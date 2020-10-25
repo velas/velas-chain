@@ -218,6 +218,10 @@ pub trait InvokeContext {
     fn get_compute_budget(&self) -> ComputeBudget;
     /// Get this invocation's compute meter
     fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>>;
+    /// Get evm executor
+    fn get_evm_executor(&self) -> Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>> {
+        unimplemented!() // TODO: Replace by optional executor, it's no need at all runtimes.
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

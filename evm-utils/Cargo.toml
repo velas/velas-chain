@@ -1,0 +1,18 @@
+[package]
+name = "evm-utils"
+version = "0.1.0"
+authors = ["Vladimir Motylenko <vld@stegos.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+solana-evm-loader-program = { path = "./programs/evm_loader", version = "0.1.0" }
+structopt = { version = "0.3", features = [ "paw" ] }
+paw = "1.0"
+evm = { version = "0.14", features = ["with-serde"] }
+primitive-types = "0.6"
+log = "0.4"
+env_logger ="*"
+hex="*"
+keccak-hash = "0.4.1"

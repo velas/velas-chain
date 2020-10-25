@@ -1,0 +1,134 @@
+use evm::Config;
+
+pub mod transactions;
+pub mod backend;
+
+pub mod layered_backend;
+pub mod version_map;
+use std::ops::Deref;
+
+/// StackExecutor, use config and backend by reference, this force object to be dependent on lifetime.
+/// And poison all outer objects with this lifetime.
+/// This is not userfriendly, so we pack Executor object into self referential object.
+pub struct StaticExecutor<B: 'static> {
+    // Avoid changing backend and config, while evm executor is reffer to it.
+    _backend: Box<B>,
+    _config: Box<Config>,
+    evm: evm::executor::StackExecutor<'static, 'static, B>
+}
+
+
+impl<B: evm::backend::Backend> StaticExecutor<B> {
+    pub fn with_config(backend: B, config: Config, gas_limit: usize) -> Self {
+        let _backend = Box::new(backend);
+        let _config = Box::new(config);
+        let evm = {
+            let backend: &'static B = unsafe{ std::mem::transmute( _backend.deref()) };
+            let config: &'static Config =  unsafe{ std::mem::transmute(_config.deref())};
+            evm::executor::StackExecutor::new(backend, gas_limit, config)
+        };
+        StaticExecutor {
+            _backend,
+            _config,
+            evm
+        }
+    }
+    pub fn rent_executor<'a, >(&'a mut self) ->  &'a mut evm::executor::StackExecutor<'a, 'a, B> {
+        unsafe { std::mem::transmute(&mut self.evm)}
+    }
+}
+
+impl<B: Default + evm::backend::Backend> Default for StaticExecutor<B> {
+    fn default() -> Self {
+        StaticExecutor::with_config(B::default(), Config::istanbul(), Default::default())
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use primitive_types::{H160, H256, U256};
+    use evm::{ExitSucceed, ExitReason, Handler, Transfer,Capture,Context, CreateScheme};
+    use std::collections::BTreeMap;
+    use super::backend::*;
+    use super::StaticExecutor;
+    use hex;
+    use log::*;
+    use sha3::{Digest, Keccak256};
+    use assert_matches::assert_matches;
+
+    const HELLO_WORLD_CODE:&str ="608060405234801561001057600080fd5b5061011e806100206000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063942ae0a714602d575b600080fd5b603360ab565b6040518080602001828103825283818151815260200191508051906020019080838360005b8381101560715780820151818401526020810190506058565b50505050905090810190601f168015609d5780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b60606040518060400160405280600a81526020017f68656c6c6f576f726c640000000000000000000000000000000000000000000081525090509056fea2646970667358221220fa787b95ca91ffe90fdb780b8ee8cb11c474bc63cb8217112c88bc465f7ea7d364736f6c63430007020033";
+    const HELLO_WORLD_ABI:&str ="942ae0a7";
+
+    fn name_to_key(name: &str) -> H160 {
+        let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
+        hash.into()
+    }
+
+    #[test]
+    fn test_evm_bytecode() {
+        let accounts = ["contract", "caller"];
+        let mut state = BTreeMap::new();
+
+        let code = hex::decode(HELLO_WORLD_CODE).unwrap();
+        let data = hex::decode(HELLO_WORLD_ABI).unwrap();
+
+        for acc in &accounts {
+            let account = name_to_key(acc);
+            let memory = MemoryAccount {
+                ..Default::default()
+            };
+            state.insert(account, memory);
+        }
+            
+        let vicinity = MemoryVicinity {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            chain_id: U256::zero(),
+            block_hashes: Vec::new(),
+            block_number: U256::zero(),
+            block_coinbase: H160::default(),
+            block_timestamp: U256::zero(),
+            block_difficulty: U256::zero(),
+            block_gas_limit: U256::max_value(),
+        };
+
+        let backend = MemoryBackend::new(vicinity, state);
+        let config = evm::Config::istanbul();
+        let mut executor = StaticExecutor::with_config(backend, config, usize::max_value());
+
+        let exit_reason = match 
+        executor.rent_executor().create(name_to_key("caller"), CreateScheme::Fixed(name_to_key("contract")), U256::zero(), code, None)
+        {
+            Capture::Exit((s, _, v)) => (s,v),
+            Capture::Trap(_) => unreachable!(),
+        };
+
+        assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
+        info!("exit = {:?}. Calling contract.", exit_reason);
+
+        let value = U256::zero();
+        
+        let context = Context {
+            caller: name_to_key("caller"),
+            address: name_to_key("contract"),
+            apparent_value: value / 2,
+        };
+        let transfer = Transfer {
+            source: name_to_key("caller"),
+            target: name_to_key("contract"),
+            value: U256::zero(),
+        };
+        
+        let result = executor.rent_executor().call(
+        name_to_key("contract"),
+        transfer.into(),
+        data.to_vec(),
+        None,
+        false,
+        context,
+        );
+
+        info!("exit reason = {:?}", result);
+    }
+}

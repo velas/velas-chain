@@ -182,8 +182,9 @@ pub struct ThisInvokeContext {
     is_cross_program_supported: bool,
     compute_budget: ComputeBudget,
     compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>>,
 }
-impl ThisInvokeContext {
+impl<'a> ThisInvokeContext {
     pub fn new(
         program_id: &Pubkey,
         rent: Rent,
@@ -192,6 +193,7 @@ impl ThisInvokeContext {
         log_collector: Option<Rc<LogCollector>>,
         is_cross_program_supported: bool,
         compute_budget: ComputeBudget,
+        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>>
     ) -> Self {
         let mut program_ids = Vec::with_capacity(compute_budget.max_invoke_depth);
         program_ids.push(*program_id);
@@ -206,6 +208,7 @@ impl ThisInvokeContext {
             compute_meter: Rc::new(RefCell::new(ThisComputeMeter {
                 remaining: compute_budget.max_units,
             })),
+            evm_executor,
         }
     }
 }
@@ -261,6 +264,9 @@ impl InvokeContext for ThisInvokeContext {
     }
     fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>> {
         self.compute_meter.clone()
+    }
+    fn get_evm_executor(&self) -> Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>> {
+        self.evm_executor.clone()
     }
 }
 pub struct ThisLogger {
@@ -633,6 +639,7 @@ impl MessageProcessor {
         accounts: &[Rc<RefCell<Account>>],
         rent_collector: &RentCollector,
         log_collector: Option<Rc<LogCollector>>,
+        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>>
     ) -> Result<(), InstructionError> {
         let pre_accounts = Self::create_pre_accounts(message, instruction, accounts);
         let mut invoke_context = ThisInvokeContext::new(
@@ -643,6 +650,7 @@ impl MessageProcessor {
             log_collector,
             self.is_cross_program_supported,
             self.compute_budget,
+            evm_executor
         );
         let keyed_accounts =
             Self::create_keyed_accounts(message, instruction, executable_accounts, accounts)?;
@@ -668,6 +676,7 @@ impl MessageProcessor {
         accounts: &[Rc<RefCell<Account>>],
         rent_collector: &RentCollector,
         log_collector: Option<Rc<LogCollector>>,
+        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>>
     ) -> Result<(), TransactionError> {
         for (instruction_index, instruction) in message.instructions.iter().enumerate() {
             self.execute_instruction(
@@ -677,6 +686,7 @@ impl MessageProcessor {
                 accounts,
                 rent_collector,
                 log_collector.clone(),
+                evm_executor.clone(),
             )
             .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
         }

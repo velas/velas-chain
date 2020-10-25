@@ -1856,12 +1856,15 @@ impl Bank {
         );
         load_time.stop();
 
+        let accounts_with_txs = loaded_accounts.iter_mut().zip(OrderedIterator::new(txs, batch.iteration_order()));
+        
         let mut execution_time = Measure::start("execution_time");
+        // TODO: Pass state
+        let mut evm_executor = Rc::new(RefCell::new(evm_state::StaticExecutor::<evm_state::backend::MemoryBackend>::default()));
         let mut signature_count: u64 = 0;
-        let executed: Vec<TransactionProcessResult> = loaded_accounts
-            .iter_mut()
-            .zip(OrderedIterator::new(txs, batch.iteration_order()))
-            .map(|(accs, (_, tx))| match accs {
+        let mut executed: Vec<TransactionProcessResult> = Vec::new();
+        for (accs, (_, tx)) in accounts_with_txs {
+             let res = match accs {
                 (Err(e), hash_age_kind) => (Err(e.clone()), hash_age_kind.clone()),
                 (Ok((accounts, loaders, _rents)), hash_age_kind) => {
                     signature_count += u64::from(tx.message().header.num_required_signatures);
@@ -1875,6 +1878,7 @@ impl Bank {
                         &account_refcells,
                         &self.rent_collector,
                         log_collector.clone(),
+                        evm_executor.clone(),
                     );
 
                     Self::refcells_to_accounts(
@@ -1889,8 +1893,9 @@ impl Bank {
                     }
                     (process_result, hash_age_kind.clone())
                 }
-            })
-            .collect();
+            };
+            executed.push(res);
+        }
 
         execution_time.stop();
 

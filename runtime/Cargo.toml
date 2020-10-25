@@ -47,6 +47,7 @@ tar = "0.4.28"
 tempfile = "3.1.0"
 thiserror = "1.0"
 zstd = "0.5.1"
+evm-state = { path = "../evm-utils/evm-state", version = "0.1"}
 
 [lib]
 crate-type = ["lib"]

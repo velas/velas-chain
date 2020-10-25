@@ -1,0 +1,18 @@
+[package]
+name = "evm-state"
+version = "0.1.0"
+authors = ["Vladimir Motylenko <vld@stegos.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+evm = { version = "0.17", features = ["with-serde"] }
+primitive-types = "0.7.2"
+log="0.4"
+hex="0.4.2"
+serde="1.0"
+sha3="0.9.1"
+assert_matches = "1.4"
+rand = "0.7.3"
+rlp="0.4.6"

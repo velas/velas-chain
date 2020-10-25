@@ -1,5 +1,5 @@
 use serde_json::Value;
-use solana_cli::cli::{process_command, CliCommand, CliConfig};
+use solana_cli::cli::{process_command, LoaderType, CliCommand, CliConfig};
 use solana_client::rpc_client::RpcClient;
 use solana_core::validator::TestValidator;
 use solana_faucet::faucet::run_local_faucet;
@@ -63,7 +63,7 @@ fn test_cli_deploy_program() {
     config.command = CliCommand::Deploy {
         program_location: pathbuf.to_str().unwrap().to_string(),
         address: None,
-        use_deprecated_loader: false,
+        loader_type: LoaderType::Bpf,
     };
 
     let response = process_command(&config);
@@ -97,7 +97,7 @@ fn test_cli_deploy_program() {
     config.command = CliCommand::Deploy {
         program_location: pathbuf.to_str().unwrap().to_string(),
         address: Some(1),
-        use_deprecated_loader: false,
+        loader_type: LoaderType::Bpf,
     };
     process_command(&config).unwrap();
     let account1 = rpc_client
