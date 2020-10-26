@@ -1,20 +1,30 @@
-use evm::Config;
-
+pub use transactions::*;
 pub mod transactions;
 pub mod backend;
-
 pub mod layered_backend;
 pub mod version_map;
 use std::ops::Deref;
+use std::fmt;
+
+pub use evm::{backend::Backend, executor::StackExecutor, Context, Transfer, Handler, Config};
 
 /// StackExecutor, use config and backend by reference, this force object to be dependent on lifetime.
 /// And poison all outer objects with this lifetime.
 /// This is not userfriendly, so we pack Executor object into self referential object.
+#[derive(Clone)]
 pub struct StaticExecutor<B: 'static> {
     // Avoid changing backend and config, while evm executor is reffer to it.
     _backend: Box<B>,
     _config: Box<Config>,
     evm: evm::executor::StackExecutor<'static, 'static, B>
+}
+
+impl<B: 'static> fmt::Debug for StaticExecutor<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StaticExecutor")
+        .field("config", &self._config)
+        .finish()
+    }
 }
 
 
@@ -45,8 +55,10 @@ impl<B: Default + evm::backend::Backend> Default for StaticExecutor<B> {
 }
 
 
+pub const HELLO_WORLD_CODE:&str ="608060405234801561001057600080fd5b5061011e806100206000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063942ae0a714602d575b600080fd5b603360ab565b6040518080602001828103825283818151815260200191508051906020019080838360005b8381101560715780820151818401526020810190506058565b50505050905090810190601f168015609d5780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b60606040518060400160405280600a81526020017f68656c6c6f576f726c640000000000000000000000000000000000000000000081525090509056fea2646970667358221220fa787b95ca91ffe90fdb780b8ee8cb11c474bc63cb8217112c88bc465f7ea7d364736f6c63430007020033";
+pub const HELLO_WORLD_ABI:&str ="942ae0a7";
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use primitive_types::{H160, H256, U256};
     use evm::{ExitSucceed, ExitReason, Handler, Transfer,Capture,Context, CreateScheme};
     use std::collections::BTreeMap;
@@ -56,9 +68,7 @@ mod tests {
     use log::*;
     use sha3::{Digest, Keccak256};
     use assert_matches::assert_matches;
-
-    const HELLO_WORLD_CODE:&str ="608060405234801561001057600080fd5b5061011e806100206000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063942ae0a714602d575b600080fd5b603360ab565b6040518080602001828103825283818151815260200191508051906020019080838360005b8381101560715780820151818401526020810190506058565b50505050905090810190601f168015609d5780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b60606040518060400160405280600a81526020017f68656c6c6f576f726c640000000000000000000000000000000000000000000081525090509056fea2646970667358221220fa787b95ca91ffe90fdb780b8ee8cb11c474bc63cb8217112c88bc465f7ea7d364736f6c63430007020033";
-    const HELLO_WORLD_ABI:&str ="942ae0a7";
+    use super::*;
 
     fn name_to_key(name: &str) -> H160 {
         let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
