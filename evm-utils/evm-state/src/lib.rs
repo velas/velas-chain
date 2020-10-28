@@ -6,10 +6,9 @@ pub mod layered_backend;
 pub mod version_map;
 use std::ops::Deref;
 use std::fmt;
-use primitive_types::H256;
+pub use primitive_types::H256;
 
 pub use evm::{ executor::StackExecutor, Context, Transfer, Handler, Config, backend::{Backend, Apply, Log}};
-
 
 /// StackExecutor, use config and backend by reference, this force object to be dependent on lifetime.
 /// And poison all outer objects with this lifetime.
@@ -148,8 +147,8 @@ pub mod tests {
             any_other => panic!("Not expected result={:?}", any_other)
         }
 
-        let (values, logs) = executor.deconstruct();
-        locked.apply(values, logs, false);
+        let (path) = executor.deconstruct();
+        locked.apply(path);
         
         drop(locked);
         let mutex_lock =  backend.read().unwrap();

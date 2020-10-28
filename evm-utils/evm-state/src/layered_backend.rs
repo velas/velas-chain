@@ -86,8 +86,9 @@ impl EvmState {
         }
     }
 
+    // TODO: Handle already locked.
     pub fn try_lock<'a> (this: &'a RwLock<Self>) -> Option<LockedState<'a> > {
-        let guard = this.try_write().ok()?;
+        let guard = this.write().ok()?;
         Some(LockedState{
             guard
         })
@@ -107,6 +108,11 @@ impl<'a> LockedState<'a> {
     }
     pub fn backend(&self) -> EvmState {
         (*self.guard).clone()
+    }
+
+    pub fn apply(&mut self, patch: (impl IntoIterator<Item=Apply<impl IntoIterator<Item=(H256, H256)>>>,
+    impl IntoIterator<Item=Log>)) {
+        ApplyBackend::apply(self, patch.0, patch.1, false)
     }
 }
 

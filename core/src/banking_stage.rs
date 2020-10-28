@@ -530,8 +530,10 @@ impl BankingStage {
         } else {
             vec![]
         };
-        let (mut loaded_accounts, results, mut retryable_txs, tx_count, signature_count) =
-            bank.load_and_execute_transactions(batch, MAX_PROCESSING_AGE, None);
+        let mut locked = evm_state::EvmState::try_lock(&bank.evm_state).unwrap();
+        
+        let (mut loaded_accounts, results, mut retryable_txs, tx_count, signature_count, path) =
+            bank.load_and_execute_transactions(batch, MAX_PROCESSING_AGE, None, &mut locked);
         load_execute_time.stop();
 
         let freeze_lock = bank.freeze_lock();
@@ -557,6 +559,8 @@ impl BankingStage {
                 &results,
                 tx_count,
                 signature_count,
+                locked,
+                path,
             );
 
             bank_utils::find_and_send_votes(txs, &tx_results, Some(gossip_vote_sender));

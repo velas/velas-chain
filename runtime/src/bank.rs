@@ -348,7 +348,7 @@ pub struct Bank {
     /// The set of parents including this bank
     pub ancestors: Ancestors,
 
-    evm_state: RwLock<evm_state::EvmState>,
+    pub evm_state: RwLock<evm_state::EvmState>,
 
     /// Hash of this Bank's state. Only meaningful after freezing.
     hash: RwLock<Hash>,
@@ -1468,16 +1468,20 @@ impl Bank {
         let txs = &[transaction];
         let batch = self.prepare_simulation_batch(txs);
         let log_collector = Rc::new(LogCollector::default());
+        let mut locked = evm_state::EvmState::try_lock(&self.evm_state).unwrap();
+        
         let (
             _loaded_accounts,
             executed,
             _retryable_transactions,
             _transaction_count,
             _signature_count,
+            _patch,
         ) = self.load_and_execute_transactions(
             &batch,
             MAX_PROCESSING_AGE,
             Some(log_collector.clone()),
+            &mut locked,
         );
         let transaction_result = executed[0].0.clone().map(|_| ());
         let log_messages = Rc::try_unwrap(log_collector).unwrap_or_default().into();
@@ -1819,12 +1823,15 @@ impl Bank {
         batch: &TransactionBatch,
         max_age: usize,
         log_collector: Option<Rc<LogCollector>>,
+        locked_evm: &mut evm_state::LockedState,
     ) -> (
         Vec<(Result<TransactionLoadResult>, Option<HashAgeKind>)>,
         Vec<TransactionProcessResult>,
         Vec<usize>,
         u64,
         u64,
+        (impl IntoIterator<Item=evm_state::Apply<impl IntoIterator<Item=(evm_state::H256, evm_state::H256)>>>,
+        impl IntoIterator<Item=evm_state::Log>),
     ) {
         let txs = batch.transactions();
         debug!("processing transactions: {}", txs.len());
@@ -1863,9 +1870,8 @@ impl Bank {
         let accounts_with_txs = loaded_accounts.iter_mut().zip(OrderedIterator::new(txs, batch.iteration_order()));
         
         let mut execution_time = Measure::start("execution_time");
-        let locked = evm_state::EvmState::try_lock(&self.evm_state).unwrap();
         // TODO: Pass state
-        let mut evm_executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(locked.backend(), evm_state::Config::istanbul(), usize::max_value())));
+        let evm_executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(locked_evm.backend(), evm_state::Config::istanbul(), usize::max_value())));
         let mut signature_count: u64 = 0;
         let mut executed: Vec<TransactionProcessResult> = Vec::new();
         for (accs, (_, tx)) in accounts_with_txs {
@@ -1937,6 +1943,7 @@ impl Bank {
             retryable_txs,
             tx_count,
             signature_count,
+            Rc::try_unwrap(evm_executor).unwrap().into_inner().deconstruct(),// TODO: Handle borrowing
         )
     }
 
@@ -2002,6 +2009,9 @@ impl Bank {
         executed: &[TransactionProcessResult],
         tx_count: u64,
         signature_count: u64,
+        mut locked_evm: evm_state::LockedState,
+        patch: (impl IntoIterator<Item=evm_state::Apply<impl IntoIterator<Item=(evm_state::H256, evm_state::H256)>>>,
+        impl IntoIterator<Item=evm_state::Log>),
     ) -> TransactionResults {
         assert!(
             !self.is_frozen(),
@@ -2037,12 +2047,15 @@ impl Bank {
         let overwritten_vote_accounts =
             self.update_cached_accounts(txs, iteration_order, executed, loaded_accounts);
 
+        locked_evm.apply(patch);
         // once committed there is no way to unroll
         write_time.stop();
         debug!("store: {}us txs_len={}", write_time.as_us(), txs.len(),);
         self.update_transaction_statuses(txs, iteration_order, &executed);
         let fee_collection_results =
             self.filter_program_errors_and_collect_fee(txs, iteration_order, executed);
+
+        // TODO: add evm transaction statuses progess
 
         TransactionResults {
             fee_collection_results,
@@ -2566,8 +2579,10 @@ impl Bank {
         } else {
             vec![]
         };
-        let (mut loaded_accounts, executed, _, tx_count, signature_count) =
-            self.load_and_execute_transactions(batch, max_age, None);
+        let mut locked = evm_state::EvmState::try_lock(&self.evm_state).unwrap();
+        
+        let (mut loaded_accounts, executed, _, tx_count, signature_count, patch) =
+            self.load_and_execute_transactions(batch, max_age, None, &mut locked);
 
         let results = self.commit_transactions(
             batch.transactions(),
@@ -2576,6 +2591,8 @@ impl Bank {
             &executed,
             tx_count,
             signature_count,
+            locked,
+            patch,
         );
         let post_balances = if collect_balances {
             self.collect_balances(batch)

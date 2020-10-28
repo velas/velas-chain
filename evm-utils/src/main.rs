@@ -14,19 +14,22 @@ use std::fs::File;
 #[derive(Debug, structopt::StructOpt)]
 enum SubCommands {
     TransferRaw {
-        #[structopt(short = "r", long = "raw-tx")]
         raw_tx:String
     },
     CreateDummy {
-        #[structopt(short = "o", long = "out-file")]
-        tx_file: String,        
+        tx_file: String,
+        #[structopt(short = "c", long = "code")]
+        contract_code: Option<String>,
     },
     CallDummy {
-        #[structopt(short = "o", long = "out-file")]
-        tx_file: String,
-        #[structopt(long = "create-tx")]
         create_tx: String,
+        tx_file: String,
+        #[structopt(short = "a", long = "abi")]
+        abi: Option<String>,
     },
+    ParseArray {
+        array: String
+    }
 }
 
 
@@ -103,7 +106,8 @@ fn main(args: Args) -> Result<(), std::io::Error> {
 
         }
         SubCommands::CreateDummy{
-            tx_file
+            tx_file,
+            contract_code
         } => {
 
             let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
@@ -113,7 +117,7 @@ fn main(args: Args) -> Result<(), std::io::Error> {
                 gas_limit: 300000.into(),
                 action: evm::TransactionAction::Create,
                 value: 0.into(),
-                input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec()
+                input: hex::decode(contract_code.as_ref().map(String::as_str).unwrap_or(evm_state::HELLO_WORLD_CODE)).unwrap().to_vec()
             };
             let tx_create = tx_create.sign(&secret_key, None);
 
@@ -122,7 +126,8 @@ fn main(args: Args) -> Result<(), std::io::Error> {
         }
         SubCommands::CallDummy{
             tx_file,
-            create_tx
+            create_tx,
+            abi,
         } => {
             let mut file = File::open(create_tx).unwrap();
             let mut buf = Vec::new();
@@ -138,7 +143,7 @@ fn main(args: Args) -> Result<(), std::io::Error> {
                 gas_limit: 300000.into(),
                 action: evm::TransactionAction::Call(tx_address),
                 value: 0.into(),
-                input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec()
+                input: hex::decode(abi.as_ref().map(String::as_str).unwrap_or(evm_state::HELLO_WORLD_ABI)).unwrap().to_vec()
             };
     
             let tx_call = tx_call.sign(&secret_key, None);
@@ -146,7 +151,13 @@ fn main(args: Args) -> Result<(), std::io::Error> {
             let mut file = File::create(tx_file).unwrap();
             Write::write_all(&mut file, &bincode::serialize(&tx_call).unwrap()).unwrap();
         }
-        _ => panic!()
+        SubCommands::ParseArray{
+            array
+        } => {
+            let bytes: Vec<u8> = serde_json::from_str(&array).unwrap();
+            println!("Resulting data HEX = {}", hex::encode(&bytes));
+            println!("Resulting data utf8 = {}", String::from_utf8_lossy(&bytes));
+        }
 
     }
     // solana_evm_loader_program::processor::EVMProcessor::write_account(address, account);

@@ -78,15 +78,13 @@ mod test {
     use crate::evm_tx;
     use solana_sdk::program_utils::limited_deserialize;
 
-    use solana_runtime::message_processor::ThisInvokeContext;
     use solana_sdk::{
         account::Account,
         entrypoint_native::{ComputeMeter, ComputeBudget, Logger, ProcessInstruction},
         instruction::CompiledInstruction,
         message::Message,
-        rent::Rent,
     };
-    use std::{cell::RefCell, fs::File, io::Read, ops::Range, rc::Rc};
+    use std::{cell::RefCell, rc::Rc};
 
 
     fn dummy_eth_tx() -> evm_state::transactions::Transaction{
@@ -147,7 +145,7 @@ mod test {
         pub key: Pubkey,
         pub logger: MockLogger,
         pub compute_meter: MockComputeMeter,
-        pub evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>>
+        pub evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>
     }
     impl Default for MockInvokeContext {
         fn default() -> Self {
@@ -157,7 +155,7 @@ mod test {
                 compute_meter: MockComputeMeter {
                     remaining: std::u64::MAX,
                 },
-                evm_executor: Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(evm_state::backend::MemoryBackend::default(), evm_state::Config::istanbul(), 10000000)))
+                evm_executor: Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(evm_state::EvmState::default(), evm_state::Config::istanbul(), 10000000)))
             }
         }
     }
@@ -192,7 +190,7 @@ mod test {
         fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>> {
             Rc::new(RefCell::new(self.compute_meter.clone()))
         }
-        fn get_evm_executor(&self) -> Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>> {
+        fn get_evm_executor(&self) -> Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>> {
             self.evm_executor.clone()
         }
     }
