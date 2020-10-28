@@ -1,14 +1,18 @@
-pub use transactions::*;
 pub use layered_backend::*;
-pub mod transactions;
+pub use transactions::*;
 pub mod backend;
 pub mod layered_backend;
+pub mod transactions;
 pub mod version_map;
-use std::ops::Deref;
-use std::fmt;
 pub use primitive_types::H256;
+use std::fmt;
+use std::ops::Deref;
 
-pub use evm::{ executor::StackExecutor, Context, Transfer, Handler, Config, backend::{Backend, Apply, Log}};
+pub use evm::{
+    backend::{Apply, Backend, Log},
+    executor::StackExecutor,
+    Config, Context, Handler, Transfer,
+};
 
 /// StackExecutor, use config and backend by reference, this force object to be dependent on lifetime.
 /// And poison all outer objects with this lifetime.
@@ -24,33 +28,36 @@ pub struct StaticExecutor<B: 'static> {
 impl<B: 'static> fmt::Debug for StaticExecutor<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StaticExecutor")
-        .field("config", &self._config)
-        .finish()
+            .field("config", &self._config)
+            .finish()
     }
 }
-
 
 impl<B: evm::backend::Backend> StaticExecutor<B> {
     pub fn with_config(backend: B, config: Config, gas_limit: usize) -> Self {
         let _backend = Box::new(backend);
         let _config = Box::new(config);
         let evm = {
-            let backend: &'static B = unsafe{ std::mem::transmute( _backend.deref()) };
-            let config: &'static Config =  unsafe{ std::mem::transmute(_config.deref())};
+            let backend: &'static B = unsafe { std::mem::transmute(_backend.deref()) };
+            let config: &'static Config = unsafe { std::mem::transmute(_config.deref()) };
             evm::executor::StackExecutor::new(backend, gas_limit, config)
         };
         StaticExecutor {
             _backend,
             _config,
-            evm
+            evm,
         }
     }
-    pub fn rent_executor<'a, >(&'a mut self) ->  &'a mut evm::executor::StackExecutor<'a, 'a, B> {
-        unsafe { std::mem::transmute(&mut self.evm)}
+    pub fn rent_executor<'a>(&'a mut self) -> &'a mut evm::executor::StackExecutor<'a, 'a, B> {
+        unsafe { std::mem::transmute(&mut self.evm) }
     }
 
-    pub fn deconstruct(self) -> (impl IntoIterator<Item=Apply<impl IntoIterator<Item=(H256, H256)>>>,
-    impl IntoIterator<Item=Log>) {
+    pub fn deconstruct(
+        self,
+    ) -> (
+        impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)>>>,
+        impl IntoIterator<Item = Log>,
+    ) {
         self.evm.deconstruct()
     }
 }
@@ -61,23 +68,22 @@ impl<B: Default + evm::backend::Backend> Default for StaticExecutor<B> {
     }
 }
 
-
 pub const HELLO_WORLD_CODE:&str = "608060405234801561001057600080fd5b5061011e806100206000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063942ae0a714602d575b600080fd5b603360ab565b6040518080602001828103825283818151815260200191508051906020019080838360005b8381101560715780820151818401526020810190506058565b50505050905090810190601f168015609d5780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b60606040518060400160405280600a81526020017f68656c6c6f576f726c640000000000000000000000000000000000000000000081525090509056fea2646970667358221220fa787b95ca91ffe90fdb780b8ee8cb11c474bc63cb8217112c88bc465f7ea7d364736f6c63430007020033";
-pub const HELLO_WORLD_ABI:&str = "942ae0a7";
+pub const HELLO_WORLD_ABI: &str = "942ae0a7";
 pub const HELLO_WORLD_RESULT:&str = "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000a68656c6c6f576f726c6400000000000000000000000000000000000000000000";
 pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b506004361060285760003560e01c8063942ae0a714602d575b600080fd5b603360ab565b6040518080602001828103825283818151815260200191508051906020019080838360005b8381101560715780820151818401526020810190506058565b50505050905090810190601f168015609d5780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b60606040518060400160405280600a81526020017f68656c6c6f576f726c640000000000000000000000000000000000000000000081525090509056fea2646970667358221220fa787b95ca91ffe90fdb780b8ee8cb11c474bc63cb8217112c88bc465f7ea7d364736f6c63430007020033";
 #[cfg(test)]
 pub mod tests {
-    use primitive_types::{H160, H256, U256};
-    use evm::{ExitSucceed, ExitReason, Handler, Capture, CreateScheme, backend::ApplyBackend};
-    use std::sync::RwLock;
     use super::layered_backend::*;
     use super::StaticExecutor;
+    use super::*;
+    use assert_matches::assert_matches;
+    use evm::{backend::ApplyBackend, Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use hex;
     use log::*;
+    use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
-    use assert_matches::assert_matches;
-    use super::*;
+    use std::sync::RwLock;
 
     fn name_to_key(name: &str) -> H160 {
         let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
@@ -108,9 +114,8 @@ pub mod tests {
         let backend = RwLock::new(backend);
 
         let mut locked = EvmState::try_lock(&backend).unwrap();
-        
-        {
 
+        {
             let state = locked.fork_mut();
 
             for acc in &accounts {
@@ -123,37 +128,44 @@ pub mod tests {
         }
 
         let config = evm::Config::istanbul();
-        let mut executor = StaticExecutor::with_config(locked.backend(), config, usize::max_value());
+        let mut executor =
+            StaticExecutor::with_config(locked.backend(), config, usize::max_value());
 
-        let exit_reason = match 
-        executor.rent_executor().create(name_to_key("caller"), CreateScheme::Fixed(name_to_key("contract")), U256::zero(), code.clone(), None)
-        {
-            Capture::Exit((s, _, v)) => (s,v),
+        let exit_reason = match executor.rent_executor().create(
+            name_to_key("caller"),
+            CreateScheme::Fixed(name_to_key("contract")),
+            U256::zero(),
+            code.clone(),
+            None,
+        ) {
+            Capture::Exit((s, _, v)) => (s, v),
             Capture::Trap(_) => unreachable!(),
         };
 
         assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
         let exit_reason = executor.rent_executor().transact_call(
-        name_to_key("contract"),
-        name_to_key("contract"),
-        U256::zero(),
-        data.to_vec(),
-        usize::max_value(),
+            name_to_key("contract"),
+            name_to_key("contract"),
+            U256::zero(),
+            data.to_vec(),
+            usize::max_value(),
         );
-        
+
         let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
         match exit_reason {
-            (ExitReason::Succeed(ExitSucceed::Returned), res ) if res == result => {},
-            any_other => panic!("Not expected result={:?}", any_other)
+            (ExitReason::Succeed(ExitSucceed::Returned), res) if res == result => {}
+            any_other => panic!("Not expected result={:?}", any_other),
         }
 
         let (path) = executor.deconstruct();
         locked.apply(path);
-        
-        drop(locked);
-        let mutex_lock =  backend.read().unwrap();
-        let contract = mutex_lock.accounts.get(&name_to_key("contract"));
-        assert_eq!(&contract.unwrap().code,  &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap());
 
+        drop(locked);
+        let mutex_lock = backend.read().unwrap();
+        let contract = mutex_lock.accounts.get(&name_to_key("contract"));
+        assert_eq!(
+            &contract.unwrap().code,
+            &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap()
+        );
     }
 }

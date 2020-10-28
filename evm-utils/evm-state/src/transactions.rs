@@ -1,10 +1,13 @@
-use primitive_types::{H256, H160, U256};
-use rlp::{Decodable, Encodable, Rlp, RlpStream, DecoderError};
-use serde::{Serialize, Deserialize};
+use primitive_types::{H160, H256, U256};
+use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::str::FromStr;
 
-use secp256k1::{SECP256K1,  Message, Error, recovery::{RecoveryId, RecoverableSignature}};
+use secp256k1::{
+    recovery::{RecoverableSignature, RecoveryId},
+    Error, Message, SECP256K1,
+};
 
 pub use secp256k1::SecretKey;
 pub type Address = H160;
@@ -27,11 +30,9 @@ impl Transaction {
         let unsigned = UnsignedTransaction::from((*self).clone());
         let hash = unsigned.signing_hash(self.signature.chain_id());
         let sig = self.signature.to_recoverable_signature()?;
-        let public_key = {
-              SECP256K1.recover(&Message::from_slice(&hash.as_bytes()).unwrap(), &sig)? 
-        };
-        let hash = H256::from_slice(
-            Keccak256::digest(&public_key.serialize()[1..]).as_slice());
+        let public_key =
+            { SECP256K1.recover(&Message::from_slice(&hash.as_bytes()).unwrap(), &sig)? };
+        let hash = H256::from_slice(Keccak256::digest(&public_key.serialize()[1..]).as_slice());
         Ok(Address::from(hash))
     }
 
@@ -39,7 +40,6 @@ impl Transaction {
         Ok(self.action.address(self.caller()?, self.nonce))
     }
 }
-
 
 pub struct UnsignedTransaction {
     pub nonce: U256,
@@ -76,22 +76,19 @@ impl UnsignedTransaction {
     pub fn sign(self, key: &SecretKey, chain_id: Option<u64>) -> Transaction {
         let hash = self.signing_hash(chain_id);
         // hash is always MESSAGE_SIZE bytes.
-        let msg = {
-            Message::from_slice(hash.as_bytes()).unwrap()
-        };
+        let msg = { Message::from_slice(hash.as_bytes()).unwrap() };
 
         // SecretKey and Message are always valid.
-        let s = {
-            SECP256K1.sign_recoverable(&msg, key)
-        };
-        let (rid, sig) = {
-            s.serialize_compact()
-        };
+        let s = { SECP256K1.sign_recoverable(&msg, key) };
+        let (rid, sig) = { s.serialize_compact() };
 
         let sig = TransactionSignature {
-            v: ({
-                 rid.to_i32() 
-            } + if let Some(n) = chain_id { (35 + n * 2) as i32 } else { 27 }) as u64,
+            v: ({ rid.to_i32() }
+                + if let Some(n) = chain_id {
+                    (35 + n * 2) as i32
+                } else {
+                    27
+                }) as u64,
             r: H256::from_slice(&sig[0..32]),
             s: H256::from_slice(&sig[32..64]),
         };
@@ -106,9 +103,7 @@ impl UnsignedTransaction {
             signature: sig,
         }
     }
-
 }
-
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum TransactionAction {
@@ -125,8 +120,10 @@ impl TransactionAction {
                 rlp.append(&caller);
                 rlp.append(&nonce);
 
-                Address::from(H256::from_slice(Keccak256::digest(rlp.out().as_slice()).as_slice()))
-            },
+                Address::from(H256::from_slice(
+                    Keccak256::digest(rlp.out().as_slice()).as_slice(),
+                ))
+            }
         }
     }
 }
@@ -149,15 +146,25 @@ impl TransactionSignature {
     }
 
     pub fn is_low_s(&self) -> bool {
-        self.s <= H256::from_str("0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0").unwrap()
+        self.s
+            <= H256::from_str("0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0")
+                .unwrap()
     }
 
     pub fn is_valid(&self) -> bool {
-        self.standard_v() <= 1 &&
-            self.r < H256::from_str("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141").unwrap() &&
-            self.r > H256::zero() &&
-            self.s < H256::from_str("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141").unwrap() &&
-            self.s > H256::zero()
+        self.standard_v() <= 1
+            && self.r
+                < H256::from_str(
+                    "0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
+                )
+                .unwrap()
+            && self.r > H256::zero()
+            && self.s
+                < H256::from_str(
+                    "0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
+                )
+                .unwrap()
+            && self.s > H256::zero()
     }
 
     pub fn chain_id(&self) -> Option<u64> {
@@ -177,16 +184,15 @@ impl TransactionSignature {
     }
 }
 
-
 impl Encodable for TransactionAction {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self {
             &TransactionAction::Call(address) => {
                 s.append(&address);
-            },
+            }
             &TransactionAction::Create => {
                 s.append(&"");
-            },
+            }
         }
     }
 }
@@ -197,7 +203,7 @@ impl Decodable for TransactionAction {
             if rlp.is_data() {
                 TransactionAction::Create
             } else {
-                return Err(rlp::DecoderError::RlpExpectedToBeData)
+                return Err(rlp::DecoderError::RlpExpectedToBeData);
             }
         } else {
             TransactionAction::Call(rlp.as_val()?)
@@ -237,7 +243,6 @@ impl Decodable for Transaction {
         })
     }
 }
-
 
 impl From<Transaction> for UnsignedTransaction {
     fn from(val: Transaction) -> UnsignedTransaction {

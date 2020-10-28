@@ -1,16 +1,13 @@
 use super::scope::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum EvmInstruction {
-
     /// Execute native evm transaction.
     ///
-    /// 
-    EvmTransaction{
-        evm_tx: evm::Transaction
-    },
-    
+    ///
+    EvmTransaction { evm_tx: evm::Transaction },
+
     /// Transfer native lamports to ethereum.
     ///
     /// Outer args:
@@ -21,11 +18,9 @@ pub enum EvmInstruction {
     /// ether_key - recevier etherium address.
     SwapNativeToEther {
         amount: u64,
-        ether_key: evm::Address
+        ether_key: evm::Address,
     },
-
     // TODO: Transfer eth to sol back
-
 
     // /// Transfer native lamports to ethereum.
     // ///

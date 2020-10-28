@@ -31,10 +31,11 @@ use solana_faucet::faucet::request_airdrop_transaction;
 use solana_faucet::faucet_mock::request_airdrop_transaction;
 use solana_remote_wallet::remote_wallet::RemoteWalletManager;
 use solana_sdk::{
-    bpf_loader, bpf_loader_deprecated, evm_loader,
+    bpf_loader, bpf_loader_deprecated,
     clock::{Epoch, Slot, DEFAULT_TICKS_PER_SECOND},
     commitment_config::CommitmentConfig,
     decode_error::DecodeError,
+    evm_loader,
     fee_calculator::FeeCalculator,
     hash::Hash,
     instruction::InstructionError,
@@ -164,7 +165,7 @@ pub fn nonce_authority_arg<'a, 'b>() -> Arg<'a, 'b> {
 pub enum LoaderType {
     Bpf,
     BpfDeprecated,
-    Evm
+    Evm,
 }
 
 impl FromStr for LoaderType {
@@ -475,7 +476,7 @@ pub enum CliError {
     #[error("keypair file not found: {0}")]
     KeypairFileNotFound(String),
     #[error("incorrect loader provided: {0}")]
-    IncorrectLoader(String)
+    IncorrectLoader(String),
 }
 
 impl From<Box<dyn error::Error>> for CliError {
@@ -1313,7 +1314,8 @@ fn process_deploy(
     let (blockhash, fee_calculator, _) = rpc_client
         .get_recent_blockhash_with_commitment(config.commitment)?
         .value;
-    let minimum_balance = rpc_client.get_minimum_balance_for_rent_exemption(program_data.len() * 2)? ;
+    let minimum_balance =
+        rpc_client.get_minimum_balance_for_rent_exemption(program_data.len() * 2)?;
     let ix = system_instruction::create_account(
         &config.signers[0].pubkey(),
         &program_id.pubkey(),
@@ -1343,12 +1345,15 @@ fn process_deploy(
     }
     messages.append(&mut write_message_refs);
 
-    let instruction = 
-    match loader_type {
-        LoaderType::Bpf | LoaderType::BpfDeprecated => loader_instruction::finalize(&program_id.pubkey(), &loader_id),
-        LoaderType::Evm => {
-            loader_instruction::finalize_with_caller(&program_id.pubkey(), &loader_id, &signers[0].pubkey())
+    let instruction = match loader_type {
+        LoaderType::Bpf | LoaderType::BpfDeprecated => {
+            loader_instruction::finalize(&program_id.pubkey(), &loader_id)
         }
+        LoaderType::Evm => loader_instruction::finalize_with_caller(
+            &program_id.pubkey(),
+            &loader_id,
+            &signers[0].pubkey(),
+        ),
     };
     let finalize_message = Message::new(&[instruction], Some(&signers[0].pubkey()));
     messages.push(&finalize_message);

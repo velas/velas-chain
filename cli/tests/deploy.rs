@@ -1,5 +1,5 @@
 use serde_json::Value;
-use solana_cli::cli::{process_command, LoaderType, CliCommand, CliConfig};
+use solana_cli::cli::{process_command, CliCommand, CliConfig, LoaderType};
 use solana_client::rpc_client::RpcClient;
 use solana_core::validator::TestValidator;
 use solana_faucet::faucet::run_local_faucet;

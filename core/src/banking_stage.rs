@@ -531,7 +531,7 @@ impl BankingStage {
             vec![]
         };
         let mut locked = evm_state::EvmState::try_lock(&bank.evm_state).unwrap();
-        
+
         let (mut loaded_accounts, results, mut retryable_txs, tx_count, signature_count, path) =
             bank.load_and_execute_transactions(batch, MAX_PROCESSING_AGE, None, &mut locked);
         load_execute_time.stop();

@@ -1,15 +1,14 @@
 use solana_sdk::instruction::InstructionError;
-use solana_sdk::{
-    entrypoint_native::{Logger, InvokeContext},
-    program_utils::limited_deserialize,
-    account::{KeyedAccount},
-};
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::{
+    account::KeyedAccount,
+    entrypoint_native::{InvokeContext, Logger},
+    program_utils::limited_deserialize,
+};
 
-
-use super::scope::*;
-use evm::{TransactionAction};
 use super::instructions::EvmInstruction;
+use super::scope::*;
+use evm::TransactionAction;
 
 macro_rules! log{
     ($logger:ident, $message:expr) => {
@@ -40,61 +39,64 @@ pub fn process_instruction(
     let ix = limited_deserialize(data)?;
     log!(logger, "Run evm exec with ix = {:?}.", ix);
     match ix {
-        EvmInstruction::EvmTransaction {
-            evm_tx
-        } => {
+        EvmInstruction::EvmTransaction { evm_tx } => {
             // TODO: Handle gas price
             // TODO: Handle nonce
             // TODO: validate tx signature
 
             let result = match evm_tx.action {
-                TransactionAction::Call(addr) => {
-                    evm_executor.transact_call(evm_tx.caller().map_err(|_| InstructionError::InvalidArgument)?,
+                TransactionAction::Call(addr) => evm_executor.transact_call(
+                    evm_tx
+                        .caller()
+                        .map_err(|_| InstructionError::InvalidArgument)?,
                     addr,
-                     evm_tx.value,
-                     evm_tx.input,
-                     evm_tx.gas_limit.as_usize())
-                },
-                TransactionAction::Create => {
-                    (evm_executor.transact_create(evm_tx.caller().map_err(|_| InstructionError::InvalidArgument)?,
                     evm_tx.value,
                     evm_tx.input,
-                    evm_tx.gas_limit.as_usize()),
-                    vec![])
-                }
+                    evm_tx.gas_limit.as_usize(),
+                ),
+                TransactionAction::Create => (
+                    evm_executor.transact_create(
+                        evm_tx
+                            .caller()
+                            .map_err(|_| InstructionError::InvalidArgument)?,
+                        evm_tx.value,
+                        evm_tx.input,
+                        evm_tx.gas_limit.as_usize(),
+                    ),
+                    vec![],
+                ),
             };
             // TODO: Map evm errors on solana.
             log!(logger, "Exit status = {:?}", result);
         }
-        _ => todo!("Do other staff later")
+        _ => todo!("Do other staff later"),
     }
     Ok(())
 }
 #[cfg(test)]
 mod test {
     use super::*;
-    use primitive_types::{H256, H160, U256};
-    use evm_state::transactions::{ TransactionAction, TransactionSignature};
     use crate::evm_tx;
+    use evm_state::transactions::{TransactionAction, TransactionSignature};
+    use primitive_types::{H160, H256, U256};
     use solana_sdk::program_utils::limited_deserialize;
 
     use solana_sdk::{
         account::Account,
-        entrypoint_native::{ComputeMeter, ComputeBudget, Logger, ProcessInstruction},
+        entrypoint_native::{ComputeBudget, ComputeMeter, Logger, ProcessInstruction},
         instruction::CompiledInstruction,
         message::Message,
     };
     use std::{cell::RefCell, rc::Rc};
 
-
-    fn dummy_eth_tx() -> evm_state::transactions::Transaction{
+    fn dummy_eth_tx() -> evm_state::transactions::Transaction {
         evm_state::transactions::Transaction {
             nonce: U256::zero(),
             gas_price: U256::zero(),
             gas_limit: U256::zero(),
             action: TransactionAction::Call(H160::zero()),
             value: U256::zero(),
-            signature: TransactionSignature{
+            signature: TransactionSignature {
                 v: 0,
                 r: H256::zero(),
                 s: H256::zero(),
@@ -102,7 +104,6 @@ mod test {
             input: vec![],
         }
     }
-
 
     #[test]
     fn serialize_deserialize_eth_ix() {
@@ -145,7 +146,7 @@ mod test {
         pub key: Pubkey,
         pub logger: MockLogger,
         pub compute_meter: MockComputeMeter,
-        pub evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>
+        pub evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>,
     }
     impl Default for MockInvokeContext {
         fn default() -> Self {
@@ -155,7 +156,11 @@ mod test {
                 compute_meter: MockComputeMeter {
                     remaining: std::u64::MAX,
                 },
-                evm_executor: Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(evm_state::EvmState::default(), evm_state::Config::istanbul(), 10000000)))
+                evm_executor: Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
+                    evm_state::EvmState::default(),
+                    evm_state::Config::istanbul(),
+                    10000000,
+                ))),
             }
         }
     }
@@ -195,11 +200,10 @@ mod test {
         }
     }
 
-    const SECRET_KEY_DUMMY:[u8;32] = [1;32];
+    const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
     #[test]
-    fn execute_tx()
-    {
+    fn execute_tx() {
         let mut cx = MockInvokeContext::default();
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let tx_create = evm::UnsignedTransaction {
@@ -208,11 +212,20 @@ mod test {
             gas_limit: 300000.into(),
             action: TransactionAction::Create,
             value: 0.into(),
-            input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec()
+            input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec(),
         };
         let tx_create = tx_create.sign(&secret_key, None);
 
-        assert!(process_instruction(&crate::ID, &[], &bincode::serialize(&EvmInstruction::EvmTransaction{evm_tx: tx_create.clone()}).unwrap(), &mut cx).is_ok());
+        assert!(process_instruction(
+            &crate::ID,
+            &[],
+            &bincode::serialize(&EvmInstruction::EvmTransaction {
+                evm_tx: tx_create.clone()
+            })
+            .unwrap(),
+            &mut cx
+        )
+        .is_ok());
         println!("cx = {:?}", cx);
         // cx.evm_executor.borrow_mut().deconstruct();
         let tx_address = tx_create.address().unwrap();
@@ -222,11 +235,17 @@ mod test {
             gas_limit: 300000.into(),
             action: TransactionAction::Call(tx_address),
             value: 0.into(),
-            input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec()
+            input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
         };
 
         let tx_call = tx_call.sign(&secret_key, None);
-        assert!(process_instruction(&crate::ID, &[], &bincode::serialize(&EvmInstruction::EvmTransaction{evm_tx: tx_call}).unwrap(), &mut cx).is_ok());
+        assert!(process_instruction(
+            &crate::ID,
+            &[],
+            &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
+            &mut cx
+        )
+        .is_ok());
         println!("cx = {:?}", cx);
         // TODO: Assert that tx executed successfull.
         panic!();

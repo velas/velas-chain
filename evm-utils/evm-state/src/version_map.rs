@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::borrow::Borrow;
-use std::ops::Deref;
+use std::collections::BTreeMap;
 use std::fmt;
+use std::ops::Deref;
+use std::sync::Arc;
 
 /// Represent state of value at current version.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
@@ -17,14 +17,14 @@ impl<V> State<V> {
     fn by_ref(&self) -> State<&V> {
         match self {
             State::Changed(ref v) => State::Changed(v),
-            State::Removed => State::Removed
+            State::Removed => State::Removed,
         }
     }
 
     fn into_option(self) -> Option<V> {
         match self {
             State::Changed(v) => Some(v),
-            State::Removed => None
+            State::Removed => None,
         }
     }
 }
@@ -32,53 +32,53 @@ impl<V> State<V> {
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Map<K, V, Store = Arc<dyn MapLike<Key = K, Value = V>>> {
     state: BTreeMap<K, State<V>>,
-    parent: Option<Store>
+    parent: Option<Store>,
 }
 
-impl<K:Ord, V> Default for Map<K,V> {
+impl<K: Ord, V> Default for Map<K, V> {
     fn default() -> Self {
         Map::new()
     }
 }
 
-impl<K, V, Store> fmt::Debug for Map<K, V, Store> 
-where 
-K: fmt::Debug,
-V: fmt::Debug,
-Store: MapLike<Key = K, Value = V>,
+impl<K, V, Store> fmt::Debug for Map<K, V, Store>
+where
+    K: fmt::Debug,
+    V: fmt::Debug,
+    Store: MapLike<Key = K, Value = V>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Map")
-        .field("state",&self.state)
-        .field("parent", &"omited")
-        .finish()
+            .field("state", &self.state)
+            .field("parent", &"omited")
+            .finish()
     }
 }
 
-
-impl<K, V, Store> Map<K, V, Store> 
-where 
-K: Ord,
-Store: MapLike<Key = K, Value = V>,
+impl<K, V, Store> Map<K, V, Store>
+where
+    K: Ord,
+    Store: MapLike<Key = K, Value = V>,
 {
     // Create new versioned map.
     pub fn new() -> Map<K, V, Store>
-    where Store: Sized {
+    where
+        Store: Sized,
+    {
         Map {
             state: BTreeMap::new(),
-            parent: None
+            parent: None,
         }
     }
 
     // Borrow value by key
-    pub fn get(&self, key: &K) -> Option<&V>
-    {
-        if let  Some(s) = self.state.get(key) {
-            return s.by_ref().into_option()
+    pub fn get(&self, key: &K) -> Option<&V> {
+        if let Some(s) = self.state.get(key) {
+            return s.by_ref().into_option();
         }
 
         if let Some(parent) = &self.parent {
-            return parent.get(key)
+            return parent.get(key);
         }
         None
     }
@@ -106,28 +106,25 @@ Store: MapLike<Key = K, Value = V>,
     pub fn remove(&mut self, key: K) {
         self.push_change(key, State::Removed);
     }
-    
+
     // Create new version from existing one
     pub(crate) fn new_from_parent_static(parent: Store) -> Self {
         Self {
             state: BTreeMap::new(),
-            parent: Some(parent)
+            parent: Some(parent),
         }
     }
 }
 
-
-impl<K: Ord, V> Map<K, V, Arc<dyn MapLike<Key = K, Value = V>>> { 
+impl<K: Ord, V> Map<K, V, Arc<dyn MapLike<Key = K, Value = V>>> {
     // Create new version from existing one
-    pub fn new_from_parent(parent: Arc<dyn MapLike<Key = K, Value = V>> ) -> Self {
+    pub fn new_from_parent(parent: Arc<dyn MapLike<Key = K, Value = V>>) -> Self {
         Self {
             state: BTreeMap::new(),
-            parent: Some(parent)
+            parent: Some(parent),
         }
     }
 }
-
-
 
 /// Map can store it's old version in database or in some other immutable structure.
 /// This trait allows you to define your own storage
@@ -140,26 +137,23 @@ pub trait MapLike: Sync + Send {
 impl<Store: MapLike + ?Sized + Send> MapLike for Arc<Store> {
     type Key = Store::Key;
     type Value = Store::Value;
-    fn get(&self, key: &Self::Key) -> Option<&Self::Value>
-    {
-        <Store as MapLike> ::get(self.deref(), key)
+    fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
+        <Store as MapLike>::get(self.deref(), key)
     }
 }
 
 impl<K, V, Store> MapLike for Map<K, V, Store>
-where 
-K: Ord + Sync + Send,
-V: Sync + Send,
-Store: MapLike<Key = K, Value = V> + Send + Sync
+where
+    K: Ord + Sync + Send,
+    V: Sync + Send,
+    Store: MapLike<Key = K, Value = V> + Send + Sync,
 {
     type Key = Store::Key;
     type Value = Store::Value;
-    fn get(&self, key: &Self::Key) -> Option<&Self::Value>
-    {
+    fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
         Map::get(self, key)
     }
 }
-
 
 #[cfg(test)]
 mod test {
@@ -193,7 +187,6 @@ mod test {
         assert_eq!(map.get(&"second"), Some(&2));
         assert_eq!(map.get(&"third"), Some(&1));
     }
-
 
     // Same as new_dynamic_version_insert_remove_test but dont hide type of store.
     #[test]

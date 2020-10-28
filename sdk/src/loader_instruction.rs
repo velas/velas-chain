@@ -52,7 +52,11 @@ pub fn finalize(account_pubkey: &Pubkey, program_id: &Pubkey) -> Instruction {
     Instruction::new(*program_id, &LoaderInstruction::Finalize, account_metas)
 }
 
-pub fn finalize_with_caller(account_pubkey: &Pubkey, program_id: &Pubkey, caller_key: &Pubkey) -> Instruction {
+pub fn finalize_with_caller(
+    account_pubkey: &Pubkey,
+    program_id: &Pubkey,
+    caller_key: &Pubkey,
+) -> Instruction {
     let account_metas = vec![
         AccountMeta::new(*account_pubkey, true),
         AccountMeta::new(rent::id(), false),

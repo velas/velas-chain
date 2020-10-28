@@ -1,20 +1,24 @@
-
-use std::collections::BTreeMap;
-use std::cell::{RefCell};
-use std::rc::Rc;
 use log::*;
 use solana_client::rpc_client::RpcClient;
-use std::io::{Read, Write};
 use solana_evm_loader_program::instructions::EvmInstruction;
 use solana_evm_loader_program::scope::*;
-use solana_sdk::{message::Message, instruction::{AccountMeta, Instruction},signature::{read_keypair_file, Signer}, commitment_config::CommitmentConfig};
+use solana_sdk::{
+    commitment_config::CommitmentConfig,
+    instruction::{AccountMeta, Instruction},
+    message::Message,
+    signature::{read_keypair_file, Signer},
+};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fs::File;
+use std::io::{Read, Write};
+use std::rc::Rc;
 
 // With the "paw" feature enabled in structopt
 #[derive(Debug, structopt::StructOpt)]
 enum SubCommands {
     TransferRaw {
-        raw_tx:String
+        raw_tx: String,
     },
     CreateDummy {
         tx_file: String,
@@ -28,10 +32,9 @@ enum SubCommands {
         abi: Option<String>,
     },
     ParseArray {
-        array: String
-    }
+        array: String,
+    },
 }
-
 
 #[derive(Debug, structopt::StructOpt)]
 struct Args {
@@ -39,7 +42,7 @@ struct Args {
     subcommand: SubCommands,
 }
 
-const SECRET_KEY_DUMMY:[u8;32] = [1;32];
+const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
 #[paw::main]
 fn main(args: Args) -> Result<(), std::io::Error> {
@@ -52,27 +55,22 @@ fn main(args: Args) -> Result<(), std::io::Error> {
     let signer = Box::new(read_keypair_file(&keypath).unwrap()) as Box<dyn Signer>;
 
     let rpc_client = RpcClient::new("http://127.0.0.1:8899".to_string());
-    
+
     match args.subcommand {
-        SubCommands::TransferRaw{
-            raw_tx
-        } => {
+        SubCommands::TransferRaw { raw_tx } => {
             let mut file = File::open(raw_tx).unwrap();
             let mut buf = Vec::new();
             Read::read_to_end(&mut file, &mut buf).unwrap();
-            let tx: evm::Transaction = solana_sdk::program_utils::limited_deserialize(&buf).unwrap();
+            let tx: evm::Transaction =
+                solana_sdk::program_utils::limited_deserialize(&buf).unwrap();
 
             info!("loaded tx = {:?}", tx);
 
-            let account_metas = vec![
-                AccountMeta::new(signer.pubkey(), true),
-            ];
+            let account_metas = vec![AccountMeta::new(signer.pubkey(), true)];
 
             let ix = Instruction::new(
                 solana_evm_loader_program::ID,
-                &EvmInstruction::EvmTransaction {
-                    evm_tx: tx
-                },
+                &EvmInstruction::EvmTransaction { evm_tx: tx },
                 account_metas,
             );
 
@@ -81,8 +79,9 @@ fn main(args: Args) -> Result<(), std::io::Error> {
 
             info!("Getting block hash");
             let (blockhash, _fee_calculator, _) = rpc_client
-            .get_recent_blockhash_with_commitment(CommitmentConfig::default()).unwrap()
-            .value;
+                .get_recent_blockhash_with_commitment(CommitmentConfig::default())
+                .unwrap()
+                .value;
 
             create_account_tx.sign(&vec![&*signer], blockhash);
             println!("Sending tx = {:?}", create_account_tx);
@@ -98,18 +97,16 @@ fn main(args: Args) -> Result<(), std::io::Error> {
             //     tx.try_sign(&signers, blockhash)?;
             //     write_transactions.push(tx);
             // }
-        
+
             // trace!("Writing program data");
             // send_and_confirm_transactions_with_spinner(&rpc_client, write_transactions, &signers).map_err(
             //     |_| CliError::DynamicProgramError("Data writes to program account failed".to_string()),
             // )?;
-
         }
-        SubCommands::CreateDummy{
+        SubCommands::CreateDummy {
             tx_file,
-            contract_code
+            contract_code,
         } => {
-
             let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
             let tx_create = evm::UnsignedTransaction {
                 nonce: 0.into(),
@@ -117,14 +114,21 @@ fn main(args: Args) -> Result<(), std::io::Error> {
                 gas_limit: 300000.into(),
                 action: evm::TransactionAction::Create,
                 value: 0.into(),
-                input: hex::decode(contract_code.as_ref().map(String::as_str).unwrap_or(evm_state::HELLO_WORLD_CODE)).unwrap().to_vec()
+                input: hex::decode(
+                    contract_code
+                        .as_ref()
+                        .map(String::as_str)
+                        .unwrap_or(evm_state::HELLO_WORLD_CODE),
+                )
+                .unwrap()
+                .to_vec(),
             };
             let tx_create = tx_create.sign(&secret_key, None);
 
             let mut file = File::create(tx_file).unwrap();
             Write::write_all(&mut file, &bincode::serialize(&tx_create).unwrap()).unwrap();
         }
-        SubCommands::CallDummy{
+        SubCommands::CallDummy {
             tx_file,
             create_tx,
             abi,
@@ -132,9 +136,9 @@ fn main(args: Args) -> Result<(), std::io::Error> {
             let mut file = File::open(create_tx).unwrap();
             let mut buf = Vec::new();
             Read::read_to_end(&mut file, &mut buf).unwrap();
-            let evm_tx: evm::Transaction = solana_sdk::program_utils::limited_deserialize(&buf).unwrap();
+            let evm_tx: evm::Transaction =
+                solana_sdk::program_utils::limited_deserialize(&buf).unwrap();
             let tx_address = evm_tx.address().unwrap();
-
 
             let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
             let tx_call = evm::UnsignedTransaction {
@@ -143,22 +147,25 @@ fn main(args: Args) -> Result<(), std::io::Error> {
                 gas_limit: 300000.into(),
                 action: evm::TransactionAction::Call(tx_address),
                 value: 0.into(),
-                input: hex::decode(abi.as_ref().map(String::as_str).unwrap_or(evm_state::HELLO_WORLD_ABI)).unwrap().to_vec()
+                input: hex::decode(
+                    abi.as_ref()
+                        .map(String::as_str)
+                        .unwrap_or(evm_state::HELLO_WORLD_ABI),
+                )
+                .unwrap()
+                .to_vec(),
             };
-    
+
             let tx_call = tx_call.sign(&secret_key, None);
 
             let mut file = File::create(tx_file).unwrap();
             Write::write_all(&mut file, &bincode::serialize(&tx_call).unwrap()).unwrap();
         }
-        SubCommands::ParseArray{
-            array
-        } => {
+        SubCommands::ParseArray { array } => {
             let bytes: Vec<u8> = serde_json::from_str(&array).unwrap();
             println!("Resulting data HEX = {}", hex::encode(&bytes));
             println!("Resulting data utf8 = {}", String::from_utf8_lossy(&bytes));
         }
-
     }
     // solana_evm_loader_program::processor::EVMProcessor::write_account(address, account);
     Ok(())
