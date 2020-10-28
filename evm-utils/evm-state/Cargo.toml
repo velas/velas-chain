@@ -10,6 +10,7 @@ edition = "2018"
 evm = { version = "0.18", features = ["with-serde"] }
 primitive-types = "0.7.2"
 log="0.4"
+simple_logger="1.11"
 hex="0.4.2"
 serde="1.0"
 sha3="0.9.1"

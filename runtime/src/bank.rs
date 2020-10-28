@@ -348,6 +348,8 @@ pub struct Bank {
     /// The set of parents including this bank
     pub ancestors: Ancestors,
 
+    evm_state: RwLock<evm_state::EvmState>,
+
     /// Hash of this Bank's state. Only meaningful after freezing.
     hash: RwLock<Hash>,
 
@@ -534,6 +536,7 @@ impl Bank {
             src,
             slot,
             epoch,
+            evm_state: RwLock::new(parent.evm_state.read().unwrap().new_from_parent()),
             blockhash_queue: RwLock::new(parent.blockhash_queue.read().unwrap().clone()),
 
             // TODO: clean this up, soo much special-case copying...
@@ -637,6 +640,7 @@ impl Bank {
         let mut bank = Self {
             rc: bank_rc,
             src: new(),
+            evm_state: RwLock::new(evm_state::EvmState::new_not_forget_to_deserialize_later()),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             ancestors: fields.ancestors,
             hash: RwLock::new(fields.hash),
@@ -1859,8 +1863,9 @@ impl Bank {
         let accounts_with_txs = loaded_accounts.iter_mut().zip(OrderedIterator::new(txs, batch.iteration_order()));
         
         let mut execution_time = Measure::start("execution_time");
+        let locked = evm_state::EvmState::try_lock(&self.evm_state).unwrap();
         // TODO: Pass state
-        let mut evm_executor = Rc::new(RefCell::new(evm_state::StaticExecutor::<evm_state::backend::MemoryBackend>::default()));
+        let mut evm_executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(locked.backend(), evm_state::Config::istanbul(), usize::max_value())));
         let mut signature_count: u64 = 0;
         let mut executed: Vec<TransactionProcessResult> = Vec::new();
         for (accs, (_, tx)) in accounts_with_txs {

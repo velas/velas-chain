@@ -182,7 +182,7 @@ pub struct ThisInvokeContext {
     is_cross_program_supported: bool,
     compute_budget: ComputeBudget,
     compute_meter: Rc<RefCell<dyn ComputeMeter>>,
-    evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>>,
+    evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>,
 }
 impl<'a> ThisInvokeContext {
     pub fn new(
@@ -193,7 +193,7 @@ impl<'a> ThisInvokeContext {
         log_collector: Option<Rc<LogCollector>>,
         is_cross_program_supported: bool,
         compute_budget: ComputeBudget,
-        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>>
+        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>
     ) -> Self {
         let mut program_ids = Vec::with_capacity(compute_budget.max_invoke_depth);
         program_ids.push(*program_id);
@@ -265,7 +265,7 @@ impl InvokeContext for ThisInvokeContext {
     fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>> {
         self.compute_meter.clone()
     }
-    fn get_evm_executor(&self) -> Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>> {
+    fn get_evm_executor(&self) -> Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>> {
         self.evm_executor.clone()
     }
 }
@@ -639,7 +639,7 @@ impl MessageProcessor {
         accounts: &[Rc<RefCell<Account>>],
         rent_collector: &RentCollector,
         log_collector: Option<Rc<LogCollector>>,
-        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>>
+        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>
     ) -> Result<(), InstructionError> {
         let pre_accounts = Self::create_pre_accounts(message, instruction, accounts);
         let mut invoke_context = ThisInvokeContext::new(
@@ -676,7 +676,7 @@ impl MessageProcessor {
         accounts: &[Rc<RefCell<Account>>],
         rent_collector: &RentCollector,
         log_collector: Option<Rc<LogCollector>>,
-        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::backend::MemoryBackend>>>
+        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>
     ) -> Result<(), TransactionError> {
         for (instruction_index, instruction) in message.instructions.iter().enumerate() {
             self.execute_instruction(

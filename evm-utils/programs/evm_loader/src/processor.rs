@@ -63,6 +63,7 @@ pub fn process_instruction(
                     vec![])
                 }
             };
+            // TODO: Map evm errors on solana.
             log!(logger, "Exit status = {:?}", result);
         }
         _ => todo!("Do other staff later")
@@ -112,8 +113,6 @@ mod test {
         let ser = bincode::serialize(&sol_ix).unwrap();
         assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
     }
-
-
 
     #[derive(Debug, Default, Clone)]
     pub struct MockComputeMeter {
@@ -199,6 +198,7 @@ mod test {
     }
 
     const SECRET_KEY_DUMMY:[u8;32] = [1;32];
+
     #[test]
     fn execute_tx()
     {
@@ -230,6 +230,7 @@ mod test {
         let tx_call = tx_call.sign(&secret_key, None);
         assert!(process_instruction(&crate::ID, &[], &bincode::serialize(&EvmInstruction::EvmTransaction{evm_tx: tx_call}).unwrap(), &mut cx).is_ok());
         println!("cx = {:?}", cx);
+        // TODO: Assert that tx executed successfull.
         panic!();
         // assert!(process_instruction(&crate::ID, &[], tx_call, &mut cx).is_ok());
     }

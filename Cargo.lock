@@ -238,7 +238,7 @@ dependencies = [
  "cfg-if",
  "clang-sys",
  "clap",
- "env_logger",
+ "env_logger 0.7.1",
  "lazy_static",
  "lazycell",
  "log 0.4.8",
@@ -520,6 +520,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddfc5b9aa5d4507acaf872de71051dfd0e309860e88966e1051e462a077aac4f"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "colored"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4ffc801dacf156c5854b9df4f425a626539c3a6ef7893cc0c5084a23f0b6c59"
+dependencies = [
+ "atty",
+ "lazy_static",
+ "winapi 0.3.8",
 ]
 
 [[package]]
@@ -930,16 +941,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "env_logger"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54532e3223c5af90a6a757c90b5c5521564b07e5e7a958681bcd2afad421cdcd"
+dependencies = [
+ "atty",
+ "humantime 2.0.1",
+ "log 0.4.8",
+ "regex",
+ "termcolor",
+]
+
+[[package]]
 name = "ethbloom"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71a6567e6fd35589fea0c63b94b4cf2e55573e413901bdbe60ab15cf0e25e5df"
 dependencies = [
  "crunchy",
- "fixed-hash 0.6.1",
+ "fixed-hash",
  "impl-rlp",
  "impl-serde",
- "tiny-keccak 2.0.2",
+ "tiny-keccak",
 ]
 
 [[package]]
@@ -963,26 +987,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "473aecff686bd8e7b9db0165cbbb53562376b39bf35b427f0c60446a9e1634b0"
 dependencies = [
  "ethbloom",
- "fixed-hash 0.6.1",
+ "fixed-hash",
  "impl-rlp",
  "impl-serde",
- "primitive-types 0.7.2",
+ "primitive-types",
  "uint",
-]
-
-[[package]]
-name = "evm"
-version = "0.14.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73f887b371f9999682ccc5b1cb771e7d4408ae61e93fc0343ceaeb761fca42d1"
-dependencies = [
- "evm-core 0.14.0",
- "evm-gasometer 0.14.0",
- "evm-runtime 0.14.1",
- "primitive-types 0.6.2",
- "rlp",
- "serde",
- "sha3 0.8.2",
 ]
 
 [[package]]
@@ -992,24 +1001,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73ae392693d655a526f86dcd9ee0846ee9250f3cef8c6ee67c35ce05d277b7a2"
 dependencies = [
  "ethereum",
- "evm-core 0.18.2",
- "evm-gasometer 0.18.0",
- "evm-runtime 0.18.0",
+ "evm-core",
+ "evm-gasometer",
+ "evm-runtime",
  "log 0.4.8",
  "parity-scale-codec",
- "primitive-types 0.7.2",
+ "primitive-types",
  "rlp",
  "serde",
  "sha3 0.8.2",
-]
-
-[[package]]
-name = "evm-core"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bcde5af3d542874ddeb53de0919302d57586ea04b3f76f54d865f8a6cdc70ae"
-dependencies = [
- "primitive-types 0.6.2",
 ]
 
 [[package]]
@@ -1020,19 +1020,8 @@ checksum = "485c128056e9d80afdd6b154b174947ca77c1d889819b1be2a0275d3733256e5"
 dependencies = [
  "log 0.4.8",
  "parity-scale-codec",
- "primitive-types 0.7.2",
+ "primitive-types",
  "serde",
-]
-
-[[package]]
-name = "evm-gasometer"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b82bc9f275cb59d2bcc05d85c98736ddfaba003a7ef7b73893fa7c1c1fab29dc"
-dependencies = [
- "evm-core 0.14.0",
- "evm-runtime 0.14.1",
- "primitive-types 0.6.2",
 ]
 
 [[package]]
@@ -1041,20 +1030,9 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49550ed1f3d504ce8189708dbc153cee38956ac201cba3bc8c3e0816595d41a9"
 dependencies = [
- "evm-core 0.18.2",
- "evm-runtime 0.18.0",
- "primitive-types 0.7.2",
-]
-
-[[package]]
-name = "evm-runtime"
-version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0dbbc89d29618c3722c17ba78ddf432d40ace8ee27e3f8b28b52a85921112e4b"
-dependencies = [
- "evm-core 0.14.0",
- "primitive-types 0.6.2",
- "sha3 0.8.2",
+ "evm-core",
+ "evm-runtime",
+ "primitive-types",
 ]
 
 [[package]]
@@ -1063,8 +1041,8 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a9c6338c699169eb3dbc9d355adb5cae0b7bc19b44a9b45edb344aa795e1ac6"
 dependencies = [
- "evm-core 0.18.2",
- "primitive-types 0.7.2",
+ "evm-core",
+ "primitive-types",
  "sha3 0.8.2",
 ]
 
@@ -1073,30 +1051,34 @@ name = "evm-state"
 version = "0.1.0"
 dependencies = [
  "assert_matches",
- "evm 0.18.0",
+ "evm",
  "hex",
  "log 0.4.8",
- "primitive-types 0.7.2",
+ "primitive-types",
  "rand 0.6.1",
  "rand 0.7.3",
  "rlp",
  "secp256k1",
  "serde",
  "sha3 0.9.1",
+ "simple_logger",
 ]
 
 [[package]]
 name = "evm-utils"
 version = "0.1.0"
 dependencies = [
- "env_logger",
- "evm 0.14.2",
+ "bincode",
+ "env_logger 0.8.1",
+ "evm-state",
  "hex",
- "keccak-hash",
  "log 0.4.8",
  "paw",
- "primitive-types 0.6.2",
+ "solana-clap-utils",
+ "solana-cli-config",
+ "solana-client",
  "solana-evm-loader-program",
+ "solana-sdk 1.4.0",
  "structopt",
 ]
 
@@ -1153,18 +1135,6 @@ dependencies = [
  "libc",
  "redox_syscall",
  "winapi 0.3.8",
-]
-
-[[package]]
-name = "fixed-hash"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3367952ceb191f4ab95dd5685dc163ac539e36202f9fcfd0cb22f9f9c542fefc"
-dependencies = [
- "byteorder",
- "rand 0.7.3",
- "rustc-hex",
- "static_assertions",
 ]
 
 [[package]]
@@ -2033,16 +2003,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67c21572b4949434e4fc1e1978b99c5f77064153c59d998bf13ecd96fb5ecba7"
 
 [[package]]
-name = "keccak-hash"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f0e55d8f242fdc281c21c4cd70960a25db6dd17cc6232d8b38b564b5b18c784"
-dependencies = [
- "primitive-types 0.6.2",
- "tiny-keccak 1.5.0",
-]
-
-[[package]]
 name = "kernel32-sys"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2748,24 +2708,11 @@ checksum = "be91bcc43e73799dc46a6c194a55e7aae1d86cc867c860fd4a436019af21bd8c"
 
 [[package]]
 name = "primitive-types"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4336f4f5d5524fa60bcbd6fe626f9223d8142a50e7053e979acdf0da41ab975"
-dependencies = [
- "fixed-hash 0.5.2",
- "impl-codec",
- "impl-rlp",
- "impl-serde",
- "uint",
-]
-
-[[package]]
-name = "primitive-types"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c55c21c64d0eaa4d7ed885d959ef2d62d9e488c27c0e02d9aa5ce6c877b7d5f8"
 dependencies = [
- "fixed-hash 0.6.1",
+ "fixed-hash",
  "impl-codec",
  "impl-rlp",
  "impl-serde",
@@ -3634,6 +3581,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a30f10c911c0355f80f1c2faa8096efc4a58cdf8590b954d5b395efa071c711"
 
 [[package]]
+name = "simple_logger"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd57f17c093ead1d4a1499dc9acaafdd71240908d64775465543b8d9a9f1d198"
+dependencies = [
+ "atty",
+ "chrono",
+ "colored",
+ "log 0.4.8",
+ "winapi 0.3.8",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4154,7 +4114,7 @@ dependencies = [
  "evm-state",
  "hex",
  "log 0.4.8",
- "primitive-types 0.7.2",
+ "primitive-types",
  "serde",
  "solana-logger 1.4.0",
  "solana-runtime",
@@ -4434,7 +4394,7 @@ version = "1.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c8d27af0c30536bf91abbf40db5133e905bfd61ed24b8096c6e0a5cfb92c1e6"
 dependencies = [
- "env_logger",
+ "env_logger 0.7.1",
  "lazy_static",
  "log 0.4.8",
 ]
@@ -4443,7 +4403,7 @@ dependencies = [
 name = "solana-logger"
 version = "1.4.0"
 dependencies = [
- "env_logger",
+ "env_logger 0.7.1",
  "lazy_static",
  "log 0.4.8",
 ]
@@ -4472,7 +4432,7 @@ dependencies = [
 name = "solana-metrics"
 version = "1.4.0"
 dependencies = [
- "env_logger",
+ "env_logger 0.7.1",
  "gethostname",
  "lazy_static",
  "log 0.4.8",
@@ -5552,15 +5512,6 @@ dependencies = [
  "rustc-hash",
  "sha2",
  "unicode-normalization",
-]
-
-[[package]]
-name = "tiny-keccak"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d8a021c69bb74a44ccedb824a046447e2c84a01df9e5c20779750acb38e11b2"
-dependencies = [
- "crunchy",
 ]
 
 [[package]]

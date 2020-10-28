@@ -131,13 +131,13 @@ impl<K: Ord, V> Map<K, V, Arc<dyn MapLike<Key = K, Value = V>>> {
 
 /// Map can store it's old version in database or in some other immutable structure.
 /// This trait allows you to define your own storage
-pub trait MapLike {
+pub trait MapLike: Sync + Send {
     type Key;
     type Value;
     fn get(&self, key: &Self::Key) -> Option<&Self::Value>;
 }
 
-impl<Store: MapLike + ?Sized> MapLike for Arc<Store> {
+impl<Store: MapLike + ?Sized + Send> MapLike for Arc<Store> {
     type Key = Store::Key;
     type Value = Store::Value;
     fn get(&self, key: &Self::Key) -> Option<&Self::Value>
@@ -148,8 +148,9 @@ impl<Store: MapLike + ?Sized> MapLike for Arc<Store> {
 
 impl<K, V, Store> MapLike for Map<K, V, Store>
 where 
-K: Ord,
-Store: MapLike<Key = K, Value = V>
+K: Ord + Sync + Send,
+V: Sync + Send,
+Store: MapLike<Key = K, Value = V> + Send + Sync
 {
     type Key = Store::Key;
     type Value = Store::Value;

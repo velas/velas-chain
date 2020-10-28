@@ -4,9 +4,10 @@ use primitive_types::{H160, U256, H256};
 use sha3::{Digest, Keccak256};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{RwLock, RwLockWriteGuard};
+use log::{debug, error};
 
-use super::backend::MemoryVicinity;
+pub use super::backend::MemoryVicinity;
 use super::version_map::Map;
 
 #[derive(Default, Clone, Debug, Eq, PartialEq)]
@@ -22,25 +23,60 @@ pub struct AccountState {
 #[derive(Clone, Debug)]
 pub struct EvmState {
 	vicinity: MemoryVicinity,
-    accounts: Arc<Map<H160, AccountState>>,
+    pub(crate) accounts: Arc<Map<H160, AccountState>>,
     // Store every account storage at single place, to use power of versioned map. (This allows us to save only changed data).
-    storage: Arc<Map<(H160, H256), H256>>,
+    pub(crate) storage: Arc<Map<(H160, H256), H256>>,
     logs: Vec<Log>,
+}
+impl Default for EvmState {
+    fn default() -> Self {
+        Self::new_not_forget_to_deserialize_later()
+    }
 }
 
 #[derive(Debug)]
 pub struct EvmAccountsLocked<'a> {
-    accounts: &'a mut Map<H160, AccountState>,
-    storage: &'a mut Map<(H160, H256), H256>
+    pub accounts: &'a mut Map<H160, AccountState>,
+    pub storage: &'a mut Map<(H160, H256), H256>
 }
 
 #[derive(Debug)]
 pub struct LockedState<'a> {
-    state: EvmState,
-    guard: MutexGuard<'a, ()>
+    guard: RwLockWriteGuard<'a, EvmState>
 }
 
 impl EvmState {
+
+    pub fn new(vicinity: MemoryVicinity) -> Self {
+        EvmState {
+            vicinity: vicinity,
+            accounts: Arc::new(Map::new()),
+            storage: Arc::new(Map::new()),
+            logs: Vec::new(),
+        }
+    }
+
+    // TODO: Replace it by persistent storage
+    pub fn new_not_forget_to_deserialize_later() -> Self {
+        let vicinity = MemoryVicinity {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            chain_id: U256::zero(),
+            block_hashes: Vec::new(),
+            block_number: U256::zero(),
+            block_coinbase: H160::default(),
+            block_timestamp: U256::zero(),
+            block_difficulty: U256::zero(),
+            block_gas_limit: U256::max_value(),
+        };
+        EvmState {
+            vicinity,
+            accounts: Arc::new(Map::new()),
+            storage: Arc::new(Map::new()),
+            logs: Vec::new(),
+        }
+    }
+
     pub fn new_from_parent(&self) -> Self {
         EvmState {
             vicinity: self.vicinity.clone(),
@@ -50,21 +86,27 @@ impl EvmState {
         }
     }
 
-    pub fn try_lock<'a> (&'a self, evm_mutex: &'a Mutex<()>) -> Option<LockedState<'a> > {
-        let guard = evm_mutex.try_lock().ok()?;
+    pub fn try_lock<'a> (this: &'a RwLock<Self>) -> Option<LockedState<'a> > {
+        let guard = this.try_write().ok()?;
         Some(LockedState{
-            state: self.clone(),
             guard
         })
     }
 }
 
 impl<'a> LockedState<'a> {
-    fn fork_mut<'b>(&'b mut self) -> EvmAccountsLocked<'b> {
-        EvmAccountsLocked {
-            accounts: Arc::make_mut(&mut self.state.accounts),
-            storage: Arc::make_mut(&mut self.state.storage)
+    pub fn fork_mut<'b>(&'b mut self) -> EvmAccountsLocked<'b> {
+        if Arc::strong_count(&self.guard.accounts) > 2 || Arc::strong_count(&self.guard.storage) > 2 {
+            error!("During forking locked state, stale evm accounts founds. This can happen, when we trying to edit not last state.");
         }
+        let guard = &mut *self.guard;
+        EvmAccountsLocked {
+            accounts: Arc::make_mut(&mut guard.accounts),
+            storage: Arc::make_mut(&mut guard.storage)
+        }
+    }
+    pub fn backend(&self) -> EvmState {
+        (*self.guard).clone()
     }
 }
 
@@ -136,6 +178,7 @@ impl<'a> ApplyBackend for LockedState<'a> {
 				Apply::Modify {
 					address, basic, code, storage, reset_storage,
 				} => {
+                    debug!("Apply::Modify address = {}", address);
                     // TODO: rollback on insert fail.
                     // TODO: clear account storage on delete.
 					let is_empty = {
@@ -183,7 +226,7 @@ impl<'a> ApplyBackend for LockedState<'a> {
 		}
 
 		for log in logs {
-			self.state.logs.push(log);
+			self.guard.logs.push(log);
 		}
 	}
 }
