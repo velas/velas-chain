@@ -1036,6 +1036,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "evm-rpc"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "jsonrpc-core",
+ "jsonrpc-derive",
+ "jsonrpc-pubsub",
+ "primitive-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "evm-runtime"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
