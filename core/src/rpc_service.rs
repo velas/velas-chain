@@ -3,6 +3,7 @@
 use crate::{
     bigtable_upload_service::BigTableUploadService,
     cluster_info::ClusterInfo,
+    evm_rpc::*,
     poh_recorder::PohRecorder,
     rpc::*,
     rpc_health::*,
@@ -336,6 +337,12 @@ impl JsonRpcService {
                 let mut io = MetaIoHandler::default();
                 let rpc = RpcSolImpl;
                 io.extend_with(rpc.to_delegate());
+                let ether_basic = super::evm_rpc::BasicERPCImpl;
+                io.extend_with(ether_basic.to_delegate());
+                let chain_mock = super::evm_rpc::ChainMockERPCImpl;
+                io.extend_with(chain_mock.to_delegate());
+                let bridge_rpc = super::evm_rpc::BridgeERPCImpl::default();
+                io.extend_with(bridge_rpc.to_delegate());
 
                 let request_middleware = RpcRequestMiddleware::new(
                     ledger_path,

@@ -1072,19 +1072,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "evm-rpc"
-version = "0.1.0"
-dependencies = [
- "hex",
- "jsonrpc-core",
- "jsonrpc-derive",
- "jsonrpc-pubsub",
- "primitive-types",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "evm-runtime"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4034,6 +4021,7 @@ dependencies = [
  "evm-state",
  "flate2",
  "fs_extra",
+ "hex",
  "indexmap",
  "itertools 0.9.0",
  "jsonrpc-core",
@@ -4046,22 +4034,27 @@ dependencies = [
  "matches",
  "num-traits",
  "num_cpus",
+ "primitive-types",
  "rand 0.7.3",
  "rand_chacha 0.2.2",
  "raptorq",
  "rayon",
  "regex",
  "reqwest",
+ "rlp",
  "rustc_version",
+ "secp256k1",
  "serde",
  "serde_derive",
  "serde_json",
  "serial_test",
  "serial_test_derive",
+ "sha3 0.9.1",
  "solana-account-decoder",
  "solana-banks-server",
  "solana-clap-utils",
  "solana-client",
+ "solana-evm-loader-program",
  "solana-faucet",
  "solana-genesis-programs",
  "solana-ledger",

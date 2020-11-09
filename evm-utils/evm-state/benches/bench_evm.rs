@@ -1,9 +1,9 @@
-use criterion::{Throughput, Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
-use evm_state::layered_backend::*;
-use evm_state::*;
 use assert_matches::assert_matches;
 use evm::{backend::ApplyBackend, Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
+use evm_state::layered_backend::*;
+use evm_state::*;
 use hex;
 use log::*;
 use primitive_types::{H160, H256, U256};
@@ -16,7 +16,6 @@ fn name_to_key(name: &str) -> H160 {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-
     let mut group = c.benchmark_group("Evm");
     // group.throughput(Throughput::Elements(1 as u64));
     // group.bench_function("create_hello", |b| {
@@ -58,7 +57,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     //     let mut executor =
     //         StaticExecutor::with_config(locked.backend(), config, usize::max_value());
 
-        
     //     b.iter(|| {
     //         let exit_reason = match executor.rent_executor().create(
     //             name_to_key("caller"),
@@ -70,9 +68,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     //             Capture::Exit((s, _, v)) => (s, v),
     //             Capture::Trap(_) => unreachable!(),
     //         };
-    
+
     //         assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
-            
+
     //     })
     // });
 
@@ -129,7 +127,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         };
 
         assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
-        
+
         b.iter(|| {
             let exit_reason = executor.rent_executor().transact_call(
                 name_to_key("contract"),
@@ -138,13 +136,12 @@ fn criterion_benchmark(c: &mut Criterion) {
                 data.to_vec(),
                 usize::max_value(),
             );
-    
+
             let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
             match exit_reason {
                 (ExitReason::Succeed(ExitSucceed::Returned), res) if res == result => {}
                 any_other => panic!("Not expected result={:?}", any_other),
             }
-   
         });
     });
     group.finish();

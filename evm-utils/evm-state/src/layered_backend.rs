@@ -10,7 +10,7 @@ use std::sync::{RwLock, RwLockWriteGuard};
 pub use super::backend::MemoryVicinity;
 use super::version_map::Map;
 
-#[derive(Default, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccountState {
     /// Account nonce.
     pub nonce: U256,
@@ -18,6 +18,17 @@ pub struct AccountState {
     pub balance: U256,
     /// Account code.
     pub code: Vec<u8>,
+}
+const DEFAULT_BALANCE: usize = 77;
+const ETHER_BIGINT: u64 = 1_000_000_000_000_000_000;
+impl Default for AccountState {
+    fn default() -> Self {
+        AccountState {
+            nonce: U256::from(0),
+            balance: U256::from(DEFAULT_BALANCE) * U256::from(ETHER_BIGINT),
+            code: vec![],
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -162,13 +173,11 @@ impl Backend for EvmState {
     }
 
     fn basic(&self, address: H160) -> Basic {
-        self.accounts
-            .get(&address)
-            .map(|a| Basic {
-                balance: a.balance,
-                nonce: a.nonce,
-            })
-            .unwrap_or_default()
+        let a = self.accounts.get(&address).cloned().unwrap_or_default();
+        Basic {
+            balance: a.balance,
+            nonce: a.nonce,
+        }
     }
 
     fn code_hash(&self, address: H160) -> H256 {
@@ -416,6 +425,7 @@ mod test {
         let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
 
         let mut evm_state = EvmState::testing_default();
+        assert!(evm_state.basic(H160::zero()).balance != U256::from(0));
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
 
         assert_state(&evm_state, &accounts_state_diff, &storage_diff);

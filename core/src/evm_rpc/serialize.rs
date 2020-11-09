@@ -1,4 +1,4 @@
-use serde::{Serialize, Serializer, Deserializer, Deserialize, de};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{self, LowerHex};
 use std::marker::PhantomData;
 use std::str::FromStr;
@@ -10,9 +10,11 @@ pub struct Bytes(pub Vec<u8>);
 
 impl<T: LowerHex> Serialize for Hex<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer
+    where
+        S: Serializer,
     {
-        let value = format!("0x{:x}", self.0);
+        let hex_str = format!("{:x}", self.0);
+        let value = format!("0x{}", hex_str.trim_left_matches("0"));
         if &value == "0x" {
             serializer.serialize_str("0x0")
         } else {
@@ -23,9 +25,10 @@ impl<T: LowerHex> Serialize for Hex<T> {
 
 impl Serialize for Bytes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer
+    where
+        S: Serializer,
     {
-        serializer.serialize_str(&hex::encode(&self.0))
+        serializer.serialize_str(&format!("0x{}", &hex::encode(&self.0)))
     }
 }
 
@@ -41,11 +44,12 @@ impl<'de, T: FromStr> de::Visitor<'de> for HexVisitor<T> {
     }
 
     fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-        where E: de::Error
+    where
+        E: de::Error,
     {
-        match T::from_str(s) {
-            Ok(s) => Ok(Hex(s)),
-            Err(_) => Err(de::Error::invalid_value(de::Unexpected::Str(s), &self)),
+        match T::from_str(&s[2..]) {
+            Ok(d) if &s[..2] == "0x" => Ok(Hex(d)),
+            _ => Err(de::Error::invalid_value(de::Unexpected::Str(s), &self)),
         }
     }
 }
@@ -60,33 +64,46 @@ impl<'de> de::Visitor<'de> for BytesVisitor {
     }
 
     fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-        where E: de::Error
+    where
+        E: de::Error,
     {
-        match hex::decode(s) {
-            Ok(s) => Ok(Bytes(s)),
-            Err(_) => Err(de::Error::invalid_value(de::Unexpected::Str(s), &self)),
+        match hex::decode(&s[2..]) {
+            Ok(d) if &s[..2] == "0x" => Ok(Bytes(d)),
+            _ => Err(de::Error::invalid_value(de::Unexpected::Str(s), &self)),
         }
     }
 }
 
 impl<'de, T: FromStr> Deserialize<'de> for Hex<T> {
     fn deserialize<D>(deserializer: D) -> Result<Hex<T>, D::Error>
-        where D: Deserializer<'de>
+    where
+        D: Deserializer<'de>,
     {
         deserializer.deserialize_str(HexVisitor {
-            _marker: PhantomData
+            _marker: PhantomData,
         })
     }
 }
 
 impl<'de> Deserialize<'de> for Bytes {
     fn deserialize<D>(deserializer: D) -> Result<Bytes, D::Error>
-        where D: Deserializer<'de>
+    where
+        D: Deserializer<'de>,
     {
         deserializer.deserialize_str(BytesVisitor)
     }
 }
 
+impl From<Vec<u8>> for Bytes {
+    fn from(b: Vec<u8>) -> Self {
+        Bytes(b)
+    }
+}
+impl<T: LowerHex + FromStr> From<T> for Hex<T> {
+    fn from(b: T) -> Self {
+        Hex(b)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,7 +118,10 @@ mod tests {
 
     #[test]
     fn hex_zero() {
-        assert_eq!("\"0x0\"", serde_json::to_string(&Hex(U256::zero())).unwrap());
+        assert_eq!(
+            "\"0x0\"",
+            serde_json::to_string(&Hex(U256::zero())).unwrap()
+        );
     }
 
     #[test]

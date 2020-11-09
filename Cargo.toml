@@ -38,7 +38,6 @@ members = [
     "evm-utils",
     "evm-utils/programs/evm_loader",
     "evm-utils/evm-state",
-    "evm-utils/evm-rpc",
     "poh-bench",
     "programs/bpf_loader",
     "programs/budget",

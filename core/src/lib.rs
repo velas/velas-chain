@@ -31,6 +31,7 @@ pub mod crds_gossip_pull;
 pub mod crds_gossip_push;
 pub mod crds_value;
 pub mod epoch_slots;
+pub mod evm_rpc;
 pub mod fetch_stage;
 pub mod fork_choice;
 pub mod gen_keys;

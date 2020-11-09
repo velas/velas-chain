@@ -73,7 +73,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{channel, Receiver, Sender},
-        Arc, Mutex, RwLock,
+        Arc, Mutex, RwLock, RwLockReadGuard,
     },
 };
 use tokio::runtime;
@@ -122,7 +122,7 @@ pub struct JsonRpcRequestProcessor {
 impl Metadata for JsonRpcRequestProcessor {}
 
 impl JsonRpcRequestProcessor {
-    fn bank(&self, commitment: Option<CommitmentConfig>) -> Arc<Bank> {
+    pub(crate) fn bank(&self, commitment: Option<CommitmentConfig>) -> Arc<Bank> {
         debug!("RPC commitment_config: {:?}", commitment);
         let r_bank_forks = self.bank_forks.read().unwrap();
 
@@ -428,7 +428,7 @@ impl JsonRpcRequestProcessor {
         }
     }
 
-    fn get_slot(&self, commitment: Option<CommitmentConfig>) -> u64 {
+    pub fn get_slot(&self, commitment: Option<CommitmentConfig>) -> u64 {
         self.bank(commitment).slot()
     }
 

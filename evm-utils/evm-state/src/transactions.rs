@@ -6,10 +6,10 @@ use std::str::FromStr;
 
 use secp256k1::{
     recovery::{RecoverableSignature, RecoveryId},
-    Error, Message, SECP256K1,
+    Error, Message,
 };
 
-pub use secp256k1::SecretKey;
+pub use secp256k1::{PublicKey, SecretKey, SECP256K1};
 pub type Address = H160;
 pub type Gas = U256;
 
@@ -67,7 +67,7 @@ impl UnsignedTransaction {
         }
     }
 
-    fn signing_hash(&self, chain_id: Option<u64>) -> H256 {
+    pub fn signing_hash(&self, chain_id: Option<u64>) -> H256 {
         let mut stream = RlpStream::new();
         self.signing_rlp_append(&mut stream, chain_id);
         H256::from_slice(Keccak256::digest(&stream.drain()).as_slice())
