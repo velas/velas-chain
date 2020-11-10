@@ -14,7 +14,7 @@ impl<T: LowerHex> Serialize for Hex<T> {
         S: Serializer,
     {
         let hex_str = format!("{:x}", self.0);
-        let value = format!("0x{}", hex_str.trim_left_matches("0"));
+        let value = format!("0x{}", hex_str.trim_start_matches("0"));
         if &value == "0x" {
             serializer.serialize_str("0x0")
         } else {

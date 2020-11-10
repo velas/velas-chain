@@ -15,7 +15,7 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     instruction::{AccountMeta, Instruction},
     message::Message,
-    signature::{read_keypair_file, Signer},
+    signature::{Signer},
 };
 use std::collections::HashMap;
 
@@ -24,67 +24,67 @@ pub struct ChainMockERPCImpl;
 impl ChainMockERPC for ChainMockERPCImpl {
     type Metadata = JsonRpcRequestProcessor;
 
-    fn network_id(&self, meta: Self::Metadata) -> Result<String, Error> {
+    fn network_id(&self, _meta: Self::Metadata) -> Result<String, Error> {
         Ok(String::from("0x77"))
     }
 
-    fn chain_id(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error> {
+    fn chain_id(&self, _meta: Self::Metadata) -> Result<Hex<usize>, Error> {
         Ok(Hex(0x77))
     }
 
     // TODO: Add network info
-    fn is_listening(&self, meta: Self::Metadata) -> Result<bool, Error> {
+    fn is_listening(&self, _meta: Self::Metadata) -> Result<bool, Error> {
         Ok(true)
     }
 
-    fn peer_count(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error> {
+    fn peer_count(&self, _meta: Self::Metadata) -> Result<Hex<usize>, Error> {
         Ok(Hex(0))
     }
 
-    fn sha3(&self, meta: Self::Metadata, bytes: Bytes) -> Result<Hex<H256>, Error> {
+    fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> Result<Hex<H256>, Error> {
         Ok(Hex(H256::from_slice(
             Keccak256::digest(bytes.0.as_slice()).as_slice(),
         )))
     }
 
-    fn client_version(&self, meta: Self::Metadata) -> Result<String, Error> {
+    fn client_version(&self, _meta: Self::Metadata) -> Result<String, Error> {
         Ok(String::from("SolanaEvm/v0.1.0"))
     }
 
-    fn protocol_version(&self, meta: Self::Metadata) -> Result<String, Error> {
+    fn protocol_version(&self, _meta: Self::Metadata) -> Result<String, Error> {
         Ok(String::from("0"))
     }
 
-    fn is_syncing(&self, meta: Self::Metadata) -> Result<bool, Error> {
+    fn is_syncing(&self, _meta: Self::Metadata) -> Result<bool, Error> {
         Ok(false)
     }
 
-    fn coinbase(&self, meta: Self::Metadata) -> Result<Hex<Address>, Error> {
+    fn coinbase(&self, _meta: Self::Metadata) -> Result<Hex<Address>, Error> {
         Ok(Hex(Address::from_low_u64_be(0)))
     }
 
-    fn is_mining(&self, meta: Self::Metadata) -> Result<bool, Error> {
+    fn is_mining(&self, _meta: Self::Metadata) -> Result<bool, Error> {
         Ok(false)
     }
 
-    fn hashrate(&self, meta: Self::Metadata) -> Result<String, Error> {
+    fn hashrate(&self, _meta: Self::Metadata) -> Result<String, Error> {
         Ok(String::from("0x00"))
     }
 
     fn block_by_hash(
         &self,
-        meta: Self::Metadata,
-        block_hash: Hex<H256>,
-        full: bool,
+        _meta: Self::Metadata,
+        _block_hash: Hex<H256>,
+        _full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
         Ok(None)
     }
 
     fn block_by_number(
         &self,
-        meta: Self::Metadata,
-        block: String,
-        full: bool,
+        _meta: Self::Metadata,
+        _block: String,
+        _full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
         Ok(Some(RPCBlock {
             number: U256::zero().into(),
@@ -111,50 +111,50 @@ impl ChainMockERPC for ChainMockERPCImpl {
 
     fn uncle_by_block_hash_and_index(
         &self,
-        meta: Self::Metadata,
-        block_hash: Hex<H256>,
-        uncle_id: Hex<U256>,
+        _meta: Self::Metadata,
+        _block_hash: Hex<H256>,
+        _uncle_id: Hex<U256>,
     ) -> Result<Option<RPCBlock>, Error> {
         Ok(None)
     }
 
     fn uncle_by_block_number_and_index(
         &self,
-        meta: Self::Metadata,
-        block: String,
-        uncle_id: Hex<U256>,
+        _meta: Self::Metadata,
+        _block: String,
+        _uncle_id: Hex<U256>,
     ) -> Result<Option<RPCBlock>, Error> {
         Ok(None)
     }
 
     fn block_transaction_count_by_hash(
         &self,
-        meta: Self::Metadata,
-        block_hash: Hex<H256>,
+        _meta: Self::Metadata,
+        _block_hash: Hex<H256>,
     ) -> Result<Option<Hex<usize>>, Error> {
         Ok(None)
     }
 
     fn block_transaction_count_by_number(
         &self,
-        meta: Self::Metadata,
-        block: String,
+        _meta: Self::Metadata,
+        _block: String,
     ) -> Result<Option<Hex<usize>>, Error> {
         Ok(None)
     }
 
     fn block_uncles_count_by_hash(
         &self,
-        meta: Self::Metadata,
-        block_hash: Hex<H256>,
+        _meta: Self::Metadata,
+        _block_hash: Hex<H256>,
     ) -> Result<Option<Hex<usize>>, Error> {
         Ok(None)
     }
 
     fn block_uncles_count_by_number(
         &self,
-        meta: Self::Metadata,
-        block: String,
+        _meta: Self::Metadata,
+        _block: String,
     ) -> Result<Option<Hex<usize>>, Error> {
         Ok(None)
     }
@@ -174,7 +174,7 @@ impl BasicERPC for BasicERPCImpl {
         &self,
         meta: Self::Metadata,
         address: Hex<Address>,
-        block: Option<String>,
+        _block: Option<String>,
     ) -> Result<Hex<U256>, Error> {
         let bank = meta.bank(None);
         let evm_state = bank.evm_state.read().unwrap();
@@ -186,7 +186,7 @@ impl BasicERPC for BasicERPCImpl {
         meta: Self::Metadata,
         address: Hex<Address>,
         data: Hex<H256>,
-        block: Option<String>,
+        _block: Option<String>,
     ) -> Result<Hex<H256>, Error> {
         let bank = meta.bank(None);
         let evm_state = bank.evm_state.read().unwrap();
@@ -197,7 +197,7 @@ impl BasicERPC for BasicERPCImpl {
         &self,
         meta: Self::Metadata,
         address: Hex<Address>,
-        block: Option<String>,
+        _block: Option<String>,
     ) -> Result<Hex<U256>, Error> {
         let bank = meta.bank(None);
         let evm_state = bank.evm_state.read().unwrap();
@@ -208,7 +208,7 @@ impl BasicERPC for BasicERPCImpl {
         &self,
         meta: Self::Metadata,
         address: Hex<Address>,
-        block: Option<String>,
+        _block: Option<String>,
     ) -> Result<Bytes, Error> {
         let bank = meta.bank(None);
         let evm_state = bank.evm_state.read().unwrap();
@@ -217,34 +217,34 @@ impl BasicERPC for BasicERPCImpl {
 
     fn transaction_by_hash(
         &self,
-        meta: Self::Metadata,
-        tx_hash: Hex<H256>,
+        _meta: Self::Metadata,
+        _tx_hash: Hex<H256>,
     ) -> Result<Option<RPCTransaction>, Error> {
         unimplemented!()
     }
 
     fn transaction_receipt(
         &self,
-        meta: Self::Metadata,
-        tx_hash: Hex<H256>,
+        _meta: Self::Metadata,
+        _tx_hash: Hex<H256>,
     ) -> Result<Option<RPCReceipt>, Error> {
         Ok(None)
     }
 
     fn transaction_by_block_hash_and_index(
         &self,
-        meta: Self::Metadata,
-        block_hash: Hex<H256>,
-        tx_id: Hex<U256>,
+        _meta: Self::Metadata,
+        _block_hash: Hex<H256>,
+        _tx_id: Hex<U256>,
     ) -> Result<Option<RPCTransaction>, Error> {
         unimplemented!()
     }
 
     fn transaction_by_block_number_and_index(
         &self,
-        meta: Self::Metadata,
-        block: String,
-        tx_id: Hex<U256>,
+        _meta: Self::Metadata,
+        _block: String,
+        _tx_id: Hex<U256>,
     ) -> Result<Option<RPCTransaction>, Error> {
         unimplemented!()
     }
@@ -277,22 +277,22 @@ impl Default for BridgeERPCImpl {
 impl BridgeERPC for BridgeERPCImpl {
     type Metadata = JsonRpcRequestProcessor;
 
-    fn accounts(&self, meta: Self::Metadata) -> Result<Vec<Hex<Address>>, Error> {
+    fn accounts(&self, _meta: Self::Metadata) -> Result<Vec<Hex<Address>>, Error> {
         Ok(self.accounts.iter().map(|(k, _)| Hex(*k)).collect())
     }
 
     fn sign(
         &self,
-        meta: Self::Metadata,
-        address: Hex<Address>,
-        data: Bytes,
+        _meta: Self::Metadata,
+        _address: Hex<Address>,
+        _data: Bytes,
     ) -> Result<Bytes, Error> {
         unimplemented!()
     }
 
     fn send_transaction(
         &self,
-        meta: Self::Metadata,
+        _meta: Self::Metadata,
         tx: RPCTransaction,
     ) -> Result<Hex<H256>, Error> {
         info!("send_transaction");
@@ -346,7 +346,7 @@ impl BridgeERPC for BridgeERPCImpl {
         Ok(Hex(hash))
     }
 
-    fn send_raw_transaction(&self, meta: Self::Metadata, tx: Bytes) -> Result<Hex<H256>, Error> {
+    fn send_raw_transaction(&self, _meta: Self::Metadata, tx: Bytes) -> Result<Hex<H256>, Error> {
         info!("send_raw_transaction");
         let tx: evm::Transaction = rlp::decode(&tx.0).unwrap();
         let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
@@ -386,32 +386,32 @@ impl BridgeERPC for BridgeERPCImpl {
 
     fn call(
         &self,
-        meta: Self::Metadata,
-        tx: RPCTransaction,
-        block: Option<String>,
+        _meta: Self::Metadata,
+        _tx: RPCTransaction,
+        _block: Option<String>,
     ) -> Result<Bytes, Error> {
         unimplemented!()
     }
 
-    fn gas_price(&self, meta: Self::Metadata) -> Result<Hex<Gas>, Error> {
+    fn gas_price(&self, _meta: Self::Metadata) -> Result<Hex<Gas>, Error> {
         //TODO: Add gas logic
         Ok(Hex(1.into()))
     }
 
     fn estimate_gas(
         &self,
-        meta: Self::Metadata,
-        tx: RPCTransaction,
-        block: Option<String>,
+        _meta: Self::Metadata,
+        _tx: RPCTransaction,
+        _block: Option<String>,
     ) -> Result<Hex<Gas>, Error> {
         Ok(Hex(300_000_000.into()))
     }
 
-    fn compilers(&self, meta: Self::Metadata) -> Result<Vec<String>, Error> {
+    fn compilers(&self, _meta: Self::Metadata) -> Result<Vec<String>, Error> {
         unimplemented!()
     }
 
-    fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
+    fn logs(&self, _meta: Self::Metadata, _log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
         unimplemented!()
     }
 }

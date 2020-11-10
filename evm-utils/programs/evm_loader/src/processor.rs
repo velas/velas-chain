@@ -7,7 +7,6 @@ use solana_sdk::instruction::InstructionError;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{
     account::KeyedAccount,
-    account_info::AccountInfo,
     entrypoint_native::{InvokeContext, Logger},
     program_utils::limited_deserialize,
     sysvar::{rent::Rent, Sysvar},
@@ -68,7 +67,7 @@ pub fn process_initialize_deposit(
 }
 
 pub fn process_instruction(
-    program_id: &Pubkey,
+    _program_id: &Pubkey,
     keyed_accounts: &[KeyedAccount],
     data: &[u8],
     cx: &mut dyn InvokeContext,

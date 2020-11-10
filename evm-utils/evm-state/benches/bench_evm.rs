@@ -1,11 +1,11 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
 use assert_matches::assert_matches;
-use evm::{backend::ApplyBackend, Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
+use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
 use evm_state::layered_backend::*;
 use evm_state::*;
 use hex;
-use log::*;
+
 use primitive_types::{H160, H256, U256};
 use sha3::{Digest, Keccak256};
 use std::sync::RwLock;

@@ -74,13 +74,13 @@ pub const HELLO_WORLD_RESULT:&str = "0000000000000000000000000000000000000000000
 pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b506004361060285760003560e01c8063942ae0a714602d575b600080fd5b603360ab565b6040518080602001828103825283818151815260200191508051906020019080838360005b8381101560715780820151818401526020810190506058565b50505050905090810190601f168015609d5780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b60606040518060400160405280600a81526020017f68656c6c6f576f726c640000000000000000000000000000000000000000000081525090509056fea2646970667358221220fa787b95ca91ffe90fdb780b8ee8cb11c474bc63cb8217112c88bc465f7ea7d364736f6c63430007020033";
 #[cfg(test)]
 pub mod tests {
-    use super::layered_backend::*;
+
     use super::StaticExecutor;
     use super::*;
     use assert_matches::assert_matches;
-    use evm::{backend::ApplyBackend, Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
+    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use hex;
-    use log::*;
+
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
     use std::sync::RwLock;
@@ -157,7 +157,7 @@ pub mod tests {
             any_other => panic!("Not expected result={:?}", any_other),
         }
 
-        let (path) = executor.deconstruct();
+        let path = executor.deconstruct();
         locked.apply(path);
 
         drop(locked);

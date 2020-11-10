@@ -73,7 +73,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{channel, Receiver, Sender},
-        Arc, Mutex, RwLock, RwLockReadGuard,
+        Arc, Mutex, RwLock,
     },
 };
 use tokio::runtime;

@@ -84,7 +84,7 @@ where
     }
 
     // Exclusively borrow value by key
-    pub fn get_mut<Q: ?Sized>(&mut self, key: &Q) -> Option<&mut V>
+    pub fn get_mut<Q: ?Sized>(&mut self, _key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
         Q: Ord,
@@ -108,6 +108,7 @@ where
     }
 
     // Create new version from existing one
+    #[allow(unused)]
     pub(crate) fn new_from_parent_static(parent: Store) -> Self {
         Self {
             state: BTreeMap::new(),

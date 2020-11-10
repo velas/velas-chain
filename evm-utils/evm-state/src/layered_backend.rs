@@ -1,9 +1,9 @@
 use evm::backend::{Apply, ApplyBackend, Backend, Basic, Log};
 use log::{debug, error};
 use primitive_types::{H160, H256, U256};
-use serde::{Deserialize, Serialize};
+
 use sha3::{Digest, Keccak256};
-use std::collections::BTreeMap;
+
 use std::sync::Arc;
 use std::sync::{RwLock, RwLockWriteGuard};
 
@@ -224,7 +224,7 @@ impl<'a> ApplyBackend for LockedState<'a> {
                     basic,
                     code,
                     storage,
-                    reset_storage,
+                    reset_storage: _,
                 } => {
                     debug!("Apply::Modify address = {}", address);
                     // TODO: rollback on insert fail.
