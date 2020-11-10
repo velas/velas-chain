@@ -1,14 +1,17 @@
+use super::instructions::{Deposit, EvmInstruction};
+use super::scope::*;
+use evm::TransactionAction;
+use log::*;
+use primitive_types::U256;
 use solana_sdk::instruction::InstructionError;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{
     account::KeyedAccount,
+    account_info::AccountInfo,
     entrypoint_native::{InvokeContext, Logger},
     program_utils::limited_deserialize,
+    sysvar::{rent::Rent, Sysvar},
 };
-
-use super::instructions::EvmInstruction;
-use super::scope::*;
-use evm::TransactionAction;
 
 macro_rules! log{
     ($logger:ident, $message:expr) => {
@@ -25,9 +28,48 @@ macro_rules! log{
     };
 }
 
+const LAMPORTS_TO_GWEI_PRICE: u64 = 1_000_000_000; // Lamports is 1/10^9 of SOLs while GWEI is 1/10^18
+
+/// Return the next AccountInfo or a NotEnoughAccountKeys error
+pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
+    iter: &mut I,
+) -> Result<I::Item, InstructionError> {
+    iter.next().ok_or(InstructionError::NotEnoughAccountKeys)
+}
+
+pub fn process_initialize_deposit(
+    accounts: &[KeyedAccount],
+    pubkey: Pubkey,
+) -> Result<(), InstructionError> {
+    let account_info_iter = &mut accounts.iter();
+    let deposit_info = next_account_info(account_info_iter)?;
+    let deposit_info_len = deposit_info.data_len()?;
+    let rent = &Rent::from_account(&*next_account_info(account_info_iter)?.try_account_ref()?)
+        .ok_or(InstructionError::InvalidArgument)?;
+
+    let mut deposit: Deposit =
+        limited_deserialize(&deposit_info.try_account_ref()?.data).unwrap_or_default();
+    if deposit.is_initialized {
+        return Err(InstructionError::AccountAlreadyInitialized.into());
+    }
+
+    if !rent.is_exempt(deposit_info.lamports()?, deposit_info_len) {
+        return Err(InstructionError::ExecutableAccountNotRentExempt.into());
+    }
+
+    deposit.deposit_authority = Option::Some(pubkey);
+    deposit.is_initialized = true;
+    deposit.locked_lamports = 0;
+
+    bincode::serialize_into(&mut *deposit_info.try_account_ref_mut()?.data, &deposit)
+        .map_err(|_| InstructionError::InvalidArgument)?;
+
+    Ok(())
+}
+
 pub fn process_instruction(
-    _program_id: &Pubkey,
-    _keyed_accounts: &[KeyedAccount],
+    program_id: &Pubkey,
+    keyed_accounts: &[KeyedAccount],
     data: &[u8],
     cx: &mut dyn InvokeContext,
 ) -> Result<(), InstructionError> {
@@ -68,6 +110,68 @@ pub fn process_instruction(
             };
             // TODO: Map evm errors on solana.
             log!(logger, "Exit status = {:?}", result);
+        }
+        EvmInstruction::CreateDepositAccount { pubkey } => {
+            process_initialize_deposit(keyed_accounts, pubkey)?
+        }
+        EvmInstruction::SwapNativeToEther {
+            lamports,
+            ether_address,
+        } => {
+            let accounts_iter = &mut keyed_accounts.iter();
+            let signer_account = next_account_info(accounts_iter)?;
+            let authority_account = next_account_info(accounts_iter)?;
+            let gweis = U256::from(lamports) * U256::from(LAMPORTS_TO_GWEI_PRICE);
+            log!(
+                logger,
+                "Sending lamports to Gwei tokens from={},to={}",
+                authority_account.unsigned_key(),
+                ether_address
+            );
+
+            if keyed_accounts.len() < 1 {
+                error!("Not enough accounts");
+                return Err(InstructionError::InvalidArgument);
+            }
+
+            if lamports == 0 {
+                return Ok(());
+            }
+
+            let mut deposit: Deposit =
+                limited_deserialize(&authority_account.account.borrow().data).unwrap_or_default();
+
+            if signer_account.signer_key().is_none()
+                || deposit.get_owner()? != *signer_account.signer_key().unwrap()
+            {
+                debug!("SwapNativeToEther: from must sign");
+                return Err(InstructionError::MissingRequiredSignature);
+            }
+
+            let mut real_lamports = authority_account.lamports()?;
+            if deposit.locked_lamports >= real_lamports {
+                debug!(
+                    "SwapNativeToEther: insufficient unlocked lamports ({}, locked {})",
+                    authority_account.lamports()?,
+                    deposit.locked_lamports
+                );
+                return Err(InstructionError::InsufficientFunds);
+            }
+            real_lamports -= deposit.locked_lamports;
+            if lamports > real_lamports {
+                debug!(
+                    "SwapNativeToEther: insufficient lamports ({}, need {})",
+                    real_lamports, lamports
+                );
+                return Err(InstructionError::InsufficientFunds);
+            }
+            deposit.locked_lamports += lamports;
+            evm_executor.deposit(ether_address, gweis);
+            bincode::serialize_into(
+                &mut *authority_account.try_account_ref_mut()?.data,
+                &deposit,
+            )
+            .map_err(|_| InstructionError::InvalidArgument)?;
         }
         _ => todo!("Do other staff later"),
     }
