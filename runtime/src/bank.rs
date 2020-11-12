@@ -62,7 +62,7 @@ use solana_stake_program::stake_state::{self, Delegation, PointValue};
 use solana_vote_program::{vote_instruction::VoteInstruction, vote_state::VoteState};
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     convert::TryFrom,
     mem,
     ops::RangeInclusive,
@@ -1831,12 +1831,15 @@ impl Bank {
         u64,
         u64,
         (
-            impl IntoIterator<
-                Item = evm_state::Apply<
-                    impl IntoIterator<Item = (evm_state::H256, evm_state::H256)>,
+            (
+                impl IntoIterator<
+                    Item = evm_state::Apply<
+                        impl IntoIterator<Item = (evm_state::H256, evm_state::H256)>,
+                    >,
                 >,
-            >,
-            impl IntoIterator<Item = evm_state::Log>,
+                impl IntoIterator<Item = evm_state::Log>,
+            ),
+            BTreeMap<evm_state::H256, evm_state::TransactionReceipt>,
         ),
     ) {
         let txs = batch.transactions();
@@ -2026,12 +2029,15 @@ impl Bank {
         signature_count: u64,
         mut locked_evm: evm_state::LockedState,
         patch: (
-            impl IntoIterator<
-                Item = evm_state::Apply<
-                    impl IntoIterator<Item = (evm_state::H256, evm_state::H256)>,
+            (
+                impl IntoIterator<
+                    Item = evm_state::Apply<
+                        impl IntoIterator<Item = (evm_state::H256, evm_state::H256)>,
+                    >,
                 >,
-            >,
-            impl IntoIterator<Item = evm_state::Log>,
+                impl IntoIterator<Item = evm_state::Log>,
+            ),
+            BTreeMap<evm_state::H256, evm_state::TransactionReceipt>,
         ),
     ) -> TransactionResults {
         assert!(

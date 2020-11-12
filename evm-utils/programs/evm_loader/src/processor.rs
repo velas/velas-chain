@@ -74,8 +74,8 @@ pub fn process_instruction(
 ) -> Result<(), InstructionError> {
     let logger = cx.get_logger();
     let evm_executor = cx.get_evm_executor();
-    let mut evm_executor = evm_executor.borrow_mut();
-    let evm_executor = evm_executor.rent_executor();
+    let mut static_evm_executor = evm_executor.borrow_mut();
+    let evm_executor = static_evm_executor.rent_executor();
 
     let ix = limited_deserialize(data)?;
     log!(logger, "Run evm exec with ix = {:?}.", ix);
@@ -85,28 +85,45 @@ pub fn process_instruction(
             // TODO: Handle nonce
             // TODO: validate tx signature
 
+            let before_gas = evm_executor.used_gas();
             let result = match evm_tx.action {
-                TransactionAction::Call(addr) => evm_executor.transact_call(
-                    evm_tx
+                TransactionAction::Call(addr) => {
+                    let caller = evm_tx
                         .caller()
-                        .map_err(|_| InstructionError::InvalidArgument)?,
-                    addr,
-                    evm_tx.value,
-                    evm_tx.input,
-                    evm_tx.gas_limit.as_usize(),
-                ),
+                        .map_err(|_| InstructionError::InvalidArgument)?;
+                    log!(
+                        logger,
+                        "TransactionAction::Call caller  = {}, to = {}.",
+                        caller,
+                        addr
+                    );
+                    evm_executor.transact_call(
+                        caller,
+                        addr,
+                        evm_tx.value,
+                        evm_tx.input.clone(),
+                        evm_tx.gas_limit.as_usize(),
+                    )
+                }
                 TransactionAction::Create => (
                     evm_executor.transact_create(
                         evm_tx
                             .caller()
                             .map_err(|_| InstructionError::InvalidArgument)?,
                         evm_tx.value,
-                        evm_tx.input,
+                        evm_tx.input.clone(),
                         evm_tx.gas_limit.as_usize(),
                     ),
                     vec![],
                 ),
             };
+
+            let used_gas = evm_executor.used_gas() - before_gas;
+            static_evm_executor.register_tx_receipt(evm_state::TransactionReceipt::new(
+                evm_tx,
+                used_gas.into(),
+                result.clone(),
+            ));
             // TODO: Map evm errors on solana.
             log!(logger, "Exit status = {:?}", result);
         }
@@ -310,7 +327,7 @@ mod test {
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let tx_create = evm::UnsignedTransaction {
             nonce: 0.into(),
-            gas_price: 0.into(),
+            gas_price: 1.into(),
             gas_limit: 300000.into(),
             action: TransactionAction::Create,
             value: 0.into(),
@@ -333,7 +350,7 @@ mod test {
         let tx_address = tx_create.address().unwrap();
         let tx_call = evm::UnsignedTransaction {
             nonce: 0.into(),
-            gas_price: 0.into(),
+            gas_price: 1.into(),
             gas_limit: 300000.into(),
             action: TransactionAction::Call(tx_address),
             value: 0.into(),

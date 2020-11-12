@@ -32,8 +32,7 @@ impl Transaction {
         let sig = self.signature.to_recoverable_signature()?;
         let public_key =
             { SECP256K1.recover(&Message::from_slice(&hash.as_bytes()).unwrap(), &sig)? };
-        let hash = H256::from_slice(Keccak256::digest(&public_key.serialize()[1..]).as_slice());
-        Ok(Address::from(hash))
+        Ok(addr_from_public_key(&public_key))
     }
 
     pub fn address(&self) -> Result<Address, Error> {
@@ -254,5 +253,78 @@ impl From<Transaction> for UnsignedTransaction {
             value: val.value,
             input: val.input,
         }
+    }
+}
+// TODO: Work on logs and state_root.
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
+pub struct TransactionReceipt {
+    pub transaction: Transaction,
+    pub status: bool,
+    // pub state_root: H256,
+    pub used_gas: Gas,
+    // pub logs_bloom: LogsBloom,
+    // pub logs: Vec<Log>,
+}
+impl TransactionReceipt {
+    pub fn new(
+        transaction: Transaction,
+        used_gas: Gas,
+        result: (evm::ExitReason, Vec<u8>),
+    ) -> TransactionReceipt {
+        let status = match result.0 {
+            evm::ExitReason::Succeed(_) => true,
+            _ => false,
+        };
+        TransactionReceipt {
+            status,
+            transaction,
+            used_gas,
+        }
+    }
+}
+
+fn addr_from_public_key(key: &PublicKey) -> H160 {
+    let digest = Keccak256::digest(&key.serialize_uncompressed()[1..]);
+
+    let hash = H256::from_slice(digest.as_slice());
+    H160::from(hash)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use secp256k1::{PublicKey, SecretKey, SECP256K1};
+    #[test]
+    fn test_valid_addr() {
+        let addr = H160::from_str("9Edb9E0B88Dbf2a29aE121a657e1860aEceaA53D").unwrap();
+        let secret_key =
+            SecretKey::from_str("fb507dc8bc8ea30aa275702108e6a22f66096e274a1c4c36e709b12a13dd0e76")
+                .unwrap();
+        let public_key = PublicKey::from_secret_key(SECP256K1, &secret_key);
+        println!("public = {}", public_key);
+        let addr2 = addr_from_public_key(&public_key);
+        assert_eq!(addr, addr2)
+    }
+
+    #[test]
+    fn sign_check_signature() {
+        let addr = H160::from_str("9Edb9E0B88Dbf2a29aE121a657e1860aEceaA53D").unwrap();
+        let secret_key =
+            SecretKey::from_str("fb507dc8bc8ea30aa275702108e6a22f66096e274a1c4c36e709b12a13dd0e76")
+                .unwrap();
+        let tx = UnsignedTransaction {
+            nonce: U256::from(1),
+            gas_price: U256::from(2),
+            gas_limit: U256::from(3),
+            action: TransactionAction::Create,
+            value: U256::from(4),
+            input: vec![2; 3],
+        };
+        let chain_id = 0x77;
+
+        let tx = tx.sign(&secret_key, Some(chain_id));
+
+        assert_eq!(tx.signature.chain_id(), Some(chain_id));
+        assert_eq!(tx.caller().unwrap(), addr);
     }
 }

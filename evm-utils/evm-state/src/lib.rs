@@ -1,10 +1,10 @@
 pub use layered_backend::*;
 pub use transactions::*;
-pub mod backend;
 pub mod layered_backend;
 pub mod transactions;
 pub mod version_map;
 pub use primitive_types::H256;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Deref;
 
@@ -23,6 +23,7 @@ pub struct StaticExecutor<B: 'static> {
     // Avoid changing backend and config, while evm executor is reffer to it.
     _backend: Box<B>,
     _config: Box<Config>,
+    txs_receipts: BTreeMap<H256, transactions::TransactionReceipt>,
 }
 
 impl<B: 'static> fmt::Debug for StaticExecutor<B> {
@@ -46,19 +47,29 @@ impl<B: evm::backend::Backend> StaticExecutor<B> {
             _backend,
             _config,
             evm,
+            txs_receipts: BTreeMap::new(),
         }
     }
     pub fn rent_executor(&mut self) -> &mut evm::executor::StackExecutor<'_, '_, B> {
         unsafe { std::mem::transmute(&mut self.evm) }
     }
+    // TODO: Handle duplicates, statuses.
+    pub fn register_tx_receipt(&mut self, tx_receipt: transactions::TransactionReceipt) {
+        let tx: transactions::UnsignedTransaction = tx_receipt.transaction.clone().into();
+        let tx_hash = tx.signing_hash(tx_receipt.transaction.signature.chain_id());
+        self.txs_receipts.insert(tx_hash, tx_receipt);
+    }
 
     pub fn deconstruct(
         self,
     ) -> (
-        impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)>>>,
-        impl IntoIterator<Item = Log>,
+        (
+            impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)>>>,
+            impl IntoIterator<Item = Log>,
+        ),
+        BTreeMap<H256, transactions::TransactionReceipt>,
     ) {
-        self.evm.deconstruct()
+        (self.evm.deconstruct(), self.txs_receipts)
     }
 }
 

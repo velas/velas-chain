@@ -18,6 +18,7 @@ use solana_sdk::{
     signature::Signer,
 };
 use std::collections::HashMap;
+use std::convert::TryInto;
 
 pub struct ChainMockERPCImpl;
 
@@ -77,7 +78,27 @@ impl ChainMockERPC for ChainMockERPCImpl {
         _block_hash: Hex<H256>,
         _full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
-        Ok(None)
+        Ok(Some(RPCBlock {
+            number: U256::zero().into(),
+            hash: H256::zero().into(),
+            parent_hash: H256::zero().into(),
+            nonce: 0.into(),
+            sha3_uncles: H256::zero().into(),
+            logs_bloom: H256::zero().into(), // H2048
+            transactions_root: H256::zero().into(),
+            state_root: H256::zero().into(),
+            receipts_root: H256::zero().into(),
+            miner: Address::zero().into(),
+            difficulty: U256::zero().into(),
+            total_difficulty: U256::zero().into(),
+            extra_data: vec![].into(),
+            size: 0.into(),
+            gas_limit: Gas::zero().into(),
+            gas_used: Gas::zero().into(),
+            timestamp: 0.into(),
+            transactions: Either::Left(vec![]),
+            uncles: vec![],
+        }))
     }
 
     fn block_by_number(
@@ -217,18 +238,66 @@ impl BasicERPC for BasicERPCImpl {
 
     fn transaction_by_hash(
         &self,
-        _meta: Self::Metadata,
-        _tx_hash: Hex<H256>,
+        meta: Self::Metadata,
+        tx_hash: Hex<H256>,
     ) -> Result<Option<RPCTransaction>, Error> {
-        unimplemented!()
+        let bank = meta.bank(None);
+        let evm_state = bank.evm_state.read().unwrap();
+        let receipt = evm_state.get_tx_receipt_by_hash(tx_hash.0);
+        Ok(match receipt {
+            Some(tx) => Some(RPCTransaction {
+                transaction_index: Some(0.into()),
+                block_hash: Some(H256::zero().into()),
+                block_number: Some(U256::zero().into()),
+                from: Some(
+                    tx.transaction
+                        .caller()
+                        .map_err(|_| Error::InvalidParams)?
+                        .into(),
+                ),
+                to: Some(
+                    tx.transaction
+                        .address()
+                        .map_err(|_| Error::InvalidParams)?
+                        .into(),
+                ),
+                gas: Some(tx.transaction.gas_limit.into()),
+                gas_price: Some(tx.transaction.gas_price.into()),
+                value: Some(tx.transaction.value.into()),
+                data: Some(tx.transaction.input.clone().into()),
+                nonce: Some(tx.transaction.nonce.into()),
+                hash: Some(tx_hash),
+            }),
+            None => None,
+        })
     }
 
     fn transaction_receipt(
         &self,
-        _meta: Self::Metadata,
-        _tx_hash: Hex<H256>,
+        meta: Self::Metadata,
+        tx_hash: Hex<H256>,
     ) -> Result<Option<RPCReceipt>, Error> {
-        Ok(None)
+        let bank = meta.bank(None);
+        let evm_state = bank.evm_state.read().unwrap();
+        let receipt = evm_state.get_tx_receipt_by_hash(tx_hash.0);
+        Ok(match receipt {
+            Some(tx) => Some(RPCReceipt {
+                transaction_index: 0.into(),
+                block_hash: H256::zero().into(),
+                block_number: U256::zero().into(),
+                cumulative_gas_used: tx.used_gas.into(),
+                gas_used: tx.used_gas.into(),
+                transaction_hash: tx_hash,
+                logs: vec![],
+                contract_address: Some(Hex(tx
+                    .transaction
+                    .address()
+                    .map_err(|_| Error::InvalidParams)?)),
+                root: H256::zero().into(),
+                status: if tx.status { 1 } else { 0 },
+            }),
+            None => None,
+        })
     }
 
     fn transaction_by_block_hash_and_index(
@@ -237,7 +306,7 @@ impl BasicERPC for BasicERPCImpl {
         _block_hash: Hex<H256>,
         _tx_id: Hex<U256>,
     ) -> Result<Option<RPCTransaction>, Error> {
-        unimplemented!()
+        Ok(None)
     }
 
     fn transaction_by_block_number_and_index(
@@ -246,7 +315,7 @@ impl BasicERPC for BasicERPCImpl {
         _block: String,
         _tx_id: Hex<U256>,
     ) -> Result<Option<RPCTransaction>, Error> {
-        unimplemented!()
+        Ok(None)
     }
 }
 
@@ -287,7 +356,7 @@ impl BridgeERPC for BridgeERPCImpl {
         _address: Hex<Address>,
         _data: Bytes,
     ) -> Result<Bytes, Error> {
-        unimplemented!()
+        Err(Error::NotFound)
     }
 
     fn send_transaction(
@@ -300,8 +369,12 @@ impl BridgeERPC for BridgeERPCImpl {
             .accounts
             .get(&tx.from.map(|a| a.0).unwrap_or_default())
             .unwrap();
+        let nonce = match tx.nonce.map(|a| a.0) {
+            Some(nonce) => nonce,
+            None => 0.into(), // TODO: Request nonce
+        };
         let tx_create = evm::UnsignedTransaction {
-            nonce: tx.nonce.map(|a| a.0).unwrap_or_else(|| 0.into()),
+            nonce,
             gas_price: tx.gas_price.map(|a| a.0).unwrap_or_else(|| 0.into()),
             gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 300000.into()),
             action: tx
@@ -386,11 +459,32 @@ impl BridgeERPC for BridgeERPCImpl {
 
     fn call(
         &self,
-        _meta: Self::Metadata,
-        _tx: RPCTransaction,
+        meta: Self::Metadata,
+        tx: RPCTransaction,
         _block: Option<String>,
     ) -> Result<Bytes, Error> {
-        unimplemented!()
+        let caller = tx.from.map(|a| a.0).unwrap_or_default();
+
+        let value = tx.value.map(|a| a.0).unwrap_or(0.into());
+        let input = tx.data.map(|a| a.0).unwrap_or_else(|| vec![]);
+        let gas_limit: u64 = tx
+            .gas
+            .map(|a| a.0)
+            .unwrap_or(300000.into())
+            .try_into()
+            .map_err(|_| Error::InvalidParams)?;
+        let gas_limit = gas_limit as usize;
+
+        let evm_state: evm_state::EvmState = meta.bank(None).evm_state.read().unwrap().clone();
+        let mut executor =
+            evm_state::StaticExecutor::with_config(evm_state, Config::istanbul(), gas_limit);
+        let address = tx.to.map(|h| h.0).unwrap_or_default();
+        let result = executor
+            .rent_executor()
+            .transact_call(caller, address, value, input, gas_limit);
+
+        println!("Result tx = {:?}, gas_limit={}", result, gas_limit);
+        Ok(Bytes(result.1))
     }
 
     fn gas_price(&self, _meta: Self::Metadata) -> Result<Hex<Gas>, Error> {
@@ -408,10 +502,10 @@ impl BridgeERPC for BridgeERPCImpl {
     }
 
     fn compilers(&self, _meta: Self::Metadata) -> Result<Vec<String>, Error> {
-        unimplemented!()
+        Err(Error::NotFound)
     }
 
     fn logs(&self, _meta: Self::Metadata, _log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
-        unimplemented!()
+        Err(Error::NotFound)
     }
 }

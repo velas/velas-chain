@@ -1,13 +1,38 @@
 use evm::backend::{Apply, ApplyBackend, Backend, Basic, Log};
-use log::{debug, error};
+use log::{debug, error, info};
 use primitive_types::{H160, H256, U256};
+use serde::{Deserialize, Serialize};
 
 use sha3::{Digest, Keccak256};
 
+use super::transactions::TransactionReceipt;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::{RwLock, RwLockWriteGuard};
 
-pub use super::backend::MemoryVicinity;
+/// Vivinity value of a memory backend.
+#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MemoryVicinity {
+    /// Gas price.
+    pub gas_price: U256,
+    /// Origin.
+    pub origin: H160,
+    /// Chain ID.
+    pub chain_id: U256,
+    /// Environmental block hashes.
+    pub block_hashes: Vec<H256>,
+    /// Environmental block number.
+    pub block_number: U256,
+    /// Environmental coinbase.
+    pub block_coinbase: H160,
+    /// Environmental block timestamp.
+    pub block_timestamp: U256,
+    /// Environmental block difficulty.
+    pub block_difficulty: U256,
+    /// Environmental block gas limit.
+    pub block_gas_limit: U256,
+}
+
 use super::version_map::Map;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,13 +44,12 @@ pub struct AccountState {
     /// Account code.
     pub code: Vec<u8>,
 }
-const DEFAULT_BALANCE: usize = 77;
-const ETHER_BIGINT: u64 = 1_000_000_000_000_000_000;
+
 impl Default for AccountState {
     fn default() -> Self {
         AccountState {
             nonce: U256::from(0),
-            balance: U256::from(DEFAULT_BALANCE) * U256::from(ETHER_BIGINT),
+            balance: U256::from(0),
             code: vec![],
         }
     }
@@ -37,8 +61,10 @@ pub struct EvmState {
     pub(crate) accounts: Arc<Map<H160, AccountState>>,
     // Store every account storage at single place, to use power of versioned map. (This allows us to save only changed data).
     pub(crate) storage: Arc<Map<(H160, H256), H256>>,
+    pub(crate) txs_receipts: Arc<Map<H256, TransactionReceipt>>,
     logs: Vec<Log>,
 }
+
 impl Default for EvmState {
     fn default() -> Self {
         Self::new_not_forget_to_deserialize_later()
@@ -49,6 +75,13 @@ impl Default for EvmState {
 pub struct EvmAccountsLocked<'a> {
     pub accounts: &'a mut Map<H160, AccountState>,
     pub storage: &'a mut Map<(H160, H256), H256>,
+    pub txs_receipts: &'a mut Map<H256, TransactionReceipt>,
+}
+
+impl<'a> EvmAccountsLocked<'a> {
+    pub fn insert_tx_receipt(&mut self, tx_hash: H256, tx: TransactionReceipt) {
+        self.txs_receipts.insert(tx_hash, tx)
+    }
 }
 
 #[derive(Debug)]
@@ -62,6 +95,7 @@ impl EvmState {
             vicinity,
             accounts: Arc::new(Map::new()),
             storage: Arc::new(Map::new()),
+            txs_receipts: Arc::new(Map::new()),
             logs: Vec::new(),
         }
     }
@@ -83,6 +117,7 @@ impl EvmState {
             vicinity,
             accounts: Arc::new(Map::new()),
             storage: Arc::new(Map::new()),
+            txs_receipts: Arc::new(Map::new()),
             logs: Vec::new(),
         }
     }
@@ -92,6 +127,7 @@ impl EvmState {
             vicinity: self.vicinity.clone(),
             accounts: Arc::new(Map::new_from_parent(self.accounts.clone())),
             storage: Arc::new(Map::new_from_parent(self.storage.clone())),
+            txs_receipts: Arc::new(Map::new_from_parent(self.txs_receipts.clone())),
             logs: Vec::new(),
         }
     }
@@ -101,11 +137,17 @@ impl EvmState {
         let guard = this.write().ok()?;
         Some(LockedState { guard })
     }
+
+    pub fn get_tx_receipt_by_hash(&self, tx_hash: H256) -> Option<&TransactionReceipt> {
+        self.txs_receipts.get(&tx_hash)
+    }
 }
 
 impl<'a> LockedState<'a> {
     pub fn fork_mut(&mut self) -> EvmAccountsLocked<'_> {
-        if Arc::strong_count(&self.guard.accounts) > 2 || Arc::strong_count(&self.guard.storage) > 2
+        if Arc::strong_count(&self.guard.accounts) > 1
+            || Arc::strong_count(&self.guard.storage) > 1
+            || Arc::strong_count(&self.guard.txs_receipts) > 1
         {
             error!("During forking locked state, stale evm accounts founds. This can happen, when we trying to edit not last state.");
         }
@@ -113,6 +155,7 @@ impl<'a> LockedState<'a> {
         EvmAccountsLocked {
             accounts: Arc::make_mut(&mut guard.accounts),
             storage: Arc::make_mut(&mut guard.storage),
+            txs_receipts: Arc::make_mut(&mut guard.txs_receipts),
         }
     }
     pub fn backend(&self) -> EvmState {
@@ -121,12 +164,21 @@ impl<'a> LockedState<'a> {
 
     pub fn apply(
         &mut self,
-        patch: (
-            impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)>>>,
-            impl IntoIterator<Item = Log>,
+        updates: (
+            (
+                impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)>>>,
+                impl IntoIterator<Item = Log>,
+            ),
+            BTreeMap<H256, TransactionReceipt>,
         ),
     ) {
-        ApplyBackend::apply(self, patch.0, patch.1, false)
+        let (patch, txs) = updates;
+        ApplyBackend::apply(self, patch.0, patch.1, false);
+        let mut state = self.fork_mut();
+        for (tx_hash, tx) in txs {
+            info!("Register tx in evm = {}", tx_hash);
+            state.insert_tx_receipt(tx_hash, tx)
+        }
     }
 }
 
@@ -294,6 +346,7 @@ mod test {
                 vicinity: Default::default(),
                 accounts: Default::default(),
                 storage: Default::default(),
+                txs_receipts: Default::default(),
                 logs: Default::default(),
             }
         }
@@ -421,7 +474,7 @@ mod test {
         let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
 
         let mut evm_state = EvmState::testing_default();
-        assert!(evm_state.basic(H160::zero()).balance != U256::from(0));
+        assert_eq!(evm_state.basic(H160::random()).balance, U256::from(0));
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
 
         assert_state(&evm_state, &accounts_state_diff, &storage_diff);
