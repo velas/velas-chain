@@ -7,7 +7,7 @@ use solana_sdk::instruction::InstructionError;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{
     account::KeyedAccount,
-    entrypoint_native::{InvokeContext, Logger},
+    entrypoint_native::InvokeContext,
     program_utils::limited_deserialize,
     sysvar::{rent::Rent, Sysvar},
 };
@@ -49,11 +49,11 @@ pub fn process_initialize_deposit(
     let mut deposit: Deposit =
         limited_deserialize(&deposit_info.try_account_ref()?.data).unwrap_or_default();
     if deposit.is_initialized {
-        return Err(InstructionError::AccountAlreadyInitialized.into());
+        return Err(InstructionError::AccountAlreadyInitialized);
     }
 
     if !rent.is_exempt(deposit_info.lamports()?, deposit_info_len) {
-        return Err(InstructionError::ExecutableAccountNotRentExempt.into());
+        return Err(InstructionError::ExecutableAccountNotRentExempt);
     }
 
     deposit.deposit_authority = Option::Some(pubkey);
@@ -128,7 +128,7 @@ pub fn process_instruction(
                 ether_address
             );
 
-            if keyed_accounts.len() < 1 {
+            if keyed_accounts.is_empty() {
                 error!("Not enough accounts");
                 return Err(InstructionError::InvalidArgument);
             }
@@ -172,7 +172,6 @@ pub fn process_instruction(
             )
             .map_err(|_| InstructionError::InvalidArgument)?;
         }
-        _ => todo!("Do other staff later"),
     }
     Ok(())
 }

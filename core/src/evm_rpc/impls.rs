@@ -15,7 +15,7 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     instruction::{AccountMeta, Instruction},
     message::Message,
-    signature::{Signer},
+    signature::Signer,
 };
 use std::collections::HashMap;
 
@@ -301,14 +301,14 @@ impl BridgeERPC for BridgeERPCImpl {
             .get(&tx.from.map(|a| a.0).unwrap_or_default())
             .unwrap();
         let tx_create = evm::UnsignedTransaction {
-            nonce: tx.nonce.map(|a| a.0).unwrap_or(0.into()),
-            gas_price: tx.gas_price.map(|a| a.0).unwrap_or(0.into()),
-            gas_limit: tx.gas.map(|a| a.0).unwrap_or(300000.into()),
+            nonce: tx.nonce.map(|a| a.0).unwrap_or_else(|| 0.into()),
+            gas_price: tx.gas_price.map(|a| a.0).unwrap_or_else(|| 0.into()),
+            gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 300000.into()),
             action: tx
                 .to
                 .map(|a| evm::TransactionAction::Call(a.0))
                 .unwrap_or(evm::TransactionAction::Create),
-            value: tx.value.map(|a| a.0).unwrap_or(0.into()),
+            value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
             input: tx.data.map(|a| a.0).unwrap_or_default(),
         };
         let hash = tx_create.signing_hash(None);

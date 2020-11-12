@@ -3,7 +3,6 @@ use solana_client::rpc_client::RpcClient;
 use solana_evm_loader_program::instructions::{Deposit, EvmInstruction};
 use solana_evm_loader_program::scope::*;
 use solana_sdk::{
-    account::Account,
     commitment_config::CommitmentConfig,
     instruction::{AccountMeta, Instruction},
     message::Message,
@@ -175,7 +174,7 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 minimum_balance_for_rent_exemption
                     + fee_calculator.calculate_fee(&transaction.message()),
             )?;
-            let mut signers = vec![signer.as_ref(), account.as_ref()];
+            let signers = vec![signer.as_ref(), account.as_ref()];
             transaction.sign(&signers, recent_blockhash);
             info!("Sending tx = {:?}", transaction);
             let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
@@ -235,8 +234,7 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 value: 0.into(),
                 input: hex::decode(
                     contract_code
-                        .as_ref()
-                        .map(String::as_str)
+                        .as_deref()
                         .unwrap_or(evm_state::HELLO_WORLD_CODE),
                 )
                 .unwrap()
@@ -266,13 +264,9 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 gas_limit: 300000.into(),
                 action: evm::TransactionAction::Call(tx_address),
                 value: 0.into(),
-                input: hex::decode(
-                    abi.as_ref()
-                        .map(String::as_str)
-                        .unwrap_or(evm_state::HELLO_WORLD_ABI),
-                )
-                .unwrap()
-                .to_vec(),
+                input: hex::decode(abi.as_deref().unwrap_or(evm_state::HELLO_WORLD_ABI))
+                    .unwrap()
+                    .to_vec(),
             };
 
             let tx_call = tx_call.sign(&secret_key, None);
