@@ -1145,6 +1145,15 @@ impl RpcClient {
         self.send(RpcRequest::ValidatorExit, Value::Null)
     }
 
+    /// EVM scope.
+    pub fn get_evm_account(&self, address: &evm_state::Address) -> ClientResult<evm_state::U256> {
+        self.send::<evm_rpc::Hex<_>>(
+            RpcRequest::GetEthTransactionCount,
+            json!([evm_rpc::Hex(*address)]),
+        )
+        .map(|h| h.0)
+    }
+
     pub fn send<T>(&self, request: RpcRequest, params: Value) -> ClientResult<T>
     where
         T: serde::de::DeserializeOwned,

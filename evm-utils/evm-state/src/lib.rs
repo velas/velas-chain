@@ -3,7 +3,7 @@ pub use transactions::*;
 pub mod layered_backend;
 pub mod transactions;
 pub mod version_map;
-pub use primitive_types::H256;
+pub use primitive_types::{H256, U256};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Deref;
@@ -17,7 +17,6 @@ pub use evm::{
 /// StackExecutor, use config and backend by reference, this force object to be dependent on lifetime.
 /// And poison all outer objects with this lifetime.
 /// This is not userfriendly, so we pack Executor object into self referential object.
-#[derive(Clone)]
 pub struct StaticExecutor<B: 'static> {
     evm: evm::executor::StackExecutor<'static, 'static, B>,
     // Avoid changing backend and config, while evm executor is reffer to it.

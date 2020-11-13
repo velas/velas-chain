@@ -1,10 +1,8 @@
-use super::basic::BasicERPC;
-use super::bridge::BridgeERPC;
-use super::chain_mock::ChainMockERPC;
-use super::error::Error;
-use super::serialize::*;
-use super::*;
 use crate::rpc::JsonRpcRequestProcessor;
+use evm_rpc::basic::BasicERPC;
+use evm_rpc::bridge::BridgeERPC;
+use evm_rpc::chain_mock::ChainMockERPC;
+use evm_rpc::*;
 use evm_state::*;
 use sha3::{Digest, Keccak256};
 
@@ -22,15 +20,17 @@ use std::convert::TryInto;
 
 pub struct ChainMockERPCImpl;
 
+const CHAIN_ID: u64 = 0x77;
+
 impl ChainMockERPC for ChainMockERPCImpl {
     type Metadata = JsonRpcRequestProcessor;
 
     fn network_id(&self, _meta: Self::Metadata) -> Result<String, Error> {
-        Ok(String::from("0x77"))
+        Ok(format!("0x{:x}", CHAIN_ID))
     }
 
-    fn chain_id(&self, _meta: Self::Metadata) -> Result<Hex<usize>, Error> {
-        Ok(Hex(0x77))
+    fn chain_id(&self, _meta: Self::Metadata) -> Result<Hex<u64>, Error> {
+        Ok(Hex(CHAIN_ID))
     }
 
     // TODO: Add network info
@@ -331,13 +331,10 @@ impl Default for BridgeERPCImpl {
         let secret_key = evm_state::SecretKey::from_slice(&[1; 32]).unwrap();
         let public_key = evm_state::PublicKey::from_secret_key(&evm_state::SECP256K1, &secret_key);
         let rpc_client = RpcClient::new("http://127.0.0.1:8899".to_string());
-        let public_key_hash =
-            H256::from_slice(Keccak256::digest(&public_key.serialize()[1..]).as_slice());
+        let public_key = evm_state::addr_from_public_key(&public_key);
         Self {
             key: solana_sdk::signature::read_keypair_file(&keypath).unwrap(),
-            accounts: vec![(Address::from(public_key_hash), secret_key)]
-                .into_iter()
-                .collect(),
+            accounts: vec![(public_key, secret_key)].into_iter().collect(),
             rpc_client,
         }
     }
@@ -364,14 +361,17 @@ impl BridgeERPC for BridgeERPCImpl {
         _meta: Self::Metadata,
         tx: RPCTransaction,
     ) -> Result<Hex<H256>, Error> {
-        info!("send_transaction");
-        let secret_key = self
-            .accounts
-            .get(&tx.from.map(|a| a.0).unwrap_or_default())
-            .unwrap();
+        let address = tx.from.map(|a| a.0).unwrap_or_default();
+
+        info!("send_transaction from = {}", address);
+
+        let secret_key = self.accounts.get(&address).unwrap();
         let nonce = match tx.nonce.map(|a| a.0) {
             Some(nonce) => nonce,
-            None => 0.into(), // TODO: Request nonce
+            None => self
+                .rpc_client
+                .get_evm_account(&address)
+                .unwrap_or_default(),
         };
         let tx_create = evm::UnsignedTransaction {
             nonce,
@@ -384,9 +384,17 @@ impl BridgeERPC for BridgeERPCImpl {
             value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
             input: tx.data.map(|a| a.0).unwrap_or_default(),
         };
-        let hash = tx_create.signing_hash(None);
+        let hash = tx_create.signing_hash(CHAIN_ID.into());
 
-        let tx = tx_create.sign(&secret_key, None);
+        let tx = tx_create.sign(&secret_key, CHAIN_ID.into());
+
+        info!(
+            "Printing tx_info from={:?}, to={:?}, nonce = {}, chain_id = {:?}",
+            tx.caller(),
+            tx.address(),
+            nonce,
+            tx.signature.chain_id()
+        );
 
         let account_metas = vec![AccountMeta::new(self.key.pubkey(), true)];
 
@@ -423,8 +431,16 @@ impl BridgeERPC for BridgeERPCImpl {
         info!("send_raw_transaction");
         let tx: evm::Transaction = rlp::decode(&tx.0).unwrap();
         let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
-        let hash = unsigned_tx.signing_hash(None);
+        let hash = unsigned_tx.signing_hash(CHAIN_ID.into());
         info!("loaded tx = {:?}, hash = {}", tx, hash);
+
+        info!(
+            "Printing tx_info from={:?}, to={:?}, nonce = {}, chain_id = {:?}",
+            tx.caller(),
+            tx.address(),
+            tx.nonce,
+            tx.signature.chain_id()
+        );
 
         let account_metas = vec![AccountMeta::new(self.key.pubkey(), true)];
 

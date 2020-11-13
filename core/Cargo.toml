@@ -44,11 +44,12 @@ serde = "1.0.112"
 serde_derive = "1.0.103"
 serde_json = "1.0.56"
 hex = "0.4.2"
-rlp = "0.4.6"
+rlp = "0.4.5"
 sha3="0.9.1"
 primitive-types = "0.7"
 secp256k1 = { version = "0.19.0", features = ["recovery", "global-context"] }
 evm-state = {path="../evm-utils/evm-state"}
+evm-rpc = {path="../evm-utils/evm-rpc"}
 solana-evm-loader-program = {path="../evm-utils/programs/evm_loader"}
 solana-account-decoder = { path = "../account-decoder", version = "1.4.0" }
 solana-banks-server = { path = "../banks-server", version = "1.4.0" }

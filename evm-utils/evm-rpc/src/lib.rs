@@ -1,26 +1,13 @@
 mod error;
-mod impls;
 mod serialize;
-use self::error::Error;
-use self::serialize::*;
+pub use self::error::Error;
+pub use self::serialize::*;
 use evm_state::*;
-pub use impls::*;
 use jsonrpc_derive::rpc;
 use primitive_types::{H256, U256};
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
-
-// use std::net::SocketAddr;
-// use std::sync::{Arc, Mutex};
-// use std::sync::mpsc::{channel, Sender, Receiver};
-
-// mod serves;
-// mod filter;
-// mod util;
-// mod solidity;
-
-// use super::miner::MinerState;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
@@ -174,22 +161,22 @@ pub struct RPCStep {
     pub storage: Option<HashMap<Hex<U256>, Hex<U256>>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct RPCDump {
-    pub accounts: HashMap<Hex<Address>, RPCDumpAccount>,
-    pub root: Hex<H256>,
-}
+// #[derive(Serialize, Deserialize, Debug, Clone)]
+// #[serde(rename_all = "camelCase")]
+// pub struct RPCDump {
+//     pub accounts: HashMap<Hex<Address>, RPCDumpAccount>,
+//     pub root: Hex<H256>,
+// }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct RPCDumpAccount {
+pub struct RPCDumpAccountBasic {
     pub balance: Hex<U256>,
-    pub code: Bytes,
-    pub code_hash: Hex<H256>,
+    // pub code: Bytes,
+    // pub code_hash: Hex<H256>,
     pub nonce: Hex<U256>,
-    pub root: Hex<H256>,
-    pub storage: HashMap<Hex<U256>, Hex<U256>>,
+    // pub root: Hex<H256>,
+    // pub storage: HashMap<Hex<U256>, Hex<U256>>,
 }
 pub use basic::BasicERPC;
 pub use bridge::BridgeERPC;
@@ -293,7 +280,7 @@ pub mod chain_mock {
         fn peer_count(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error>;
 
         #[rpc(meta, name = "eth_chainId")]
-        fn chain_id(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error>;
+        fn chain_id(&self, meta: Self::Metadata) -> Result<Hex<u64>, Error>;
 
         #[rpc(meta, name = "eth_protocolVersion")]
         fn protocol_version(&self, meta: Self::Metadata) -> Result<String, Error>;

@@ -1,5 +1,5 @@
 use evm::backend::{Apply, ApplyBackend, Backend, Basic, Log};
-use log::{debug, error, info};
+use log::{debug, error};
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 
@@ -176,7 +176,7 @@ impl<'a> LockedState<'a> {
         ApplyBackend::apply(self, patch.0, patch.1, false);
         let mut state = self.fork_mut();
         for (tx_hash, tx) in txs {
-            info!("Register tx in evm = {}", tx_hash);
+            debug!("Register tx in evm = {}", tx_hash);
             state.insert_tx_receipt(tx_hash, tx)
         }
     }
@@ -278,7 +278,7 @@ impl<'a> ApplyBackend for LockedState<'a> {
                     storage,
                     reset_storage: _,
                 } => {
-                    debug!("Apply::Modify address = {}", address);
+                    debug!("Apply::Modify address = {}, basic = {:?}", address, basic);
                     // TODO: rollback on insert fail.
                     // TODO: clear account storage on delete.
                     let is_empty = {

@@ -1072,6 +1072,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "evm-rpc"
+version = "0.1.0"
+dependencies = [
+ "evm-state",
+ "hex",
+ "jsonrpc-core",
+ "jsonrpc-core-client",
+ "jsonrpc-derive",
+ "jsonrpc-http-server",
+ "jsonrpc-pubsub",
+ "primitive-types",
+ "rlp",
+ "secp256k1",
+ "serde",
+ "solana-evm-loader-program",
+]
+
+[[package]]
 name = "evm-runtime"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1090,6 +1108,7 @@ dependencies = [
  "criterion",
  "evm",
  "hex",
+ "keccak-hash",
  "log 0.4.8",
  "primitive-types",
  "rand 0.6.1",
@@ -2039,6 +2058,16 @@ name = "keccak"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67c21572b4949434e4fc1e1978b99c5f77064153c59d998bf13ecd96fb5ecba7"
+
+[[package]]
+name = "keccak-hash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f58a51ef3df9398cf2434bea8d4eb61fb748d0feb1571f87388579a120a4c8f"
+dependencies = [
+ "primitive-types",
+ "tiny-keccak",
+]
 
 [[package]]
 name = "kernel32-sys"
@@ -3209,9 +3238,9 @@ dependencies = [
 
 [[package]]
 name = "rlp"
-version = "0.4.6"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1190dcc8c3a512f1eef5d09bb8c84c7f39e1054e174d1795482e18f5272f2e73"
+checksum = "4a7d3f9bed94764eac15b8f14af59fac420c236adaff743b7bcc88e265cb4345"
 dependencies = [
  "rustc-hex",
 ]
@@ -3972,6 +4001,8 @@ dependencies = [
  "assert_matches",
  "bincode",
  "bs58",
+ "evm-rpc",
+ "evm-state",
  "indicatif",
  "jsonrpc-core",
  "jsonrpc-http-server",
@@ -4018,6 +4049,7 @@ dependencies = [
  "core_affinity",
  "crossbeam-channel",
  "ed25519-dalek",
+ "evm-rpc",
  "evm-state",
  "flate2",
  "fs_extra",

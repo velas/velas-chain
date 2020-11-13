@@ -40,6 +40,7 @@ impl Transaction {
     }
 }
 
+#[derive(Clone)]
 pub struct UnsignedTransaction {
     pub nonce: U256,
     pub gas_price: U256,
@@ -69,7 +70,7 @@ impl UnsignedTransaction {
     pub fn signing_hash(&self, chain_id: Option<u64>) -> H256 {
         let mut stream = RlpStream::new();
         self.signing_rlp_append(&mut stream, chain_id);
-        H256::from_slice(Keccak256::digest(&stream.drain()).as_slice())
+        H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
     }
 
     pub fn sign(self, key: &SecretKey, chain_id: Option<u64>) -> Transaction {
@@ -187,10 +188,10 @@ impl Encodable for TransactionAction {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self {
             TransactionAction::Call(address) => {
-                s.append(address);
+                s.append_internal(address);
             }
             TransactionAction::Create => {
-                s.append(&"");
+                s.append_internal(&"");
             }
         }
     }
@@ -283,7 +284,7 @@ impl TransactionReceipt {
     }
 }
 
-fn addr_from_public_key(key: &PublicKey) -> H160 {
+pub fn addr_from_public_key(key: &PublicKey) -> H160 {
     let digest = Keccak256::digest(&key.serialize_uncompressed()[1..]);
 
     let hash = H256::from_slice(digest.as_slice());
@@ -321,10 +322,105 @@ mod test {
             input: vec![2; 3],
         };
         let chain_id = 0x77;
+        let mut stream = RlpStream::new();
+        tx.signing_rlp_append(&mut stream, Some(chain_id));
+        println!("rlp = {}", hex::encode(stream.out()));
+        println!("hash = {:x}", tx.signing_hash(Some(chain_id)));
 
         let tx = tx.sign(&secret_key, Some(chain_id));
 
         assert_eq!(tx.signature.chain_id(), Some(chain_id));
         assert_eq!(tx.caller().unwrap(), addr);
+    }
+
+    #[test]
+    fn raw_tx_from_web3() {
+        let chain_id = 101;
+        let addr = H160::from_str("9Edb9E0B88Dbf2a29aE121a657e1860aEceaA53D").unwrap();
+        let secret_key =
+            SecretKey::from_str("fb507dc8bc8ea30aa275702108e6a22f66096e274a1c4c36e709b12a13dd0e76")
+                .unwrap();
+
+        // {
+        //     v: '0x0112'
+        // r: '0x93dd10f0e3bdd60315594634e61e6459b1feaa5dcef1d1ce8f9ece843dba5052'
+        // s: '0x6829e09c4713ef6537b0523f41312f411159308db086db014c6828d49c5ab87c'
+        let raw_tx = "f8658001831e848094f0109fc8df283027b6285cc889f5aa624eac1f55843b9aca008081eda01006e931fd170e04c164c1854f0aa60aa39695bbaed7cf11e68f32948b66e70ba01726bf45212937d7229621bcc647ce24f926dce88c3a99408433ac0ed6af2a22";
+        let tx_bytes = hex::decode(raw_tx).unwrap();
+        let tx: Transaction = rlp::decode(&tx_bytes).unwrap();
+        let r = H256::from_str("1006e931fd170e04c164c1854f0aa60aa39695bbaed7cf11e68f32948b66e70b")
+            .unwrap();
+        let s = H256::from_str("1726bf45212937d7229621bcc647ce24f926dce88c3a99408433ac0ed6af2a22")
+            .unwrap();
+        assert_eq!(tx.signature.v, 0xed);
+        assert_eq!(tx.signature.r, r);
+        assert_eq!(tx.signature.s, s);
+
+        assert_eq!(tx.signature.chain_id(), Some(chain_id));
+
+        let tx_hash =
+            H256::from_str("9ef6ce713d2bfd5dbf0f687b974c868c7fc6de07074edde66b0288af024b1699")
+                .unwrap();
+
+        let unsigned: UnsignedTransaction = tx.clone().into();
+        let tx_bytes_back = rlp::encode(&tx);
+        println!("{}", hex::encode(tx_bytes_back));
+        let tx_back = unsigned.clone().sign(&secret_key, Some(chain_id));
+        let tx_bytes_back = rlp::encode(&tx_back);
+        println!("{}", hex::encode(tx_bytes_back));
+
+        let mut stream = RlpStream::new();
+        unsigned.signing_rlp_append(&mut stream, Some(chain_id));
+
+        println!("  {}", hex::encode(stream.as_raw()));
+
+        assert_eq!(tx, tx_back);
+
+        assert_eq!(unsigned.signing_hash(Some(chain_id)), tx_hash);
+
+        assert_eq!(tx.caller().unwrap(), addr);
+        // transactionHash: '0x211f77299a72e0e57d1a715c5c232a192e6d55d36dd73084ac64b8dc3bc76a15'
+    }
+
+    #[test]
+    fn should_agree_with_vitalik() {
+        let test_vector = |tx_data: &str, address: &'static str| {
+            let signed: Transaction =
+                rlp::decode(&hex::decode(tx_data).unwrap()).expect("decoding tx data failed");
+            assert_eq!(
+                signed.caller().unwrap(),
+                Address::from_str(&address[2..]).unwrap()
+            );
+            println!("chainid: {:?}", signed.signature.chain_id());
+        };
+
+        test_vector("f864808504a817c800825208943535353535353535353535353535353535353535808025a0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116da0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116d", "0xf0f6f18bca1b28cd68e4357452947e021241e9ce");
+        test_vector("f864018504a817c80182a410943535353535353535353535353535353535353535018025a0489efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bcaa0489efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bc6", "0x23ef145a395ea3fa3deb533b8a9e1b4c6c25d112");
+        test_vector("f864028504a817c80282f618943535353535353535353535353535353535353535088025a02d7c5bef027816a800da1736444fb58a807ef4c9603b7848673f7e3a68eb14a5a02d7c5bef027816a800da1736444fb58a807ef4c9603b7848673f7e3a68eb14a5", "0x2e485e0c23b4c3c542628a5f672eeab0ad4888be");
+        test_vector("f865038504a817c803830148209435353535353535353535353535353535353535351b8025a02a80e1ef1d7842f27f2e6be0972bb708b9a135c38860dbe73c27c3486c34f4e0a02a80e1ef1d7842f27f2e6be0972bb708b9a135c38860dbe73c27c3486c34f4de", "0x82a88539669a3fd524d669e858935de5e5410cf0");
+        test_vector("f865048504a817c80483019a28943535353535353535353535353535353535353535408025a013600b294191fc92924bb3ce4b969c1e7e2bab8f4c93c3fc6d0a51733df3c063a013600b294191fc92924bb3ce4b969c1e7e2bab8f4c93c3fc6d0a51733df3c060", "0xf9358f2538fd5ccfeb848b64a96b743fcc930554");
+        test_vector("f865058504a817c8058301ec309435353535353535353535353535353535353535357d8025a04eebf77a833b30520287ddd9478ff51abbdffa30aa90a8d655dba0e8a79ce0c1a04eebf77a833b30520287ddd9478ff51abbdffa30aa90a8d655dba0e8a79ce0c1", "0xa8f7aba377317440bc5b26198a363ad22af1f3a4");
+        test_vector("f866068504a817c80683023e3894353535353535353535353535353535353535353581d88025a06455bf8ea6e7463a1046a0b52804526e119b4bf5136279614e0b1e8e296a4e2fa06455bf8ea6e7463a1046a0b52804526e119b4bf5136279614e0b1e8e296a4e2d", "0xf1f571dc362a0e5b2696b8e775f8491d3e50de35");
+        test_vector("f867078504a817c807830290409435353535353535353535353535353535353535358201578025a052f1a9b320cab38e5da8a8f97989383aab0a49165fc91c737310e4f7e9821021a052f1a9b320cab38e5da8a8f97989383aab0a49165fc91c737310e4f7e9821021", "0xd37922162ab7cea97c97a87551ed02c9a38b7332");
+        test_vector("f867088504a817c8088302e2489435353535353535353535353535353535353535358202008025a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c12a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c10", "0x9bddad43f934d313c2b79ca28a432dd2b7281029");
+        test_vector("f867098504a817c809830334509435353535353535353535353535353535353535358202d98025a052f8f61201b2b11a78d6e866abc9c3db2ae8631fa656bfe5cb53668255367afba052f8f61201b2b11a78d6e866abc9c3db2ae8631fa656bfe5cb53668255367afb", "0x3c24d7329e92f84f08556ceb6df1cdb0104ca49f");
+    }
+
+    #[test]
+    fn should_recover_from_chain_specific_signing() {
+        let mut rng = secp256k1::rand::thread_rng();
+        let key = SecretKey::new(&mut rng);
+        let t = UnsignedTransaction {
+            action: TransactionAction::Create,
+            nonce: U256::from(42),
+            gas_price: U256::from(3000),
+            gas_limit: U256::from(50_000),
+            value: U256::from(1),
+            input: b"Hello!".to_vec(),
+        }
+        .sign(&key, Some(69));
+        let public_key = PublicKey::from_secret_key(SECP256K1, &key);
+        assert_eq!(addr_from_public_key(&public_key), t.caller().unwrap());
+        assert_eq!(t.signature.chain_id(), Some(69));
     }
 }

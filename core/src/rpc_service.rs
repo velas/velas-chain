@@ -3,13 +3,13 @@
 use crate::{
     bigtable_upload_service::BigTableUploadService,
     cluster_info::ClusterInfo,
-    evm_rpc::*,
     poh_recorder::PohRecorder,
     rpc::*,
     rpc_health::*,
     send_transaction_service::{LeaderInfo, SendTransactionService},
     validator::ValidatorExit,
 };
+use evm_rpc::*;
 use jsonrpc_core::MetaIoHandler;
 use jsonrpc_http_server::{
     hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
@@ -337,11 +337,11 @@ impl JsonRpcService {
                 let mut io = MetaIoHandler::default();
                 let rpc = RpcSolImpl;
                 io.extend_with(rpc.to_delegate());
-                let ether_basic = super::evm_rpc::BasicERPCImpl;
+                let ether_basic = super::evm_rpc_impl::BasicERPCImpl;
                 io.extend_with(ether_basic.to_delegate());
-                let chain_mock = super::evm_rpc::ChainMockERPCImpl;
+                let chain_mock = super::evm_rpc_impl::ChainMockERPCImpl;
                 io.extend_with(chain_mock.to_delegate());
-                let bridge_rpc = super::evm_rpc::BridgeERPCImpl::default();
+                let bridge_rpc = super::evm_rpc_impl::BridgeERPCImpl::default();
                 io.extend_with(bridge_rpc.to_delegate());
 
                 let request_middleware = RpcRequestMiddleware::new(

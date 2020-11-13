@@ -105,17 +105,27 @@ pub fn process_instruction(
                         evm_tx.gas_limit.as_usize(),
                     )
                 }
-                TransactionAction::Create => (
-                    evm_executor.transact_create(
-                        evm_tx
-                            .caller()
-                            .map_err(|_| InstructionError::InvalidArgument)?,
-                        evm_tx.value,
-                        evm_tx.input.clone(),
-                        evm_tx.gas_limit.as_usize(),
-                    ),
-                    vec![],
-                ),
+                TransactionAction::Create => {
+                    let caller = evm_tx
+                        .caller()
+                        .map_err(|_| InstructionError::InvalidArgument)?;
+                    let addr = evm_tx.address();
+                    log!(
+                        logger,
+                        "TransactionAction::Create caller  = {}, to = {:?}.",
+                        caller,
+                        addr
+                    );
+                    (
+                        evm_executor.transact_create(
+                            caller,
+                            evm_tx.value,
+                            evm_tx.input.clone(),
+                            evm_tx.gas_limit.as_usize(),
+                        ),
+                        vec![],
+                    )
+                }
             };
 
             let used_gas = evm_executor.used_gas() - before_gas;
@@ -206,6 +216,9 @@ mod test {
         instruction::CompiledInstruction,
         message::Message,
     };
+
+    use std::sync::Arc;
+    use std::sync::{RwLock, RwLockWriteGuard};
     use std::{cell::RefCell, rc::Rc};
 
     fn dummy_eth_tx() -> evm_state::transactions::Transaction {
@@ -267,19 +280,15 @@ mod test {
         pub compute_meter: MockComputeMeter,
         pub evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>,
     }
-    impl Default for MockInvokeContext {
-        fn default() -> Self {
+    impl MockInvokeContext {
+        fn new(evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>) -> Self {
             MockInvokeContext {
                 key: Pubkey::default(),
                 logger: MockLogger::default(),
                 compute_meter: MockComputeMeter {
                     remaining: std::u64::MAX,
                 },
-                evm_executor: Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
-                    evm_state::EvmState::default(),
-                    evm_state::Config::istanbul(),
-                    10000000,
-                ))),
+                evm_executor,
             }
         }
     }
@@ -323,7 +332,12 @@ mod test {
 
     #[test]
     fn execute_tx() {
-        let mut cx = MockInvokeContext::default();
+        let executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
+            evm_state::EvmState::default(),
+            evm_state::Config::istanbul(),
+            10000000,
+        )));
+        let mut cx = MockInvokeContext::new(executor.clone());
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let tx_create = evm::UnsignedTransaction {
             nonce: 0.into(),
@@ -366,6 +380,96 @@ mod test {
         )
         .is_ok());
         println!("cx = {:?}", cx);
+    }
+
+    #[test]
+    fn execute_tx_with_state_apply() {
+        use evm_state::Backend;
+        let mut state = RwLock::new(evm_state::EvmState::default());
+
+        let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
+        let tx_create = evm::UnsignedTransaction {
+            nonce: 0.into(),
+            gas_price: 1.into(),
+            gas_limit: 300000.into(),
+            action: TransactionAction::Create,
+            value: 0.into(),
+            input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec(),
+        };
+
+        let tx_create = tx_create.sign(&secret_key, None);
+
+        let caller_address = tx_create.caller().unwrap();
+        let tx_address = tx_create.address().unwrap();
+
+        assert_eq!(state.read().unwrap().basic(caller_address).nonce, 0.into());
+        assert_eq!(state.read().unwrap().basic(tx_address).nonce, 0.into());
+        {
+            let mut locked = evm_state::EvmState::try_lock(&state).unwrap();
+            let executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
+                locked.backend(),
+                evm_state::Config::istanbul(),
+                10000000,
+            )));
+
+            let mut cx = MockInvokeContext::new(executor.clone());
+            assert!(process_instruction(
+                &crate::ID,
+                &[],
+                &bincode::serialize(&EvmInstruction::EvmTransaction {
+                    evm_tx: tx_create.clone()
+                })
+                .unwrap(),
+                &mut cx
+            )
+            .is_ok());
+            println!("cx = {:?}", cx);
+
+            drop(cx);
+            let patch = Rc::try_unwrap(executor).unwrap().into_inner().deconstruct(); // TODO: Handle borrowing
+
+            locked.apply(patch);
+        }
+
+        // cx.evm_executor.borrow_mut().deconstruct();
+
+        assert_eq!(state.read().unwrap().basic(caller_address).nonce, 1.into());
+        assert_eq!(state.read().unwrap().basic(tx_address).nonce, 1.into());
+
+        let tx_call = evm::UnsignedTransaction {
+            nonce: 1.into(),
+            gas_price: 1.into(),
+            gas_limit: 300000.into(),
+            action: TransactionAction::Call(tx_address),
+            value: 0.into(),
+            input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
+        };
+
+        let tx_call = tx_call.sign(&secret_key, None);
+        {
+            let mut locked = evm_state::EvmState::try_lock(&state).unwrap();
+            let executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
+                locked.backend(),
+                evm_state::Config::istanbul(),
+                10000000,
+            )));
+
+            let mut cx = MockInvokeContext::new(executor.clone());
+            assert!(process_instruction(
+                &crate::ID,
+                &[],
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
+                &mut cx
+            )
+            .is_ok());
+            println!("cx = {:?}", cx);
+
+            drop(cx);
+            let patch = Rc::try_unwrap(executor).unwrap().into_inner().deconstruct(); // TODO: Handle borrowing
+
+            locked.apply(patch);
+        }
+
         // TODO: Assert that tx executed successfull.
         panic!();
         // assert!(process_instruction(&crate::ID, &[], tx_call, &mut cx).is_ok());
