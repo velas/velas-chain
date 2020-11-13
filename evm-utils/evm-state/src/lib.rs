@@ -48,7 +48,7 @@ impl<B: evm::backend::Backend> StaticExecutor<B> {
             evm,
         }
     }
-    pub fn rent_executor<'a>(&'a mut self) -> &'a mut evm::executor::StackExecutor<'a, 'a, B> {
+    pub fn rent_executor(&mut self) -> &mut evm::executor::StackExecutor<'_, '_, B> {
         unsafe { std::mem::transmute(&mut self.evm) }
     }
 
@@ -79,7 +79,6 @@ pub mod tests {
     use super::*;
     use assert_matches::assert_matches;
     use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
-    use hex;
 
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
@@ -135,7 +134,7 @@ pub mod tests {
             name_to_key("caller"),
             CreateScheme::Fixed(name_to_key("contract")),
             U256::zero(),
-            code.clone(),
+            code,
             None,
         ) {
             Capture::Exit((s, _, v)) => (s, v),

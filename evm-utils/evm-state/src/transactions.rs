@@ -114,8 +114,8 @@ pub enum TransactionAction {
 impl TransactionAction {
     pub fn address(&self, caller: Address, nonce: U256) -> Address {
         match self {
-            &TransactionAction::Call(address) => address,
-            &TransactionAction::Create => {
+            TransactionAction::Call(address) => *address,
+            TransactionAction::Create => {
                 let mut rlp = RlpStream::new_list(2);
                 rlp.append(&caller);
                 rlp.append(&nonce);
@@ -187,10 +187,10 @@ impl TransactionSignature {
 impl Encodable for TransactionAction {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self {
-            &TransactionAction::Call(address) => {
-                s.append(&address);
+            TransactionAction::Call(address) => {
+                s.append(address);
             }
-            &TransactionAction::Create => {
+            TransactionAction::Create => {
                 s.append(&"");
             }
         }

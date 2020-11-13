@@ -119,7 +119,7 @@ impl Backend for MemoryBackend {
         self.state
             .get(&address)
             .map(|v| H256::from_slice(Keccak256::digest(&v.code).as_slice()))
-            .unwrap_or(H256::from_slice(Keccak256::digest(&[]).as_slice()))
+            .unwrap_or_else(|| H256::from_slice(Keccak256::digest(&[]).as_slice()))
     }
 
     fn code_size(&self, address: H160) -> usize {
@@ -136,8 +136,8 @@ impl Backend for MemoryBackend {
     fn storage(&self, address: H160, index: H256) -> H256 {
         self.state
             .get(&address)
-            .map(|v| v.storage.get(&index).cloned().unwrap_or(H256::default()))
-            .unwrap_or(H256::default())
+            .and_then(|v| v.storage.get(&index).cloned())
+            .unwrap_or_default()
     }
 }
 
@@ -158,7 +158,7 @@ impl ApplyBackend for MemoryBackend {
                     reset_storage,
                 } => {
                     let is_empty = {
-                        let account = self.state.entry(address).or_insert(Default::default());
+                        let account = self.state.entry(address).or_default();
                         account.balance = basic.balance;
                         account.nonce = basic.nonce;
                         if let Some(code) = code {
@@ -173,7 +173,7 @@ impl ApplyBackend for MemoryBackend {
                             .storage
                             .iter()
                             .filter(|(_, v)| v == &&H256::default())
-                            .map(|(k, _)| k.clone())
+                            .map(|(k, _)| *k)
                             .collect::<Vec<H256>>();
 
                         for zero in zeros {
@@ -190,7 +190,7 @@ impl ApplyBackend for MemoryBackend {
 
                         account.balance == U256::zero()
                             && account.nonce == U256::zero()
-                            && account.code.len() == 0
+                            && account.code.is_empty()
                     };
 
                     if is_empty && delete_empty {

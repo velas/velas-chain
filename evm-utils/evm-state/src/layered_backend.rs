@@ -59,7 +59,7 @@ pub struct LockedState<'a> {
 impl EvmState {
     pub fn new(vicinity: MemoryVicinity) -> Self {
         EvmState {
-            vicinity: vicinity,
+            vicinity,
             accounts: Arc::new(Map::new()),
             storage: Arc::new(Map::new()),
             logs: Vec::new(),
@@ -104,7 +104,7 @@ impl EvmState {
 }
 
 impl<'a> LockedState<'a> {
-    pub fn fork_mut<'b>(&'b mut self) -> EvmAccountsLocked<'b> {
+    pub fn fork_mut(&mut self) -> EvmAccountsLocked<'_> {
         if Arc::strong_count(&self.guard.accounts) > 2 || Arc::strong_count(&self.guard.storage) > 2
         {
             error!("During forking locked state, stale evm accounts founds. This can happen, when we trying to edit not last state.");
@@ -184,7 +184,7 @@ impl Backend for EvmState {
         self.accounts
             .get(&address)
             .map(|v| H256::from_slice(Keccak256::digest(&v.code).as_slice()))
-            .unwrap_or(H256::from_slice(Keccak256::digest(&[]).as_slice()))
+            .unwrap_or_else(|| H256::from_slice(Keccak256::digest(&[]).as_slice()))
     }
 
     fn code_size(&self, address: H160) -> usize {
@@ -205,7 +205,7 @@ impl Backend for EvmState {
         self.storage
             .get(&(address, index))
             .cloned()
-            .unwrap_or(H256::default())
+            .unwrap_or_default()
     }
 }
 
@@ -230,11 +230,7 @@ impl<'a> ApplyBackend for LockedState<'a> {
                     // TODO: rollback on insert fail.
                     // TODO: clear account storage on delete.
                     let is_empty = {
-                        let mut account = state
-                            .accounts
-                            .get(&address)
-                            .cloned()
-                            .unwrap_or(Default::default());
+                        let mut account = state.accounts.get(&address).cloned().unwrap_or_default();
                         account.balance = basic.balance;
                         account.nonce = basic.nonce;
                         if let Some(code) = code {
@@ -242,7 +238,7 @@ impl<'a> ApplyBackend for LockedState<'a> {
                         }
                         let is_empty_state = account.balance == U256::zero()
                             && account.nonce == U256::zero()
-                            && account.code.len() == 0;
+                            && account.code.is_empty();
 
                         state.accounts.insert(address, account);
 
