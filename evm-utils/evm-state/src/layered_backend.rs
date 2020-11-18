@@ -1,14 +1,12 @@
+use std::collections::BTreeMap;
+
 use evm::backend::{Apply, ApplyBackend, Backend, Basic, Log};
-use log::{debug, error};
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
-
 use sha3::{Digest, Keccak256};
 
 use super::transactions::TransactionReceipt;
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::{RwLock, RwLockWriteGuard};
+use super::version_map::Map;
 
 /// Vivinity value of a memory backend.
 #[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -33,9 +31,7 @@ pub struct MemoryVicinity {
     pub block_gas_limit: U256,
 }
 
-use super::version_map::Map;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Default, Clone, Debug, Eq, PartialEq)]
 pub struct AccountState {
     /// Account nonce.
     pub nonce: U256,
@@ -45,23 +41,14 @@ pub struct AccountState {
     pub code: Vec<u8>,
 }
 
-impl Default for AccountState {
-    fn default() -> Self {
-        AccountState {
-            nonce: U256::from(0),
-            balance: U256::from(0),
-            code: vec![],
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct EvmState {
     vicinity: MemoryVicinity,
-    pub(crate) accounts: Arc<Map<H160, AccountState>>,
-    // Store every account storage at single place, to use power of versioned map. (This allows us to save only changed data).
-    pub(crate) storage: Arc<Map<(H160, H256), H256>>,
-    pub(crate) txs_receipts: Arc<Map<H256, TransactionReceipt>>,
+    pub(crate) accounts: Map<H160, AccountState>,
+    // Store every account storage at single place, to use power of versioned map.
+    // This allows us to save only changed data.
+    pub(crate) storage: Map<(H160, H256), H256>,
+    pub(crate) txs_receipts: Map<H256, TransactionReceipt>,
     logs: Vec<Log>,
 }
 
@@ -71,35 +58,41 @@ impl Default for EvmState {
     }
 }
 
-#[derive(Debug)]
-pub struct EvmAccountsLocked<'a> {
-    pub accounts: &'a mut Map<H160, AccountState>,
-    pub storage: &'a mut Map<(H160, H256), H256>,
-    pub txs_receipts: &'a mut Map<H256, TransactionReceipt>,
-}
+impl EvmState {
+    pub fn freeze(&mut self) {
+        self.accounts.freeze();
+        self.storage.freeze();
+        self.txs_receipts.freeze();
+    }
 
-impl<'a> EvmAccountsLocked<'a> {
-    pub fn insert_tx_receipt(&mut self, tx_hash: H256, tx: TransactionReceipt) {
-        self.txs_receipts.insert(tx_hash, tx)
+    pub fn try_fork(&self) -> Option<Self> {
+        let accounts = self.accounts.try_fork()?;
+        let storage = self.storage.try_fork()?;
+        let txs_receipts = self.txs_receipts.try_fork()?;
+
+        Some(Self {
+            vicinity: self.vicinity.clone(),
+            accounts,
+            storage,
+            txs_receipts,
+            logs: vec![],
+        })
     }
 }
 
-#[derive(Debug)]
-pub struct LockedState<'a> {
-    guard: RwLockWriteGuard<'a, EvmState>,
+impl From<MemoryVicinity> for EvmState {
+    fn from(vicinity: MemoryVicinity) -> Self {
+        Self {
+            vicinity,
+            accounts: Map::new(),
+            storage: Map::new(),
+            txs_receipts: Map::new(),
+            logs: vec![],
+        }
+    }
 }
 
 impl EvmState {
-    pub fn new(vicinity: MemoryVicinity) -> Self {
-        EvmState {
-            vicinity,
-            accounts: Arc::new(Map::new()),
-            storage: Arc::new(Map::new()),
-            txs_receipts: Arc::new(Map::new()),
-            logs: Vec::new(),
-        }
-    }
-
     // TODO: Replace it by persistent storage
     pub fn new_not_forget_to_deserialize_later() -> Self {
         let vicinity = MemoryVicinity {
@@ -115,51 +108,15 @@ impl EvmState {
         };
         EvmState {
             vicinity,
-            accounts: Arc::new(Map::new()),
-            storage: Arc::new(Map::new()),
-            txs_receipts: Arc::new(Map::new()),
+            accounts: Map::new(),
+            storage: Map::new(),
+            txs_receipts: Map::new(),
             logs: Vec::new(),
         }
-    }
-
-    pub fn new_from_parent(&self) -> Self {
-        EvmState {
-            vicinity: self.vicinity.clone(),
-            accounts: Arc::new(Map::new_from_parent(self.accounts.clone())),
-            storage: Arc::new(Map::new_from_parent(self.storage.clone())),
-            txs_receipts: Arc::new(Map::new_from_parent(self.txs_receipts.clone())),
-            logs: Vec::new(),
-        }
-    }
-
-    // TODO: Handle already locked.
-    pub fn try_lock<'a>(this: &'a RwLock<Self>) -> Option<LockedState<'a>> {
-        let guard = this.write().ok()?;
-        Some(LockedState { guard })
     }
 
     pub fn get_tx_receipt_by_hash(&self, tx_hash: H256) -> Option<&TransactionReceipt> {
         self.txs_receipts.get(&tx_hash)
-    }
-}
-
-impl<'a> LockedState<'a> {
-    pub fn fork_mut(&mut self) -> EvmAccountsLocked<'_> {
-        if Arc::strong_count(&self.guard.accounts) > 1
-            || Arc::strong_count(&self.guard.storage) > 1
-            || Arc::strong_count(&self.guard.txs_receipts) > 1
-        {
-            error!("During forking locked state, stale evm accounts founds. This can happen, when we trying to edit not last state.");
-        }
-        let guard = &mut *self.guard;
-        EvmAccountsLocked {
-            accounts: Arc::make_mut(&mut guard.accounts),
-            storage: Arc::make_mut(&mut guard.storage),
-            txs_receipts: Arc::make_mut(&mut guard.txs_receipts),
-        }
-    }
-    pub fn backend(&self) -> EvmState {
-        (*self.guard).clone()
     }
 
     pub fn apply(
@@ -174,10 +131,9 @@ impl<'a> LockedState<'a> {
     ) {
         let (patch, txs) = updates;
         ApplyBackend::apply(self, patch.0, patch.1, false);
-        let mut state = self.fork_mut();
         for (tx_hash, tx) in txs {
-            debug!("Register tx in evm = {}", tx_hash);
-            state.insert_tx_receipt(tx_hash, tx)
+            log::debug!("Register tx in evm = {}", tx_hash);
+            self.txs_receipts.insert(tx_hash, tx);
         }
     }
 }
@@ -261,14 +217,13 @@ impl Backend for EvmState {
     }
 }
 
-impl<'a> ApplyBackend for LockedState<'a> {
+impl ApplyBackend for EvmState {
     fn apply<A, I, L>(&mut self, values: A, logs: L, delete_empty: bool)
     where
         A: IntoIterator<Item = Apply<I>>,
         I: IntoIterator<Item = (H256, H256)>,
         L: IntoIterator<Item = Log>,
     {
-        let state = self.fork_mut();
         for apply in values {
             match apply {
                 Apply::Modify {
@@ -278,11 +233,11 @@ impl<'a> ApplyBackend for LockedState<'a> {
                     storage,
                     reset_storage: _,
                 } => {
-                    debug!("Apply::Modify address = {}, basic = {:?}", address, basic);
+                    log::debug!("Apply::Modify address = {}, basic = {:?}", address, basic);
                     // TODO: rollback on insert fail.
                     // TODO: clear account storage on delete.
                     let is_empty = {
-                        let mut account = state.accounts.get(&address).cloned().unwrap_or_default();
+                        let mut account = self.accounts.get(&address).cloned().unwrap_or_default();
                         account.balance = basic.balance;
                         account.nonce = basic.nonce;
                         if let Some(code) = code {
@@ -292,7 +247,7 @@ impl<'a> ApplyBackend for LockedState<'a> {
                             && account.nonce == U256::zero()
                             && account.code.is_empty();
 
-                        state.accounts.insert(address, account);
+                        self.accounts.insert(address, account);
 
                         // TODO: Clear storage on reset_storage = true
                         // if reset_storage {
@@ -303,9 +258,9 @@ impl<'a> ApplyBackend for LockedState<'a> {
 
                         for (index, value) in storage {
                             if value == H256::default() {
-                                state.storage.remove((address, index));
+                                self.storage.remove((address, index));
                             } else {
-                                state.storage.insert((address, index), value);
+                                self.storage.insert((address, index), value);
                             }
                         }
 
@@ -313,18 +268,16 @@ impl<'a> ApplyBackend for LockedState<'a> {
                     };
 
                     if is_empty && delete_empty {
-                        state.accounts.remove(address);
+                        self.accounts.remove(address);
                     }
                 }
                 Apply::Delete { address } => {
-                    state.accounts.remove(address);
+                    self.accounts.remove(address);
                 }
             }
         }
 
-        for log in logs {
-            self.guard.logs.push(log);
-        }
+        self.logs.extend(logs);
     }
 }
 

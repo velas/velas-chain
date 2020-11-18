@@ -530,10 +530,11 @@ impl BankingStage {
         } else {
             vec![]
         };
-        let mut locked = evm_state::EvmState::try_lock(&bank.evm_state).unwrap();
+
+        let mut evm_wl = bank.evm_state.write().expect("bank evm state was poisoned");
 
         let (mut loaded_accounts, results, mut retryable_txs, tx_count, signature_count, path) =
-            bank.load_and_execute_transactions(batch, MAX_PROCESSING_AGE, None, &mut locked);
+            bank.load_and_execute_transactions(batch, MAX_PROCESSING_AGE, None, &mut evm_wl);
         load_execute_time.stop();
 
         let freeze_lock = bank.freeze_lock();
@@ -559,7 +560,7 @@ impl BankingStage {
                 &results,
                 tx_count,
                 signature_count,
-                locked,
+                &mut evm_wl,
                 path,
             );
 

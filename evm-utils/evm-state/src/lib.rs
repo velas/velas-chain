@@ -1,9 +1,3 @@
-pub use layered_backend::*;
-pub use transactions::*;
-pub mod layered_backend;
-pub mod transactions;
-pub mod version_map;
-pub use primitive_types::{H256, U256};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Deref;
@@ -13,6 +7,14 @@ pub use evm::{
     executor::StackExecutor,
     Config, Context, Handler, Transfer,
 };
+
+pub mod layered_backend;
+pub mod transactions;
+pub mod version_map;
+
+pub use layered_backend::*;
+pub use primitive_types::{H256, U256};
+pub use transactions::*;
 
 /// StackExecutor, use config and backend by reference, this force object to be dependent on lifetime.
 /// And poison all outer objects with this lifetime.

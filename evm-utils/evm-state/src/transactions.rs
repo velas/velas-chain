@@ -272,10 +272,7 @@ impl TransactionReceipt {
         used_gas: Gas,
         result: (evm::ExitReason, Vec<u8>),
     ) -> TransactionReceipt {
-        let status = match result.0 {
-            evm::ExitReason::Succeed(_) => true,
-            _ => false,
-        };
+        let status = matches!(result.0, evm::ExitReason::Succeed(_));
         TransactionReceipt {
             status,
             transaction,
