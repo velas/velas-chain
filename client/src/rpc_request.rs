@@ -56,6 +56,7 @@ pub enum RpcRequest {
     SignVote,
     /// EVM scope
     GetEthTransactionCount,
+    GetEthBalance,
 }
 
 impl fmt::Display for RpcRequest {
@@ -111,6 +112,7 @@ impl fmt::Display for RpcRequest {
             RpcRequest::SimulateTransaction => "simulateTransaction",
             RpcRequest::SignVote => "signVote",
             RpcRequest::GetEthTransactionCount => "eth_getTransactionCount",
+            RpcRequest::GetEthBalance => "eth_getBalance",
         };
 
         write!(f, "{}", method)

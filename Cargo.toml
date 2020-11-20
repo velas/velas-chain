@@ -3,6 +3,7 @@ members = [
     "bench-exchange",
     "bench-streamer",
     "bench-tps",
+    "bench-tps-evm",
     "accounts-bench",
     "banking-bench",
     "banks-client",

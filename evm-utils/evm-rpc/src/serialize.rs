@@ -1,20 +1,93 @@
+use primitive_types::{H160, H256, H512, U128, U256, U512};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{self, LowerHex};
 use std::marker::PhantomData;
 use std::str::FromStr;
-
 #[derive(Debug, Hash, Clone, Eq, PartialEq)]
 pub struct Hex<T>(pub T);
 #[derive(Debug, Clone)]
 pub struct Bytes(pub Vec<u8>);
 
-impl<T: LowerHex> Serialize for Hex<T> {
+fn format_hex_trimmed<T: LowerHex>(val: &T) -> String {
+    let hex_str = format!("{:x}", val);
+    format!("0x{}", hex_str.trim_start_matches('0'))
+}
+
+pub trait FormatHex {
+    fn format_hex(&self) -> String;
+}
+
+impl FormatHex for usize {
+    fn format_hex(&self) -> String {
+        format_hex_trimmed(self)
+    }
+}
+
+impl FormatHex for u8 {
+    fn format_hex(&self) -> String {
+        format_hex_trimmed(self)
+    }
+}
+
+impl FormatHex for u16 {
+    fn format_hex(&self) -> String {
+        format_hex_trimmed(self)
+    }
+}
+impl FormatHex for u32 {
+    fn format_hex(&self) -> String {
+        format_hex_trimmed(self)
+    }
+}
+
+impl FormatHex for u64 {
+    fn format_hex(&self) -> String {
+        format_hex_trimmed(self)
+    }
+}
+
+impl FormatHex for U128 {
+    fn format_hex(&self) -> String {
+        format_hex_trimmed(self)
+    }
+}
+
+impl FormatHex for U256 {
+    fn format_hex(&self) -> String {
+        format_hex_trimmed(self)
+    }
+}
+
+impl FormatHex for U512 {
+    fn format_hex(&self) -> String {
+        format_hex_trimmed(self)
+    }
+}
+
+impl FormatHex for H512 {
+    fn format_hex(&self) -> String {
+        format!("0x{:x}", self)
+    }
+}
+
+impl FormatHex for H256 {
+    fn format_hex(&self) -> String {
+        format!("0x{:x}", self)
+    }
+}
+
+impl FormatHex for H160 {
+    fn format_hex(&self) -> String {
+        format!("0x{:x}", self)
+    }
+}
+
+impl<T: FormatHex> Serialize for Hex<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let hex_str = format!("{:x}", self.0);
-        let value = format!("0x{}", hex_str.trim_start_matches('0'));
+        let value = self.0.format_hex();
         if &value == "0x" {
             serializer.serialize_str("0x0")
         } else {
@@ -99,7 +172,7 @@ impl From<Vec<u8>> for Bytes {
         Bytes(b)
     }
 }
-impl<T: LowerHex + FromStr> From<T> for Hex<T> {
+impl<T: FormatHex + FromStr> From<T> for Hex<T> {
     fn from(b: T) -> Self {
         Hex(b)
     }
