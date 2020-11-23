@@ -181,7 +181,8 @@ mod test {
         assert_eq!(map.get(&"second"), Some(&2));
         assert_eq!(map.get(&"third"), Some(&3));
 
-        let mut map: Map<_, _> = Map::new_from_parent(Arc::new(map));
+        map.freeze();
+        let mut map: Map<_, _> = map.try_fork().unwrap();
 
         map.remove("first");
         map.insert("third", 1);
@@ -202,7 +203,8 @@ mod test {
         assert_eq!(map.get(&"second"), Some(&2));
         assert_eq!(map.get(&"third"), Some(&3));
 
-        let mut map = Map::new_from_parent_static(map);
+        map.freeze();
+        let mut map = map.try_fork().unwrap();
 
         map.remove("first");
         map.insert("third", 1);

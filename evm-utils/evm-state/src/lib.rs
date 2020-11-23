@@ -121,13 +121,11 @@ pub mod tests {
             block_gas_limit: U256::max_value(),
         };
 
-        let backend = EvmState::new(vicinity);
+        let backend = EvmState::from(vicinity);
         let backend = RwLock::new(backend);
 
-        let mut locked = EvmState::try_lock(&backend).unwrap();
-
         {
-            let state = locked.fork_mut();
+            let mut state = backend.write().unwrap();
 
             for acc in &accounts {
                 let account = name_to_key(acc);
@@ -139,8 +137,11 @@ pub mod tests {
         }
 
         let config = evm::Config::istanbul();
-        let mut executor =
-            StaticExecutor::with_config(locked.backend(), config, usize::max_value());
+        let mut executor = StaticExecutor::with_config(
+            backend.read().unwrap().try_fork().unwrap(),
+            config,
+            usize::max_value(),
+        );
 
         let exit_reason = match executor.rent_executor().create(
             name_to_key("caller"),
@@ -168,10 +169,9 @@ pub mod tests {
             any_other => panic!("Not expected result={:?}", any_other),
         }
 
-        let path = executor.deconstruct();
-        locked.apply(path);
+        let patch = executor.deconstruct();
+        backend.write().unwrap().apply(patch);
 
-        drop(locked);
         let mutex_lock = backend.read().unwrap();
         let contract = mutex_lock.accounts.get(&name_to_key("contract"));
         assert_eq!(

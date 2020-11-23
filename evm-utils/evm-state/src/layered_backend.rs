@@ -390,15 +390,15 @@ mod test {
     ) {
         for account in accounts {
             match &account.1 {
-                Some(v) => Arc::make_mut(&mut state.accounts).insert(*account.0, v.clone()),
-                None => Arc::make_mut(&mut state.accounts).remove(*account.0),
+                Some(v) => state.accounts.insert(*account.0, v.clone()),
+                None => state.accounts.remove(*account.0),
             }
         }
 
         for s in storage {
             match &s.1 {
-                Some(v) => Arc::make_mut(&mut state.storage).insert(*s.0, *v),
-                None => Arc::make_mut(&mut state.storage).remove(*s.0),
+                Some(v) => state.storage.insert(*s.0, *v),
+                None => state.storage.remove(*s.0),
             }
         }
     }
@@ -446,7 +446,14 @@ mod test {
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
 
         assert_state(&evm_state, &accounts_state_diff, &storage_diff);
-        let mut new_evm_state = evm_state.new_from_parent();
+        let mut new_evm_state = {
+            if let Some(new_evm_state) = evm_state.try_fork() {
+                new_evm_state
+            } else {
+                evm_state.freeze();
+                evm_state.try_fork().unwrap()
+            }
+        };
 
         assert_state(&new_evm_state, &accounts_state_diff, &storage_diff);
 
