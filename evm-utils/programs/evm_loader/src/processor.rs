@@ -12,21 +12,6 @@ use solana_sdk::{
     sysvar::{rent::Rent, Sysvar},
 };
 
-macro_rules! log{
-    ($logger:ident, $message:expr) => {
-        if let Ok(mut logger) = $logger.try_borrow_mut() {
-            if logger.log_enabled() {
-                logger.log($message);
-            }
-        }
-    };
-    ($logger:ident, $fmt:expr, $($arg:tt)*) => {
-        if let Ok(mut logger) = $logger.try_borrow_mut() {
-            logger.log(&format!($fmt, $($arg)*));
-        }
-    };
-}
-
 /// Return the next AccountInfo or a NotEnoughAccountKeys error
 pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
     iter: &mut I,
@@ -40,8 +25,9 @@ pub fn process_initialize_deposit(
 ) -> Result<(), InstructionError> {
     let account_info_iter = &mut accounts.iter();
     let deposit_info = next_account_info(account_info_iter)?;
+    let rent_account = next_account_info(account_info_iter)?;
     let deposit_info_len = deposit_info.data_len()?;
-    let rent = &Rent::from_account(&*next_account_info(account_info_iter)?.try_account_ref()?)
+    let rent = &Rent::from_account(&*rent_account.try_account_ref()?)
         .ok_or(InstructionError::InvalidArgument)?;
 
     let mut deposit: Deposit =
@@ -64,19 +50,46 @@ pub fn process_initialize_deposit(
     Ok(())
 }
 
+/// Ensure that first account is program itself, and it's locked for writes.
+fn check_evm_account<'a, 'b>(
+    program_id: &Pubkey,
+    keyed_accounts: &'a [KeyedAccount<'b>],
+) -> Result<&'a [KeyedAccount<'b>], InstructionError> {
+    let first = keyed_accounts
+        .get(0)
+        .ok_or(InstructionError::NotEnoughAccountKeys)?;
+
+    let keyed_accounts = &keyed_accounts[1..];
+
+    if first.unsigned_key() != program_id || !first.is_writable() {
+        error!("First account is not evm, or not writable");
+        debug!(
+            "Program_id = {}, account.pub_key()={}, writable={} ",
+            program_id,
+            first.unsigned_key(),
+            first.is_writable()
+        );
+        debug!("keyed_accounts = {:?}", keyed_accounts);
+        return Err(InstructionError::MissingAccount);
+    }
+
+    Ok(keyed_accounts)
+}
+
 pub fn process_instruction(
-    _program_id: &Pubkey,
+    program_id: &Pubkey,
     keyed_accounts: &[KeyedAccount],
     data: &[u8],
     cx: &mut dyn InvokeContext,
 ) -> Result<(), InstructionError> {
-    let logger = cx.get_logger();
     let evm_executor = cx.get_evm_executor();
     let mut static_evm_executor = evm_executor.borrow_mut();
     let evm_executor = static_evm_executor.rent_executor();
 
+    let keyed_accounts = check_evm_account(program_id, keyed_accounts)?;
+
     let ix = limited_deserialize(data)?;
-    log!(logger, "Run evm exec with ix = {:?}.", ix);
+    debug!("Run evm exec with ix = {:?}.", ix);
     match ix {
         EvmInstruction::EvmTransaction { evm_tx } => {
             // TODO: Handle gas price
@@ -89,11 +102,9 @@ pub fn process_instruction(
                     let caller = evm_tx
                         .caller()
                         .map_err(|_| InstructionError::InvalidArgument)?;
-                    log!(
-                        logger,
+                    debug!(
                         "TransactionAction::Call caller  = {}, to = {}.",
-                        caller,
-                        addr
+                        caller, addr
                     );
                     evm_executor.transact_call(
                         caller,
@@ -108,11 +119,9 @@ pub fn process_instruction(
                         .caller()
                         .map_err(|_| InstructionError::InvalidArgument)?;
                     let addr = evm_tx.address();
-                    log!(
-                        logger,
+                    debug!(
                         "TransactionAction::Create caller  = {}, to = {:?}.",
-                        caller,
-                        addr
+                        caller, addr
                     );
                     (
                         evm_executor.transact_create(
@@ -133,10 +142,10 @@ pub fn process_instruction(
                 result.clone(),
             ));
             // TODO: Map evm errors on solana.
-            log!(logger, "Exit status = {:?}", result);
+            debug!("Exit status = {:?}", result);
         }
         EvmInstruction::CreateDepositAccount { pubkey } => {
-            process_initialize_deposit(keyed_accounts, pubkey)?
+            process_initialize_deposit(&keyed_accounts, pubkey)?
         }
         EvmInstruction::SwapNativeToEther {
             lamports,
@@ -146,8 +155,7 @@ pub fn process_instruction(
             let signer_account = next_account_info(accounts_iter)?;
             let authority_account = next_account_info(accounts_iter)?;
             let gweis = evm::lamports_to_gwei(lamports);
-            log!(
-                logger,
+            debug!(
                 "Sending lamports to Gwei tokens from={},to={}",
                 authority_account.unsigned_key(),
                 ether_address
@@ -203,7 +211,6 @@ pub fn process_instruction(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::evm_tx;
     use evm_state::transactions::{TransactionAction, TransactionSignature};
     use primitive_types::{H160, H256, U256};
     use solana_sdk::program_utils::limited_deserialize;
@@ -237,7 +244,7 @@ mod test {
     #[test]
     fn serialize_deserialize_eth_ix() {
         let tx = dummy_eth_tx();
-        let sol_ix = evm_tx(tx);
+        let sol_ix = EvmInstruction::EvmTransaction { evm_tx: tx };
         let ser = bincode::serialize(&sol_ix).unwrap();
         assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
     }

@@ -7,11 +7,10 @@ use evm_state::*;
 use sha3::{Digest, Keccak256};
 
 use solana_client::rpc_client::RpcClient;
-use solana_evm_loader_program::instructions::EvmInstruction;
+
 use solana_evm_loader_program::scope::*;
 use solana_sdk::{
-    commitment_config::CommitmentConfig,
-    instruction::{AccountMeta, Instruction},
+    commitment_config::{CommitmentConfig, CommitmentLevel},
     message::Message,
     signature::Signer,
 };
@@ -181,13 +180,17 @@ impl ChainMockERPC for ChainMockERPCImpl {
     }
 }
 
+const DEFAULT_COMITTMENT: Option<CommitmentConfig> = Some(CommitmentConfig {
+    commitment: CommitmentLevel::Recent,
+});
+
 pub struct BasicERPCImpl;
 impl BasicERPC for BasicERPCImpl {
     type Metadata = JsonRpcRequestProcessor;
 
     // The same as get_slot
     fn block_number(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error> {
-        let bank = meta.bank(None);
+        let bank = meta.bank(DEFAULT_COMITTMENT);
         Ok(Hex(bank.slot() as usize))
     }
 
@@ -197,7 +200,7 @@ impl BasicERPC for BasicERPCImpl {
         address: Hex<Address>,
         _block: Option<String>,
     ) -> Result<Hex<U256>, Error> {
-        let bank = meta.bank(None);
+        let bank = meta.bank(DEFAULT_COMITTMENT);
         let evm_state = bank.evm_state.read().unwrap();
         Ok(Hex(evm_state.basic(address.0).balance))
     }
@@ -209,7 +212,7 @@ impl BasicERPC for BasicERPCImpl {
         data: Hex<H256>,
         _block: Option<String>,
     ) -> Result<Hex<H256>, Error> {
-        let bank = meta.bank(None);
+        let bank = meta.bank(DEFAULT_COMITTMENT);
         let evm_state = bank.evm_state.read().unwrap();
         Ok(Hex(evm_state.storage(address.0, data.0)))
     }
@@ -220,7 +223,7 @@ impl BasicERPC for BasicERPCImpl {
         address: Hex<Address>,
         _block: Option<String>,
     ) -> Result<Hex<U256>, Error> {
-        let bank = meta.bank(None);
+        let bank = meta.bank(DEFAULT_COMITTMENT);
         let evm_state = bank.evm_state.read().unwrap();
         Ok(Hex(evm_state.basic(address.0).nonce))
     }
@@ -241,7 +244,7 @@ impl BasicERPC for BasicERPCImpl {
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
     ) -> Result<Option<RPCTransaction>, Error> {
-        let bank = meta.bank(None);
+        let bank = meta.bank(DEFAULT_COMITTMENT);
         let evm_state = bank.evm_state.read().unwrap();
         let receipt = evm_state.get_tx_receipt_by_hash(tx_hash.0);
         Ok(match receipt {
@@ -277,7 +280,7 @@ impl BasicERPC for BasicERPCImpl {
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
     ) -> Result<Option<RPCReceipt>, Error> {
-        let bank = meta.bank(None);
+        let bank = meta.bank(DEFAULT_COMITTMENT);
         let evm_state = bank.evm_state.read().unwrap();
         let receipt = evm_state.get_tx_receipt_by_hash(tx_hash.0);
         Ok(match receipt {
@@ -396,13 +399,7 @@ impl BridgeERPC for BridgeERPCImpl {
             tx.signature.chain_id()
         );
 
-        let account_metas = vec![AccountMeta::new(self.key.pubkey(), true)];
-
-        let ix = Instruction::new(
-            solana_evm_loader_program::ID,
-            &EvmInstruction::EvmTransaction { evm_tx: tx },
-            account_metas,
-        );
+        let ix = solana_evm_loader_program::send_raw_tx(&self.key.pubkey(), tx);
 
         let message = Message::new(&[ix], Some(&self.key.pubkey()));
         let mut send_raw_tx: solana_sdk::transaction::Transaction =
@@ -442,13 +439,7 @@ impl BridgeERPC for BridgeERPCImpl {
             tx.signature.chain_id()
         );
 
-        let account_metas = vec![AccountMeta::new(self.key.pubkey(), true)];
-
-        let ix = Instruction::new(
-            solana_evm_loader_program::ID,
-            &EvmInstruction::EvmTransaction { evm_tx: tx },
-            account_metas,
-        );
+        let ix = solana_evm_loader_program::send_raw_tx(&self.key.pubkey(), tx);
 
         let message = Message::new(&[ix], Some(&self.key.pubkey()));
         let mut send_raw_tx: solana_sdk::transaction::Transaction =
@@ -491,14 +482,12 @@ impl BridgeERPC for BridgeERPCImpl {
             .map_err(|_| Error::InvalidParams)?;
         let gas_limit = gas_limit as usize;
 
-        let bank = meta.bank(None);
+        let bank = meta.bank(DEFAULT_COMITTMENT);
         let evm_state = bank
             .evm_state
             .read()
-            .expect("meta bank EVM state was poisoned");
-
-        let evm_state = evm_state.try_fork().unwrap_or_else(|| evm_state.clone());
-
+            .expect("meta bank EVM state was poisoned")
+            .clone();
         let mut executor =
             evm_state::StaticExecutor::with_config(evm_state, Config::istanbul(), gas_limit);
         let address = tx.to.map(|h| h.0).unwrap_or_default();

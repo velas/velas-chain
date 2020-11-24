@@ -531,10 +531,15 @@ impl BankingStage {
             vec![]
         };
 
-        let mut evm_wl = bank.evm_state.write().expect("bank evm state was poisoned");
+        let mut evm_state = bank
+            .evm_state
+            .read()
+            .expect("bank evm state was poisoned")
+            .clone();
 
         let (mut loaded_accounts, results, mut retryable_txs, tx_count, signature_count, path) =
-            bank.load_and_execute_transactions(batch, MAX_PROCESSING_AGE, None, &mut evm_wl);
+            bank.load_and_execute_transactions(batch, MAX_PROCESSING_AGE, None, evm_state);
+
         load_execute_time.stop();
 
         let freeze_lock = bank.freeze_lock();
@@ -552,6 +557,7 @@ impl BankingStage {
 
         let num_to_commit = num_to_commit.unwrap();
 
+        let mut evm_wl = bank.evm_state.write().expect("bank evm state was poisoned");
         if num_to_commit != 0 {
             let tx_results = bank.commit_transactions(
                 txs,

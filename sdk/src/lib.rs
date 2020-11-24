@@ -21,6 +21,7 @@ pub mod entrypoint_native;
 pub mod epoch_info;
 pub mod epoch_schedule;
 pub mod evm_loader;
+pub mod evm_state;
 pub mod fee_calculator;
 pub mod hash;
 pub mod incinerator;

@@ -33,8 +33,17 @@ use scope::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::sysvar;
 
-pub fn evm_tx(evm_tx: evm::Transaction) -> EvmInstruction {
-    EvmInstruction::EvmTransaction { evm_tx }
+pub fn send_raw_tx(signer: &solana::Address, evm_tx: evm::Transaction) -> solana::Instruction {
+    let account_metas = vec![
+        AccountMeta::new(crate::ID, false),
+        AccountMeta::new(*signer, true),
+    ];
+
+    Instruction::new(
+        crate::ID,
+        &EvmInstruction::EvmTransaction { evm_tx },
+        account_metas,
+    )
 }
 
 pub fn transfer_native_to_eth(
@@ -44,6 +53,7 @@ pub fn transfer_native_to_eth(
     ether_address: evm::Address,
 ) -> solana::Instruction {
     let account_metas = vec![
+        AccountMeta::new(crate::ID, false),
         AccountMeta::new(*owner, true),
         AccountMeta::new(*authority_address, false),
     ];
@@ -63,6 +73,7 @@ pub fn create_deposit_account(
     authority_address: &solana::Address,
 ) -> solana::Instruction {
     let account_metas = vec![
+        AccountMeta::new(crate::ID, false),
         AccountMeta::new(*authority_address, false),
         AccountMeta::new_readonly(sysvar::rent::id(), false),
     ];
