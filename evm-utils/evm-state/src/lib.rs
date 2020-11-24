@@ -121,7 +121,7 @@ pub mod tests {
             block_gas_limit: U256::max_value(),
         };
 
-        let backend = EvmState::from(vicinity);
+        let backend = EvmState::new(vicinity);
         let backend = RwLock::new(backend);
 
         {
@@ -135,6 +135,8 @@ pub mod tests {
                 state.accounts.insert(account, memory);
             }
         }
+
+        backend.write().unwrap().freeze();
 
         let config = evm::Config::istanbul();
         let mut executor = StaticExecutor::with_config(

@@ -41,7 +41,7 @@ pub struct AccountState {
     pub code: Vec<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EvmState {
     vicinity: MemoryVicinity,
     pub(crate) accounts: Map<H160, AccountState>,
@@ -59,6 +59,16 @@ impl Default for EvmState {
 }
 
 impl EvmState {
+    pub fn new(vicinity: MemoryVicinity) -> Self {
+        Self {
+            vicinity,
+            accounts: Map::new(),
+            storage: Map::new(),
+            txs_receipts: Map::new(),
+            logs: Vec::new(),
+        }
+    }
+
     pub fn freeze(&mut self) {
         self.accounts.freeze();
         self.storage.freeze();
@@ -77,18 +87,6 @@ impl EvmState {
             txs_receipts,
             logs: vec![],
         })
-    }
-}
-
-impl From<MemoryVicinity> for EvmState {
-    fn from(vicinity: MemoryVicinity) -> Self {
-        Self {
-            vicinity,
-            accounts: Map::new(),
-            storage: Map::new(),
-            txs_receipts: Map::new(),
-            logs: vec![],
-        }
     }
 }
 
@@ -444,17 +442,11 @@ mod test {
 
         let mut evm_state = EvmState::testing_default();
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
+        evm_state.freeze();
 
         assert_state(&evm_state, &accounts_state_diff, &storage_diff);
-        let mut new_evm_state = {
-            if let Some(new_evm_state) = evm_state.try_fork() {
-                new_evm_state
-            } else {
-                evm_state.freeze();
-                evm_state.try_fork().unwrap()
-            }
-        };
 
+        let mut new_evm_state = evm_state.try_fork().unwrap();
         assert_state(&new_evm_state, &accounts_state_diff, &storage_diff);
 
         let new_accounts = generate_accounts_addresses(SEED + 1, 2);

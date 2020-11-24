@@ -31,6 +31,7 @@ impl<T> From<State<T>> for Option<T> {
     }
 }
 
+#[derive(Clone)]
 pub struct Map<K, V, Store = Arc<dyn MapLike<Key = K, Value = V>>> {
     state: BTreeMap<K, State<V>>,
     parent: Option<Store>,

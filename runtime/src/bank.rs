@@ -65,7 +65,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     convert::TryFrom,
     mem,
-    ops::{DerefMut, RangeInclusive},
+    ops::{Deref, DerefMut, RangeInclusive},
     path::PathBuf,
     ptr,
     rc::Rc,
@@ -1123,6 +1123,11 @@ impl Bank {
     pub fn freeze(&self) {
         let mut hash = self.hash.write().unwrap();
 
+        self.evm_state
+            .write()
+            .expect("EVM state was poisoned")
+            .freeze();
+
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
@@ -1833,7 +1838,7 @@ impl Bank {
         batch: &TransactionBatch,
         max_age: usize,
         log_collector: Option<Rc<LogCollector>>,
-        evm_state: &mut EVM,
+        evm_state: &EVM,
     ) -> (
         Vec<(Result<TransactionLoadResult>, Option<HashAgeKind>)>,
         Vec<TransactionProcessResult>,
@@ -1853,7 +1858,7 @@ impl Bank {
         ),
     )
     where
-        EVM: DerefMut<Target = evm_state::EvmState>,
+        EVM: Deref<Target = evm_state::EvmState>,
     {
         let txs = batch.transactions();
         debug!("processing transactions: {}", txs.len());
@@ -1897,10 +1902,9 @@ impl Bank {
 
         // TODO: Pass state
 
-        evm_state.freeze();
         let evm_state_fork = evm_state
             .try_fork()
-            .expect("Unable to fork EVM state right after freezing it");
+            .unwrap_or_else(|| evm_state.deref().clone());
 
         let evm_executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
             evm_state_fork,

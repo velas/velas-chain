@@ -492,23 +492,12 @@ impl BridgeERPC for BridgeERPCImpl {
         let gas_limit = gas_limit as usize;
 
         let bank = meta.bank(None);
-
         let evm_state = bank
             .evm_state
             .read()
-            .expect("meta bank EVM state was poisoned")
-            .try_fork()
-            .unwrap_or_else(|| {
-                // TODO: freezing of bank state for RPC execution
-                let mut evm_wl = bank
-                    .evm_state
-                    .write()
-                    .expect("meta bank EVM state was poisoned");
-                evm_wl.freeze();
-                evm_wl
-                    .try_fork()
-                    .expect("Unable to for EVM state right after freezing it")
-            });
+            .expect("meta bank EVM state was poisoned");
+
+        let evm_state = evm_state.try_fork().unwrap_or_else(|| evm_state.clone());
 
         let mut executor =
             evm_state::StaticExecutor::with_config(evm_state, Config::istanbul(), gas_limit);
