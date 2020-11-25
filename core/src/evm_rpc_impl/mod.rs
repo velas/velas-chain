@@ -491,7 +491,14 @@ impl BridgeERPC for BridgeERPCImpl {
             .map_err(|_| Error::InvalidParams)?;
         let gas_limit = gas_limit as usize;
 
-        let evm_state: evm_state::EvmState = meta.bank(None).evm_state.read().unwrap().clone();
+        let bank = meta.bank(None);
+        let evm_state = bank
+            .evm_state
+            .read()
+            .expect("meta bank EVM state was poisoned");
+
+        let evm_state = evm_state.try_fork().unwrap_or_else(|| evm_state.clone());
+
         let mut executor =
             evm_state::StaticExecutor::with_config(evm_state, Config::istanbul(), gas_limit);
         let address = tx.to.map(|h| h.0).unwrap_or_default();

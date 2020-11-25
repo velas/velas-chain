@@ -65,7 +65,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     convert::TryFrom,
     mem,
-    ops::RangeInclusive,
+    ops::{Deref, DerefMut, RangeInclusive},
     path::PathBuf,
     ptr,
     rc::Rc,
@@ -536,7 +536,16 @@ impl Bank {
             src,
             slot,
             epoch,
-            evm_state: RwLock::new(parent.evm_state.read().unwrap().new_from_parent()),
+            evm_state: RwLock::new({
+                let mut evm_wl = parent
+                    .evm_state
+                    .write()
+                    .expect("parent evm state was poisoned");
+                evm_wl.freeze();
+                evm_wl
+                    .try_fork()
+                    .expect("Unable to fork EVM state right after freezing it")
+            }),
             blockhash_queue: RwLock::new(parent.blockhash_queue.read().unwrap().clone()),
 
             // TODO: clean this up, soo much special-case copying...
@@ -1114,6 +1123,11 @@ impl Bank {
     pub fn freeze(&self) {
         let mut hash = self.hash.write().unwrap();
 
+        self.evm_state
+            .write()
+            .expect("EVM state was poisoned")
+            .freeze();
+
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
@@ -1468,7 +1482,8 @@ impl Bank {
         let txs = &[transaction];
         let batch = self.prepare_simulation_batch(txs);
         let log_collector = Rc::new(LogCollector::default());
-        let mut locked = evm_state::EvmState::try_lock(&self.evm_state).unwrap();
+
+        let mut evm_wl = self.evm_state.write().expect("evm state was poisoned"); // TODO: read
 
         let (
             _loaded_accounts,
@@ -1481,7 +1496,7 @@ impl Bank {
             &batch,
             MAX_PROCESSING_AGE,
             Some(log_collector.clone()),
-            &mut locked,
+            &mut evm_wl,
         );
         let transaction_result = executed[0].0.clone().map(|_| ());
         let log_messages = Rc::try_unwrap(log_collector).unwrap_or_default().into();
@@ -1818,12 +1833,12 @@ impl Bank {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn load_and_execute_transactions(
+    pub fn load_and_execute_transactions<EVM>(
         &self,
         batch: &TransactionBatch,
         max_age: usize,
         log_collector: Option<Rc<LogCollector>>,
-        locked_evm: &mut evm_state::LockedState,
+        evm_state: &EVM,
     ) -> (
         Vec<(Result<TransactionLoadResult>, Option<HashAgeKind>)>,
         Vec<TransactionProcessResult>,
@@ -1841,7 +1856,10 @@ impl Bank {
             ),
             BTreeMap<evm_state::H256, evm_state::TransactionReceipt>,
         ),
-    ) {
+    )
+    where
+        EVM: Deref<Target = evm_state::EvmState>,
+    {
         let txs = batch.transactions();
         debug!("processing transactions: {}", txs.len());
         inc_new_counter_info!("bank-process_transactions", txs.len());
@@ -1881,12 +1899,19 @@ impl Bank {
             .zip(OrderedIterator::new(txs, batch.iteration_order()));
 
         let mut execution_time = Measure::start("execution_time");
+
         // TODO: Pass state
+
+        let evm_state_fork = evm_state
+            .try_fork()
+            .unwrap_or_else(|| evm_state.deref().clone());
+
         let evm_executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
-            locked_evm.backend(),
+            evm_state_fork,
             evm_state::Config::istanbul(),
-            usize::max_value(),
+            usize::MAX,
         )));
+
         let mut signature_count: u64 = 0;
         let mut executed: Vec<TransactionProcessResult> = Vec::new();
         for (accs, (_, tx)) in accounts_with_txs {
@@ -2019,7 +2044,7 @@ impl Bank {
         results
     }
 
-    pub fn commit_transactions(
+    pub fn commit_transactions<EVM: DerefMut<Target = evm_state::EvmState>>(
         &self,
         txs: &[Transaction],
         iteration_order: Option<&[usize]>,
@@ -2027,7 +2052,7 @@ impl Bank {
         executed: &[TransactionProcessResult],
         tx_count: u64,
         signature_count: u64,
-        mut locked_evm: evm_state::LockedState,
+        evm_state: &mut EVM,
         patch: (
             (
                 impl IntoIterator<
@@ -2074,7 +2099,7 @@ impl Bank {
         let overwritten_vote_accounts =
             self.update_cached_accounts(txs, iteration_order, executed, loaded_accounts);
 
-        locked_evm.apply(patch);
+        evm_state.apply(patch);
         // once committed there is no way to unroll
         write_time.stop();
         debug!("store: {}us txs_len={}", write_time.as_us(), txs.len(),);
@@ -2606,10 +2631,17 @@ impl Bank {
         } else {
             vec![]
         };
-        let mut locked = evm_state::EvmState::try_lock(&self.evm_state).unwrap();
+
+        let mut evm_wl = self.evm_state.write().expect("evm state was poisoned");
+
+        // let mut evm_state = self
+        //     .evm_state
+        //     .write()
+        //     .expect("evm state was poisoned")
+        //     .deref_mut();
 
         let (mut loaded_accounts, executed, _, tx_count, signature_count, patch) =
-            self.load_and_execute_transactions(batch, max_age, None, &mut locked);
+            self.load_and_execute_transactions(batch, max_age, None, &mut evm_wl);
 
         let results = self.commit_transactions(
             batch.transactions(),
@@ -2618,7 +2650,7 @@ impl Bank {
             &executed,
             tx_count,
             signature_count,
-            locked,
+            &mut evm_wl,
             patch,
         );
         let post_balances = if collect_balances {

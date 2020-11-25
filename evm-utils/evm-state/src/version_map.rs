@@ -20,16 +20,18 @@ impl<V> State<V> {
             State::Removed => State::Removed,
         }
     }
+}
 
-    fn into_option(self) -> Option<V> {
-        match self {
-            State::Changed(v) => Some(v),
+impl<T> From<State<T>> for Option<T> {
+    fn from(state: State<T>) -> Option<T> {
+        match state {
+            State::Changed(value) => Some(value),
             State::Removed => None,
         }
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone)]
 pub struct Map<K, V, Store = Arc<dyn MapLike<Key = K, Value = V>>> {
     state: BTreeMap<K, State<V>>,
     parent: Option<Store>,
@@ -74,13 +76,10 @@ where
     // Borrow value by key
     pub fn get(&self, key: &K) -> Option<&V> {
         if let Some(s) = self.state.get(key) {
-            return s.by_ref().into_option();
+            s.by_ref().into()
+        } else {
+            self.parent.as_ref().and_then(|parent| parent.get(key))
         }
-
-        if let Some(parent) = &self.parent {
-            return parent.get(key);
-        }
-        None
     }
 
     // Exclusively borrow value by key
@@ -106,24 +105,28 @@ where
     pub fn remove(&mut self, key: K) {
         self.push_change(key, State::Removed);
     }
-
-    // Create new version from existing one
-    #[allow(unused)]
-    pub(crate) fn new_from_parent_static(parent: Store) -> Self {
-        Self {
-            state: BTreeMap::new(),
-            parent: Some(parent),
-        }
-    }
 }
 
-impl<K: Ord, V> Map<K, V, Arc<dyn MapLike<Key = K, Value = V>>> {
-    // Create new version from existing one
-    pub fn new_from_parent(parent: Arc<dyn MapLike<Key = K, Value = V>>) -> Self {
-        Self {
-            state: BTreeMap::new(),
-            parent: Some(parent),
+impl<K, V> Map<K, V>
+where
+    K: Ord + Send + Sync + 'static,
+    V: Send + Sync + 'static,
+{
+    pub fn freeze(&mut self) {
+        let this = Arc::new(std::mem::take(self)) as Arc<dyn MapLike<Key = K, Value = V>>;
+        self.parent = Some(this);
+    }
+
+    // Create new version from freezed one
+    pub fn try_fork(&self) -> Option<Self> {
+        if !self.state.is_empty() {
+            return None;
         }
+
+        Some(Self {
+            state: BTreeMap::new(),
+            parent: self.parent.clone(),
+        })
     }
 }
 
@@ -179,7 +182,8 @@ mod test {
         assert_eq!(map.get(&"second"), Some(&2));
         assert_eq!(map.get(&"third"), Some(&3));
 
-        let mut map: Map<_, _> = Map::new_from_parent(Arc::new(map));
+        map.freeze();
+        let mut map: Map<_, _> = map.try_fork().unwrap();
 
         map.remove("first");
         map.insert("third", 1);
@@ -200,7 +204,8 @@ mod test {
         assert_eq!(map.get(&"second"), Some(&2));
         assert_eq!(map.get(&"third"), Some(&3));
 
-        let mut map = Map::new_from_parent_static(map);
+        map.freeze();
+        let mut map = map.try_fork().unwrap();
 
         map.remove("first");
         map.insert("third", 1);
