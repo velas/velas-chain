@@ -13,6 +13,7 @@ jsonrpc-derive = "14.2.1"
 jsonrpc-http-server = "14.2.0"
 jsonrpc-pubsub = "14.2.0"
 serde = "1.0.112"
+serde_json = "1.0"
 primitive-types = "0.7"
 evm-state = {path="../evm-state"}
 solana-evm-loader-program = {path="../programs/evm_loader"}

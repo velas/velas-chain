@@ -370,7 +370,7 @@ impl BridgeERPC for BridgeERPCImpl {
             Some(nonce) => nonce,
             None => self
                 .rpc_client
-                .get_evm_account(&address)
+                .get_evm_transaction_count(&address)
                 .unwrap_or_default(),
         };
         let tx_create = evm::UnsignedTransaction {
@@ -481,12 +481,12 @@ impl BridgeERPC for BridgeERPCImpl {
     ) -> Result<Bytes, Error> {
         let caller = tx.from.map(|a| a.0).unwrap_or_default();
 
-        let value = tx.value.map(|a| a.0).unwrap_or(0.into());
-        let input = tx.data.map(|a| a.0).unwrap_or_else(|| vec![]);
+        let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
+        let input = tx.data.map(|a| a.0).unwrap_or_else(Vec::new);
         let gas_limit: u64 = tx
             .gas
             .map(|a| a.0)
-            .unwrap_or(300000.into())
+            .unwrap_or_else(|| 300000.into())
             .try_into()
             .map_err(|_| Error::InvalidParams)?;
         let gas_limit = gas_limit as usize;

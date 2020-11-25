@@ -14,7 +14,25 @@ pub mod version_map;
 
 pub use layered_backend::*;
 pub use primitive_types::{H256, U256};
+pub use secp256k1::rand;
 pub use transactions::*;
+
+pub trait FromKey {
+    fn to_public_key(&self) -> secp256k1::PublicKey;
+    fn to_address(&self) -> crate::Address;
+}
+
+impl FromKey for secp256k1::SecretKey {
+    fn to_public_key(&self) -> secp256k1::PublicKey {
+        secp256k1::PublicKey::from_secret_key(&secp256k1::SECP256K1, self)
+    }
+    fn to_address(&self) -> crate::Address {
+        addr_from_public_key(&secp256k1::PublicKey::from_secret_key(
+            &secp256k1::SECP256K1,
+            self,
+        ))
+    }
+}
 
 /// StackExecutor, use config and backend by reference, this force object to be dependent on lifetime.
 /// And poison all outer objects with this lifetime.

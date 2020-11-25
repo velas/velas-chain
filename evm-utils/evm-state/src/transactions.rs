@@ -331,55 +331,6 @@ mod test {
     }
 
     #[test]
-    fn raw_tx_from_web3() {
-        let chain_id = 101;
-        let addr = H160::from_str("9Edb9E0B88Dbf2a29aE121a657e1860aEceaA53D").unwrap();
-        let secret_key =
-            SecretKey::from_str("fb507dc8bc8ea30aa275702108e6a22f66096e274a1c4c36e709b12a13dd0e76")
-                .unwrap();
-
-        // {
-        //     v: '0x0112'
-        // r: '0x93dd10f0e3bdd60315594634e61e6459b1feaa5dcef1d1ce8f9ece843dba5052'
-        // s: '0x6829e09c4713ef6537b0523f41312f411159308db086db014c6828d49c5ab87c'
-        let raw_tx = "f8658001831e848094f0109fc8df283027b6285cc889f5aa624eac1f55843b9aca008081eda01006e931fd170e04c164c1854f0aa60aa39695bbaed7cf11e68f32948b66e70ba01726bf45212937d7229621bcc647ce24f926dce88c3a99408433ac0ed6af2a22";
-        let tx_bytes = hex::decode(raw_tx).unwrap();
-        let tx: Transaction = rlp::decode(&tx_bytes).unwrap();
-        let r = H256::from_str("1006e931fd170e04c164c1854f0aa60aa39695bbaed7cf11e68f32948b66e70b")
-            .unwrap();
-        let s = H256::from_str("1726bf45212937d7229621bcc647ce24f926dce88c3a99408433ac0ed6af2a22")
-            .unwrap();
-        assert_eq!(tx.signature.v, 0xed);
-        assert_eq!(tx.signature.r, r);
-        assert_eq!(tx.signature.s, s);
-
-        assert_eq!(tx.signature.chain_id(), Some(chain_id));
-
-        let tx_hash =
-            H256::from_str("9ef6ce713d2bfd5dbf0f687b974c868c7fc6de07074edde66b0288af024b1699")
-                .unwrap();
-
-        let unsigned: UnsignedTransaction = tx.clone().into();
-        let tx_bytes_back = rlp::encode(&tx);
-        println!("{}", hex::encode(tx_bytes_back));
-        let tx_back = unsigned.clone().sign(&secret_key, Some(chain_id));
-        let tx_bytes_back = rlp::encode(&tx_back);
-        println!("{}", hex::encode(tx_bytes_back));
-
-        let mut stream = RlpStream::new();
-        unsigned.signing_rlp_append(&mut stream, Some(chain_id));
-
-        println!("  {}", hex::encode(stream.as_raw()));
-
-        assert_eq!(tx, tx_back);
-
-        assert_eq!(unsigned.signing_hash(Some(chain_id)), tx_hash);
-
-        assert_eq!(tx.caller().unwrap(), addr);
-        // transactionHash: '0x211f77299a72e0e57d1a715c5c232a192e6d55d36dd73084ac64b8dc3bc76a15'
-    }
-
-    #[test]
     fn should_agree_with_vitalik() {
         let test_vector = |tx_data: &str, address: &'static str| {
             let signed: Transaction =

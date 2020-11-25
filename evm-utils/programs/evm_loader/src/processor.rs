@@ -2,7 +2,7 @@ use super::instructions::{Deposit, EvmInstruction};
 use super::scope::*;
 use evm::TransactionAction;
 use log::*;
-use primitive_types::U256;
+
 use solana_sdk::instruction::InstructionError;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{
@@ -26,8 +26,6 @@ macro_rules! log{
         }
     };
 }
-
-const LAMPORTS_TO_GWEI_PRICE: u64 = 1_000_000_000; // Lamports is 1/10^9 of SOLs while GWEI is 1/10^18
 
 /// Return the next AccountInfo or a NotEnoughAccountKeys error
 pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
@@ -147,7 +145,7 @@ pub fn process_instruction(
             let accounts_iter = &mut keyed_accounts.iter();
             let signer_account = next_account_info(accounts_iter)?;
             let authority_account = next_account_info(accounts_iter)?;
-            let gweis = U256::from(lamports) * U256::from(LAMPORTS_TO_GWEI_PRICE);
+            let gweis = evm::lamports_to_gwei(lamports);
             log!(
                 logger,
                 "Sending lamports to Gwei tokens from={},to={}",
@@ -217,8 +215,7 @@ mod test {
         message::Message,
     };
 
-    use std::sync::Arc;
-    use std::sync::{RwLock, RwLockWriteGuard};
+    use std::sync::RwLock;
     use std::{cell::RefCell, rc::Rc};
 
     fn dummy_eth_tx() -> evm_state::transactions::Transaction {
@@ -385,7 +382,7 @@ mod test {
     #[test]
     fn execute_tx_with_state_apply() {
         use evm_state::Backend;
-        let mut state = RwLock::new(evm_state::EvmState::default());
+        let state = RwLock::new(evm_state::EvmState::default());
 
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let tx_create = evm::UnsignedTransaction {
@@ -405,9 +402,9 @@ mod test {
         assert_eq!(state.read().unwrap().basic(caller_address).nonce, 0.into());
         assert_eq!(state.read().unwrap().basic(tx_address).nonce, 0.into());
         {
-            let mut locked = evm_state::EvmState::try_lock(&state).unwrap();
+            let mut locked = state.write().unwrap();
             let executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
-                locked.backend(),
+                locked.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
             )));
@@ -447,9 +444,9 @@ mod test {
 
         let tx_call = tx_call.sign(&secret_key, None);
         {
-            let mut locked = evm_state::EvmState::try_lock(&state).unwrap();
+            let mut locked = state.write().unwrap();
             let executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
-                locked.backend(),
+                locked.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
             )));

@@ -1,6 +1,3 @@
-use jsonrpc_core;
-use secp256k1;
-// use sputnikvm::errors::PreExecutionError;
 use hex::FromHexError;
 use rlp::DecoderError;
 use std::num::ParseIntError;
@@ -17,12 +14,6 @@ pub enum Error {
     CallError,
     UnknownSourceMapJump,
 }
-
-// impl From<PreExecutionError> for Error {
-//     fn from(val: PreExecutionError) -> Error {
-//         Error::CallError
-//     }
-// }
 
 impl From<DecoderError> for Error {
     fn from(_val: DecoderError) -> Error {
