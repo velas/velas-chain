@@ -543,7 +543,7 @@ impl Bank {
                     .expect("parent evm state was poisoned");
                 evm_wl.freeze();
                 evm_wl
-                    .try_fork()
+                    .try_fork(slot)
                     .expect("Unable to fork EVM state right after freezing it")
             }),
             blockhash_queue: RwLock::new(parent.blockhash_queue.read().unwrap().clone()),
@@ -646,10 +646,17 @@ impl Bank {
         fn new<T: Default>() -> T {
             T::default()
         }
+
+        // TODO: get real path from extern configuration
+        const EVM_STATE_STORAGE: &str = "/tmp/solana/evm-state";
+
+        let evm_state = evm_state::EvmState::load_from(EVM_STATE_STORAGE, fields.slot)
+            .expect("Unable to open EVM state storage");
+
         let mut bank = Self {
             rc: bank_rc,
             src: new(),
-            evm_state: RwLock::new(evm_state::EvmState::new_not_forget_to_deserialize_later()),
+            evm_state: RwLock::new(evm_state),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             ancestors: fields.ancestors,
             hash: RwLock::new(fields.hash),

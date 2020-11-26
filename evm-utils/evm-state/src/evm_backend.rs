@@ -140,9 +140,11 @@ impl ApplyBackend for EvmBackend {
 
                         for (index, value) in storage {
                             if value == H256::default() {
-                                self.evm_state.storage.remove((address, index));
+                                self.evm_state.accounts_storage.remove((address, index));
                             } else {
-                                self.evm_state.storage.insert((address, index), value);
+                                self.evm_state
+                                    .accounts_storage
+                                    .insert((address, index), value);
                             }
                         }
 

@@ -1,23 +1,27 @@
-use std::fmt;
-
 pub use evm::{
     backend::{Apply, ApplyBackend, Backend, Log},
     executor::StackExecutor,
     Config, Context, Handler, Transfer,
 };
 pub use evm::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed};
-use log::debug;
 pub use primitive_types::{H256, U256};
 pub use secp256k1::rand;
 
-mod evm_backend;
-mod layered_backend;
 pub mod transactions;
-mod version_map;
-
 pub use evm_backend::*;
 pub use layered_backend::*;
 pub use transactions::*;
+
+use std::fmt;
+
+use log::debug;
+
+mod evm_backend;
+mod layered_backend;
+mod storage;
+mod version_map;
+
+pub(crate) type Slot = u64; // TODO: re-use existing one from sdk package
 
 pub trait FromKey {
     fn to_public_key(&self) -> secp256k1::PublicKey;
@@ -167,22 +171,17 @@ impl Executor {
         let block_num = self.evm.tx_info.block_number.as_u64();
         let tx_hash = tx.signing_hash();
 
-        log::debug!("Register tx in evm block={}, tx= {}", block_num, tx_hash);
-        //TODO: replace by entry api
-        let updated_vec = match self.evm.evm_state.txs_in_block.get(&block_num) {
-            None => vec![tx_hash],
-            Some(v) => {
-                let mut v = v.clone();
-                v.push(tx_hash);
-                v
-            }
-        };
-
-        let index = updated_vec.len() as u64;
-        self.evm
+        debug!("Register tx in evm block={}, tx= {}", block_num, tx_hash);
+        // TODO: replace by Entry-like api
+        let mut hashes = self
+            .evm
             .evm_state
-            .txs_in_block
-            .insert(block_num, updated_vec);
+            .get_txs_in_block(block_num)
+            .unwrap_or_default();
+        hashes.push(tx_hash);
+
+        let index = hashes.len() as u64;
+        self.evm.evm_state.txs_in_block.insert(block_num, hashes);
 
         let tx_receipt = TransactionReceipt::new(tx, used_gas, block_num, index, result);
         self.evm.evm_state.txs_receipts.insert(tx_hash, tx_receipt);
@@ -197,17 +196,21 @@ pub const HELLO_WORLD_CODE:&str = "608060405234801561001057600080fd5b5061011e806
 pub const HELLO_WORLD_ABI: &str = "942ae0a7";
 pub const HELLO_WORLD_RESULT:&str = "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000a68656c6c6f576f726c6400000000000000000000000000000000000000000000";
 pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b506004361060285760003560e01c8063942ae0a714602d575b600080fd5b603360ab565b6040518080602001828103825283818151815260200191508051906020019080838360005b8381101560715780820151818401526020810190506058565b50505050905090810190601f168015609d5780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b60606040518060400160405280600a81526020017f68656c6c6f576f726c640000000000000000000000000000000000000000000081525090509056fea2646970667358221220fa787b95ca91ffe90fdb780b8ee8cb11c474bc63cb8217112c88bc465f7ea7d364736f6c63430007020033";
+
 #[cfg(test)]
-pub mod tests {
+mod test_utils;
 
-    use super::Executor;
-    use super::*;
+#[cfg(test)]
+mod tests {
+    use anyhow::anyhow;
     use assert_matches::assert_matches;
-    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
 
+    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
-    use std::sync::RwLock;
+
+    use super::*;
+    use crate::test_utils::TmpDir;
 
     fn name_to_key(name: &str) -> H160 {
         let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
@@ -215,33 +218,31 @@ pub mod tests {
     }
 
     #[test]
-    fn test_evm_bytecode() {
-        simple_logger::SimpleLogger::new().init().unwrap();
+    fn test_evm_bytecode() -> anyhow::Result<()> {
+        simple_logger::SimpleLogger::new().init()?;
         let accounts = ["contract", "caller"];
 
-        let code = hex::decode(HELLO_WORLD_CODE).unwrap();
-        let data = hex::decode(HELLO_WORLD_ABI).unwrap();
+        let code = hex::decode(HELLO_WORLD_CODE)?;
+        let data = hex::decode(HELLO_WORLD_ABI)?;
 
-        let backend = EvmState::new();
-        let backend = RwLock::new(backend);
+        let tmp_dir = TmpDir::new("test_evm_bytecode");
+        let mut backend = EvmState::load_from(tmp_dir, Slot::default())?;
 
-        {
-            let mut state = backend.write().unwrap();
-
-            for acc in &accounts {
-                let account = name_to_key(acc);
-                let memory = AccountState {
-                    ..Default::default()
-                };
-                state.accounts.insert(account, memory);
-            }
+        for acc in &accounts {
+            let account = name_to_key(acc);
+            let memory = AccountState {
+                ..Default::default()
+            };
+            backend.accounts.insert(account, memory);
         }
 
-        backend.write().unwrap().freeze();
+        backend.freeze();
 
         let config = evm::Config::istanbul();
         let mut executor = Executor::with_config(
-            backend.read().unwrap().try_fork().unwrap(),
+            backend
+                .clone()
+                .ok_or_else(|| anyhow!("Unable to fork backend"))?,
             config,
             usize::max_value(),
             0,
@@ -271,7 +272,7 @@ pub mod tests {
             )
         });
 
-        let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
+        let result = hex::decode(HELLO_WORLD_RESULT)?;
         match exit_reason {
             (ExitReason::Succeed(ExitSucceed::Returned), res) if res == result => {}
             any_other => panic!("Not expected result={:?}", any_other),
@@ -280,11 +281,11 @@ pub mod tests {
         let patch = executor.deconstruct();
         backend.write().unwrap().swap_commit(patch);
 
-        let mutex_lock = backend.read().unwrap();
-        let contract = mutex_lock.accounts.get(&name_to_key("contract"));
+        let contract = backend.accounts.get(name_to_key("contract"));
         assert_eq!(
             &contract.unwrap().code,
             &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap()
         );
+        Ok(())
     }
 }

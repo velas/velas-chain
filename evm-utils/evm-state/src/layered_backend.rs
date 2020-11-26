@@ -1,12 +1,19 @@
+use std::{borrow::Cow, path::Path};
+
 use evm::backend::Log;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 
-use super::transactions::TransactionReceipt;
-use super::version_map::Map;
+use crate::{
+    persistent_types,
+    storage::{PersistentAssoc, PersistentMap, VersionedStorage},
+    transactions::TransactionReceipt,
+    version_map::{KeyResult, Map},
+    Slot,
+};
 
 /// Vivinity value of a memory backend.
-#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MemoryVicinity {
     /// Gas price.
     pub gas_price: U256,
@@ -28,7 +35,23 @@ pub struct MemoryVicinity {
     pub block_gas_limit: U256,
 }
 
-#[derive(Default, Clone, Debug, Eq, PartialEq)]
+impl Default for MemoryVicinity {
+    fn default() -> Self {
+        Self {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            chain_id: U256::zero(),
+            block_hashes: Vec::new(),
+            block_number: U256::zero(),
+            block_coinbase: H160::default(),
+            block_timestamp: U256::zero(),
+            block_difficulty: U256::zero(),
+            block_gas_limit: U256::max_value(),
+        }
+    }
+}
+
+#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AccountState {
     /// Account nonce.
     pub nonce: U256,
@@ -38,87 +61,157 @@ pub struct AccountState {
     pub code: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
-pub struct EvmState {
-    pub(crate) accounts: Map<H160, AccountState>,
-    // Store every account storage at single place, to use power of versioned map.
-    // This allows us to save only changed data.
-    pub(crate) storage: Map<(H160, H256), H256>,
-    pub(crate) txs_receipts: Map<H256, TransactionReceipt>,
-    pub(crate) txs_in_block: Map<u64, Vec<H256>>,
-    pub(crate) logs: Vec<Log>,
+// Store every account storage at single place, to use power of versioned map.
+// This allows us to save only changed data.
+persistent_types! {
+    Accounts :: "accounts" => H160 => AccountState,
+    AccountsStorage :: "accounts_storage" => (H160, H256) => H256,
+    TransactionReceipts :: "txs_receipts" => H256 => TransactionReceipt,
+    TransactionsInBlock :: "txs_in_block" => Slot => Vec<H256>,
 }
 
+type Mapped<M> = Map<Slot, <M as PersistentAssoc>::Key, <M as PersistentAssoc>::Value>;
+
+#[derive(Clone)] // TODO: Debug
+pub struct EvmState {
+    pub(crate) slot: Slot,
+
+    pub(crate) accounts: Mapped<Accounts>,
+    pub(crate) accounts_storage: Mapped<AccountsStorage>,
+    pub(crate) txs_receipts: Mapped<TransactionReceipts>,
+    pub(crate) txs_in_block: Mapped<TransactionsInBlock>,
+    pub(crate) logs: Vec<Log>, // TODO: migrate into storage
+
+    storage: VersionedStorage<Slot>,
+}
+
+// TODO: move this logic outside
 impl Default for EvmState {
     fn default() -> Self {
-        Self::new_not_forget_to_deserialize_later()
+        let path = std::env::temp_dir().join("evm-state");
+        Self::load_from(path, Slot::default()).expect("Unable to instantiate default EVM state")
     }
 }
 
 impl EvmState {
-    pub fn new() -> Self {
-        Self {
-            accounts: Map::new(),
-            storage: Map::new(),
-            txs_receipts: Map::new(),
-            txs_in_block: Map::new(),
-            logs: Vec::new(),
-        }
-    }
-
     pub fn freeze(&mut self) {
         self.accounts.freeze();
-        self.storage.freeze();
+        self.accounts_storage.freeze();
         self.txs_receipts.freeze();
         self.txs_in_block.freeze();
     }
 
-    pub fn try_fork(&self) -> Option<Self> {
-        let accounts = self.accounts.try_fork()?;
-        let storage = self.storage.try_fork()?;
-        let txs_receipts = self.txs_receipts.try_fork()?;
-        let txs_in_block = self.txs_in_block.try_fork()?;
+    pub fn try_fork(&self, new_slot: Slot) -> Option<Self> {
+        let accounts = self.accounts.try_fork(new_slot)?;
+        let accounts_storage = self.accounts_storage.try_fork(new_slot)?;
+        let txs_receipts = self.txs_receipts.try_fork(new_slot)?;
+        let txs_in_block = self.txs_in_block.try_fork(new_slot)?;
+
+        // TODO: save new_slot in new state and refactor memory map as versionless with inlined get w/o layered map proxy
 
         Some(Self {
+            slot: new_slot,
+
             accounts,
-            storage,
+            accounts_storage,
             txs_receipts,
             txs_in_block,
             logs: vec![],
+            storage: self.storage.clone(),
         })
+    }
+
+    #[rustfmt::skip]
+    pub fn dump_all(&mut self) -> anyhow::Result<()> {
+        dump_into(&self.storage.typed::<Accounts>(), &mut self.accounts)?;
+        dump_into(&self.storage.typed::<AccountsStorage>(), &mut self.accounts_storage)?;
+        dump_into(&self.storage.typed::<TransactionReceipts>(), &mut self.txs_receipts)?;
+        Ok(())
+    }
+
+    fn lookup<'a, M: PersistentAssoc>(
+        &'a self,
+        // TODO: elide this arg, TBD: maybe typemap
+        map: &'a Mapped<M>,
+        key: M::Key,
+    ) -> Option<Cow<'a, M::Value>>
+    where
+        M::Key: Copy + Ord,
+        M::Value: Clone,
+    {
+        match map.get(&key) {
+            KeyResult::Found(mb_value) => mb_value.map(Cow::Borrowed),
+            KeyResult::NotFound(last_version) => self
+                .storage
+                .typed::<M>()
+                .get_for(*last_version, key)
+                .expect("Internal storage error")
+                .map(Cow::Owned),
+        }
     }
 }
 
-impl EvmState {
-    // TODO: Replace it by persistent storage
-    pub fn new_not_forget_to_deserialize_later() -> Self {
-        EvmState {
-            accounts: Map::new(),
-            storage: Map::new(),
-            txs_receipts: Map::new(),
-            txs_in_block: Map::new(),
-            logs: Vec::new(),
+fn dump_into<'a, M: PersistentAssoc>(
+    storage: &PersistentMap<'a, Slot, M>,
+    map: &mut Mapped<M>,
+) -> anyhow::Result<()>
+where
+    M::Key: Ord + Copy,
+    M::Value: Clone,
+{
+    let mut full_iter = map.full_iter().peekable();
+    while let Some((version, kvs)) = full_iter.next() {
+        for (key, value) in kvs {
+            storage.insert_with(*version, *key, value.cloned())?;
         }
+
+        let previous = full_iter
+            .peek()
+            .map(|(previous, _)| **previous)
+            .or_else(|| storage.previous_of(*version).ok().flatten());
+        storage.new_version(*version, previous)?;
+    }
+    drop(full_iter);
+
+    map.clear();
+    Ok(())
+}
+
+impl EvmState {
+    pub fn load_from<P: AsRef<Path>>(path: P, slot: Slot) -> Result<Self, anyhow::Error> {
+        let storage = VersionedStorage::open(path, COLUMN_NAMES)?;
+
+        Ok(Self {
+            slot,
+            logs: vec![],
+
+            accounts: Map::empty(slot),
+            accounts_storage: Map::empty(slot),
+            txs_receipts: Map::empty(slot),
+            txs_in_block: Map::empty(slot),
+
+            storage,
+        })
     }
 
     pub fn get_tx_receipt_by_hash(&self, tx_hash: H256) -> Option<TransactionReceipt> {
-        self.txs_receipts.get(&tx_hash).cloned()
+        self.lookup::<TransactionReceipts>(&self.txs_receipts, tx_hash)
+            .map(Cow::into_owned)
     }
 
-    pub fn get_txs_in_block(&self, block_num: u64) -> Option<Vec<H256>> {
-        self.txs_in_block.get(&block_num).cloned()
+    pub fn get_txs_in_block(&self, block_num: Slot) -> Option<Vec<H256>> {
+        self.lookup::<TransactionsInBlock>(&self.txs_in_block, block_num)
+            .map(Cow::into_owned)
     }
 
     pub fn get_account(&self, address: H160) -> Option<AccountState> {
-        self.accounts.get(&address).cloned()
-    }
-
-    pub fn basic(&self, account: H160) -> AccountState {
-        self.get_account(account).unwrap_or_default()
+        self.lookup::<Accounts>(&self.accounts, address)
+            .map(Cow::into_owned)
     }
 
     pub fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
-        self.storage.get(&(address, index)).cloned()
+        self.lookup::<AccountsStorage>(&self.accounts_storage, (address, index))
+            .map(Cow::into_owned)
     }
 
     pub fn swap_commit(&mut self, mut updated: Self) {
@@ -128,28 +221,21 @@ impl EvmState {
 }
 
 #[cfg(test)]
-mod test {
-    use super::*;
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
     use primitive_types::{H160, H256, U256};
     use rand::rngs::mock::StepRng;
     use rand::Rng;
-    use std::collections::{BTreeMap, BTreeSet};
+
+    use crate::test_utils::TmpDir;
+
+    use super::*;
+
     const RANDOM_INCR: u64 = 734512;
     const MAX_SIZE: usize = 32; // Max size of test collections.
 
     const SEED: u64 = 123;
-
-    impl EvmState {
-        pub(crate) fn testing_default() -> EvmState {
-            EvmState {
-                accounts: Default::default(),
-                storage: Default::default(),
-                txs_receipts: Default::default(),
-                txs_in_block: Default::default(),
-                logs: Default::default(),
-            }
-        }
-    }
 
     fn generate_account_by_seed(seed: u64) -> AccountState {
         let mut rng = StepRng::new(seed * RANDOM_INCR + seed, RANDOM_INCR);
@@ -243,8 +329,8 @@ mod test {
 
         for s in storage {
             match &s.1 {
-                Some(v) => state.storage.insert(*s.0, *v),
-                None => state.storage.remove(*s.0),
+                Some(v) => state.accounts_storage.insert(*s.0, *v),
+                None => state.accounts_storage.remove(*s.0),
             }
         }
     }
@@ -255,11 +341,11 @@ mod test {
         storage: &BTreeMap<(H160, H256), Option<H256>>,
     ) {
         for account in accounts {
-            assert_eq!(state.accounts.get(account.0), account.1.as_ref())
+            assert_eq!(state.accounts.get(*account.0).as_ref(), account.1.as_ref())
         }
 
         for s in storage {
-            assert_eq!(state.storage.get(s.0), s.1.as_ref())
+            assert_eq!(state.accounts_storage.get(*s.0).as_ref(), s.1.as_ref())
         }
     }
 
@@ -272,7 +358,9 @@ mod test {
         let storage_diff = to_state_diff(storage, BTreeSet::new());
         let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
 
-        let mut evm_state = EvmState::testing_default();
+        let tmp_dir = TmpDir::new("add_two_accounts_check_helpers");
+        let mut evm_state = EvmState::load_from(tmp_dir, Default::default()).unwrap();
+
         assert_eq!(evm_state.basic(H160::random()).balance, U256::from(0));
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
 
@@ -288,13 +376,15 @@ mod test {
         let storage_diff = to_state_diff(storage, BTreeSet::new());
         let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
 
-        let mut evm_state = EvmState::testing_default();
+        let tmp_dir = TmpDir::new("fork_add_remove_accounts");
+        let mut evm_state = EvmState::load_from(tmp_dir, Default::default()).unwrap();
+
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
         evm_state.freeze();
 
         assert_state(&evm_state, &accounts_state_diff, &storage_diff);
 
-        let mut new_evm_state = evm_state.try_fork().unwrap();
+        let mut new_evm_state = evm_state.try_fork(1).unwrap();
         assert_state(&new_evm_state, &accounts_state_diff, &storage_diff);
 
         let new_accounts = generate_accounts_addresses(SEED + 1, 2);

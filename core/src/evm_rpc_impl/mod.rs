@@ -275,7 +275,8 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Hex<U256>, Error> {
         let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
-        Ok(Hex(evm_state.basic(address.0).balance))
+        let account = evm_state.get_account(address.0).unwrap_or_default();
+        Ok(Hex(account.balance))
     }
 
     fn storage_at(
@@ -300,7 +301,8 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Hex<U256>, Error> {
         let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
-        Ok(Hex(evm_state.basic(address.0).nonce))
+        let account = evm_state.get_account(address.0).unwrap_or_default();
+        Ok(Hex(account.nonce))
     }
 
     fn code(
@@ -311,7 +313,8 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Bytes, Error> {
         let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
-        Ok(Bytes(evm_state.basic(address.0).code))
+        let account = evm_state.get_account(address.0).unwrap_or_default();
+        Ok(Bytes(account.code))
     }
 
     fn transaction_by_hash(

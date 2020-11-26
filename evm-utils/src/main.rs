@@ -62,7 +62,9 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     info!("Loading keypair from: {}", keypath);
     let signer = Box::new(read_keypair_file(&keypath).unwrap()) as Box<dyn Signer>;
 
-    let address = args.rpc_address.unwrap_or_else(||"https://api.next.velas.com:8899".to_string());
+    let address = args
+        .rpc_address
+        .unwrap_or_else(|| "https://api.next.velas.com:8899".to_string());
     let rpc_client = RpcClient::new(address);
 
     match args.subcommand {
