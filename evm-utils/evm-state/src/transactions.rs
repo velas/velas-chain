@@ -281,8 +281,9 @@ impl From<Transaction> for UnsignedTransaction {
         }
     }
 }
+
 // TODO: Work on logs and state_root.
-#[derive(Derivative, Debug, Clone, Eq, PartialEq)]
+#[derive(Derivative, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[derivative(PartialOrd, Ord)]
 pub struct TransactionReceipt {
     pub transaction: Transaction,
@@ -295,6 +296,7 @@ pub struct TransactionReceipt {
     // pub logs_bloom: LogsBloom,
     // pub logs: Vec<Log>,
 }
+
 impl TransactionReceipt {
     pub fn new(
         transaction: Transaction,
