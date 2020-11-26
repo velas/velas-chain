@@ -1262,6 +1262,9 @@ impl Bank {
         for (name, program_id) in &genesis_config.native_instruction_processors {
             self.add_native_program(name, program_id);
         }
+        // Add account for evm.
+        let account = native_loader::create_loadable_account("Evm Processor");
+        self.store_account(&solana_sdk::evm_loader::id(), &account);
     }
 
     pub fn add_native_program(&self, name: &str, program_id: &Pubkey) {
@@ -1899,11 +1902,8 @@ impl Bank {
 
         // TODO: Pass state
 
-        let evm_executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
-            evm,
-            evm_state::Config::istanbul(),
-            usize::MAX,
-        )));
+        let mut evm_executor =
+            evm_state::StaticExecutor::with_config(evm, evm_state::Config::istanbul(), usize::MAX);
 
         let mut signature_count: u64 = 0;
         let mut executed: Vec<TransactionProcessResult> = Vec::new();
@@ -1922,7 +1922,7 @@ impl Bank {
                         &account_refcells,
                         &self.rent_collector,
                         log_collector.clone(),
-                        evm_executor.clone(),
+                        Some(&mut evm_executor),
                     );
 
                     Self::refcells_to_accounts(
@@ -1976,10 +1976,7 @@ impl Bank {
             retryable_txs,
             tx_count,
             signature_count,
-            Rc::try_unwrap(evm_executor)
-                .unwrap()
-                .into_inner()
-                .deconstruct(), // TODO: Handle borrowing
+            evm_executor.deconstruct(),
         )
     }
 
@@ -2981,6 +2978,7 @@ impl Bank {
             .into_iter()
             .map(|(_pubkey, account)| {
                 let is_specially_retained = solana_sdk::native_loader::check_id(&account.owner)
+                    || solana_sdk::evm_loader::check_id(&account.owner)
                     || solana_sdk::sysvar::check_id(&account.owner);
 
                 if is_specially_retained {

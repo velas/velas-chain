@@ -1,13 +1,9 @@
 pub mod instructions;
 pub mod processor;
 
-solana_sdk::declare_builtin!(
-    solana_sdk::evm_loader::ID,
-    solana_evm_loader_program,
-    solana_evm_loader_program::process_instruction
-);
+pub static ID: solana_sdk::pubkey::Pubkey = solana_sdk::evm_loader::ID;
 
-pub use processor::process_instruction;
+pub use processor::EvmProcessor;
 
 /// Public API for intermediate eth <-> solana transfers
 pub mod scope {

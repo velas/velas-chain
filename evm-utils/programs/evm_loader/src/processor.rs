@@ -3,11 +3,12 @@ use super::scope::*;
 use evm::TransactionAction;
 use log::*;
 
+use evm::EvmState;
+use evm::StaticExecutor;
 use solana_sdk::instruction::InstructionError;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{
     account::KeyedAccount,
-    entrypoint_native::InvokeContext,
     program_utils::limited_deserialize,
     sysvar::{rent::Rent, Sysvar},
 };
@@ -19,37 +20,6 @@ pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
     iter.next().ok_or(InstructionError::NotEnoughAccountKeys)
 }
 
-pub fn process_initialize_deposit(
-    accounts: &[KeyedAccount],
-    pubkey: Pubkey,
-) -> Result<(), InstructionError> {
-    let account_info_iter = &mut accounts.iter();
-    let deposit_info = next_account_info(account_info_iter)?;
-    let rent_account = next_account_info(account_info_iter)?;
-    let deposit_info_len = deposit_info.data_len()?;
-    let rent = &Rent::from_account(&*rent_account.try_account_ref()?)
-        .ok_or(InstructionError::InvalidArgument)?;
-
-    let mut deposit: Deposit =
-        limited_deserialize(&deposit_info.try_account_ref()?.data).unwrap_or_default();
-    if deposit.is_initialized {
-        return Err(InstructionError::AccountAlreadyInitialized);
-    }
-
-    if !rent.is_exempt(deposit_info.lamports()?, deposit_info_len) {
-        return Err(InstructionError::ExecutableAccountNotRentExempt);
-    }
-
-    deposit.deposit_authority = Option::Some(pubkey);
-    deposit.is_initialized = true;
-    deposit.locked_lamports = 0;
-
-    bincode::serialize_into(&mut *deposit_info.try_account_ref_mut()?.data, &deposit)
-        .map_err(|_| InstructionError::InvalidArgument)?;
-
-    Ok(())
-}
-
 /// Ensure that first account is program itself, and it's locked for writes.
 fn check_evm_account<'a, 'b>(
     program_id: &Pubkey,
@@ -58,8 +28,6 @@ fn check_evm_account<'a, 'b>(
     let first = keyed_accounts
         .get(0)
         .ok_or(InstructionError::NotEnoughAccountKeys)?;
-
-    let keyed_accounts = &keyed_accounts[1..];
 
     if first.unsigned_key() != program_id || !first.is_writable() {
         error!("First account is not evm, or not writable");
@@ -73,141 +41,180 @@ fn check_evm_account<'a, 'b>(
         return Err(InstructionError::MissingAccount);
     }
 
+    let keyed_accounts = &keyed_accounts[1..];
     Ok(keyed_accounts)
 }
 
-pub fn process_instruction(
-    program_id: &Pubkey,
-    keyed_accounts: &[KeyedAccount],
-    data: &[u8],
-    cx: &mut dyn InvokeContext,
-) -> Result<(), InstructionError> {
-    let evm_executor = cx.get_evm_executor();
-    let mut static_evm_executor = evm_executor.borrow_mut();
-    let evm_executor = static_evm_executor.rent_executor();
+#[derive(Default, Debug, Clone)]
+pub struct EvmProcessor {}
 
-    let keyed_accounts = check_evm_account(program_id, keyed_accounts)?;
+impl EvmProcessor {
+    pub fn process_initialize_deposit(
+        accounts: &[KeyedAccount],
+        pubkey: Pubkey,
+    ) -> Result<(), InstructionError> {
+        let account_info_iter = &mut accounts.iter();
+        let deposit_info = next_account_info(account_info_iter)?;
+        let rent_account = next_account_info(account_info_iter)?;
+        let deposit_info_len = deposit_info.data_len()?;
+        let rent = &Rent::from_account(&*rent_account.try_account_ref()?)
+            .ok_or(InstructionError::InvalidArgument)?;
 
-    let ix = limited_deserialize(data)?;
-    debug!("Run evm exec with ix = {:?}.", ix);
-    match ix {
-        EvmInstruction::EvmTransaction { evm_tx } => {
-            // TODO: Handle gas price
-            // TODO: Handle nonce
-            // TODO: validate tx signature
+        let mut deposit: Deposit =
+            limited_deserialize(&deposit_info.try_account_ref()?.data).unwrap_or_default();
+        if deposit.is_initialized {
+            return Err(InstructionError::AccountAlreadyInitialized);
+        }
 
-            let before_gas = evm_executor.used_gas();
-            let result = match evm_tx.action {
-                TransactionAction::Call(addr) => {
-                    let caller = evm_tx
-                        .caller()
-                        .map_err(|_| InstructionError::InvalidArgument)?;
-                    debug!(
-                        "TransactionAction::Call caller  = {}, to = {}.",
-                        caller, addr
-                    );
-                    evm_executor.transact_call(
-                        caller,
-                        addr,
-                        evm_tx.value,
-                        evm_tx.input.clone(),
-                        evm_tx.gas_limit.as_usize(),
-                    )
-                }
-                TransactionAction::Create => {
-                    let caller = evm_tx
-                        .caller()
-                        .map_err(|_| InstructionError::InvalidArgument)?;
-                    let addr = evm_tx.address();
-                    debug!(
-                        "TransactionAction::Create caller  = {}, to = {:?}.",
-                        caller, addr
-                    );
-                    (
-                        evm_executor.transact_create(
+        if !rent.is_exempt(deposit_info.lamports()?, deposit_info_len) {
+            return Err(InstructionError::ExecutableAccountNotRentExempt);
+        }
+
+        deposit.deposit_authority = Option::Some(pubkey);
+        deposit.is_initialized = true;
+        deposit.locked_lamports = 0;
+
+        bincode::serialize_into(&mut *deposit_info.try_account_ref_mut()?.data, &deposit)
+            .map_err(|_| InstructionError::InvalidArgument)?;
+
+        Ok(())
+    }
+
+    pub fn process_instruction(
+        &self,
+        program_id: &Pubkey,
+        keyed_accounts: &[KeyedAccount],
+        data: &[u8],
+        executor: Option<&mut StaticExecutor<EvmState>>,
+    ) -> Result<(), InstructionError> {
+        let executor = executor.expect("Evm execution from crossprogram is not allowed.");
+        let evm_executor = executor.rent_executor();
+
+        let keyed_accounts = check_evm_account(program_id, keyed_accounts)?;
+
+        let ix = limited_deserialize(data)?;
+        debug!("Run evm exec with ix = {:?}.", ix);
+        match ix {
+            EvmInstruction::EvmTransaction { evm_tx } => {
+                // TODO: Handle gas price
+                // TODO: Handle nonce
+                // TODO: validate tx signature
+
+                let before_gas = evm_executor.used_gas();
+                let result = match evm_tx.action {
+                    TransactionAction::Call(addr) => {
+                        let caller = evm_tx
+                            .caller()
+                            .map_err(|_| InstructionError::InvalidArgument)?;
+                        debug!(
+                            "TransactionAction::Call caller  = {}, to = {}.",
+                            caller, addr
+                        );
+                        evm_executor.transact_call(
                             caller,
+                            addr,
                             evm_tx.value,
                             evm_tx.input.clone(),
                             evm_tx.gas_limit.as_usize(),
-                        ),
-                        vec![],
-                    )
+                        )
+                    }
+                    TransactionAction::Create => {
+                        let caller = evm_tx
+                            .caller()
+                            .map_err(|_| InstructionError::InvalidArgument)?;
+                        let addr = evm_tx.address();
+                        debug!(
+                            "TransactionAction::Create caller  = {}, to = {:?}.",
+                            caller, addr
+                        );
+                        (
+                            evm_executor.transact_create(
+                                caller,
+                                evm_tx.value,
+                                evm_tx.input.clone(),
+                                evm_tx.gas_limit.as_usize(),
+                            ),
+                            vec![],
+                        )
+                    }
+                };
+
+                let used_gas = evm_executor.used_gas() - before_gas;
+                executor.register_tx_receipt(evm_state::TransactionReceipt::new(
+                    evm_tx,
+                    used_gas.into(),
+                    result.clone(),
+                ));
+                // TODO: Map evm errors on solana.
+                debug!("Exit status = {:?}", result);
+            }
+            EvmInstruction::CreateDepositAccount { pubkey } => {
+                Self::process_initialize_deposit(&keyed_accounts, pubkey)?
+            }
+            EvmInstruction::SwapNativeToEther {
+                lamports,
+                ether_address,
+            } => {
+                let accounts_iter = &mut keyed_accounts.iter();
+                let signer_account = next_account_info(accounts_iter)?;
+                let authority_account = next_account_info(accounts_iter)?;
+                let gweis = evm::lamports_to_gwei(lamports);
+                debug!(
+                    "Sending lamports to Gwei tokens from={},to={}",
+                    authority_account.unsigned_key(),
+                    ether_address
+                );
+
+                if keyed_accounts.is_empty() {
+                    error!("Not enough accounts");
+                    return Err(InstructionError::InvalidArgument);
                 }
-            };
 
-            let used_gas = evm_executor.used_gas() - before_gas;
-            static_evm_executor.register_tx_receipt(evm_state::TransactionReceipt::new(
-                evm_tx,
-                used_gas.into(),
-                result.clone(),
-            ));
-            // TODO: Map evm errors on solana.
-            debug!("Exit status = {:?}", result);
+                if lamports == 0 {
+                    return Ok(());
+                }
+
+                let mut deposit: Deposit =
+                    limited_deserialize(&authority_account.account.borrow().data)
+                        .unwrap_or_default();
+
+                if signer_account.signer_key().is_none()
+                    || deposit.get_owner()? != *signer_account.signer_key().unwrap()
+                {
+                    debug!("SwapNativeToEther: from must sign");
+                    return Err(InstructionError::MissingRequiredSignature);
+                }
+
+                let mut real_lamports = authority_account.lamports()?;
+                if deposit.locked_lamports >= real_lamports {
+                    debug!(
+                        "SwapNativeToEther: insufficient unlocked lamports ({}, locked {})",
+                        authority_account.lamports()?,
+                        deposit.locked_lamports
+                    );
+                    return Err(InstructionError::InsufficientFunds);
+                }
+                real_lamports -= deposit.locked_lamports;
+                if lamports > real_lamports {
+                    debug!(
+                        "SwapNativeToEther: insufficient lamports ({}, need {})",
+                        real_lamports, lamports
+                    );
+                    return Err(InstructionError::InsufficientFunds);
+                }
+                deposit.locked_lamports += lamports;
+                evm_executor.deposit(ether_address, gweis);
+                bincode::serialize_into(
+                    &mut *authority_account.try_account_ref_mut()?.data,
+                    &deposit,
+                )
+                .map_err(|_| InstructionError::InvalidArgument)?;
+            }
         }
-        EvmInstruction::CreateDepositAccount { pubkey } => {
-            process_initialize_deposit(&keyed_accounts, pubkey)?
-        }
-        EvmInstruction::SwapNativeToEther {
-            lamports,
-            ether_address,
-        } => {
-            let accounts_iter = &mut keyed_accounts.iter();
-            let signer_account = next_account_info(accounts_iter)?;
-            let authority_account = next_account_info(accounts_iter)?;
-            let gweis = evm::lamports_to_gwei(lamports);
-            debug!(
-                "Sending lamports to Gwei tokens from={},to={}",
-                authority_account.unsigned_key(),
-                ether_address
-            );
-
-            if keyed_accounts.is_empty() {
-                error!("Not enough accounts");
-                return Err(InstructionError::InvalidArgument);
-            }
-
-            if lamports == 0 {
-                return Ok(());
-            }
-
-            let mut deposit: Deposit =
-                limited_deserialize(&authority_account.account.borrow().data).unwrap_or_default();
-
-            if signer_account.signer_key().is_none()
-                || deposit.get_owner()? != *signer_account.signer_key().unwrap()
-            {
-                debug!("SwapNativeToEther: from must sign");
-                return Err(InstructionError::MissingRequiredSignature);
-            }
-
-            let mut real_lamports = authority_account.lamports()?;
-            if deposit.locked_lamports >= real_lamports {
-                debug!(
-                    "SwapNativeToEther: insufficient unlocked lamports ({}, locked {})",
-                    authority_account.lamports()?,
-                    deposit.locked_lamports
-                );
-                return Err(InstructionError::InsufficientFunds);
-            }
-            real_lamports -= deposit.locked_lamports;
-            if lamports > real_lamports {
-                debug!(
-                    "SwapNativeToEther: insufficient lamports ({}, need {})",
-                    real_lamports, lamports
-                );
-                return Err(InstructionError::InsufficientFunds);
-            }
-            deposit.locked_lamports += lamports;
-            evm_executor.deposit(ether_address, gweis);
-            bincode::serialize_into(
-                &mut *authority_account.try_account_ref_mut()?.data,
-                &deposit,
-            )
-            .map_err(|_| InstructionError::InvalidArgument)?;
-        }
+        Ok(())
     }
-    Ok(())
 }
+
 #[cfg(test)]
 mod test {
     use super::*;

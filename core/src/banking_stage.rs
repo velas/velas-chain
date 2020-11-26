@@ -531,7 +531,7 @@ impl BankingStage {
             vec![]
         };
 
-        let mut evm_state = bank
+        let evm_state = bank
             .evm_state
             .read()
             .expect("bank evm state was poisoned")
