@@ -502,8 +502,10 @@ impl BridgeERPC for BridgeERPCImpl {
         let evm_state = bank
             .evm_state
             .read()
-            .expect("meta bank EVM state was poisoned")
-            .clone();
+            .expect("meta bank EVM state was poisoned");
+
+        let evm_state = evm_state.clone(); // TODO: revise
+
         let mut executor =
             evm_state::StaticExecutor::with_config(evm_state, Config::istanbul(), gas_limit);
         let address = tx.to.map(|h| h.0).unwrap_or_default();
