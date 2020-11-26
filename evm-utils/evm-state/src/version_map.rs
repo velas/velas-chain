@@ -73,6 +73,14 @@ where
         }
     }
 
+    pub fn wrap(storage: impl MapLike<Key = K, Value = V> + 'static) -> Map<K, V> {
+        let storage = Arc::new(storage) as Arc<dyn MapLike<Key = K, Value = V>>;
+        Map {
+            state: BTreeMap::new(),
+            parent: Some(storage),
+        }
+    }
+
     // Borrow value by key
     pub fn get(&self, key: &K) -> Option<&V> {
         if let Some(s) = self.state.get(key) {

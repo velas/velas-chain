@@ -1,12 +1,16 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use evm::backend::{Apply, ApplyBackend, Backend, Basic, Log};
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
-use super::transactions::TransactionReceipt;
-use super::version_map::Map;
+use crate::storage;
+use crate::transactions::TransactionReceipt;
+use crate::version_map::{Map, MapLike};
+
+type Slot = u64; // TODO: re-use existing one from sdk package
 
 /// Vivinity value of a memory backend.
 #[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -43,13 +47,13 @@ pub struct AccountState {
 
 #[derive(Debug, Clone)]
 pub struct EvmState {
-    vicinity: MemoryVicinity,
+    pub(crate) vicinity: MemoryVicinity,
     pub(crate) accounts: Map<H160, AccountState>,
     // Store every account storage at single place, to use power of versioned map.
     // This allows us to save only changed data.
     pub(crate) storage: Map<(H160, H256), H256>,
     pub(crate) txs_receipts: Map<H256, TransactionReceipt>,
-    logs: Vec<Log>,
+    pub(crate) logs: Vec<Log>,
 }
 
 impl Default for EvmState {
@@ -90,7 +94,35 @@ impl EvmState {
     }
 }
 
+type Storage<K, V> = storage::Storage<Slot, K, V>;
+type PerSlot<V> = storage::KVStorage<Slot, V>;
+
 impl EvmState {
+    pub fn read_from<P: AsRef<Path>>(path: P, slot: Option<Slot>) -> Result<Self, anyhow::Error> {
+        let storage = storage::Versions::open(path, &["vicinity", "accounts"])?;
+
+        let _vicinities: PerSlot<MemoryVicinity> = storage.typed("vicinity")?;
+        let _accounts: Storage<H160, AccountState> = storage.typed("accounts")?;
+
+        let vicinity = if let Some(slot) = slot {
+            todo!("read vicinity for requested slot");
+        } else {
+            MemoryVicinity::default()
+        };
+
+        Ok(Self {
+            vicinity,
+            accounts: todo!(),
+            storage: todo!(),
+            txs_receipts: todo!(),
+            logs: vec![],
+        })
+
+        // let accounts = Storage::open(&path, &opts, "accounts")?;
+        // let storage = Storage::open(&path, &opts, "storage")?;
+        // let txs_receipts = Storage::open(&path, &opts, "txs_receipts")?;
+    }
+
     // TODO: Replace it by persistent storage
     pub fn new_not_forget_to_deserialize_later() -> Self {
         let vicinity = MemoryVicinity {
