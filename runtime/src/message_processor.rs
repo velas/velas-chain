@@ -1284,8 +1284,14 @@ mod tests {
             Some(&from_pubkey),
         );
 
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].borrow().lamports, 100);
         assert_eq!(accounts[1].borrow().lamports, 0);
@@ -1299,8 +1305,14 @@ mod tests {
             Some(&from_pubkey),
         );
 
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(
@@ -1318,8 +1330,14 @@ mod tests {
             Some(&from_pubkey),
         );
 
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(
@@ -1418,8 +1436,14 @@ mod tests {
             )],
             Some(&from_pubkey),
         );
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(
@@ -1437,8 +1461,14 @@ mod tests {
             )],
             Some(&from_pubkey),
         );
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(result, Ok(()));
 
         // Do work on the same account but at different location in keyed_accounts[]
@@ -1453,8 +1483,14 @@ mod tests {
             )],
             Some(&from_pubkey),
         );
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].borrow().lamports, 80);
         assert_eq!(accounts[1].borrow().lamports, 20);

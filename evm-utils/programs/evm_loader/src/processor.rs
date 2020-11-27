@@ -220,17 +220,12 @@ mod test {
     use super::*;
     use evm_state::transactions::{TransactionAction, TransactionSignature};
     use primitive_types::{H160, H256, U256};
+    use solana_sdk::account::KeyedAccount;
+    use solana_sdk::native_loader;
     use solana_sdk::program_utils::limited_deserialize;
 
-    use solana_sdk::{
-        account::Account,
-        entrypoint_native::{ComputeBudget, ComputeMeter, Logger, ProcessInstruction},
-        instruction::CompiledInstruction,
-        message::Message,
-    };
-
+    use std::cell::RefCell;
     use std::sync::RwLock;
-    use std::{cell::RefCell, rc::Rc};
 
     fn dummy_eth_tx() -> evm_state::transactions::Transaction {
         evm_state::transactions::Transaction {
@@ -256,99 +251,29 @@ mod test {
         assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
     }
 
-    #[derive(Debug, Default, Clone)]
-    pub struct MockComputeMeter {
-        pub remaining: u64,
-    }
-    impl ComputeMeter for MockComputeMeter {
-        fn consume(&mut self, amount: u64) -> Result<(), InstructionError> {
-            self.remaining = self.remaining.saturating_sub(amount);
-            if self.remaining == 0 {
-                return Err(InstructionError::ComputationalBudgetExceeded);
-            }
-            Ok(())
-        }
-        fn get_remaining(&self) -> u64 {
-            self.remaining
-        }
-    }
-    #[derive(Debug, Default, Clone)]
-    pub struct MockLogger {
-        pub log: Rc<RefCell<Vec<String>>>,
-    }
-    impl Logger for MockLogger {
-        fn log_enabled(&self) -> bool {
-            true
-        }
-        fn log(&mut self, message: &str) {
-            self.log.borrow_mut().push(message.to_string());
-        }
-    }
-    #[derive(Debug)]
-    pub struct MockInvokeContext {
-        pub key: Pubkey,
-        pub logger: MockLogger,
-        pub compute_meter: MockComputeMeter,
-        pub evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>,
-    }
-    impl MockInvokeContext {
-        fn new(evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>) -> Self {
-            MockInvokeContext {
-                key: Pubkey::default(),
-                logger: MockLogger::default(),
-                compute_meter: MockComputeMeter {
-                    remaining: std::u64::MAX,
-                },
-                evm_executor,
-            }
-        }
-    }
-    impl InvokeContext for MockInvokeContext {
-        fn push(&mut self, _key: &Pubkey) -> Result<(), InstructionError> {
-            Ok(())
-        }
-        fn pop(&mut self) {}
-        fn verify_and_update(
-            &mut self,
-            _message: &Message,
-            _instruction: &CompiledInstruction,
-            _accounts: &[Rc<RefCell<Account>>],
-        ) -> Result<(), InstructionError> {
-            Ok(())
-        }
-        fn get_caller(&self) -> Result<&Pubkey, InstructionError> {
-            Ok(&self.key)
-        }
-        fn get_programs(&self) -> &[(Pubkey, ProcessInstruction)] {
-            &[]
-        }
-        fn get_logger(&self) -> Rc<RefCell<dyn Logger>> {
-            Rc::new(RefCell::new(self.logger.clone()))
-        }
-        fn is_cross_program_supported(&self) -> bool {
-            true
-        }
-        fn get_compute_budget(&self) -> ComputeBudget {
-            ComputeBudget::default()
-        }
-        fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>> {
-            Rc::new(RefCell::new(self.compute_meter.clone()))
-        }
-        fn get_evm_executor(&self) -> Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>> {
-            self.evm_executor.clone()
-        }
-    }
-
     const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
     #[test]
     fn execute_tx() {
-        let executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
+        let mut executor = evm_state::StaticExecutor::with_config(
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-        )));
-        let mut cx = MockInvokeContext::new(executor.clone());
+        );
+        let mut executor = Some(&mut executor);
+        let processor = EvmProcessor::default();
+        // pub fn new(key: &'a Pubkey, is_signer: bool, account: &'a RefCell<Account>) -> Self {
+        //     Self {
+        //         is_signer,
+        //         is_writable: true,
+        //         key,
+        //         account,
+        //     }
+        // }
+        let evm_account = RefCell::new(native_loader::create_loadable_account("Evm Processor"));
+
+        let evm_keyed_account = KeyedAccount::new(&crate::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account];
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let tx_create = evm::UnsignedTransaction {
             nonce: 0.into(),
@@ -360,17 +285,18 @@ mod test {
         };
         let tx_create = tx_create.sign(&secret_key, None);
 
-        assert!(process_instruction(
-            &crate::ID,
-            &[],
-            &bincode::serialize(&EvmInstruction::EvmTransaction {
-                evm_tx: tx_create.clone()
-            })
-            .unwrap(),
-            &mut cx
-        )
-        .is_ok());
-        println!("cx = {:?}", cx);
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmTransaction {
+                    evm_tx: tx_create.clone()
+                })
+                .unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_ok());
+        println!("cx = {:?}", executor);
         // cx.evm_executor.borrow_mut().deconstruct();
         let tx_address = tx_create.address().unwrap();
         let tx_call = evm::UnsignedTransaction {
@@ -383,20 +309,26 @@ mod test {
         };
 
         let tx_call = tx_call.sign(&secret_key, None);
-        assert!(process_instruction(
-            &crate::ID,
-            &[],
-            &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
-            &mut cx
-        )
-        .is_ok());
-        println!("cx = {:?}", cx);
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_ok());
+        println!("cx = {:?}", executor);
     }
 
     #[test]
     fn execute_tx_with_state_apply() {
         use evm_state::Backend;
         let state = RwLock::new(evm_state::EvmState::default());
+        let processor = EvmProcessor::default();
+        let evm_account = RefCell::new(native_loader::create_loadable_account("Evm Processor"));
+
+        let evm_keyed_account = KeyedAccount::new(&crate::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account];
 
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let tx_create = evm::UnsignedTransaction {
@@ -417,27 +349,26 @@ mod test {
         assert_eq!(state.read().unwrap().basic(tx_address).nonce, 0.into());
         {
             let mut locked = state.write().unwrap();
-            let executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
+            let mut executor_orig = evm_state::StaticExecutor::with_config(
                 locked.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
-            )));
+            );
+            let mut executor = Some(&mut executor_orig);
+            assert!(processor
+                .process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &bincode::serialize(&EvmInstruction::EvmTransaction {
+                        evm_tx: tx_create.clone()
+                    })
+                    .unwrap(),
+                    executor.as_deref_mut()
+                )
+                .is_ok());
+            println!("cx = {:?}", executor);
 
-            let mut cx = MockInvokeContext::new(executor.clone());
-            assert!(process_instruction(
-                &crate::ID,
-                &[],
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_create.clone()
-                })
-                .unwrap(),
-                &mut cx
-            )
-            .is_ok());
-            println!("cx = {:?}", cx);
-
-            drop(cx);
-            let patch = Rc::try_unwrap(executor).unwrap().into_inner().deconstruct(); // TODO: Handle borrowing
+            let patch = executor_orig.deconstruct();
 
             locked.apply(patch);
         }
@@ -459,24 +390,25 @@ mod test {
         let tx_call = tx_call.sign(&secret_key, None);
         {
             let mut locked = state.write().unwrap();
-            let executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
+            let mut executor_orig = evm_state::StaticExecutor::with_config(
                 locked.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
-            )));
+            );
+            let mut executor = Some(&mut executor_orig);
 
-            let mut cx = MockInvokeContext::new(executor.clone());
-            assert!(process_instruction(
-                &crate::ID,
-                &[],
-                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
-                &mut cx
-            )
-            .is_ok());
-            println!("cx = {:?}", cx);
+            assert!(processor
+                .process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
+                        .unwrap(),
+                    executor.as_deref_mut()
+                )
+                .is_ok());
+            println!("cx = {:?}", executor);
 
-            drop(cx);
-            let patch = Rc::try_unwrap(executor).unwrap().into_inner().deconstruct(); // TODO: Handle borrowing
+            let patch = executor_orig.deconstruct();
 
             locked.apply(patch);
         }
