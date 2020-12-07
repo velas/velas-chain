@@ -11,6 +11,7 @@ pub use layered_backend::*;
 pub use primitive_types::{H256, U256};
 pub use transactions::*;
 
+mod layered_map;
 mod storage;
 mod version_map;
 
@@ -86,17 +87,21 @@ pub const HELLO_WORLD_CODE:&str = "608060405234801561001057600080fd5b5061011e806
 pub const HELLO_WORLD_ABI: &str = "942ae0a7";
 pub const HELLO_WORLD_RESULT:&str = "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000a68656c6c6f576f726c6400000000000000000000000000000000000000000000";
 pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b506004361060285760003560e01c8063942ae0a714602d575b600080fd5b603360ab565b6040518080602001828103825283818151815260200191508051906020019080838360005b8381101560715780820151818401526020810190506058565b50505050905090810190601f168015609d5780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b60606040518060400160405280600a81526020017f68656c6c6f576f726c640000000000000000000000000000000000000000000081525090509056fea2646970667358221220fa787b95ca91ffe90fdb780b8ee8cb11c474bc63cb8217112c88bc465f7ea7d364736f6c63430007020033";
-#[cfg(test)]
-pub mod tests {
 
-    use super::StaticExecutor;
-    use super::*;
+#[cfg(test)]
+mod test_utils;
+
+#[cfg(test)]
+mod tests {
+    use std::sync::RwLock;
+
     use assert_matches::assert_matches;
     use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
 
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
-    use std::sync::RwLock;
+
+    use super::*;
 
     fn name_to_key(name: &str) -> H160 {
         let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
@@ -138,7 +143,7 @@ pub mod tests {
             }
         }
 
-        backend.write().unwrap().freeze();
+        backend.write().unwrap().freeze_as(0);
 
         let config = evm::Config::istanbul();
         let mut executor = StaticExecutor::with_config(

@@ -6,9 +6,9 @@ use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
+use crate::layered_map::LayeredMap;
 use crate::storage;
 use crate::transactions::TransactionReceipt;
-use crate::version_map::{Map, MapLike};
 
 type Slot = u64; // TODO: re-use existing one from sdk package
 
@@ -35,7 +35,7 @@ pub struct MemoryVicinity {
     pub block_gas_limit: U256,
 }
 
-#[derive(Default, Clone, Debug, Eq, PartialEq)]
+#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AccountState {
     /// Account nonce.
     pub nonce: U256,
@@ -45,108 +45,168 @@ pub struct AccountState {
     pub code: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)] // TODO: Debug
 pub struct EvmState {
     pub(crate) vicinity: MemoryVicinity,
-    pub(crate) accounts: Map<H160, AccountState>,
+    pub(crate) logs: Vec<Log>,
+
+    pub accounts: Map<H160, AccountState>,
     // Store every account storage at single place, to use power of versioned map.
     // This allows us to save only changed data.
-    pub(crate) storage: Map<(H160, H256), H256>,
+    pub(crate) accounts_storage: Map<(H160, H256), H256>,
     pub(crate) txs_receipts: Map<H256, TransactionReceipt>,
-    pub(crate) logs: Vec<Log>,
+    storage: storage::Versions<Slot>,
+}
+
+type Map<K, V> = LayeredMap<Slot, K, V>;
+type Storage<K, V> = storage::Storage<Slot, K, Option<V>>;
+type PerSlot<V> = storage::KVStorage<Slot, V>;
+
+const DEFAULT_STORAGE_PATH: &str = "/tmp/solana/evm-state";
+
+const VICINITY: &str = "vicinity";
+const ACCOUNTS: &str = "accounts";
+const ACCOUNTS_STORAGE: &str = "accounts_storage";
+const TRANSACTIONS_RECEIPTS: &str = "txs_receipts";
+
+struct FieldsStorages {
+    vicinities: PerSlot<MemoryVicinity>,
+    accounts: Storage<H160, AccountState>,
+    accounts_storage: Storage<(H160, H256), H256>,
+    txs_receipts: Storage<H256, TransactionReceipt>,
+}
+
+fn open_storage<P: AsRef<Path>>(
+    path: P,
+) -> anyhow::Result<(storage::Versions<Slot>, FieldsStorages)> {
+    let storage = storage::Versions::open(
+        path,
+        &[VICINITY, ACCOUNTS, ACCOUNTS_STORAGE, TRANSACTIONS_RECEIPTS],
+    )?;
+
+    let vicinities = storage.typed(VICINITY)?;
+    let accounts = storage.typed(ACCOUNTS)?;
+    let accounts_storage = storage.typed(ACCOUNTS_STORAGE)?;
+    let txs_receipts = storage.typed(TRANSACTIONS_RECEIPTS)?;
+
+    Ok((
+        storage,
+        FieldsStorages {
+            vicinities,
+            accounts,
+            accounts_storage,
+            txs_receipts,
+        },
+    ))
 }
 
 impl Default for EvmState {
     fn default() -> Self {
-        Self::new_not_forget_to_deserialize_later()
+        Self::new(default_memory_vicinity())
+    }
+}
+
+fn default_memory_vicinity() -> MemoryVicinity {
+    MemoryVicinity {
+        gas_price: U256::zero(),
+        origin: H160::default(),
+        chain_id: U256::zero(),
+        block_hashes: Vec::new(),
+        block_number: U256::zero(),
+        block_coinbase: H160::default(),
+        block_timestamp: U256::zero(),
+        block_difficulty: U256::zero(),
+        block_gas_limit: U256::max_value(),
     }
 }
 
 impl EvmState {
+    // TODO: remove, keep only default instance
     pub fn new(vicinity: MemoryVicinity) -> Self {
+        let (
+            storage,
+            FieldsStorages {
+                accounts,
+                accounts_storage,
+                txs_receipts,
+                ..
+            },
+        ) = open_storage(DEFAULT_STORAGE_PATH).unwrap_or_else(|err| {
+            panic!("Unable to open storage for default EVM state: {:?}", err)
+        });
+
+        let slot = Slot::default();
+
         Self {
             vicinity,
-            accounts: Map::new(),
-            storage: Map::new(),
-            txs_receipts: Map::new(),
-            logs: Vec::new(),
+            logs: vec![],
+
+            accounts: LayeredMap::wrap(accounts, slot),
+            accounts_storage: LayeredMap::wrap(accounts_storage, slot),
+            txs_receipts: LayeredMap::wrap(txs_receipts, slot),
+            storage,
         }
     }
 
     pub fn freeze(&mut self) {
+        // TODO: store vicinity
+
         self.accounts.freeze();
-        self.storage.freeze();
+        self.accounts_storage.freeze();
         self.txs_receipts.freeze();
+        // self.storage.new_version(slot);
     }
 
-    pub fn try_fork(&self) -> Option<Self> {
-        let accounts = self.accounts.try_fork()?;
-        let storage = self.storage.try_fork()?;
-        let txs_receipts = self.txs_receipts.try_fork()?;
+    pub fn try_fork(&self, new_slot: Slot) -> Option<Self> {
+        let accounts = self.accounts.try_fork(new_slot)?;
+        let accounts_storage = self.accounts_storage.try_fork(new_slot)?;
+        let txs_receipts = self.txs_receipts.try_fork(new_slot)?;
 
         Some(Self {
             vicinity: self.vicinity.clone(),
-            accounts,
-            storage,
-            txs_receipts,
             logs: vec![],
+
+            accounts,
+            accounts_storage,
+            txs_receipts,
+            storage: self.storage.clone(),
         })
     }
 }
 
-type Storage<K, V> = storage::Storage<Slot, K, V>;
-type PerSlot<V> = storage::KVStorage<Slot, V>;
-
 impl EvmState {
-    pub fn read_from<P: AsRef<Path>>(path: P, slot: Option<Slot>) -> Result<Self, anyhow::Error> {
-        let storage = storage::Versions::open(path, &["vicinity", "accounts"])?;
+    pub fn load_from<P: AsRef<Path>>(path: P, slot: Slot) -> Result<Self, anyhow::Error> {
+        let (
+            storage,
+            FieldsStorages {
+                vicinities,
+                accounts,
+                accounts_storage,
+                txs_receipts,
+            },
+        ) = open_storage(path)?;
 
-        let _vicinities: PerSlot<MemoryVicinity> = storage.typed("vicinity")?;
-        let _accounts: Storage<H160, AccountState> = storage.typed("accounts")?;
+        let vicinity = vicinities
+            .get(slot)?
+            .unwrap_or_else(|| panic!("Missed memory vicinity for requested slot {}", slot));
 
-        let vicinity = if let Some(slot) = slot {
-            todo!("read vicinity for requested slot");
-        } else {
-            MemoryVicinity::default()
-        };
+        let accounts = LayeredMap::wrap(accounts, slot);
+        let accounts_storage = LayeredMap::wrap(accounts_storage, slot);
+        let txs_receipts = LayeredMap::wrap(txs_receipts, slot);
 
         Ok(Self {
             vicinity,
-            accounts: todo!(),
-            storage: todo!(),
-            txs_receipts: todo!(),
             logs: vec![],
+
+            accounts,
+            accounts_storage,
+            txs_receipts,
+            storage,
         })
-
-        // let accounts = Storage::open(&path, &opts, "accounts")?;
-        // let storage = Storage::open(&path, &opts, "storage")?;
-        // let txs_receipts = Storage::open(&path, &opts, "txs_receipts")?;
     }
 
-    // TODO: Replace it by persistent storage
-    pub fn new_not_forget_to_deserialize_later() -> Self {
-        let vicinity = MemoryVicinity {
-            gas_price: U256::zero(),
-            origin: H160::default(),
-            chain_id: U256::zero(),
-            block_hashes: Vec::new(),
-            block_number: U256::zero(),
-            block_coinbase: H160::default(),
-            block_timestamp: U256::zero(),
-            block_difficulty: U256::zero(),
-            block_gas_limit: U256::max_value(),
-        };
-        EvmState {
-            vicinity,
-            accounts: Map::new(),
-            storage: Map::new(),
-            txs_receipts: Map::new(),
-            logs: Vec::new(),
-        }
-    }
-
-    pub fn get_tx_receipt_by_hash(&self, tx_hash: H256) -> Option<&TransactionReceipt> {
-        self.txs_receipts.get(&tx_hash)
+    pub fn get_tx_receipt_by_hash(&self, tx_hash: H256) -> Option<TransactionReceipt> {
+        self.txs_receipts.get(tx_hash)
     }
 
     pub fn apply(
@@ -207,11 +267,11 @@ impl Backend for EvmState {
     }
 
     fn exists(&self, address: H160) -> bool {
-        self.accounts.get(&address).is_some()
+        self.accounts.get(address).is_some()
     }
 
     fn basic(&self, address: H160) -> Basic {
-        let a = self.accounts.get(&address).cloned().unwrap_or_default();
+        let a = self.accounts.get(address).unwrap_or_default();
         Basic {
             balance: a.balance,
             nonce: a.nonce,
@@ -220,29 +280,28 @@ impl Backend for EvmState {
 
     fn code_hash(&self, address: H160) -> H256 {
         self.accounts
-            .get(&address)
+            .get(address)
             .map(|v| H256::from_slice(Keccak256::digest(&v.code).as_slice()))
             .unwrap_or_else(|| H256::from_slice(Keccak256::digest(&[]).as_slice()))
     }
 
     fn code_size(&self, address: H160) -> usize {
         self.accounts
-            .get(&address)
+            .get(address)
             .map(|v| v.code.len())
             .unwrap_or(0)
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
         self.accounts
-            .get(&address)
+            .get(address)
             .map(|v| v.code.clone())
             .unwrap_or_default()
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-        self.storage
-            .get(&(address, index))
-            .cloned()
+        self.accounts_storage
+            .get((address, index))
             .unwrap_or_default()
     }
 }
@@ -267,7 +326,7 @@ impl ApplyBackend for EvmState {
                     // TODO: rollback on insert fail.
                     // TODO: clear account storage on delete.
                     let is_empty = {
-                        let mut account = self.accounts.get(&address).cloned().unwrap_or_default();
+                        let mut account = self.accounts.get(address).unwrap_or_default();
                         account.balance = basic.balance;
                         account.nonce = basic.nonce;
                         if let Some(code) = code {
@@ -288,9 +347,9 @@ impl ApplyBackend for EvmState {
 
                         for (index, value) in storage {
                             if value == H256::default() {
-                                self.storage.remove((address, index));
+                                self.accounts_storage.remove((address, index));
                             } else {
-                                self.storage.insert((address, index), value);
+                                self.accounts_storage.insert((address, index), value);
                             }
                         }
 
@@ -312,28 +371,21 @@ impl ApplyBackend for EvmState {
 }
 
 #[cfg(test)]
-mod test {
-    use super::*;
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
     use primitive_types::{H160, H256, U256};
     use rand::rngs::mock::StepRng;
     use rand::Rng;
-    use std::collections::{BTreeMap, BTreeSet};
+
+    use crate::test_utils::TmpDir;
+
+    use super::*;
+
     const RANDOM_INCR: u64 = 734512;
     const MAX_SIZE: usize = 32; // Max size of test collections.
 
     const SEED: u64 = 123;
-
-    impl EvmState {
-        pub(crate) fn testing_default() -> EvmState {
-            EvmState {
-                vicinity: Default::default(),
-                accounts: Default::default(),
-                storage: Default::default(),
-                txs_receipts: Default::default(),
-                logs: Default::default(),
-            }
-        }
-    }
 
     fn generate_account_by_seed(seed: u64) -> AccountState {
         let mut rng = StepRng::new(seed * RANDOM_INCR + seed, RANDOM_INCR);
@@ -427,8 +479,8 @@ mod test {
 
         for s in storage {
             match &s.1 {
-                Some(v) => state.storage.insert(*s.0, *v),
-                None => state.storage.remove(*s.0),
+                Some(v) => state.accounts_storage.insert(*s.0, *v),
+                None => state.accounts_storage.remove(*s.0),
             }
         }
     }
@@ -443,7 +495,7 @@ mod test {
         }
 
         for s in storage {
-            assert_eq!(state.storage.get(s.0), s.1.as_ref())
+            assert_eq!(state.accounts_storage.get(s.0), s.1.as_ref())
         }
     }
 
@@ -456,7 +508,9 @@ mod test {
         let storage_diff = to_state_diff(storage, BTreeSet::new());
         let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
 
-        let mut evm_state = EvmState::testing_default();
+        let tmp_dir = TmpDir::new("add_two_accounts_check_helpers");
+        let mut evm_state = EvmState::read_from(tmp_dir, None).unwrap();
+
         assert_eq!(evm_state.basic(H160::random()).balance, U256::from(0));
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
 
@@ -472,9 +526,11 @@ mod test {
         let storage_diff = to_state_diff(storage, BTreeSet::new());
         let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
 
-        let mut evm_state = EvmState::testing_default();
+        let tmp_dir = TmpDir::new("fork_add_remove_accounts");
+        let mut evm_state = EvmState::read_from(tmp_dir, None).unwrap();
+
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
-        evm_state.freeze();
+        evm_state.freeze_as(0);
 
         assert_state(&evm_state, &accounts_state_diff, &storage_diff);
 

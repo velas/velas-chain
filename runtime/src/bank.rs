@@ -646,10 +646,21 @@ impl Bank {
         fn new<T: Default>() -> T {
             T::default()
         }
+
+        let evm_state = evm_state::EvmState::open(
+            evm_state::DEFAULT_STORAGE_PATH,
+            if fields.slot != 0 {
+                Some(fields.slot)
+            } else {
+                None
+            },
+        )
+        .unwrap_or_else(|err| panic!("Unable to open EVM state storage: {:?}", err));
+
         let mut bank = Self {
             rc: bank_rc,
             src: new(),
-            evm_state: RwLock::new(evm_state::EvmState::new_not_forget_to_deserialize_later()),
+            evm_state: RwLock::new(evm_state),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             ancestors: fields.ancestors,
             hash: RwLock::new(fields.hash),

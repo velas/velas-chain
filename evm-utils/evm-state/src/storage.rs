@@ -2,20 +2,20 @@ use std::array::TryFromSliceError;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::io::Cursor;
+use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
 use lazy_static::lazy_static;
 use rocksdb::{self, ColumnFamily, ColumnFamilyDescriptor, IteratorMode, Options, DB};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::version_map::MapLike;
-
-type Result<T> = std::result::Result<T, Error>;
-type StdResult<T, E> = std::result::Result<T, E>;
+pub type Result<T> = std::result::Result<T, Error>;
+pub type StdResult<T, E> = std::result::Result<T, E>;
 
 type BincodeOpts = WithOtherEndian<DefaultOptions, BigEndian>;
 lazy_static! {
@@ -39,48 +39,53 @@ pub struct Versions<V> {
     _version: PhantomData<V>,
 }
 
-type Roots<V> = Option<V>; // TODO: Vec<V>
+impl<V> Clone for Versions<V> {
+    fn clone(&self) -> Self {
+        Self {
+            db: Arc::clone(&self.db),
+            _version: PhantomData,
+        }
+    }
+}
 
-impl<V> Versions<V> {
-    pub fn roots_of(&self, version: &V) -> Result<Option<Roots<V>>>
-    where
-        V: Serialize,
-        Roots<V>: DeserializeOwned,
-    {
-        let version = CODER.serialize(version)?;
+type Previous<V> = Option<V>; // TODO: Vec<V>
+
+impl<V> Versions<V>
+where
+    V: Copy + Serialize + DeserializeOwned,
+    Previous<V>: Serialize + DeserializeOwned,
+{
+    pub fn previous_of(&self, version: V) -> Result<Previous<V>> {
+        let version = CODER.serialize(&version)?;
         let bytes = self.db.get_pinned(version)?;
-        let mb_roots = bytes.map(|bytes| CODER.deserialize(&bytes)).transpose()?;
-        Ok(mb_roots)
+        let previous = bytes.map(|bytes| CODER.deserialize(&bytes)).transpose()?;
+        Ok(previous)
     }
 
-    pub fn versions(&self) -> impl Iterator<Item = (V, Roots<V>)> + '_
-    where
-        V: DeserializeOwned,
-    {
+    pub fn versions(&self) -> impl Iterator<Item = (V, Previous<V>)> + '_ {
         self.db
             .iterator(IteratorMode::End)
             .map(move |(key, value)| {
                 let version = CODER.deserialize(&key).unwrap_or_else(|err| {
                     panic!("Unable to deserialize version from {:?}: {:?}", key, err)
                 });
-                let roots = CODER.deserialize(&value).unwrap_or_else(|err| {
-                    panic!("Unable to deserialize roots from {:?}: {:?}", value, err)
+                let previous = CODER.deserialize(&value).unwrap_or_else(|err| {
+                    panic!("Unable to deserialize previous from {:?}: {:?}", value, err)
                 });
-                (version, roots)
+                (version, previous)
             })
     }
 
-    pub fn new_version(&self, version: V, roots: Roots<V>) -> Result<()>
-    where
-        V: Serialize,
-    {
+    pub fn new_version(&self, version: V, previous: Previous<V>) -> Result<()> {
         let version = CODER.serialize(&version)?;
         debug_assert_eq!(self.db.get(&version)?, None);
-        let roots = CODER.serialize(&roots)?;
-        self.db.put(version, roots)?;
+        let previous = CODER.serialize(&previous)?;
+        self.db.put(version, previous)?;
         Ok(())
     }
+}
 
+impl<V> Versions<V> {
     pub fn typed<S: AsRef<str>, Key, Value>(&self, type_name: S) -> Result<Storage<V, Key, Value>> {
         if self.db.cf_handle(type_name.as_ref()).is_none() {
             return Err(Error::ColumnFamilyErr(type_name.as_ref().to_owned()));
@@ -116,12 +121,25 @@ impl<V> Versions<V> {
 }
 
 pub struct Storage<V, Key, Value> {
-    versions: Versions<V>,
+    pub versions: Versions<V>,
     type_name: String, // ColumnFamily id
+    squash_guard: Arc<RwLock<()>>,
 
-    _version: PhantomData<V>,
     _key: PhantomData<Key>,
     _value: PhantomData<Value>,
+}
+
+impl<V, Key, Value> Clone for Storage<V, Key, Value> {
+    fn clone(&self) -> Self {
+        Self {
+            versions: self.versions.clone(),
+            type_name: self.type_name.to_owned(),
+            squash_guard: Arc::clone(&self.squash_guard),
+
+            _key: PhantomData,
+            _value: PhantomData,
+        }
+    }
 }
 
 pub trait AsBytePrefix {
@@ -184,11 +202,13 @@ impl<V, Key, Value> Storage<V, Key, Value> {
             _version: PhantomData,
         };
         let type_name = type_name.as_ref().to_owned();
+        let squash_guard = Arc::new(RwLock::default());
 
         Self {
             versions,
             type_name,
-            _version: PhantomData,
+            squash_guard,
+
             _key: PhantomData,
             _value: PhantomData,
         }
@@ -203,37 +223,47 @@ impl<V, Key, Value> Storage<V, Key, Value> {
             .cf_handle(&self.type_name)
             .ok_or_else(|| Error::ColumnFamilyErr(self.type_name.to_owned()))
     }
+}
 
-    pub fn insert_with(&self, version: V, key: Key, value: Value) -> Result<()>
-    where
-        V: AsBytePrefix,
-        Key: Serialize,
-        Value: Serialize,
-    {
+impl<V, Key, Value> Storage<V, Key, Value>
+where
+    V: Copy + AsBytePrefix + Serialize + DeserializeOwned,
+    Key: Copy + Serialize + DeserializeOwned,
+    Value: Serialize + DeserializeOwned,
+{
+    pub fn insert_with(&self, version: V, key: Key, value: Value) -> Result<()> {
         let versioned_key: Vec<u8> = VersionedKey { version, key }.try_into()?;
         let value = CODER.serialize(&value)?;
         self.db().put_cf(self.cf()?, versioned_key, value)?;
         Ok(())
     }
 
-    pub fn get_for(&self, version: V, key: Key) -> Result<Option<Value>>
-    where
-        V: AsBytePrefix,
-        Key: Serialize,
-        Value: DeserializeOwned,
-    {
+    pub fn get_for(&self, version: V, key: Key) -> Result<Option<Value>> {
+        let _guard = self.squash_guard.read().expect("squash guard was poisoned");
+
+        let mut next_version = Some(version);
+
+        while let Some(version) = next_version.take() {
+            let value = self.get_exact_for(version, key)?;
+            if value.is_some() {
+                return Ok(value);
+            } else {
+                next_version = self.versions.previous_of(version)?;
+                continue;
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn get_exact_for(&self, version: V, key: Key) -> Result<Option<Value>> {
         let versioned_key: Vec<u8> = VersionedKey { version, key }.try_into()?;
         let bytes = self.db().get_pinned_cf(self.cf()?, versioned_key)?;
         let mb_value = bytes.map(|bytes| CODER.deserialize(&bytes)).transpose()?;
         Ok(mb_value)
     }
 
-    pub fn prefix_iter_for(&self, version: V) -> Result<impl Iterator<Item = (Key, Value)> + '_>
-    where
-        V: AsBytePrefix,
-        Key: DeserializeOwned,
-        Value: DeserializeOwned,
-    {
+    pub fn prefix_iter_for(&self, version: V) -> Result<impl Iterator<Item = (Key, Value)> + '_> {
         Ok(self
             .db()
             .prefix_iterator_cf(self.cf()?, version.to_bytes())
@@ -247,48 +277,108 @@ impl<V, Key, Value> Storage<V, Key, Value> {
                 (key, value)
             }))
     }
+
+    fn has_value_for(&self, version: V, key: Key) -> Result<bool> {
+        let versioned_key: Vec<u8> = VersionedKey { version, key }.try_into()?;
+        let data_ref = self.db().get_pinned_cf(self.cf()?, versioned_key)?;
+        Ok(data_ref.is_some())
+    }
+
+    pub fn squash_into_rev_pass(&self, target: V) -> Result<()>
+    where
+        Previous<V>: DeserializeOwned,
+        Key: HasMax,
+    {
+        let _guard = self
+            .squash_guard
+            .write()
+            .expect("squash guard was poisoned");
+
+        let mut track = vec![target];
+        while let Some(prev) = self.versions.previous_of(track[track.len() - 1])? {
+            track.push(prev);
+        }
+
+        let mut rev_track = track.into_iter().rev().peekable();
+        while let (Some(current), Some(parent)) = (rev_track.next(), rev_track.peek().copied()) {
+            for (key, value) in self.prefix_iter_for(parent)? {
+                if !self.has_value_for(current.clone(), key.clone())? {
+                    self.insert_with(current.clone(), key, value)?;
+                }
+            }
+
+            self.delete_all_for(parent.clone())?;
+
+            // TODO: cleanup all None's
+        }
+
+        Ok(())
+    }
+
+    pub fn squash_into_tracing(&self, target: V) -> Result<()>
+    where
+        Previous<V>: DeserializeOwned,
+        Key: HasMax,
+    {
+        let _guard = self
+            .squash_guard
+            .write()
+            .expect("squash guard was poisoned");
+
+        let mut next_parent_for = target;
+
+        while let Some(parent) = self.versions.previous_of(next_parent_for)? {
+            for (key, value) in self.prefix_iter_for(parent)? {
+                if !self.has_value_for(target.clone(), key.clone())? {
+                    self.insert_with(target.clone(), key.clone(), value)?;
+                }
+            }
+
+            self.delete_all_for(parent.clone())?;
+
+            next_parent_for = parent;
+        }
+
+        Ok(())
+    }
+
+    fn delete_all_for(&self, version: V) -> Result<()>
+    where
+        Key: HasMax,
+    {
+        let version_prefix: Vec<u8> = version.to_bytes().as_ref().iter().copied().collect();
+        let key_max_bytes = bincode::serialized_size(&Key::MAX)? as usize + 1;
+        let mut lexicographic_max: Vec<u8> = version_prefix.clone();
+        lexicographic_max.extend(std::iter::repeat(0u8).take(key_max_bytes));
+        self.db()
+            .delete_range_cf(self.cf()?, version_prefix, lexicographic_max)?;
+        Ok(())
+    }
 }
 
-impl<V, Key, Value> MapLike for (&V, &Storage<V, Key, Value>)
-where
-    V: Sync + Send,
-    Key: Ord + Sync + Send,
-    Value: Sync + Send,
-{
-    type Key = Key;
-    type Value = Value;
-
-    fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
-        todo!() // Cow type
-    }
+pub trait HasMax {
+    const MAX: Self;
 }
 
 pub type KVStorage<V, Value> = Storage<V, (), Value>;
 
-impl<V, Value> KVStorage<V, Value> {
-    // TODO: roots as argument
-    fn insert(&self, version: V, value: Value) -> Result<()>
-    where
-        V: AsBytePrefix + Serialize + Clone, // TODO: remove Clone
-        Value: Serialize,
-    {
+impl<V, Value> KVStorage<V, Value>
+where
+    V: Copy + AsBytePrefix + Serialize + DeserializeOwned,
+    Value: Serialize + DeserializeOwned,
+{
+    // TODO: previous versions as argument
+    pub fn insert(&self, version: V, value: Value) -> Result<()> {
         self.insert_with(version.clone(), (), value)?;
         self.versions.new_version(version, None)?;
         Ok(())
     }
 
-    fn get(&self, version: V) -> Result<Option<Value>>
-    where
-        V: AsBytePrefix,
-        Value: DeserializeOwned,
-    {
-        self.get_for(version, ())
+    pub fn get(&self, version: V) -> Result<Option<Value>> {
+        self.get_exact_for(version, ())
     }
 
-    fn keys(&self) -> impl Iterator<Item = V> + '_
-    where
-        V: DeserializeOwned,
-    {
+    fn keys(&self) -> impl Iterator<Item = V> + '_ {
         self.versions.versions().map(|(version, _)| version)
     }
 }
@@ -327,6 +417,50 @@ nums_as_byte_prefixes! {
     u8, u16, u32, u64, u128
 }
 
+macro_rules! nums_has_max {
+    ($($ty:ty),+) => {
+        $(
+            impl HasMax for $ty {
+                const MAX: $ty = <$ty>::MAX;
+            }
+        )+
+    }
+}
+
+nums_has_max! {
+    u8, u16, u32, u64, u128
+}
+
+macro_rules! primitive_type_has_max {
+    ($($ty:ty),+) => {
+        $(
+            impl HasMax for $ty {
+                const MAX: $ty = <$ty>::repeat_byte(u8::MAX);
+            }
+        )+
+    }
+
+}
+
+use primitive_types::{H160, H256, H512};
+
+primitive_type_has_max! {
+    H160, H256, H512
+}
+
+impl<V> fmt::Debug for Versions<V>
+where
+    V: 'static,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use std::any::TypeId;
+        f.debug_struct("Versions")
+            .field("Version", &TypeId::of::<V>())
+            .field("database", &self.db.path().display())
+            .finish()
+    }
+}
+
 impl<V, Key, Value> fmt::Debug for Storage<V, Key, Value>
 where
     V: 'static,
@@ -348,8 +482,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
+    use std::array::TryFromSliceError;
     use std::collections::{BTreeMap, HashMap};
     use std::iter::FromIterator;
     use std::sync::Arc;
@@ -359,40 +492,9 @@ mod tests {
     use quickcheck::{Arbitrary, Gen};
     use quickcheck_macros::quickcheck;
 
-    #[derive(Clone)]
-    struct TmpDir(PathBuf);
+    use crate::test_utils::TmpDir;
 
-    impl TmpDir {
-        fn new<P: AsRef<Path>>(sub_dir: P) -> Self {
-            let path = env::temp_dir().join(sub_dir);
-            let pprint = path.as_path().display();
-            if path.exists() {
-                panic!("Path is {} already exists", pprint);
-            }
-            fs::create_dir(&path)
-                .unwrap_or_else(|err| panic!("Unable to create tmp dir {}: {:?}", pprint, err));
-            println!("{}", pprint);
-            Self(path)
-        }
-    }
-
-    impl Drop for TmpDir {
-        fn drop(&mut self) {
-            fs::remove_dir_all(self.0.as_path()).unwrap_or_else(|err| {
-                panic!(
-                    "Unable to remove tmp dir {}: {:?}",
-                    self.0.as_path().display(),
-                    err
-                )
-            });
-        }
-    }
-
-    impl AsRef<Path> for TmpDir {
-        fn as_ref(&self) -> &Path {
-            self.0.as_path()
-        }
-    }
+    use super::*;
 
     fn open<P, S, V, Key, Value>(path: P, type_name: S) -> Result<Storage<V, Key, Value>>
     where
@@ -428,6 +530,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn it_handles_full_range_mapping() -> Result<()> {
         use rand::Rng;
 
@@ -464,7 +567,7 @@ mod tests {
         {
             let s = open(&dir, "vkv")?;
             for (version, _) in s.versions.versions() {
-                let new_map = HashMap::from_iter(s.prefix_iter_for(version)?);
+                let new_map = HashMap::from_iter(s.prefix_iter_for(&version)?);
                 assert_eq!(assoc.remove(&version), Some(new_map));
             }
             assert!(assoc.is_empty());
@@ -629,7 +732,7 @@ mod tests {
             let s = Arc::clone(s);
             thread::spawn(move || -> Result<BTreeMap<K, V>> {
                 keys.into_iter()
-                    .map(|key| s.get_for(id, key).map(|value| (key, value.unwrap())))
+                    .map(|key| s.get_exact_for(id, key).map(|value| (key, value.unwrap())))
                     .collect::<Result<_>>()
             })
         }
@@ -664,7 +767,7 @@ mod tests {
 
             let mut new_assoc = HashMap::<K, HashMap<K, V>>::new();
             for (version, _) in s.versions.versions() {
-                new_assoc.insert(version, s.prefix_iter_for(version).unwrap().collect());
+                new_assoc.insert(version, s.prefix_iter_for(&version).unwrap().collect());
             }
 
             assert_eq!(assoc, new_assoc);

@@ -94,15 +94,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             block_gas_limit: U256::max_value(),
         };
         let config = evm::Config::istanbul();
-        let backend = EvmState::new(vicinity);
-
-        let backend = RwLock::new(backend);
-
-        let mut locked = EvmState::try_lock(&backend).unwrap();
+        let mut state = EvmState::new(vicinity);
 
         {
-            let state = locked.fork_mut();
-
             for acc in &accounts {
                 let account = name_to_key(acc);
                 let memory = AccountState {
@@ -112,8 +106,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             }
         }
 
-        let mut executor =
-            StaticExecutor::with_config(locked.backend(), config, usize::max_value());
+        let mut executor = StaticExecutor::with_config(state, config, usize::max_value());
 
         let exit_reason = match executor.rent_executor().create(
             name_to_key("caller"),

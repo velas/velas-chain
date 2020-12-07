@@ -1,7 +1,5 @@
-use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::ops::Deref;
 use std::sync::Arc;
 
 /// Represent state of value at current version.
@@ -32,138 +30,142 @@ impl<T> From<State<T>> for Option<T> {
 }
 
 #[derive(Clone)]
-pub struct Map<K, V, Store = Arc<dyn MapLike<Key = K, Value = V>>> {
-    state: BTreeMap<K, State<V>>,
-    parent: Option<Store>,
+pub struct Map<Version, Key, Value> {
+    version: Version,
+    state: BTreeMap<Key, State<Value>>,
+    parent: Option<Arc<Map<Version, Key, Value>>>,
 }
 
-impl<K: Ord, V> Default for Map<K, V> {
+impl<Version, Key, Value> Default for Map<Version, Key, Value>
+where
+    Version: Default,
+    Key: Ord,
+{
     fn default() -> Self {
         Map::new()
     }
 }
 
-impl<K, V, Store> fmt::Debug for Map<K, V, Store>
-where
-    K: fmt::Debug,
-    V: fmt::Debug,
-    Store: MapLike<Key = K, Value = V>,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Map")
-            .field("state", &self.state)
-            .field("parent", &"omited")
-            .finish()
-    }
+#[derive(Clone, Copy)]
+pub enum KeyResult<V, T> {
+    /// Value for existing key.
+    Found(T),
+    /// Key not found, Value is last looked version.
+    NotFound(V),
 }
 
-impl<K, V, Store> Map<K, V, Store>
+impl<Version, Key, Value> Map<Version, Key, Value>
 where
-    K: Ord,
-    Store: MapLike<Key = K, Value = V>,
+    Key: Ord,
 {
-    // Create new versioned map.
-    pub fn new() -> Map<K, V, Store>
-    where
-        Store: Sized,
-    {
-        Map {
+    pub fn empty(version: Version) -> Self {
+        Self {
+            version,
             state: BTreeMap::new(),
             parent: None,
         }
     }
 
-    pub fn wrap(storage: impl MapLike<Key = K, Value = V> + 'static) -> Map<K, V> {
-        let storage = Arc::new(storage) as Arc<dyn MapLike<Key = K, Value = V>>;
-        Map {
+    // Create new versioned map.
+    pub fn new() -> Self
+    where
+        Version: Default,
+    {
+        Self {
+            version: Version::default(),
             state: BTreeMap::new(),
-            parent: Some(storage),
+            parent: None,
         }
     }
 
     // Borrow value by key
-    pub fn get(&self, key: &K) -> Option<&V> {
-        if let Some(s) = self.state.get(key) {
-            s.by_ref().into()
-        } else {
-            self.parent.as_ref().and_then(|parent| parent.get(key))
+    pub fn get(&self, key: &Key) -> KeyResult<&Version, Option<&Value>> {
+        match (self.state.get(key), self.parent.as_ref()) {
+            (Some(s), _) => KeyResult::Found(s.by_ref().into()),
+            (None, Some(parent)) => parent.get(key),
+            (None, None) => KeyResult::NotFound(&self.version),
         }
     }
 
-    // Exclusively borrow value by key
-    pub fn get_mut<Q: ?Sized>(&mut self, _key: &Q) -> Option<&mut V>
-    where
-        K: Borrow<Q>,
-        Q: Ord,
-    {
-        unimplemented!() // TODO: Implement a guard that will save value at drop.
-    }
-
-    // Override state of key.
-    pub(crate) fn push_change(&mut self, key: K, value: State<V>) {
-        self.state.insert(key, value);
-    }
-
     // Insert new key, didn't query key before inserting.
-    pub fn insert(&mut self, key: K, value: V) {
+    pub fn insert(&mut self, key: Key, value: Value) {
         self.push_change(key, State::Changed(value));
     }
 
     // Remove key, didn't query key before inserting.
-    pub fn remove(&mut self, key: K) {
+    pub fn remove(&mut self, key: Key) {
         self.push_change(key, State::Removed);
+    }
+
+    // Override state of key.
+    fn push_change(&mut self, key: Key, value: State<Value>) {
+        self.state.insert(key, value);
+    }
+
+    pub fn iter(&self) -> (&Version, impl Iterator<Item = (&Key, Option<&Value>)> + '_) {
+        (
+            &self.version,
+            self.state
+                .iter()
+                .map(|(key, value)| (key, value.by_ref().into())),
+        )
+    }
+
+    pub fn full_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Version, impl Iterator<Item = (&Key, Option<&Value>)> + '_)> + '_
+    {
+        std::iter::once(self.iter()).chain(self.parent.as_ref().map(|parent| parent.iter()))
     }
 }
 
-impl<K, V> Map<K, V>
+impl<Version, Key, Value> Map<Version, Key, Value>
 where
-    K: Ord + Send + Sync + 'static,
-    V: Send + Sync + 'static,
+    Key: Ord,
 {
-    pub fn freeze(&mut self) {
-        let this = Arc::new(std::mem::take(self)) as Arc<dyn MapLike<Key = K, Value = V>>;
-        self.parent = Some(this);
+    pub fn freeze(&mut self)
+    where
+        Version: Clone,
+    {
+        let this = Self {
+            version: self.version.clone(),
+            state: std::mem::take(&mut self.state),
+            parent: self.parent.as_ref().map(Arc::clone),
+        };
+        self.parent = Some(Arc::new(this));
     }
 
     // Create new version from freezed one
-    pub fn try_fork(&self) -> Option<Self> {
+    pub fn try_fork(&self, new_version: Version) -> Option<Self>
+    where
+        Version: Ord,
+    {
+        assert!(new_version > self.version);
+
         if !self.state.is_empty() {
             return None;
         }
 
         Some(Self {
+            version: new_version,
             state: BTreeMap::new(),
             parent: self.parent.clone(),
         })
     }
 }
 
-/// Map can store it's old version in database or in some other immutable structure.
-/// This trait allows you to define your own storage
-pub trait MapLike: Sync + Send {
-    type Key;
-    type Value;
-    fn get(&self, key: &Self::Key) -> Option<&Self::Value>;
-}
-
-impl<Store: MapLike + ?Sized + Send> MapLike for Arc<Store> {
-    type Key = Store::Key;
-    type Value = Store::Value;
-    fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
-        <Store as MapLike>::get(self.deref(), key)
-    }
-}
-
-impl<K, V, Store> MapLike for Map<K, V, Store>
+impl<Version, Key, Value> fmt::Debug for Map<Version, Key, Value>
 where
-    K: Ord + Sync + Send,
-    V: Sync + Send,
-    Store: MapLike<Key = K, Value = V> + Send + Sync,
+    Version: fmt::Debug,
+    Key: fmt::Debug,
+    Value: fmt::Debug,
 {
-    type Key = Store::Key;
-    type Value = Store::Value;
-    fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
-        Map::get(self, key)
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Map")
+            .field("version", &self.version)
+            .field("state", &self.state)
+            .field("parent", &"omited")
+            .finish()
     }
 }
 
@@ -172,7 +174,7 @@ mod test {
     use super::*;
     #[test]
     fn store_and_get_simple() {
-        let mut map: Map<_, _> = Map::new();
+        let mut map: Map<(), _, _> = Map::new();
         map.insert("first", 1);
         map.insert("second", 2);
         assert_eq!(map.get(&"first"), Some(&1));
@@ -182,7 +184,7 @@ mod test {
     // Test that map can save version, and type of map is always remain the same.
     #[test]
     fn new_dynamic_version_insert_remove_test() {
-        let mut map: Map<_, _> = Map::new();
+        let mut map: Map<_, _, _> = Map::new();
         map.insert("first", 1);
         map.insert("second", 2);
         map.insert("third", 3);
@@ -190,8 +192,8 @@ mod test {
         assert_eq!(map.get(&"second"), Some(&2));
         assert_eq!(map.get(&"third"), Some(&3));
 
-        map.freeze();
-        let mut map: Map<_, _> = map.try_fork().unwrap();
+        map.freeze_as(0);
+        let mut map: Map<_, _, _> = map.try_fork().unwrap();
 
         map.remove("first");
         map.insert("third", 1);
@@ -204,7 +206,7 @@ mod test {
     // Same as new_dynamic_version_insert_remove_test but dont hide type of store.
     #[test]
     fn new_static_version_insert_remove_test() {
-        let mut map: Map<_, _> = Map::new();
+        let mut map: Map<_, _, _> = Map::new();
         map.insert("first", 1);
         map.insert("second", 2);
         map.insert("third", 3);
@@ -212,7 +214,7 @@ mod test {
         assert_eq!(map.get(&"second"), Some(&2));
         assert_eq!(map.get(&"third"), Some(&3));
 
-        map.freeze();
+        map.freeze_as(0);
         let mut map = map.try_fork().unwrap();
 
         map.remove("first");
