@@ -1,19 +1,6 @@
 use crate::cli::Config;
 use log::*;
 use rayon::prelude::*;
-
-use solana_measure::measure::Measure;
-use solana_metrics::{self, datapoint_info};
-use solana_sdk::{
-    client::Client,
-    hash::Hash,
-    message::Message,
-    pubkey::Pubkey,
-    signature::{Keypair, Signer},
-    system_instruction,
-    timing::{duration_as_ms, duration_as_s, duration_as_us, timestamp},
-    transaction::Transaction,
-};
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -27,6 +14,18 @@ use std::{
 
 use crate::bench::Result;
 use crate::bench::SharedTransactions;
+use solana_measure::measure::Measure;
+use solana_metrics::{self, datapoint_info};
+use solana_sdk::{
+    client::Client,
+    hash::Hash,
+    message::Message,
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    system_instruction,
+    timing::{duration_as_ms, duration_as_s, duration_as_us, timestamp},
+    transaction::Transaction,
+};
 
 pub const MAX_SPENDS_PER_TX: u64 = 4;
 use solana_evm_loader_program::scope::evm::FromKey;

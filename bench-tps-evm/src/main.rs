@@ -1,9 +1,10 @@
 use log::*;
+use std::{process::exit, sync::Arc};
+
 use solana_bench_tps_evm::bench::generate_and_fund_keypairs;
 use solana_bench_tps_evm::bench_evm;
 use solana_bench_tps_evm::cli;
 use solana_core::gossip_service::{discover_cluster, get_client, get_multi_client};
-use std::{process::exit, sync::Arc};
 
 /// Number of signatures for all transactions in ~1 week at ~100K TPS
 pub const NUM_SIGNATURES_FOR_TXS: u64 = 100_000 * 60 * 60 * 24 * 7;
@@ -63,38 +64,6 @@ fn main() {
         Arc::new(get_client(&nodes))
     };
 
-    // let keypairs = if *read_from_client_file {
-    //     let path = Path::new(&client_ids_and_stake_file);
-    //     let file = File::open(path).unwrap();
-
-    //     info!("Reading {}", client_ids_and_stake_file);
-    //     let accounts: HashMap<String, Base64Account> = serde_yaml::from_reader(file).unwrap();
-    //     let mut keypairs = vec![];
-    //     let mut last_balance = 0;
-
-    //     accounts
-    //         .into_iter()
-    //         .for_each(|(keypair, primordial_account)| {
-    //             let bytes: Vec<u8> = serde_json::from_str(keypair.as_str()).unwrap();
-    //             keypairs.push(Keypair::from_bytes(&bytes).unwrap());
-    //             last_balance = primordial_account.balance;
-    //         });
-
-    //     if keypairs.len() < keypair_count {
-    //         eprintln!(
-    //             "Expected {} accounts in {}, only received {} (--tx_count mismatch?)",
-    //             keypair_count,
-    //             client_ids_and_stake_file,
-    //             keypairs.len(),
-    //         );
-    //         exit(1);
-    //     }
-    //     // Sort keypairs so that do_bench_tps() uses the same subset of accounts for each run.
-    //     // This prevents the amount of storage needed for bench-tps accounts from creeping up
-    //     // across multiple runs.
-    //     keypairs.sort_by_key(|x| x.pubkey().to_string());
-    //     keypairs
-    // } else {
     let keypairs = generate_and_fund_keypairs(
         client.clone(),
         Some(*faucet_addr),

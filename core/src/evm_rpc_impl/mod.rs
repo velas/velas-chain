@@ -21,8 +21,8 @@ pub struct ChainMockERPCImpl;
 
 const CHAIN_ID: u64 = 0x77;
 
-fn block_to_num(block: String) -> Option<u64> {
-    match &*block {
+fn block_to_num(block: &str) -> Option<u64> {
+    match block {
         "earliest" | "latest" | "pending" => None,
         v => v.parse::<u64>().ok(),
     }
@@ -114,7 +114,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
         _full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
         error!("Remove unwraps");
-        let block_num = block_to_num(block).unwrap_or(0); //TODO: Replace by committment.
+        let block_num = block_to_num(&block).unwrap_or(0); //TODO: Replace by committment.
         Ok(meta
             .get_confirmed_block(block_num, None)
             .unwrap()

@@ -1,5 +1,17 @@
 use log::*;
 use rayon::prelude::*;
+use std::{
+    collections::{HashSet, VecDeque},
+    net::SocketAddr,
+    process::exit,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex, RwLock,
+    },
+    thread::{sleep, Builder, JoinHandle},
+    time::{Duration, Instant},
+};
+
 use solana_client::perf_utils::{sample_txs, SampleStats};
 use solana_core::gen_keys::GenKeys;
 use solana_faucet::faucet::request_airdrop_transaction;
@@ -17,17 +29,6 @@ use solana_sdk::{
     system_instruction,
     timing::duration_as_s,
     transaction::Transaction,
-};
-use std::{
-    collections::{HashSet, VecDeque},
-    net::SocketAddr,
-    process::exit,
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex, RwLock,
-    },
-    thread::{sleep, Builder, JoinHandle},
-    time::{Duration, Instant},
 };
 
 // The point at which transactions become "too old", in seconds.
@@ -61,7 +62,7 @@ pub fn get_recent_blockhash<T: Client>(client: &T) -> (Hash, FeeCalculator) {
 
 pub fn wait_for_target_slots_per_epoch<T>(target_slots_per_epoch: u64, client: &Arc<T>)
 where
-    T: 'static + Client + Send + Sync,
+    T: 'static + Client,
 {
     if target_slots_per_epoch != 0 {
         info!(
@@ -72,7 +73,7 @@ where
             if let Ok(epoch_info) = client.get_epoch_info() {
                 if epoch_info.slots_in_epoch >= target_slots_per_epoch {
                     info!("Done epoch_info: {:?}", epoch_info);
-                    break;
+                    return;
                 }
                 info!(
                     "Waiting for epoch: {} now: {}",
@@ -588,9 +589,9 @@ pub fn generate_and_fund_keypairs<T: 'static + Client + Send + Sync>(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::bench_evm::do_bench_tps;
     use crate::cli::Config;
-    use super::*;
     use solana_runtime::bank::Bank;
     use solana_runtime::bank_client::BankClient;
     use solana_sdk::client::SyncClient;
@@ -619,7 +620,8 @@ mod tests {
             keypairs,
             keypair_count,
             20,
-        ).unwrap();
+        )
+        .unwrap();
         do_bench_tps(client, config, keypairs);
     }
 

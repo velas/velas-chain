@@ -26,18 +26,11 @@ fn check_evm_account<'a, 'b>(
     keyed_accounts: &'a [KeyedAccount<'b>],
 ) -> Result<&'a [KeyedAccount<'b>], InstructionError> {
     let first = keyed_accounts
-        .get(0)
+        .first()
         .ok_or(InstructionError::NotEnoughAccountKeys)?;
 
     if first.unsigned_key() != program_id || !first.is_writable() {
         error!("First account is not evm, or not writable");
-        debug!(
-            "Program_id = {}, account.pub_key()={}, writable={} ",
-            program_id,
-            first.unsigned_key(),
-            first.is_writable()
-        );
-        debug!("keyed_accounts = {:?}", keyed_accounts);
         return Err(InstructionError::MissingAccount);
     }
 
