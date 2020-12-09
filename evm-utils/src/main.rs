@@ -1,15 +1,14 @@
 use log::*;
 use solana_client::rpc_client::RpcClient;
-use solana_evm_loader_program::instructions::{Deposit, EvmInstruction};
+use solana_evm_loader_program::instructions::Deposit;
 use solana_evm_loader_program::scope::*;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
-    instruction::{AccountMeta, Instruction},
     message::Message,
     native_token::lamports_to_sol,
     pubkey::Pubkey,
     signature::{read_keypair_file, Keypair, Signer},
-    system_instruction, sysvar,
+    system_instruction,
 };
 use std::fs::File;
 use std::io::{Read, Write};
@@ -92,14 +91,7 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 solana_sdk::program_utils::limited_deserialize(&buf).unwrap();
 
             info!("loaded tx = {:?}", tx);
-
-            let account_metas = vec![AccountMeta::new(signer.pubkey(), true)];
-
-            let ix = Instruction::new(
-                solana_evm_loader_program::ID,
-                &EvmInstruction::EvmTransaction { evm_tx: tx },
-                account_metas,
-            );
+            let ix = solana_evm_loader_program::send_raw_tx(&signer.pubkey(), tx);
 
             let message = Message::new(&[ix], Some(&signer.pubkey()));
             let mut create_account_tx = solana::Transaction::new_unsigned(message);
@@ -139,17 +131,9 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             let minimum_balance_for_rent_exemption =
                 rpc_client.get_minimum_balance_for_rent_exemption(Deposit::LEN)?;
 
-            let account_metas = vec![
-                AccountMeta::new(account.pubkey(), false),
-                AccountMeta::new_readonly(sysvar::rent::id(), false),
-            ];
-
-            let ix = Instruction::new(
-                solana_evm_loader_program::ID,
-                &EvmInstruction::CreateDepositAccount {
-                    pubkey: signer.pubkey(),
-                },
-                account_metas,
+            let ix = solana_evm_loader_program::create_deposit_account(
+                &signer.pubkey(),
+                &account.pubkey(),
             );
             info!("Created account = {}", account.pubkey());
 
@@ -189,20 +173,12 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             lamports,
             ether_address,
         } => {
-            let account_metas = vec![
-                AccountMeta::new(signer.pubkey(), true),
-                AccountMeta::new(authority_address, false),
-            ];
-
-            let ix = Instruction::new(
-                solana_evm_loader_program::ID,
-                &EvmInstruction::SwapNativeToEther {
-                    lamports,
-                    ether_address,
-                },
-                account_metas,
+            let ix = solana_evm_loader_program::transfer_native_to_eth(
+                &signer.pubkey(),
+                &authority_address,
+                lamports,
+                ether_address,
             );
-
             let message = Message::new(&[ix], Some(&signer.pubkey()));
             let mut create_account_tx = solana::Transaction::new_unsigned(message);
 

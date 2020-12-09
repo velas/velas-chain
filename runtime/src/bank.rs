@@ -65,7 +65,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     convert::TryFrom,
     mem,
-    ops::{Deref, DerefMut, RangeInclusive},
+    ops::{DerefMut, RangeInclusive},
     path::PathBuf,
     ptr,
     rc::Rc,
@@ -1262,6 +1262,9 @@ impl Bank {
         for (name, program_id) in &genesis_config.native_instruction_processors {
             self.add_native_program(name, program_id);
         }
+        // Add account for evm.
+        let account = native_loader::create_loadable_account("Evm Processor");
+        self.store_account(&solana_sdk::evm_loader::id(), &account);
     }
 
     pub fn add_native_program(&self, name: &str, program_id: &Pubkey) {
@@ -1483,7 +1486,7 @@ impl Bank {
         let batch = self.prepare_simulation_batch(txs);
         let log_collector = Rc::new(LogCollector::default());
 
-        let mut evm_wl = self.evm_state.write().expect("evm state was poisoned"); // TODO: read
+        let db = self.evm_state.read().expect("Read lock poisoned").clone();
 
         let (
             _loaded_accounts,
@@ -1496,7 +1499,7 @@ impl Bank {
             &batch,
             MAX_PROCESSING_AGE,
             Some(log_collector.clone()),
-            &mut evm_wl,
+            db,
         );
         let transaction_result = executed[0].0.clone().map(|_| ());
         let log_messages = Rc::try_unwrap(log_collector).unwrap_or_default().into();
@@ -1833,12 +1836,12 @@ impl Bank {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn load_and_execute_transactions<EVM>(
+    pub fn load_and_execute_transactions(
         &self,
         batch: &TransactionBatch,
         max_age: usize,
         log_collector: Option<Rc<LogCollector>>,
-        evm_state: &EVM,
+        evm: evm_state::EvmState,
     ) -> (
         Vec<(Result<TransactionLoadResult>, Option<HashAgeKind>)>,
         Vec<TransactionProcessResult>,
@@ -1856,10 +1859,7 @@ impl Bank {
             ),
             BTreeMap<evm_state::H256, evm_state::TransactionReceipt>,
         ),
-    )
-    where
-        EVM: Deref<Target = evm_state::EvmState>,
-    {
+    ) {
         let txs = batch.transactions();
         debug!("processing transactions: {}", txs.len());
         inc_new_counter_info!("bank-process_transactions", txs.len());
@@ -1902,15 +1902,8 @@ impl Bank {
 
         // TODO: Pass state
 
-        let evm_state_fork = evm_state
-            .try_fork()
-            .unwrap_or_else(|| evm_state.deref().clone());
-
-        let evm_executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
-            evm_state_fork,
-            evm_state::Config::istanbul(),
-            usize::MAX,
-        )));
+        let mut evm_executor =
+            evm_state::StaticExecutor::with_config(evm, evm_state::Config::istanbul(), usize::MAX);
 
         let mut signature_count: u64 = 0;
         let mut executed: Vec<TransactionProcessResult> = Vec::new();
@@ -1929,7 +1922,7 @@ impl Bank {
                         &account_refcells,
                         &self.rent_collector,
                         log_collector.clone(),
-                        evm_executor.clone(),
+                        Some(&mut evm_executor),
                     );
 
                     Self::refcells_to_accounts(
@@ -1983,10 +1976,7 @@ impl Bank {
             retryable_txs,
             tx_count,
             signature_count,
-            Rc::try_unwrap(evm_executor)
-                .unwrap()
-                .into_inner()
-                .deconstruct(), // TODO: Handle borrowing
+            evm_executor.deconstruct(),
         )
     }
 
@@ -2631,18 +2621,11 @@ impl Bank {
         } else {
             vec![]
         };
-
-        let mut evm_wl = self.evm_state.write().expect("evm state was poisoned");
-
-        // let mut evm_state = self
-        //     .evm_state
-        //     .write()
-        //     .expect("evm state was poisoned")
-        //     .deref_mut();
-
+        let db = self.evm_state.read().expect("Read lock poisoned").clone();
         let (mut loaded_accounts, executed, _, tx_count, signature_count, patch) =
-            self.load_and_execute_transactions(batch, max_age, None, &mut evm_wl);
+            self.load_and_execute_transactions(batch, max_age, None, db);
 
+        let mut locked = self.evm_state.write().expect("Write lock poisoned");
         let results = self.commit_transactions(
             batch.transactions(),
             batch.iteration_order(),
@@ -2650,7 +2633,7 @@ impl Bank {
             &executed,
             tx_count,
             signature_count,
-            &mut evm_wl,
+            &mut locked,
             patch,
         );
         let post_balances = if collect_balances {
@@ -2995,6 +2978,7 @@ impl Bank {
             .into_iter()
             .map(|(_pubkey, account)| {
                 let is_specially_retained = solana_sdk::native_loader::check_id(&account.owner)
+                    || solana_sdk::evm_loader::check_id(&account.owner)
                     || solana_sdk::sysvar::check_id(&account.owner);
 
                 if is_specially_retained {

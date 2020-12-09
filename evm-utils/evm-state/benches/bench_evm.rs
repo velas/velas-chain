@@ -98,22 +98,11 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         let backend = RwLock::new(backend);
 
-        let mut locked = EvmState::try_lock(&backend).unwrap();
-
-        {
-            let state = locked.fork_mut();
-
-            for acc in &accounts {
-                let account = name_to_key(acc);
-                let memory = AccountState {
-                    ..Default::default()
-                };
-                state.accounts.insert(account, memory);
-            }
-        }
-
-        let mut executor =
-            StaticExecutor::with_config(locked.backend(), config, usize::max_value());
+        let mut executor = StaticExecutor::with_config(
+            backend.read().unwrap().clone(),
+            config,
+            usize::max_value(),
+        );
 
         let exit_reason = match executor.rent_executor().create(
             name_to_key("caller"),
@@ -166,23 +155,11 @@ fn criterion_benchmark(c: &mut Criterion) {
         let backend = EvmState::new(vicinity);
 
         let backend = RwLock::new(backend);
-
-        let mut locked = EvmState::try_lock(&backend).unwrap();
-
-        {
-            let state = locked.fork_mut();
-
-            for acc in &accounts {
-                let account = name_to_key(acc);
-                let memory = AccountState {
-                    ..Default::default()
-                };
-                state.accounts.insert(account, memory);
-            }
-        }
-
-        let mut executor =
-            StaticExecutor::with_config(locked.backend(), config.clone(), usize::max_value());
+        let mut executor = StaticExecutor::with_config(
+            backend.read().unwrap().clone(),
+            config.clone(),
+            usize::max_value(),
+        );
 
         let exit_reason = match executor.rent_executor().create(
             name_to_key("caller"),
@@ -197,11 +174,14 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
         let patch = executor.deconstruct();
-        locked.apply(patch);
+        backend.write().unwrap().apply(patch);
 
         b.iter(|| {
-            let mut executor =
-                StaticExecutor::with_config(locked.backend(), config.clone(), usize::max_value());
+            let mut executor = StaticExecutor::with_config(
+                backend.read().unwrap().clone(),
+                config.clone(),
+                usize::max_value(),
+            );
             let exit_reason = executor.rent_executor().transact_call(
                 name_to_key("contract"),
                 name_to_key("contract"),

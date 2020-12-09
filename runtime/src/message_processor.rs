@@ -3,6 +3,8 @@ use crate::{
 };
 use log::*;
 use serde::{Deserialize, Serialize};
+use solana_evm_loader_program::scope::evm::{EvmState, StaticExecutor};
+use solana_evm_loader_program::EvmProcessor;
 use solana_sdk::{
     account::{create_keyed_readonly_accounts, Account, KeyedAccount},
     clock::Epoch,
@@ -182,7 +184,6 @@ pub struct ThisInvokeContext {
     is_cross_program_supported: bool,
     compute_budget: ComputeBudget,
     compute_meter: Rc<RefCell<dyn ComputeMeter>>,
-    evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>,
 }
 impl<'a> ThisInvokeContext {
     pub fn new(
@@ -193,7 +194,6 @@ impl<'a> ThisInvokeContext {
         log_collector: Option<Rc<LogCollector>>,
         is_cross_program_supported: bool,
         compute_budget: ComputeBudget,
-        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>,
     ) -> Self {
         let mut program_ids = Vec::with_capacity(compute_budget.max_invoke_depth);
         program_ids.push(*program_id);
@@ -208,7 +208,6 @@ impl<'a> ThisInvokeContext {
             compute_meter: Rc::new(RefCell::new(ThisComputeMeter {
                 remaining: compute_budget.max_units,
             })),
-            evm_executor,
         }
     }
 }
@@ -265,9 +264,6 @@ impl InvokeContext for ThisInvokeContext {
     fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>> {
         self.compute_meter.clone()
     }
-    fn get_evm_executor(&self) -> Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>> {
-        self.evm_executor.clone()
-    }
 }
 pub struct ThisLogger {
     log_collector: Option<Rc<LogCollector>>,
@@ -293,6 +289,8 @@ pub struct MessageProcessor {
     #[serde(skip)]
     native_loader: NativeLoader,
     #[serde(skip)]
+    evm_processor: EvmProcessor,
+    #[serde(skip)]
     is_cross_program_supported: bool,
     #[serde(skip)]
     compute_budget: ComputeBudget,
@@ -307,6 +305,7 @@ impl std::fmt::Debug for MessageProcessor {
             native_loader: &'a NativeLoader,
             is_cross_program_supported: bool,
             compute_budget: ComputeBudget,
+            evm_processor: &'a EvmProcessor,
         }
         // rustc doesn't compile due to bug without this work around
         // https://github.com/rust-lang/rust/issues/50280
@@ -331,6 +330,7 @@ impl std::fmt::Debug for MessageProcessor {
             native_loader: &self.native_loader,
             is_cross_program_supported: self.is_cross_program_supported,
             compute_budget: self.compute_budget,
+            evm_processor: &self.evm_processor,
         };
 
         write!(f, "{:?}", processor)
@@ -345,6 +345,7 @@ impl Default for MessageProcessor {
             native_loader: NativeLoader::default(),
             is_cross_program_supported: true,
             compute_budget: ComputeBudget::default(),
+            evm_processor: EvmProcessor::default(),
         }
     }
 }
@@ -354,6 +355,7 @@ impl Clone for MessageProcessor {
             programs: self.programs.clone(),
             loaders: self.loaders.clone(),
             native_loader: NativeLoader::default(),
+            evm_processor: EvmProcessor::default(),
             ..*self
         }
     }
@@ -436,9 +438,18 @@ impl MessageProcessor {
         keyed_accounts: &[KeyedAccount],
         instruction_data: &[u8],
         invoke_context: &mut dyn InvokeContext,
+        evm_executor: Option<&mut StaticExecutor<EvmState>>,
     ) -> Result<(), InstructionError> {
         if native_loader::check_id(&keyed_accounts[0].owner()?) {
             let root_id = keyed_accounts[0].unsigned_key();
+            if solana_sdk::evm_loader::check_id(root_id) {
+                return self.evm_processor.process_instruction(
+                    &solana_sdk::evm_loader::id(),
+                    &keyed_accounts[1..], // skip evm program_id
+                    instruction_data,
+                    evm_executor,
+                );
+            }
             for (id, process_instruction) in &self.loaders {
                 if id == root_id {
                     // Call the program via a builtin loader
@@ -505,7 +516,7 @@ impl MessageProcessor {
         // Invoke callee
         invoke_context.push(instruction.program_id(&message.account_keys))?;
         let mut result =
-            self.process_instruction(&keyed_accounts, &instruction.data, invoke_context);
+            self.process_instruction(&keyed_accounts, &instruction.data, invoke_context, None);
         if result.is_ok() {
             // Verify the called program has not misbehaved
             result = invoke_context.verify_and_update(message, instruction, accounts);
@@ -639,7 +650,7 @@ impl MessageProcessor {
         accounts: &[Rc<RefCell<Account>>],
         rent_collector: &RentCollector,
         log_collector: Option<Rc<LogCollector>>,
-        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>,
+        evm_executor: Option<&mut evm_state::StaticExecutor<evm_state::EvmState>>,
     ) -> Result<(), InstructionError> {
         let pre_accounts = Self::create_pre_accounts(message, instruction, accounts);
         let mut invoke_context = ThisInvokeContext::new(
@@ -650,11 +661,15 @@ impl MessageProcessor {
             log_collector,
             self.is_cross_program_supported,
             self.compute_budget,
-            evm_executor,
         );
         let keyed_accounts =
             Self::create_keyed_accounts(message, instruction, executable_accounts, accounts)?;
-        self.process_instruction(&keyed_accounts, &instruction.data, &mut invoke_context)?;
+        self.process_instruction(
+            &keyed_accounts,
+            &instruction.data,
+            &mut invoke_context,
+            evm_executor,
+        )?;
         Self::verify(
             message,
             instruction,
@@ -676,7 +691,7 @@ impl MessageProcessor {
         accounts: &[Rc<RefCell<Account>>],
         rent_collector: &RentCollector,
         log_collector: Option<Rc<LogCollector>>,
-        evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>,
+        mut evm_executor: Option<&mut evm_state::StaticExecutor<evm_state::EvmState>>,
     ) -> Result<(), TransactionError> {
         for (instruction_index, instruction) in message.instructions.iter().enumerate() {
             self.execute_instruction(
@@ -686,7 +701,7 @@ impl MessageProcessor {
                 accounts,
                 rent_collector,
                 log_collector.clone(),
-                evm_executor.clone(),
+                evm_executor.as_deref_mut(),
             )
             .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
         }
@@ -1269,8 +1284,14 @@ mod tests {
             Some(&from_pubkey),
         );
 
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].borrow().lamports, 100);
         assert_eq!(accounts[1].borrow().lamports, 0);
@@ -1284,8 +1305,14 @@ mod tests {
             Some(&from_pubkey),
         );
 
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(
@@ -1303,8 +1330,14 @@ mod tests {
             Some(&from_pubkey),
         );
 
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(
@@ -1403,8 +1436,14 @@ mod tests {
             )],
             Some(&from_pubkey),
         );
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(
@@ -1422,8 +1461,14 @@ mod tests {
             )],
             Some(&from_pubkey),
         );
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(result, Ok(()));
 
         // Do work on the same account but at different location in keyed_accounts[]
@@ -1438,8 +1483,14 @@ mod tests {
             )],
             Some(&from_pubkey),
         );
-        let result =
-            message_processor.process_message(&message, &loaders, &accounts, &rent_collector, None);
+        let result = message_processor.process_message(
+            &message,
+            &loaders,
+            &accounts,
+            &rent_collector,
+            None,
+            None,
+        );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].borrow().lamports, 80);
         assert_eq!(accounts[1].borrow().lamports, 20);

@@ -3,29 +3,15 @@ use super::scope::*;
 use evm::TransactionAction;
 use log::*;
 
+use evm::EvmState;
+use evm::StaticExecutor;
 use solana_sdk::instruction::InstructionError;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{
     account::KeyedAccount,
-    entrypoint_native::InvokeContext,
     program_utils::limited_deserialize,
     sysvar::{rent::Rent, Sysvar},
 };
-
-macro_rules! log{
-    ($logger:ident, $message:expr) => {
-        if let Ok(mut logger) = $logger.try_borrow_mut() {
-            if logger.log_enabled() {
-                logger.log($message);
-            }
-        }
-    };
-    ($logger:ident, $fmt:expr, $($arg:tt)*) => {
-        if let Ok(mut logger) = $logger.try_borrow_mut() {
-            logger.log(&format!($fmt, $($arg)*));
-        }
-    };
-}
 
 /// Return the next AccountInfo or a NotEnoughAccountKeys error
 pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
@@ -34,189 +20,205 @@ pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
     iter.next().ok_or(InstructionError::NotEnoughAccountKeys)
 }
 
-pub fn process_initialize_deposit(
-    accounts: &[KeyedAccount],
-    pubkey: Pubkey,
-) -> Result<(), InstructionError> {
-    let account_info_iter = &mut accounts.iter();
-    let deposit_info = next_account_info(account_info_iter)?;
-    let deposit_info_len = deposit_info.data_len()?;
-    let rent = &Rent::from_account(&*next_account_info(account_info_iter)?.try_account_ref()?)
-        .ok_or(InstructionError::InvalidArgument)?;
+/// Ensure that first account is program itself, and it's locked for writes.
+fn check_evm_account<'a, 'b>(
+    program_id: &Pubkey,
+    keyed_accounts: &'a [KeyedAccount<'b>],
+) -> Result<&'a [KeyedAccount<'b>], InstructionError> {
+    let first = keyed_accounts
+        .first()
+        .ok_or(InstructionError::NotEnoughAccountKeys)?;
 
-    let mut deposit: Deposit =
-        limited_deserialize(&deposit_info.try_account_ref()?.data).unwrap_or_default();
-    if deposit.is_initialized {
-        return Err(InstructionError::AccountAlreadyInitialized);
+    if first.unsigned_key() != program_id || !first.is_writable() {
+        error!("First account is not evm, or not writable");
+        return Err(InstructionError::MissingAccount);
     }
 
-    if !rent.is_exempt(deposit_info.lamports()?, deposit_info_len) {
-        return Err(InstructionError::ExecutableAccountNotRentExempt);
-    }
-
-    deposit.deposit_authority = Option::Some(pubkey);
-    deposit.is_initialized = true;
-    deposit.locked_lamports = 0;
-
-    bincode::serialize_into(&mut *deposit_info.try_account_ref_mut()?.data, &deposit)
-        .map_err(|_| InstructionError::InvalidArgument)?;
-
-    Ok(())
+    let keyed_accounts = &keyed_accounts[1..];
+    Ok(keyed_accounts)
 }
 
-pub fn process_instruction(
-    _program_id: &Pubkey,
-    keyed_accounts: &[KeyedAccount],
-    data: &[u8],
-    cx: &mut dyn InvokeContext,
-) -> Result<(), InstructionError> {
-    let logger = cx.get_logger();
-    let evm_executor = cx.get_evm_executor();
-    let mut static_evm_executor = evm_executor.borrow_mut();
-    let evm_executor = static_evm_executor.rent_executor();
+#[derive(Default, Debug, Clone)]
+pub struct EvmProcessor {}
 
-    let ix = limited_deserialize(data)?;
-    log!(logger, "Run evm exec with ix = {:?}.", ix);
-    match ix {
-        EvmInstruction::EvmTransaction { evm_tx } => {
-            // TODO: Handle gas price
-            // TODO: Handle nonce
-            // TODO: validate tx signature
+impl EvmProcessor {
+    pub fn process_initialize_deposit(
+        accounts: &[KeyedAccount],
+        pubkey: Pubkey,
+    ) -> Result<(), InstructionError> {
+        let account_info_iter = &mut accounts.iter();
+        let deposit_info = next_account_info(account_info_iter)?;
+        let rent_account = next_account_info(account_info_iter)?;
+        let deposit_info_len = deposit_info.data_len()?;
+        let rent = &Rent::from_account(&*rent_account.try_account_ref()?)
+            .ok_or(InstructionError::InvalidArgument)?;
 
-            let before_gas = evm_executor.used_gas();
-            let result = match evm_tx.action {
-                TransactionAction::Call(addr) => {
-                    let caller = evm_tx
-                        .caller()
-                        .map_err(|_| InstructionError::InvalidArgument)?;
-                    log!(
-                        logger,
-                        "TransactionAction::Call caller  = {}, to = {}.",
-                        caller,
-                        addr
-                    );
-                    evm_executor.transact_call(
-                        caller,
-                        addr,
-                        evm_tx.value,
-                        evm_tx.input.clone(),
-                        evm_tx.gas_limit.as_usize(),
-                    )
-                }
-                TransactionAction::Create => {
-                    let caller = evm_tx
-                        .caller()
-                        .map_err(|_| InstructionError::InvalidArgument)?;
-                    let addr = evm_tx.address();
-                    log!(
-                        logger,
-                        "TransactionAction::Create caller  = {}, to = {:?}.",
-                        caller,
-                        addr
-                    );
-                    (
-                        evm_executor.transact_create(
+        let mut deposit: Deposit =
+            limited_deserialize(&deposit_info.try_account_ref()?.data).unwrap_or_default();
+        if deposit.is_initialized {
+            return Err(InstructionError::AccountAlreadyInitialized);
+        }
+
+        if !rent.is_exempt(deposit_info.lamports()?, deposit_info_len) {
+            return Err(InstructionError::ExecutableAccountNotRentExempt);
+        }
+
+        deposit.deposit_authority = Option::Some(pubkey);
+        deposit.is_initialized = true;
+        deposit.locked_lamports = 0;
+
+        bincode::serialize_into(&mut *deposit_info.try_account_ref_mut()?.data, &deposit)
+            .map_err(|_| InstructionError::InvalidArgument)?;
+
+        Ok(())
+    }
+
+    pub fn process_instruction(
+        &self,
+        program_id: &Pubkey,
+        keyed_accounts: &[KeyedAccount],
+        data: &[u8],
+        executor: Option<&mut StaticExecutor<EvmState>>,
+    ) -> Result<(), InstructionError> {
+        let executor = executor.expect("Evm execution from crossprogram is not allowed.");
+        let evm_executor = executor.rent_executor();
+
+        let keyed_accounts = check_evm_account(program_id, keyed_accounts)?;
+
+        let ix = limited_deserialize(data)?;
+        debug!("Run evm exec with ix = {:?}.", ix);
+        match ix {
+            EvmInstruction::EvmTransaction { evm_tx } => {
+                // TODO: Handle gas price
+                // TODO: Handle nonce
+                // TODO: validate tx signature
+
+                let before_gas = evm_executor.used_gas();
+                let result = match evm_tx.action {
+                    TransactionAction::Call(addr) => {
+                        let caller = evm_tx
+                            .caller()
+                            .map_err(|_| InstructionError::InvalidArgument)?;
+                        debug!(
+                            "TransactionAction::Call caller  = {}, to = {}.",
+                            caller, addr
+                        );
+                        evm_executor.transact_call(
                             caller,
+                            addr,
                             evm_tx.value,
                             evm_tx.input.clone(),
                             evm_tx.gas_limit.as_usize(),
-                        ),
-                        vec![],
-                    )
+                        )
+                    }
+                    TransactionAction::Create => {
+                        let caller = evm_tx
+                            .caller()
+                            .map_err(|_| InstructionError::InvalidArgument)?;
+                        let addr = evm_tx.address();
+                        debug!(
+                            "TransactionAction::Create caller  = {}, to = {:?}.",
+                            caller, addr
+                        );
+                        (
+                            evm_executor.transact_create(
+                                caller,
+                                evm_tx.value,
+                                evm_tx.input.clone(),
+                                evm_tx.gas_limit.as_usize(),
+                            ),
+                            vec![],
+                        )
+                    }
+                };
+
+                let used_gas = evm_executor.used_gas() - before_gas;
+                executor.register_tx_receipt(evm_state::TransactionReceipt::new(
+                    evm_tx,
+                    used_gas.into(),
+                    result.clone(),
+                ));
+                // TODO: Map evm errors on solana.
+                debug!("Exit status = {:?}", result);
+            }
+            EvmInstruction::CreateDepositAccount { pubkey } => {
+                Self::process_initialize_deposit(&keyed_accounts, pubkey)?
+            }
+            EvmInstruction::SwapNativeToEther {
+                lamports,
+                ether_address,
+            } => {
+                let accounts_iter = &mut keyed_accounts.iter();
+                let signer_account = next_account_info(accounts_iter)?;
+                let authority_account = next_account_info(accounts_iter)?;
+                let gweis = evm::lamports_to_gwei(lamports);
+                debug!(
+                    "Sending lamports to Gwei tokens from={},to={}",
+                    authority_account.unsigned_key(),
+                    ether_address
+                );
+
+                if keyed_accounts.is_empty() {
+                    error!("Not enough accounts");
+                    return Err(InstructionError::InvalidArgument);
                 }
-            };
 
-            let used_gas = evm_executor.used_gas() - before_gas;
-            static_evm_executor.register_tx_receipt(evm_state::TransactionReceipt::new(
-                evm_tx,
-                used_gas.into(),
-                result.clone(),
-            ));
-            // TODO: Map evm errors on solana.
-            log!(logger, "Exit status = {:?}", result);
+                if lamports == 0 {
+                    return Ok(());
+                }
+
+                let mut deposit: Deposit =
+                    limited_deserialize(&authority_account.account.borrow().data)
+                        .unwrap_or_default();
+
+                if signer_account.signer_key().is_none()
+                    || deposit.get_owner()? != *signer_account.signer_key().unwrap()
+                {
+                    debug!("SwapNativeToEther: from must sign");
+                    return Err(InstructionError::MissingRequiredSignature);
+                }
+
+                let mut real_lamports = authority_account.lamports()?;
+                if deposit.locked_lamports >= real_lamports {
+                    debug!(
+                        "SwapNativeToEther: insufficient unlocked lamports ({}, locked {})",
+                        authority_account.lamports()?,
+                        deposit.locked_lamports
+                    );
+                    return Err(InstructionError::InsufficientFunds);
+                }
+                real_lamports -= deposit.locked_lamports;
+                if lamports > real_lamports {
+                    debug!(
+                        "SwapNativeToEther: insufficient lamports ({}, need {})",
+                        real_lamports, lamports
+                    );
+                    return Err(InstructionError::InsufficientFunds);
+                }
+                deposit.locked_lamports += lamports;
+                evm_executor.deposit(ether_address, gweis);
+                bincode::serialize_into(
+                    &mut *authority_account.try_account_ref_mut()?.data,
+                    &deposit,
+                )
+                .map_err(|_| InstructionError::InvalidArgument)?;
+            }
         }
-        EvmInstruction::CreateDepositAccount { pubkey } => {
-            process_initialize_deposit(keyed_accounts, pubkey)?
-        }
-        EvmInstruction::SwapNativeToEther {
-            lamports,
-            ether_address,
-        } => {
-            let accounts_iter = &mut keyed_accounts.iter();
-            let signer_account = next_account_info(accounts_iter)?;
-            let authority_account = next_account_info(accounts_iter)?;
-            let gweis = evm::lamports_to_gwei(lamports);
-            log!(
-                logger,
-                "Sending lamports to Gwei tokens from={},to={}",
-                authority_account.unsigned_key(),
-                ether_address
-            );
-
-            if keyed_accounts.is_empty() {
-                error!("Not enough accounts");
-                return Err(InstructionError::InvalidArgument);
-            }
-
-            if lamports == 0 {
-                return Ok(());
-            }
-
-            let mut deposit: Deposit =
-                limited_deserialize(&authority_account.account.borrow().data).unwrap_or_default();
-
-            if signer_account.signer_key().is_none()
-                || deposit.get_owner()? != *signer_account.signer_key().unwrap()
-            {
-                debug!("SwapNativeToEther: from must sign");
-                return Err(InstructionError::MissingRequiredSignature);
-            }
-
-            let mut real_lamports = authority_account.lamports()?;
-            if deposit.locked_lamports >= real_lamports {
-                debug!(
-                    "SwapNativeToEther: insufficient unlocked lamports ({}, locked {})",
-                    authority_account.lamports()?,
-                    deposit.locked_lamports
-                );
-                return Err(InstructionError::InsufficientFunds);
-            }
-            real_lamports -= deposit.locked_lamports;
-            if lamports > real_lamports {
-                debug!(
-                    "SwapNativeToEther: insufficient lamports ({}, need {})",
-                    real_lamports, lamports
-                );
-                return Err(InstructionError::InsufficientFunds);
-            }
-            deposit.locked_lamports += lamports;
-            evm_executor.deposit(ether_address, gweis);
-            bincode::serialize_into(
-                &mut *authority_account.try_account_ref_mut()?.data,
-                &deposit,
-            )
-            .map_err(|_| InstructionError::InvalidArgument)?;
-        }
+        Ok(())
     }
-    Ok(())
 }
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::evm_tx;
     use evm_state::transactions::{TransactionAction, TransactionSignature};
     use primitive_types::{H160, H256, U256};
+    use solana_sdk::account::KeyedAccount;
+    use solana_sdk::native_loader;
     use solana_sdk::program_utils::limited_deserialize;
 
-    use solana_sdk::{
-        account::Account,
-        entrypoint_native::{ComputeBudget, ComputeMeter, Logger, ProcessInstruction},
-        instruction::CompiledInstruction,
-        message::Message,
-    };
-
+    use std::cell::RefCell;
     use std::sync::RwLock;
-    use std::{cell::RefCell, rc::Rc};
 
     fn dummy_eth_tx() -> evm_state::transactions::Transaction {
         evm_state::transactions::Transaction {
@@ -237,104 +239,34 @@ mod test {
     #[test]
     fn serialize_deserialize_eth_ix() {
         let tx = dummy_eth_tx();
-        let sol_ix = evm_tx(tx);
+        let sol_ix = EvmInstruction::EvmTransaction { evm_tx: tx };
         let ser = bincode::serialize(&sol_ix).unwrap();
         assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
-    }
-
-    #[derive(Debug, Default, Clone)]
-    pub struct MockComputeMeter {
-        pub remaining: u64,
-    }
-    impl ComputeMeter for MockComputeMeter {
-        fn consume(&mut self, amount: u64) -> Result<(), InstructionError> {
-            self.remaining = self.remaining.saturating_sub(amount);
-            if self.remaining == 0 {
-                return Err(InstructionError::ComputationalBudgetExceeded);
-            }
-            Ok(())
-        }
-        fn get_remaining(&self) -> u64 {
-            self.remaining
-        }
-    }
-    #[derive(Debug, Default, Clone)]
-    pub struct MockLogger {
-        pub log: Rc<RefCell<Vec<String>>>,
-    }
-    impl Logger for MockLogger {
-        fn log_enabled(&self) -> bool {
-            true
-        }
-        fn log(&mut self, message: &str) {
-            self.log.borrow_mut().push(message.to_string());
-        }
-    }
-    #[derive(Debug)]
-    pub struct MockInvokeContext {
-        pub key: Pubkey,
-        pub logger: MockLogger,
-        pub compute_meter: MockComputeMeter,
-        pub evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>,
-    }
-    impl MockInvokeContext {
-        fn new(evm_executor: Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>>) -> Self {
-            MockInvokeContext {
-                key: Pubkey::default(),
-                logger: MockLogger::default(),
-                compute_meter: MockComputeMeter {
-                    remaining: std::u64::MAX,
-                },
-                evm_executor,
-            }
-        }
-    }
-    impl InvokeContext for MockInvokeContext {
-        fn push(&mut self, _key: &Pubkey) -> Result<(), InstructionError> {
-            Ok(())
-        }
-        fn pop(&mut self) {}
-        fn verify_and_update(
-            &mut self,
-            _message: &Message,
-            _instruction: &CompiledInstruction,
-            _accounts: &[Rc<RefCell<Account>>],
-        ) -> Result<(), InstructionError> {
-            Ok(())
-        }
-        fn get_caller(&self) -> Result<&Pubkey, InstructionError> {
-            Ok(&self.key)
-        }
-        fn get_programs(&self) -> &[(Pubkey, ProcessInstruction)] {
-            &[]
-        }
-        fn get_logger(&self) -> Rc<RefCell<dyn Logger>> {
-            Rc::new(RefCell::new(self.logger.clone()))
-        }
-        fn is_cross_program_supported(&self) -> bool {
-            true
-        }
-        fn get_compute_budget(&self) -> ComputeBudget {
-            ComputeBudget::default()
-        }
-        fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>> {
-            Rc::new(RefCell::new(self.compute_meter.clone()))
-        }
-        fn get_evm_executor(&self) -> Rc<RefCell<evm_state::StaticExecutor<evm_state::EvmState>>> {
-            self.evm_executor.clone()
-        }
     }
 
     const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
     #[test]
     fn execute_tx() {
-        let executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
+        let mut executor = evm_state::StaticExecutor::with_config(
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-        )));
-        let mut cx = MockInvokeContext::new(executor.clone());
+        );
+        let mut executor = Some(&mut executor);
+        let processor = EvmProcessor::default();
+        // pub fn new(key: &'a Pubkey, is_signer: bool, account: &'a RefCell<Account>) -> Self {
+        //     Self {
+        //         is_signer,
+        //         is_writable: true,
+        //         key,
+        //         account,
+        //     }
+        // }
+        let evm_account = RefCell::new(native_loader::create_loadable_account("Evm Processor"));
+
+        let evm_keyed_account = KeyedAccount::new(&crate::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account];
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let tx_create = evm::UnsignedTransaction {
             nonce: 0.into(),
@@ -346,17 +278,18 @@ mod test {
         };
         let tx_create = tx_create.sign(&secret_key, None);
 
-        assert!(process_instruction(
-            &crate::ID,
-            &[],
-            &bincode::serialize(&EvmInstruction::EvmTransaction {
-                evm_tx: tx_create.clone()
-            })
-            .unwrap(),
-            &mut cx
-        )
-        .is_ok());
-        println!("cx = {:?}", cx);
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmTransaction {
+                    evm_tx: tx_create.clone()
+                })
+                .unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_ok());
+        println!("cx = {:?}", executor);
         // cx.evm_executor.borrow_mut().deconstruct();
         let tx_address = tx_create.address().unwrap();
         let tx_call = evm::UnsignedTransaction {
@@ -369,20 +302,26 @@ mod test {
         };
 
         let tx_call = tx_call.sign(&secret_key, None);
-        assert!(process_instruction(
-            &crate::ID,
-            &[],
-            &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
-            &mut cx
-        )
-        .is_ok());
-        println!("cx = {:?}", cx);
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_ok());
+        println!("cx = {:?}", executor);
     }
 
     #[test]
     fn execute_tx_with_state_apply() {
         use evm_state::Backend;
         let state = RwLock::new(evm_state::EvmState::default());
+        let processor = EvmProcessor::default();
+        let evm_account = RefCell::new(native_loader::create_loadable_account("Evm Processor"));
+
+        let evm_keyed_account = KeyedAccount::new(&crate::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account];
 
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let tx_create = evm::UnsignedTransaction {
@@ -403,27 +342,26 @@ mod test {
         assert_eq!(state.read().unwrap().basic(tx_address).nonce, 0.into());
         {
             let mut locked = state.write().unwrap();
-            let executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
+            let mut executor_orig = evm_state::StaticExecutor::with_config(
                 locked.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
-            )));
+            );
+            let mut executor = Some(&mut executor_orig);
+            assert!(processor
+                .process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &bincode::serialize(&EvmInstruction::EvmTransaction {
+                        evm_tx: tx_create.clone()
+                    })
+                    .unwrap(),
+                    executor.as_deref_mut()
+                )
+                .is_ok());
+            println!("cx = {:?}", executor);
 
-            let mut cx = MockInvokeContext::new(executor.clone());
-            assert!(process_instruction(
-                &crate::ID,
-                &[],
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_create.clone()
-                })
-                .unwrap(),
-                &mut cx
-            )
-            .is_ok());
-            println!("cx = {:?}", cx);
-
-            drop(cx);
-            let patch = Rc::try_unwrap(executor).unwrap().into_inner().deconstruct(); // TODO: Handle borrowing
+            let patch = executor_orig.deconstruct();
 
             locked.apply(patch);
         }
@@ -445,24 +383,25 @@ mod test {
         let tx_call = tx_call.sign(&secret_key, None);
         {
             let mut locked = state.write().unwrap();
-            let executor = Rc::new(RefCell::new(evm_state::StaticExecutor::with_config(
+            let mut executor_orig = evm_state::StaticExecutor::with_config(
                 locked.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
-            )));
+            );
+            let mut executor = Some(&mut executor_orig);
 
-            let mut cx = MockInvokeContext::new(executor.clone());
-            assert!(process_instruction(
-                &crate::ID,
-                &[],
-                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
-                &mut cx
-            )
-            .is_ok());
-            println!("cx = {:?}", cx);
+            assert!(processor
+                .process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
+                        .unwrap(),
+                    executor.as_deref_mut()
+                )
+                .is_ok());
+            println!("cx = {:?}", executor);
 
-            drop(cx);
-            let patch = Rc::try_unwrap(executor).unwrap().into_inner().deconstruct(); // TODO: Handle borrowing
+            let patch = executor_orig.deconstruct();
 
             locked.apply(patch);
         }

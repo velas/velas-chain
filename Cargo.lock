@@ -1087,7 +1087,6 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
- "solana-evm-loader-program",
 ]
 
 [[package]]
@@ -3894,6 +3893,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-bench-tps-evm"
+version = "1.4.0"
+dependencies = [
+ "bincode",
+ "clap",
+ "log 0.4.8",
+ "rand_isaac",
+ "rayon",
+ "serde_json",
+ "serde_yaml",
+ "serial_test",
+ "serial_test_derive",
+ "solana-clap-utils",
+ "solana-client",
+ "solana-core",
+ "solana-evm-loader-program",
+ "solana-faucet",
+ "solana-genesis",
+ "solana-local-cluster",
+ "solana-logger 1.4.0",
+ "solana-measure",
+ "solana-metrics",
+ "solana-net-utils",
+ "solana-runtime",
+ "solana-sdk 1.4.0",
+ "solana-version",
+]
+
+[[package]]
 name = "solana-bpf-loader-program"
 version = "1.4.0"
 dependencies = [
@@ -4213,7 +4241,6 @@ dependencies = [
  "primitive-types",
  "serde",
  "solana-logger 1.4.0",
- "solana-runtime",
  "solana-sdk 1.4.0",
 ]
 
@@ -4720,6 +4747,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-config-program",
+ "solana-evm-loader-program",
  "solana-logger 1.4.0",
  "solana-measure",
  "solana-metrics",

@@ -1,8 +1,6 @@
 #[macro_use]
 extern crate solana_bpf_loader_program;
 #[macro_use]
-extern crate solana_evm_loader_program;
-#[macro_use]
 extern crate solana_budget_program;
 #[macro_use]
 extern crate solana_exchange_program;
@@ -82,7 +80,6 @@ fn get_programs(cluster_type: ClusterType) -> Vec<(Program, Epoch)> {
         ClusterType::Development => vec![
             // Programs used for testing
             Program::BuiltinLoader(solana_bpf_loader_program!()),
-            Program::BuiltinLoader(solana_evm_loader_program!()),
             Program::BuiltinLoader(solana_bpf_loader_deprecated_program!()),
             Program::Native(solana_vest_program!()),
             Program::Native(solana_budget_program!()),
