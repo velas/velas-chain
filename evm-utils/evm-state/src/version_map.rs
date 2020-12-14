@@ -31,7 +31,7 @@ impl<T> From<State<T>> for Option<T> {
 
 #[derive(Clone)]
 pub struct Map<Version, Key, Value> {
-    version: Version,
+    pub(crate) version: Version,
     state: BTreeMap<Key, State<Value>>,
     parent: Option<Arc<Map<Version, Key, Value>>>,
 }

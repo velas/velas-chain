@@ -6,14 +6,10 @@ use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
-use crate::layered_map::LayeredMap;
-use crate::storage;
-use crate::transactions::TransactionReceipt;
-
-type Slot = u64; // TODO: re-use existing one from sdk package
+use crate::{layered_map::LayeredMap, storage, transactions::TransactionReceipt, Slot};
 
 /// Vivinity value of a memory backend.
-#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MemoryVicinity {
     /// Gas price.
     pub gas_price: U256,
@@ -35,6 +31,22 @@ pub struct MemoryVicinity {
     pub block_gas_limit: U256,
 }
 
+impl Default for MemoryVicinity {
+    fn default() -> Self {
+        Self {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            chain_id: U256::zero(),
+            block_hashes: Vec::new(),
+            block_number: U256::zero(),
+            block_coinbase: H160::default(),
+            block_timestamp: U256::zero(),
+            block_difficulty: U256::zero(),
+            block_gas_limit: U256::max_value(),
+        }
+    }
+}
+
 #[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AccountState {
     /// Account nonce.
@@ -47,9 +59,10 @@ pub struct AccountState {
 
 #[derive(Clone)] // TODO: Debug
 pub struct EvmState {
+    pub(crate) slot: Slot,
     pub(crate) vicinity: MemoryVicinity,
     pub(crate) logs: Vec<Log>,
-
+    // TODO: add Slot
     pub accounts: Map<H160, AccountState>,
     // Store every account storage at single place, to use power of versioned map.
     // This allows us to save only changed data.
@@ -60,18 +73,15 @@ pub struct EvmState {
 
 type Map<K, V> = LayeredMap<Slot, K, V>;
 type Storage<K, V> = storage::PersistentMap<Slot, K, Option<V>>;
-type PerSlot<V> = storage::VersionedValue<Slot, V>;
 
 // TODO: remove this in future
 const DEFAULT_STORAGE_PATH: &str = "/tmp/solana/evm-state";
 
-const VICINITY: &str = "vicinity";
 const ACCOUNTS: &str = "accounts";
 const ACCOUNTS_STORAGE: &str = "accounts_storage";
 const TRANSACTIONS_RECEIPTS: &str = "txs_receipts";
 
 struct FieldsStorages {
-    vicinities: PerSlot<MemoryVicinity>,
     accounts: Storage<H160, AccountState>,
     accounts_storage: Storage<(H160, H256), H256>,
     txs_receipts: Storage<H256, TransactionReceipt>,
@@ -82,10 +92,9 @@ fn open_storage<P: AsRef<Path>>(
 ) -> anyhow::Result<(storage::VersionedStorage<Slot>, FieldsStorages)> {
     let storage = storage::VersionedStorage::open(
         path,
-        &[VICINITY, ACCOUNTS, ACCOUNTS_STORAGE, TRANSACTIONS_RECEIPTS],
+        &[ACCOUNTS, ACCOUNTS_STORAGE, TRANSACTIONS_RECEIPTS],
     )?;
 
-    let vicinities = storage.typed(VICINITY)?;
     let accounts = storage.typed(ACCOUNTS)?;
     let accounts_storage = storage.typed(ACCOUNTS_STORAGE)?;
     let txs_receipts = storage.typed(TRANSACTIONS_RECEIPTS)?;
@@ -93,7 +102,6 @@ fn open_storage<P: AsRef<Path>>(
     Ok((
         storage,
         FieldsStorages {
-            vicinities,
             accounts,
             accounts_storage,
             txs_receipts,
@@ -103,59 +111,17 @@ fn open_storage<P: AsRef<Path>>(
 
 impl Default for EvmState {
     fn default() -> Self {
-        Self::new(default_memory_vicinity())
-    }
-}
-
-fn default_memory_vicinity() -> MemoryVicinity {
-    MemoryVicinity {
-        gas_price: U256::zero(),
-        origin: H160::default(),
-        chain_id: U256::zero(),
-        block_hashes: Vec::new(),
-        block_number: U256::zero(),
-        block_coinbase: H160::default(),
-        block_timestamp: U256::zero(),
-        block_difficulty: U256::zero(),
-        block_gas_limit: U256::max_value(),
+        Self::load_from(DEFAULT_STORAGE_PATH, Slot::default()).unwrap_or_else(|err| {
+            panic!("Unable to instantiate default EVM state: {:?}", err);
+        })
     }
 }
 
 impl EvmState {
-    // TODO: remove, keep only default instance
-    pub fn new(vicinity: MemoryVicinity) -> Self {
-        let (
-            storage,
-            FieldsStorages {
-                accounts,
-                accounts_storage,
-                txs_receipts,
-                ..
-            },
-        ) = open_storage(DEFAULT_STORAGE_PATH).unwrap_or_else(|err| {
-            panic!("Unable to open storage for default EVM state: {:?}", err)
-        });
-
-        let slot = Slot::default();
-
-        Self {
-            vicinity,
-            logs: vec![],
-
-            accounts: LayeredMap::wrap(accounts, slot),
-            accounts_storage: LayeredMap::wrap(accounts_storage, slot),
-            txs_receipts: LayeredMap::wrap(txs_receipts, slot),
-            storage,
-        }
-    }
-
     pub fn freeze(&mut self) {
-        // TODO: store vicinity
-
         self.accounts.freeze();
         self.accounts_storage.freeze();
         self.txs_receipts.freeze();
-        // self.storage.new_version(slot);
     }
 
     pub fn try_fork(&self, new_slot: Slot) -> Option<Self> {
@@ -163,7 +129,10 @@ impl EvmState {
         let accounts_storage = self.accounts_storage.try_fork(new_slot)?;
         let txs_receipts = self.txs_receipts.try_fork(new_slot)?;
 
+        // TODO: save new_slot in new state and refactor memory map as versionless with inlined get w/o layered map proxy
+
         Some(Self {
+            slot: new_slot,
             vicinity: self.vicinity.clone(),
             logs: vec![],
 
@@ -173,6 +142,13 @@ impl EvmState {
             storage: self.storage.clone(),
         })
     }
+
+    pub fn dump(&mut self) -> anyhow::Result<()> {
+        self.accounts.dump()?;
+        self.accounts_storage.dump()?;
+        self.txs_receipts.dump()?;
+        Ok(())
+    }
 }
 
 impl EvmState {
@@ -180,23 +156,19 @@ impl EvmState {
         let (
             storage,
             FieldsStorages {
-                vicinities,
                 accounts,
                 accounts_storage,
                 txs_receipts,
             },
         ) = open_storage(path)?;
 
-        let vicinity = vicinities
-            .get(slot)?
-            .unwrap_or_else(|| panic!("Missed memory vicinity for requested slot {}", slot));
-
         let accounts = LayeredMap::wrap(accounts, slot);
         let accounts_storage = LayeredMap::wrap(accounts_storage, slot);
         let txs_receipts = LayeredMap::wrap(txs_receipts, slot);
 
         Ok(Self {
-            vicinity,
+            slot,
+            vicinity: MemoryVicinity::default(),
             logs: vec![],
 
             accounts,

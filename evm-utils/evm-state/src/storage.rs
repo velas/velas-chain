@@ -181,6 +181,7 @@ impl<V, Key> VersionedKey<V, Key>
 where
     V: AsBytePrefix,
 {
+    #[allow(dead_code)]
     fn version_of(bytes: &[u8]) -> Result<V>
     where
         Error: From<V::FromBytesError>,
@@ -379,7 +380,7 @@ where
         self.get_exact_for(version, ())
     }
 
-    fn keys(&self) -> impl Iterator<Item = V> + '_ {
+    pub fn keys(&self) -> impl Iterator<Item = V> + '_ {
         self.versions.versions().map(|(version, _)| version)
     }
 }

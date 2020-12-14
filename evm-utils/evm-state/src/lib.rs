@@ -11,6 +11,8 @@ pub use layered_backend::*;
 pub use primitive_types::{H256, U256};
 pub use transactions::*;
 
+pub(crate) type Slot = u64; // TODO: re-use existing one from sdk package
+
 mod layered_map;
 mod storage;
 mod version_map;
@@ -93,15 +95,15 @@ mod test_utils;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::RwLock;
-
+    use anyhow::anyhow;
     use assert_matches::assert_matches;
-    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
 
+    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
 
     use super::*;
+    use crate::test_utils::TmpDir;
 
     fn name_to_key(name: &str) -> H160 {
         let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
@@ -109,45 +111,31 @@ mod tests {
     }
 
     #[test]
-    fn test_evm_bytecode() {
-        simple_logger::SimpleLogger::new().init().unwrap();
+    fn test_evm_bytecode() -> anyhow::Result<()> {
+        simple_logger::SimpleLogger::new().init()?;
         let accounts = ["contract", "caller"];
 
-        let code = hex::decode(HELLO_WORLD_CODE).unwrap();
-        let data = hex::decode(HELLO_WORLD_ABI).unwrap();
+        let code = hex::decode(HELLO_WORLD_CODE)?;
+        let data = hex::decode(HELLO_WORLD_ABI)?;
 
-        let vicinity = MemoryVicinity {
-            gas_price: U256::zero(),
-            origin: H160::default(),
-            chain_id: U256::zero(),
-            block_hashes: Vec::new(),
-            block_number: U256::zero(),
-            block_coinbase: H160::default(),
-            block_timestamp: U256::zero(),
-            block_difficulty: U256::zero(),
-            block_gas_limit: U256::max_value(),
-        };
+        let tmp_dir = TmpDir::new("test_evm_bytecode");
+        let mut backend = EvmState::load_from(tmp_dir, Slot::default())?;
 
-        let backend = EvmState::new(vicinity);
-        let backend = RwLock::new(backend);
-
-        {
-            let mut state = backend.write().unwrap();
-
-            for acc in &accounts {
-                let account = name_to_key(acc);
-                let memory = AccountState {
-                    ..Default::default()
-                };
-                state.accounts.insert(account, memory);
-            }
+        for acc in &accounts {
+            let account = name_to_key(acc);
+            let memory = AccountState {
+                ..Default::default()
+            };
+            backend.accounts.insert(account, memory);
         }
 
-        backend.write().unwrap().freeze();
+        backend.freeze();
 
         let config = evm::Config::istanbul();
         let mut executor = StaticExecutor::with_config(
-            backend.read().unwrap().try_fork(1).unwrap(),
+            backend
+                .try_fork(backend.slot + 1)
+                .ok_or_else(|| anyhow!("Unable to fork backend"))?,
             config,
             usize::max_value(),
         );
@@ -172,20 +160,20 @@ mod tests {
             usize::max_value(),
         );
 
-        let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
+        let result = hex::decode(HELLO_WORLD_RESULT)?;
         match exit_reason {
             (ExitReason::Succeed(ExitSucceed::Returned), res) if res == result => {}
             any_other => panic!("Not expected result={:?}", any_other),
         }
 
         let patch = executor.deconstruct();
-        backend.write().unwrap().apply(patch);
+        backend.apply(patch);
 
-        let mutex_lock = backend.read().unwrap();
-        let contract = mutex_lock.accounts.get(name_to_key("contract"));
+        let contract = backend.accounts.get(name_to_key("contract"));
         assert_eq!(
             &contract.unwrap().code,
             &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap()
         );
+        Ok(())
     }
 }

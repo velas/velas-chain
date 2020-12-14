@@ -61,7 +61,6 @@ where
         Value: Serialize + DeserializeOwned + Clone,
     {
         let mut full_iter = self.layers.full_iter().peekable();
-
         while let Some((version, kvs)) = full_iter.next() {
             for (key, value) in kvs {
                 self.storage.insert_with(*version, *key, value.cloned())?;
@@ -73,8 +72,10 @@ where
                 .or_else(|| self.storage.versions.previous_of(*version).ok().flatten());
             self.storage.versions.new_version(*version, previous)?;
         }
+        drop(full_iter);
 
-        // TODO: drop all layers
+        let current_version = self.layers.version;
+        self.layers = Map::empty(current_version);
 
         Ok(())
     }
