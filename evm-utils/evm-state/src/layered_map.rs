@@ -1,16 +1,16 @@
 use serde::{de::DeserializeOwned, Serialize};
 
-use super::storage::{AsBytePrefix, Storage};
+use super::storage::{AsBytePrefix, PersistentMap};
 use super::version_map::{KeyResult, Map};
 
 #[derive(Clone)]
 pub struct LayeredMap<Version, Key, Value> {
     layers: Map<Version, Key, Value>,
-    storage: Storage<Version, Key, Option<Value>>,
+    storage: PersistentMap<Version, Key, Option<Value>>,
 }
 
 impl<Version, Key, Value> LayeredMap<Version, Key, Value> {
-    pub fn wrap(storage: Storage<Version, Key, Option<Value>>, version: Version) -> Self
+    pub fn wrap(storage: PersistentMap<Version, Key, Option<Value>>, version: Version) -> Self
     where
         Key: Ord,
     {

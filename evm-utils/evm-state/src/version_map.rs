@@ -46,7 +46,7 @@ where
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum KeyResult<V, T> {
     /// Value for existing key.
     Found(T),
@@ -172,13 +172,15 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use KeyResult::*;
+
     #[test]
     fn store_and_get_simple() {
         let mut map: Map<(), _, _> = Map::new();
         map.insert("first", 1);
         map.insert("second", 2);
-        assert_eq!(map.get(&"first"), Some(&1));
-        assert_eq!(map.get(&"second"), Some(&2));
+        assert_eq!(map.get(&"first"), Found(Some(&1)));
+        assert_eq!(map.get(&"second"), Found(Some(&2)));
     }
 
     // Test that map can save version, and type of map is always remain the same.
@@ -188,19 +190,19 @@ mod test {
         map.insert("first", 1);
         map.insert("second", 2);
         map.insert("third", 3);
-        assert_eq!(map.get(&"first"), Some(&1));
-        assert_eq!(map.get(&"second"), Some(&2));
-        assert_eq!(map.get(&"third"), Some(&3));
+        assert_eq!(map.get(&"first"), Found(Some(&1)));
+        assert_eq!(map.get(&"second"), Found(Some(&2)));
+        assert_eq!(map.get(&"third"), Found(Some(&3)));
 
-        map.freeze_as(0);
-        let mut map: Map<_, _, _> = map.try_fork().unwrap();
+        map.freeze();
+        let mut map: Map<_, _, _> = map.try_fork(1).unwrap();
 
         map.remove("first");
         map.insert("third", 1);
 
-        assert_eq!(map.get(&"first"), None);
-        assert_eq!(map.get(&"second"), Some(&2));
-        assert_eq!(map.get(&"third"), Some(&1));
+        assert_eq!(map.get(&"first"), Found(None));
+        assert_eq!(map.get(&"second"), Found(Some(&2)));
+        assert_eq!(map.get(&"third"), Found(Some(&1)));
     }
 
     // Same as new_dynamic_version_insert_remove_test but dont hide type of store.
@@ -210,18 +212,18 @@ mod test {
         map.insert("first", 1);
         map.insert("second", 2);
         map.insert("third", 3);
-        assert_eq!(map.get(&"first"), Some(&1));
-        assert_eq!(map.get(&"second"), Some(&2));
-        assert_eq!(map.get(&"third"), Some(&3));
+        assert_eq!(map.get(&"first"), Found(Some(&1)));
+        assert_eq!(map.get(&"second"), Found(Some(&2)));
+        assert_eq!(map.get(&"third"), Found(Some(&3)));
 
-        map.freeze_as(0);
-        let mut map = map.try_fork().unwrap();
+        map.freeze();
+        let mut map = map.try_fork(1).unwrap();
 
         map.remove("first");
         map.insert("third", 1);
 
-        assert_eq!(map.get(&"first"), None);
-        assert_eq!(map.get(&"second"), Some(&2));
-        assert_eq!(map.get(&"third"), Some(&1));
+        assert_eq!(map.get(&"first"), Found(None));
+        assert_eq!(map.get(&"second"), Found(Some(&2)));
+        assert_eq!(map.get(&"third"), Found(Some(&1)));
     }
 }

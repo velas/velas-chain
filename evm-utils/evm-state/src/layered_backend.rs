@@ -55,13 +55,14 @@ pub struct EvmState {
     // This allows us to save only changed data.
     pub(crate) accounts_storage: Map<(H160, H256), H256>,
     pub(crate) txs_receipts: Map<H256, TransactionReceipt>,
-    storage: storage::Versions<Slot>,
+    storage: storage::VersionedStorage<Slot>,
 }
 
 type Map<K, V> = LayeredMap<Slot, K, V>;
-type Storage<K, V> = storage::Storage<Slot, K, Option<V>>;
-type PerSlot<V> = storage::KVStorage<Slot, V>;
+type Storage<K, V> = storage::PersistentMap<Slot, K, Option<V>>;
+type PerSlot<V> = storage::VersionedValue<Slot, V>;
 
+// TODO: remove this in future
 const DEFAULT_STORAGE_PATH: &str = "/tmp/solana/evm-state";
 
 const VICINITY: &str = "vicinity";
@@ -78,8 +79,8 @@ struct FieldsStorages {
 
 fn open_storage<P: AsRef<Path>>(
     path: P,
-) -> anyhow::Result<(storage::Versions<Slot>, FieldsStorages)> {
-    let storage = storage::Versions::open(
+) -> anyhow::Result<(storage::VersionedStorage<Slot>, FieldsStorages)> {
+    let storage = storage::VersionedStorage::open(
         path,
         &[VICINITY, ACCOUNTS, ACCOUNTS_STORAGE, TRANSACTIONS_RECEIPTS],
     )?;
@@ -491,11 +492,11 @@ mod tests {
         storage: &BTreeMap<(H160, H256), Option<H256>>,
     ) {
         for account in accounts {
-            assert_eq!(state.accounts.get(account.0), account.1.as_ref())
+            assert_eq!(state.accounts.get(*account.0).as_ref(), account.1.as_ref())
         }
 
         for s in storage {
-            assert_eq!(state.accounts_storage.get(s.0), s.1.as_ref())
+            assert_eq!(state.accounts_storage.get(*s.0).as_ref(), s.1.as_ref())
         }
     }
 
@@ -509,7 +510,7 @@ mod tests {
         let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
 
         let tmp_dir = TmpDir::new("add_two_accounts_check_helpers");
-        let mut evm_state = EvmState::read_from(tmp_dir, None).unwrap();
+        let mut evm_state = EvmState::load_from(tmp_dir, Default::default()).unwrap();
 
         assert_eq!(evm_state.basic(H160::random()).balance, U256::from(0));
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
@@ -527,14 +528,14 @@ mod tests {
         let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
 
         let tmp_dir = TmpDir::new("fork_add_remove_accounts");
-        let mut evm_state = EvmState::read_from(tmp_dir, None).unwrap();
+        let mut evm_state = EvmState::load_from(tmp_dir, Default::default()).unwrap();
 
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
-        evm_state.freeze_as(0);
+        evm_state.freeze();
 
         assert_state(&evm_state, &accounts_state_diff, &storage_diff);
 
-        let mut new_evm_state = evm_state.try_fork().unwrap();
+        let mut new_evm_state = evm_state.try_fork(1).unwrap();
         assert_state(&new_evm_state, &accounts_state_diff, &storage_diff);
 
         let new_accounts = generate_accounts_addresses(SEED + 1, 2);

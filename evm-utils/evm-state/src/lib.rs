@@ -143,11 +143,11 @@ mod tests {
             }
         }
 
-        backend.write().unwrap().freeze_as(0);
+        backend.write().unwrap().freeze();
 
         let config = evm::Config::istanbul();
         let mut executor = StaticExecutor::with_config(
-            backend.read().unwrap().try_fork().unwrap(),
+            backend.read().unwrap().try_fork(1).unwrap(),
             config,
             usize::max_value(),
         );
@@ -182,7 +182,7 @@ mod tests {
         backend.write().unwrap().apply(patch);
 
         let mutex_lock = backend.read().unwrap();
-        let contract = mutex_lock.accounts.get(&name_to_key("contract"));
+        let contract = mutex_lock.accounts.get(name_to_key("contract"));
         assert_eq!(
             &contract.unwrap().code,
             &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap()

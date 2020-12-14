@@ -5,8 +5,7 @@ use std::io::Cursor;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
 use lazy_static::lazy_static;
@@ -33,12 +32,12 @@ pub enum Error {
     KeyErr(#[from] TryFromSliceError),
 }
 
-pub struct Versions<V> {
+pub struct VersionedStorage<V> {
     db: Arc<DB>,
     _version: PhantomData<V>,
 }
 
-impl<V> Clone for Versions<V> {
+impl<V> Clone for VersionedStorage<V> {
     fn clone(&self) -> Self {
         Self {
             db: Arc::clone(&self.db),
@@ -49,7 +48,7 @@ impl<V> Clone for Versions<V> {
 
 type Previous<V> = Option<V>; // TODO: Vec<V>
 
-impl<V> Versions<V>
+impl<V> VersionedStorage<V>
 where
     V: Copy + Serialize + DeserializeOwned,
     Previous<V>: Serialize + DeserializeOwned,
@@ -84,12 +83,15 @@ where
     }
 }
 
-impl<V> Versions<V> {
-    pub fn typed<S: AsRef<str>, Key, Value>(&self, type_name: S) -> Result<Storage<V, Key, Value>> {
+impl<V> VersionedStorage<V> {
+    pub fn typed<S: AsRef<str>, Key, Value>(
+        &self,
+        type_name: S,
+    ) -> Result<PersistentMap<V, Key, Value>> {
         if self.db.cf_handle(type_name.as_ref()).is_none() {
             return Err(Error::ColumnFamilyErr(type_name.as_ref().to_owned()));
         }
-        Ok(Storage::for_type(&self.db, type_name))
+        Ok(PersistentMap::for_type(&self.db, type_name))
     }
 
     pub fn open<P: AsRef<Path>, S: AsRef<str>>(
@@ -119,8 +121,8 @@ impl<V> Versions<V> {
     }
 }
 
-pub struct Storage<V, Key, Value> {
-    pub versions: Versions<V>,
+pub struct PersistentMap<V, Key, Value> {
+    pub versions: VersionedStorage<V>,
     type_name: String, // ColumnFamily id
     squash_guard: Arc<RwLock<()>>,
 
@@ -128,7 +130,7 @@ pub struct Storage<V, Key, Value> {
     _value: PhantomData<Value>,
 }
 
-impl<V, Key, Value> Clone for Storage<V, Key, Value> {
+impl<V, Key, Value> Clone for PersistentMap<V, Key, Value> {
     fn clone(&self) -> Self {
         Self {
             versions: self.versions.clone(),
@@ -194,9 +196,9 @@ where
     }
 }
 
-impl<V, Key, Value> Storage<V, Key, Value> {
+impl<V, Key, Value> PersistentMap<V, Key, Value> {
     fn for_type<S: AsRef<str>>(db: &Arc<DB>, type_name: S) -> Self {
-        let versions = Versions {
+        let versions = VersionedStorage {
             db: Arc::clone(&db),
             _version: PhantomData,
         };
@@ -224,7 +226,7 @@ impl<V, Key, Value> Storage<V, Key, Value> {
     }
 }
 
-impl<V, Key, Value> Storage<V, Key, Value>
+impl<V, Key, Value> PersistentMap<V, Key, Value>
 where
     V: Copy + AsBytePrefix + Serialize + DeserializeOwned,
     Key: Copy + Serialize + DeserializeOwned,
@@ -359,9 +361,9 @@ pub trait HasMax {
     const MAX: Self;
 }
 
-pub type KVStorage<V, Value> = Storage<V, (), Value>;
+pub type VersionedValue<V, Value> = PersistentMap<V, (), Value>;
 
-impl<V, Value> KVStorage<V, Value>
+impl<V, Value> VersionedValue<V, Value>
 where
     V: Copy + AsBytePrefix + Serialize + DeserializeOwned,
     Value: Serialize + DeserializeOwned,
@@ -447,20 +449,20 @@ primitive_type_has_max! {
     H160, H256, H512
 }
 
-impl<V> fmt::Debug for Versions<V>
+impl<V> fmt::Debug for VersionedStorage<V>
 where
     V: 'static,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use std::any::TypeId;
-        f.debug_struct("Versions")
+        f.debug_struct("VersionedStorage")
             .field("Version", &TypeId::of::<V>())
             .field("database", &self.db.path().display())
             .finish()
     }
 }
 
-impl<V, Key, Value> fmt::Debug for Storage<V, Key, Value>
+impl<V, Key, Value> fmt::Debug for PersistentMap<V, Key, Value>
 where
     V: 'static,
     Key: 'static,
@@ -480,28 +482,25 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::blacklisted_name)]
 mod tests {
-    use std::array::TryFromSliceError;
     use std::collections::{BTreeMap, HashMap};
     use std::iter::FromIterator;
-    use std::sync::Arc;
     use std::thread::{self, JoinHandle};
-    use std::{env, fs, path::PathBuf};
 
-    use quickcheck::{Arbitrary, Gen};
     use quickcheck_macros::quickcheck;
 
     use crate::test_utils::TmpDir;
 
     use super::*;
 
-    fn open<P, S, V, Key, Value>(path: P, type_name: S) -> Result<Storage<V, Key, Value>>
+    fn open<P, S, V, Key, Value>(path: P, type_name: S) -> Result<PersistentMap<V, Key, Value>>
     where
         V: AsBytePrefix,
         P: AsRef<Path>,
         S: AsRef<str>,
     {
-        Versions::open(path, &[type_name.as_ref()])?.typed(type_name.as_ref())
+        VersionedStorage::open(path, &[type_name.as_ref()])?.typed(type_name.as_ref())
     }
 
     impl<A, B> AsBytePrefix for (A, B)
@@ -529,7 +528,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn it_handles_full_range_mapping() -> Result<()> {
         use rand::Rng;
 
@@ -554,11 +552,11 @@ mod tests {
         {
             let s = open(&dir, "vkv")?;
 
-            for (version, map) in &assoc {
-                for (key, value) in map {
-                    s.insert_with(*version, key, value)?;
+            for (&version, map) in &assoc {
+                for (&key, &value) in map {
+                    s.insert_with(version, key, value)?;
                 }
-                s.versions.new_version(*version, None)?;
+                s.versions.new_version(version, None)?;
             }
             s.db().flush()?;
             println!("assoc is stored");
@@ -566,7 +564,7 @@ mod tests {
         {
             let s = open(&dir, "vkv")?;
             for (version, _) in s.versions.versions() {
-                let new_map = HashMap::from_iter(s.prefix_iter_for(&version)?);
+                let new_map = HashMap::from_iter(s.prefix_iter_for(version)?);
                 assert_eq!(assoc.remove(&version), Some(new_map));
             }
             assert!(assoc.is_empty());
@@ -628,8 +626,8 @@ mod tests {
         let dir = TmpDir::new("qc_keyless_storage_behaves_like_a_map_with_version_as_key");
         {
             let s = open(&dir, "kv")?;
-            for (k, v) in &map {
-                s.insert(*k, v)?;
+            for (&k, &v) in &map {
+                s.insert(k, v)?;
             }
             s.db().flush()?;
         }
@@ -648,7 +646,7 @@ mod tests {
     fn qc_two_concurrent_threads_works_on_shared_db_via_version_assoc(
         (foo, bar): (BTreeMap<K, V>, BTreeMap<K, V>),
     ) -> Result<()> {
-        type Storage = KVStorage<(ThreadId, K), V>;
+        type Storage = VersionedValue<(ThreadId, K), V>;
 
         let dir = TmpDir::new("qc_two_concurrent_threads_works_on_shared_db_via_version_assoc");
         let s: Arc<Storage> = Arc::new(open(&dir, "kv_assoc")?);
@@ -700,7 +698,7 @@ mod tests {
     fn qc_two_concurrent_threads_works_on_shared_db_via_own_version_slot(
         (foo, bar): (BTreeMap<K, V>, BTreeMap<K, V>),
     ) -> Result<()> {
-        type TStorage = Storage<ThreadId, K, V>;
+        type TStorage = PersistentMap<ThreadId, K, V>;
         let dir = TmpDir::new("qc_two_concurrent_threads_works_on_shared_db_via_own_version_slot");
         let s: Arc<TStorage> = Arc::new(open(&dir, "slot_assoc")?);
 
@@ -753,11 +751,11 @@ mod tests {
         let dir = TmpDir::new("qc_reads_the_same_as_inserts");
         {
             let s = open(&dir, "vkv")?;
-            for (version, map) in &assoc {
-                for (k, v) in map {
-                    s.insert_with(*version, k, v)?;
+            for (&version, map) in &assoc {
+                for (&k, &v) in map {
+                    s.insert_with(version, k, v)?;
                 }
-                s.versions.new_version(*version, None)?;
+                s.versions.new_version(version, None)?;
             }
             s.db().flush()?;
         }
@@ -766,7 +764,7 @@ mod tests {
 
             let mut new_assoc = HashMap::<K, HashMap<K, V>>::new();
             for (version, _) in s.versions.versions() {
-                new_assoc.insert(version, s.prefix_iter_for(&version).unwrap().collect());
+                new_assoc.insert(version, s.prefix_iter_for(version).unwrap().collect());
             }
 
             assert_eq!(assoc, new_assoc);
