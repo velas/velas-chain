@@ -295,7 +295,7 @@ impl Backend for EvmState {
     fn code(&self, address: H160) -> Vec<u8> {
         self.accounts
             .get(address)
-            .map(|v| v.code.clone())
+            .map(|v| v.code)
             .unwrap_or_default()
     }
 

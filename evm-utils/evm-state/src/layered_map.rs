@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use serde::{de::DeserializeOwned, Serialize};
 
 use super::storage::{AsBytePrefix, Storage};

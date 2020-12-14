@@ -2,7 +2,6 @@ use std::array::TryFromSliceError;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::io::Cursor;
-use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::path::Path;
@@ -302,12 +301,12 @@ where
         let mut rev_track = track.into_iter().rev().peekable();
         while let (Some(current), Some(parent)) = (rev_track.next(), rev_track.peek().copied()) {
             for (key, value) in self.prefix_iter_for(parent)? {
-                if !self.has_value_for(current.clone(), key.clone())? {
-                    self.insert_with(current.clone(), key, value)?;
+                if !self.has_value_for(current, key)? {
+                    self.insert_with(current, key, value)?;
                 }
             }
 
-            self.delete_all_for(parent.clone())?;
+            self.delete_all_for(parent)?;
 
             // TODO: cleanup all None's
         }
@@ -329,12 +328,12 @@ where
 
         while let Some(parent) = self.versions.previous_of(next_parent_for)? {
             for (key, value) in self.prefix_iter_for(parent)? {
-                if !self.has_value_for(target.clone(), key.clone())? {
-                    self.insert_with(target.clone(), key.clone(), value)?;
+                if !self.has_value_for(target, key)? {
+                    self.insert_with(target, key, value)?;
                 }
             }
 
-            self.delete_all_for(parent.clone())?;
+            self.delete_all_for(parent)?;
 
             next_parent_for = parent;
         }
@@ -369,7 +368,7 @@ where
 {
     // TODO: previous versions as argument
     pub fn insert(&self, version: V, value: Value) -> Result<()> {
-        self.insert_with(version.clone(), (), value)?;
+        self.insert_with(version, (), value)?;
         self.versions.new_version(version, None)?;
         Ok(())
     }
