@@ -497,7 +497,7 @@ impl BridgeERPC for BridgeERPCImpl {
             .read()
             .expect("meta bank EVM state was poisoned");
 
-        let evm_state = evm_state.try_fork().unwrap_or_else(|| evm_state.clone());
+        let evm_state = evm_state.clone(); // TODO: revise
 
         let mut executor =
             evm_state::StaticExecutor::with_config(evm_state, Config::istanbul(), gas_limit);

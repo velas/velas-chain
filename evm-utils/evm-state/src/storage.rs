@@ -4,6 +4,7 @@ use std::fmt;
 use std::io::Cursor;
 use std::marker::PhantomData;
 use std::mem::size_of;
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
@@ -34,6 +35,7 @@ pub enum Error {
 
 pub struct VersionedStorage<V> {
     db: Arc<DB>,
+    squash_guard: Arc<RwLock<()>>,
     _version: PhantomData<V>,
 }
 
@@ -41,6 +43,7 @@ impl<V> Clone for VersionedStorage<V> {
     fn clone(&self) -> Self {
         Self {
             db: Arc::clone(&self.db),
+            squash_guard: Arc::clone(&self.squash_guard),
             _version: PhantomData,
         }
     }
@@ -83,27 +86,39 @@ where
     }
 }
 
-impl<V> VersionedStorage<V> {
-    pub fn typed<S: AsRef<str>, Key, Value>(
-        &self,
-        type_name: S,
-    ) -> Result<PersistentMap<V, Key, Value>> {
-        if self.db.cf_handle(type_name.as_ref()).is_none() {
-            return Err(Error::ColumnFamilyErr(type_name.as_ref().to_owned()));
-        }
-        Ok(PersistentMap::for_type(&self.db, type_name))
-    }
+pub trait PersistentAssoc {
+    const COLUMN_NAME: &'static str;
+    type Key: Serialize + DeserializeOwned;
+    type Value: Serialize + DeserializeOwned;
+}
 
+#[macro_export]
+macro_rules! persistent_types {
+    ($($Marker:ident :: $Column:expr => $Key:ty => $Value:ty,)+) => {
+        const COLUMN_NAMES: &[&'static str] = &[$($Column),+];
+
+        $(
+            pub(crate) enum $Marker {}
+            impl PersistentAssoc for $Marker {
+                const COLUMN_NAME: &'static str = $Column;
+                type Key = $Key;
+                type Value = $Value;
+            }
+        )+
+    };
+}
+
+impl<V> VersionedStorage<V> {
     pub fn open<P: AsRef<Path>, S: AsRef<str>>(
         path: P,
-        type_names: impl IntoIterator<Item = S>,
+        column_names: impl IntoIterator<Item = S>,
     ) -> Result<Self>
     where
         V: AsBytePrefix,
     {
         let db_opts = default_db_opts();
 
-        let descriptors = type_names
+        let descriptors = column_names
             .into_iter()
             .map(|type_name| {
                 let mut cf_opts = Options::default();
@@ -113,33 +128,35 @@ impl<V> VersionedStorage<V> {
             .collect::<Vec<_>>();
 
         let db = Arc::new(DB::open_cf_descriptors(&db_opts, &path, descriptors)?);
+        let squash_guard = Arc::new(RwLock::default());
 
         Ok(Self {
             db,
+            squash_guard,
             _version: PhantomData,
         })
     }
-}
 
-pub struct PersistentMap<V, Key, Value> {
-    pub versions: VersionedStorage<V>,
-    type_name: String, // ColumnFamily id
-    squash_guard: Arc<RwLock<()>>,
+    pub fn typed<'a, M: PersistentAssoc>(&'a self) -> PersistentMap<'a, V, M> {
+        assert!(self.db.cf_handle(M::COLUMN_NAME).is_some());
 
-    _key: PhantomData<Key>,
-    _value: PhantomData<Value>,
-}
-
-impl<V, Key, Value> Clone for PersistentMap<V, Key, Value> {
-    fn clone(&self) -> Self {
-        Self {
-            versions: self.versions.clone(),
-            type_name: self.type_name.to_owned(),
-            squash_guard: Arc::clone(&self.squash_guard),
-
-            _key: PhantomData,
-            _value: PhantomData,
+        PersistentMap {
+            storage: &self,
+            _marker: PhantomData,
         }
+    }
+}
+
+pub struct PersistentMap<'a, V, M: PersistentAssoc> {
+    // TODO: revise this ref type
+    storage: &'a VersionedStorage<V>,
+    _marker: PhantomData<M>,
+}
+
+impl<'a, V, M: PersistentAssoc> Deref for PersistentMap<'a, V, M> {
+    type Target = VersionedStorage<V>;
+    fn deref(&self) -> &Self::Target {
+        &self.storage
     }
 }
 
@@ -197,51 +214,36 @@ where
     }
 }
 
-impl<V, Key, Value> PersistentMap<V, Key, Value> {
-    fn for_type<S: AsRef<str>>(db: &Arc<DB>, type_name: S) -> Self {
-        let versions = VersionedStorage {
-            db: Arc::clone(&db),
-            _version: PhantomData,
-        };
-        let type_name = type_name.as_ref().to_owned();
-        let squash_guard = Arc::new(RwLock::default());
-
-        Self {
-            versions,
-            type_name,
-            squash_guard,
-
-            _key: PhantomData,
-            _value: PhantomData,
-        }
-    }
-
+impl<'a, V, M: PersistentAssoc> PersistentMap<'a, V, M> {
     fn db(&self) -> &DB {
-        self.versions.db.as_ref()
+        self.storage.db.as_ref()
     }
 
-    fn cf(&self) -> Result<&ColumnFamily> {
+    fn cf(&self) -> &ColumnFamily {
         self.db()
-            .cf_handle(&self.type_name)
-            .ok_or_else(|| Error::ColumnFamilyErr(self.type_name.to_owned()))
+            .cf_handle(M::COLUMN_NAME)
+            .unwrap_or_else(|| panic!("Missed Column Family '{}'", M::COLUMN_NAME))
     }
 }
 
-impl<V, Key, Value> PersistentMap<V, Key, Value>
+impl<'a, V, M: PersistentAssoc> PersistentMap<'a, V, M>
 where
     V: Copy + AsBytePrefix + Serialize + DeserializeOwned,
-    Key: Copy + Serialize + DeserializeOwned,
-    Value: Serialize + DeserializeOwned,
+    M::Key: Copy,
 {
-    pub fn insert_with(&self, version: V, key: Key, value: Value) -> Result<()> {
+    pub fn insert_with(&self, version: V, key: M::Key, value: Option<M::Value>) -> Result<()> {
         let versioned_key: Vec<u8> = VersionedKey { version, key }.try_into()?;
         let value = CODER.serialize(&value)?;
-        self.db().put_cf(self.cf()?, versioned_key, value)?;
+        self.db().put_cf(self.cf(), versioned_key, value)?;
         Ok(())
     }
 
-    pub fn get_for(&self, version: V, key: Key) -> Result<Option<Value>> {
-        let _guard = self.squash_guard.read().expect("squash guard was poisoned");
+    pub fn get_for(&self, version: V, key: M::Key) -> Result<Option<M::Value>> {
+        let _guard = self
+            .storage
+            .squash_guard
+            .read()
+            .expect("squash guard was poisoned");
 
         let mut next_version = Some(version);
 
@@ -250,7 +252,7 @@ where
             if value.is_some() {
                 return Ok(value);
             } else {
-                next_version = self.versions.previous_of(version)?;
+                next_version = self.storage.previous_of(version)?;
                 continue;
             }
         }
@@ -258,19 +260,22 @@ where
         Ok(None)
     }
 
-    fn get_exact_for(&self, version: V, key: Key) -> Result<Option<Value>> {
+    fn get_exact_for(&self, version: V, key: M::Key) -> Result<Option<M::Value>> {
         let versioned_key: Vec<u8> = VersionedKey { version, key }.try_into()?;
-        let bytes = self.db().get_pinned_cf(self.cf()?, versioned_key)?;
+        let bytes = self.db().get_pinned_cf(self.cf(), versioned_key)?;
         let mb_value = bytes.map(|bytes| CODER.deserialize(&bytes)).transpose()?;
         Ok(mb_value)
     }
 
-    pub fn prefix_iter_for(&self, version: V) -> Result<impl Iterator<Item = (Key, Value)> + '_> {
+    pub fn prefix_iter_for(
+        &self,
+        version: V,
+    ) -> Result<impl Iterator<Item = (M::Key, M::Value)> + '_> {
         Ok(self
             .db()
-            .prefix_iterator_cf(self.cf()?, version.to_bytes())
+            .prefix_iterator_cf(self.cf(), version.to_bytes())
             .map(move |(key, value)| {
-                let key = VersionedKey::<V, Key>::key_from(&key).unwrap_or_else(|err| {
+                let key = VersionedKey::<V, M::Key>::key_from(&key).unwrap_or_else(|err| {
                     panic!("Unable to deserialize key from {:?}: {:?}", key, err)
                 });
                 let value = CODER.deserialize(&value).unwrap_or_else(|err| {
@@ -280,24 +285,25 @@ where
             }))
     }
 
-    fn has_value_for(&self, version: V, key: Key) -> Result<bool> {
+    fn has_value_for(&self, version: V, key: M::Key) -> Result<bool> {
         let versioned_key: Vec<u8> = VersionedKey { version, key }.try_into()?;
-        let data_ref = self.db().get_pinned_cf(self.cf()?, versioned_key)?;
+        let data_ref = self.db().get_pinned_cf(self.cf(), versioned_key)?;
         Ok(data_ref.is_some())
     }
 
     pub fn squash_into_rev_pass(&self, target: V) -> Result<()>
     where
         Previous<V>: DeserializeOwned,
-        Key: HasMax,
+        M::Key: HasMax,
     {
         let _guard = self
+            .storage
             .squash_guard
             .write()
             .expect("squash guard was poisoned");
 
         let mut track = vec![target];
-        while let Some(prev) = self.versions.previous_of(track[track.len() - 1])? {
+        while let Some(prev) = self.storage.previous_of(track[track.len() - 1])? {
             track.push(prev);
         }
 
@@ -305,7 +311,7 @@ where
         while let (Some(current), Some(parent)) = (rev_track.next(), rev_track.peek().copied()) {
             for (key, value) in self.prefix_iter_for(parent)? {
                 if !self.has_value_for(current, key)? {
-                    self.insert_with(current, key, value)?;
+                    self.insert_with(current, key, Some(value))?;
                 }
             }
 
@@ -320,19 +326,20 @@ where
     pub fn squash_into_tracing(&self, target: V) -> Result<()>
     where
         Previous<V>: DeserializeOwned,
-        Key: HasMax,
+        M::Key: HasMax,
     {
         let _guard = self
+            .storage
             .squash_guard
             .write()
             .expect("squash guard was poisoned");
 
         let mut next_parent_for = target;
 
-        while let Some(parent) = self.versions.previous_of(next_parent_for)? {
+        while let Some(parent) = self.storage.previous_of(next_parent_for)? {
             for (key, value) in self.prefix_iter_for(parent)? {
                 if !self.has_value_for(target, key)? {
-                    self.insert_with(target, key, value)?;
+                    self.insert_with(target, key, Some(value))?;
                 }
             }
 
@@ -346,14 +353,14 @@ where
 
     fn delete_all_for(&self, version: V) -> Result<()>
     where
-        Key: HasMax,
+        M::Key: HasMax,
     {
         let version_prefix: Vec<u8> = version.to_bytes().as_ref().iter().copied().collect();
-        let key_max_bytes = bincode::serialized_size(&Key::MAX)? as usize + 1;
+        let key_max_bytes = bincode::serialized_size(&M::Key::MAX)? as usize + 1;
         let mut lexicographic_max: Vec<u8> = version_prefix.clone();
         lexicographic_max.extend(std::iter::repeat(0u8).take(key_max_bytes));
         self.db()
-            .delete_range_cf(self.cf()?, version_prefix, lexicographic_max)?;
+            .delete_range_cf(self.cf(), version_prefix, lexicographic_max)?;
         Ok(())
     }
 }
@@ -362,17 +369,18 @@ pub trait HasMax {
     const MAX: Self;
 }
 
-pub type VersionedValue<V, Value> = PersistentMap<V, (), Value>;
+// pub type VersionedValue<'a, V, Value> =
+//     PersistentMap<'a, V, M: PersistentAssoc<Key = (), Value = Value>>;
 
-impl<V, Value> VersionedValue<V, Value>
+impl<'a, V, Value, M: PersistentAssoc<Key = (), Value = Value>> PersistentMap<'a, V, M>
 where
     V: Copy + AsBytePrefix + Serialize + DeserializeOwned,
     Value: Serialize + DeserializeOwned,
 {
     // TODO: previous versions as argument
     pub fn insert(&self, version: V, value: Value) -> Result<()> {
-        self.insert_with(version, (), value)?;
-        self.versions.new_version(version, None)?;
+        self.insert_with(version, (), Some(value))?;
+        self.storage.new_version(version, None)?;
         Ok(())
     }
 
@@ -381,7 +389,7 @@ where
     }
 
     pub fn keys(&self) -> impl Iterator<Item = V> + '_ {
-        self.versions.versions().map(|(version, _)| version)
+        self.storage.versions().map(|(version, _)| version)
     }
 }
 
@@ -463,21 +471,21 @@ where
     }
 }
 
-impl<V, Key, Value> fmt::Debug for PersistentMap<V, Key, Value>
+impl<'a, V, M: PersistentAssoc> fmt::Debug for PersistentMap<'a, V, M>
 where
     V: 'static,
-    Key: 'static,
-    Value: 'static,
+    M::Key: 'static,
+    M::Value: 'static,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use std::any::TypeId;
 
         f.debug_struct("Storage")
             .field("Version", &TypeId::of::<V>())
-            .field("Key", &TypeId::of::<Key>())
-            .field("Value", &TypeId::of::<Value>())
+            .field("Key", &TypeId::of::<M::Key>())
+            .field("Value", &TypeId::of::<M::Value>())
             .field("database", &self.db().path().display())
-            .field("type_name", &self.type_name)
+            .field("column", &M::COLUMN_NAME)
             .finish()
     }
 }
@@ -557,14 +565,14 @@ mod tests {
                 for (&key, &value) in map {
                     s.insert_with(version, key, value)?;
                 }
-                s.versions.new_version(version, None)?;
+                s.storage.new_version(version, None)?;
             }
             s.db().flush()?;
             println!("assoc is stored");
         }
         {
             let s = open(&dir, "vkv")?;
-            for (version, _) in s.versions.versions() {
+            for (version, _) in s.storage.versions() {
                 let new_map = HashMap::from_iter(s.prefix_iter_for(version)?);
                 assert_eq!(assoc.remove(&version), Some(new_map));
             }
@@ -710,7 +718,7 @@ mod tests {
                 for (k, v) in map {
                     s.insert_with(id, k, v)?;
                 }
-                s.versions.new_version(id, None)?;
+                s.storage.new_version(id, None)?;
                 s.db().flush()?;
                 Ok(id)
             })
@@ -756,7 +764,7 @@ mod tests {
                 for (&k, &v) in map {
                     s.insert_with(version, k, v)?;
                 }
-                s.versions.new_version(version, None)?;
+                s.storage.new_version(version, None)?;
             }
             s.db().flush()?;
         }
@@ -764,7 +772,7 @@ mod tests {
             let s = open(&dir, "vkv")?;
 
             let mut new_assoc = HashMap::<K, HashMap<K, V>>::new();
-            for (version, _) in s.versions.versions() {
+            for (version, _) in s.storage.versions() {
                 new_assoc.insert(version, s.prefix_iter_for(version).unwrap().collect());
             }
 

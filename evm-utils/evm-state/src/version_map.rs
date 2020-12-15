@@ -97,6 +97,11 @@ where
         self.push_change(key, State::Removed);
     }
 
+    pub fn clear(&mut self) {
+        self.state.clear();
+        self.parent = None;
+    }
+
     // Override state of key.
     fn push_change(&mut self, key: Key, value: State<Value>) {
         self.state.insert(key, value);

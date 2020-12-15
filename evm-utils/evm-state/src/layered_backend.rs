@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -6,7 +7,13 @@ use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
-use crate::{layered_map::LayeredMap, storage, transactions::TransactionReceipt, Slot};
+use crate::{
+    persistent_types,
+    storage::{PersistentAssoc, PersistentMap, VersionedStorage},
+    transactions::TransactionReceipt,
+    version_map::{KeyResult, Map},
+    Slot,
+};
 
 /// Vivinity value of a memory backend.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -57,63 +64,34 @@ pub struct AccountState {
     pub code: Vec<u8>,
 }
 
+// Store every account storage at single place, to use power of versioned map.
+// This allows us to save only changed data.
+persistent_types! {
+    Accounts :: "accounts" => H160 => AccountState,
+    AccountsStorage :: "accounts_storage" => (H160, H256) => H256,
+    TransactionReceipts :: "txs_receipts" => H256 => TransactionReceipt,
+}
+
+type Mapped<M: PersistentAssoc> = Map<Slot, M::Key, M::Value>;
+
 #[derive(Clone)] // TODO: Debug
 pub struct EvmState {
     pub(crate) slot: Slot,
     pub(crate) vicinity: MemoryVicinity,
     pub(crate) logs: Vec<Log>,
-    // TODO: add Slot
-    pub accounts: Map<H160, AccountState>,
-    // Store every account storage at single place, to use power of versioned map.
-    // This allows us to save only changed data.
-    pub(crate) accounts_storage: Map<(H160, H256), H256>,
-    pub(crate) txs_receipts: Map<H256, TransactionReceipt>,
-    storage: storage::VersionedStorage<Slot>,
+
+    pub(crate) accounts: Mapped<Accounts>,
+    pub(crate) accounts_storage: Mapped<AccountsStorage>,
+    pub(crate) txs_receipts: Mapped<TransactionReceipts>,
+
+    storage: VersionedStorage<Slot>,
 }
 
-type Map<K, V> = LayeredMap<Slot, K, V>;
-type Storage<K, V> = storage::PersistentMap<Slot, K, Option<V>>;
-
-// TODO: remove this in future
-const DEFAULT_STORAGE_PATH: &str = "/tmp/solana/evm-state";
-
-const ACCOUNTS: &str = "accounts";
-const ACCOUNTS_STORAGE: &str = "accounts_storage";
-const TRANSACTIONS_RECEIPTS: &str = "txs_receipts";
-
-struct FieldsStorages {
-    accounts: Storage<H160, AccountState>,
-    accounts_storage: Storage<(H160, H256), H256>,
-    txs_receipts: Storage<H256, TransactionReceipt>,
-}
-
-fn open_storage<P: AsRef<Path>>(
-    path: P,
-) -> anyhow::Result<(storage::VersionedStorage<Slot>, FieldsStorages)> {
-    let storage = storage::VersionedStorage::open(
-        path,
-        &[ACCOUNTS, ACCOUNTS_STORAGE, TRANSACTIONS_RECEIPTS],
-    )?;
-
-    let accounts = storage.typed(ACCOUNTS)?;
-    let accounts_storage = storage.typed(ACCOUNTS_STORAGE)?;
-    let txs_receipts = storage.typed(TRANSACTIONS_RECEIPTS)?;
-
-    Ok((
-        storage,
-        FieldsStorages {
-            accounts,
-            accounts_storage,
-            txs_receipts,
-        },
-    ))
-}
-
+// TODO: move this logic outside
 impl Default for EvmState {
     fn default() -> Self {
-        Self::load_from(DEFAULT_STORAGE_PATH, Slot::default()).unwrap_or_else(|err| {
-            panic!("Unable to instantiate default EVM state: {:?}", err);
-        })
+        let path = std::env::temp_dir().join("evm-state");
+        Self::load_from(path, Slot::default()).expect("Unable to instantiate default EVM state")
     }
 }
 
@@ -143,43 +121,82 @@ impl EvmState {
         })
     }
 
-    pub fn dump(&mut self) -> anyhow::Result<()> {
-        self.accounts.dump()?;
-        self.accounts_storage.dump()?;
-        self.txs_receipts.dump()?;
+    #[rustfmt::skip]
+    pub fn dump_all(&mut self) -> anyhow::Result<()> {
+        dump_into(&self.storage.typed::<Accounts>(), &mut self.accounts)?;
+        dump_into(&self.storage.typed::<AccountsStorage>(), &mut self.accounts_storage)?;
+        dump_into(&self.storage.typed::<TransactionReceipts>(), &mut self.txs_receipts)?;
         Ok(())
     }
+
+    fn lookup<'a, M: PersistentAssoc>(
+        &'a self,
+        // TODO: elide this arg, TBD: maybe typemap
+        map: &'a Mapped<M>,
+        key: M::Key,
+    ) -> Option<Cow<'a, M::Value>>
+    where
+        M::Key: Copy + Ord,
+        M::Value: Clone,
+    {
+        match map.get(&key) {
+            KeyResult::Found(mb_value) => mb_value.map(Cow::Borrowed),
+            KeyResult::NotFound(last_version) => self
+                .storage
+                .typed::<M>()
+                .get_for(*last_version, key)
+                .expect("Internal storage error")
+                .map(Cow::Owned),
+        }
+    }
+}
+
+fn dump_into<'a, M: PersistentAssoc>(
+    storage: &PersistentMap<'a, Slot, M>,
+    map: &mut Mapped<M>,
+) -> anyhow::Result<()>
+where
+    M::Key: Ord + Copy,
+    M::Value: Clone,
+{
+    let mut full_iter = map.full_iter().peekable();
+    while let Some((version, kvs)) = full_iter.next() {
+        for (key, value) in kvs {
+            storage.insert_with(*version, *key, value.cloned())?;
+        }
+
+        let previous = full_iter
+            .peek()
+            .map(|(previous, _)| **previous)
+            .or_else(|| storage.previous_of(*version).ok().flatten());
+        storage.new_version(*version, previous)?;
+    }
+    drop(full_iter);
+
+    map.clear();
+    Ok(())
 }
 
 impl EvmState {
     pub fn load_from<P: AsRef<Path>>(path: P, slot: Slot) -> Result<Self, anyhow::Error> {
-        let (
-            storage,
-            FieldsStorages {
-                accounts,
-                accounts_storage,
-                txs_receipts,
-            },
-        ) = open_storage(path)?;
-
-        let accounts = LayeredMap::wrap(accounts, slot);
-        let accounts_storage = LayeredMap::wrap(accounts_storage, slot);
-        let txs_receipts = LayeredMap::wrap(txs_receipts, slot);
+        let storage = VersionedStorage::open(path, COLUMN_NAMES)?;
 
         Ok(Self {
             slot,
             vicinity: MemoryVicinity::default(),
             logs: vec![],
 
-            accounts,
-            accounts_storage,
-            txs_receipts,
+            accounts: Map::empty(slot),
+            accounts_storage: Map::empty(slot),
+            txs_receipts: Map::empty(slot),
+
             storage,
         })
     }
 
     pub fn get_tx_receipt_by_hash(&self, tx_hash: H256) -> Option<TransactionReceipt> {
-        self.txs_receipts.get(tx_hash)
+        self.lookup::<TransactionReceipts>(&self.txs_receipts, tx_hash)
+            .map(Cow::into_owned)
     }
 
     pub fn apply(
@@ -198,6 +215,16 @@ impl EvmState {
             log::debug!("Register tx in evm = {}", tx_hash);
             self.txs_receipts.insert(tx_hash, tx);
         }
+    }
+
+    fn get_account(&self, address: H160) -> Option<AccountState> {
+        self.lookup::<Accounts>(&self.accounts, address)
+            .map(Cow::into_owned)
+    }
+
+    fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
+        self.lookup::<AccountsStorage>(&self.accounts_storage, (address, index))
+            .map(Cow::into_owned)
     }
 }
 
@@ -240,42 +267,35 @@ impl Backend for EvmState {
     }
 
     fn exists(&self, address: H160) -> bool {
-        self.accounts.get(address).is_some()
+        self.get_account(address).is_some()
     }
 
     fn basic(&self, address: H160) -> Basic {
-        let a = self.accounts.get(address).unwrap_or_default();
+        let account = self.get_account(address).unwrap_or_default();
         Basic {
-            balance: a.balance,
-            nonce: a.nonce,
+            balance: account.balance,
+            nonce: account.nonce,
         }
     }
 
     fn code_hash(&self, address: H160) -> H256 {
-        self.accounts
-            .get(address)
+        self.get_account(address)
             .map(|v| H256::from_slice(Keccak256::digest(&v.code).as_slice()))
             .unwrap_or_else(|| H256::from_slice(Keccak256::digest(&[]).as_slice()))
     }
 
     fn code_size(&self, address: H160) -> usize {
-        self.accounts
-            .get(address)
-            .map(|v| v.code.len())
-            .unwrap_or(0)
+        self.get_account(address).map(|v| v.code.len()).unwrap_or(0)
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
-        self.accounts
-            .get(address)
+        self.get_account(address)
             .map(|v| v.code)
             .unwrap_or_default()
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-        self.accounts_storage
-            .get((address, index))
-            .unwrap_or_default()
+        self.get_storage(address, index).unwrap_or_default()
     }
 }
 
@@ -299,7 +319,8 @@ impl ApplyBackend for EvmState {
                     // TODO: rollback on insert fail.
                     // TODO: clear account storage on delete.
                     let is_empty = {
-                        let mut account = self.accounts.get(address).unwrap_or_default();
+                        let mut account = self.get_account(address).unwrap_or_default();
+
                         account.balance = basic.balance;
                         account.nonce = basic.nonce;
                         if let Some(code) = code {

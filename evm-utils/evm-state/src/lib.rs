@@ -13,7 +13,6 @@ pub use transactions::*;
 
 pub(crate) type Slot = u64; // TODO: re-use existing one from sdk package
 
-mod layered_map;
 mod storage;
 mod version_map;
 
