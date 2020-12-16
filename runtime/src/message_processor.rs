@@ -3,7 +3,6 @@ use crate::{
 };
 use log::*;
 use serde::{Deserialize, Serialize};
-use solana_evm_loader_program::scope::evm::{EvmState, StaticExecutor};
 use solana_evm_loader_program::EvmProcessor;
 use solana_sdk::{
     account::{create_keyed_readonly_accounts, Account, KeyedAccount},
@@ -438,7 +437,7 @@ impl MessageProcessor {
         keyed_accounts: &[KeyedAccount],
         instruction_data: &[u8],
         invoke_context: &mut dyn InvokeContext,
-        evm_executor: Option<&mut StaticExecutor<EvmState>>,
+        evm_executor: Option<&mut evm_state::Executor>,
     ) -> Result<(), InstructionError> {
         if native_loader::check_id(&keyed_accounts[0].owner()?) {
             let root_id = keyed_accounts[0].unsigned_key();
@@ -650,7 +649,7 @@ impl MessageProcessor {
         accounts: &[Rc<RefCell<Account>>],
         rent_collector: &RentCollector,
         log_collector: Option<Rc<LogCollector>>,
-        evm_executor: Option<&mut evm_state::StaticExecutor<evm_state::EvmState>>,
+        evm_executor: Option<&mut evm_state::Executor>,
     ) -> Result<(), InstructionError> {
         let pre_accounts = Self::create_pre_accounts(message, instruction, accounts);
         let mut invoke_context = ThisInvokeContext::new(
@@ -691,7 +690,7 @@ impl MessageProcessor {
         accounts: &[Rc<RefCell<Account>>],
         rent_collector: &RentCollector,
         log_collector: Option<Rc<LogCollector>>,
-        mut evm_executor: Option<&mut evm_state::StaticExecutor<evm_state::EvmState>>,
+        mut evm_executor: Option<&mut evm_state::Executor>,
     ) -> Result<(), TransactionError> {
         for (instruction_index, instruction) in message.instructions.iter().enumerate() {
             self.execute_instruction(

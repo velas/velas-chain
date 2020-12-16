@@ -62,7 +62,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     //             name_to_key("caller"),
     //             CreateScheme::Fixed(name_to_key("contract")),
     //             U256::zero(),
-    //             code.clone(),
+    //             code.clone(),,г
     //             None,
     //         ) {
     //             Capture::Exit((s, _, v)) => (s, v),
@@ -79,6 +79,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.bench_function("call_hello", |b| {
         let accounts = ["contract", "caller"];
 
+        cleanup_dir(dir).unwrap();
+    });
+
+    group.bench_function("call_hello", |b| {
         let code = hex::decode(HELLO_WORLD_CODE).unwrap();
         let data = hex::decode(HELLO_WORLD_ABI).unwrap();
 

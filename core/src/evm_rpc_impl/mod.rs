@@ -313,7 +313,11 @@ impl BasicERPC for BasicERPCImpl {
                     .address()
                     .map_err(|_| Error::InvalidParams)?)),
                 root: H256::zero().into(),
-                status: if tx.status { 1 } else { 0 },
+                status: if let evm_state::ExitReason::Succeed(_) = tx.status {
+                    1
+                } else {
+                    0
+                },
             }),
             None => None,
         })
@@ -505,11 +509,10 @@ impl BridgeERPC for BridgeERPCImpl {
             .expect("meta bank EVM state was poisoned")
             .clone();
         let mut executor =
-            evm_state::StaticExecutor::with_config(evm_state, Config::istanbul(), gas_limit);
+            evm_state::Executor::with_config(evm_state, Config::istanbul(), gas_limit);
         let address = tx.to.map(|h| h.0).unwrap_or_default();
-        let result = executor
-            .rent_executor()
-            .transact_call(caller, address, value, input, gas_limit);
+        let result =
+            executor.with_executor(|e| e.transact_call(caller, address, value, input, gas_limit));
 
         println!("Result tx = {:?}, gas_limit={}", result, gas_limit);
         Ok(Bytes(result.1))

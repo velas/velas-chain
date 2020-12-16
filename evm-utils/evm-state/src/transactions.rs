@@ -1,3 +1,4 @@
+use derivative::Derivative;
 use primitive_types::{H160, H256, U256};
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,7 @@ use secp256k1::{
 };
 
 pub use secp256k1::{PublicKey, SecretKey, SECP256K1};
+
 pub type Address = H160;
 pub type Gas = U256;
 
@@ -257,10 +259,12 @@ impl From<Transaction> for UnsignedTransaction {
     }
 }
 // TODO: Work on logs and state_root.
-#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Derivative, Debug, Clone, Eq, PartialEq)]
+#[derivative(PartialOrd, Ord)]
 pub struct TransactionReceipt {
     pub transaction: Transaction,
-    pub status: bool,
+    #[derivative(PartialOrd = "ignore", Ord = "ignore")]
+    pub status: evm::ExitReason,
     // pub state_root: H256,
     pub used_gas: Gas,
     // pub logs_bloom: LogsBloom,
@@ -272,9 +276,8 @@ impl TransactionReceipt {
         used_gas: Gas,
         result: (evm::ExitReason, Vec<u8>),
     ) -> TransactionReceipt {
-        let status = matches!(result.0, evm::ExitReason::Succeed(_));
         TransactionReceipt {
-            status,
+            status: result.0,
             transaction,
             used_gas,
         }

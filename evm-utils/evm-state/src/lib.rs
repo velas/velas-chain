@@ -1,20 +1,22 @@
-use std::collections::BTreeMap;
 use std::fmt;
-use std::ops::Deref;
 
 pub use evm::{
-    backend::{Apply, Backend, Log},
+    backend::{Apply, ApplyBackend, Backend, Log},
     executor::StackExecutor,
     Config, Context, Handler, Transfer,
 };
-
-pub mod layered_backend;
-pub mod transactions;
-pub mod version_map;
-
-pub use layered_backend::*;
+pub use evm::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed};
+use log::debug;
 pub use primitive_types::{H256, U256};
 pub use secp256k1::rand;
+
+mod evm_backend;
+mod layered_backend;
+pub mod transactions;
+mod version_map;
+
+pub use evm_backend::*;
+pub use layered_backend::*;
 pub use transactions::*;
 
 pub trait FromKey {
@@ -34,67 +36,141 @@ impl FromKey for secp256k1::SecretKey {
     }
 }
 
-/// StackExecutor, use config and backend by reference, this force object to be dependent on lifetime.
-/// And poison all outer objects with this lifetime.
-/// This is not userfriendly, so we pack Executor object into self referential object.
-pub struct StaticExecutor<B: 'static> {
-    evm: evm::executor::StackExecutor<'static, 'static, B>,
-    // Avoid changing backend and config, while evm executor is reffer to it.
-    _backend: Box<B>,
-    _config: Box<Config>,
-    txs_receipts: BTreeMap<H256, transactions::TransactionReceipt>,
+pub struct Executor {
+    evm: EvmBackend,
+    config: Config,
+    used_gas: usize,
 }
 
-impl<B: 'static> fmt::Debug for StaticExecutor<B> {
+impl fmt::Debug for Executor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("StaticExecutor")
-            .field("config", &self._config)
+        f.debug_struct("Executor")
+            .field("config", &self.config)
             .finish()
     }
 }
 
-impl<B: evm::backend::Backend> StaticExecutor<B> {
-    pub fn with_config(backend: B, config: Config, gas_limit: usize) -> Self {
-        let _backend = Box::new(backend);
-        let _config = Box::new(config);
-        let evm = {
-            let backend: &'static B = unsafe { std::mem::transmute(_backend.deref()) };
-            let config: &'static Config = unsafe { std::mem::transmute(_config.deref()) };
-            evm::executor::StackExecutor::new(backend, gas_limit, config)
+impl Executor {
+    pub fn with_config(state: EvmState, config: Config, gas_limit: usize) -> Self {
+        //TODO: Request info from solana blockchain for vicinity
+
+        //         /// Gas price.
+        // pub gas_price: U256,
+        // /// Chain ID.
+        // pub chain_id: U256,
+        // /// Environmental block hashes.
+        // pub block_hashes: Vec<H256>,
+        // /// Environmental block number.
+        // pub block_number: U256,
+        // /// Environmental coinbase.
+        // pub block_coinbase: H160,
+        // /// Environmental block timestamp.
+        // pub block_timestamp: U256,
+        // /// Environmental block difficulty.
+        // pub block_difficulty: U256,
+        // /// Environmental block gas limit.
+        // pub block_gas_limit: U256,
+        let vicinity = MemoryVicinity {
+            block_gas_limit: gas_limit.into(),
+            ..Default::default()
         };
-        StaticExecutor {
-            _backend,
-            _config,
-            evm,
-            txs_receipts: BTreeMap::new(),
+        Executor {
+            evm: EvmBackend::new_from_state(state, vicinity),
+            config,
+            used_gas: 0,
         }
     }
-    pub fn rent_executor(&mut self) -> &mut evm::executor::StackExecutor<'_, '_, B> {
-        unsafe { std::mem::transmute(&mut self.evm) }
-    }
-    // TODO: Handle duplicates, statuses.
-    pub fn register_tx_receipt(&mut self, tx_receipt: transactions::TransactionReceipt) {
-        let tx: transactions::UnsignedTransaction = tx_receipt.transaction.clone().into();
-        let tx_hash = tx.signing_hash(tx_receipt.transaction.signature.chain_id());
-        self.txs_receipts.insert(tx_hash, tx_receipt);
+
+    pub fn transaction_execute(
+        &mut self,
+        evm_tx: Transaction,
+    ) -> Result<(evm::ExitReason, Vec<u8>), secp256k1::Error> {
+        let caller = evm_tx.caller()?;
+
+        self.evm.tx_info.origin = caller;
+        self.evm.tx_info.gas_price = evm_tx.gas_price;
+        let gas_limit = self.evm.block_gas_limit().as_usize() - self.used_gas;
+        let mut executor = StackExecutor::new(&self.evm, gas_limit, &self.config);
+        let result = match evm_tx.action {
+            TransactionAction::Call(addr) => {
+                debug!(
+                    "TransactionAction::Call caller  = {}, to = {}.",
+                    caller, addr
+                );
+                executor.transact_call(
+                    caller,
+                    addr,
+                    evm_tx.value,
+                    evm_tx.input.clone(),
+                    evm_tx.gas_limit.as_usize(),
+                )
+            }
+            TransactionAction::Create => {
+                let addr = evm_tx.address();
+                debug!(
+                    "TransactionAction::Create caller  = {}, to = {:?}.",
+                    caller, addr
+                );
+                (
+                    executor.transact_create(
+                        caller,
+                        evm_tx.value,
+                        evm_tx.input.clone(),
+                        evm_tx.gas_limit.as_usize(),
+                    ),
+                    vec![],
+                )
+            }
+        };
+        let used_gas = executor.used_gas();
+
+        assert!(used_gas + self.used_gas <= self.evm.tx_info.block_gas_limit.as_usize());
+        let (updates, logs) = executor.deconstruct();
+        self.evm.apply(updates, logs, false);
+        self.register_tx_receipt(TransactionReceipt::new(
+            evm_tx,
+            used_gas.into(),
+            result.clone(),
+        ));
+        self.used_gas += used_gas;
+
+        Ok(result)
     }
 
-    pub fn deconstruct(
-        self,
-    ) -> (
-        (
-            impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)>>>,
-            impl IntoIterator<Item = Log>,
-        ),
-        BTreeMap<H256, transactions::TransactionReceipt>,
-    ) {
-        (self.evm.deconstruct(), self.txs_receipts)
+    /// Do lowlevel operation with executor, without storing transaction into logs.
+    /// Usefull for testing and transfering tokens from evm to solana and back.
+    pub fn with_executor<F, U>(&mut self, func: F) -> U
+    where
+        F: FnOnce(&mut StackExecutor<'_, '_, EvmBackend>) -> U,
+    {
+        let gas_limit = self.evm.block_gas_limit().as_usize() - self.used_gas;
+        let mut executor = StackExecutor::new(&self.evm, gas_limit, &self.config);
+        let result = func(&mut executor);
+        let (updates, logs) = executor.deconstruct();
+        self.evm.apply(updates, logs, false);
+        result
+    }
+
+    pub fn get_tx_receipt_by_hash(&mut self, tx: H256) -> Option<TransactionReceipt> {
+        self.evm.evm_state.get_tx_receipt_by_hash(tx)
+    }
+
+    // TODO: Handle duplicates, statuses.
+    fn register_tx_receipt(&mut self, tx_receipt: transactions::TransactionReceipt) {
+        let tx: transactions::UnsignedTransaction = tx_receipt.transaction.clone().into();
+        let tx_hash = tx.signing_hash(tx_receipt.transaction.signature.chain_id());
+        log::debug!("Register tx in evm = {}", tx_hash);
+        self.evm.evm_state.txs_receipts.insert(tx_hash, tx_receipt);
+    }
+
+    pub fn deconstruct(self) -> EvmState {
+        self.evm.evm_state
     }
 }
 
-impl<B: Default + evm::backend::Backend> Default for StaticExecutor<B> {
+impl Default for Executor {
     fn default() -> Self {
-        StaticExecutor::with_config(B::default(), Config::istanbul(), Default::default())
+        Executor::with_config(EvmState::default(), Config::istanbul(), Default::default())
     }
 }
 
@@ -163,25 +239,29 @@ pub mod tests {
             usize::max_value(),
         );
 
-        let exit_reason = match executor.rent_executor().create(
-            name_to_key("caller"),
-            CreateScheme::Fixed(name_to_key("contract")),
-            U256::zero(),
-            code,
-            None,
-        ) {
+        let exit_reason = match executor.with_executor(|e| {
+            e.create(
+                name_to_key("caller"),
+                CreateScheme::Fixed(name_to_key("contract")),
+                U256::zero(),
+                code,
+                None,
+            )
+        }) {
             Capture::Exit((s, _, v)) => (s, v),
             Capture::Trap(_) => unreachable!(),
         };
 
         assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
-        let exit_reason = executor.rent_executor().transact_call(
-            name_to_key("contract"),
-            name_to_key("contract"),
-            U256::zero(),
-            data.to_vec(),
-            usize::max_value(),
-        );
+        let exit_reason = executor.with_executor(|e| {
+            e.transact_call(
+                name_to_key("contract"),
+                name_to_key("contract"),
+                U256::zero(),
+                data.to_vec(),
+                300000,
+            )
+        });
 
         let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
         match exit_reason {
@@ -190,7 +270,7 @@ pub mod tests {
         }
 
         let patch = executor.deconstruct();
-        backend.write().unwrap().apply(patch);
+        backend.swap_commit(patch);
 
         let mutex_lock = backend.read().unwrap();
         let contract = mutex_lock.accounts.get(&name_to_key("contract"));
