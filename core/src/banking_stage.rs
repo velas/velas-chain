@@ -531,14 +531,8 @@ impl BankingStage {
             vec![]
         };
 
-        let evm_state = bank
-            .evm_state
-            .read()
-            .expect("bank evm state was poisoned")
-            .clone();
-
-        let (mut loaded_accounts, results, mut retryable_txs, tx_count, signature_count, path) =
-            bank.load_and_execute_transactions(batch, MAX_PROCESSING_AGE, None, evm_state);
+        let (mut loaded_accounts, results, mut retryable_txs, tx_count, signature_count, patch) =
+            bank.load_and_execute_transactions(batch, MAX_PROCESSING_AGE, None);
 
         load_execute_time.stop();
 
@@ -557,7 +551,6 @@ impl BankingStage {
 
         let num_to_commit = num_to_commit.unwrap();
 
-        let mut evm_wl = bank.evm_state.write().expect("bank evm state was poisoned");
         if num_to_commit != 0 {
             let tx_results = bank.commit_transactions(
                 txs,
@@ -566,8 +559,7 @@ impl BankingStage {
                 &results,
                 tx_count,
                 signature_count,
-                &mut evm_wl,
-                path,
+                patch,
             );
 
             bank_utils::find_and_send_votes(txs, &tx_results, Some(gossip_vote_sender));

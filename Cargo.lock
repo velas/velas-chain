@@ -1206,6 +1206,7 @@ dependencies = [
  "bincode",
  "bytes 0.6.0",
  "criterion",
+ "derivative",
  "evm",
  "hex",
  "keccak-hash",
@@ -4520,6 +4521,7 @@ dependencies = [
 name = "solana-evm-loader-program"
 version = "0.1.0"
 dependencies = [
+ "assert_matches",
  "bincode",
  "evm-state",
  "hex",

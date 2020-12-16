@@ -1,10 +1,8 @@
 use super::instructions::{Deposit, EvmInstruction};
 use super::scope::*;
-use evm::TransactionAction;
 use log::*;
 
-use evm::EvmState;
-use evm::StaticExecutor;
+use evm::Executor;
 use solana_sdk::instruction::InstructionError;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{
@@ -78,10 +76,9 @@ impl EvmProcessor {
         program_id: &Pubkey,
         keyed_accounts: &[KeyedAccount],
         data: &[u8],
-        executor: Option<&mut StaticExecutor<EvmState>>,
+        executor: Option<&mut Executor>,
     ) -> Result<(), InstructionError> {
         let executor = executor.expect("Evm execution from crossprogram is not allowed.");
-        let evm_executor = executor.rent_executor();
 
         let keyed_accounts = check_evm_account(program_id, keyed_accounts)?;
 
@@ -92,53 +89,9 @@ impl EvmProcessor {
                 // TODO: Handle gas price
                 // TODO: Handle nonce
                 // TODO: validate tx signature
-
-                let before_gas = evm_executor.used_gas();
-                let result = match evm_tx.action {
-                    TransactionAction::Call(addr) => {
-                        let caller = evm_tx
-                            .caller()
-                            .map_err(|_| InstructionError::InvalidArgument)?;
-                        debug!(
-                            "TransactionAction::Call caller  = {}, to = {}.",
-                            caller, addr
-                        );
-                        evm_executor.transact_call(
-                            caller,
-                            addr,
-                            evm_tx.value,
-                            evm_tx.input.clone(),
-                            evm_tx.gas_limit.as_usize(),
-                        )
-                    }
-                    TransactionAction::Create => {
-                        let caller = evm_tx
-                            .caller()
-                            .map_err(|_| InstructionError::InvalidArgument)?;
-                        let addr = evm_tx.address();
-                        debug!(
-                            "TransactionAction::Create caller  = {}, to = {:?}.",
-                            caller, addr
-                        );
-                        (
-                            evm_executor.transact_create(
-                                caller,
-                                evm_tx.value,
-                                evm_tx.input.clone(),
-                                evm_tx.gas_limit.as_usize(),
-                            ),
-                            vec![],
-                        )
-                    }
-                };
-
-                let used_gas = evm_executor.used_gas() - before_gas;
-                executor.register_tx_receipt(evm_state::TransactionReceipt::new(
-                    evm_tx,
-                    used_gas.into(),
-                    result.clone(),
-                ));
-                // TODO: Map evm errors on solana.
+                let result = executor
+                    .transaction_execute(evm_tx)
+                    .map_err(|_| InstructionError::InvalidArgument)?;
                 debug!("Exit status = {:?}", result);
             }
             EvmInstruction::CreateDepositAccount { pubkey } => {
@@ -196,7 +149,7 @@ impl EvmProcessor {
                     return Err(InstructionError::InsufficientFunds);
                 }
                 deposit.locked_lamports += lamports;
-                evm_executor.deposit(ether_address, gweis);
+                executor.with_executor(|e| e.deposit(ether_address, gweis));
                 bincode::serialize_into(
                     &mut *authority_account.try_account_ref_mut()?.data,
                     &deposit,
@@ -211,7 +164,9 @@ impl EvmProcessor {
 #[cfg(test)]
 mod test {
     use super::*;
+    use assert_matches::assert_matches;
     use evm_state::transactions::{TransactionAction, TransactionSignature};
+    use evm_state::{ExitReason, ExitSucceed};
     use primitive_types::{H160, H256, U256};
     use solana_sdk::account::KeyedAccount;
     use solana_sdk::native_loader;
@@ -248,21 +203,13 @@ mod test {
 
     #[test]
     fn execute_tx() {
-        let mut executor = evm_state::StaticExecutor::with_config(
+        let mut executor = evm_state::Executor::with_config(
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
         );
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
-        // pub fn new(key: &'a Pubkey, is_signer: bool, account: &'a RefCell<Account>) -> Self {
-        //     Self {
-        //         is_signer,
-        //         is_writable: true,
-        //         key,
-        //         account,
-        //     }
-        // }
         let evm_account = RefCell::new(native_loader::create_loadable_account("Evm Processor"));
 
         let evm_keyed_account = KeyedAccount::new(&crate::ID, false, &evm_account);
@@ -290,7 +237,6 @@ mod test {
             )
             .is_ok());
         println!("cx = {:?}", executor);
-        // cx.evm_executor.borrow_mut().deconstruct();
         let tx_address = tx_create.address().unwrap();
         let tx_call = evm::UnsignedTransaction {
             nonce: 0.into(),
@@ -301,7 +247,9 @@ mod test {
             input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
         };
 
+        let tx_hash = tx_call.signing_hash(None);
         let tx_call = tx_call.sign(&secret_key, None);
+
         assert!(processor
             .process_instruction(
                 &crate::ID,
@@ -311,11 +259,15 @@ mod test {
             )
             .is_ok());
         println!("cx = {:?}", executor);
+        assert!(executor
+            .as_deref_mut()
+            .unwrap()
+            .get_tx_receipt_by_hash(tx_hash)
+            .is_some())
     }
 
     #[test]
     fn execute_tx_with_state_apply() {
-        use evm_state::Backend;
         let state = RwLock::new(evm_state::EvmState::default());
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(native_loader::create_loadable_account("Evm Processor"));
@@ -342,7 +294,7 @@ mod test {
         assert_eq!(state.read().unwrap().basic(tx_address).nonce, 0.into());
         {
             let mut locked = state.write().unwrap();
-            let mut executor_orig = evm_state::StaticExecutor::with_config(
+            let mut executor_orig = evm_state::Executor::with_config(
                 locked.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
@@ -363,10 +315,8 @@ mod test {
 
             let patch = executor_orig.deconstruct();
 
-            locked.apply(patch);
+            locked.swap_commit(patch);
         }
-
-        // cx.evm_executor.borrow_mut().deconstruct();
 
         assert_eq!(state.read().unwrap().basic(caller_address).nonce, 1.into());
         assert_eq!(state.read().unwrap().basic(tx_address).nonce, 1.into());
@@ -380,10 +330,11 @@ mod test {
             input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
         };
 
+        let tx_hash = tx_call.signing_hash(None);
         let tx_call = tx_call.sign(&secret_key, None);
         {
             let mut locked = state.write().unwrap();
-            let mut executor_orig = evm_state::StaticExecutor::with_config(
+            let mut executor_orig = evm_state::Executor::with_config(
                 locked.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
@@ -403,11 +354,16 @@ mod test {
 
             let patch = executor_orig.deconstruct();
 
-            locked.apply(patch);
+            locked.swap_commit(patch);
         }
 
-        // TODO: Assert that tx executed successfull.
-        panic!();
-        // assert!(process_instruction(&crate::ID, &[], tx_call, &mut cx).is_ok());
+        let receipt = state
+            .read()
+            .unwrap()
+            .get_tx_receipt_by_hash(tx_hash)
+            .unwrap()
+            .clone();
+        assert_matches!(receipt.status, ExitReason::Succeed(ExitSucceed::Returned));
+        // TODO: Assert that tx executed with result.
     }
 }
