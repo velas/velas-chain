@@ -279,9 +279,9 @@ mod tests {
         }
 
         let patch = executor.deconstruct();
-        backend.write().unwrap().swap_commit(patch);
+        backend.swap_commit(patch);
 
-        let contract = backend.accounts.get(name_to_key("contract"));
+        let contract = backend.get_account(name_to_key("contract"));
         assert_eq!(
             &contract.unwrap().code,
             &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap()
