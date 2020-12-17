@@ -249,6 +249,7 @@ mod test {
     }
 
     #[test]
+    #[allow(clippy::eq_op)]
     fn test_update_multi_threaded() {
         for round in 0..50 {
             let start = Instant::now();
