@@ -186,7 +186,7 @@ mod tests {
         let patch = executor.deconstruct();
         backend.apply(patch);
 
-        let contract = backend.accounts.get(name_to_key("contract"));
+        let contract = backend.get_account(name_to_key("contract"));
         assert_eq!(
             &contract.unwrap().code,
             &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap()

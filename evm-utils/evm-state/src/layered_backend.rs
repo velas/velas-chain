@@ -67,9 +67,9 @@ pub struct AccountState {
 // Store every account storage at single place, to use power of versioned map.
 // This allows us to save only changed data.
 persistent_types! {
-    Accounts :: "accounts" => H160 => AccountState,
-    AccountsStorage :: "accounts_storage" => (H160, H256) => H256,
-    TransactionReceipts :: "txs_receipts" => H256 => TransactionReceipt,
+    Accounts in "accounts" => H160 : AccountState,
+    AccountsStorage in "accounts_storage" => (H160, H256) : H256,
+    TransactionReceipts in "txs_receipts" => H256 : TransactionReceipt,
 }
 
 type Mapped<M: PersistentAssoc> = Map<Slot, M::Key, M::Value>;
@@ -217,12 +217,12 @@ impl EvmState {
         }
     }
 
-    fn get_account(&self, address: H160) -> Option<AccountState> {
+    pub fn get_account(&self, address: H160) -> Option<AccountState> {
         self.lookup::<Accounts>(&self.accounts, address)
             .map(Cow::into_owned)
     }
 
-    fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
+    pub fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
         self.lookup::<AccountsStorage>(&self.accounts_storage, (address, index))
             .map(Cow::into_owned)
     }
@@ -484,12 +484,15 @@ mod tests {
         accounts: &BTreeMap<H160, Option<AccountState>>,
         storage: &BTreeMap<(H160, H256), Option<H256>>,
     ) {
-        for account in accounts {
-            assert_eq!(state.accounts.get(*account.0).as_ref(), account.1.as_ref())
+        for (address, expected) in accounts {
+            assert_eq!(state.get_account(*address).as_ref(), expected.as_ref())
         }
 
-        for s in storage {
-            assert_eq!(state.accounts_storage.get(*s.0).as_ref(), s.1.as_ref())
+        for ((address, index), expected) in storage {
+            assert_eq!(
+                state.get_storage(*address, *index).as_ref(),
+                expected.as_ref()
+            )
         }
     }
 
