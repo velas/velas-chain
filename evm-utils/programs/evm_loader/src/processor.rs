@@ -11,6 +11,8 @@ use solana_sdk::{
     sysvar::{rent::Rent, Sysvar},
 };
 
+use evm::ExitReason;
+
 /// Return the next AccountInfo or a NotEnoughAccountKeys error
 pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
     iter: &mut I,
@@ -93,6 +95,12 @@ impl EvmProcessor {
                     .transaction_execute(evm_tx)
                     .map_err(|_| InstructionError::InvalidArgument)?;
                 debug!("Exit status = {:?}", result);
+                match result.0 {
+                    ExitReason::Fatal(_) | ExitReason::Error(_) => {
+                        return Err(InstructionError::InvalidError)
+                    }
+                    _ => {}
+                }
             }
             EvmInstruction::CreateDepositAccount { pubkey } => {
                 Self::process_initialize_deposit(&keyed_accounts, pubkey)?
@@ -161,6 +169,26 @@ impl EvmProcessor {
     }
 }
 
+const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
+
+#[doc(hidden)]
+pub fn dummy_call() -> evm::Transaction {
+    let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
+    let dummy_address = evm::addr_from_public_key(&evm::PublicKey::from_secret_key(
+        &evm::SECP256K1,
+        &secret_key,
+    ));
+
+    let tx_call = evm::UnsignedTransaction {
+        nonce: 1.into(),
+        gas_price: 1.into(),
+        gas_limit: 300000.into(),
+        action: evm::TransactionAction::Call(dummy_address),
+        value: 0.into(),
+        input: vec![],
+    };
+    tx_call.sign(&secret_key, None)
+}
 #[cfg(test)]
 mod test {
     use super::*;
@@ -168,7 +196,7 @@ mod test {
     use evm_state::transactions::{TransactionAction, TransactionSignature};
     use evm_state::{ExitReason, ExitSucceed};
     use primitive_types::{H160, H256, U256};
-    use solana_sdk::account::{Account, KeyedAccount};
+    use solana_sdk::account::KeyedAccount;
     use solana_sdk::native_loader;
     use solana_sdk::program_utils::limited_deserialize;
 
@@ -198,8 +226,6 @@ mod test {
         let ser = bincode::serialize(&sol_ix).unwrap();
         assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
     }
-
-    const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
     #[test]
     fn execute_tx() {
@@ -368,27 +394,13 @@ mod test {
     }
 
     fn all_ixs() -> Vec<solana_sdk::instruction::Instruction> {
-        let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
-        let dummy_address = evm::addr_from_public_key(&evm::PublicKey::from_secret_key(
-            &evm::SECP256K1,
-            &secret_key,
-        ));
-
-        let tx_call = evm::UnsignedTransaction {
-            nonce: 1.into(),
-            gas_price: 1.into(),
-            gas_limit: 300000.into(),
-            action: TransactionAction::Call(dummy_address),
-            value: 0.into(),
-            input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
-        };
-        let tx_call = tx_call.sign(&secret_key, None);
+        let tx_call = dummy_call();
 
         let signer = solana::Address::new_rand();
         let authority = solana::Address::new_rand();
         vec![
             crate::create_deposit_account(&signer, &authority),
-            crate::transfer_native_to_eth(&signer, &authority, 1, dummy_address),
+            crate::transfer_native_to_eth(&signer, &authority, 1, tx_call.address().unwrap()),
             crate::send_raw_tx(&signer, tx_call),
         ]
     }
