@@ -168,12 +168,12 @@ mod test {
     use evm_state::transactions::{TransactionAction, TransactionSignature};
     use evm_state::{ExitReason, ExitSucceed};
     use primitive_types::{H160, H256, U256};
-    use solana_sdk::account::KeyedAccount;
+    use solana_sdk::account::{Account, KeyedAccount};
     use solana_sdk::native_loader;
     use solana_sdk::program_utils::limited_deserialize;
 
-    use std::cell::RefCell;
     use std::sync::RwLock;
+    use std::{cell::RefCell, collections::BTreeMap};
 
     fn dummy_eth_tx() -> evm_state::transactions::Transaction {
         evm_state::transactions::Transaction {
@@ -365,5 +365,116 @@ mod test {
             .clone();
         assert_matches!(receipt.status, ExitReason::Succeed(ExitSucceed::Returned));
         // TODO: Assert that tx executed with result.
+    }
+
+    fn all_ixs() -> Vec<solana_sdk::instruction::Instruction> {
+        let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
+        let dummy_address = evm::addr_from_public_key(&evm::PublicKey::from_secret_key(
+            &evm::SECP256K1,
+            &secret_key,
+        ));
+
+        let tx_call = evm::UnsignedTransaction {
+            nonce: 1.into(),
+            gas_price: 1.into(),
+            gas_limit: 300000.into(),
+            action: TransactionAction::Call(dummy_address),
+            value: 0.into(),
+            input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
+        };
+        let tx_call = tx_call.sign(&secret_key, None);
+
+        let signer = solana::Address::new_rand();
+        let authority = solana::Address::new_rand();
+        vec![
+            crate::create_deposit_account(&signer, &authority),
+            crate::transfer_native_to_eth(&signer, &authority, 1, dummy_address),
+            crate::send_raw_tx(&signer, tx_call),
+        ]
+    }
+
+    fn account_by_key(pubkey: solana::Address) -> solana_sdk::account::Account {
+        match &pubkey {
+            id if id == &crate::ID => native_loader::create_loadable_account("Evm Processor"),
+            id if id == &solana_sdk::sysvar::rent::id() => solana_sdk::account::Account {
+                lamports: 10,
+                owner: native_loader::id(),
+                data: bincode::serialize(&Rent::default()).unwrap(),
+                executable: false,
+                rent_epoch: 0,
+            },
+            _rest => solana_sdk::account::Account {
+                lamports: 20000000,
+                owner: native_loader::id(),
+                data: vec![0u8; Deposit::LEN],
+                executable: false,
+                rent_epoch: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn each_solana_tx_should_contain_writeable_evm_state() {
+        simple_logger::SimpleLogger::new().init().unwrap();
+        let mut executor = evm_state::Executor::with_config(
+            evm_state::EvmState::default(),
+            evm_state::Config::istanbul(),
+            10000000,
+        );
+        let mut executor = Some(&mut executor);
+        let processor = EvmProcessor::default();
+
+        let mut dummy_accounts = BTreeMap::new();
+
+        for ix in all_ixs() {
+            // insert new accounts, if some missing
+            for acc in &ix.accounts {
+                dummy_accounts
+                    .entry(acc.pubkey)
+                    .or_insert_with(|| RefCell::new(account_by_key(acc.pubkey)));
+            }
+
+            let data: EvmInstruction = limited_deserialize(&ix.data).unwrap();
+            println!("Executing = {:?}", data);
+            let mut keyed_accounts: Vec<_> = ix
+                .accounts
+                .iter()
+                .map(|k| {
+                    if k.is_writable {
+                        KeyedAccount::new(&k.pubkey, k.is_signer, &dummy_accounts[&k.pubkey])
+                    } else {
+                        KeyedAccount::new_readonly(
+                            &k.pubkey,
+                            k.is_signer,
+                            &dummy_accounts[&k.pubkey],
+                        )
+                    }
+                })
+                .collect();
+
+            println!("Keyed accounts = {:?}", keyed_accounts);
+            processor
+                .process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &bincode::serialize(&data).unwrap(),
+                    executor.as_deref_mut(),
+                )
+                .unwrap();
+            keyed_accounts.remove(0);
+
+            let err = processor
+                .process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &bincode::serialize(&data).unwrap(),
+                    executor.as_deref_mut(),
+                )
+                .unwrap_err();
+            match err {
+                InstructionError::NotEnoughAccountKeys | InstructionError::MissingAccount => {}
+                rest => panic!("Unexpected result = {:?}", rest),
+            }
+        }
     }
 }

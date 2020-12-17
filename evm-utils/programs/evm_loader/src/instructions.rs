@@ -12,18 +12,25 @@ pub enum EvmInstruction {
     /// Create Intermediate account, to allow evm manage your native tokens.
     ///
     /// Outer args:
+    /// account_key[0] - `[writable]. Evm state account, used for lock.
+    /// account_key[1] - `[writable]`. Authority account that is
+    /// account_key[2] - `[read]`. Rent sysvar
     ///
+    /// Inner args:
+    /// pubkey - owner pubkey, that will be allowed to manage withdrawals and deposits for this accounts.
     ///
     CreateDepositAccount { pubkey: solana::Address },
     /// Transfer native lamports to ethereum.
     ///
     /// Outer args:
-    /// account_key[0] - `[writable, signer]`.
-    /// account_key[1] - `[writable]`. Account that should be created with CreateDepositAccount
+    /// account_key[0] - `[writable]. Evm state account, used for lock.
+    /// account_key[1] - `[read, signer]`. Owner account that's allowed to manage withdrawal of authority account.
+    /// account_key[2] - `[writable]`. Authority account that was created in CreateDepositAccount
     ///
     /// Inner args:
     /// amount - count of lamports to be transfered.
     /// ether_key - recevier etherium address.
+    ///
     SwapNativeToEther {
         lamports: u64,
         ether_address: evm::Address,
