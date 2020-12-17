@@ -94,7 +94,7 @@ pub trait PersistentAssoc {
 
 #[macro_export]
 macro_rules! persistent_types {
-    ($($Marker:ident :: $Column:expr => $Key:ty => $Value:ty,)+) => {
+    ($($Marker:ident in $Column:expr => $Key:ty : $Value:ty,)+) => {
         const COLUMN_NAMES: &[&'static str] = &[$($Column),+];
 
         $(
@@ -106,6 +106,9 @@ macro_rules! persistent_types {
             }
         )+
     };
+    ($($Marker:ident in $Column:expr => $Key:ty : $Value:ty),+) => {
+        persistent_types! { $($Marker in $Column => $Key : $Value,)+ }
+    }
 }
 
 impl<V> VersionedStorage<V> {
@@ -263,14 +266,17 @@ where
     fn get_exact_for(&self, version: V, key: M::Key) -> Result<Option<M::Value>> {
         let versioned_key: Vec<u8> = VersionedKey { version, key }.try_into()?;
         let bytes = self.db().get_pinned_cf(self.cf(), versioned_key)?;
-        let mb_value = bytes.map(|bytes| CODER.deserialize(&bytes)).transpose()?;
+        let mb_value = bytes
+            .map(|bytes| CODER.deserialize(&bytes))
+            .transpose()?
+            .flatten();
         Ok(mb_value)
     }
 
     pub fn prefix_iter_for(
         &self,
         version: V,
-    ) -> Result<impl Iterator<Item = (M::Key, M::Value)> + '_> {
+    ) -> Result<impl Iterator<Item = (M::Key, Option<M::Value>)> + '_> {
         Ok(self
             .db()
             .prefix_iterator_cf(self.cf(), version.to_bytes())
@@ -311,7 +317,7 @@ where
         while let (Some(current), Some(parent)) = (rev_track.next(), rev_track.peek().copied()) {
             for (key, value) in self.prefix_iter_for(parent)? {
                 if !self.has_value_for(current, key)? {
-                    self.insert_with(current, key, Some(value))?;
+                    self.insert_with(current, key, value)?;
                 }
             }
 
@@ -339,7 +345,7 @@ where
         while let Some(parent) = self.storage.previous_of(next_parent_for)? {
             for (key, value) in self.prefix_iter_for(parent)? {
                 if !self.has_value_for(target, key)? {
-                    self.insert_with(target, key, Some(value))?;
+                    self.insert_with(target, key, value)?;
                 }
             }
 
@@ -368,9 +374,6 @@ where
 pub trait HasMax {
     const MAX: Self;
 }
-
-// pub type VersionedValue<'a, V, Value> =
-//     PersistentMap<'a, V, M: PersistentAssoc<Key = (), Value = Value>>;
 
 impl<'a, V, Value, M: PersistentAssoc<Key = (), Value = Value>> PersistentMap<'a, V, M>
 where
@@ -503,13 +506,17 @@ mod tests {
 
     use super::*;
 
-    fn open<P, S, V, Key, Value>(path: P, type_name: S) -> Result<PersistentMap<V, Key, Value>>
-    where
-        V: AsBytePrefix,
-        P: AsRef<Path>,
-        S: AsRef<str>,
-    {
-        VersionedStorage::open(path, &[type_name.as_ref()])?.typed(type_name.as_ref())
+    impl AsBytePrefix for () {
+        const SIZE: usize = 0;
+        type Bytes = [u8; 0];
+        fn to_bytes(&self) -> Self::Bytes {
+            []
+        }
+
+        type FromBytesError = TryFromSliceError;
+        fn from_bytes(bytes: &[u8]) -> StdResult<Self, Self::FromBytesError> {
+            Self::Bytes::try_from(bytes).map(|_| ())
+        }
     }
 
     impl<A, B> AsBytePrefix for (A, B)
@@ -544,6 +551,8 @@ mod tests {
         type Key = u8;
         type Value = u64;
         type Assoc = HashMap<Version, HashMap<Key, Value>>;
+        type Storage = VersionedStorage<Version>;
+        persistent_types! { KV in "kv" => Key : Value }
 
         let mut rng = rand::thread_rng();
 
@@ -559,31 +568,31 @@ mod tests {
 
         let dir = TmpDir::new("it_handles_full_range_mapping");
         {
-            let s = open(&dir, "vkv")?;
+            let s = Storage::open(&dir, COLUMN_NAMES)?;
 
             for (&version, map) in &assoc {
                 for (&key, &value) in map {
-                    s.insert_with(version, key, value)?;
+                    s.typed::<KV>().insert_with(version, key, Some(value))?;
                 }
-                s.storage.new_version(version, None)?;
+                s.new_version(version, None)?;
             }
-            s.db().flush()?;
+            s.db.flush()?;
             println!("assoc is stored");
         }
         {
-            let s = open(&dir, "vkv")?;
-            for (version, _) in s.storage.versions() {
-                let new_map = HashMap::from_iter(s.prefix_iter_for(version)?);
+            let s = Storage::open(&dir, COLUMN_NAMES)?;
+            for (version, _) in s.versions() {
+                let new_map = HashMap::from_iter(
+                    s.typed::<KV>()
+                        .prefix_iter_for(version)?
+                        .map(|(key, mb_value)| (key, mb_value.unwrap())),
+                );
                 assert_eq!(assoc.remove(&version), Some(new_map));
             }
             assert!(assoc.is_empty());
         }
         Ok(())
     }
-
-    type K = u16;
-    type V = u64;
-    type ThreadId = u64;
 
     #[quickcheck]
     fn qc_version_precedes_key_in_serialized_data(version: u64, key: u64) -> Result<()> {
@@ -628,23 +637,29 @@ mod tests {
     pair_works_as_byte_prefix!(u8, u64);
     pair_works_as_byte_prefix!(u64, u16);
 
+    type K = u16;
+    type V = u64;
+    type ThreadId = u64;
+
     #[quickcheck]
     fn qc_keyless_storage_behaves_like_a_map_with_version_as_key(
         map: BTreeMap<K, V>,
     ) -> Result<()> {
+        type Storage = VersionedStorage<K>;
+        persistent_types! { KV in "kv" => () : V }
         let dir = TmpDir::new("qc_keyless_storage_behaves_like_a_map_with_version_as_key");
         {
-            let s = open(&dir, "kv")?;
+            let s = Storage::open(&dir, COLUMN_NAMES)?;
             for (&k, &v) in &map {
-                s.insert(k, v)?;
+                s.typed::<KV>().insert(k, v)?;
             }
-            s.db().flush()?;
+            s.db.flush()?;
         }
         {
-            let s = open(&dir, "kv")?;
+            let s = Storage::open(&dir, COLUMN_NAMES)?;
             let mut new_map = BTreeMap::new();
-            for key in s.keys() {
-                new_map.insert(key, s.get(key)?.unwrap());
+            for key in s.typed::<KV>().keys() {
+                new_map.insert(key, s.typed::<KV>().get(key)?.unwrap());
             }
             assert_eq!(map, new_map);
         }
@@ -655,19 +670,19 @@ mod tests {
     fn qc_two_concurrent_threads_works_on_shared_db_via_version_assoc(
         (foo, bar): (BTreeMap<K, V>, BTreeMap<K, V>),
     ) -> Result<()> {
-        type Storage = VersionedValue<(ThreadId, K), V>;
-
+        type Storage = VersionedStorage<(ThreadId, K)>;
+        persistent_types! { TKV in "tkv" => () : V }
         let dir = TmpDir::new("qc_two_concurrent_threads_works_on_shared_db_via_version_assoc");
-        let s: Arc<Storage> = Arc::new(open(&dir, "kv_assoc")?);
+        let s: Arc<Storage> = Arc::new(Storage::open(&dir, COLUMN_NAMES)?);
 
         fn spawn_insert(s: &Arc<Storage>, map: BTreeMap<K, V>) -> JoinHandle<Result<ThreadId>> {
             let s = Arc::clone(s);
             thread::spawn(move || -> Result<ThreadId> {
                 let id = thread_id();
                 for (k, v) in map {
-                    s.insert((id, k), v)?;
+                    s.typed::<TKV>().insert((id, k), v)?;
                 }
-                s.db().flush()?;
+                s.db.flush()?;
                 Ok(id)
             })
         }
@@ -686,7 +701,11 @@ mod tests {
             let s = Arc::clone(s);
             thread::spawn(move || -> Result<BTreeMap<K, V>> {
                 keys.into_iter()
-                    .map(|key| s.get((id, key)).map(|value| (key, value.unwrap())))
+                    .map(|key| {
+                        s.typed::<TKV>()
+                            .get((id, key))
+                            .map(|value| (key, value.unwrap()))
+                    })
                     .collect::<Result<_>>()
             })
         }
@@ -707,19 +726,20 @@ mod tests {
     fn qc_two_concurrent_threads_works_on_shared_db_via_own_version_slot(
         (foo, bar): (BTreeMap<K, V>, BTreeMap<K, V>),
     ) -> Result<()> {
-        type TStorage = PersistentMap<ThreadId, K, V>;
+        type Storage = VersionedStorage<ThreadId>;
+        persistent_types! { KV in "kv" => K : V }
         let dir = TmpDir::new("qc_two_concurrent_threads_works_on_shared_db_via_own_version_slot");
-        let s: Arc<TStorage> = Arc::new(open(&dir, "slot_assoc")?);
+        let s = Arc::new(Storage::open(&dir, COLUMN_NAMES)?);
 
-        fn spawn_insert(s: &Arc<TStorage>, map: BTreeMap<K, V>) -> JoinHandle<Result<ThreadId>> {
+        fn spawn_insert(s: &Arc<Storage>, map: BTreeMap<K, V>) -> JoinHandle<Result<ThreadId>> {
             let s = Arc::clone(s);
             thread::spawn(move || -> Result<ThreadId> {
                 let id = thread_id();
                 for (k, v) in map {
-                    s.insert_with(id, k, v)?;
+                    s.typed::<KV>().insert_with(id, k, Some(v))?;
                 }
-                s.storage.new_version(id, None)?;
-                s.db().flush()?;
+                s.new_version(id, None)?;
+                s.db.flush()?;
                 Ok(id)
             })
         }
@@ -731,14 +751,18 @@ mod tests {
         let bar_id = bar_wh.join().unwrap()?;
 
         fn spawn_read(
-            s: &Arc<TStorage>,
+            s: &Arc<Storage>,
             id: ThreadId,
             keys: impl IntoIterator<Item = K> + Send + 'static,
         ) -> JoinHandle<Result<BTreeMap<K, V>>> {
             let s = Arc::clone(s);
             thread::spawn(move || -> Result<BTreeMap<K, V>> {
                 keys.into_iter()
-                    .map(|key| s.get_exact_for(id, key).map(|value| (key, value.unwrap())))
+                    .map(|key| {
+                        s.typed::<KV>()
+                            .get_exact_for(id, key)
+                            .map(|value| (key, value.unwrap()))
+                    })
                     .collect::<Result<_>>()
             })
         }
@@ -756,24 +780,30 @@ mod tests {
     }
 
     #[quickcheck]
-    fn qc_reads_the_same_as_inserts(assoc: HashMap<K, HashMap<K, V>>) -> Result<()> {
+    fn qc_reads_the_same_as_inserts(assoc: HashMap<K, HashMap<K, Option<V>>>) -> Result<()> {
+        type Storage = VersionedStorage<K>;
+        persistent_types! { KV in "kv" => K : V }
         let dir = TmpDir::new("qc_reads_the_same_as_inserts");
+
         {
-            let s = open(&dir, "vkv")?;
+            let s = Storage::open(&dir, COLUMN_NAMES)?;
             for (&version, map) in &assoc {
                 for (&k, &v) in map {
-                    s.insert_with(version, k, v)?;
+                    s.typed::<KV>().insert_with(version, k, v)?;
                 }
-                s.storage.new_version(version, None)?;
+                s.new_version(version, None)?;
             }
-            s.db().flush()?;
+            s.db.flush()?;
         }
         {
-            let s = open(&dir, "vkv")?;
+            let s = Storage::open(&dir, COLUMN_NAMES)?;
 
-            let mut new_assoc = HashMap::<K, HashMap<K, V>>::new();
-            for (version, _) in s.storage.versions() {
-                new_assoc.insert(version, s.prefix_iter_for(version).unwrap().collect());
+            let mut new_assoc = HashMap::<K, HashMap<K, Option<V>>>::new();
+            for (version, _) in s.versions() {
+                new_assoc.insert(
+                    version,
+                    s.typed::<KV>().prefix_iter_for(version).unwrap().collect(),
+                );
             }
 
             assert_eq!(assoc, new_assoc);

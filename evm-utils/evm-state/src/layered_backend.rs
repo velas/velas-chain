@@ -64,10 +64,10 @@ pub struct AccountState {
 // Store every account storage at single place, to use power of versioned map.
 // This allows us to save only changed data.
 persistent_types! {
-    Accounts :: "accounts" => H160 => AccountState,
-    AccountsStorage :: "accounts_storage" => (H160, H256) => H256,
-    TransactionReceipts :: "txs_receipts" => H256 => TransactionReceipt,
-    TransactionsInBlock :: "txs_in_block" => Slot => Vec<H256>,
+    Accounts in "accounts" => H160 : AccountState,
+    AccountsStorage in "accounts_storage" => (H160, H256) : H256,
+    TransactionReceipts in "txs_receipts" => H256 : TransactionReceipt,
+    TransactionsInBlock in "txs_in_block" => Slot : Vec<H256>,
 }
 
 type Mapped<M> = Map<Slot, <M as PersistentAssoc>::Key, <M as PersistentAssoc>::Value>;
@@ -340,12 +340,15 @@ mod tests {
         accounts: &BTreeMap<H160, Option<AccountState>>,
         storage: &BTreeMap<(H160, H256), Option<H256>>,
     ) {
-        for account in accounts {
-            assert_eq!(state.accounts.get(*account.0).as_ref(), account.1.as_ref())
+        for (address, expected) in accounts {
+            assert_eq!(state.get_account(*address).as_ref(), expected.as_ref())
         }
 
-        for s in storage {
-            assert_eq!(state.accounts_storage.get(*s.0).as_ref(), s.1.as_ref())
+        for ((address, index), expected) in storage {
+            assert_eq!(
+                state.get_storage(*address, *index).as_ref(),
+                expected.as_ref()
+            )
         }
     }
 
@@ -361,7 +364,13 @@ mod tests {
         let tmp_dir = TmpDir::new("add_two_accounts_check_helpers");
         let mut evm_state = EvmState::load_from(tmp_dir, Default::default()).unwrap();
 
-        assert_eq!(evm_state.basic(H160::random()).balance, U256::from(0));
+        assert_eq!(
+            evm_state
+                .get_account(H160::random())
+                .unwrap_or_default()
+                .balance,
+            U256::from(0)
+        );
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
 
         assert_state(&evm_state, &accounts_state_diff, &storage_diff);
