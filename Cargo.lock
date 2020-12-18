@@ -1234,7 +1234,6 @@ name = "evm-state"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assert_matches",
  "bincode",
  "bytes 0.6.0",
  "criterion",

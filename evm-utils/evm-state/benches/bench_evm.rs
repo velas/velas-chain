@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
 use anyhow::{bail, Context, Result};
-use assert_matches::assert_matches;
 use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
 use primitive_types::{H160, H256, U256};
 use sha3::{Digest, Keccak256};
@@ -41,14 +40,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("call_hello", |b| {
-        let accounts = ["contract", "caller"];
-
-        cleanup_dir(dir).unwrap();
-    });
-
-    group.bench_function("call_hello", |b| {
         let code = hex::decode(HELLO_WORLD_CODE).unwrap();
         let data = hex::decode(HELLO_WORLD_ABI).unwrap();
+        let accounts = ["contract", "caller"];
 
         let dir = prepare_dir("call_hello").unwrap();
         let mut state = EvmState::load_from(&dir, 0).unwrap();
@@ -58,33 +52,35 @@ fn criterion_benchmark(c: &mut Criterion) {
             let memory = AccountState {
                 ..Default::default()
             };
-            state.accounts.insert(account, memory);
+            state.set_account(account, memory);
         }
 
         let config = evm::Config::istanbul();
-        let mut executor = StaticExecutor::with_config(state, config, usize::max_value());
+        let mut executor = Executor::with_config(state, config, usize::max_value(), 0);
 
-        let exit_reason = match executor.rent_executor().create(
-            name_to_key("caller"),
-            CreateScheme::Fixed(name_to_key("contract")),
-            U256::zero(),
-            code,
-            None,
-        ) {
-            Capture::Exit((s, _, v)) => (s, v),
-            Capture::Trap(_) => unreachable!(),
-        };
-
-        assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
+        let exit_reason = executor.with_executor(|executor| {
+            executor.transact_create(
+                name_to_key("caller"),
+                U256::zero(),
+                code,
+                usize::max_value(),
+            )
+        });
+        assert!(matches!(
+            exit_reason,
+            ExitReason::Succeed(ExitSucceed::Returned)
+        ));
 
         b.iter(|| {
-            let exit_reason = executor.rent_executor().transact_call(
-                name_to_key("contract"),
-                name_to_key("contract"),
-                U256::zero(),
-                data.to_vec(),
-                usize::max_value(),
-            );
+            let exit_reason = executor.with_executor(|executor| {
+                executor.transact_call(
+                    name_to_key("caller"),
+                    name_to_key("contract"),
+                    U256::zero(),
+                    data.to_vec(),
+                    usize::max_value(),
+                )
+            });
 
             let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
             match exit_reason {
@@ -104,33 +100,36 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut state = EvmState::load_from(&dir, 0).unwrap();
         let config = evm::Config::istanbul();
         let mut executor =
-            StaticExecutor::with_config(state.clone(), config.clone(), usize::max_value());
+            Executor::with_config(state.clone(), config.clone(), usize::max_value(), 0);
 
-        let exit_reason = match executor.rent_executor().create(
-            name_to_key("caller"),
-            CreateScheme::Fixed(name_to_key("contract")),
-            U256::zero(),
-            code,
-            None,
-        ) {
-            Capture::Exit((s, _, v)) => (s, v),
-            Capture::Trap(_) => unreachable!(),
-        };
+        let exit_reason = executor.with_executor(|executor| {
+            executor.transact_create(
+                name_to_key("caller"),
+                U256::zero(),
+                code,
+                usize::max_value(),
+            )
+        });
+        assert!(matches!(
+            exit_reason,
+            ExitReason::Succeed(ExitSucceed::Returned)
+        ));
 
-        assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
         let patch = executor.deconstruct();
-        state.apply(patch);
+        state.swap_commit(patch);
 
         b.iter(|| {
             let mut executor =
-                StaticExecutor::with_config(state.clone(), config.clone(), usize::max_value());
-            let exit_reason = executor.rent_executor().transact_call(
-                name_to_key("contract"),
-                name_to_key("contract"),
-                U256::zero(),
-                data.to_vec(),
-                usize::max_value(),
-            );
+                Executor::with_config(state.clone(), config.clone(), usize::max_value(), 0);
+            let exit_reason = executor.with_executor(|executor| {
+                executor.transact_call(
+                    name_to_key("contract"),
+                    name_to_key("contract"),
+                    U256::zero(),
+                    data.to_vec(),
+                    usize::max_value(),
+                )
+            });
 
             let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
             match exit_reason {
@@ -156,39 +155,42 @@ fn criterion_benchmark(c: &mut Criterion) {
             let memory = AccountState {
                 ..Default::default()
             };
-            state.accounts.insert(account, memory);
+            state.set_account(account, memory);
         }
-        state.dump().unwrap();
+        state.dump_all().unwrap();
 
         let config = evm::Config::istanbul();
         let mut executor =
-            StaticExecutor::with_config(state.clone(), config.clone(), usize::max_value());
+            Executor::with_config(state.clone(), config.clone(), usize::max_value(), 0);
 
-        let exit_reason = match executor.rent_executor().create(
-            name_to_key("caller"),
-            CreateScheme::Fixed(name_to_key("contract")),
-            U256::zero(),
-            code,
-            None,
-        ) {
-            Capture::Exit((s, _, v)) => (s, v),
-            Capture::Trap(_) => unreachable!(),
-        };
+        let exit_reason = executor.with_executor(|executor| {
+            executor.transact_create(
+                name_to_key("caller"),
+                U256::zero(),
+                code,
+                usize::max_value(),
+            )
+        });
+        assert!(matches!(
+            exit_reason,
+            ExitReason::Succeed(ExitSucceed::Returned),
+        ));
 
-        assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
         let patch = executor.deconstruct();
-        state.apply(patch);
+        state.swap_commit(patch);
 
         b.iter(|| {
             let mut executor =
-                StaticExecutor::with_config(state.clone(), config.clone(), usize::max_value());
-            let exit_reason = executor.rent_executor().transact_call(
-                name_to_key("contract"),
-                name_to_key("contract"),
-                U256::zero(),
-                data.to_vec(),
-                usize::max_value(),
-            );
+                Executor::with_config(state.clone(), config.clone(), usize::max_value(), 0);
+            let exit_reason = executor.with_executor(|executor| {
+                executor.transact_call(
+                    name_to_key("contract"),
+                    name_to_key("contract"),
+                    U256::zero(),
+                    data.to_vec(),
+                    usize::max_value(),
+                )
+            });
 
             let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
             match exit_reason {

@@ -7,19 +7,20 @@ pub use evm::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed};
 pub use primitive_types::{H256, U256};
 pub use secp256k1::rand;
 
+pub mod layered_backend;
 pub mod transactions;
+
 pub use evm_backend::*;
 pub use layered_backend::*;
 pub use transactions::*;
 
-use std::fmt;
-
-use log::debug;
-
 mod evm_backend;
-mod layered_backend;
+mod mb_value;
 mod storage;
 mod version_map;
+
+use log::debug;
+use std::fmt;
 
 pub(crate) type Slot = u64; // TODO: re-use existing one from sdk package
 
@@ -203,14 +204,15 @@ mod test_utils;
 #[cfg(test)]
 mod tests {
     use anyhow::anyhow;
-    use assert_matches::assert_matches;
 
     use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
 
-    use super::*;
     use crate::test_utils::TmpDir;
+
+    use super::Executor;
+    use super::*;
 
     fn name_to_key(name: &str) -> H160 {
         let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
@@ -261,7 +263,10 @@ mod tests {
             Capture::Trap(_) => unreachable!(),
         };
 
-        assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
+        assert!(matches!(
+            exit_reason,
+            (ExitReason::Succeed(ExitSucceed::Returned), _)
+        ));
         let exit_reason = executor.with_executor(|e| {
             e.transact_call(
                 name_to_key("contract"),

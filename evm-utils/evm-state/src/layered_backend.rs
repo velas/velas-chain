@@ -1,4 +1,4 @@
-use std::{borrow::Cow, path::Path};
+use std::{any::type_name, borrow::Cow, path::Path};
 
 use evm::backend::Log;
 use primitive_types::{H160, H256, U256};
@@ -145,7 +145,16 @@ impl EvmState {
                 .storage
                 .typed::<M>()
                 .get_for(*last_version, key)
-                .expect("Internal storage error")
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "Storage ({} :: Key {} => Value {}) lookup error: {:?}",
+                        type_name::<M>(),
+                        type_name::<M::Key>(),
+                        type_name::<M::Value>(),
+                        err
+                    )
+                })
+                .and_then(Option::from)
                 .map(Cow::Owned),
         }
     }
@@ -162,7 +171,7 @@ where
     let mut full_iter = map.full_iter().peekable();
     while let Some((version, kvs)) = full_iter.next() {
         for (key, value) in kvs {
-            storage.insert_with(*version, *key, value.cloned())?;
+            storage.insert_with(*version, *key, value.clone())?;
         }
 
         let previous = full_iter
@@ -204,6 +213,11 @@ impl EvmState {
             .map(Cow::into_owned)
     }
 
+    // NOTE: currently used in benches only
+    pub fn set_account(&mut self, address: H160, state: AccountState) {
+        self.accounts.insert(address, state)
+    }
+
     pub fn get_account(&self, address: H160) -> Option<AccountState> {
         self.lookup::<Accounts>(&self.accounts, address)
             .map(Cow::into_owned)
@@ -229,6 +243,7 @@ mod tests {
     use rand::Rng;
 
     use crate::test_utils::TmpDir;
+    use anyhow::anyhow;
 
     use super::*;
 
@@ -408,5 +423,42 @@ mod tests {
         );
 
         assert_state(&new_evm_state, &new_accounts_state_diff, &BTreeMap::new());
+    }
+
+    #[test]
+    fn reads_the_same_after_dump() -> anyhow::Result<()> {
+        let accounts = generate_accounts_addresses(SEED, 42_000);
+
+        let storage = generate_storage(SEED, &accounts);
+        let accounts_state = generate_accounts_state(SEED, &accounts);
+        let storage_diff = to_state_diff(storage, BTreeSet::new());
+        let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
+
+        let slot = 0;
+
+        let tmp_dir = TmpDir::new("reads_the_same_after_dump");
+        let mut evm_state = EvmState::load_from(tmp_dir, slot)?;
+
+        save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
+        evm_state.freeze();
+        evm_state.dump_all()?;
+
+        {
+            let mut evm_state = evm_state
+                .try_fork(slot + 1)
+                .ok_or_else(|| anyhow!("Unable to fork evm state after freezing"))?;
+            let accounts = generate_accounts_addresses(SEED + 1, 42_000);
+
+            let storage = generate_storage(SEED + 1, &accounts);
+            let accounts_state = generate_accounts_state(SEED + 1, &accounts);
+            let storage_diff = to_state_diff(storage, BTreeSet::new());
+            let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
+            save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
+            evm_state.dump_all()?;
+            assert_state(&evm_state, &accounts_state_diff, &storage_diff);
+        }
+
+        assert_state(&evm_state, &accounts_state_diff, &storage_diff);
+        Ok(())
     }
 }
