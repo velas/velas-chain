@@ -7,19 +7,20 @@ pub use evm::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed};
 pub use primitive_types::{H256, U256};
 pub use secp256k1::rand;
 
+pub mod layered_backend;
 pub mod transactions;
+
 pub use evm_backend::*;
 pub use layered_backend::*;
 pub use transactions::*;
 
-use std::fmt;
-
-use log::debug;
-
 mod evm_backend;
-mod layered_backend;
+mod mb_value;
 mod storage;
 mod version_map;
+
+use log::debug;
+use std::fmt;
 
 pub(crate) type Slot = u64; // TODO: re-use existing one from sdk package
 
@@ -203,14 +204,15 @@ mod test_utils;
 #[cfg(test)]
 mod tests {
     use anyhow::anyhow;
-    use assert_matches::assert_matches;
 
     use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
 
-    use super::*;
     use crate::test_utils::TmpDir;
+
+    use super::Executor;
+    use super::*;
 
     fn name_to_key(name: &str) -> H160 {
         let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
@@ -219,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_evm_bytecode() -> anyhow::Result<()> {
-        simple_logger::SimpleLogger::new().init()?;
+        let _logger_error = simple_logger::SimpleLogger::new().init();
         let accounts = ["contract", "caller"];
 
         let code = hex::decode(HELLO_WORLD_CODE)?;
@@ -239,14 +241,7 @@ mod tests {
         backend.freeze();
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(
-            backend
-                .clone()
-                .ok_or_else(|| anyhow!("Unable to fork backend"))?,
-            config,
-            usize::max_value(),
-            0,
-        );
+        let mut executor = Executor::with_config(backend.clone(), config, usize::max_value(), 0);
 
         let exit_reason = match executor.with_executor(|e| {
             e.create(
@@ -261,7 +256,10 @@ mod tests {
             Capture::Trap(_) => unreachable!(),
         };
 
-        assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
+        assert!(matches!(
+            exit_reason,
+            (ExitReason::Succeed(ExitSucceed::Returned), _)
+        ));
         let exit_reason = executor.with_executor(|e| {
             e.transact_call(
                 name_to_key("contract"),

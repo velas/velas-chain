@@ -2,37 +2,12 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
-/// Represent state of value at current version.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-pub enum State<V> {
-    // Value exist, and was changed.
-    Changed(V),
-    // Value was removed.
-    Removed,
-}
-
-impl<V> State<V> {
-    fn by_ref(&self) -> State<&V> {
-        match self {
-            State::Changed(ref v) => State::Changed(v),
-            State::Removed => State::Removed,
-        }
-    }
-}
-
-impl<T> From<State<T>> for Option<T> {
-    fn from(state: State<T>) -> Option<T> {
-        match state {
-            State::Changed(value) => Some(value),
-            State::Removed => None,
-        }
-    }
-}
+use super::mb_value::MaybeValue;
 
 #[derive(Clone)]
 pub struct Map<Version, Key, Value> {
     pub(crate) version: Version,
-    state: BTreeMap<Key, State<Value>>,
+    state: BTreeMap<Key, MaybeValue<Value>>,
     parent: Option<Arc<Map<Version, Key, Value>>>,
 }
 
@@ -89,12 +64,12 @@ where
 
     // Insert new key, didn't query key before inserting.
     pub fn insert(&mut self, key: Key, value: Value) {
-        self.push_change(key, State::Changed(value));
+        self.push_change(key, MaybeValue::Value(value));
     }
 
     // Remove key, didn't query key before inserting.
     pub fn remove(&mut self, key: Key) {
-        self.push_change(key, State::Removed);
+        self.push_change(key, MaybeValue::Removed);
     }
 
     pub fn clear(&mut self) {
@@ -103,23 +78,30 @@ where
     }
 
     // Override state of key.
-    fn push_change(&mut self, key: Key, value: State<Value>) {
+    fn push_change(&mut self, key: Key, value: MaybeValue<Value>) {
         self.state.insert(key, value);
     }
 
-    pub fn iter(&self) -> (&Version, impl Iterator<Item = (&Key, Option<&Value>)> + '_) {
+    pub fn iter(
+        &self,
+    ) -> (
+        &Version,
+        impl Iterator<Item = (&Key, &MaybeValue<Value>)> + '_,
+    ) {
         (
             &self.version,
-            self.state
-                .iter()
-                .map(|(key, value)| (key, value.by_ref().into())),
+            self.state.iter(), //.map(|(key, value)| (key, value.by_ref().into())),
         )
     }
 
     pub fn full_iter(
         &self,
-    ) -> impl Iterator<Item = (&Version, impl Iterator<Item = (&Key, Option<&Value>)> + '_)> + '_
-    {
+    ) -> impl Iterator<
+        Item = (
+            &Version,
+            impl Iterator<Item = (&Key, &MaybeValue<Value>)> + '_,
+        ),
+    > + '_ {
         std::iter::once(self.iter()).chain(self.parent.as_ref().map(|parent| parent.iter()))
     }
 }
@@ -145,7 +127,7 @@ where
     where
         Version: Ord,
     {
-        assert!(new_version > self.version);
+        assert!(new_version >= self.version);
 
         if !self.state.is_empty() {
             return None;

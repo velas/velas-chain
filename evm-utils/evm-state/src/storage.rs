@@ -1,6 +1,6 @@
 use std::array::TryFromSliceError;
 use std::convert::{TryFrom, TryInto};
-use std::fmt;
+use std::fmt::{self, Debug};
 use std::io::Cursor;
 use std::marker::PhantomData;
 use std::mem::size_of;
@@ -12,6 +12,8 @@ use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
 use lazy_static::lazy_static;
 use rocksdb::{self, ColumnFamily, ColumnFamilyDescriptor, IteratorMode, Options, DB};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
+use super::mb_value::MaybeValue;
 
 pub type Result<T> = std::result::Result<T, Error>;
 pub type StdResult<T, E> = std::result::Result<T, E>;
@@ -25,10 +27,8 @@ lazy_static! {
 pub enum Error {
     #[error(transparent)]
     DatabaseErr(#[from] rocksdb::Error),
-    #[error("Missed Column Familiy for type '{0}'")]
-    ColumnFamilyErr(String),
-    #[error(transparent)]
-    BincodeErr(#[from] bincode::Error),
+    #[error("Type {1} :: {0}")]
+    BincodeErr(bincode::Error, &'static str),
     #[error("Unable to construct key from bytes")]
     KeyErr(#[from] TryFromSliceError),
 }
@@ -51,16 +51,30 @@ impl<V> Clone for VersionedStorage<V> {
 
 type Previous<V> = Option<V>; // TODO: Vec<V>
 
+trait BincodeResultExt<T> {
+    fn typed_ctx(self) -> Result<T>;
+}
+
+impl<T> BincodeResultExt<T> for StdResult<T, bincode::Error> {
+    fn typed_ctx(self) -> Result<T> {
+        self.map_err(|err| Error::BincodeErr(err, std::any::type_name::<T>()))
+    }
+}
+
 impl<V> VersionedStorage<V>
 where
     V: Copy + Serialize + DeserializeOwned,
     Previous<V>: Serialize + DeserializeOwned,
 {
     pub fn previous_of(&self, version: V) -> Result<Previous<V>> {
-        let version = CODER.serialize(&version)?;
-        let bytes = self.db.get_pinned(version)?;
-        let previous = bytes.map(|bytes| CODER.deserialize(&bytes)).transpose()?;
-        Ok(previous)
+        let version = CODER.serialize(&version).typed_ctx()?;
+
+        if let Some(bytes) = self.db.get_pinned(version)? {
+            let previous = CODER.deserialize::<Previous<V>>(&bytes).typed_ctx()?;
+            Ok(previous)
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn versions(&self) -> impl Iterator<Item = (V, Previous<V>)> + '_ {
@@ -78,10 +92,11 @@ where
     }
 
     pub fn new_version(&self, version: V, previous: Previous<V>) -> Result<()> {
-        let version = CODER.serialize(&version)?;
-        debug_assert_eq!(self.db.get(&version)?, None);
-        let previous = CODER.serialize(&previous)?;
-        self.db.put(version, previous)?;
+        let version = CODER.serialize(&version).typed_ctx()?;
+        if self.db.get(&version)?.is_none() {
+            let previous = CODER.serialize(&previous).typed_ctx()?;
+            self.db.put(version, previous)?;
+        }
         Ok(())
     }
 }
@@ -140,7 +155,7 @@ impl<V> VersionedStorage<V> {
         })
     }
 
-    pub fn typed<'a, M: PersistentAssoc>(&'a self) -> PersistentMap<'a, V, M> {
+    pub fn typed<M: PersistentAssoc>(&self) -> PersistentMap<'_, V, M> {
         assert!(self.db.cf_handle(M::COLUMN_NAME).is_some());
 
         PersistentMap {
@@ -186,13 +201,13 @@ where
     V: AsBytePrefix,
     Key: Serialize,
 {
-    type Error = bincode::Error;
+    type Error = Error;
 
     fn try_into(self) -> StdResult<Vec<u8>, Self::Error> {
         let mut bytes = Vec::from(self.version.to_bytes().as_ref());
         let mut cursor = Cursor::new(&mut bytes);
         cursor.set_position(<V as AsBytePrefix>::SIZE as u64);
-        bincode::serialize_into(&mut cursor, &self.key)?;
+        bincode::serialize_into(&mut cursor, &self.key).typed_ctx()?;
         Ok(bytes)
     }
 }
@@ -213,7 +228,7 @@ where
     where
         Key: DeserializeOwned,
     {
-        bincode::deserialize_from(&bytes[<V as AsBytePrefix>::SIZE..]).map_err(Error::from)
+        bincode::deserialize_from(&bytes[<V as AsBytePrefix>::SIZE..]).typed_ctx()
     }
 }
 
@@ -234,14 +249,14 @@ where
     V: Copy + AsBytePrefix + Serialize + DeserializeOwned,
     M::Key: Copy,
 {
-    pub fn insert_with(&self, version: V, key: M::Key, value: Option<M::Value>) -> Result<()> {
+    pub fn insert_with(&self, version: V, key: M::Key, value: MaybeValue<M::Value>) -> Result<()> {
         let versioned_key: Vec<u8> = VersionedKey { version, key }.try_into()?;
-        let value = CODER.serialize(&value)?;
+        let value = CODER.serialize(&value).typed_ctx()?;
         self.db().put_cf(self.cf(), versioned_key, value)?;
         Ok(())
     }
 
-    pub fn get_for(&self, version: V, key: M::Key) -> Result<Option<M::Value>> {
+    pub fn get_for(&self, version: V, key: M::Key) -> Result<Option<MaybeValue<M::Value>>> {
         let _guard = self
             .storage
             .squash_guard
@@ -263,20 +278,23 @@ where
         Ok(None)
     }
 
-    fn get_exact_for(&self, version: V, key: M::Key) -> Result<Option<M::Value>> {
+    fn get_exact_for(&self, version: V, key: M::Key) -> Result<Option<MaybeValue<M::Value>>> {
         let versioned_key: Vec<u8> = VersionedKey { version, key }.try_into()?;
         let bytes = self.db().get_pinned_cf(self.cf(), versioned_key)?;
         let mb_value = bytes
-            .map(|bytes| CODER.deserialize(&bytes))
-            .transpose()?
-            .flatten();
+            .map(|bytes| {
+                CODER
+                    .deserialize::<MaybeValue<M::Value>>(&bytes)
+                    .typed_ctx()
+            })
+            .transpose()?;
         Ok(mb_value)
     }
 
     pub fn prefix_iter_for(
         &self,
         version: V,
-    ) -> Result<impl Iterator<Item = (M::Key, Option<M::Value>)> + '_> {
+    ) -> Result<impl Iterator<Item = (M::Key, MaybeValue<M::Value>)> + '_> {
         Ok(self
             .db()
             .prefix_iterator_cf(self.cf(), version.to_bytes())
@@ -362,7 +380,9 @@ where
         M::Key: HasMax,
     {
         let version_prefix: Vec<u8> = version.to_bytes().as_ref().iter().copied().collect();
-        let key_max_bytes = bincode::serialized_size(&M::Key::MAX)? as usize + 1;
+        let key_max_bytes = bincode::serialized_size(&M::Key::MAX)
+            .expect("Unable to calculate serialized len") as usize
+            + 1;
         let mut lexicographic_max: Vec<u8> = version_prefix.clone();
         lexicographic_max.extend(std::iter::repeat(0u8).take(key_max_bytes));
         self.db()
@@ -382,12 +402,12 @@ where
 {
     // TODO: previous versions as argument
     pub fn insert(&self, version: V, value: Value) -> Result<()> {
-        self.insert_with(version, (), Some(value))?;
+        self.insert_with(version, (), value.into())?;
         self.storage.new_version(version, None)?;
         Ok(())
     }
 
-    pub fn get(&self, version: V) -> Result<Option<Value>> {
+    pub fn get(&self, version: V) -> Result<Option<MaybeValue<Value>>> {
         self.get_exact_for(version, ())
     }
 
@@ -461,14 +481,13 @@ primitive_type_has_max! {
     H160, H256, H512
 }
 
-impl<V> fmt::Debug for VersionedStorage<V>
+impl<V> Debug for VersionedStorage<V>
 where
     V: 'static,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use std::any::TypeId;
         f.debug_struct("VersionedStorage")
-            .field("Version", &TypeId::of::<V>())
+            .field("Version", &std::any::type_name::<V>())
             .field("database", &self.db.path().display())
             .finish()
     }
@@ -497,7 +516,6 @@ where
 #[allow(clippy::blacklisted_name)]
 mod tests {
     use std::collections::{BTreeMap, HashMap};
-    use std::iter::FromIterator;
     use std::thread::{self, JoinHandle};
 
     use quickcheck_macros::quickcheck;
@@ -572,7 +590,7 @@ mod tests {
 
             for (&version, map) in &assoc {
                 for (&key, &value) in map {
-                    s.typed::<KV>().insert_with(version, key, Some(value))?;
+                    s.typed::<KV>().insert_with(version, key, value.into())?;
                 }
                 s.new_version(version, None)?;
             }
@@ -582,11 +600,11 @@ mod tests {
         {
             let s = Storage::open(&dir, COLUMN_NAMES)?;
             for (version, _) in s.versions() {
-                let new_map = HashMap::from_iter(
-                    s.typed::<KV>()
-                        .prefix_iter_for(version)?
-                        .map(|(key, mb_value)| (key, mb_value.unwrap())),
-                );
+                let new_map = s
+                    .typed::<KV>()
+                    .prefix_iter_for(version)?
+                    .map(|(key, mb_value)| (key, Option::from(mb_value).unwrap()))
+                    .collect::<HashMap<_, _>>();
                 assert_eq!(assoc.remove(&version), Some(new_map));
             }
             assert!(assoc.is_empty());
@@ -596,9 +614,10 @@ mod tests {
 
     #[quickcheck]
     fn qc_version_precedes_key_in_serialized_data(version: u64, key: u64) -> Result<()> {
-        let version_data = CODER.serialize(&version)?;
+        let version_data = CODER.serialize(&version).typed_ctx()?;
+
         let versioned_key = VersionedKey { version, key };
-        let versioned_key_data = CODER.serialize(&versioned_key)?;
+        let versioned_key_data = CODER.serialize(&versioned_key).typed_ctx()?;
         assert!(versioned_key_data.starts_with(&version_data));
         Ok(())
     }
@@ -659,7 +678,10 @@ mod tests {
             let s = Storage::open(&dir, COLUMN_NAMES)?;
             let mut new_map = BTreeMap::new();
             for key in s.typed::<KV>().keys() {
-                new_map.insert(key, s.typed::<KV>().get(key)?.unwrap());
+                new_map.insert(
+                    key,
+                    s.typed::<KV>().get(key)?.and_then(Option::from).unwrap(),
+                );
             }
             assert_eq!(map, new_map);
         }
@@ -704,7 +726,7 @@ mod tests {
                     .map(|key| {
                         s.typed::<TKV>()
                             .get((id, key))
-                            .map(|value| (key, value.unwrap()))
+                            .map(|value| (key, value.and_then(Option::from).unwrap()))
                     })
                     .collect::<Result<_>>()
             })
@@ -736,7 +758,7 @@ mod tests {
             thread::spawn(move || -> Result<ThreadId> {
                 let id = thread_id();
                 for (k, v) in map {
-                    s.typed::<KV>().insert_with(id, k, Some(v))?;
+                    s.typed::<KV>().insert_with(id, k, v.into())?;
                 }
                 s.new_version(id, None)?;
                 s.db.flush()?;
@@ -761,7 +783,7 @@ mod tests {
                     .map(|key| {
                         s.typed::<KV>()
                             .get_exact_for(id, key)
-                            .map(|value| (key, value.unwrap()))
+                            .map(|value| (key, value.and_then(Option::from).unwrap()))
                     })
                     .collect::<Result<_>>()
             })
@@ -789,7 +811,7 @@ mod tests {
             let s = Storage::open(&dir, COLUMN_NAMES)?;
             for (&version, map) in &assoc {
                 for (&k, &v) in map {
-                    s.typed::<KV>().insert_with(version, k, v)?;
+                    s.typed::<KV>().insert_with(version, k, v.into())?;
                 }
                 s.new_version(version, None)?;
             }
@@ -802,7 +824,11 @@ mod tests {
             for (version, _) in s.versions() {
                 new_assoc.insert(
                     version,
-                    s.typed::<KV>().prefix_iter_for(version).unwrap().collect(),
+                    s.typed::<KV>()
+                        .prefix_iter_for(version)
+                        .unwrap()
+                        .map(|(key, mb_value)| (key, Option::from(mb_value)))
+                        .collect(),
                 );
             }
 
