@@ -1,33 +1,38 @@
 use crate::rpc::JsonRpcRequestProcessor;
 use evm_rpc::basic::BasicERPC;
-use evm_rpc::bridge::BridgeERPC;
 use evm_rpc::chain_mock::ChainMockERPC;
 use evm_rpc::*;
 use evm_state::*;
 use sha3::{Digest, Keccak256};
 
-use solana_client::rpc_client::RpcClient;
-
-use solana_evm_loader_program::scope::*;
-use solana_sdk::{
-    commitment_config::{CommitmentConfig, CommitmentLevel},
-    message::Message,
-    signature::Signer,
-};
-use std::collections::HashMap;
+use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use std::convert::TryInto;
-
-pub struct ChainMockERPCImpl;
 
 const CHAIN_ID: u64 = 0x77;
 
-fn block_to_num(block: &str) -> Option<u64> {
-    match block {
-        "earliest" | "latest" | "pending" => None,
-        v => v.parse::<u64>().ok(),
-    }
+const DEFAULT_COMITTMENT: Option<CommitmentConfig> = Some(CommitmentConfig {
+    commitment: CommitmentLevel::Recent,
+});
+
+fn block_to_commitment(block: Option<String>) -> Option<CommitmentConfig> {
+    let commitment = match block?.as_str() {
+        "earliest" => CommitmentLevel::Root,
+        "latest" => CommitmentLevel::Single,
+        "pending" => CommitmentLevel::Single,
+        v => {
+            // Try to parse newest version of block commitment.
+            if let Ok(c) = serde_json::from_str::<CommitmentLevel>(v) {
+                c
+            } else {
+                // Probably user provide specific slot number, we didn't support bank from future, so just return default.
+                return None;
+            }
+        }
+    };
+    Some(CommitmentConfig { commitment })
 }
 
+pub struct ChainMockERPCImpl;
 impl ChainMockERPC for ChainMockERPCImpl {
     type Metadata = JsonRpcRequestProcessor;
 
@@ -114,18 +119,41 @@ impl ChainMockERPC for ChainMockERPCImpl {
         _full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
         error!("Remove unwraps");
-        let block_num = block_to_num(&block).unwrap_or(0); //TODO: Replace by committment.
+        let num = match &*block {
+            "pending" => None,
+            "earliest" => Some(meta.get_first_available_block()),
+            "latest" => Some(meta.get_slot(None)),
+            v => v.parse::<u64>().ok(),
+        };
+        let block_num = num.unwrap_or(0);
         Ok(meta
             .get_confirmed_block(block_num, None)
             .unwrap()
             .map(|block| {
                 use std::str::FromStr;
                 let hash = solana_sdk::hash::Hash::from_str(&block.blockhash).unwrap();
+                let parent_hash =
+                    solana_sdk::hash::Hash::from_str(&block.previous_blockhash).unwrap();
+                // let transactions = block.transactions
+                // .into_iter()
+                // .filter_map(|tx|
+                //     tx.transaction.decode())
+                // .filter(|tx|
+                //     tx.
+
+                // )
+
                 RPCBlock {
                     number: U256::from(block_num).into(),
                     hash: H256::from_slice(&hash.0).into(),
-                    parent_hash: H256::zero().into(),
-                    nonce: 0.into(),
+                    parent_hash: H256::from_slice(&parent_hash.0).into(),
+                    size: 0.into(),
+                    gas_limit: Gas::max_value().into(),
+                    gas_used: Gas::zero().into(),
+                    timestamp: 0.into(),
+                    transactions: Either::Left(vec![]),
+
+                    nonce: 0x7bb9369dcbaec019.into(),
                     sha3_uncles: H256::zero().into(),
                     logs_bloom: H256::zero().into(), // H2048
                     transactions_root: H256::zero().into(),
@@ -135,40 +163,9 @@ impl ChainMockERPC for ChainMockERPCImpl {
                     difficulty: U256::zero().into(),
                     total_difficulty: U256::zero().into(),
                     extra_data: vec![].into(),
-                    size: 0.into(),
-                    gas_limit: Gas::max_value().into(),
-                    gas_used: Gas::zero().into(),
-                    timestamp: 0.into(),
-                    transactions: Either::Left(vec![]),
                     uncles: vec![],
                 }
             }))
-    }
-
-    fn uncle_by_block_hash_and_index(
-        &self,
-        _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-        _uncle_id: Hex<U256>,
-    ) -> Result<Option<RPCBlock>, Error> {
-        Ok(None)
-    }
-
-    fn uncle_by_block_number_and_index(
-        &self,
-        _meta: Self::Metadata,
-        _block: String,
-        _uncle_id: Hex<U256>,
-    ) -> Result<Option<RPCBlock>, Error> {
-        Ok(None)
-    }
-
-    fn block_transaction_count_by_hash(
-        &self,
-        _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-    ) -> Result<Option<Hex<usize>>, Error> {
-        Ok(None)
     }
 
     fn block_transaction_count_by_number(
@@ -179,12 +176,38 @@ impl ChainMockERPC for ChainMockERPCImpl {
         Ok(None)
     }
 
+    fn block_transaction_count_by_hash(
+        &self,
+        _meta: Self::Metadata,
+        _block_hash: Hex<H256>,
+    ) -> Result<Option<Hex<usize>>, Error> {
+        Err(Error::NotFound)
+    }
+
+    fn uncle_by_block_hash_and_index(
+        &self,
+        _meta: Self::Metadata,
+        _block_hash: Hex<H256>,
+        _uncle_id: Hex<U256>,
+    ) -> Result<Option<RPCBlock>, Error> {
+        Err(Error::NotFound)
+    }
+
+    fn uncle_by_block_number_and_index(
+        &self,
+        _meta: Self::Metadata,
+        _block: String,
+        _uncle_id: Hex<U256>,
+    ) -> Result<Option<RPCBlock>, Error> {
+        Err(Error::NotFound)
+    }
+
     fn block_uncles_count_by_hash(
         &self,
         _meta: Self::Metadata,
         _block_hash: Hex<H256>,
     ) -> Result<Option<Hex<usize>>, Error> {
-        Ok(None)
+        Err(Error::NotFound)
     }
 
     fn block_uncles_count_by_number(
@@ -192,13 +215,27 @@ impl ChainMockERPC for ChainMockERPCImpl {
         _meta: Self::Metadata,
         _block: String,
     ) -> Result<Option<Hex<usize>>, Error> {
-        Ok(None)
+        Err(Error::NotFound)
+    }
+
+    fn transaction_by_block_hash_and_index(
+        &self,
+        _meta: Self::Metadata,
+        _block_hash: Hex<H256>,
+        _tx_id: Hex<U256>,
+    ) -> Result<Option<RPCTransaction>, Error> {
+        Err(Error::NotFound)
+    }
+
+    fn transaction_by_block_number_and_index(
+        &self,
+        _meta: Self::Metadata,
+        _block: String,
+        _tx_id: Hex<U256>,
+    ) -> Result<Option<RPCTransaction>, Error> {
+        Err(Error::NotFound)
     }
 }
-
-const DEFAULT_COMITTMENT: Option<CommitmentConfig> = Some(CommitmentConfig {
-    commitment: CommitmentLevel::Recent,
-});
 
 pub struct BasicERPCImpl;
 impl BasicERPC for BasicERPCImpl {
@@ -206,7 +243,7 @@ impl BasicERPC for BasicERPCImpl {
 
     // The same as get_slot
     fn block_number(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error> {
-        let bank = meta.bank(DEFAULT_COMITTMENT);
+        let bank = meta.bank(CommitmentConfig::recent().into());
         Ok(Hex(bank.slot() as usize))
     }
 
@@ -214,9 +251,9 @@ impl BasicERPC for BasicERPCImpl {
         &self,
         meta: Self::Metadata,
         address: Hex<Address>,
-        _block: Option<String>,
+        block: Option<String>,
     ) -> Result<Hex<U256>, Error> {
-        let bank = meta.bank(DEFAULT_COMITTMENT);
+        let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
         Ok(Hex(evm_state.basic(address.0).balance))
     }
@@ -226,9 +263,9 @@ impl BasicERPC for BasicERPCImpl {
         meta: Self::Metadata,
         address: Hex<Address>,
         data: Hex<H256>,
-        _block: Option<String>,
+        block: Option<String>,
     ) -> Result<Hex<H256>, Error> {
-        let bank = meta.bank(DEFAULT_COMITTMENT);
+        let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
         Ok(Hex(evm_state.storage(address.0, data.0)))
     }
@@ -237,9 +274,9 @@ impl BasicERPC for BasicERPCImpl {
         &self,
         meta: Self::Metadata,
         address: Hex<Address>,
-        _block: Option<String>,
+        block: Option<String>,
     ) -> Result<Hex<U256>, Error> {
-        let bank = meta.bank(DEFAULT_COMITTMENT);
+        let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
         Ok(Hex(evm_state.basic(address.0).nonce))
     }
@@ -248,9 +285,9 @@ impl BasicERPC for BasicERPCImpl {
         &self,
         meta: Self::Metadata,
         address: Hex<Address>,
-        _block: Option<String>,
+        block: Option<String>,
     ) -> Result<Bytes, Error> {
-        let bank = meta.bank(None);
+        let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
         Ok(Bytes(evm_state.code(address.0)))
     }
@@ -260,7 +297,7 @@ impl BasicERPC for BasicERPCImpl {
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
     ) -> Result<Option<RPCTransaction>, Error> {
-        let bank = meta.bank(DEFAULT_COMITTMENT);
+        let bank = meta.bank(CommitmentConfig::recent().into());
         let evm_state = bank.evm_state.read().unwrap();
         let receipt = evm_state.get_tx_receipt_by_hash(tx_hash.0);
         Ok(match receipt {
@@ -296,7 +333,7 @@ impl BasicERPC for BasicERPCImpl {
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
     ) -> Result<Option<RPCReceipt>, Error> {
-        let bank = meta.bank(DEFAULT_COMITTMENT);
+        let bank = meta.bank(CommitmentConfig::recent().into());
         let evm_state = bank.evm_state.read().unwrap();
         let receipt = evm_state.get_tx_receipt_by_hash(tx_hash.0);
         Ok(match receipt {
@@ -323,220 +360,56 @@ impl BasicERPC for BasicERPCImpl {
         })
     }
 
-    fn transaction_by_block_hash_and_index(
-        &self,
-        _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-        _tx_id: Hex<U256>,
-    ) -> Result<Option<RPCTransaction>, Error> {
-        Ok(None)
-    }
-
-    fn transaction_by_block_number_and_index(
-        &self,
-        _meta: Self::Metadata,
-        _block: String,
-        _tx_id: Hex<U256>,
-    ) -> Result<Option<RPCTransaction>, Error> {
-        Ok(None)
-    }
-}
-
-pub struct BridgeERPCImpl {
-    key: solana_sdk::signature::Keypair,
-    accounts: HashMap<evm_state::Address, evm_state::SecretKey>,
-    rpc_client: RpcClient,
-}
-impl Default for BridgeERPCImpl {
-    fn default() -> Self {
-        let keypath = "./keyfile.json";
-        info!("Loading keypair from: {}", keypath);
-        let secret_key = evm_state::SecretKey::from_slice(&[1; 32]).unwrap();
-        let public_key = evm_state::PublicKey::from_secret_key(&evm_state::SECP256K1, &secret_key);
-        let rpc_client = RpcClient::new("http://127.0.0.1:8899".to_string());
-        let public_key = evm_state::addr_from_public_key(&public_key);
-        Self {
-            key: solana_sdk::signature::read_keypair_file(&keypath).unwrap(),
-            accounts: vec![(public_key, secret_key)].into_iter().collect(),
-            rpc_client,
-        }
-    }
-}
-
-impl BridgeERPC for BridgeERPCImpl {
-    type Metadata = JsonRpcRequestProcessor;
-
-    fn accounts(&self, _meta: Self::Metadata) -> Result<Vec<Hex<Address>>, Error> {
-        Ok(self.accounts.iter().map(|(k, _)| Hex(*k)).collect())
-    }
-
-    fn sign(
-        &self,
-        _meta: Self::Metadata,
-        _address: Hex<Address>,
-        _data: Bytes,
-    ) -> Result<Bytes, Error> {
-        Err(Error::NotFound)
-    }
-
-    fn send_transaction(
-        &self,
-        _meta: Self::Metadata,
-        tx: RPCTransaction,
-    ) -> Result<Hex<H256>, Error> {
-        let address = tx.from.map(|a| a.0).unwrap_or_default();
-
-        info!("send_transaction from = {}", address);
-
-        let secret_key = self.accounts.get(&address).unwrap();
-        let nonce = match tx.nonce.map(|a| a.0) {
-            Some(nonce) => nonce,
-            None => self
-                .rpc_client
-                .get_evm_transaction_count(&address)
-                .unwrap_or_default(),
-        };
-        let tx_create = evm::UnsignedTransaction {
-            nonce,
-            gas_price: tx.gas_price.map(|a| a.0).unwrap_or_else(|| 0.into()),
-            gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 300000.into()),
-            action: tx
-                .to
-                .map(|a| evm::TransactionAction::Call(a.0))
-                .unwrap_or(evm::TransactionAction::Create),
-            value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
-            input: tx.data.map(|a| a.0).unwrap_or_default(),
-        };
-        let hash = tx_create.signing_hash(CHAIN_ID.into());
-
-        let tx = tx_create.sign(&secret_key, CHAIN_ID.into());
-
-        info!(
-            "Printing tx_info from={:?}, to={:?}, nonce = {}, chain_id = {:?}",
-            tx.caller(),
-            tx.address(),
-            nonce,
-            tx.signature.chain_id()
-        );
-
-        let ix = solana_evm_loader_program::send_raw_tx(&self.key.pubkey(), tx);
-
-        let message = Message::new(&[ix], Some(&self.key.pubkey()));
-        let mut send_raw_tx: solana_sdk::transaction::Transaction =
-            solana_sdk::transaction::Transaction::new_unsigned(message);
-
-        info!("Getting block hash");
-        let (blockhash, _fee_calculator, _) = self
-            .rpc_client
-            .get_recent_blockhash_with_commitment(CommitmentConfig::default())
-            .unwrap()
-            .value;
-
-        send_raw_tx.sign(&vec![&self.key], blockhash);
-        println!("Sending tx = {:?}", send_raw_tx);
-        let result = self.rpc_client.send_transaction_with_config(
-            &send_raw_tx,
-            // CommitmentConfig::default(),
-            Default::default(),
-        );
-
-        println!("Result tx = {:?}", result);
-        Ok(Hex(hash))
-    }
-
-    fn send_raw_transaction(&self, _meta: Self::Metadata, tx: Bytes) -> Result<Hex<H256>, Error> {
-        info!("send_raw_transaction");
-        let tx: evm::Transaction = rlp::decode(&tx.0).unwrap();
-        let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
-        let hash = unsigned_tx.signing_hash(CHAIN_ID.into());
-        info!("loaded tx = {:?}, hash = {}", tx, hash);
-
-        info!(
-            "Printing tx_info from={:?}, to={:?}, nonce = {}, chain_id = {:?}",
-            tx.caller(),
-            tx.address(),
-            tx.nonce,
-            tx.signature.chain_id()
-        );
-
-        let ix = solana_evm_loader_program::send_raw_tx(&self.key.pubkey(), tx);
-
-        let message = Message::new(&[ix], Some(&self.key.pubkey()));
-        let mut send_raw_tx: solana_sdk::transaction::Transaction =
-            solana_sdk::transaction::Transaction::new_unsigned(message);
-
-        info!("Getting block hash");
-        let (blockhash, _fee_calculator, _) = self
-            .rpc_client
-            .get_recent_blockhash_with_commitment(CommitmentConfig::default())
-            .unwrap()
-            .value;
-
-        send_raw_tx.sign(&vec![&self.key], blockhash);
-        println!("Sending tx = {:?}", send_raw_tx);
-        let result = self.rpc_client.send_transaction_with_config(
-            &send_raw_tx,
-            // CommitmentConfig::default(),
-            Default::default(),
-        );
-
-        println!("Result tx = {:?}", result);
-        Ok(Hex(hash))
-    }
-
     fn call(
         &self,
         meta: Self::Metadata,
         tx: RPCTransaction,
-        _block: Option<String>,
+        block: Option<String>,
     ) -> Result<Bytes, Error> {
-        let caller = tx.from.map(|a| a.0).unwrap_or_default();
-
-        let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
-        let input = tx.data.map(|a| a.0).unwrap_or_else(Vec::new);
-        let gas_limit: u64 = tx
-            .gas
-            .map(|a| a.0)
-            .unwrap_or_else(|| 300000.into())
-            .try_into()
-            .map_err(|_| Error::InvalidParams)?;
-        let gas_limit = gas_limit as usize;
-
-        let bank = meta.bank(DEFAULT_COMITTMENT);
-        let evm_state = bank
-            .evm_state
-            .read()
-            .expect("meta bank EVM state was poisoned")
-            .clone();
-        let mut executor =
-            evm_state::Executor::with_config(evm_state, Config::istanbul(), gas_limit);
-        let address = tx.to.map(|h| h.0).unwrap_or_default();
-        let result =
-            executor.with_executor(|e| e.transact_call(caller, address, value, input, gas_limit));
-
-        println!("Result tx = {:?}, gas_limit={}", result, gas_limit);
+        let result = call(meta, tx, block)?;
         Ok(Bytes(result.1))
-    }
-
-    fn gas_price(&self, _meta: Self::Metadata) -> Result<Hex<Gas>, Error> {
-        //TODO: Add gas logic
-        Ok(Hex(1.into()))
     }
 
     fn estimate_gas(
         &self,
-        _meta: Self::Metadata,
-        _tx: RPCTransaction,
-        _block: Option<String>,
+        meta: Self::Metadata,
+        tx: RPCTransaction,
+        block: Option<String>,
     ) -> Result<Hex<Gas>, Error> {
-        Ok(Hex(300_000_000.into()))
+        let result = call(meta, tx, block)?;
+        Ok(Hex(result.2.into()))
     }
+}
 
-    fn compilers(&self, _meta: Self::Metadata) -> Result<Vec<String>, Error> {
-        Err(Error::NotFound)
-    }
+fn call(
+    meta: JsonRpcRequestProcessor,
+    tx: RPCTransaction,
+    _block: Option<String>,
+) -> Result<(evm_state::ExitReason, Vec<u8>, usize), Error> {
+    let caller = tx.from.map(|a| a.0).unwrap_or_default();
 
-    fn logs(&self, _meta: Self::Metadata, _log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
-        Err(Error::NotFound)
-    }
+    let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
+    let input = tx.data.map(|a| a.0).unwrap_or_else(Vec::new);
+    let gas_limit: u64 = tx
+        .gas
+        .map(|a| a.0)
+        .unwrap_or_else(|| 300000.into())
+        .try_into()
+        .map_err(|_| Error::InvalidParams)?;
+    let gas_limit = gas_limit as usize;
+
+    let bank = meta.bank(DEFAULT_COMITTMENT);
+    let evm_state = bank
+        .evm_state
+        .read()
+        .expect("meta bank EVM state was poisoned");
+
+    let evm_state = evm_state.clone(); // TODO: revise
+
+    let mut executor = evm_state::Executor::with_config(evm_state, Config::istanbul(), gas_limit);
+    let address = tx.to.map(|h| h.0).unwrap_or_default();
+    let result =
+        executor.with_executor(|e| e.transact_call(caller, address, value, input, gas_limit));
+    let gas_used = executor.with_executor(|e| e.used_gas());
+    Ok((result.0, result.1, gas_used))
 }

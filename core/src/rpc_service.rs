@@ -341,8 +341,6 @@ impl JsonRpcService {
                 io.extend_with(ether_basic.to_delegate());
                 let chain_mock = super::evm_rpc_impl::ChainMockERPCImpl;
                 io.extend_with(chain_mock.to_delegate());
-                let bridge_rpc = super::evm_rpc_impl::BridgeERPCImpl::default();
-                io.extend_with(bridge_rpc.to_delegate());
 
                 let request_middleware = RpcRequestMiddleware::new(
                     ledger_path,

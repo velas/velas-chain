@@ -1151,14 +1151,14 @@ impl RpcClient {
         address: &evm_state::Address,
     ) -> ClientResult<evm_state::U256> {
         self.send::<evm_rpc::Hex<_>>(
-            RpcRequest::GetEthTransactionCount,
+            RpcRequest::EthGetTransactionCount,
             json!([evm_rpc::Hex(*address)]),
         )
         .map(|h| h.0)
     }
 
     pub fn get_evm_balance(&self, address: &evm_state::Address) -> ClientResult<evm_state::U256> {
-        self.send::<evm_rpc::Hex<_>>(RpcRequest::GetEthBalance, json!([evm_rpc::Hex(*address)]))
+        self.send::<evm_rpc::Hex<_>>(RpcRequest::EthGetBalance, json!([evm_rpc::Hex(*address)]))
             .map(|h| h.0)
     }
 

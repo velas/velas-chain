@@ -66,6 +66,12 @@ pub struct RPCBlock {
     pub number: Hex<U256>,
     pub hash: Hex<H256>,
     pub parent_hash: Hex<H256>,
+
+    pub size: Hex<usize>,
+    pub gas_limit: Hex<Gas>,
+    pub gas_used: Hex<Gas>,
+    pub timestamp: Hex<u64>,
+    pub transactions: Either<Vec<Hex<H256>>, Vec<RPCTransaction>>,
     pub nonce: Hex<u64>,
     pub sha3_uncles: Hex<H256>,
     pub logs_bloom: Hex<H256>, // H2048
@@ -76,11 +82,6 @@ pub struct RPCBlock {
     pub difficulty: Hex<U256>,
     pub total_difficulty: Hex<U256>,
     pub extra_data: Bytes,
-    pub size: Hex<usize>,
-    pub gas_limit: Hex<Gas>,
-    pub gas_used: Hex<Gas>,
-    pub timestamp: Hex<u64>,
-    pub transactions: Either<Vec<Hex<H256>>, Vec<RPCTransaction>>,
     pub uncles: Vec<Hex<H256>>,
 }
 
@@ -232,28 +233,28 @@ pub mod basic {
             tx_hash: Hex<H256>,
         ) -> Result<Option<RPCTransaction>, Error>;
 
-        #[rpc(meta, name = "eth_getTransactionByBlockHashAndIndex")]
-        fn transaction_by_block_hash_and_index(
-            &self,
-            meta: Self::Metadata,
-            block_hash: Hex<H256>,
-            tx_id: Hex<U256>,
-        ) -> Result<Option<RPCTransaction>, Error>;
-
-        #[rpc(meta, name = "eth_getTransactionByBlockNumberAndIndex")]
-        fn transaction_by_block_number_and_index(
-            &self,
-            meta: Self::Metadata,
-            block: String,
-            tx_id: Hex<U256>,
-        ) -> Result<Option<RPCTransaction>, Error>;
-
         #[rpc(meta, name = "eth_getTransactionReceipt")]
         fn transaction_receipt(
             &self,
             meta: Self::Metadata,
             tx_hash: Hex<H256>,
         ) -> Result<Option<RPCReceipt>, Error>;
+
+        #[rpc(meta, name = "eth_call")]
+        fn call(
+            &self,
+            meta: Self::Metadata,
+            tx: RPCTransaction,
+            block: Option<String>,
+        ) -> Result<Bytes, Error>;
+
+        #[rpc(meta, name = "eth_estimateGas")]
+        fn estimate_gas(
+            &self,
+            meta: Self::Metadata,
+            tx: RPCTransaction,
+            block: Option<String>,
+        ) -> Result<Hex<Gas>, Error>;
     }
 }
 
@@ -356,6 +357,22 @@ pub mod chain_mock {
             meta: Self::Metadata,
             block: String,
         ) -> Result<Option<Hex<usize>>, Error>;
+
+        #[rpc(meta, name = "eth_getTransactionByBlockHashAndIndex")]
+        fn transaction_by_block_hash_and_index(
+            &self,
+            meta: Self::Metadata,
+            block_hash: Hex<H256>,
+            tx_id: Hex<U256>,
+        ) -> Result<Option<RPCTransaction>, Error>;
+
+        #[rpc(meta, name = "eth_getTransactionByBlockNumberAndIndex")]
+        fn transaction_by_block_number_and_index(
+            &self,
+            meta: Self::Metadata,
+            block: String,
+            tx_id: Hex<U256>,
+        ) -> Result<Option<RPCTransaction>, Error>;
     }
 }
 
@@ -388,24 +405,8 @@ pub mod bridge {
         fn send_raw_transaction(&self, meta: Self::Metadata, tx: Bytes)
             -> Result<Hex<H256>, Error>;
 
-        #[rpc(meta, name = "eth_call")]
-        fn call(
-            &self,
-            meta: Self::Metadata,
-            tx: RPCTransaction,
-            block: Option<String>,
-        ) -> Result<Bytes, Error>;
-
         #[rpc(meta, name = "eth_gasPrice")]
         fn gas_price(&self, meta: Self::Metadata) -> Result<Hex<Gas>, Error>;
-
-        #[rpc(meta, name = "eth_estimateGas")]
-        fn estimate_gas(
-            &self,
-            meta: Self::Metadata,
-            tx: RPCTransaction,
-            block: Option<String>,
-        ) -> Result<Hex<Gas>, Error>;
 
         #[rpc(meta, name = "eth_getCompilers")]
         fn compilers(&self, meta: Self::Metadata) -> Result<Vec<String>, Error>;

@@ -1147,6 +1147,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "evm-bridge"
+version = "0.1.0"
+dependencies = [
+ "env_logger 0.8.2",
+ "evm-rpc",
+ "evm-state",
+ "jsonrpc-core",
+ "jsonrpc-core-client",
+ "jsonrpc-derive",
+ "jsonrpc-http-server",
+ "jsonrpc-pubsub",
+ "jsonrpc-ws-server",
+ "log 0.4.11",
+ "num_cpus",
+ "paw",
+ "primitive-types",
+ "rlp",
+ "secp256k1",
+ "serde_json",
+ "sha3 0.9.1",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-core",
+ "solana-evm-loader-program",
+ "solana-runtime",
+ "solana-sdk 1.4.0",
+ "solana-transaction-status",
+ "structopt",
+]
+
+[[package]]
 name = "evm-core"
 version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

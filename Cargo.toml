@@ -37,6 +37,7 @@ members = [
     "net-shaper",
     "notifier",
     "evm-utils",
+    "evm-utils/evm-bridge",
     "evm-utils/programs/evm_loader",
     "evm-utils/evm-state",
     "evm-utils/evm-rpc",
