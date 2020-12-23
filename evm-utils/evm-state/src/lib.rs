@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_evm_bytecode() -> anyhow::Result<()> {
-        simple_logger::SimpleLogger::new().init()?;
+        let _ = simple_logger::SimpleLogger::new().init();
         let accounts = ["contract", "caller"];
 
         let code = hex::decode(HELLO_WORLD_CODE)?;
@@ -243,7 +243,7 @@ mod tests {
         let config = evm::Config::istanbul();
         let mut executor = Executor::with_config(
             backend
-                .try_fork(backend.slot + 1)
+                .try_fork(backend.current_slot + 1)
                 .ok_or_else(|| anyhow!("Unable to fork backend"))?,
             config,
             usize::max_value(),

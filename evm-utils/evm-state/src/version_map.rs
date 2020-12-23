@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::mb_value::MaybeValue;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Map<Version, Key, Value> {
     pub(crate) version: Version,
     state: BTreeMap<Key, MaybeValue<Value>>,
@@ -82,27 +82,40 @@ where
         self.state.insert(key, value);
     }
 
-    pub fn iter(
-        &self,
-    ) -> (
-        &Version,
-        impl Iterator<Item = (&Key, &MaybeValue<Value>)> + '_,
-    ) {
-        (
-            &self.version,
-            self.state.iter(), //.map(|(key, value)| (key, value.by_ref().into())),
-        )
+    pub fn iter_full<'a>(&'a self) -> VMapFullIter<'a, Version, Key, Value> {
+        VMapFullIter::Map(self)
     }
+}
 
-    pub fn full_iter(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &Version,
-            impl Iterator<Item = (&Key, &MaybeValue<Value>)> + '_,
-        ),
-    > + '_ {
-        std::iter::once(self.iter()).chain(self.parent.as_ref().map(|parent| parent.iter()))
+pub enum VMapFullIter<'a, Version, Key, Value> {
+    Map(&'a Map<Version, Key, Value>),
+    Parent(Option<&'a Map<Version, Key, Value>>),
+}
+
+impl<'a, Version, Key, Value> Iterator for VMapFullIter<'a, Version, Key, Value>
+where
+    Key: Ord,
+{
+    type Item = (
+        &'a Version,
+        std::collections::btree_map::Iter<'a, Key, MaybeValue<Value>>,
+    );
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use VMapFullIter::*; // Self actually
+        match self {
+            Map(map) => {
+                let item = (&map.version, map.state.iter());
+                *self = Parent(map.parent.as_ref().map(Arc::as_ref));
+                Some(item)
+            }
+            Parent(Some(parent)) => {
+                let item = (&parent.version, parent.state.iter());
+                *self = Parent(parent.parent.as_ref().map(Arc::as_ref));
+                Some(item)
+            }
+            Parent(None) => None,
+        }
     }
 }
 
@@ -138,21 +151,6 @@ where
             state: BTreeMap::new(),
             parent: self.parent.clone(),
         })
-    }
-}
-
-impl<Version, Key, Value> fmt::Debug for Map<Version, Key, Value>
-where
-    Version: fmt::Debug,
-    Key: fmt::Debug,
-    Value: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Map")
-            .field("version", &self.version)
-            .field("state", &self.state)
-            .field("parent", &"omited")
-            .finish()
     }
 }
 
@@ -212,5 +210,53 @@ mod test {
         assert_eq!(map.get(&"first"), Found(None));
         assert_eq!(map.get(&"second"), Found(Some(&2)));
         assert_eq!(map.get(&"third"), Found(Some(&1)));
+    }
+
+    #[test]
+    fn try_fork_produces_correct_track_on_freezed_state() {
+        let mut map: Map<_, _, _> = Map::empty(0);
+
+        // map.insert("default", 0);
+        map.freeze();
+        map = map.try_fork(map.version + 1).unwrap();
+
+        map.insert("first", 1);
+        map.freeze();
+        map = map.try_fork(map.version + 1).unwrap();
+
+        map.insert("second", 2);
+        map.freeze();
+        map = map.try_fork(map.version + 1).unwrap();
+
+        map.insert("third", 3);
+        // map.freeze();
+
+        let expected = vec![
+            (3, vec![("third", 3)]),
+            (2, vec![("second", 2)]),
+            (1, vec![("first", 1)]),
+            (0, vec![]),
+        ];
+
+        let full = dbg!(map)
+            .iter_full()
+            .map(|(version, iter)| {
+                (
+                    *version,
+                    iter.map(|(k, v)| {
+                        (
+                            *k,
+                            match v {
+                                MaybeValue::Value(v) => *v,
+                                MaybeValue::Removed => unreachable!(),
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(full, expected);
     }
 }

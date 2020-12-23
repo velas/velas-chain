@@ -531,21 +531,19 @@ impl Bank {
         let fee_rate_governor =
             FeeRateGovernor::new_derived(&parent.fee_rate_governor, parent.signature_count());
 
+        let evm_state = parent
+            .evm_state
+            .read()
+            .expect("parent evm state was poisoned")
+            .try_fork(slot)
+            .expect("unable to fork evm state from parent bank right after freezing it");
+
         let mut new = Bank {
             rc,
             src,
             slot,
             epoch,
-            evm_state: RwLock::new({
-                let mut evm_wl = parent
-                    .evm_state
-                    .write()
-                    .expect("parent evm state was poisoned");
-                evm_wl.freeze();
-                evm_wl
-                    .try_fork(slot)
-                    .expect("Unable to fork EVM state right after freezing it")
-            }),
+            evm_state: RwLock::new(evm_state),
             blockhash_queue: RwLock::new(parent.blockhash_queue.read().unwrap().clone()),
 
             // TODO: clean this up, soo much special-case copying...
@@ -1129,6 +1127,14 @@ impl Bank {
 
     pub fn freeze(&self) {
         let mut hash = self.hash.write().unwrap();
+
+        {
+            let mut evm_state = self.evm_state.write().expect("evm state was poisoned");
+
+            evm_state.freeze();
+            evm_state.dump_all().expect("unable to dump evm state");
+        }
+
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
