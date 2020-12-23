@@ -91,11 +91,17 @@ where
             })
     }
 
-    pub fn new_version(&self, version: V, previous: Previous<V>) -> Result<()> {
+    pub fn new_version(&self, version: V, previous: Previous<V>) -> Result<()>
+    where
+        V: PartialEq + std::fmt::Debug,
+    {
+        assert_ne!(Some(version), previous);
         let version = CODER.serialize(&version).typed_ctx()?;
         if self.db.get(&version)?.is_none() {
             let previous = CODER.serialize(&previous).typed_ctx()?;
             self.db.put(version, previous)?;
+        } else {
+            // TODO: assert the same
         }
         Ok(())
     }
@@ -244,6 +250,136 @@ impl<'a, V, M: PersistentAssoc> PersistentMap<'a, V, M> {
     }
 }
 
+mod track {
+    use std::fmt::{self, Display};
+    use std::ops::{Range, Sub};
+
+    #[derive(Debug, Clone)]
+    enum RevTrack<V> {
+        Single(V),
+        Sequence(std::ops::Range<V>),
+    }
+
+    use RevTrack::*;
+
+    impl<V> RevTrack<V> {
+        fn single(v: V) -> Self {
+            Self::Single(v)
+        }
+
+        fn is_prev(&self, other: V) -> bool
+        where
+            V: Copy + Sub<Output = V> + PartialEq + Stepped,
+        {
+            (match self {
+                Single(v) => *v,
+                Sequence(range) => range.start,
+            }) - other
+                == V::ONE
+        }
+
+        fn prepend(&mut self, prev: V)
+        where
+            V: Copy,
+        {
+            match self {
+                Single(v) => {
+                    *self = Sequence(Range {
+                        start: prev,
+                        end: *v,
+                    })
+                }
+                Sequence(range) => range.start = prev,
+            }
+        }
+    }
+
+    pub(super) struct Checked<V>(Vec<RevTrack<V>>);
+
+    impl<V> Default for Checked<V> {
+        fn default() -> Self {
+            Self(vec![])
+        }
+    }
+
+    impl<V> Checked<V> {
+        pub fn prepend(&mut self, prev: V)
+        where
+            V: Copy + Sub<Output = V> + PartialEq + Stepped,
+        {
+            match self.0.last_mut() {
+                Some(ref mut last) if last.is_prev(prev) => last.prepend(prev),
+                Some(_) | None => self.0.push(Single(prev)),
+            }
+        }
+    }
+
+    impl<V: Display> Display for RevTrack<V> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Single(v) => write!(f, "{}", v),
+                Sequence(range) => write!(f, "{}..{}", range.end, range.start),
+            }
+        }
+    }
+
+    impl<V: Display> Display for Checked<V> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "[")?;
+            let mut iter = self.0.iter().peekable();
+            while let Some(track) = iter.next() {
+                write!(f, "{}", track)?;
+                if iter.peek().is_some() {
+                    write!(f, ", ")?;
+                }
+            }
+            write!(f, "]")?;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn it_prints_tracks_as_expected() {
+        impl<V: Display> Checked<V> {
+            fn assert_display(&self, s: &str) {
+                assert_eq!(format!("{}", self), s);
+            }
+        }
+        let mut c = Checked::<u64>::default();
+        c.assert_display("[]");
+        c.prepend(42);
+        c.assert_display("[42]");
+        c.prepend(19);
+        c.assert_display("[42, 19]");
+        c.prepend(18);
+        c.assert_display("[42, 19..18]");
+        c.prepend(17);
+        c.assert_display("[42, 19..17]");
+        c.prepend(15);
+        c.prepend(14);
+        c.prepend(13);
+        c.assert_display("[42, 19..17, 15..13]");
+    }
+
+    pub trait Stepped {
+        const ONE: Self;
+    }
+
+    macro_rules! nums_as_stepped {
+        ($($ty:ty),+) => {
+            $(
+                impl Stepped for $ty {
+                    const ONE: $ty = 1;
+                }
+            )+
+        }
+    }
+
+    nums_as_stepped! {
+        u8, u16, u32, u64, u128
+    }
+}
+
 impl<'a, V, M: PersistentAssoc> PersistentMap<'a, V, M>
 where
     V: Copy + AsBytePrefix + Serialize + DeserializeOwned,
@@ -256,7 +392,16 @@ where
         Ok(())
     }
 
-    pub fn get_for(&self, version: V, key: M::Key) -> Result<Option<MaybeValue<M::Value>>> {
+    pub fn get_for(&self, version: V, key: M::Key) -> Result<Option<MaybeValue<M::Value>>>
+    where
+        V: std::fmt::Debug
+            + std::fmt::Display
+            + PartialEq
+            + track::Stepped
+            + std::ops::Sub<Output = V>,
+        M::Key: std::fmt::Debug,
+        M::Value: std::fmt::Debug,
+    {
         let _guard = self
             .storage
             .squash_guard
@@ -265,15 +410,29 @@ where
 
         let mut next_version = Some(version);
 
+        let mut track = track::Checked::<V>::default();
+
         while let Some(version) = next_version.take() {
+            track.prepend(version);
             let value = self.get_exact_for(version, key)?;
             if value.is_some() {
+                log::debug!(
+                    "get_for: key {:?} found with track {}: value {:?}",
+                    key,
+                    track,
+                    &value
+                );
                 return Ok(value);
             } else {
-                next_version = self.storage.previous_of(version)?;
+                let previous = self.storage.previous_of(version)?;
+                log::trace!("get_for: previous of {:?} is {:?}", version, previous);
+                assert_ne!(Some(version), previous);
+                next_version = previous;
                 continue;
             }
         }
+
+        log::debug!("get_for: not found {}", track);
 
         Ok(None)
     }
@@ -401,7 +560,10 @@ where
     Value: Serialize + DeserializeOwned,
 {
     // TODO: previous versions as argument
-    pub fn insert(&self, version: V, value: Value) -> Result<()> {
+    pub fn insert(&self, version: V, value: Value) -> Result<()>
+    where
+        V: std::fmt::Debug + PartialEq,
+    {
         self.insert_with(version, (), value.into())?;
         self.storage.new_version(version, None)?;
         Ok(())
@@ -559,6 +721,15 @@ mod tests {
             let b = B::from_bytes(&bytes[A::SIZE..(A::SIZE + B::SIZE)])?;
             Ok((a, b))
         }
+    }
+
+    #[test]
+    fn it_handles_versions_as_expected() -> Result<()> {
+        persistent_types! { KV in "kv" => u64 : usize } // TODO: rm, can be any
+        let dir = TmpDir::new("it_handles_versions_as_expected");
+        let s = VersionedStorage::<u64>::open(&dir, COLUMN_NAMES)?;
+        assert_eq!(s.previous_of(0)?, None);
+        Ok(())
     }
 
     #[test]

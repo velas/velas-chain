@@ -1,6 +1,7 @@
 use std::{any::type_name, borrow::Cow, path::Path};
 
 use evm::backend::Log;
+use log::*;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 
@@ -74,7 +75,8 @@ type Mapped<M> = Map<Slot, <M as PersistentAssoc>::Key, <M as PersistentAssoc>::
 
 #[derive(Clone)] // TODO: Debug
 pub struct EvmState {
-    pub(crate) slot: Slot,
+    pub(crate) current_slot: Slot,
+    pub(crate) previous_slot: Option<Slot>,
 
     pub(crate) accounts: Mapped<Accounts>,
     pub(crate) accounts_storage: Mapped<AccountsStorage>,
@@ -95,6 +97,7 @@ impl Default for EvmState {
 
 impl EvmState {
     pub fn freeze(&mut self) {
+        info!(target: "evm_state", "freezing evm state (slot {})", self.current_slot);
         self.accounts.freeze();
         self.accounts_storage.freeze();
         self.txs_receipts.freeze();
@@ -102,15 +105,31 @@ impl EvmState {
     }
 
     pub fn try_fork(&self, new_slot: Slot) -> Option<Self> {
+        info!(
+            "forking evm state (slots: from {} to {})",
+            self.current_slot, new_slot
+        );
         let accounts = self.accounts.try_fork(new_slot)?;
         let accounts_storage = self.accounts_storage.try_fork(new_slot)?;
         let txs_receipts = self.txs_receipts.try_fork(new_slot)?;
         let txs_in_block = self.txs_in_block.try_fork(new_slot)?;
 
+        // XXX: >_<
+        if new_slot != self.current_slot {
+            debug!(
+                "new slot {} with previous {:?}",
+                self.current_slot, self.previous_slot
+            );
+            self.storage
+                .new_version(self.current_slot, self.previous_slot)
+                .unwrap();
+        }
+
         // TODO: save new_slot in new state and refactor memory map as versionless with inlined get w/o layered map proxy
 
         Some(Self {
-            slot: new_slot,
+            current_slot: new_slot,
+            previous_slot: Some(self.current_slot),
 
             accounts,
             accounts_storage,
@@ -126,6 +145,7 @@ impl EvmState {
         dump_into(&self.storage.typed::<Accounts>(), &mut self.accounts)?;
         dump_into(&self.storage.typed::<AccountsStorage>(), &mut self.accounts_storage)?;
         dump_into(&self.storage.typed::<TransactionReceipts>(), &mut self.txs_receipts)?;
+        debug!(target: "evm_state", "all layers have been dumped");
         Ok(())
     }
 
@@ -136,26 +156,60 @@ impl EvmState {
         key: M::Key,
     ) -> Option<Cow<'a, M::Value>>
     where
-        M::Key: Copy + Ord,
-        M::Value: Clone,
+        M::Key: Copy + Ord + std::fmt::Debug,
+        M::Value: Clone + std::fmt::Debug,
     {
+        debug!("lookup {} for key {:?}", type_name::<M>(), &key);
         match map.get(&key) {
-            KeyResult::Found(mb_value) => mb_value.map(Cow::Borrowed),
-            KeyResult::NotFound(last_version) => self
-                .storage
-                .typed::<M>()
-                .get_for(*last_version, key)
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "Storage ({} :: Key {} => Value {}) lookup error: {:?}",
+            KeyResult::Found(mb_value) => mb_value.map(|value| {
+                debug!(
+                    "{}: key {:?} was found in memory layer, value: {:?}",
+                    type_name::<M>(),
+                    key,
+                    &value
+                );
+                Cow::Borrowed(value)
+            }),
+            KeyResult::NotFound(last_version) => {
+                debug!("last looked version in memory was {}", last_version);
+
+                let old_lookup =
+                    if *last_version == self.current_slot && self.previous_slot.is_some() {
+                        self.previous_slot.unwrap()
+                    } else {
+                        *last_version
+                    };
+
+                if let Some(mb_value) = self
+                    .storage
+                    .typed::<M>()
+                    .get_for(old_lookup, key)
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "Storage ({} :: Key {} => Value {}) lookup error: {:?}",
+                            type_name::<M>(),
+                            type_name::<M::Key>(),
+                            type_name::<M::Value>(),
+                            err
+                        )
+                    })
+                {
+                    debug!(
+                        "{}: key {:?} was found in storage, value: {:?}",
                         type_name::<M>(),
-                        type_name::<M::Key>(),
-                        type_name::<M::Value>(),
-                        err
-                    )
-                })
-                .and_then(Option::from)
-                .map(Cow::Owned),
+                        key,
+                        &mb_value
+                    );
+                    Option::from(mb_value).map(Cow::Owned)
+                } else {
+                    debug!(
+                        "{}: key {:?} was not found in storage",
+                        type_name::<M>(),
+                        key
+                    );
+                    None
+                }
+            }
         }
     }
 }
@@ -165,40 +219,62 @@ fn dump_into<'a, M: PersistentAssoc>(
     map: &mut Mapped<M>,
 ) -> anyhow::Result<()>
 where
-    M::Key: Ord + Copy,
-    M::Value: Clone,
+    M::Key: Ord + Copy + std::fmt::Debug,
+    M::Value: Clone + std::fmt::Debug,
 {
-    let mut full_iter = map.full_iter().peekable();
+    trace!("dump assoc {} ...", type_name::<M>());
+
+    let mut full_iter = map.iter_full().peekable();
     while let Some((version, kvs)) = full_iter.next() {
         for (key, value) in kvs {
+            debug!(
+                "{}: {:?} {:?} migrates from memory into storage...",
+                version, key, &value
+            );
             storage.insert_with(*version, *key, value.clone())?;
+            debug!(
+                "{}: {:?} in storage as {:?}",
+                version,
+                key,
+                storage.get_for(*version, *key)
+            );
         }
 
-        let previous = full_iter
-            .peek()
-            .map(|(previous, _)| **previous)
-            .or_else(|| storage.previous_of(*version).ok().flatten());
-        storage.new_version(*version, previous)?;
+        // let previous = full_iter
+        //     .peek()
+        //     .map(|(previous, _)| **previous)
+        //     .or_else(|| storage.previous_of(*version).ok().flatten());
     }
     drop(full_iter);
 
     map.clear();
+    trace!("dump assoc {} done", type_name::<M>());
     Ok(())
 }
 
 impl EvmState {
     pub fn load_from<P: AsRef<Path>>(path: P, slot: Slot) -> Result<Self, anyhow::Error> {
+        info!(
+            "open evm state storage {} for slot {}",
+            path.as_ref().display(),
+            slot
+        );
         let storage = VersionedStorage::open(path, COLUMN_NAMES)?;
+        let previous_slot = storage.previous_of(slot)?;
+        debug!(
+            "storage reports: previous of {} is {:?}",
+            slot, previous_slot
+        );
 
         Ok(Self {
-            slot,
-            logs: vec![],
+            current_slot: slot,
+            previous_slot,
 
             accounts: Map::empty(slot),
             accounts_storage: Map::empty(slot),
             txs_receipts: Map::empty(slot),
             txs_in_block: Map::empty(slot),
-
+            logs: vec![],
             storage,
         })
     }
@@ -247,10 +323,19 @@ mod tests {
 
     use super::*;
 
-    const RANDOM_INCR: u64 = 734512;
+    const RANDOM_INCR: u64 = 1; // TODO: replace by rand::SeedableRng implementor
     const MAX_SIZE: usize = 32; // Max size of test collections.
 
-    const SEED: u64 = 123;
+    const SEED: u64 = 1;
+
+    #[test]
+    fn it_handles_my_own_expectations() {
+        let tmp_dir = TmpDir::new("it_handles_my_own_expectations");
+        let mut evm_state = EvmState::load_from(&tmp_dir, 0).unwrap();
+        assert_eq!(evm_state.current_slot, 0);
+        assert_eq!(evm_state.previous_slot, None);
+        // assert_eq!(evm_state.storage.previous_of(0).unwrap(), None);
+    }
 
     fn generate_account_by_seed(seed: u64) -> AccountState {
         let mut rng = StepRng::new(seed * RANDOM_INCR + seed, RANDOM_INCR);
@@ -426,39 +511,77 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_same_after_dump() -> anyhow::Result<()> {
-        let accounts = generate_accounts_addresses(SEED, 42_000);
+    fn reads_the_same_after_consequent_dumps() -> anyhow::Result<()> {
+        use std::ops::Bound::Included;
+        let _ = simple_logger::SimpleLogger::from_env().init();
 
-        let storage = generate_storage(SEED, &accounts);
+        const N_VERSIONS: usize = 10;
+        const ACCOUNTS_PER_VERSION: usize = 10;
+
+        let accounts = generate_accounts_addresses(SEED, ACCOUNTS_PER_VERSION * N_VERSIONS);
         let accounts_state = generate_accounts_state(SEED, &accounts);
-        let storage_diff = to_state_diff(storage, BTreeSet::new());
-        let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
-
-        let slot = 0;
+        let accounts_storage = generate_storage(SEED, &accounts);
 
         let tmp_dir = TmpDir::new("reads_the_same_after_dump");
-        let mut evm_state = EvmState::load_from(tmp_dir, slot)?;
+        let mut evm_state = EvmState::load_from(tmp_dir, 0)?;
 
-        save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
-        evm_state.freeze();
-        evm_state.dump_all()?;
+        for accounts_per_version in accounts.chunks(N_VERSIONS) {
+            for account in accounts_per_version {
+                log::debug!("working with account: {:?}", account);
+                evm_state
+                    .accounts
+                    .insert(*account, accounts_state[account].clone());
 
-        {
-            let mut evm_state = evm_state
-                .try_fork(slot + 1)
-                .ok_or_else(|| anyhow!("Unable to fork evm state after freezing"))?;
-            let accounts = generate_accounts_addresses(SEED + 1, 42_000);
+                for (account_with_index, data) in accounts_storage.range((
+                    Included((*account, H256::zero())),
+                    Included((*account, H256::repeat_byte(u8::MAX))),
+                )) {
+                    evm_state
+                        .accounts_storage
+                        .insert(*account_with_index, *data);
+                }
+            }
 
-            let storage = generate_storage(SEED + 1, &accounts);
-            let accounts_state = generate_accounts_state(SEED + 1, &accounts);
-            let storage_diff = to_state_diff(storage, BTreeSet::new());
-            let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
-            save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
+            evm_state.freeze();
             evm_state.dump_all()?;
-            assert_state(&evm_state, &accounts_state_diff, &storage_diff);
+
+            let next_slot = evm_state.current_slot + 1;
+            evm_state = evm_state
+                .try_fork(next_slot)
+                .expect("unable to fork evm state after freeze");
         }
 
-        assert_state(&evm_state, &accounts_state_diff, &storage_diff);
+        let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
+        let accounts_storage_diff = to_state_diff(accounts_storage, BTreeSet::new());
+
+        assert_state(&evm_state, &accounts_state_diff, &accounts_storage_diff);
+
         Ok(())
+    }
+
+    #[test]
+    fn lookups_thru_forks() {
+        let _ = simple_logger::SimpleLogger::new().init();
+
+        let tmp_dir = TmpDir::new("lookups_thru_forks");
+        let mut state = EvmState::load_from(tmp_dir, 0).unwrap();
+
+        let accounts = generate_accounts_addresses(SEED, 1);
+        let account_states = generate_accounts_state(SEED, &accounts);
+
+        let account = accounts.first().copied().unwrap();
+        let account_state = account_states[&account].clone();
+
+        state.accounts.insert(account, account_state.clone());
+
+        for _ in 0..42 {
+            state.freeze();
+            state.dump_all().unwrap();
+
+            let next_slot = state.current_slot + 1;
+            state = state.try_fork(next_slot).unwrap();
+        }
+
+        assert_eq!(state.get_account(account), Some(account_state));
     }
 }

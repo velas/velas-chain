@@ -11,7 +11,8 @@ impl TmpDir {
         let path = env::temp_dir().join(sub_dir);
         let pprint = path.as_path().display();
         if path.exists() {
-            panic!("Path is {} already exists", pprint);
+            // panic!("Path is {} already exists", pprint);
+            fs::remove_dir_all(&path).expect("Unable to cleanup existing dir");
         }
         fs::create_dir(&path)
             .unwrap_or_else(|err| panic!("Unable to create tmp dir {}: {:?}", pprint, err));

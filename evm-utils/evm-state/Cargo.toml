@@ -15,7 +15,7 @@ rocksdb = { version = "0.15.0", default-features = false }
 
 primitive-types = "0.7.2"
 keccak-hash = "0.5"
-log = "0.4"
+log = "0.4.11"
 simple_logger = "1.11"
 hex = "0.4.2"
 serde = "1.0"
