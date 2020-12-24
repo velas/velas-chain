@@ -269,12 +269,7 @@ impl SyncClient for BankClient {
 
     /// Get account balance or 0 if not found.
     fn get_evm_balance(&self, pubkey: &evm_state::Address) -> Result<evm_state::U256> {
-        use evm_state::Backend;
-        let backend = evm_state::EvmBackend::new_from_state(
-            self.bank.evm_state.read().unwrap().clone(),
-            evm_state::MemoryVicinity::default(), // TODO(@vldm): revise
-        );
-        Ok(backend.basic(*pubkey).balance)
+        Ok(self.bank.evm_state.read().unwrap().basic(*pubkey).balance)
     }
 }
 

@@ -40,12 +40,12 @@ pub struct AccountState {
 
 #[derive(Debug, Clone)]
 pub struct EvmState {
-    vicinity: MemoryVicinity,
     pub(crate) accounts: Map<H160, AccountState>,
     // Store every account storage at single place, to use power of versioned map.
     // This allows us to save only changed data.
     pub(crate) storage: Map<(H160, H256), H256>,
     pub(crate) txs_receipts: Map<H256, TransactionReceipt>,
+    pub(crate) txs_in_block: Map<u64, H256>,
     pub(crate) logs: Vec<Log>,
 }
 
@@ -56,12 +56,12 @@ impl Default for EvmState {
 }
 
 impl EvmState {
-    pub fn new(vicinity: MemoryVicinity) -> Self {
+    pub fn new() -> Self {
         Self {
-            vicinity,
             accounts: Map::new(),
             storage: Map::new(),
             txs_receipts: Map::new(),
+            txs_in_block: Map::new(),
             logs: Vec::new(),
         }
     }
@@ -76,12 +76,13 @@ impl EvmState {
         let accounts = self.accounts.try_fork()?;
         let storage = self.storage.try_fork()?;
         let txs_receipts = self.txs_receipts.try_fork()?;
+        let txs_in_block = self.txs_in_block.try_fork()?;
 
         Some(Self {
-            vicinity: self.vicinity.clone(),
             accounts,
             storage,
             txs_receipts,
+            txs_in_block,
             logs: vec![],
         })
     }
@@ -90,22 +91,11 @@ impl EvmState {
 impl EvmState {
     // TODO: Replace it by persistent storage
     pub fn new_not_forget_to_deserialize_later() -> Self {
-        let vicinity = MemoryVicinity {
-            gas_price: U256::zero(),
-            origin: H160::default(),
-            chain_id: U256::zero(),
-            block_hashes: Vec::new(),
-            block_number: U256::zero(),
-            block_coinbase: H160::default(),
-            block_timestamp: U256::zero(),
-            block_difficulty: U256::zero(),
-            block_gas_limit: U256::max_value(),
-        };
         EvmState {
-            vicinity,
             accounts: Map::new(),
             storage: Map::new(),
             txs_receipts: Map::new(),
+            txs_in_block: Map::new(),
             logs: Vec::new(),
         }
     }
@@ -116,6 +106,10 @@ impl EvmState {
 
     pub fn get_account(&self, address: H160) -> Option<AccountState> {
         self.accounts.get(&address).cloned()
+    }
+
+    pub fn basic(&self, account: H160) -> AccountState {
+        self.get_account(account).unwrap_or_default()
     }
 
     pub fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
@@ -143,10 +137,10 @@ mod test {
     impl EvmState {
         pub(crate) fn testing_default() -> EvmState {
             EvmState {
-                vicinity: Default::default(),
                 accounts: Default::default(),
                 storage: Default::default(),
                 txs_receipts: Default::default(),
+                txs_in_block: Default::default(),
                 logs: Default::default(),
             }
         }

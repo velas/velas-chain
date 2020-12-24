@@ -181,7 +181,7 @@ pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b5060043
 #[cfg(test)]
 pub mod tests {
 
-    use super::StaticExecutor;
+    use super::Executor;
     use super::*;
     use assert_matches::assert_matches;
     use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
@@ -233,7 +233,7 @@ pub mod tests {
         backend.write().unwrap().freeze();
 
         let config = evm::Config::istanbul();
-        let mut executor = StaticExecutor::with_config(
+        let mut executor = Executor::with_config(
             backend.read().unwrap().try_fork().unwrap(),
             config,
             usize::max_value(),
@@ -270,7 +270,7 @@ pub mod tests {
         }
 
         let patch = executor.deconstruct();
-        backend.swap_commit(patch);
+        backend.write().unwrap().swap_commit(patch);
 
         let mutex_lock = backend.read().unwrap();
         let contract = mutex_lock.accounts.get(&name_to_key("contract"));

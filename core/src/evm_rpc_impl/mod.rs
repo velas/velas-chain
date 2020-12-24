@@ -267,7 +267,9 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Hex<H256>, Error> {
         let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
-        Ok(Hex(evm_state.storage(address.0, data.0)))
+        Ok(Hex(evm_state
+            .get_storage(address.0, data.0)
+            .unwrap_or_default()))
     }
 
     fn transaction_count(
@@ -289,7 +291,7 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Bytes, Error> {
         let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
-        Ok(Bytes(evm_state.code(address.0)))
+        Ok(Bytes(evm_state.basic(address.0).code))
     }
 
     fn transaction_by_hash(
