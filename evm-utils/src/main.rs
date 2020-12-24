@@ -16,9 +16,12 @@ use std::io::{Read, Write};
 // With the "paw" feature enabled in structopt
 #[derive(Debug, structopt::StructOpt)]
 enum SubCommands {
+    /// Broadcast raw ethereum transaction.
     SendRawTx {
+        /// A path to a file where raw transaction is stored in bincode encoding.
         raw_tx: String,
     },
+    /// Create deposit account.
     CreateDeposit {
         account_keypair: Option<String>,
     },

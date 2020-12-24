@@ -1122,12 +1122,6 @@ impl Bank {
 
     pub fn freeze(&self) {
         let mut hash = self.hash.write().unwrap();
-
-        self.evm_state
-            .write()
-            .expect("EVM state was poisoned")
-            .freeze();
-
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
@@ -1892,8 +1886,12 @@ impl Bank {
             .expect("bank evm state was poisoned")
             .clone();
 
-        let mut evm_executor =
-            evm_state::Executor::with_config(evm_state, evm_state::Config::istanbul(), usize::MAX);
+        let mut evm_executor = evm_state::Executor::with_config(
+            evm_state,
+            evm_state::Config::istanbul(),
+            usize::MAX,
+            self.slot(),
+        );
 
         let mut signature_count: u64 = 0;
         let mut executed: Vec<TransactionProcessResult> = Vec::new();

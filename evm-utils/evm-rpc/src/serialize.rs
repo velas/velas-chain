@@ -8,14 +8,25 @@ pub struct Hex<T>(pub T);
 #[derive(Debug, Clone)]
 pub struct Bytes(pub Vec<u8>);
 
+type Error = ();
+
 fn format_hex_trimmed<T: LowerHex>(val: &T) -> String {
     let hex_str = format!("{:x}", val);
     format!("0x{}", hex_str.trim_start_matches('0'))
 }
 
+impl<T: FormatHex> Hex<T> {
+    pub fn from_hex(data: &str) -> Result<Self, Error> {
+        if &data[0..2] != "0x" {
+            return Err(());
+        }
+        T::from_hex(&data[2..]).map(Hex)
+    }
+}
+
 pub trait FormatHex {
     fn format_hex(&self) -> String;
-    fn from_hex(data: &str) -> Result<Self, ()>
+    fn from_hex(data: &str) -> Result<Self, Error>
     where
         Self: Sized;
 }
@@ -25,7 +36,7 @@ impl FormatHex for usize {
         format_hex_trimmed(self)
     }
 
-    fn from_hex(data: &str) -> Result<Self, ()> {
+    fn from_hex(data: &str) -> Result<Self, Error> {
         Self::from_str_radix(data, 16).map_err(|_| ())
     }
 }
@@ -34,7 +45,7 @@ impl FormatHex for u8 {
     fn format_hex(&self) -> String {
         format_hex_trimmed(self)
     }
-    fn from_hex(data: &str) -> Result<Self, ()> {
+    fn from_hex(data: &str) -> Result<Self, Error> {
         Self::from_str_radix(data, 16).map_err(|_| ())
     }
 }
@@ -43,7 +54,7 @@ impl FormatHex for u16 {
     fn format_hex(&self) -> String {
         format_hex_trimmed(self)
     }
-    fn from_hex(data: &str) -> Result<Self, ()> {
+    fn from_hex(data: &str) -> Result<Self, Error> {
         Self::from_str_radix(data, 16).map_err(|_| ())
     }
 }
@@ -51,7 +62,7 @@ impl FormatHex for u32 {
     fn format_hex(&self) -> String {
         format_hex_trimmed(self)
     }
-    fn from_hex(data: &str) -> Result<Self, ()> {
+    fn from_hex(data: &str) -> Result<Self, Error> {
         Self::from_str_radix(data, 16).map_err(|_| ())
     }
 }
@@ -60,7 +71,7 @@ impl FormatHex for u64 {
     fn format_hex(&self) -> String {
         format_hex_trimmed(self)
     }
-    fn from_hex(data: &str) -> Result<Self, ()> {
+    fn from_hex(data: &str) -> Result<Self, Error> {
         Self::from_str_radix(data, 16).map_err(|_| ())
     }
 }
@@ -69,7 +80,7 @@ impl FormatHex for U128 {
     fn format_hex(&self) -> String {
         format_hex_trimmed(self)
     }
-    fn from_hex(s: &str) -> Result<Self, ()> {
+    fn from_hex(s: &str) -> Result<Self, Error> {
         FromStr::from_str(&s).map_err(|_| ())
     }
 }
@@ -78,7 +89,7 @@ impl FormatHex for U256 {
     fn format_hex(&self) -> String {
         format_hex_trimmed(self)
     }
-    fn from_hex(s: &str) -> Result<Self, ()> {
+    fn from_hex(s: &str) -> Result<Self, Error> {
         FromStr::from_str(&s).map_err(|_| ())
     }
 }
@@ -87,7 +98,7 @@ impl FormatHex for U512 {
     fn format_hex(&self) -> String {
         format_hex_trimmed(self)
     }
-    fn from_hex(s: &str) -> Result<Self, ()> {
+    fn from_hex(s: &str) -> Result<Self, Error> {
         FromStr::from_str(&s).map_err(|_| ())
     }
 }
@@ -96,7 +107,7 @@ impl FormatHex for H512 {
     fn format_hex(&self) -> String {
         format!("0x{:x}", self)
     }
-    fn from_hex(s: &str) -> Result<Self, ()> {
+    fn from_hex(s: &str) -> Result<Self, Error> {
         FromStr::from_str(&s).map_err(|_| ())
     }
 }
@@ -105,7 +116,7 @@ impl FormatHex for H256 {
     fn format_hex(&self) -> String {
         format!("0x{:x}", self)
     }
-    fn from_hex(s: &str) -> Result<Self, ()> {
+    fn from_hex(s: &str) -> Result<Self, Error> {
         FromStr::from_str(&s).map_err(|_| ())
     }
 }
@@ -114,7 +125,7 @@ impl FormatHex for H160 {
     fn format_hex(&self) -> String {
         format!("0x{:x}", self)
     }
-    fn from_hex(s: &str) -> Result<Self, ()> {
+    fn from_hex(s: &str) -> Result<Self, Error> {
         FromStr::from_str(&s).map_err(|_| ())
     }
 }

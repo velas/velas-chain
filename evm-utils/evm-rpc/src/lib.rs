@@ -57,7 +57,7 @@ pub struct RPCReceipt {
     pub contract_address: Option<Hex<Address>>,
     pub logs: Vec<RPCLog>,
     pub root: Hex<H256>,
-    pub status: usize,
+    pub status: Hex<usize>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -72,12 +72,15 @@ pub struct RPCBlock {
     pub gas_used: Hex<Gas>,
     pub timestamp: Hex<u64>,
     pub transactions: Either<Vec<Hex<H256>>, Vec<RPCTransaction>>,
-    pub nonce: Hex<u64>,
-    pub sha3_uncles: Hex<H256>,
-    pub logs_bloom: Hex<H256>, // H2048
+
     pub transactions_root: Hex<H256>,
     pub state_root: Hex<H256>,
     pub receipts_root: Hex<H256>,
+    pub nonce: Hex<u64>,
+
+    pub sha3_uncles: Hex<H256>,
+    pub logs_bloom: Hex<H256>, // H2048
+
     pub miner: Hex<Address>,
     pub difficulty: Hex<U256>,
     pub total_difficulty: Hex<U256>,
@@ -90,6 +93,7 @@ pub struct RPCBlock {
 pub struct RPCTransaction {
     pub from: Option<Hex<Address>>,
     pub to: Option<Hex<Address>>,
+    pub creates: Option<Hex<Address>>,
     pub gas: Option<Hex<Gas>>,
     pub gas_price: Option<Hex<Gas>>,
     pub value: Option<Hex<U256>>,
@@ -483,3 +487,32 @@ pub mod bridge {
 
 //     server.wait();
 // }
+
+use std::convert::TryFrom;
+
+impl TryFrom<evm_state::transactions::Transaction> for RPCTransaction {
+    type Error = crate::Error;
+
+    fn try_from(tx: evm_state::transactions::Transaction) -> Result<Self, Error> {
+        let address = tx.address().map_err(|_| Error::InvalidParams)?.into();
+
+        let (to, creates) = match tx.action {
+            evm_state::transactions::TransactionAction::Call(_) => (Some(address), None),
+            evm_state::transactions::TransactionAction::Create => (None, Some(address)),
+        };
+        Ok(RPCTransaction {
+            from: Some(tx.caller().map_err(|_| Error::InvalidParams)?.into()),
+            to,
+            creates,
+            gas: Some(tx.gas_limit.into()),
+            gas_price: Some(tx.gas_price.into()),
+            value: Some(tx.value.into()),
+            data: Some(tx.input.clone().into()),
+            nonce: Some(tx.nonce.into()),
+            hash: None,
+            transaction_index: None,
+            block_hash: None,
+            block_number: None,
+        })
+    }
+}

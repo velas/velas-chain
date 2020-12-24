@@ -104,6 +104,7 @@ args=(
   --enable-rpc-exit
   --enable-rpc-transaction-history
   --init-complete-file "$dataDir"/init-completed
+  --snapshot-interval-slots 0
 )
 solana-validator "${args[@]}" &
 validator=$!

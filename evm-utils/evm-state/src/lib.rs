@@ -51,7 +51,12 @@ impl fmt::Debug for Executor {
 }
 
 impl Executor {
-    pub fn with_config(state: EvmState, config: Config, gas_limit: usize) -> Self {
+    pub fn with_config(
+        state: EvmState,
+        config: Config,
+        gas_limit: usize,
+        block_number: u64,
+    ) -> Self {
         //TODO: Request info from solana blockchain for vicinity
 
         //         /// Gas price.
@@ -72,6 +77,7 @@ impl Executor {
         // pub block_gas_limit: U256,
         let vicinity = MemoryVicinity {
             block_gas_limit: gas_limit.into(),
+            block_number: block_number.into(),
             ..Default::default()
         };
         Executor {
@@ -127,11 +133,7 @@ impl Executor {
         assert!(used_gas + self.used_gas <= self.evm.tx_info.block_gas_limit.as_usize());
         let (updates, logs) = executor.deconstruct();
         self.evm.apply(updates, logs, false);
-        self.register_tx_receipt(TransactionReceipt::new(
-            evm_tx,
-            used_gas.into(),
-            result.clone(),
-        ));
+        self.register_tx_receipt(evm_tx, used_gas.into(), result.clone());
         self.used_gas += used_gas;
 
         Ok(result)
@@ -156,21 +158,38 @@ impl Executor {
     }
 
     // TODO: Handle duplicates, statuses.
-    fn register_tx_receipt(&mut self, tx_receipt: transactions::TransactionReceipt) {
-        let tx: transactions::UnsignedTransaction = tx_receipt.transaction.clone().into();
-        let tx_hash = tx.signing_hash(tx_receipt.transaction.signature.chain_id());
-        log::debug!("Register tx in evm = {}", tx_hash);
+    fn register_tx_receipt(
+        &mut self,
+        tx: transactions::Transaction,
+        used_gas: U256,
+        result: (evm::ExitReason, Vec<u8>),
+    ) {
+        let block_num = self.evm.tx_info.block_number.as_u64();
+        let tx_hash = tx.signing_hash();
+
+        log::debug!("Register tx in evm block={}, tx= {}", block_num, tx_hash);
+        //TODO: replace by entry api
+        let updated_vec = match self.evm.evm_state.txs_in_block.get(&block_num) {
+            None => vec![tx_hash],
+            Some(v) => {
+                let mut v = v.clone();
+                v.push(tx_hash);
+                v
+            }
+        };
+
+        let index = updated_vec.len() as u64;
+        self.evm
+            .evm_state
+            .txs_in_block
+            .insert(block_num, updated_vec);
+
+        let tx_receipt = TransactionReceipt::new(tx, used_gas, block_num, index, result);
         self.evm.evm_state.txs_receipts.insert(tx_hash, tx_receipt);
     }
 
     pub fn deconstruct(self) -> EvmState {
         self.evm.evm_state
-    }
-}
-
-impl Default for Executor {
-    fn default() -> Self {
-        Executor::with_config(EvmState::default(), Config::istanbul(), Default::default())
     }
 }
 

@@ -274,6 +274,11 @@ impl ChainMockERPC for ChainMockERPCProxy {
             number: U256::zero().into(),
             hash: H256::zero().into(),
             parent_hash: H256::zero().into(),
+            size: 0.into(),
+            gas_limit: Gas::zero().into(),
+            gas_used: Gas::zero().into(),
+            timestamp: 0.into(),
+            transactions: Either::Left(vec![]),
             nonce: 0.into(),
             sha3_uncles: H256::zero().into(),
             logs_bloom: H256::zero().into(), // H2048
@@ -284,11 +289,6 @@ impl ChainMockERPC for ChainMockERPCProxy {
             difficulty: U256::zero().into(),
             total_difficulty: U256::zero().into(),
             extra_data: vec![].into(),
-            size: 0.into(),
-            gas_limit: Gas::zero().into(),
-            gas_used: Gas::zero().into(),
-            timestamp: 0.into(),
-            transactions: Either::Left(vec![]),
             uncles: vec![],
         }))
     }

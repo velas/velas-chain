@@ -45,7 +45,7 @@ pub struct EvmState {
     // This allows us to save only changed data.
     pub(crate) storage: Map<(H160, H256), H256>,
     pub(crate) txs_receipts: Map<H256, TransactionReceipt>,
-    pub(crate) txs_in_block: Map<u64, H256>,
+    pub(crate) txs_in_block: Map<u64, Vec<H256>>,
     pub(crate) logs: Vec<Log>,
 }
 
@@ -70,6 +70,7 @@ impl EvmState {
         self.accounts.freeze();
         self.storage.freeze();
         self.txs_receipts.freeze();
+        self.txs_in_block.freeze();
     }
 
     pub fn try_fork(&self) -> Option<Self> {
@@ -102,6 +103,10 @@ impl EvmState {
 
     pub fn get_tx_receipt_by_hash(&self, tx_hash: H256) -> Option<TransactionReceipt> {
         self.txs_receipts.get(&tx_hash).cloned()
+    }
+
+    pub fn get_txs_in_block(&self, block_num: u64) -> Option<Vec<H256>> {
+        self.txs_in_block.get(&block_num).cloned()
     }
 
     pub fn get_account(&self, address: H160) -> Option<AccountState> {

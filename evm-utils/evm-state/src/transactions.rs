@@ -40,6 +40,29 @@ impl Transaction {
     pub fn address(&self) -> Result<Address, Error> {
         Ok(self.action.address(self.caller()?, self.nonce))
     }
+
+    fn signing_rlp_append(&self, s: &mut RlpStream, chain_id: Option<u64>) {
+        s.begin_list(if chain_id.is_some() { 9 } else { 6 });
+        s.append(&self.nonce);
+        s.append(&self.gas_price);
+        s.append(&self.gas_limit);
+        s.append(&self.action);
+        s.append(&self.value);
+        s.append(&self.input);
+
+        if let Some(chain_id) = chain_id {
+            s.append(&chain_id);
+            s.append(&0u8);
+            s.append(&0u8);
+        }
+    }
+
+    pub fn signing_hash(&self) -> H256 {
+        let chain_id = self.signature.chain_id();
+        let mut stream = RlpStream::new();
+        self.signing_rlp_append(&mut stream, chain_id);
+        H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
+    }
 }
 
 #[derive(Clone)]
@@ -265,6 +288,8 @@ pub struct TransactionReceipt {
     pub transaction: Transaction,
     #[derivative(PartialOrd = "ignore", Ord = "ignore")]
     pub status: evm::ExitReason,
+    pub block_number: u64,
+    pub index: u64,
     // pub state_root: H256,
     pub used_gas: Gas,
     // pub logs_bloom: LogsBloom,
@@ -274,12 +299,16 @@ impl TransactionReceipt {
     pub fn new(
         transaction: Transaction,
         used_gas: Gas,
+        block_number: u64,
+        index: u64,
         result: (evm::ExitReason, Vec<u8>),
     ) -> TransactionReceipt {
         TransactionReceipt {
             status: result.0,
             transaction,
             used_gas,
+            block_number,
+            index,
         }
     }
 }
