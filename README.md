@@ -52,11 +52,14 @@ $ ./run.sh
 $ cargo test
 ```
 
+### EVM integration
+Info about evm integration is at our [docs](https://docs.next.velas.com/evm).
+
 ### Starting a local devnet
 Start your own devnet locally, instructions are in the [online docs](https://docs.next.velas.com/cluster/bench-tps).
 
 ### Accessing the remote devnet
-* `devnet` - public devnet accessible via bootstrap.next.solana.com.
+* `devnet` - public devnet accessible via bootstrap.next.velas.com.
 
 # Benchmarking
 
