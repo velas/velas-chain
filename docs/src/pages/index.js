@@ -18,11 +18,11 @@ const features = [
     description: <>Validate transactions, secure the network, and earn rewards.</>,
   },
   {
-    title: <>🏛 Create an SPL Token</>,
-    imageUrl: "https://spl.solana.com/token",
+    title: <>🏛 Integrate DApps from EVM</>,
+    imageUrl: "evm",
     description: (
       <>
-        Launch your own SPL Token, Solana's equivalent of ERC-20.
+        Use the full power of EVM infrastructure inside fast and scalable network.
       </>
     ),
   },
@@ -46,11 +46,11 @@ const features = [
     ),
   },
   {
-    title: <>🤯 Learn How Solana Works</>,
+    title: <>🤯 Learn our native chain</>,
     imageUrl: "cluster/overview",
     description: (
       <>
-        Get a high-level understanding of Solana's architecture.
+        Get a high-level view of Solana. Which code is used by our native chain.
       </>
     ),
   }, //

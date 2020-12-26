@@ -1,12 +1,12 @@
 module.exports = {
-  title: "Solana Docs",
+  title: "Velas Docs",
   tagline:
-    "Solana is an open source project implementing a new, high-performance, permissionless blockchain.",
-  url: "https://docs.solana.com",
+    "Velas is an open source project implementing a new, high-performance, permissionless blockchain.",
+  url: "https://docs.next.velas.com",
   baseUrl: "/",
   favicon: "img/favicon.ico",
-  organizationName: "solana-labs", // Usually your GitHub org/user name.
-  projectName: "solana", // Usually your repo name.
+  organizationName: "velas", // Usually your GitHub org/user name.
+  projectName: "velas", // Usually your repo name.
   themeConfig: {
     navbar: {
       logo: {
@@ -16,8 +16,8 @@ module.exports = {
       },
       links: [
         {
-          href: "https://spl.solana.com",
-          label: "Program Library »",
+          to: "evm",
+          label: "Evm integration",
           position: "left",
         },
         {
@@ -41,12 +41,7 @@ module.exports = {
           position: "left",
         },
         {
-          href: "https://discordapp.com/invite/pquxPsq",
-          label: "Chat",
-          position: "right",
-        },
-        {
-          href: "https://github.com/solana-labs/solana",
+          href: "https://github.com/velas",
           label: "GitHub",
           position: "right",
         },
@@ -55,7 +50,7 @@ module.exports = {
     algolia: {
       // This API key is "search-only" and safe to be published
       apiKey: "d58e0d68c875346d52645d68b13f3ac0",
-      indexName: "solana",
+      indexName: "velas",
     },
     footer: {
       style: "dark",
@@ -67,26 +62,14 @@ module.exports = {
               label: "Introduction",
               to: "introduction",
             },
-            {
-              label: "Tour de SOL",
-              to: "tour-de-sol",
-            },
           ],
         },
         {
           title: "Community",
           items: [
             {
-              label: "Discord",
-              href: "https://discordapp.com/invite/pquxPsq",
-            },
-            {
-              label: "Twitter",
-              href: "https://twitter.com/solana",
-            },
-            {
-              label: "Forums",
-              href: "https://forums.solana.com",
+              label: "Telegram",
+              href: "https://t.me/VelasDevelopers",
             },
           ],
         },
@@ -95,12 +78,12 @@ module.exports = {
           items: [
             {
               label: "GitHub",
-              href: "https://github.com/solana-labs/solana",
+              href: "https://github.com/velas",
             },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Solana Foundation`,
+      copyright: `Copyright © ${new Date().getFullYear()} Velas Foundation`,
     },
   },
   presets: [

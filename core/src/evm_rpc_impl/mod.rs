@@ -263,7 +263,7 @@ impl BasicERPC for BasicERPCImpl {
 
     // The same as get_slot
     fn block_number(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error> {
-        let bank = meta.bank(CommitmentConfig::recent().into());
+        let bank = meta.bank(None);
         Ok(Hex(bank.slot() as usize))
     }
 
