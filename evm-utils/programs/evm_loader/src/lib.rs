@@ -25,7 +25,7 @@ pub mod scope {
         };
     }
 }
-use instructions::EvmInstruction;
+use instructions::{EvmBigTransaction, EvmInstruction};
 use scope::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 
@@ -69,6 +69,58 @@ pub(crate) fn free_ownership(owner: &solana::Address) -> solana::Instruction {
     ];
 
     Instruction::new(crate::ID, &EvmInstruction::FreeOwnership {}, account_metas)
+}
+
+pub fn big_tx_allocate(owner: &solana::Address, seed: evm::H256, len: u64) -> solana::Instruction {
+    let account_metas = vec![
+        AccountMeta::new(solana::evm_state::ID, false),
+        AccountMeta::new(*owner, true),
+    ];
+    let big_tx = EvmBigTransaction::EvmTransactionAllocate {
+        seed,
+        len,
+        _pay_for_data: None,
+    };
+    Instruction::new(
+        crate::ID,
+        &EvmInstruction::EvmBigTransaction(big_tx),
+        account_metas,
+    )
+}
+
+pub fn big_tx_write(
+    owner: &solana::Address,
+    seed: evm::H256,
+    offset: u64,
+    chunk: Vec<u8>,
+) -> solana::Instruction {
+    let account_metas = vec![
+        AccountMeta::new(solana::evm_state::ID, false),
+        AccountMeta::new(*owner, true),
+    ];
+    let big_tx = EvmBigTransaction::EvmTransactionWrite {
+        seed,
+        offset,
+        data: chunk,
+    };
+    Instruction::new(
+        crate::ID,
+        &EvmInstruction::EvmBigTransaction(big_tx),
+        account_metas,
+    )
+}
+
+pub fn big_tx_execute(owner: &solana::Address, seed: evm::H256) -> solana::Instruction {
+    let account_metas = vec![
+        AccountMeta::new(solana::evm_state::ID, false),
+        AccountMeta::new(*owner, true),
+    ];
+    let big_tx = EvmBigTransaction::EvmTransactionExecute { seed };
+    Instruction::new(
+        crate::ID,
+        &EvmInstruction::EvmBigTransaction(big_tx),
+        account_metas,
+    )
 }
 
 pub fn transfer_native_to_eth_ixs(

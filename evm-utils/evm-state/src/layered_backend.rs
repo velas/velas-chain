@@ -37,6 +37,10 @@ pub struct AccountState {
     /// Account code.
     pub code: Vec<u8>,
 }
+#[derive(Default, Clone, Debug, Eq, PartialEq)]
+pub struct BigTransactionStorage {
+    pub tx_chunks: Vec<u8>,
+}
 
 #[derive(Debug, Clone)]
 pub struct EvmState {
@@ -46,6 +50,8 @@ pub struct EvmState {
     pub(crate) storage: Map<(H160, H256), H256>,
     pub(crate) txs_receipts: Map<H256, TransactionReceipt>,
     pub(crate) txs_in_block: Map<u64, Vec<H256>>,
+    //TODO: Deadline for storing data.
+    pub(crate) big_transactions: Map<H256, BigTransactionStorage>,
     pub(crate) logs: Vec<Log>,
 }
 
@@ -62,6 +68,7 @@ impl EvmState {
             storage: Map::new(),
             txs_receipts: Map::new(),
             txs_in_block: Map::new(),
+            big_transactions: Map::new(),
             logs: Vec::new(),
         }
     }
@@ -71,6 +78,7 @@ impl EvmState {
         self.storage.freeze();
         self.txs_receipts.freeze();
         self.txs_in_block.freeze();
+        self.big_transactions.freeze();
     }
 
     pub fn try_fork(&self) -> Option<Self> {
@@ -78,12 +86,14 @@ impl EvmState {
         let storage = self.storage.try_fork()?;
         let txs_receipts = self.txs_receipts.try_fork()?;
         let txs_in_block = self.txs_in_block.try_fork()?;
+        let big_transactions = self.big_transactions.try_fork()?;
 
         Some(Self {
             accounts,
             storage,
             txs_receipts,
             txs_in_block,
+            big_transactions,
             logs: vec![],
         })
     }
@@ -97,6 +107,7 @@ impl EvmState {
             storage: Map::new(),
             txs_receipts: Map::new(),
             txs_in_block: Map::new(),
+            big_transactions: Map::new(),
             logs: Vec::new(),
         }
     }
@@ -146,6 +157,7 @@ mod test {
                 storage: Default::default(),
                 txs_receipts: Default::default(),
                 txs_in_block: Default::default(),
+                big_transactions: Default::default(),
                 logs: Default::default(),
             }
         }

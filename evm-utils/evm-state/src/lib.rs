@@ -6,18 +6,23 @@ pub use evm::{
     Config, Context, Handler, Transfer,
 };
 pub use evm::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed};
-use log::debug;
+use log::{debug, error};
 pub use primitive_types::{H256, U256};
 pub use secp256k1::rand;
 
+mod error;
 mod evm_backend;
 mod layered_backend;
 pub mod transactions;
 mod version_map;
 
+use error::*;
 pub use evm_backend::*;
 pub use layered_backend::*;
 pub use transactions::*;
+
+pub const MAX_TX_LEN: u64 = 3 * 1024 * 1024; // Limit size to 3 MB
+pub const TX_CHUNK: u64 = 920;
 
 pub trait FromKey {
     fn to_public_key(&self) -> secp256k1::PublicKey;
@@ -90,7 +95,7 @@ impl Executor {
     pub fn transaction_execute(
         &mut self,
         evm_tx: Transaction,
-    ) -> Result<(evm::ExitReason, Vec<u8>), secp256k1::Error> {
+    ) -> Result<(evm::ExitReason, Vec<u8>), Error> {
         let caller = evm_tx.caller()?;
 
         self.evm.tx_info.origin = caller;
@@ -148,13 +153,81 @@ impl Executor {
         let gas_limit = self.evm.block_gas_limit().as_usize() - self.used_gas;
         let mut executor = StackExecutor::new(&self.evm, gas_limit, &self.config);
         let result = func(&mut executor);
+        let used_gas = executor.used_gas();
         let (updates, logs) = executor.deconstruct();
+        self.used_gas += used_gas;
         self.evm.apply(updates, logs, false);
         result
     }
 
+    pub fn used_gas(&self) -> usize {
+        self.used_gas
+    }
+
     pub fn get_tx_receipt_by_hash(&mut self, tx: H256) -> Option<TransactionReceipt> {
         self.evm.evm_state.get_tx_receipt_by_hash(tx)
+    }
+
+    pub fn take_big_tx(&mut self, key: H256) -> Result<Vec<u8>, Error> {
+        let big_tx_storage =
+            if let Some(big_tx_storage) = self.evm.evm_state.big_transactions.get(&key) {
+                debug!("data at get = {:?}", big_tx_storage.tx_chunks);
+                big_tx_storage.clone()
+            } else {
+                return DataNotFound { key }.fail();
+            };
+        self.evm.evm_state.big_transactions.remove(key);
+
+        Ok(big_tx_storage.tx_chunks)
+    }
+
+    pub fn allocate_store(&mut self, key: H256, size: u64) -> Result<(), Error> {
+        if self.evm.evm_state.big_transactions.get(&key).is_some() || size > MAX_TX_LEN {
+            error!("Double allocation for key = {:?}", key);
+            return AllocationError { key, size }.fail();
+        };
+
+        let big_tx_storage = BigTransactionStorage {
+            tx_chunks: vec![0; size as usize],
+        };
+
+        self.evm
+            .evm_state
+            .big_transactions
+            .insert(key, big_tx_storage);
+
+        Ok(())
+    }
+
+    pub fn publish_data(&mut self, key: H256, offset: u64, data: &[u8]) -> Result<(), Error> {
+        let mut big_tx_storage =
+            if let Some(big_tx_storage) = self.evm.evm_state.big_transactions.get(&key) {
+                let max_len = big_tx_storage.tx_chunks.len() as u64;
+                let data_end = offset.saturating_add(data.len() as u64);
+                // check offset to avoid integer overflow
+                if data_end > max_len {
+                    return OutOfBound {
+                        key,
+                        offset,
+                        size: max_len,
+                    }
+                    .fail();
+                }
+                big_tx_storage.clone()
+            } else {
+                error!("Failed to write without allocation = {:?}", key);
+                return FailedToWrite { key, offset }.fail();
+            };
+
+        let offset = offset as usize;
+        big_tx_storage.tx_chunks[offset..offset + data.len()].copy_from_slice(data);
+
+        self.evm
+            .evm_state
+            .big_transactions
+            .insert(key, big_tx_storage);
+
+        Ok(())
     }
 
     // TODO: Handle duplicates, statuses.
@@ -216,7 +289,7 @@ pub mod tests {
 
     #[test]
     fn test_evm_bytecode() {
-        simple_logger::SimpleLogger::new().init().unwrap();
+        let _ = simple_logger::SimpleLogger::new().init();
         let accounts = ["contract", "caller"];
 
         let code = hex::decode(HELLO_WORLD_CODE).unwrap();
@@ -286,5 +359,87 @@ pub mod tests {
             &contract.unwrap().code,
             &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap()
         );
+    }
+
+    #[test]
+    fn test_freeze_fork_save_storage() {
+        let _ = simple_logger::SimpleLogger::new().init();
+        let accounts = ["contract", "caller"];
+
+        let backend = EvmState::new();
+        let backend = RwLock::new(backend);
+
+        {
+            let mut state = backend.write().unwrap();
+
+            for acc in &accounts {
+                let account = name_to_key(acc);
+                let memory = AccountState {
+                    ..Default::default()
+                };
+                state.accounts.insert(account, memory);
+            }
+        }
+
+        backend.write().unwrap().freeze();
+
+        let config = evm::Config::istanbul();
+        let mut executor = Executor::with_config(
+            backend.read().unwrap().clone(),
+            config,
+            usize::max_value(),
+            0,
+        );
+        let key = H256::random();
+        let size = 100;
+        let data = vec![0, 1, 2, 3];
+        executor.allocate_store(key, size).unwrap();
+
+        let patch = executor.deconstruct();
+        backend.write().unwrap().swap_commit(patch);
+        backend.write().unwrap().freeze();
+        let backend = RwLock::new(backend.read().unwrap().try_fork().unwrap());
+
+        let config = evm::Config::istanbul();
+        let mut executor = Executor::with_config(
+            backend.read().unwrap().clone(),
+            config,
+            usize::max_value(),
+            0,
+        );
+        executor.publish_data(key, 0, &data).unwrap();
+
+        let patch = executor.deconstruct();
+
+        backend.write().unwrap().swap_commit(patch);
+        backend.write().unwrap().freeze();
+        let config = evm::Config::istanbul();
+        let mut executor = Executor::with_config(
+            backend.read().unwrap().clone(),
+            config,
+            usize::max_value(),
+            0,
+        );
+        executor
+            .publish_data(key, data.len() as u64, &data)
+            .unwrap();
+
+        let patch = executor.deconstruct();
+
+        backend.write().unwrap().swap_commit(patch);
+        backend.write().unwrap().freeze();
+        let backend = RwLock::new(backend.read().unwrap().try_fork().unwrap());
+
+        let config = evm::Config::istanbul();
+        let mut executor = Executor::with_config(
+            backend.read().unwrap().clone(),
+            config,
+            usize::max_value(),
+            0,
+        );
+        let result = executor.take_big_tx(key).unwrap();
+        assert_eq!(&result[..data.len()], &*data);
+
+        assert_eq!(&result[data.len()..2 * data.len()], &*data)
     }
 }

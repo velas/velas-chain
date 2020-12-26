@@ -1,4 +1,4 @@
-use super::instructions::EvmInstruction;
+use super::instructions::{EvmBigTransaction, EvmInstruction};
 use super::scope::*;
 use log::*;
 
@@ -22,8 +22,8 @@ fn check_evm_account<'a, 'b>(
         .first()
         .ok_or(InstructionError::NotEnoughAccountKeys)?;
 
-    println!("first = {:?}", first);
-    println!("all = {:?}", keyed_accounts);
+    trace!("first = {:?}", first);
+    trace!("all = {:?}", keyed_accounts);
     if first.unsigned_key() != &solana::evm_state::id() || !first.is_writable() {
         error!("First account is not evm, or not writable");
         return Err(InstructionError::MissingAccount);
@@ -107,6 +107,65 @@ impl EvmProcessor {
                 account.lamports -= lamports;
                 evm_state_account.lamports += lamports;
                 executor.with_executor(|e| e.deposit(ether_address, gweis));
+            }
+            EvmInstruction::EvmBigTransaction(big_tx) => {
+                let accounts_iter = &mut keyed_accounts.iter();
+                let signer_account = next_account_info(accounts_iter)?;
+                self.process_big_tx(signer_account, executor, big_tx)?
+            }
+        }
+        Ok(())
+    }
+
+    fn process_big_tx(
+        &self,
+        signer_account: &KeyedAccount<'_>,
+        executor: &mut Executor,
+        big_tx: EvmBigTransaction,
+    ) -> Result<(), InstructionError> {
+        let key = big_tx.get_key(*signer_account.unsigned_key());
+        debug!("executing big_tx = {:?}", big_tx);
+        match big_tx {
+            EvmBigTransaction::EvmTransactionAllocate {
+                len, _pay_for_data, ..
+            } => {
+                if let Err(e) = executor.allocate_store(key, len) {
+                    error!("Error processing alocation = {:?}", e);
+                    return Err(InstructionError::InvalidArgument);
+                }
+            }
+            EvmBigTransaction::EvmTransactionWrite { offset, data, .. } => {
+                if let Err(e) = executor.publish_data(key, offset, &data) {
+                    error!("Error processing data_write = {:?}", e);
+                    return Err(InstructionError::InvalidArgument);
+                }
+            }
+            EvmBigTransaction::EvmTransactionExecute { .. } => {
+                let tx = match executor.take_big_tx(key) {
+                    Err(e) => {
+                        error!("Error taking big transaction = {:?}", e);
+                        return Err(InstructionError::InvalidArgument);
+                    }
+                    Ok(tx) => tx,
+                };
+
+                debug!("Trying to deserialize tx ={:?}", tx);
+                let tx: evm::Transaction = bincode::deserialize(&tx).map_err(|e| {
+                    debug!("real error = {:?}", e);
+                    InstructionError::InvalidArgument
+                })?;
+
+                debug!("Executing evm tx = {:?}.", tx);
+                let result = executor
+                    .transaction_execute(tx)
+                    .map_err(|_| InstructionError::InvalidArgument)?;
+                debug!("Exit status = {:?}", result);
+                match result.0 {
+                    ExitReason::Fatal(_) | ExitReason::Error(_) => {
+                        return Err(InstructionError::InvalidError)
+                    }
+                    _ => {}
+                }
             }
         }
         Ok(())
@@ -497,5 +556,237 @@ mod test {
                 rest => panic!("Unexpected result = {:?}", rest),
             }
         }
+    }
+
+    #[test]
+    fn big_tx_allocation_error() {
+        let mut executor = evm_state::Executor::with_config(
+            evm_state::EvmState::default(),
+            evm_state::Config::istanbul(),
+            10000000,
+            0,
+        );
+        let mut executor = Some(&mut executor);
+        let processor = EvmProcessor::default();
+        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+
+        let user_account = RefCell::new(solana_sdk::account::Account {
+            lamports: 1000,
+            data: vec![],
+            owner: crate::ID,
+            executable: false,
+            rent_epoch: 0,
+        });
+        let user_id = Pubkey::new_rand();
+        let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
+
+        let keyed_accounts = [evm_keyed_account, user_keyed_account];
+
+        let big_transaction = EvmBigTransaction::EvmTransactionAllocate {
+            len: evm_state::MAX_TX_LEN + 1,
+            _pay_for_data: None,
+            seed: H256::zero(),
+        };
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_err());
+        println!("cx = {:?}", executor);
+
+        let big_transaction = EvmBigTransaction::EvmTransactionAllocate {
+            len: evm_state::MAX_TX_LEN,
+            _pay_for_data: None,
+            seed: H256::zero(),
+        };
+
+        processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
+                executor.as_deref_mut(),
+            )
+            .unwrap();
+        println!("cx = {:?}", executor);
+    }
+
+    #[test]
+    fn big_tx_write_out_of_bound() {
+        let mut executor = evm_state::Executor::with_config(
+            evm_state::EvmState::default(),
+            evm_state::Config::istanbul(),
+            10000000,
+            0,
+        );
+        let mut executor = Some(&mut executor);
+        let processor = EvmProcessor::default();
+        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+
+        let user_account = RefCell::new(solana_sdk::account::Account {
+            lamports: 1000,
+            data: vec![],
+            owner: crate::ID,
+            executable: false,
+            rent_epoch: 0,
+        });
+        let user_id = Pubkey::new_rand();
+        let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
+
+        let keyed_accounts = [evm_keyed_account, user_keyed_account];
+
+        let batch_size = 500;
+
+        let big_transaction = EvmBigTransaction::EvmTransactionAllocate {
+            len: batch_size,
+            _pay_for_data: None,
+            seed: H256::zero(),
+        };
+        processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
+                executor.as_deref_mut(),
+            )
+            .unwrap();
+        println!("cx = {:?}", executor);
+
+        // out of bound write
+        let big_transaction = EvmBigTransaction::EvmTransactionWrite {
+            offset: batch_size,
+            seed: H256::zero(),
+            data: vec![1],
+        };
+
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_err());
+
+        println!("cx = {:?}", executor);
+        // out of bound write
+        let big_transaction = EvmBigTransaction::EvmTransactionWrite {
+            offset: 0,
+            seed: H256::zero(),
+            data: vec![1; batch_size as usize + 1],
+        };
+
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_err());
+
+        println!("cx = {:?}", executor);
+
+        // Write in bounds
+        let big_transaction = EvmBigTransaction::EvmTransactionWrite {
+            offset: 0,
+            seed: H256::zero(),
+            data: vec![1; batch_size as usize],
+        };
+
+        processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
+                executor.as_deref_mut(),
+            )
+            .unwrap();
+
+        println!("cx = {:?}", executor);
+        // Overlaped writes is allowed
+        let big_transaction = EvmBigTransaction::EvmTransactionWrite {
+            offset: batch_size - 1,
+            seed: H256::zero(),
+            data: vec![1],
+        };
+
+        processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
+                executor.as_deref_mut(),
+            )
+            .unwrap();
+
+        println!("cx = {:?}", executor);
+    }
+
+    #[test]
+    fn big_tx_write_without_alloc() {
+        let mut executor = evm_state::Executor::with_config(
+            evm_state::EvmState::default(),
+            evm_state::Config::istanbul(),
+            10000000,
+            0,
+        );
+        let mut executor = Some(&mut executor);
+        let processor = EvmProcessor::default();
+        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+
+        let user_account = RefCell::new(solana_sdk::account::Account {
+            lamports: 1000,
+            data: vec![],
+            owner: crate::ID,
+            executable: false,
+            rent_epoch: 0,
+        });
+        let user_id = Pubkey::new_rand();
+        let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
+
+        let keyed_accounts = [evm_keyed_account, user_keyed_account];
+
+        let big_transaction = EvmBigTransaction::EvmTransactionWrite {
+            offset: 0,
+            seed: H256::zero(),
+            data: vec![1],
+        };
+
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_err());
+        println!("cx = {:?}", executor);
+    }
+
+    #[test]
+    fn check_tx_chunk_feet_mtu() {
+        use solana_sdk::hash::hash;
+        use solana_sdk::message::Message;
+        use solana_sdk::signature::{Keypair, Signer};
+        use solana_sdk::transaction::Transaction;
+
+        let owner = Keypair::new();
+        let ix = crate::big_tx_write(
+            &owner.pubkey(),
+            H256::random(),
+            0,
+            vec![1; evm::TX_CHUNK as usize],
+        );
+        let tx_before = Transaction::new(&[&owner], Message::new(&[ix], None), hash(&[1]));
+        let tx = bincode::serialize(&tx_before).unwrap();
+        let tx: Transaction = limited_deserialize(&tx).unwrap();
+        assert_eq!(tx_before, tx);
     }
 }

@@ -1,13 +1,22 @@
 use log::*;
-use sha3::{Digest, Keccak256};
+
+use solana_sdk::{clock::DEFAULT_TICKS_PER_SECOND, commitment_config::CommitmentLevel};
 use std::sync::Arc;
+use std::thread::sleep;
+use std::time::Duration;
 use std::{collections::HashMap, net::SocketAddr};
+
+use evm_rpc::basic::BasicERPC;
+use evm_rpc::bridge::BridgeERPC;
+use evm_rpc::chain_mock::ChainMockERPC;
+use evm_rpc::*;
+use evm_state::*;
+use sha3::{Digest, Keccak256};
 
 use jsonrpc_core::Result;
 use serde_json::json;
 
 use solana_account_decoder::{parse_token::UiTokenAmount, UiAccount};
-use solana_client::rpc_client::RpcClient;
 use solana_evm_loader_program::scope::*;
 
 use solana_runtime::commitment::BlockCommitmentArray;
@@ -17,7 +26,8 @@ use solana_sdk::{
     epoch_info::EpochInfo,
     epoch_schedule::EpochSchedule,
     message::Message,
-    signature::Signer,
+    signature::{Signature, Signer},
+    signers::Signers,
     transaction,
 };
 use solana_transaction_status::{
@@ -25,19 +35,15 @@ use solana_transaction_status::{
 };
 
 use solana_client::{
-    rpc_config::*, rpc_request::RpcRequest, rpc_response::Response as RpcResponse, rpc_response::*,
+    client_error::Result as ClientResult, rpc_client::RpcClient, rpc_config::*,
+    rpc_request::RpcRequest, rpc_response::Response as RpcResponse, rpc_response::*,
 };
 
 use solana_core::rpc::RpcSol;
 
-use evm_rpc::basic::BasicERPC;
-use evm_rpc::bridge::BridgeERPC;
-use evm_rpc::chain_mock::ChainMockERPC;
-use evm_rpc::*;
-use evm_state::*;
-
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
+type FutureEvmResult<T> = EvmResult<T>;
 
 const CHAIN_ID: u64 = 0x77;
 
@@ -68,6 +74,56 @@ impl EvmBridge {
             accounts,
             rpc_client,
         }
+    }
+
+    fn send_tx(&self, tx: evm::Transaction) -> FutureEvmResult<Hex<H256>> {
+        let hash = tx.signing_hash();
+        let bytes = bincode::serialize(&tx).unwrap();
+
+        if bytes.len() > evm::TX_CHUNK as usize {
+            info!("Sending tx = {}, by chunks", hash);
+            if let Ok(_tx) = deploy_big_tx(&self.key, &self.rpc_client, &tx) {
+                return Ok(Hex(hash));
+            } else {
+                return Err(evm_rpc::Error::InvalidParams);
+            }
+        }
+
+        info!(
+            "Printing tx_info from={:?}, to={:?}, nonce = {}, chain_id = {:?}",
+            tx.caller(),
+            tx.address(),
+            tx.nonce,
+            tx.signature.chain_id()
+        );
+
+        let ix = solana_evm_loader_program::send_raw_tx(&self.key.pubkey(), tx);
+
+        let message = Message::new(&[ix], Some(&self.key.pubkey()));
+        let mut send_raw_tx: solana_sdk::transaction::Transaction =
+            solana_sdk::transaction::Transaction::new_unsigned(message);
+
+        info!("Getting block hash");
+        let (blockhash, _fee_calculator, _) = self
+            .rpc_client
+            .get_recent_blockhash_with_commitment(CommitmentConfig::default())
+            .unwrap()
+            .value;
+
+        send_raw_tx.sign(&vec![&self.key], blockhash);
+        info!("Sending tx = {:?}", send_raw_tx);
+
+        self.rpc_client
+            .send_transaction_with_config(
+                &send_raw_tx,
+                // CommitmentConfig::default(),
+                Default::default(),
+            )
+            .map(|_| Hex(hash))
+            .map_err(|err| {
+                info!("Err = {}", err);
+                evm_rpc::Error::InvalidParams
+            })
     }
 }
 
@@ -102,7 +158,11 @@ impl BridgeERPC for BridgeERPCImpl {
         Err(evm_rpc::Error::NotFound)
     }
 
-    fn send_transaction(&self, meta: Self::Metadata, tx: RPCTransaction) -> EvmResult<Hex<H256>> {
+    fn send_transaction(
+        &self,
+        meta: Self::Metadata,
+        tx: RPCTransaction,
+    ) -> FutureEvmResult<Hex<H256>> {
         let address = tx.from.map(|a| a.0).unwrap_or_default();
 
         info!("send_transaction from = {}", address);
@@ -124,81 +184,25 @@ impl BridgeERPC for BridgeERPCImpl {
             value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
             input: tx.data.map(|a| a.0).unwrap_or_default(),
         };
-        let hash = tx_create.signing_hash(CHAIN_ID.into());
 
         let tx = tx_create.sign(&secret_key, CHAIN_ID.into());
 
-        info!(
-            "Printing tx_info from={:?}, to={:?}, nonce = {}, chain_id = {:?}",
-            tx.caller(),
-            tx.address(),
-            nonce,
-            tx.signature.chain_id()
-        );
-
-        let ix = solana_evm_loader_program::send_raw_tx(&meta.key.pubkey(), tx);
-
-        let message = Message::new(&[ix], Some(&meta.key.pubkey()));
-        let mut send_raw_tx: solana_sdk::transaction::Transaction =
-            solana_sdk::transaction::Transaction::new_unsigned(message);
-
-        info!("Getting block hash");
-        let (blockhash, _fee_calculator, _) = meta
-            .rpc_client
-            .get_recent_blockhash_with_commitment(CommitmentConfig::default())
-            .unwrap()
-            .value;
-
-        send_raw_tx.sign(&vec![&meta.key], blockhash);
-        info!("Sending tx = {:?}", send_raw_tx);
-        let result = meta.rpc_client.send_transaction_with_config(
-            &send_raw_tx,
-            // CommitmentConfig::default(),
-            Default::default(),
-        );
-
-        debug!("Result tx = {:?}", result);
-        Ok(Hex(hash))
+        meta.send_tx(tx)
     }
 
-    fn send_raw_transaction(&self, meta: Self::Metadata, tx: Bytes) -> EvmResult<Hex<H256>> {
+    fn send_raw_transaction(
+        &self,
+        meta: Self::Metadata,
+        bytes: Bytes,
+    ) -> FutureEvmResult<Hex<H256>> {
         info!("send_raw_transaction");
-        let tx: evm::Transaction = rlp::decode(&tx.0).unwrap();
+
+        let tx: evm::Transaction = rlp::decode(&bytes.0).unwrap();
         let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
         let hash = unsigned_tx.signing_hash(CHAIN_ID.into());
-        info!("loaded tx = {:?}, hash = {}", tx, hash);
 
-        info!(
-            "Printing tx_info from={:?}, to={:?}, nonce = {}, chain_id = {:?}",
-            tx.caller(),
-            tx.address(),
-            tx.nonce,
-            tx.signature.chain_id()
-        );
-
-        let ix = solana_evm_loader_program::send_raw_tx(&meta.key.pubkey(), tx);
-
-        let message = Message::new(&[ix], Some(&meta.key.pubkey()));
-        let mut send_raw_tx: solana_sdk::transaction::Transaction =
-            solana_sdk::transaction::Transaction::new_unsigned(message);
-
-        info!("Getting block hash");
-        let (blockhash, _fee_calculator, _) = meta
-            .rpc_client
-            .get_recent_blockhash_with_commitment(CommitmentConfig::default())
-            .unwrap()
-            .value;
-
-        send_raw_tx.sign(&vec![&meta.key], blockhash);
-        info!("Sending tx = {:?}", send_raw_tx);
-        let result = meta.rpc_client.send_transaction_with_config(
-            &send_raw_tx,
-            // CommitmentConfig::default(),
-            Default::default(),
-        );
-
-        debug!("Result tx = {:?}", result);
-        Ok(Hex(hash))
+        info!("loaded tx_hash = {}", hash);
+        meta.send_tx(tx)
     }
 
     fn gas_price(&self, _meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
@@ -220,7 +224,7 @@ impl ChainMockERPC for ChainMockERPCProxy {
     type Metadata = Arc<EvmBridge>;
 
     fn network_id(&self, _meta: Self::Metadata) -> EvmResult<String> {
-        Ok(format!("0x{:x}", CHAIN_ID))
+        Ok(format!("{}", CHAIN_ID))
     }
 
     fn chain_id(&self, _meta: Self::Metadata) -> EvmResult<Hex<u64>> {
@@ -986,10 +990,179 @@ fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
         .cors(DomainsValidation::AllowOnly(vec![
             AccessControlAllowOrigin::Any,
         ]))
+        .threads(4)
         .cors_max_age(86400)
         .start_http(&binding_address)
         .expect("Unable to start EVM bridge server");
 
     server.wait();
+    Ok(())
+}
+
+pub fn log_instruction_custom_error(result: ClientResult<Signature>) -> StdResult<Signature, ()> {
+    match result {
+        Err(err) => {
+            error!("Error processing transaction = {:?}", err);
+            return Err(());
+        }
+        Ok(sig) => Ok(sig),
+    }
+}
+
+fn send_and_confirm_transactions<T: Signers>(
+    rpc_client: &RpcClient,
+    mut transactions: Vec<solana::Transaction>,
+    signer_keys: &T,
+) -> StdResult<(), Box<dyn std::error::Error>> {
+    let mut send_retries = 5;
+    loop {
+        let mut status_retries = 15;
+
+        // Send all transactions
+        let mut transactions_signatures = vec![];
+        for transaction in transactions {
+            if cfg!(not(test)) {
+                // Delay ~1 tick between write transactions in an attempt to reduce AccountInUse errors
+                // when all the write transactions modify the same program account (eg, deploying a
+                // new program)
+                sleep(Duration::from_millis(1000 / DEFAULT_TICKS_PER_SECOND));
+            }
+
+            let signature = rpc_client
+                .send_transaction_with_config(
+                    &transaction,
+                    RpcSendTransactionConfig {
+                        skip_preflight: true,
+                        ..RpcSendTransactionConfig::default()
+                    },
+                )
+                .ok();
+            transactions_signatures.push((transaction, signature));
+        }
+
+        // Collect statuses for all the transactions, drop those that are confirmed
+        while status_retries > 0 {
+            status_retries -= 1;
+
+            if cfg!(not(test)) {
+                // Retry twice a second
+                sleep(Duration::from_millis(500));
+            }
+
+            transactions_signatures = transactions_signatures
+                .into_iter()
+                .filter(|(_transaction, signature)| {
+                    signature
+                        .and_then(|signature| rpc_client.get_signature_statuses(&[signature]).ok())
+                        .map(|RpcResponse { context: _, value }| match &value[0] {
+                            None => true,
+                            Some(transaction_status) => {
+                                !(transaction_status.confirmations.is_none()
+                                    || transaction_status.confirmations.unwrap() > 1)
+                            }
+                        })
+                        .unwrap_or(true)
+                })
+                .collect();
+
+            if transactions_signatures.is_empty() {
+                return Ok(());
+            }
+        }
+
+        if send_retries == 0 {
+            return Err("Transactions failed".into());
+        }
+        send_retries -= 1;
+
+        // Re-sign any failed transactions with a new blockhash and retry
+        let (blockhash, _fee_calculator) = rpc_client
+            .get_new_blockhash(&transactions_signatures[0].0.message().recent_blockhash)?;
+        transactions = vec![];
+        for (mut transaction, _) in transactions_signatures.into_iter() {
+            transaction.try_sign(signer_keys, blockhash)?;
+            transactions.push(transaction);
+        }
+    }
+}
+
+fn deploy_big_tx(
+    keypair: &solana_sdk::signature::Keypair,
+    rpc_client: &RpcClient,
+    tx: &evm::Transaction,
+) -> StdResult<(), ()> {
+    let pubkey = keypair.pubkey();
+
+    let tx_bytes = bincode::serialize(&tx).map_err(drop)?;
+
+    let seed = H256::random();
+    let (blockhash, _fee_calculator, _) = rpc_client
+        .get_recent_blockhash_with_commitment(CommitmentConfig::max())
+        .map_err(drop)?
+        .value;
+
+    let ix = solana_evm_loader_program::big_tx_allocate(&pubkey, seed, tx_bytes.len() as u64);
+    let message = Message::new(&[ix], Some(&pubkey));
+
+    let signers = [keypair];
+    let create_account_tx = solana::Transaction::new(&signers, message, blockhash);
+
+    error!(
+        "transaction signature = {}",
+        create_account_tx.signatures[0]
+    );
+    let mut write_messages = vec![];
+    for (chunk, i) in tx_bytes.chunks(evm_state::TX_CHUNK as usize).zip(0..) {
+        let instruction = solana_evm_loader_program::big_tx_write(
+            &pubkey,
+            seed,
+            (i * evm_state::TX_CHUNK) as u64,
+            chunk.to_vec(),
+        );
+        let message = Message::new(&[instruction], Some(&pubkey));
+        write_messages.push(message);
+    }
+
+    let instruction = solana_evm_loader_program::big_tx_execute(&pubkey, seed);
+    let finalize_message = Message::new(&[instruction], Some(&signers[0].pubkey()));
+
+    trace!("Creating program account");
+    let result = rpc_client.send_and_confirm_transaction(&create_account_tx);
+    log_instruction_custom_error(result)?;
+
+    let (blockhash, _fee_calculator) = rpc_client.get_new_blockhash(&blockhash).map_err(drop)?;
+
+    let mut write_transactions = vec![];
+    for message in write_messages.into_iter() {
+        let mut tx = solana::Transaction::new_unsigned(message);
+        tx.try_sign(&signers, blockhash).map_err(drop)?;
+        write_transactions.push(tx);
+    }
+
+    trace!("Writing transaction data");
+    let result = send_and_confirm_transactions(&rpc_client, write_transactions, &signers);
+    if let Err(e) = result {
+        error!("Error sending write data = {}", e);
+        return Err(());
+    }
+    let (blockhash, _fee_calculator, _) = rpc_client
+        .get_recent_blockhash_with_commitment(CommitmentConfig::recent())
+        .map_err(drop)?
+        .value;
+
+    let mut finalize_tx = solana::Transaction::new_unsigned(finalize_message);
+    finalize_tx.try_sign(&signers, blockhash).map_err(drop)?;
+
+    trace!("Finalizing program account");
+    let result = rpc_client.send_transaction_with_config(
+        &finalize_tx,
+        RpcSendTransactionConfig {
+            skip_preflight: false,
+            preflight_commitment: Some(CommitmentLevel::Recent),
+        },
+    );
+
+    log_instruction_custom_error(result)?;
+
     Ok(())
 }

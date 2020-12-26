@@ -418,6 +418,6 @@ fn call(
     let address = tx.to.map(|h| h.0).unwrap_or_default();
     let result =
         executor.with_executor(|e| e.transact_call(caller, address, value, input, gas_limit));
-    let gas_used = executor.with_executor(|e| e.used_gas());
+    let gas_used = executor.used_gas();
     Ok((result.0, result.1, gas_used))
 }

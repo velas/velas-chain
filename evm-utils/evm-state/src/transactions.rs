@@ -4,10 +4,12 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::str::FromStr;
 
+use crate::error::*;
 use secp256k1::{
     recovery::{RecoverableSignature, RecoveryId},
-    Error, Message,
+    Message,
 };
+use snafu::ResultExt;
 
 pub use secp256k1::{PublicKey, SecretKey, SECP256K1};
 
@@ -29,10 +31,17 @@ pub struct Transaction {
 impl Transaction {
     pub fn caller(&self) -> Result<Address, Error> {
         let unsigned = UnsignedTransaction::from((*self).clone());
-        let hash = unsigned.signing_hash(self.signature.chain_id());
-        let sig = self.signature.to_recoverable_signature()?;
-        let public_key =
-            { SECP256K1.recover(&Message::from_slice(&hash.as_bytes()).unwrap(), &sig)? };
+        let transaction_hash = unsigned.signing_hash(self.signature.chain_id());
+        let sig = self
+            .signature
+            .to_recoverable_signature()
+            .context(UnrecoverableCaller { transaction_hash })?;
+        let public_key = SECP256K1
+            .recover(
+                &Message::from_slice(&transaction_hash.as_bytes()).unwrap(),
+                &sig,
+            )
+            .context(UnrecoverableCaller { transaction_hash })?;
         Ok(addr_from_public_key(&public_key))
     }
 
@@ -199,7 +208,7 @@ impl TransactionSignature {
         }
     }
 
-    pub fn to_recoverable_signature(&self) -> Result<RecoverableSignature, Error> {
+    pub fn to_recoverable_signature(&self) -> Result<RecoverableSignature, secp256k1::Error> {
         let mut sig = [0u8; 64];
         sig[0..32].copy_from_slice(self.r.as_bytes());
         sig[32..64].copy_from_slice(self.s.as_bytes());

@@ -1150,6 +1150,7 @@ dependencies = [
 name = "evm-bridge"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "env_logger 0.8.2",
  "evm-rpc",
  "evm-state",
@@ -1252,6 +1253,7 @@ dependencies = [
  "serde",
  "sha3 0.9.1",
  "simple_logger",
+ "snafu",
  "thiserror",
 ]
 
@@ -4004,6 +4006,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "snafu"
+version = "0.6.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eab12d3c261b2308b0d80c26fffb58d17eba81a4be97890101f416b478c79ca7"
+dependencies = [
+ "doc-comment",
+ "snafu-derive",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.6.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1508efa03c362e23817f96cde18abed596a25219a8b2c66e8db33c03543d315b"
+dependencies = [
+ "proc-macro2 1.0.24",
+ "quote 1.0.7",
+ "syn 1.0.54",
+]
+
+[[package]]
 name = "socket2"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4527,6 +4550,7 @@ dependencies = [
  "log 0.4.11",
  "primitive-types",
  "serde",
+ "sha3 0.9.1",
  "simple_logger",
  "solana-logger 1.4.0",
  "solana-sdk 1.4.0",

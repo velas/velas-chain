@@ -17,6 +17,7 @@ serde="1.0"
 primitive-types = "0.7.2"
 hex="0.4.2"
 simple_logger = "1.11.0"
+sha3 = "0.9.1"
 
 [lib]
 crate-type = ["lib", "cdylib"]

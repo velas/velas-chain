@@ -411,45 +411,31 @@ impl RpcClient {
         &self,
         transaction: &Transaction,
     ) -> ClientResult<Signature> {
-        let mut send_retries = 20;
-        loop {
-            let mut status_retries = 15;
+        const SEND_RETRIES: usize = 20;
+        const STATUS_RETRIES: usize = 20;
+
+        for _ in 0..SEND_RETRIES {
             let signature = self.send_transaction(transaction)?;
-            let status = loop {
-                let status = self.get_signature_status(&signature)?;
-                if status.is_none() {
-                    status_retries -= 1;
-                    if status_retries == 0 {
-                        break status;
-                    }
-                } else {
-                    break status;
+            for status_retrie in 0..STATUS_RETRIES {
+                if let Some(v) = self.get_signature_status(&signature)? {
+                    return Ok(v.map(|_| signature)?);
                 }
-                if cfg!(not(test)) {
+                if cfg!(not(test)) && status_retrie < STATUS_RETRIES
+                // Ignore sleep at last step.
+                {
                     // Retry twice a second
                     sleep(Duration::from_millis(500));
                 }
-            };
-            send_retries = if let Some(result) = status.clone() {
-                match result {
-                    Ok(_) => return Ok(signature),
-                    Err(_) => 0,
-                }
-            } else {
-                send_retries - 1
-            };
-            if send_retries == 0 {
-                if let Some(err) = status {
-                    return Err(err.unwrap_err().into());
-                } else {
-                    return Err(
-                        RpcError::ForUser("unable to confirm transaction. \
-                                          This can happen in situations such as transaction expiration \
-                                          and insufficient fee-payer funds".to_string()).into(),
-                    );
-                }
             }
         }
+
+        return Err(RpcError::ForUser(
+            "unable to confirm transaction. \
+                                This can happen in situations such as transaction expiration \
+                                and insufficient fee-payer funds"
+                .to_string(),
+        )
+        .into());
     }
 
     pub fn get_account(&self, pubkey: &Pubkey) -> ClientResult<Account> {
