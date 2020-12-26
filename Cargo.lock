@@ -1168,6 +1168,7 @@ dependencies = [
  "serde_json",
  "sha3 0.9.1",
  "solana-account-decoder",
+ "solana-cli-config",
  "solana-client",
  "solana-core",
  "solana-evm-loader-program",

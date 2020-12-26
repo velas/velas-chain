@@ -51,7 +51,6 @@ pub struct EvmBridge {
 
 impl EvmBridge {
     fn new(keypath: &str, evm_keys: Vec<SecretKey>, addr: String) -> Self {
-        info!("Loading keypair from: {}", keypath);
         let accounts = evm_keys
             .into_iter()
             .map(|secret_key| {
@@ -61,7 +60,11 @@ impl EvmBridge {
                 (public_key, secret_key)
             })
             .collect();
+
+        info!("Trying to create rpc client with addr: {}", addr);
         let rpc_client = RpcClient::new(addr);
+
+        info!("Loading keypair from: {}", keypath);
         Self {
             key: solana_sdk::signature::read_keypair_file(&keypath).unwrap(),
             accounts,
@@ -148,14 +151,14 @@ impl BridgeERPC for BridgeERPCImpl {
             .value;
 
         send_raw_tx.sign(&vec![&meta.key], blockhash);
-        println!("Sending tx = {:?}", send_raw_tx);
+        info!("Sending tx = {:?}", send_raw_tx);
         let result = meta.rpc_client.send_transaction_with_config(
             &send_raw_tx,
             // CommitmentConfig::default(),
             Default::default(),
         );
 
-        println!("Result tx = {:?}", result);
+        debug!("Result tx = {:?}", result);
         Ok(Hex(hash))
     }
 
@@ -188,14 +191,14 @@ impl BridgeERPC for BridgeERPCImpl {
             .value;
 
         send_raw_tx.sign(&vec![&meta.key], blockhash);
-        println!("Sending tx = {:?}", send_raw_tx);
+        info!("Sending tx = {:?}", send_raw_tx);
         let result = meta.rpc_client.send_transaction_with_config(
             &send_raw_tx,
             // CommitmentConfig::default(),
             Default::default(),
         );
 
-        println!("Result tx = {:?}", result);
+        debug!("Result tx = {:?}", result);
         Ok(Hex(hash))
     }
 
@@ -917,6 +920,7 @@ impl RpcSol for RpcSolProxy {
 struct Args {
     keyfile: Option<String>,
     rpc_address: Option<String>,
+    binding_address: Option<String>,
 }
 
 use jsonrpc_http_server::jsonrpc_core::*;
@@ -931,20 +935,6 @@ struct LoggingMiddleware;
 impl<M: jsonrpc_core::Metadata> Middleware<M> for LoggingMiddleware {
     type Future = NoopFuture;
     type CallFuture = NoopCallFuture;
-    fn on_request<F, X>(
-        &self,
-        request: Request,
-        meta: M,
-        next: F,
-    ) -> futures::future::Either<Self::Future, X>
-    where
-        F: Fn(Request, M) -> X + Send + Sync,
-        X: futures::Future<Item = Option<response::Response>> + Send + 'static,
-    {
-        debug!("On Request = {:?}", request);
-
-        futures::future::Either::B(next(request, meta))
-    }
     fn on_call<F, X>(
         &self,
         call: Call,
@@ -961,12 +951,22 @@ impl<M: jsonrpc_core::Metadata> Middleware<M> for LoggingMiddleware {
 }
 
 #[paw::main]
-fn main(_args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
+fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
+    let keyfile_path = args
+        .keyfile
+        .unwrap_or_else(|| solana_cli_config::Config::default().keypair_path);
+    let server_path = args
+        .rpc_address
+        .unwrap_or_else(|| "http://127.0.0.1:8899".to_string());
+    let binding_address = args
+        .binding_address
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| "127.0.0.1:8545".parse().unwrap());
     let meta = EvmBridge::new(
-        "./keyfile.json",
+        &keyfile_path,
         vec![evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap()],
-        "http://localhost:8899".to_string(),
+        server_path,
     );
     let meta = Arc::new(meta);
     let mut io = MetaIoHandler::with_middleware(LoggingMiddleware);
@@ -979,6 +979,8 @@ fn main(_args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
     io.extend_with(ether_basic.to_delegate());
     let ether_mock = ChainMockERPCProxy;
     io.extend_with(ether_mock.to_delegate());
+
+    info!("Creating server with: {}", binding_address);
     let server =
         ServerBuilder::with_meta_extractor(io, move |_req: &hyper::Request<hyper::Body>| {
             meta.clone()
@@ -987,7 +989,7 @@ fn main(_args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
             AccessControlAllowOrigin::Any,
         ]))
         .cors_max_age(86400)
-        .start_http(&"127.0.0.1:8545".parse().unwrap())
+        .start_http(&binding_address)
         .expect("Unable to start EVM bridge server");
 
     server.wait();
