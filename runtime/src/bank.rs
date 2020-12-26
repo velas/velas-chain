@@ -1259,6 +1259,8 @@ impl Bank {
         // Add account for evm.
         let account = native_loader::create_loadable_account("Evm Processor");
         self.store_account(&solana_sdk::evm_loader::id(), &account);
+        let account = solana_evm_loader_program::create_state_account();
+        self.store_account(&solana_sdk::evm_state::id(), &account);
     }
 
     pub fn add_native_program(&self, name: &str, program_id: &Pubkey) {

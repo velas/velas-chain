@@ -22,7 +22,6 @@ use solana_sdk::{
     message::Message,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
-    system_instruction,
     timing::{duration_as_ms, duration_as_s, duration_as_us, timestamp},
     transaction::Transaction,
 };
@@ -34,21 +33,14 @@ use solana_evm_loader_program::scope::*;
 
 pub const BENCH_SEED: &str = "authority";
 
-pub fn generate_evm_keypair(seed_keypair: &Keypair) -> (evm::SecretKey, Pubkey) {
+pub fn generate_evm_keypair(seed_keypair: &Keypair) -> evm::SecretKey {
     use solana_evm_loader_program::scope::evm::rand::SeedableRng;
 
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&seed_keypair.to_bytes()[..32]);
     let mut rng = rand_isaac::IsaacRng::from_seed(seed);
-    (
-        evm::SecretKey::new(&mut rng),
-        Pubkey::create_with_seed(
-            &seed_keypair.pubkey(),
-            BENCH_SEED,
-            &solana_evm_loader_program::ID,
-        )
-        .unwrap(),
-    )
+
+    evm::SecretKey::new(&mut rng)
 }
 
 pub fn generate_and_fund_evm_keypairs<T: 'static + Client + Send + Sync>(
@@ -57,13 +49,13 @@ pub fn generate_and_fund_evm_keypairs<T: 'static + Client + Send + Sync>(
     sources: Vec<Keypair>,
     keypair_count: usize,
     lamports_per_account: u64,
-) -> Result<Vec<(Keypair, evm::SecretKey, Pubkey)>> {
+) -> Result<Vec<(Keypair, evm::SecretKey)>> {
     info!("Creating {} keypairs...", keypair_count);
     let mut keypairs: Vec<_> = sources
         .into_iter()
         .map(|key| {
             let evm_keys = generate_evm_keypair(&key);
-            (key, evm_keys.0, evm_keys.1)
+            (key, evm_keys)
         })
         .collect();
     info!("Get lamports...");
@@ -114,20 +106,20 @@ trait FundingTransactions<'a> {
     fn fund<T: 'static + Client + Send + Sync>(
         &mut self,
         client: &Arc<T>,
-        to_fund: &'a [(Keypair, evm::SecretKey, Pubkey)],
+        to_fund: &'a [(Keypair, evm::SecretKey)],
         to_lamports: u64,
     );
-    fn make(&mut self, to_fund: &'a [(Keypair, evm::SecretKey, Pubkey)], to_lamports: u64);
+    fn make(&mut self, to_fund: &'a [(Keypair, evm::SecretKey)], to_lamports: u64);
     fn sign(&mut self, blockhash: Hash);
     fn send<T: Client>(&self, client: &Arc<T>);
     fn verify<T: 'static + Client + Send + Sync>(&mut self, client: &Arc<T>, to_lamports: u64);
 }
 
-impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Pubkey, Transaction)> {
+impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Transaction)> {
     fn fund<T: 'static + Client + Send + Sync>(
         &mut self,
         client: &Arc<T>,
-        to_fund: &'a [(Keypair, evm::SecretKey, Pubkey)],
+        to_fund: &'a [(Keypair, evm::SecretKey)],
         to_lamports: u64,
     ) {
         self.make(to_fund, to_lamports);
@@ -165,34 +157,18 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Pubke
         info!("transferred");
     }
 
-    fn make(&mut self, to_fund: &'a [(Keypair, evm::SecretKey, Pubkey)], to_lamports: u64) {
+    fn make(&mut self, to_fund: &'a [(Keypair, evm::SecretKey)], to_lamports: u64) {
         let mut make_txs = Measure::start("make_txs");
-        let to_fund_txs: Vec<(&Keypair, &evm::SecretKey, Pubkey, Transaction)> = to_fund
+        let to_fund_txs: Vec<(&Keypair, &evm::SecretKey, Transaction)> = to_fund
             .par_iter()
-            .map(|(k, evm, authority)| {
-                let mut instructions = vec![];
-                let min_space = solana_evm_loader_program::instructions::Deposit::LEN as u64;
-                instructions.push(system_instruction::create_account_with_seed(
+            .map(|(k, evm)| {
+                let instructions = solana_evm_loader_program::transfer_native_to_eth_ixs(
                     &k.pubkey(),
-                    authority,
-                    &k.pubkey(),
-                    BENCH_SEED,
-                    to_lamports,
-                    min_space,
-                    &solana_evm_loader_program::ID,
-                ));
-                instructions.push(solana_evm_loader_program::create_deposit_account(
-                    &k.pubkey(),
-                    authority,
-                ));
-                instructions.push(solana_evm_loader_program::transfer_native_to_eth(
-                    &k.pubkey(),
-                    authority,
                     to_lamports,
                     evm.to_address(),
-                ));
+                );
                 let message = Message::new(&instructions, Some(&k.pubkey()));
-                (k, evm, *authority, Transaction::new_unsigned(message))
+                (k, evm, Transaction::new_unsigned(message))
             })
             .collect();
         make_txs.stop();
@@ -206,7 +182,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Pubke
 
     fn sign(&mut self, blockhash: Hash) {
         let mut sign_txs = Measure::start("sign_txs");
-        self.par_iter_mut().for_each(|(k, _, _, tx)| {
+        self.par_iter_mut().for_each(|(k, _, tx)| {
             tx.sign(&[*k], blockhash);
         });
         sign_txs.stop();
@@ -215,7 +191,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Pubke
 
     fn send<T: Client>(&self, client: &Arc<T>) {
         let mut send_txs = Measure::start("send_txs");
-        self.iter().for_each(|(_, _, _, tx)| {
+        self.iter().for_each(|(_, _, tx)| {
             client.async_send_transaction(tx.clone()).expect("transfer");
         });
         send_txs.stop();
@@ -238,7 +214,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Pubke
             let too_many_failures = &too_many_failures;
             let verified_set: HashSet<Pubkey> = self
                 .par_iter()
-                .filter_map(move |(k, evm_secret, _authority, tx)| {
+                .filter_map(move |(k, evm_secret, tx)| {
                     if too_many_failures.load(Ordering::Relaxed) {
                         return None;
                     }
@@ -281,7 +257,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Pubke
                 })
                 .collect();
 
-            self.retain(|(k, _, _, _)| !verified_set.contains(&k.pubkey()));
+            self.retain(|(k, _, _)| !verified_set.contains(&k.pubkey()));
             if self.is_empty() {
                 break;
             }
@@ -301,7 +277,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Pubke
 
 pub fn fund_evm_keys<T: 'static + Client + Send + Sync>(
     client: Arc<T>,
-    keys: &[(Keypair, evm::SecretKey, Pubkey)],
+    keys: &[(Keypair, evm::SecretKey)],
     lamports_per_account: u64,
 ) {
     // try to transfer a "few" at a time with recent blockhash
@@ -309,7 +285,7 @@ pub fn fund_evm_keys<T: 'static + Client + Send + Sync>(
     const FUND_CHUNK_LEN: usize = 4 * 1024 * 1024 / 512;
 
     keys.chunks(FUND_CHUNK_LEN).for_each(|chunk| {
-        Vec::<(&Keypair, _, _, Transaction)>::with_capacity(chunk.len()).fund(
+        Vec::<(&Keypair, _, Transaction)>::with_capacity(chunk.len()).fund(
             &client,
             chunk,
             lamports_per_account,
@@ -320,8 +296,8 @@ pub fn fund_evm_keys<T: 'static + Client + Send + Sync>(
 }
 
 fn generate_system_txs(
-    source: &[&(Keypair, evm::SecretKey, Pubkey)],
-    dest: &VecDeque<&(Keypair, evm::SecretKey, Pubkey)>,
+    source: &[&(Keypair, evm::SecretKey)],
+    dest: &VecDeque<&(Keypair, evm::SecretKey)>,
     reclaim: bool,
     blockhash: &Hash,
 ) -> Vec<(Transaction, u64)> {
@@ -362,8 +338,8 @@ fn generate_system_txs(
 fn generate_txs(
     shared_txs: &SharedTransactions,
     blockhash: &Arc<RwLock<Hash>>,
-    source: &[&(Keypair, evm::SecretKey, Pubkey)],
-    dest: &VecDeque<&(Keypair, evm::SecretKey, Pubkey)>,
+    source: &[&(Keypair, evm::SecretKey)],
+    dest: &VecDeque<&(Keypair, evm::SecretKey)>,
     threads: usize,
     reclaim: bool,
 ) {
@@ -406,7 +382,7 @@ fn generate_txs(
 pub fn do_bench_tps<T>(
     client: Arc<T>,
     config: Config,
-    gen_keypairs: Vec<(Keypair, evm::SecretKey, Pubkey)>,
+    gen_keypairs: Vec<(Keypair, evm::SecretKey)>,
 ) -> u64
 where
     T: 'static + Client + Send + Sync,
@@ -535,8 +511,8 @@ fn generate_chunked_transfers(
     recent_blockhash: Arc<RwLock<Hash>>,
     shared_txs: &SharedTransactions,
     shared_tx_active_thread_count: Arc<AtomicIsize>,
-    source_keypair_chunks: Vec<Vec<&(Keypair, evm::SecretKey, Pubkey)>>,
-    dest_keypair_chunks: &mut Vec<VecDeque<&(Keypair, evm::SecretKey, Pubkey)>>,
+    source_keypair_chunks: Vec<Vec<&(Keypair, evm::SecretKey)>>,
+    dest_keypair_chunks: &mut Vec<VecDeque<&(Keypair, evm::SecretKey)>>,
     threads: usize,
     duration: Duration,
     sustained: bool,
