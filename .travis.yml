@@ -40,9 +40,9 @@ jobs:
       name: "Windows release artifacts"
       os: windows
     #  Linux release artifacts are still built by ci/buildkite-secondary.yml
-    #- <<: *release-artifacts
-    #  name: "Linux release artifacts"
-    #  os: linux
-    #  before_install:
-    #    - sudo apt-get install libssl-dev libudev-dev
+    - <<: *release-artifacts
+      name: "Linux release artifacts"
+      os: linux
+      before_install:
+        - sudo apt-get install libssl-dev libudev-dev
 
