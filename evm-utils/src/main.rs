@@ -1,14 +1,10 @@
 use log::*;
 use solana_client::rpc_client::RpcClient;
-use solana_evm_loader_program::instructions::Deposit;
 use solana_evm_loader_program::scope::*;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     message::Message,
-    native_token::lamports_to_sol,
-    pubkey::Pubkey,
-    signature::{read_keypair_file, Keypair, Signer},
-    system_instruction,
+    signature::{read_keypair_file, Signer},
 };
 use std::fs::File;
 use std::io::{Read, Write};
@@ -21,12 +17,7 @@ enum SubCommands {
         /// A path to a file where raw transaction is stored in bincode encoding.
         raw_tx: String,
     },
-    /// Create deposit account.
-    CreateDeposit {
-        account_keypair: Option<String>,
-    },
     TransferToEth {
-        authority_address: solana::Address,
         lamports: u64,
         ether_address: evm::Address,
     },
@@ -53,25 +44,6 @@ struct Args {
 }
 
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
-
-fn check_fee_payer_balance(
-    rpc_client: &RpcClient,
-    pubkey: &Pubkey,
-    required_balance: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let balance = rpc_client.get_balance(pubkey)?;
-    if balance < required_balance {
-        Err(format!(
-            "Fee payer, {}, has insufficient balance: {} required, {} available",
-            pubkey,
-            lamports_to_sol(required_balance),
-            lamports_to_sol(balance)
-        )
-        .into())
-    } else {
-        Ok(())
-    }
-}
 
 #[paw::main]
 fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -125,64 +97,16 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             //     |_| CliError::DynamicProgramError("Data writes to program account failed".to_string()),
             // )?;
         }
-        SubCommands::CreateDeposit { account_keypair } => {
-            let account = if let Some(account_keypair) = account_keypair {
-                Box::new(read_keypair_file(&account_keypair).unwrap())
-            } else {
-                Box::new(Keypair::new())
-            };
-            let minimum_balance_for_rent_exemption =
-                rpc_client.get_minimum_balance_for_rent_exemption(Deposit::LEN)?;
-
-            let ix = solana_evm_loader_program::create_deposit_account(
-                &signer.pubkey(),
-                &account.pubkey(),
-            );
-            info!("Created account = {}", account.pubkey());
-
-            let mut transaction = solana::Transaction::new_with_payer(
-                &[
-                    system_instruction::create_account(
-                        &signer.pubkey(),
-                        &account.pubkey(),
-                        minimum_balance_for_rent_exemption,
-                        Deposit::LEN as u64,
-                        &solana_evm_loader_program::ID,
-                    ),
-                    ix,
-                ],
-                Some(&signer.pubkey()),
-            );
-
-            let (recent_blockhash, fee_calculator) = rpc_client.get_recent_blockhash()?;
-            check_fee_payer_balance(
-                &rpc_client,
-                &signer.pubkey(),
-                minimum_balance_for_rent_exemption
-                    + fee_calculator.calculate_fee(&transaction.message()),
-            )?;
-            let signers = vec![signer.as_ref(), account.as_ref()];
-            transaction.sign(&signers, recent_blockhash);
-            info!("Sending tx = {:?}", transaction);
-            let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-                &transaction,
-                CommitmentConfig::default(),
-                Default::default(),
-            );
-            info!("Result = {:?}", result);
-        }
         SubCommands::TransferToEth {
-            authority_address,
             lamports,
             ether_address,
         } => {
-            let ix = solana_evm_loader_program::transfer_native_to_eth(
+            let ixs = solana_evm_loader_program::transfer_native_to_eth_ixs(
                 &signer.pubkey(),
-                &authority_address,
                 lamports,
                 ether_address,
             );
-            let message = Message::new(&[ix], Some(&signer.pubkey()));
+            let message = Message::new(&ixs, Some(&signer.pubkey()));
             let mut create_account_tx = solana::Transaction::new_unsigned(message);
 
             info!("Getting block hash");

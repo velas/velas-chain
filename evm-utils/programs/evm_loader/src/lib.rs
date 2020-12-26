@@ -20,18 +20,18 @@ pub mod scope {
     }
     pub mod solana {
         pub use solana_sdk::{
-            instruction::Instruction, pubkey::Pubkey as Address, transaction::Transaction,
+            evm_state, instruction::Instruction, pubkey::Pubkey as Address,
+            transaction::Transaction,
         };
     }
 }
 use instructions::EvmInstruction;
 use scope::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
-use solana_sdk::sysvar;
 
 pub fn send_raw_tx(signer: &solana::Address, evm_tx: evm::Transaction) -> solana::Instruction {
     let account_metas = vec![
-        AccountMeta::new(crate::ID, false),
+        AccountMeta::new(solana::evm_state::ID, false),
         AccountMeta::new(*signer, true),
     ];
 
@@ -42,16 +42,14 @@ pub fn send_raw_tx(signer: &solana::Address, evm_tx: evm::Transaction) -> solana
     )
 }
 
-pub fn transfer_native_to_eth(
+pub(crate) fn transfer_native_to_eth(
     owner: &solana::Address,
-    authority_address: &solana::Address,
     lamports: u64,
     ether_address: evm::Address,
 ) -> solana::Instruction {
     let account_metas = vec![
-        AccountMeta::new(crate::ID, false),
+        AccountMeta::new(solana::evm_state::ID, false),
         AccountMeta::new(*owner, true),
-        AccountMeta::new(*authority_address, false),
     ];
 
     Instruction::new(
@@ -64,19 +62,34 @@ pub fn transfer_native_to_eth(
     )
 }
 
-pub fn create_deposit_account(
-    signer: &solana::Address,
-    authority_address: &solana::Address,
-) -> solana::Instruction {
+pub(crate) fn free_ownership(owner: &solana::Address) -> solana::Instruction {
     let account_metas = vec![
-        AccountMeta::new(crate::ID, false),
-        AccountMeta::new(*authority_address, false),
-        AccountMeta::new_readonly(sysvar::rent::id(), false),
+        AccountMeta::new(solana::evm_state::ID, false),
+        AccountMeta::new(*owner, true),
     ];
 
-    Instruction::new(
-        crate::ID,
-        &EvmInstruction::CreateDepositAccount { pubkey: *signer },
-        account_metas,
-    )
+    Instruction::new(crate::ID, &EvmInstruction::FreeOwnership {}, account_metas)
+}
+
+pub fn transfer_native_to_eth_ixs(
+    owner: &solana::Address,
+    lamports: u64,
+    ether_address: evm::Address,
+) -> Vec<solana::Instruction> {
+    vec![
+        solana_sdk::system_instruction::assign(owner, &crate::ID),
+        transfer_native_to_eth(owner, lamports, ether_address),
+        free_ownership(owner),
+    ]
+}
+
+/// Create an account that represent evm locked lamports count.
+pub fn create_state_account() -> solana_sdk::account::Account {
+    solana_sdk::account::Account {
+        lamports: 1,
+        owner: crate::ID,
+        data: b"Evm state".to_vec(),
+        executable: false,
+        rent_epoch: 0,
+    }
 }

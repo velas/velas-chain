@@ -222,19 +222,7 @@ pub mod tests {
         let code = hex::decode(HELLO_WORLD_CODE).unwrap();
         let data = hex::decode(HELLO_WORLD_ABI).unwrap();
 
-        let vicinity = MemoryVicinity {
-            gas_price: U256::zero(),
-            origin: H160::default(),
-            chain_id: U256::zero(),
-            block_hashes: Vec::new(),
-            block_number: U256::zero(),
-            block_coinbase: H160::default(),
-            block_timestamp: U256::zero(),
-            block_difficulty: U256::zero(),
-            block_gas_limit: U256::max_value(),
-        };
-
-        let backend = EvmState::new(vicinity);
+        let backend = EvmState::new();
         let backend = RwLock::new(backend);
 
         {
@@ -256,6 +244,7 @@ pub mod tests {
             backend.read().unwrap().try_fork().unwrap(),
             config,
             usize::max_value(),
+            0,
         );
 
         let exit_reason = match executor.with_executor(|e| {

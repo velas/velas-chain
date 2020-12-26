@@ -1,15 +1,11 @@
-use super::instructions::{Deposit, EvmInstruction};
+use super::instructions::EvmInstruction;
 use super::scope::*;
 use log::*;
 
 use evm::Executor;
 use solana_sdk::instruction::InstructionError;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::{
-    account::KeyedAccount,
-    program_utils::limited_deserialize,
-    sysvar::{rent::Rent, Sysvar},
-};
+use solana_sdk::{account::KeyedAccount, program_utils::limited_deserialize};
 
 use evm::ExitReason;
 
@@ -22,67 +18,38 @@ pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
 
 /// Ensure that first account is program itself, and it's locked for writes.
 fn check_evm_account<'a, 'b>(
-    program_id: &Pubkey,
     keyed_accounts: &'a [KeyedAccount<'b>],
-) -> Result<&'a [KeyedAccount<'b>], InstructionError> {
+) -> Result<(&'a KeyedAccount<'b>, &'a [KeyedAccount<'b>]), InstructionError> {
     let first = keyed_accounts
         .first()
         .ok_or(InstructionError::NotEnoughAccountKeys)?;
 
-    if first.unsigned_key() != program_id || !first.is_writable() {
+    println!("first = {:?}", first);
+    println!("all = {:?}", keyed_accounts);
+    if first.unsigned_key() != &solana::evm_state::id() || !first.is_writable() {
         error!("First account is not evm, or not writable");
         return Err(InstructionError::MissingAccount);
     }
 
     let keyed_accounts = &keyed_accounts[1..];
-    Ok(keyed_accounts)
+    Ok((first, keyed_accounts))
 }
 
 #[derive(Default, Debug, Clone)]
 pub struct EvmProcessor {}
 
 impl EvmProcessor {
-    pub fn process_initialize_deposit(
-        accounts: &[KeyedAccount],
-        pubkey: Pubkey,
-    ) -> Result<(), InstructionError> {
-        let account_info_iter = &mut accounts.iter();
-        let deposit_info = next_account_info(account_info_iter)?;
-        let rent_account = next_account_info(account_info_iter)?;
-        let deposit_info_len = deposit_info.data_len()?;
-        let rent = &Rent::from_account(&*rent_account.try_account_ref()?)
-            .ok_or(InstructionError::InvalidArgument)?;
-
-        let mut deposit: Deposit =
-            limited_deserialize(&deposit_info.try_account_ref()?.data).unwrap_or_default();
-        if deposit.is_initialized {
-            return Err(InstructionError::AccountAlreadyInitialized);
-        }
-
-        if !rent.is_exempt(deposit_info.lamports()?, deposit_info_len) {
-            return Err(InstructionError::ExecutableAccountNotRentExempt);
-        }
-
-        deposit.deposit_authority = Option::Some(pubkey);
-        deposit.is_initialized = true;
-        deposit.locked_lamports = 0;
-
-        bincode::serialize_into(&mut *deposit_info.try_account_ref_mut()?.data, &deposit)
-            .map_err(|_| InstructionError::InvalidArgument)?;
-
-        Ok(())
-    }
-
     pub fn process_instruction(
         &self,
-        program_id: &Pubkey,
+        _program_id: &Pubkey,
         keyed_accounts: &[KeyedAccount],
         data: &[u8],
         executor: Option<&mut Executor>,
     ) -> Result<(), InstructionError> {
         let executor = executor.expect("Evm execution from crossprogram is not allowed.");
 
-        let keyed_accounts = check_evm_account(program_id, keyed_accounts)?;
+        let (evm_state_account, keyed_accounts) = check_evm_account(keyed_accounts)?;
+        let mut evm_state_account = evm_state_account.try_account_ref_mut()?;
 
         let ix = limited_deserialize(data)?;
         debug!("Run evm exec with ix = {:?}.", ix);
@@ -102,8 +69,10 @@ impl EvmProcessor {
                     _ => {}
                 }
             }
-            EvmInstruction::CreateDepositAccount { pubkey } => {
-                Self::process_initialize_deposit(&keyed_accounts, pubkey)?
+            EvmInstruction::FreeOwnership {} => {
+                let accounts_iter = &mut keyed_accounts.iter();
+                let signer_account = next_account_info(accounts_iter)?;
+                signer_account.try_account_ref_mut()?.owner = solana_sdk::system_program::id();
             }
             EvmInstruction::SwapNativeToEther {
                 lamports,
@@ -111,11 +80,10 @@ impl EvmProcessor {
             } => {
                 let accounts_iter = &mut keyed_accounts.iter();
                 let signer_account = next_account_info(accounts_iter)?;
-                let authority_account = next_account_info(accounts_iter)?;
                 let gweis = evm::lamports_to_gwei(lamports);
                 debug!(
                     "Sending lamports to Gwei tokens from={},to={}",
-                    authority_account.unsigned_key(),
+                    signer_account.unsigned_key(),
                     ether_address
                 );
 
@@ -128,41 +96,22 @@ impl EvmProcessor {
                     return Ok(());
                 }
 
-                let mut deposit: Deposit =
-                    limited_deserialize(&authority_account.account.borrow().data)
-                        .unwrap_or_default();
-
-                if signer_account.signer_key().is_none()
-                    || deposit.get_owner()? != *signer_account.signer_key().unwrap()
-                {
+                if signer_account.signer_key().is_none() {
                     debug!("SwapNativeToEther: from must sign");
                     return Err(InstructionError::MissingRequiredSignature);
                 }
 
-                let mut real_lamports = authority_account.lamports()?;
-                if deposit.locked_lamports >= real_lamports {
-                    debug!(
-                        "SwapNativeToEther: insufficient unlocked lamports ({}, locked {})",
-                        authority_account.lamports()?,
-                        deposit.locked_lamports
-                    );
-                    return Err(InstructionError::InsufficientFunds);
-                }
-                real_lamports -= deposit.locked_lamports;
-                if lamports > real_lamports {
+                let mut account = signer_account.try_account_ref_mut()?;
+                if lamports > account.lamports {
                     debug!(
                         "SwapNativeToEther: insufficient lamports ({}, need {})",
-                        real_lamports, lamports
+                        account.lamports, lamports
                     );
                     return Err(InstructionError::InsufficientFunds);
                 }
-                deposit.locked_lamports += lamports;
+                account.lamports -= lamports;
+                evm_state_account.lamports += lamports;
                 executor.with_executor(|e| e.deposit(ether_address, gweis));
-                bincode::serialize_into(
-                    &mut *authority_account.try_account_ref_mut()?.data,
-                    &deposit,
-                )
-                .map_err(|_| InstructionError::InvalidArgument)?;
             }
         }
         Ok(())
@@ -199,6 +148,7 @@ mod test {
     use solana_sdk::account::KeyedAccount;
     use solana_sdk::native_loader;
     use solana_sdk::program_utils::limited_deserialize;
+    use solana_sdk::sysvar::rent::Rent;
 
     use std::sync::RwLock;
     use std::{cell::RefCell, collections::BTreeMap};
@@ -233,12 +183,12 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
+            0,
         );
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
-        let evm_account = RefCell::new(native_loader::create_loadable_account("Evm Processor"));
-
-        let evm_keyed_account = KeyedAccount::new(&crate::ID, false, &evm_account);
+        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account];
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let tx_create = evm::UnsignedTransaction {
@@ -296,9 +246,8 @@ mod test {
     fn execute_tx_with_state_apply() {
         let state = RwLock::new(evm_state::EvmState::default());
         let processor = EvmProcessor::default();
-        let evm_account = RefCell::new(native_loader::create_loadable_account("Evm Processor"));
-
-        let evm_keyed_account = KeyedAccount::new(&crate::ID, false, &evm_account);
+        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account];
 
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
@@ -324,6 +273,7 @@ mod test {
                 locked.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
+                0,
             );
             let mut executor = Some(&mut executor_orig);
             assert!(processor
@@ -364,6 +314,7 @@ mod test {
                 locked.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
+                0,
             );
             let mut executor = Some(&mut executor_orig);
 
@@ -393,14 +344,74 @@ mod test {
         // TODO: Assert that tx executed with result.
     }
 
+    #[test]
+    fn execute_native_transfer_tx() {
+        let mut executor = evm_state::Executor::with_config(
+            evm_state::EvmState::default(),
+            evm_state::Config::istanbul(),
+            10000000,
+            0,
+        );
+        let mut executor = Some(&mut executor);
+        let processor = EvmProcessor::default();
+        let user_account = RefCell::new(solana_sdk::account::Account {
+            lamports: 1000,
+            data: vec![],
+            owner: crate::ID,
+            executable: false,
+            rent_epoch: 0,
+        });
+        let user_id = Pubkey::new_rand();
+        let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
+
+        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account, user_keyed_account];
+        let ether_dummy_address = H160::repeat_byte(0x11);
+
+        let lamports_before = keyed_accounts[0].try_account_ref_mut().unwrap().lamports;
+
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::SwapNativeToEther {
+                    lamports: 1000,
+                    ether_address: ether_dummy_address
+                })
+                .unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_ok());
+        println!("cx = {:?}", executor);
+
+        assert_eq!(
+            keyed_accounts[0].try_account_ref_mut().unwrap().lamports,
+            lamports_before + 1000
+        );
+        assert_eq!(keyed_accounts[1].try_account_ref_mut().unwrap().lamports, 0);
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::FreeOwnership {}).unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_ok());
+        println!("cx = {:?}", executor);
+        assert_eq!(
+            keyed_accounts[1].try_account_ref_mut().unwrap().owner,
+            solana_sdk::system_program::id()
+        );
+    }
+
     fn all_ixs() -> Vec<solana_sdk::instruction::Instruction> {
         let tx_call = dummy_call();
 
         let signer = solana::Address::new_rand();
-        let authority = solana::Address::new_rand();
         vec![
-            crate::create_deposit_account(&signer, &authority),
-            crate::transfer_native_to_eth(&signer, &authority, 1, tx_call.address().unwrap()),
+            crate::transfer_native_to_eth(&signer, 1, tx_call.address().unwrap()),
+            crate::free_ownership(&signer),
             crate::send_raw_tx(&signer, tx_call),
         ]
     }
@@ -418,7 +429,7 @@ mod test {
             _rest => solana_sdk::account::Account {
                 lamports: 20000000,
                 owner: native_loader::id(),
-                data: vec![0u8; Deposit::LEN],
+                data: vec![0u8],
                 executable: false,
                 rent_epoch: 0,
             },
@@ -432,6 +443,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
+            0,
         );
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();

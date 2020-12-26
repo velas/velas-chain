@@ -47,21 +47,6 @@ pub struct RPCLog {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct RPCReceipt {
-    pub transaction_hash: Hex<H256>,
-    pub transaction_index: Hex<usize>,
-    pub block_hash: Hex<H256>,
-    pub block_number: Hex<U256>,
-    pub cumulative_gas_used: Hex<Gas>,
-    pub gas_used: Hex<Gas>,
-    pub contract_address: Option<Hex<Address>>,
-    pub logs: Vec<RPCLog>,
-    pub root: Hex<H256>,
-    pub status: Hex<usize>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct RPCBlock {
     pub number: Hex<U256>,
     pub hash: Hex<H256>,
@@ -106,6 +91,20 @@ pub struct RPCTransaction {
     pub transaction_index: Option<Hex<usize>>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RPCReceipt {
+    pub transaction_hash: Hex<H256>,
+    pub transaction_index: Hex<usize>,
+    pub block_hash: Hex<H256>,
+    pub block_number: Hex<U256>,
+    pub cumulative_gas_used: Hex<Gas>,
+    pub gas_used: Hex<Gas>,
+    pub contract_address: Option<Hex<Address>>,
+    pub logs: Vec<RPCLog>,
+    pub root: Hex<H256>,
+    pub status: Hex<usize>,
+}
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCTrace {
