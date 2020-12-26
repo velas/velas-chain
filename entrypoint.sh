@@ -96,8 +96,8 @@ case "${NODE_TYPE}" in
     fi
     PORT_RANGE=$2
     RPC_PORT=$3
-    # IP=`get_my_ip`
-    run_solana_bootstrap $DATADIR 127.0.0.1 $PORT_RANGE $RPC_PORT
+    IP=`get_my_ip`
+    run_solana_bootstrap $DATADIR $IP $PORT_RANGE $RPC_PORT
     ;;
   "validator")    
     ENTRYPOINT=$2
