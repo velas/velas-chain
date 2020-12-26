@@ -39,9 +39,7 @@ enum SubCommands {
         abi: Option<String>,
     },
     /// DEBUG: Parse binary array as hex/utf8.
-    ParseArray {
-        array: String,
-    },
+    ParseArray { array: String },
 }
 
 #[derive(Debug, structopt::StructOpt)]
@@ -52,7 +50,6 @@ struct Args {
 
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 use env_logger::Env;
-
 
 #[paw::main]
 fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -120,7 +117,7 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 Default::default(),
             );
             debug!("Result = {:?}", result);
-            let res =  result.expect("Failed to send transaction using rpc");
+            let res = result.expect("Failed to send transaction using rpc");
             println!("Transaction signature = {}", res);
         }
         SubCommands::CreateDummy {
