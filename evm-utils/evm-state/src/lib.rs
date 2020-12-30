@@ -13,16 +13,15 @@ pub mod transactions;
 pub use evm_backend::*;
 pub use layered_backend::*;
 pub use transactions::*;
+pub use types::*;
 
 mod evm_backend;
 mod mb_value;
 mod storage;
-mod version_map;
+mod types;
 
 use log::debug;
 use std::fmt;
-
-pub(crate) type Slot = u64; // TODO: re-use existing one from sdk package
 
 pub trait FromKey {
     fn to_public_key(&self) -> secp256k1::PublicKey;
@@ -62,24 +61,6 @@ impl Executor {
         gas_limit: usize,
         block_number: u64,
     ) -> Self {
-        //TODO: Request info from solana blockchain for vicinity
-
-        //         /// Gas price.
-        // pub gas_price: U256,
-        // /// Chain ID.
-        // pub chain_id: U256,
-        // /// Environmental block hashes.
-        // pub block_hashes: Vec<H256>,
-        // /// Environmental block number.
-        // pub block_number: U256,
-        // /// Environmental coinbase.
-        // pub block_coinbase: H160,
-        // /// Environmental block timestamp.
-        // pub block_timestamp: U256,
-        // /// Environmental block difficulty.
-        // pub block_difficulty: U256,
-        // /// Environmental block gas limit.
-        // pub block_gas_limit: U256,
         let vicinity = MemoryVicinity {
             block_gas_limit: gas_limit.into(),
             block_number: block_number.into(),
@@ -182,10 +163,16 @@ impl Executor {
         hashes.push(tx_hash);
 
         let index = hashes.len() as u64;
-        self.evm.evm_state.txs_in_block.insert(block_num, hashes);
+        self.evm
+            .evm_state
+            .txs_in_block
+            .insert(block_num, hashes.into());
 
         let tx_receipt = TransactionReceipt::new(tx, used_gas, block_num, index, result);
-        self.evm.evm_state.txs_receipts.insert(tx_hash, tx_receipt);
+        self.evm
+            .evm_state
+            .txs_receipts
+            .insert(tx_hash, tx_receipt.into());
     }
 
     pub fn deconstruct(self) -> EvmState {

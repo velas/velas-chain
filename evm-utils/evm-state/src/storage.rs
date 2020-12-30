@@ -1,19 +1,21 @@
-use std::array::TryFromSliceError;
-use std::convert::{TryFrom, TryInto};
-use std::fmt::{self, Debug};
-use std::io::Cursor;
-use std::marker::PhantomData;
-use std::mem::size_of;
-use std::ops::Deref;
-use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::{
+    array::TryFromSliceError,
+    convert::{TryFrom, TryInto},
+    fmt::{self, Debug},
+    io::Cursor,
+    marker::PhantomData,
+    mem::size_of,
+    ops::Deref,
+    path::Path,
+    sync::{Arc, RwLock},
+};
 
 use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
 use lazy_static::lazy_static;
 use rocksdb::{self, ColumnFamily, ColumnFamilyDescriptor, IteratorMode, Options, DB};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use super::mb_value::MaybeValue;
+use crate::mb_value::MaybeValue;
 
 pub type Result<T> = std::result::Result<T, Error>;
 pub type StdResult<T, E> = std::result::Result<T, E>;
@@ -66,6 +68,11 @@ where
     V: Copy + Serialize + DeserializeOwned,
     Previous<V>: Serialize + DeserializeOwned,
 {
+    pub fn is_exists(&self, version: V) -> Result<bool> {
+        let key = CODER.serialize(&version).typed_ctx()?;
+        Ok(self.db.get_pinned(key)?.is_some())
+    }
+
     pub fn previous_of(&self, version: V) -> Result<Previous<V>> {
         let version = CODER.serialize(&version).typed_ctx()?;
 
