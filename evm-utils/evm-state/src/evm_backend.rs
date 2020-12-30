@@ -16,7 +16,7 @@ impl EvmBackend {
         Self { evm_state, tx_info }
     }
 
-    fn tx_info<'a>(&'a self) -> &'a crate::layered_backend::MemoryVicinity {
+    fn tx_info(&self) -> &crate::layered_backend::MemoryVicinity {
         &self.tx_info
     }
 }
@@ -88,7 +88,7 @@ impl Backend for EvmBackend {
     fn code(&self, address: H160) -> Vec<u8> {
         self.evm_state
             .get_account(address)
-            .map(|v| v.code.clone())
+            .map(|v| v.code)
             .unwrap_or_default()
     }
 

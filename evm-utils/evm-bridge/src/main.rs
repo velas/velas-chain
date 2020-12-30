@@ -1,19 +1,14 @@
 use log::*;
-
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use evm_rpc::basic::BasicERPC;
-use evm_rpc::bridge::BridgeERPC;
-use evm_rpc::chain_mock::ChainMockERPC;
-use evm_rpc::*;
-use evm_state::*;
 use sha3::{Digest, Keccak256};
-use solana_evm_loader_program::scope::*;
+use std::sync::Arc;
+use std::{collections::HashMap, net::SocketAddr};
 
-use solana_client::rpc_client::RpcClient;
+use jsonrpc_core::Result;
+use serde_json::json;
 
 use solana_account_decoder::{parse_token::UiTokenAmount, UiAccount};
+use solana_client::rpc_client::RpcClient;
+use solana_evm_loader_program::scope::*;
 
 use solana_runtime::commitment::BlockCommitmentArray;
 use solana_sdk::{
@@ -25,7 +20,6 @@ use solana_sdk::{
     signature::Signer,
     transaction,
 };
-
 use solana_transaction_status::{
     ConfirmedBlock, ConfirmedTransaction, TransactionStatus, UiTransactionEncoding,
 };
@@ -34,9 +28,13 @@ use solana_client::{
     rpc_config::*, rpc_request::RpcRequest, rpc_response::Response as RpcResponse, rpc_response::*,
 };
 
-use jsonrpc_core::Result;
-use serde_json::json;
 use solana_core::rpc::RpcSol;
+
+use evm_rpc::basic::BasicERPC;
+use evm_rpc::bridge::BridgeERPC;
+use evm_rpc::chain_mock::ChainMockERPC;
+use evm_rpc::*;
+use evm_state::*;
 
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
@@ -75,14 +73,17 @@ impl EvmBridge {
 
 macro_rules! proxy_evm_rpc {
     ($rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
-        // debug!("proxy received {}", stringify!($rpc_call));
+        {
+        debug!("evm proxy received {}", stringify!($rpc_call));
         RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*]))
-        .map_err(|e|{
-            error!("Json rpc error = {:?}", e);
-            evm_rpc::Error::InvalidParams
+            .map_err(|e| {
+                error!("Json rpc error = {:?}", e);
+                evm_rpc::Error::InvalidParams
             })
+        }
     )
 }
+
 pub struct BridgeERPCImpl;
 
 impl BridgeERPC for BridgeERPCImpl {
@@ -107,13 +108,11 @@ impl BridgeERPC for BridgeERPCImpl {
         info!("send_transaction from = {}", address);
 
         let secret_key = meta.accounts.get(&address).unwrap();
-        let nonce = match tx.nonce.map(|a| a.0) {
-            Some(nonce) => nonce,
-            None => meta
-                .rpc_client
-                .get_evm_transaction_count(&address)
-                .unwrap_or_default(),
-        };
+        let nonce = tx
+            .nonce
+            .map(|a| a.0)
+            .or_else(|| meta.rpc_client.get_evm_transaction_count(&address).ok())
+            .unwrap_or_default();
         let tx_create = evm::UnsignedTransaction {
             nonce,
             gas_price: tx.gas_price.map(|a| a.0).unwrap_or_else(|| 0.into()),
@@ -457,12 +456,14 @@ impl BasicERPC for BasicERPCProxy {
 
 macro_rules! proxy_sol_rpc {
     ($rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
-        // debug!("proxy received {}", stringify!($rpc_call));
+        {
+        debug!("proxy received {}", stringify!($rpc_call));
         RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*]))
-        .map_err(|e|{
-            error!("Json rpc error = {:?}", e);
-            jsonrpc_core::Error::internal_error()
+            .map_err(|e| {
+                error!("Json rpc error = {:?}", e);
+                jsonrpc_core::Error::internal_error()
             })
+        }
     )
 }
 
@@ -919,8 +920,10 @@ impl RpcSol for RpcSolProxy {
 #[derive(Debug, structopt::StructOpt)]
 struct Args {
     keyfile: Option<String>,
-    rpc_address: Option<String>,
-    binding_address: Option<String>,
+    #[structopt(default_value = "http://127.0.0.1:8899")]
+    rpc_address: String,
+    #[structopt(default_value = "127.0.0.1:8545")]
+    binding_address: SocketAddr,
 }
 
 use jsonrpc_http_server::jsonrpc_core::*;
@@ -956,13 +959,8 @@ fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let keyfile_path = args
         .keyfile
         .unwrap_or_else(|| solana_cli_config::Config::default().keypair_path);
-    let server_path = args
-        .rpc_address
-        .unwrap_or_else(|| "http://127.0.0.1:8899".to_string());
-    let binding_address = args
-        .binding_address
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| "127.0.0.1:8545".parse().unwrap());
+    let server_path = args.rpc_address;
+    let binding_address = args.binding_address;
     let meta = EvmBridge::new(
         &keyfile_path,
         vec![evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap()],
