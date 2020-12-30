@@ -1,66 +1,19 @@
-use std::{any::type_name, borrow::Cow, path::Path};
-
-use evm::backend::Log;
-use log::*;
-use primitive_types::{H160, H256, U256};
-use serde::{Deserialize, Serialize};
-
-use crate::{
-    persistent_types,
-    storage::{PersistentAssoc, PersistentMap, VersionedStorage},
-    transactions::TransactionReceipt,
-    version_map::{KeyResult, Map},
-    Slot,
+use std::{
+    any::type_name, borrow::Cow, collections::BTreeMap, fmt::Debug, marker::PhantomData, path::Path,
 };
 
-/// Vivinity value of a memory backend.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct MemoryVicinity {
-    /// Gas price.
-    pub gas_price: U256,
-    /// Origin.
-    pub origin: H160,
-    /// Chain ID.
-    pub chain_id: U256,
-    /// Environmental block hashes.
-    pub block_hashes: Vec<H256>,
-    /// Environmental block number.
-    pub block_number: U256,
-    /// Environmental coinbase.
-    pub block_coinbase: H160,
-    /// Environmental block timestamp.
-    pub block_timestamp: U256,
-    /// Environmental block difficulty.
-    pub block_difficulty: U256,
-    /// Environmental block gas limit.
-    pub block_gas_limit: U256,
-}
+use derive_more::Deref;
+use log::*;
 
-impl Default for MemoryVicinity {
-    fn default() -> Self {
-        Self {
-            gas_price: U256::zero(),
-            origin: H160::default(),
-            chain_id: U256::zero(),
-            block_hashes: Vec::new(),
-            block_number: U256::zero(),
-            block_coinbase: H160::default(),
-            block_timestamp: U256::zero(),
-            block_difficulty: U256::zero(),
-            block_gas_limit: U256::max_value(),
-        }
-    }
-}
+use evm::backend::Log;
 
-#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct AccountState {
-    /// Account nonce.
-    pub nonce: U256,
-    /// Account balance.
-    pub balance: U256,
-    /// Account code.
-    pub code: Vec<u8>,
-}
+use crate::{
+    mb_value::MaybeValue,
+    persistent_types,
+    storage::{PersistentAssoc, Result as StorageResult, VersionedStorage},
+    transactions::TransactionReceipt,
+    types::*,
+};
 
 // Store every account storage at single place, to use power of versioned map.
 // This allows us to save only changed data.
@@ -68,20 +21,82 @@ persistent_types! {
     Accounts in "accounts" => H160 : AccountState,
     AccountsStorage in "accounts_storage" => (H160, H256) : H256,
     TransactionReceipts in "txs_receipts" => H256 : TransactionReceipt,
-    TransactionsInBlock in "txs_in_block" => Slot : Vec<H256>,
+    TransactionsInBlock in "txs_in_block" => Slot : Vec<H256>, // TODO: Key is Slot or U256?
 }
 
-type Mapped<M> = Map<Slot, <M as PersistentAssoc>::Key, <M as PersistentAssoc>::Value>;
+#[derive(Deref)]
+pub(crate) struct Layer<M: PersistentAssoc>(
+    #[deref] BTreeMap<M::Key, MaybeValue<M::Value>>,
+    PhantomData<M>,
+)
+where
+    M::Key: Ord;
+
+impl<M> Layer<M>
+where
+    M: PersistentAssoc,
+    M::Key: Ord,
+{
+    pub fn empty() -> Self {
+        Self(BTreeMap::new(), PhantomData)
+    }
+
+    pub fn insert(&mut self, key: M::Key, value: M::Value) {
+        self.0.insert(key, MaybeValue::Value(value));
+    }
+
+    pub fn remove(&mut self, key: M::Key) {
+        self.0.insert(key, MaybeValue::Removed);
+    }
+
+    fn dump_into(&mut self, storage: &VersionedStorage<Slot>, version: Slot) -> StorageResult<()>
+    where
+        M::Key: Ord + Copy + Debug,
+        M::Value: Clone + Debug,
+    {
+        let storage = storage.typed::<M>();
+
+        trace!("layer :: {} dumping ...", type_name::<M>());
+        for (key, value) in std::mem::replace(self, Self::empty()).0 {
+            debug!(
+                "{}: {:?} {:?} migrates from memory into storage",
+                version, key, &value
+            );
+
+            storage.insert_with(version, key, value)?;
+
+            trace!(
+                "{}: {:?} in storage as {:?}",
+                version,
+                key,
+                storage.get_for(version, key)
+            );
+        }
+        trace!("layer :: {} dumped", type_name::<M>());
+
+        Ok(())
+    }
+}
+
+impl<M: PersistentAssoc> Clone for Layer<M>
+where
+    M::Key: Clone + Ord,
+    M::Value: Clone,
+{
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), PhantomData)
+    }
+}
 
 #[derive(Clone)] // TODO: Debug
 pub struct EvmState {
     pub(crate) current_slot: Slot,
     pub(crate) previous_slot: Option<Slot>,
 
-    pub(crate) accounts: Mapped<Accounts>,
-    pub(crate) accounts_storage: Mapped<AccountsStorage>,
-    pub(crate) txs_receipts: Mapped<TransactionReceipts>,
-    pub(crate) txs_in_block: Mapped<TransactionsInBlock>,
+    pub(crate) accounts: Layer<Accounts>,
+    pub(crate) accounts_storage: Layer<AccountsStorage>,
+    pub(crate) txs_receipts: Layer<TransactionReceipts>,
+    pub(crate) txs_in_block: Layer<TransactionsInBlock>,
     pub(crate) logs: Vec<Log>, // TODO: migrate into storage
 
     storage: VersionedStorage<Slot>,
@@ -98,21 +113,24 @@ impl Default for EvmState {
 impl EvmState {
     pub fn freeze(&mut self) {
         info!(target: "evm_state", "freezing evm state (slot {})", self.current_slot);
-        self.accounts.freeze();
-        self.accounts_storage.freeze();
-        self.txs_receipts.freeze();
-        self.txs_in_block.freeze();
+        // self.accounts.freeze();
+        // self.accounts_storage.freeze();
+        // self.txs_receipts.freeze();
+        // self.txs_in_block.freeze();
     }
 
+    // TODO: dump all
     pub fn try_fork(&self, new_slot: Slot) -> Option<Self> {
         info!(
-            "forking evm state (slots: from {} to {})",
+            "forking evm state from slot {} to slot {}",
             self.current_slot, new_slot
         );
-        let accounts = self.accounts.try_fork(new_slot)?;
-        let accounts_storage = self.accounts_storage.try_fork(new_slot)?;
-        let txs_receipts = self.txs_receipts.try_fork(new_slot)?;
-        let txs_in_block = self.txs_in_block.try_fork(new_slot)?;
+
+        // TODO: assert that all these maps are empty
+        let accounts = self.accounts.clone();
+        let accounts_storage = self.accounts_storage.clone();
+        let txs_receipts = self.txs_receipts.clone();
+        let txs_in_block = self.txs_in_block.clone();
 
         // XXX: >_<
         if new_slot != self.current_slot {
@@ -124,8 +142,6 @@ impl EvmState {
                 .new_version(self.current_slot, self.previous_slot)
                 .unwrap();
         }
-
-        // TODO: save new_slot in new state and refactor memory map as versionless with inlined get w/o layered map proxy
 
         Some(Self {
             current_slot: new_slot,
@@ -142,57 +158,48 @@ impl EvmState {
 
     #[rustfmt::skip]
     pub fn dump_all(&mut self) -> anyhow::Result<()> {
-        dump_into(&self.storage.typed::<Accounts>(), &mut self.accounts)?;
-        dump_into(&self.storage.typed::<AccountsStorage>(), &mut self.accounts_storage)?;
-        dump_into(&self.storage.typed::<TransactionReceipts>(), &mut self.txs_receipts)?;
+        self.accounts.dump_into(&self.storage, self.current_slot)?;
+        self.accounts_storage.dump_into(&self.storage, self.current_slot )?;
+        self.txs_receipts.dump_into(&self.storage, self.current_slot)?;
+        self.txs_in_block.dump_into(&self.storage, self.current_slot)?;
         debug!(target: "evm_state", "all layers have been dumped");
         Ok(())
     }
 
+    // TODO: elide map arg, TBD: maybe typemap
     fn lookup<'a, M: PersistentAssoc>(
         &'a self,
-        // TODO: elide this arg, TBD: maybe typemap
-        map: &'a Mapped<M>,
+        map: &'a Layer<M>,
         key: M::Key,
     ) -> Option<Cow<'a, M::Value>>
     where
-        M::Key: Copy + Ord + std::fmt::Debug,
-        M::Value: Clone + std::fmt::Debug,
+        M::Key: Copy + Ord + Debug,
+        M::Value: Clone + Debug,
     {
         debug!("lookup {} for key {:?}", type_name::<M>(), &key);
-        match map.get(&key) {
-            KeyResult::Found(mb_value) => mb_value.map(|value| {
-                debug!(
-                    "{}: key {:?} was found in memory layer, value: {:?}",
-                    type_name::<M>(),
-                    key,
-                    &value
-                );
-                Cow::Borrowed(value)
-            }),
-            KeyResult::NotFound(last_version) => {
-                debug!("last looked version in memory was {}", last_version);
+        if let Some(mb_value) = map.0.get(&key) {
+            Option::from(mb_value.by_ref()).map(Cow::Borrowed)
+        } else {
+            let lookup_slot = if self.storage.is_exists(self.current_slot).unwrap() {
+                Some(self.current_slot)
+            } else {
+                self.previous_slot
+            };
 
-                let old_lookup =
-                    if *last_version == self.current_slot && self.previous_slot.is_some() {
-                        self.previous_slot.unwrap()
-                    } else {
-                        *last_version
-                    };
-
-                if let Some(mb_value) = self
-                    .storage
-                    .typed::<M>()
-                    .get_for(old_lookup, key)
-                    .unwrap_or_else(|err| {
-                        panic!(
-                            "Storage ({} :: Key {} => Value {}) lookup error: {:?}",
-                            type_name::<M>(),
-                            type_name::<M::Key>(),
-                            type_name::<M::Value>(),
-                            err
-                        )
-                    })
+            if let Some(slot) = lookup_slot {
+                if let Some(mb_value) =
+                    self.storage
+                        .typed::<M>()
+                        .get_for(slot, key)
+                        .unwrap_or_else(|err| {
+                            panic!(
+                                "Storage ({} :: Key {} => Value {}) lookup error: {:?}",
+                                type_name::<M>(),
+                                type_name::<M::Key>(),
+                                type_name::<M::Value>(),
+                                err
+                            );
+                        })
                 {
                     debug!(
                         "{}: key {:?} was found in storage, value: {:?}",
@@ -209,47 +216,11 @@ impl EvmState {
                     );
                     None
                 }
+            } else {
+                None
             }
         }
     }
-}
-
-fn dump_into<'a, M: PersistentAssoc>(
-    storage: &PersistentMap<'a, Slot, M>,
-    map: &mut Mapped<M>,
-) -> anyhow::Result<()>
-where
-    M::Key: Ord + Copy + std::fmt::Debug,
-    M::Value: Clone + std::fmt::Debug,
-{
-    trace!("dump assoc {} ...", type_name::<M>());
-
-    let mut full_iter = map.iter_full().peekable();
-    while let Some((version, kvs)) = full_iter.next() {
-        for (key, value) in kvs {
-            debug!(
-                "{}: {:?} {:?} migrates from memory into storage...",
-                version, key, &value
-            );
-            storage.insert_with(*version, *key, value.clone())?;
-            debug!(
-                "{}: {:?} in storage as {:?}",
-                version,
-                key,
-                storage.get_for(*version, *key)
-            );
-        }
-
-        // let previous = full_iter
-        //     .peek()
-        //     .map(|(previous, _)| **previous)
-        //     .or_else(|| storage.previous_of(*version).ok().flatten());
-    }
-    drop(full_iter);
-
-    map.clear();
-    trace!("dump assoc {} done", type_name::<M>());
-    Ok(())
 }
 
 impl EvmState {
@@ -270,10 +241,10 @@ impl EvmState {
             current_slot: slot,
             previous_slot,
 
-            accounts: Map::empty(slot),
-            accounts_storage: Map::empty(slot),
-            txs_receipts: Map::empty(slot),
-            txs_in_block: Map::empty(slot),
+            accounts: Layer::empty(),
+            accounts_storage: Layer::empty(),
+            txs_receipts: Layer::empty(),
+            txs_in_block: Layer::empty(),
             logs: vec![],
             storage,
         })
@@ -291,7 +262,7 @@ impl EvmState {
 
     // NOTE: currently used in benches only
     pub fn set_account(&mut self, address: H160, state: AccountState) {
-        self.accounts.insert(address, state)
+        self.accounts.insert(address, state);
     }
 
     pub fn get_account(&self, address: H160) -> Option<AccountState> {
@@ -305,8 +276,27 @@ impl EvmState {
     }
 
     pub fn swap_commit(&mut self, mut updated: Self) {
-        // TODO: Assert that updated is newer than current state.
+        // Assert that updated is newer than current state.
+        // Slot can not change, because we allow multiple commits per block.
+        // assert!(
+        //     updated.current_slot > self.current_slot
+        //         || (updated.current_slot == self.current_slot && self.is_empty()),
+        //     "Not expected commit: current = slot {}, is_empty {}, updated = slot {}, is_empty {}",
+        //     self.current_slot,
+        //     self.is_empty(),
+        //     updated.current_slot,
+        //     updated.is_empty()
+        // );
+
         std::mem::swap(self, &mut updated);
+    }
+
+    /// True if current layer has no any update, false otherwise.
+    fn is_empty(&self) -> bool {
+        self.accounts.is_empty()
+            && self.accounts_storage.is_empty()
+            && self.txs_receipts.is_empty()
+            && self.txs_in_block.is_empty()
     }
 }
 
@@ -331,10 +321,16 @@ mod tests {
     #[test]
     fn it_handles_my_own_expectations() {
         let tmp_dir = TmpDir::new("it_handles_my_own_expectations");
-        let mut evm_state = EvmState::load_from(&tmp_dir, 0).unwrap();
+        let evm_state = EvmState::load_from(&tmp_dir, 0).unwrap();
         assert_eq!(evm_state.current_slot, 0);
         assert_eq!(evm_state.previous_slot, None);
-        // assert_eq!(evm_state.storage.previous_of(0).unwrap(), None);
+        assert_eq!(
+            evm_state
+                .storage
+                .previous_of(evm_state.current_slot)
+                .unwrap(),
+            None
+        );
     }
 
     fn generate_account_by_seed(seed: u64) -> AccountState {
