@@ -64,6 +64,8 @@ if [[ $CI_OS_NAME = windows ]]; then
     solana-keygen
     solana-stake-accounts
     solana-tokens
+    evm-utils
+    evm-bridge
   )
 else
   ./fetch-perf-libs.sh
@@ -94,6 +96,8 @@ else
     solana-tokens
     solana-validator
     solana-watchtower
+    evm-utils
+    evm-bridge
   )
 
   #XXX: Ensure `solana-genesis` is built LAST!
