@@ -22,8 +22,16 @@ run_solana_validator() {
   solana --keypair $datadir/identity.json --url $rpc_url create-vote-account $datadir/vote-account.json $datadir/identity.json
   fi
 
-  solana-validator --max-genesis-archive-unpacked-size 1073741824 --entrypoint $entrypoint  --identity $datadir/identity.json --vote-account $datadir/vote-account.json --ledger $datadir --log - --enable-rpc-exit --enable-rpc-set-log-filter \
-  --snapshot-interval-slots 0 # temporary solution while evm is not persistent
+  solana-validator \
+    --max-genesis-archive-unpacked-size 1073741824 \
+    --entrypoint $entrypoint  \
+    --identity $datadir/identity.json \
+    --vote-account $datadir/vote-account.json \
+    --ledger $datadir \
+    --log - \
+    --enable-rpc-exit \
+    --enable-rpc-set-log-filter \
+    --snapshot-interval-slots 0 # temporary solution while evm is not persistent
 }
 
 run_solana_bootstrap() {
@@ -31,8 +39,17 @@ run_solana_bootstrap() {
   declare host=$2
   declare port_range=$3
   declare rpc_port=$4
-  solana-validator --enable-rpc-exit --enable-rpc-set-log-filter --gossip-host $host --ledger $datadir --dynamic-port-range $port_range --rpc-port $rpc_port --identity $datadir/identity.json --vote-account $datadir/vote-account.json --log - \
-   --snapshot-interval-slots 0 # temporary solution while evm is not persistent
+  solana-validator \
+    --enable-rpc-exit \
+    --enable-rpc-set-log-filter \
+    --gossip-host $host \
+    --ledger $datadir \
+    --dynamic-port-range $port_range \
+    --rpc-port $rpc_port \
+    --identity $datadir/identity.json \
+    --vote-account $datadir/vote-account.json \
+    --log - \
+    --snapshot-interval-slots 0 # temporary solution while evm is not persistent
 }
 
 run_evm_bridge() {
@@ -40,7 +57,7 @@ run_evm_bridge() {
   declare entrypoint=$2
   declare listen_addr=$3
   # RUN evm bridge with specific logs configuration
-  RUST_LOG="info,jsonrpc_core::io=debug,evm_bridge=debug" evm-bridge $keyfile $entrypoint $listen_addr
+  RUST_LOG="debug,hyper=info,tokio_reactor=info,reqwest=info" evm-bridge $keyfile $entrypoint $listen_addr
 }
 
 
