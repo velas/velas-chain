@@ -118,7 +118,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
         block: String,
         _full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
-        let num = match &*block {
+        let num = match block.as_str() {
             "pending" => None,
             "earliest" => Some(meta.get_first_available_block()),
             "latest" => Some(meta.get_slot(None)),
@@ -143,7 +143,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
                 let tx_hashes = evm_lock.get_txs_in_block(block_num);
                 let transactions = tx_hashes
                     .iter()
-                    .flat_map(|i| i)
+                    .flatten()
                     .map(|tx_hash| {
                         (
                             *tx_hash,

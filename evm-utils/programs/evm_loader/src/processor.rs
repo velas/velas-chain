@@ -2,12 +2,10 @@ use super::instructions::EvmInstruction;
 use super::scope::*;
 use log::*;
 
-use evm::Executor;
+use evm::{Executor, ExitReason};
 use solana_sdk::instruction::InstructionError;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{account::KeyedAccount, program_utils::limited_deserialize};
-
-use evm::ExitReason;
 
 /// Return the next AccountInfo or a NotEnoughAccountKeys error
 pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
@@ -62,11 +60,8 @@ impl EvmProcessor {
                     .transaction_execute(evm_tx)
                     .map_err(|_| InstructionError::InvalidArgument)?;
                 debug!("Exit status = {:?}", result);
-                match result.0 {
-                    ExitReason::Fatal(_) | ExitReason::Error(_) => {
-                        return Err(InstructionError::InvalidError)
-                    }
-                    _ => {}
+                if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
+                    return Err(InstructionError::InvalidError);
                 }
             }
             EvmInstruction::FreeOwnership {} => {
@@ -141,7 +136,6 @@ pub fn dummy_call() -> evm::Transaction {
 #[cfg(test)]
 mod test {
     use super::*;
-    use assert_matches::assert_matches;
     use evm_state::transactions::{TransactionAction, TransactionSignature};
     use evm_state::{ExitReason, ExitSucceed};
     use primitive_types::{H160, H256, U256};
@@ -340,7 +334,10 @@ mod test {
             .get_tx_receipt_by_hash(tx_hash)
             .unwrap()
             .clone();
-        assert_matches!(receipt.status, ExitReason::Succeed(ExitSucceed::Returned));
+        assert!(matches!(
+            receipt.status,
+            ExitReason::Succeed(ExitSucceed::Returned)
+        ));
         // TODO: Assert that tx executed with result.
     }
 

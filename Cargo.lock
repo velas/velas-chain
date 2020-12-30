@@ -1238,7 +1238,6 @@ dependencies = [
  "bincode",
  "bytes 0.6.0",
  "criterion",
- "derivative",
  "evm",
  "hex",
  "keccak-hash",

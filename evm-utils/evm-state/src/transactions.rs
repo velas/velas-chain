@@ -1,4 +1,3 @@
-use derivative::Derivative;
 use primitive_types::{H160, H256, U256};
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use serde::{Deserialize, Serialize};
@@ -282,11 +281,9 @@ impl From<Transaction> for UnsignedTransaction {
     }
 }
 // TODO: Work on logs and state_root.
-#[derive(Derivative, Debug, Clone, Eq, PartialEq)]
-#[derivative(PartialOrd, Ord)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TransactionReceipt {
     pub transaction: Transaction,
-    #[derivative(PartialOrd = "ignore", Ord = "ignore")]
     pub status: evm::ExitReason,
     pub block_number: u64,
     pub index: u64,

@@ -8,7 +8,7 @@ pub struct Hex<T>(pub T);
 #[derive(Debug, Clone)]
 pub struct Bytes(pub Vec<u8>);
 
-type Error = ();
+type Error = (); // TODO: Rewrite errors.
 
 fn format_hex_trimmed<T: LowerHex>(val: &T) -> String {
     let hex_str = format!("{:x}", val);
