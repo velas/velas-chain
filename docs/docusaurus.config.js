@@ -17,7 +17,7 @@ module.exports = {
       links: [
         {
           to: "evm",
-          label: "Evm integration",
+          label: "EVM integration",
           position: "left",
         },
         {
@@ -78,12 +78,12 @@ module.exports = {
           items: [
             {
               label: "GitHub",
-              href: "https://github.com/velas",
+              href: "https://github.com/velas/velas-chain",
             },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Velas Foundation`,
+      copyright: `Copyright © ${new Date().getFullYear()} Velas`,
     },
   },
   presets: [

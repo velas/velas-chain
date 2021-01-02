@@ -1,11 +1,11 @@
 ---
-title: EVM in solana
+title: EVM in Solana
 ---
 
-[Solana application model](apps/rent.md) is aiming to high performance by spliting its modifiable state on accounts.
-While this allows to process transactions in parallel on single shard, it also introduce complication for ordinary DApps developer.
+[Solana application model](apps/rent.md) is aiming to high performance by spliting its modifiable state across multiple accounts.
+While this allows to process transactions in parallel on single shard, thats also introduce complication for ordinary DApps developer.
 Also, most of DApps infrastructure is already relies on Solidity, and targeting Ethereum blockchain.
-This two reasons can significantly slow down the spread of solana ecosystem.
+These two reasons can significantly slow down the spread of solana ecosystem.
 
 To make life of DApps developers, and integrators more easier, we at Velas introduce full hybrid of solana and EVM.
 
@@ -20,7 +20,8 @@ Note: EVM store tokens in nano plancks, so when you transfer for example, 5 plan
 
 Usage:
 ```
-/target/debug/evm-utils transfer-to-eth --help
+> evm-utils transfer-to-eth --help
+
 evm-utils-transfer-to-eth 0.1.0
 Transfer solana token to EVM world
 
@@ -39,11 +40,11 @@ ARGS:
 
 Example:
 ```
-evm-utils transfer-to-eth 5 9Edb9E0B88Dbf2a29aE121a657e1860aEceaA53D
+> evm-utils transfer-to-eth 5 9Edb9E0B88Dbf2a29aE121a657e1860aEceaA53D
 ```
 Result after transaction processing:
 ```
-[2020-12-26T15:03:01Z INFO  evm_utils] Loading keypair from: /home/vladimir/.config/solana/id.json
+[2020-12-26T15:03:01Z INFO  evm_utils] Loading keypair from: /home/user/.config/solana/id.json
 Transaction signature = 5d3eP741NYgemyM4CLmXuTEcP8f8w7QxfZ5vBxorqenEtNeSHWMFpkwtyi1meFKHVNXzDD3NbvFCExjZH79gEMKk
 ```
 
