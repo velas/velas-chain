@@ -136,7 +136,7 @@ impl BridgeERPC for BridgeERPCImpl {
             tx.signature.chain_id()
         );
 
-        let ix = solana_evm_loader_program::send_raw_tx(&meta.key.pubkey(), tx);
+        let ix = solana_evm_loader_program::send_raw_tx(meta.key.pubkey(), tx);
 
         let message = Message::new(&[ix], Some(&meta.key.pubkey()));
         let mut send_raw_tx: solana_sdk::transaction::Transaction =
@@ -176,7 +176,7 @@ impl BridgeERPC for BridgeERPCImpl {
             tx.signature.chain_id()
         );
 
-        let ix = solana_evm_loader_program::send_raw_tx(&meta.key.pubkey(), tx);
+        let ix = solana_evm_loader_program::send_raw_tx(meta.key.pubkey(), tx);
 
         let message = Message::new(&[ix], Some(&meta.key.pubkey()));
         let mut send_raw_tx: solana_sdk::transaction::Transaction =

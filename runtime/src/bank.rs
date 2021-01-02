@@ -5947,7 +5947,7 @@ mod tests {
         let create_tx = |from_keypair: &Keypair, hash: Hash| {
             let from_pubkey = from_keypair.pubkey();
             let instruction = solana_evm_loader_program::send_raw_tx(
-                &from_pubkey,
+                from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(),
             );
             let message = Message::new(&[instruction], Some(&from_pubkey));
