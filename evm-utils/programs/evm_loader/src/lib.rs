@@ -29,10 +29,10 @@ use instructions::EvmInstruction;
 use scope::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 
-pub fn send_raw_tx(signer: &solana::Address, evm_tx: evm::Transaction) -> solana::Instruction {
+pub fn send_raw_tx(signer: solana::Address, evm_tx: evm::Transaction) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
-        AccountMeta::new(*signer, true),
+        AccountMeta::new(signer, true),
     ];
 
     Instruction::new(
@@ -43,13 +43,13 @@ pub fn send_raw_tx(signer: &solana::Address, evm_tx: evm::Transaction) -> solana
 }
 
 pub(crate) fn transfer_native_to_eth(
-    owner: &solana::Address,
+    owner: solana::Address,
     lamports: u64,
     ether_address: evm::Address,
 ) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
-        AccountMeta::new(*owner, true),
+        AccountMeta::new(owner, true),
     ];
 
     Instruction::new(
@@ -62,22 +62,22 @@ pub(crate) fn transfer_native_to_eth(
     )
 }
 
-pub(crate) fn free_ownership(owner: &solana::Address) -> solana::Instruction {
+pub(crate) fn free_ownership(owner: solana::Address) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
-        AccountMeta::new(*owner, true),
+        AccountMeta::new(owner, true),
     ];
 
     Instruction::new(crate::ID, &EvmInstruction::FreeOwnership {}, account_metas)
 }
 
 pub fn transfer_native_to_eth_ixs(
-    owner: &solana::Address,
+    owner: solana::Address,
     lamports: u64,
     ether_address: evm::Address,
 ) -> Vec<solana::Instruction> {
     vec![
-        solana_sdk::system_instruction::assign(owner, &crate::ID),
+        solana_sdk::system_instruction::assign(&owner, &crate::ID),
         transfer_native_to_eth(owner, lamports, ether_address),
         free_ownership(owner),
     ]

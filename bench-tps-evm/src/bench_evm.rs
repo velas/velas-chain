@@ -33,7 +33,7 @@ use solana_evm_loader_program::scope::*;
 
 pub const BENCH_SEED: &str = "authority";
 
-pub fn generate_evm_keypair(seed_keypair: &Keypair) -> evm::SecretKey {
+pub fn generate_evm_key(seed_keypair: &Keypair) -> evm::SecretKey {
     use solana_evm_loader_program::scope::evm::rand::SeedableRng;
 
     let mut seed = [0u8; 32];
@@ -54,8 +54,8 @@ pub fn generate_and_fund_evm_keypairs<T: 'static + Client + Send + Sync>(
     let mut keypairs: Vec<_> = sources
         .into_iter()
         .map(|key| {
-            let evm_keys = generate_evm_keypair(&key);
-            (key, evm_keys)
+            let evm_key = generate_evm_key(&key);
+            (key, evm_key)
         })
         .collect();
     info!("Get lamports...");
@@ -163,7 +163,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Trans
             .par_iter()
             .map(|(k, evm)| {
                 let instructions = solana_evm_loader_program::transfer_native_to_eth_ixs(
-                    &k.pubkey(),
+                    k.pubkey(),
                     to_lamports,
                     evm.to_address(),
                 );
@@ -323,7 +323,7 @@ fn generate_system_txs(
 
             let tx_call = tx_call.sign(&from.1, None);
 
-            let ix = solana_evm_loader_program::send_raw_tx(&from.0.pubkey(), tx_call);
+            let ix = solana_evm_loader_program::send_raw_tx(from.0.pubkey(), tx_call);
 
             let message = Message::new(&[ix], Some(&from.0.pubkey()));
 

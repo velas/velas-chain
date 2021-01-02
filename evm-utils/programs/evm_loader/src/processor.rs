@@ -410,9 +410,9 @@ mod test {
 
         let signer = solana::Address::new_rand();
         vec![
-            crate::transfer_native_to_eth(&signer, 1, tx_call.address().unwrap()),
-            crate::free_ownership(&signer),
-            crate::send_raw_tx(&signer, tx_call),
+            crate::transfer_native_to_eth(signer, 1, tx_call.address().unwrap()),
+            crate::free_ownership(signer),
+            crate::send_raw_tx(signer, tx_call),
         ]
     }
 
