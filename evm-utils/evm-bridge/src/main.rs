@@ -210,10 +210,6 @@ impl BridgeERPC for BridgeERPCImpl {
     fn compilers(&self, _meta: Self::Metadata) -> EvmResult<Vec<String>> {
         Err(evm_rpc::Error::NotFound)
     }
-
-    fn logs(&self, _meta: Self::Metadata, _log_filter: RPCLogFilter) -> EvmResult<Vec<RPCLog>> {
-        Err(evm_rpc::Error::NotFound)
-    }
 }
 
 pub struct ChainMockERPCProxy;
@@ -452,6 +448,10 @@ impl BasicERPC for BasicERPCProxy {
         block: Option<String>,
     ) -> EvmResult<Hex<Gas>> {
         proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block)
+    }
+
+    fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> EvmResult<Vec<RPCLog>> {
+        proxy_evm_rpc!(meta.rpc_client, EthGetLogs, log_filter)
     }
 }
 

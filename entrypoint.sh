@@ -13,6 +13,10 @@ run_solana_validator() {
   declare entrypoint=$2
   declare port_range=$3
   rpc_url=`solana-gossip rpc-url --timeout 180 --entrypoint $entrypoint` # get rpc url
+  rpc_url=`solana-gossip rpc-url --timeout 30 --entrypoint $entrypoint` # get rpc url
+  if [ $? -ne 0 ]; then
+    rpc_url=http://$(echo $entrypoint | cut -d ':' -f 1):8899
+  fi
   solana-keygen new --no-passphrase -so $datadir/identity.json #try to generate identity
   solana-keygen new --no-passphrase -so $datadir/vote-account.json #try to generate vote account
 
@@ -32,10 +36,8 @@ run_solana_validator() {
     --log - \
     --enable-rpc-exit \
     --enable-rpc-set-log-filter \
-    --no-genesis-fetch \
     --dynamic-port-range $port_range \
-    --no-snapshot-fetch \
-    --snapshot-interval-slots 0 # temporary solution while evm is not persistent
+    --snapshot-interval-slots 100 # temporary solution while evm is not persistent
 }
 
 run_solana_bootstrap() {
@@ -46,6 +48,7 @@ run_solana_bootstrap() {
   solana-validator \
     --enable-rpc-exit \
     --enable-rpc-set-log-filter \
+    --enable_rpc_transaction_history \
     --gossip-host $host \
     --ledger $datadir \
     --dynamic-port-range $port_range \
@@ -53,7 +56,7 @@ run_solana_bootstrap() {
     --identity $datadir/identity.json \
     --vote-account $datadir/vote-account.json \
     --log - \
-    --snapshot-interval-slots 0 # temporary solution while evm is not persistent
+    --snapshot-interval-slots 100 # temporary solution while evm is not persistent
 }
 
 run_evm_bridge() {

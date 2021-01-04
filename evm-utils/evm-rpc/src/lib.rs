@@ -41,6 +41,7 @@ pub struct RPCLog {
     pub transaction_hash: Hex<H256>,
     pub block_hash: Hex<H256>,
     pub block_number: Hex<U256>,
+    pub address: Hex<Address>,
     pub data: Bytes,
     pub topics: Vec<Hex<H256>>,
 }
@@ -101,8 +102,8 @@ pub struct RPCReceipt {
     pub cumulative_gas_used: Hex<Gas>,
     pub gas_used: Hex<Gas>,
     pub contract_address: Option<Hex<Address>>,
+    pub to: Option<Hex<Address>>,
     pub logs: Vec<RPCLog>,
-    pub root: Hex<H256>,
     pub status: Hex<usize>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -258,6 +259,13 @@ pub mod basic {
             tx: RPCTransaction,
             block: Option<String>,
         ) -> Result<Hex<Gas>, Error>;
+
+        #[rpc(meta, name = "eth_getLogs")]
+        fn logs(
+            &self,
+            meta: Self::Metadata,
+            log_filter: RPCLogFilter,
+        ) -> Result<Vec<RPCLog>, Error>;
     }
 }
 
@@ -413,13 +421,6 @@ pub mod bridge {
 
         #[rpc(meta, name = "eth_getCompilers")]
         fn compilers(&self, meta: Self::Metadata) -> Result<Vec<String>, Error>;
-
-        #[rpc(meta, name = "eth_getLogs")]
-        fn logs(
-            &self,
-            meta: Self::Metadata,
-            log_filter: RPCLogFilter,
-        ) -> Result<Vec<RPCLog>, Error>;
     }
 }
 
@@ -487,18 +488,19 @@ pub mod bridge {
 //     server.wait();
 // }
 
-use std::convert::TryFrom;
-
-impl TryFrom<evm_state::transactions::Transaction> for RPCTransaction {
-    type Error = crate::Error;
-
-    fn try_from(tx: evm_state::transactions::Transaction) -> Result<Self, Error> {
+impl RPCTransaction {
+    pub fn new_from_receipt(
+        receipt: evm_state::transactions::TransactionReceipt,
+        block_hash: H256,
+    ) -> Result<Self, crate::Error> {
+        let ref tx = receipt.transaction;
         let address = tx.address().map_err(|_| Error::InvalidParams)?.into();
 
         let (to, creates) = match tx.action {
             evm_state::transactions::TransactionAction::Call(_) => (Some(address), None),
             evm_state::transactions::TransactionAction::Create => (None, Some(address)),
         };
+        let hash = tx.signing_hash();
         Ok(RPCTransaction {
             from: Some(tx.caller().map_err(|_| Error::InvalidParams)?.into()),
             to,
@@ -508,10 +510,91 @@ impl TryFrom<evm_state::transactions::Transaction> for RPCTransaction {
             value: Some(tx.value.into()),
             data: Some(tx.input.clone().into()),
             nonce: Some(tx.nonce.into()),
-            hash: None,
-            transaction_index: None,
-            block_hash: None,
-            block_number: None,
+            hash: Some(hash.into()),
+            transaction_index: Some((receipt.index as usize).into()),
+            block_hash: Some(block_hash.into()),
+            block_number: Some(Hex(receipt.block_number.into())),
         })
+    }
+}
+
+impl RPCReceipt {
+    pub fn new_from_receipt(
+        receipt: evm_state::transactions::TransactionReceipt,
+        block_hash: H256,
+    ) -> Result<Self, crate::Error> {
+        let ref tx = receipt.transaction;
+        let address = tx.address().map_err(|_| Error::InvalidParams)?.into();
+        let (to, contract_address) = match tx.action {
+            evm_state::transactions::TransactionAction::Call(_) => (Some(address), None),
+            evm_state::transactions::TransactionAction::Create => (None, Some(address)),
+        };
+        let tx_hash = Hex(tx.signing_hash());
+        let tx_index: Hex<_> = (receipt.index as usize).into();
+        let block_number = Hex(receipt.block_number.into());
+
+        let logs = receipt
+            .logs
+            .into_iter()
+            .enumerate()
+            .map(|(id, log)| RPCLog {
+                removed: false,
+                log_index: Hex(id),
+                transaction_hash: tx_hash.clone(),
+                transaction_index: tx_index.clone(),
+                block_hash: block_hash.into(),
+                block_number: block_number.clone(),
+                data: log.data.into(),
+                topics: log.topics.into_iter().map(Hex).collect(),
+                address: Hex(log.address),
+            })
+            .collect();
+
+        Ok(RPCReceipt {
+            to,
+            contract_address,
+            gas_used: receipt.used_gas.into(),
+            cumulative_gas_used: receipt.used_gas.into(),
+            transaction_hash: tx_hash,
+            transaction_index: tx_index,
+            block_hash: block_hash.into(),
+            block_number: block_number,
+            logs,
+            status: Hex(if let evm_state::ExitReason::Succeed(_) = receipt.status {
+                1
+            } else {
+                0
+            }),
+        })
+    }
+}
+
+// #[derive(Serialize, Deserialize, Debug, Clone)]
+// #[serde(rename_all = "camelCase")]
+// pub struct RPCLog {
+//     pub removed: bool,
+//     pub log_index: Hex<usize>,
+//     pub transaction_index: Hex<usize>,
+//     pub transaction_hash: Hex<H256>,
+//     pub block_hash: Hex<H256>,
+//     pub block_number: Hex<U256>,
+//     pub address: Hex<Address>,
+//     pub data: Bytes,
+//     pub topics: Vec<Hex<H256>>,
+// }
+
+impl From<LogWithLocation> for RPCLog {
+    fn from(log: LogWithLocation) -> Self {
+        RPCLog {
+            removed: false,
+            transaction_hash: log.transaction_hash.into(),
+            transaction_index: (log.transaction_id as usize).into(),
+            block_number: Hex(log.block_num.into()),
+            block_hash: Hex(H256::zero()),
+            log_index: Hex(0),
+            address: Hex(log.address),
+            topics: log.topics.into_iter().map(Hex).collect(),
+            data: Bytes(log.data),
+        }
     }
 }

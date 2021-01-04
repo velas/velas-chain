@@ -7,6 +7,7 @@ use sha3::{Digest, Keccak256};
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use solana_transaction_status::UiTransactionEncoding;
 use std::convert::TryInto;
+use std::str::FromStr;
 
 const CHAIN_ID: u64 = 0x77;
 
@@ -30,6 +31,16 @@ fn block_to_commitment(block: Option<String>) -> Option<CommitmentConfig> {
         }
     };
     Some(CommitmentConfig { commitment })
+}
+
+fn block_to_confirmed_num(block: Option<String>, meta: &JsonRpcRequestProcessor) -> Option<u64> {
+    let block = block?;
+    match block.as_str() {
+        "pending" => None,
+        "earliest" => Some(meta.get_first_available_block()),
+        "latest" => Some(meta.get_slot(None)),
+        v => Hex::<u64>::from_hex(&v).ok().map(|f| f.0),
+    }
 }
 
 pub struct ChainMockERPCImpl;
@@ -116,14 +127,9 @@ impl ChainMockERPC for ChainMockERPCImpl {
         &self,
         meta: Self::Metadata,
         block: String,
-        _full: bool,
+        full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
-        let num = match block.as_str() {
-            "pending" => None,
-            "earliest" => Some(meta.get_first_available_block()),
-            "latest" => Some(meta.get_slot(None)),
-            v => Hex::<u64>::from_hex(&v).ok().map(|f| f.0),
-        };
+        let num = block_to_confirmed_num(Some(block), &meta);
         // TODO: Inline evm_state lookups, and request only solana headers.
         let block_num = num.unwrap_or(0);
         if block_num == 0 {
@@ -133,7 +139,6 @@ impl ChainMockERPC for ChainMockERPCImpl {
             .get_confirmed_block(block_num, UiTransactionEncoding::Binary.into())
             .map_err(|_| Error::NotFound)?
             .map(|block| {
-                use std::str::FromStr;
                 let block_hash = solana_sdk::hash::Hash::from_str(&block.blockhash).unwrap();
                 let block_hash = H256::from_slice(&block_hash.0);
                 let parent_hash =
@@ -141,26 +146,24 @@ impl ChainMockERPC for ChainMockERPCImpl {
                 let bank = meta.bank(None);
                 let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
                 let tx_hashes = evm_lock.get_txs_in_block(block_num);
-                let transactions = tx_hashes
-                    .iter()
-                    .flatten()
-                    .map(|tx_hash| {
-                        (
-                            *tx_hash,
-                            evm_lock
-                                .get_tx_receipt_by_hash(*tx_hash)
-                                .expect("Transaction exist"),
-                        )
-                    })
-                    .filter_map(|(tx_hash, tx)| {
-                        let mut rpc_tx: RPCTransaction = tx.transaction.try_into().ok()?;
-                        rpc_tx.hash = Some(tx_hash.into());
-                        rpc_tx.block_hash = Some(Hex(block_hash.into()));
-                        rpc_tx.block_number = Some(Hex(tx.block_number.into()));
-                        rpc_tx.transaction_index = Some(Hex(tx.index as usize));
-                        Some(rpc_tx)
-                    })
-                    .collect();
+                let transactions = if full {
+                    let txs = tx_hashes
+                        .iter()
+                        .flatten()
+                        .map(|tx_hash| {
+                                evm_lock
+                                    .get_tx_receipt_by_hash(*tx_hash)
+                                    .expect("Transaction exist")
+                        })
+                        .filter_map(|receipt| {
+                            RPCTransaction::new_from_receipt(receipt, block_hash.clone()).ok()
+                        })
+                        .collect();
+                    Either::Right(txs)
+                } else {
+                    let txs = tx_hashes.into_iter().flatten().map(Hex).collect();
+                    Either::Left(txs)
+                };
                 drop(evm_lock);
 
                 RPCBlock {
@@ -171,7 +174,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
                     gas_limit: Hex(0x10000.into()),
                     gas_used: Gas::zero().into(),
                     timestamp: Hex(block.block_time.unwrap_or(0) as u64),
-                    transactions: Either::Right(transactions),
+                    transactions,
 
                     nonce: 0x7bb9369dcbaec019.into(),
                     sha3_uncles: H256::zero().into(),
@@ -324,12 +327,15 @@ impl BasicERPC for BasicERPCImpl {
         let receipt = evm_state.get_tx_receipt_by_hash(tx_hash.0);
 
         Ok(match receipt {
-            Some(tx) => {
-                let mut rpc_tx: RPCTransaction = tx.transaction.clone().try_into()?;
-                rpc_tx.hash = Some(tx_hash);
-                rpc_tx.block_number = Some(Hex(tx.block_number.into()));
-                rpc_tx.transaction_index = Some(Hex(tx.index as usize));
-                Some(rpc_tx)
+            Some(receipt) => {
+                let block_hash = meta
+                    .get_confirmed_block_hash(receipt.block_number)
+                    .map_err(|_| Error::InvalidParams)?;
+                let block_hash = block_hash.ok_or(Error::InvalidParams)?;
+                let block_hash = solana_sdk::hash::Hash::from_str(&block_hash).unwrap();
+                let block_hash = H256::from_slice(&block_hash.0);
+
+                Some(RPCTransaction::new_from_receipt(receipt, block_hash)?)
             }
             None => None,
         })
@@ -344,25 +350,15 @@ impl BasicERPC for BasicERPCImpl {
         let evm_state = bank.evm_state.read().unwrap();
         let receipt = evm_state.get_tx_receipt_by_hash(tx_hash.0);
         Ok(match receipt {
-            Some(tx) => Some(RPCReceipt {
-                transaction_index: Hex(tx.index as usize),
-                block_hash: H256::zero().into(),
-                block_number: Hex(tx.block_number.into()),
-                cumulative_gas_used: tx.used_gas.into(),
-                gas_used: tx.used_gas.into(),
-                transaction_hash: tx_hash,
-                logs: vec![],
-                contract_address: Some(Hex(tx
-                    .transaction
-                    .address()
-                    .map_err(|_| Error::InvalidParams)?)),
-                root: H256::zero().into(),
-                status: Hex(if let evm_state::ExitReason::Succeed(_) = tx.status {
-                    1
-                } else {
-                    0
-                }),
-            }),
+            Some(receipt) => {
+                let block_hash = meta
+                    .get_confirmed_block_hash(receipt.block_number)
+                    .map_err(|_| Error::InvalidParams)?;
+                let block_hash = block_hash.ok_or(Error::InvalidParams)?;
+                let block_hash = solana_sdk::hash::Hash::from_str(&block_hash).unwrap();
+                let block_hash = H256::from_slice(&block_hash.0);
+                Some(RPCReceipt::new_from_receipt(receipt, block_hash)?)
+            }
             None => None,
         })
     }
@@ -386,6 +382,28 @@ impl BasicERPC for BasicERPCImpl {
         let result = call(meta, tx, block)?;
         Ok(Hex(result.2.into()))
     }
+
+    fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
+        let bank = meta.bank(None);
+        let slot = bank.slot();
+
+        let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
+        let to = block_to_confirmed_num(log_filter.to_block, &meta).unwrap_or(slot);
+        let from = block_to_confirmed_num(log_filter.from_block, &meta).unwrap_or(slot);
+
+        let filter = LogFilter {
+            address: log_filter.address.map(|k| k.0),
+            topics: vec![],
+            from_block: from,
+            to_block: to,
+        };
+
+        Ok(evm_lock
+            .get_logs(filter)
+            .into_iter()
+            .map(|l| l.into())
+            .collect())
+    }
 }
 
 fn call(
@@ -400,7 +418,7 @@ fn call(
     let gas_limit: u64 = tx
         .gas
         .map(|a| a.0)
-        .unwrap_or_else(|| 300000.into())
+        .unwrap_or_else(|| 300000000.into())
         .try_into()
         .map_err(|_| Error::InvalidParams)?;
     let gas_limit = gas_limit as usize;
@@ -415,9 +433,14 @@ fn call(
 
     let mut executor =
         evm_state::Executor::with_config(evm_state, Config::istanbul(), gas_limit, bank.slot());
-    let address = tx.to.map(|h| h.0).unwrap_or_default();
-    let result =
-        executor.with_executor(|e| e.transact_call(caller, address, value, input, gas_limit));
+
+    let result = if let Some(address) = tx.to {
+        let address = address.0;
+        executor.with_executor(|e| e.transact_call(caller, address, value, input, gas_limit))
+    } else {
+        executor.with_executor(|e| (e.transact_create(caller, value, input, gas_limit), vec![]))
+    };
+
     let gas_used = executor.used_gas();
     Ok((result.0, result.1, gas_used))
 }

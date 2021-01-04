@@ -137,8 +137,8 @@ impl Executor {
 
         assert!(used_gas + self.used_gas <= self.evm.tx_info.block_gas_limit.as_usize());
         let (updates, logs) = executor.deconstruct();
-        self.evm.apply(updates, logs, false);
-        self.register_tx_receipt(evm_tx, used_gas.into(), result.clone());
+        self.evm.apply(updates, false);
+        self.register_tx_receipt(evm_tx, used_gas.into(), logs, result.clone());
         self.used_gas += used_gas;
 
         Ok(result)
@@ -154,9 +154,9 @@ impl Executor {
         let mut executor = StackExecutor::new(&self.evm, gas_limit, &self.config);
         let result = func(&mut executor);
         let used_gas = executor.used_gas();
-        let (updates, logs) = executor.deconstruct();
+        let (updates, _logs) = executor.deconstruct();
         self.used_gas += used_gas;
-        self.evm.apply(updates, logs, false);
+        self.evm.apply(updates, false);
         result
     }
 
@@ -231,12 +231,15 @@ impl Executor {
     }
 
     // TODO: Handle duplicates, statuses.
-    fn register_tx_receipt(
+    fn register_tx_receipt<I>(
         &mut self,
         tx: transactions::Transaction,
         used_gas: U256,
+        logs: I,
         result: (evm::ExitReason, Vec<u8>),
-    ) {
+    ) where
+        I: IntoIterator<Item = Log>,
+    {
         let block_num = self.evm.tx_info.block_number.as_u64();
         let tx_hash = tx.signing_hash();
 
@@ -257,7 +260,14 @@ impl Executor {
             .txs_in_block
             .insert(block_num, updated_vec);
 
-        let tx_receipt = TransactionReceipt::new(tx, used_gas, block_num, index, result);
+        let tx_receipt = TransactionReceipt::new(
+            tx,
+            used_gas,
+            block_num,
+            index,
+            logs.into_iter().collect(),
+            result,
+        );
         self.evm.evm_state.txs_receipts.insert(tx_hash, tx_receipt);
     }
 

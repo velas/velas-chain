@@ -72,6 +72,7 @@ pub enum RpcRequest {
     EthGetTransactionReceipt,
     EthCall,
     EthEstimateGas,
+    EthGetLogs,
 }
 
 impl fmt::Display for RpcRequest {
@@ -142,6 +143,7 @@ impl fmt::Display for RpcRequest {
             RpcRequest::EthGetTransactionReceipt => "eth_getTransactionReceipt",
             RpcRequest::EthCall => "eth_call",
             RpcRequest::EthEstimateGas => "eth_estimateGas",
+            RpcRequest::EthGetLogs => "eth_getLogs",
         };
 
         write!(f, "{}", method)

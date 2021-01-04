@@ -1,4 +1,3 @@
-use evm::backend::Log;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +27,22 @@ pub struct MemoryVicinity {
     pub block_gas_limit: U256,
 }
 
+pub struct LogWithLocation {
+    pub transaction_hash: H256,
+    pub transaction_id: u64,
+    pub block_num: u64,
+    pub address: H160,
+    pub data: Vec<u8>,
+    pub topics: Vec<H256>,
+}
+
+pub struct LogFilter {
+    pub from_block: u64,
+    pub to_block: u64,
+    pub address: Option<H160>,
+    pub topics: Vec<H256>,
+}
+
 #[derive(Default, Clone, Debug, Eq, PartialEq)]
 pub struct AccountState {
     /// Account nonce.
@@ -52,7 +67,6 @@ pub struct EvmState {
     pub(crate) txs_in_block: Map<u64, Vec<H256>>,
     //TODO: Deadline for storing data.
     pub(crate) big_transactions: Map<H256, BigTransactionStorage>,
-    pub(crate) logs: Vec<Log>,
 }
 
 impl Default for EvmState {
@@ -69,7 +83,6 @@ impl EvmState {
             txs_receipts: Map::new(),
             txs_in_block: Map::new(),
             big_transactions: Map::new(),
-            logs: Vec::new(),
         }
     }
 
@@ -94,7 +107,6 @@ impl EvmState {
             txs_receipts,
             txs_in_block,
             big_transactions,
-            logs: vec![],
         })
     }
 }
@@ -108,7 +120,6 @@ impl EvmState {
             txs_receipts: Map::new(),
             txs_in_block: Map::new(),
             big_transactions: Map::new(),
-            logs: Vec::new(),
         }
     }
 
@@ -130,6 +141,50 @@ impl EvmState {
 
     pub fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
         self.storage.get(&(address, index)).cloned()
+    }
+
+    // transaction_hash: H256,
+    // transaction_id: u64,
+    // block_num: u64,
+    // address: H160,
+    // data: H256,
+    // topics: Vec<H256>
+
+    // TODO: Optimize, using bloom filters.
+    // TODO: Check topics query limits <= 4.
+    // TODO: Filter by address, topics
+    pub fn get_logs(&self, logs_filter: LogFilter) -> Vec<LogWithLocation> {
+        let mut result = Vec::new();
+
+        for (block_id, txs) in (logs_filter.from_block..=logs_filter.to_block)
+            .filter_map(|b| self.txs_in_block.get(&b).cloned().map(|k| (b, k)))
+        {
+            let txs_in_block = txs
+                .into_iter()
+                .map(|tx_hash| {
+                    (
+                        tx_hash,
+                        self.get_tx_receipt_by_hash(tx_hash)
+                            .expect("Transacton not found by hash, while exist by number"),
+                    )
+                })
+                .enumerate();
+
+            for (tx_id, (tx_hash, receipt)) in txs_in_block {
+                for log in receipt.logs {
+                    let log_entry = LogWithLocation {
+                        transaction_hash: tx_hash,
+                        transaction_id: tx_id as u64,
+                        block_num: block_id,
+                        data: log.data,
+                        topics: log.topics,
+                        address: log.address,
+                    };
+                    result.push(log_entry)
+                }
+            }
+        }
+        result
     }
 
     pub fn swap_commit(&mut self, mut updated: Self) {

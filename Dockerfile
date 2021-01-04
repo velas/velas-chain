@@ -16,6 +16,8 @@ COPY ./ /solana
 #RUN git clone https://github.com/solana-labs/solana
 WORKDIR /solana
 RUN cargo build --release
+RUN rm /solana/target/release/deps -rf
+RUN rm /solana/target/release/build -rf
 
 FROM ubuntu:20.04 as dest
 RUN apt-get update && \

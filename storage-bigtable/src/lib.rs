@@ -308,6 +308,15 @@ impl LedgerStorage {
         Ok(block.into_confirmed_block(encoding))
     }
 
+    /// Fetch the confirmed block from the desired slot
+    pub async fn get_confirmed_block_hash(&self, slot: Slot) -> Result<String> {
+        let mut bigtable = self.connection.client();
+        let block = bigtable
+            .get_bincode_cell::<StoredConfirmedBlock>("blocks", slot_to_key(slot))
+            .await?;
+        Ok(block.blockhash)
+    }
+
     pub async fn get_signature_status(&self, signature: &Signature) -> Result<TransactionStatus> {
         let mut bigtable = self.connection.client();
         let transaction_info = bigtable

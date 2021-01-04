@@ -1,3 +1,4 @@
+use evm::backend::Log;
 use primitive_types::{H160, H256, U256};
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use serde::{Deserialize, Serialize};
@@ -299,7 +300,7 @@ pub struct TransactionReceipt {
     // pub state_root: H256,
     pub used_gas: Gas,
     // pub logs_bloom: LogsBloom,
-    // pub logs: Vec<Log>,
+    pub logs: Vec<Log>,
 }
 impl TransactionReceipt {
     pub fn new(
@@ -307,6 +308,7 @@ impl TransactionReceipt {
         used_gas: Gas,
         block_number: u64,
         index: u64,
+        logs: Vec<Log>,
         result: (evm::ExitReason, Vec<u8>),
     ) -> TransactionReceipt {
         TransactionReceipt {
@@ -315,6 +317,7 @@ impl TransactionReceipt {
             used_gas,
             block_number,
             index,
+            logs,
         }
     }
 }

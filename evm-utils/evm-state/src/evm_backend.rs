@@ -1,5 +1,5 @@
 use crate::EvmState;
-use evm::backend::{Apply, ApplyBackend, Backend, Basic, Log};
+use evm::backend::{Apply, Backend, Basic};
 use primitive_types::{H160, H256, U256};
 use sha3::{Digest, Keccak256};
 
@@ -18,6 +18,65 @@ impl EvmBackend {
 
     fn tx_info(&self) -> &crate::layered_backend::MemoryVicinity {
         &self.tx_info
+    }
+
+    pub fn apply<A, I>(&mut self, values: A, delete_empty: bool)
+    where
+        A: IntoIterator<Item = Apply<I>>,
+        I: IntoIterator<Item = (H256, H256)>,
+    {
+        for apply in values {
+            match apply {
+                Apply::Modify {
+                    address,
+                    basic,
+                    code,
+                    storage,
+                    reset_storage: _,
+                } => {
+                    log::debug!("Apply::Modify address = {}, basic = {:?}", address, basic);
+                    // TODO: rollback on insert fail.
+                    // TODO: clear account storage on delete.
+                    let is_empty = {
+                        let mut account = self.evm_state.get_account(address).unwrap_or_default();
+                        account.balance = basic.balance;
+                        account.nonce = basic.nonce;
+                        if let Some(code) = code {
+                            account.code = code;
+                        }
+                        let is_empty_state = account.balance == U256::zero()
+                            && account.nonce == U256::zero()
+                            && account.code.is_empty();
+
+                        self.evm_state.accounts.insert(address, account);
+
+                        // TODO: Clear storage on reset_storage = true
+                        // if reset_storage {
+                        // 	account.storage = BTreeMap::new();
+                        // }
+
+                        // TODO: Clear zeros data (H256::default())
+
+                        for (index, value) in storage {
+                            if value == H256::default() {
+                                self.evm_state.storage.remove((address, index));
+                            } else {
+                                self.evm_state.storage.insert((address, index), value);
+                            }
+                        }
+
+                        is_empty_state
+                    };
+
+                    if is_empty && delete_empty {
+                        self.evm_state.accounts.remove(address);
+                    }
+                }
+                Apply::Delete { address } => {
+                    self.evm_state.accounts.remove(address);
+                }
+            }
+        }
     }
 }
 
@@ -96,70 +155,6 @@ impl Backend for EvmBackend {
         self.evm_state
             .get_storage(address, index)
             .unwrap_or_default()
-    }
-}
-
-impl ApplyBackend for EvmBackend {
-    fn apply<A, I, L>(&mut self, values: A, logs: L, delete_empty: bool)
-    where
-        A: IntoIterator<Item = Apply<I>>,
-        I: IntoIterator<Item = (H256, H256)>,
-        L: IntoIterator<Item = Log>,
-    {
-        for apply in values {
-            match apply {
-                Apply::Modify {
-                    address,
-                    basic,
-                    code,
-                    storage,
-                    reset_storage: _,
-                } => {
-                    log::debug!("Apply::Modify address = {}, basic = {:?}", address, basic);
-                    // TODO: rollback on insert fail.
-                    // TODO: clear account storage on delete.
-                    let is_empty = {
-                        let mut account = self.evm_state.get_account(address).unwrap_or_default();
-                        account.balance = basic.balance;
-                        account.nonce = basic.nonce;
-                        if let Some(code) = code {
-                            account.code = code;
-                        }
-                        let is_empty_state = account.balance == U256::zero()
-                            && account.nonce == U256::zero()
-                            && account.code.is_empty();
-
-                        self.evm_state.accounts.insert(address, account);
-
-                        // TODO: Clear storage on reset_storage = true
-                        // if reset_storage {
-                        // 	account.storage = BTreeMap::new();
-                        // }
-
-                        // TODO: Clear zeros data (H256::default())
-
-                        for (index, value) in storage {
-                            if value == H256::default() {
-                                self.evm_state.storage.remove((address, index));
-                            } else {
-                                self.evm_state.storage.insert((address, index), value);
-                            }
-                        }
-
-                        is_empty_state
-                    };
-
-                    if is_empty && delete_empty {
-                        self.evm_state.accounts.remove(address);
-                    }
-                }
-                Apply::Delete { address } => {
-                    self.evm_state.accounts.remove(address);
-                }
-            }
-        }
-
-        self.evm_state.logs.extend(logs);
     }
 }
 
