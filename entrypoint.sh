@@ -31,6 +31,8 @@ run_solana_validator() {
     --log - \
     --enable-rpc-exit \
     --enable-rpc-set-log-filter \
+    --no-genesis-fetch \
+    --no-snapshot-fetch \
     --snapshot-interval-slots 0 # temporary solution while evm is not persistent
 }
 
