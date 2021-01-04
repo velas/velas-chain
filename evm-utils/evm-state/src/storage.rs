@@ -1,17 +1,18 @@
 use std::{
     array::TryFromSliceError,
     convert::{TryFrom, TryInto},
-    fmt::{self, Debug},
+    fmt::{self, Debug, Display},
     io::Cursor,
     marker::PhantomData,
     mem::size_of,
-    ops::Deref,
+    ops::{Deref, Sub},
     path::Path,
     sync::{Arc, RwLock},
 };
 
 use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
 use lazy_static::lazy_static;
+use log::*;
 use rocksdb::{self, ColumnFamily, ColumnFamilyDescriptor, IteratorMode, Options, DB};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -100,16 +101,27 @@ where
 
     pub fn new_version(&self, version: V, previous: Previous<V>) -> Result<()>
     where
-        V: PartialEq + std::fmt::Debug,
+        V: PartialEq + Debug,
     {
         assert_ne!(Some(version), previous);
-        let version = CODER.serialize(&version).typed_ctx()?;
-        if self.db.get(&version)?.is_none() {
-            let previous = CODER.serialize(&previous).typed_ctx()?;
-            self.db.put(version, previous)?;
-        } else {
-            // TODO: assert the same
+        let key = CODER.serialize(&version).typed_ctx()?;
+
+        match self.db.get_pinned(&key)? {
+            None => {
+                let value = CODER.serialize(&previous).typed_ctx()?;
+                self.db.put(key, value)?;
+            }
+            Some(data) => {
+                // TODO: assert or do some check
+                // assert_eq!(
+                //     previous,
+                //     CODER.deserialize(&data).typed_ctx()?,
+                //     "attempt to insert for {:?}",
+                //     version
+                // );
+            }
         }
+
         Ok(())
     }
 }
@@ -401,13 +413,9 @@ where
 
     pub fn get_for(&self, version: V, key: M::Key) -> Result<Option<MaybeValue<M::Value>>>
     where
-        V: std::fmt::Debug
-            + std::fmt::Display
-            + PartialEq
-            + track::Stepped
-            + std::ops::Sub<Output = V>,
-        M::Key: std::fmt::Debug,
-        M::Value: std::fmt::Debug,
+        V: Display + Debug + PartialEq + Sub<Output = V> + track::Stepped,
+        M::Key: Debug,
+        M::Value: Debug,
     {
         let _guard = self
             .storage
@@ -423,23 +431,20 @@ where
             track.prepend(version);
             let value = self.get_exact_for(version, key)?;
             if value.is_some() {
-                log::debug!(
+                debug!(
                     "get_for: key {:?} found with track {}: value {:?}",
-                    key,
-                    track,
-                    &value
+                    key, track, &value
                 );
                 return Ok(value);
             } else {
                 let previous = self.storage.previous_of(version)?;
-                log::trace!("get_for: previous of {:?} is {:?}", version, previous);
                 assert_ne!(Some(version), previous);
                 next_version = previous;
                 continue;
             }
         }
 
-        log::debug!("get_for: not found {}", track);
+        debug!("get_for: key {:?} not found {}", key, track);
 
         Ok(None)
     }

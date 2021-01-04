@@ -15,7 +15,7 @@ impl EvmBackend {
         Self { evm_state, tx_info }
     }
 
-    fn tx_info<'a>(&'a self) -> &'a MemoryVicinity {
+    fn tx_info(&self) -> &MemoryVicinity {
         &self.tx_info
     }
 }
