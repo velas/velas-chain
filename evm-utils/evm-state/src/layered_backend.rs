@@ -2,7 +2,6 @@ use std::{
     any::type_name, borrow::Cow, collections::BTreeMap, fmt::Debug, marker::PhantomData, path::Path,
 };
 
-use derive_more::Deref;
 use log::*;
 
 use evm::backend::Log;
@@ -24,13 +23,14 @@ persistent_types! {
     TransactionsInBlock in "txs_in_block" => Slot : Vec<H256>, // TODO: Key is Slot or U256?
 }
 
-#[derive(Deref)]
-pub(crate) struct Layer<M: PersistentAssoc>(
-    #[deref] BTreeMap<M::Key, MaybeValue<M::Value>>,
-    PhantomData<M>,
-)
+pub(crate) struct Layer<M: PersistentAssoc>
 where
-    M::Key: Ord;
+    M::Key: Ord,
+{
+    map: BTreeMap<M::Key, MaybeValue<M::Value>>,
+    is_frozen: bool,
+    _type: PhantomData<M>,
+}
 
 impl<M> Layer<M>
 where
@@ -38,15 +38,50 @@ where
     M::Key: Ord,
 {
     pub fn empty() -> Self {
-        Self(BTreeMap::new(), PhantomData)
+        Self {
+            map: BTreeMap::new(),
+            is_frozen: false,
+            _type: PhantomData,
+        }
     }
 
-    pub fn insert(&mut self, key: M::Key, value: M::Value) {
-        self.0.insert(key, MaybeValue::Value(value));
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 
-    pub fn remove(&mut self, key: M::Key) {
-        self.0.insert(key, MaybeValue::Removed);
+    pub fn insert(&mut self, key: M::Key, value: M::Value)
+    where
+        M::Key: Debug,
+        M::Value: Debug,
+    {
+        assert!(
+            !self.is_frozen,
+            "Modification of frozen layer is prohibited"
+        );
+        trace!(
+            "layer :: {} inserts {:?} => {:?}",
+            type_name::<M>(),
+            key,
+            value
+        );
+        self.map.insert(key, MaybeValue::Value(value));
+    }
+
+    pub fn remove(&mut self, key: M::Key)
+    where
+        M::Key: Debug,
+    {
+        assert!(
+            !self.is_frozen,
+            "Modification of frozen layer is prohibited"
+        );
+
+        trace!("layer :: {} removes {:?}", type_name::<M>(), key);
+        self.map.insert(key, MaybeValue::Removed);
+    }
+
+    fn freeze(&mut self) {
+        self.is_frozen = true;
     }
 
     fn dump_into(&mut self, storage: &VersionedStorage<Slot>, version: Slot) -> StorageResult<()>
@@ -56,23 +91,14 @@ where
     {
         let storage = storage.typed::<M>();
 
-        trace!("layer :: {} dumping ...", type_name::<M>());
-        for (key, value) in std::mem::replace(self, Self::empty()).0 {
+        for (key, value) in std::mem::replace(self, Self::empty()).map {
             debug!(
                 "{}: {:?} {:?} migrates from memory into storage",
                 version, key, &value
             );
 
             storage.insert_with(version, key, value)?;
-
-            trace!(
-                "{}: {:?} in storage as {:?}",
-                version,
-                key,
-                storage.get_for(version, key)
-            );
         }
-        trace!("layer :: {} dumped", type_name::<M>());
 
         Ok(())
     }
@@ -84,7 +110,11 @@ where
     M::Value: Clone,
 {
     fn clone(&self) -> Self {
-        Self(self.0.clone(), PhantomData)
+        Self {
+            map: self.map.clone(),
+            is_frozen: false,
+            _type: PhantomData,
+        }
     }
 }
 
@@ -112,11 +142,22 @@ impl Default for EvmState {
 
 impl EvmState {
     pub fn freeze(&mut self) {
-        info!(target: "evm_state", "freezing evm state (slot {})", self.current_slot);
-        // self.accounts.freeze();
-        // self.accounts_storage.freeze();
-        // self.txs_receipts.freeze();
-        // self.txs_in_block.freeze();
+        debug!("freezing evm state (slot {})", self.current_slot);
+        self.dump_all()
+            .expect("Unable to dump EVM state layers into storage");
+
+        self.accounts.freeze();
+        self.accounts_storage.freeze();
+        self.txs_receipts.freeze();
+        self.txs_in_block.freeze();
+
+        debug!(
+            "new slot {} with previous {:?}",
+            self.current_slot, self.previous_slot
+        );
+        self.storage
+            .new_version(self.current_slot, self.previous_slot)
+            .expect("Unable to create new version in storage");
     }
 
     // TODO: dump all
@@ -132,17 +173,6 @@ impl EvmState {
         let txs_receipts = self.txs_receipts.clone();
         let txs_in_block = self.txs_in_block.clone();
 
-        // XXX: >_<
-        if new_slot != self.current_slot {
-            debug!(
-                "new slot {} with previous {:?}",
-                self.current_slot, self.previous_slot
-            );
-            self.storage
-                .new_version(self.current_slot, self.previous_slot)
-                .unwrap();
-        }
-
         Some(Self {
             current_slot: new_slot,
             previous_slot: Some(self.current_slot),
@@ -157,19 +187,18 @@ impl EvmState {
     }
 
     #[rustfmt::skip]
-    pub fn dump_all(&mut self) -> anyhow::Result<()> {
+    fn dump_all(&mut self) -> anyhow::Result<()> {
         self.accounts.dump_into(&self.storage, self.current_slot)?;
-        self.accounts_storage.dump_into(&self.storage, self.current_slot )?;
+        self.accounts_storage.dump_into(&self.storage, self.current_slot)?;
         self.txs_receipts.dump_into(&self.storage, self.current_slot)?;
         self.txs_in_block.dump_into(&self.storage, self.current_slot)?;
-        debug!(target: "evm_state", "all layers have been dumped");
         Ok(())
     }
 
     // TODO: elide map arg, TBD: maybe typemap
     fn lookup<'a, M: PersistentAssoc>(
         &'a self,
-        map: &'a Layer<M>,
+        layer: &'a Layer<M>,
         key: M::Key,
     ) -> Option<Cow<'a, M::Value>>
     where
@@ -177,7 +206,7 @@ impl EvmState {
         M::Value: Clone + Debug,
     {
         debug!("lookup {} for key {:?}", type_name::<M>(), &key);
-        if let Some(mb_value) = map.0.get(&key) {
+        if let Some(mb_value) = layer.map.get(&key) {
             Option::from(mb_value.by_ref()).map(Cow::Borrowed)
         } else {
             let lookup_slot = if self.storage.is_exists(self.current_slot).unwrap() {
@@ -250,29 +279,28 @@ impl EvmState {
         })
     }
 
+    pub fn get_account(&self, address: H160) -> Option<AccountState> {
+        self.lookup(&self.accounts, address).map(Cow::into_owned)
+    }
+
+    pub fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
+        self.lookup(&self.accounts_storage, (address, index))
+            .map(Cow::into_owned)
+    }
+
     pub fn get_tx_receipt_by_hash(&self, tx_hash: H256) -> Option<TransactionReceipt> {
-        self.lookup::<TransactionReceipts>(&self.txs_receipts, tx_hash)
+        self.lookup(&self.txs_receipts, tx_hash)
             .map(Cow::into_owned)
     }
 
     pub fn get_txs_in_block(&self, block_num: Slot) -> Option<Vec<H256>> {
-        self.lookup::<TransactionsInBlock>(&self.txs_in_block, block_num)
+        self.lookup(&self.txs_in_block, block_num)
             .map(Cow::into_owned)
     }
 
     // NOTE: currently used in benches only
     pub fn set_account(&mut self, address: H160, state: AccountState) {
         self.accounts.insert(address, state);
-    }
-
-    pub fn get_account(&self, address: H160) -> Option<AccountState> {
-        self.lookup::<Accounts>(&self.accounts, address)
-            .map(Cow::into_owned)
-    }
-
-    pub fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
-        self.lookup::<AccountsStorage>(&self.accounts_storage, (address, index))
-            .map(Cow::into_owned)
     }
 
     pub fn swap_commit(&mut self, mut updated: Self) {
@@ -539,7 +567,6 @@ mod tests {
             }
 
             evm_state.freeze();
-            evm_state.dump_all()?;
 
             let next_slot = evm_state.current_slot + 1;
             evm_state = evm_state
@@ -572,7 +599,6 @@ mod tests {
 
         for _ in 0..42 {
             state.freeze();
-            state.dump_all().unwrap();
 
             let next_slot = state.current_slot + 1;
             state = state.try_fork(next_slot).unwrap();

@@ -1128,12 +1128,10 @@ impl Bank {
     pub fn freeze(&self) {
         let mut hash = self.hash.write().unwrap();
 
-        {
-            let mut evm_state = self.evm_state.write().expect("evm state was poisoned");
-
-            evm_state.freeze();
-            evm_state.dump_all().expect("unable to dump evm state");
-        }
+        self.evm_state
+            .write()
+            .expect("evm state was poisoned")
+            .freeze();
 
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
