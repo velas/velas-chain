@@ -11,6 +11,7 @@ get_my_ip() {
 run_solana_validator() {
   declare datadir=$1
   declare entrypoint=$2
+  declare port_range=$3
   rpc_url=`solana-gossip rpc-url --timeout 180 --entrypoint $entrypoint` # get rpc url
   solana-keygen new --no-passphrase -so $datadir/identity.json #try to generate identity
   solana-keygen new --no-passphrase -so $datadir/vote-account.json #try to generate vote account
@@ -32,6 +33,7 @@ run_solana_validator() {
     --enable-rpc-exit \
     --enable-rpc-set-log-filter \
     --no-genesis-fetch \
+    --dynamic-port-range $port_range \
     --no-snapshot-fetch \
     --snapshot-interval-slots 0 # temporary solution while evm is not persistent
 }
@@ -120,10 +122,11 @@ case "${NODE_TYPE}" in
     ;;
   "validator")    
     ENTRYPOINT=$2
+    PORT_RANGE=$3
     mkdir $DATADIR/v
     cp $DATADIR/genesis.bin $DATADIR/v/genesis.bin
     DATADIR=$DATADIR/v
-    run_solana_validator $DATADIR $ENTRYPOINT
+    run_solana_validator $DATADIR $ENTRYPOINT $PORT_RANGE
     ;;
   "bridge")
     ENTRYPOINT=$2
