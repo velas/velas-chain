@@ -771,7 +771,7 @@ mod test {
     }
 
     #[test]
-    fn check_tx_chunk_feet_mtu() {
+    fn check_tx_mtu_is_in_solanas_limit() {
         use solana_sdk::hash::hash;
         use solana_sdk::message::Message;
         use solana_sdk::signature::{Keypair, Signer};
@@ -782,7 +782,7 @@ mod test {
             &owner.pubkey(),
             H256::random(),
             0,
-            vec![1; evm::TX_CHUNK as usize],
+            vec![1; evm::TX_MTU as usize],
         );
         let tx_before = Transaction::new(&[&owner], Message::new(&[ix], None), hash(&[1]));
         let tx = bincode::serialize(&tx_before).unwrap();

@@ -22,7 +22,7 @@ pub use layered_backend::*;
 pub use transactions::*;
 
 pub const MAX_TX_LEN: u64 = 3 * 1024 * 1024; // Limit size to 3 MB
-pub const TX_CHUNK: u64 = 920;
+pub const TX_MTU: u64 = 920;
 
 pub trait FromKey {
     fn to_public_key(&self) -> secp256k1::PublicKey;
