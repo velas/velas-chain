@@ -11,6 +11,7 @@ pub mod layered_backend;
 pub mod transactions;
 
 pub use evm_backend::*;
+pub use layered_backend::Storage;
 pub use layered_backend::*;
 pub use transactions::*;
 pub use types::*;

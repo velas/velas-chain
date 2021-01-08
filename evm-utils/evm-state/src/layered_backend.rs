@@ -1,5 +1,6 @@
 use std::{
-    any::type_name, borrow::Cow, collections::BTreeMap, fmt::Debug, marker::PhantomData, path::Path,
+    any::type_name, borrow::Cow, collections::BTreeMap, fmt::Debug, marker::PhantomData,
+    ops::Deref, path::Path,
 };
 
 use log::*;
@@ -13,6 +14,8 @@ use crate::{
     transactions::TransactionReceipt,
     types::*,
 };
+
+pub type Storage = VersionedStorage<Slot>;
 
 // Store every account storage at single place, to use power of versioned map.
 // This allows us to save only changed data.
@@ -84,12 +87,16 @@ where
         self.is_frozen = true;
     }
 
-    fn dump_into(&mut self, storage: &VersionedStorage<Slot>, version: Slot) -> StorageResult<()>
+    fn dump_into(
+        &mut self,
+        storage: impl Deref<Target = Storage>,
+        version: Slot,
+    ) -> StorageResult<()>
     where
         M::Key: Ord + Copy + Debug,
         M::Value: Clone + Debug,
     {
-        let storage = storage.typed::<M>();
+        let storage = storage.deref().typed::<M>();
 
         for (key, value) in std::mem::replace(self, Self::empty()).map {
             debug!(
@@ -129,7 +136,7 @@ pub struct EvmState {
     pub(crate) txs_in_block: Layer<TransactionsInBlock>,
     pub(crate) logs: Vec<Log>, // TODO: migrate into storage
 
-    storage: VersionedStorage<Slot>,
+    pub storage: Storage,
 }
 
 // TODO: move this logic outside
@@ -259,7 +266,7 @@ impl EvmState {
             path.as_ref().display(),
             slot
         );
-        let storage = VersionedStorage::open(path, COLUMN_NAMES)?;
+        let storage = Storage::open(path, COLUMN_NAMES)?;
         let previous_slot = storage.previous_of(slot)?;
         debug!(
             "storage reports: previous of {} is {:?}",

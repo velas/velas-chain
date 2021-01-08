@@ -1,5 +1,5 @@
 use crate::{
-    bank::{Bank, BankSlotDelta},
+    bank::{Bank, BankSlotDelta, EVM_STATE_STORAGE},
     bank_forks::CompressionType,
     hardened_unpack::{unpack_snapshot, UnpackError},
     serde_snapshot::{
@@ -37,6 +37,8 @@ pub const SNAPSHOT_STATUS_CACHE_FILE_NAME: &str = "status_cache";
 pub const TAR_SNAPSHOTS_DIR: &str = "snapshots";
 pub const TAR_ACCOUNTS_DIR: &str = "accounts";
 pub const TAR_VERSION_FILE: &str = "version";
+
+const EVM_STATE_DIR: &str = "evm-state";
 
 const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const VERSION_STRING_V1_2_0: &str = "1.2.0";
@@ -101,6 +103,7 @@ impl SnapshotVersion {
 pub struct SlotSnapshotPaths {
     pub slot: Slot,
     pub snapshot_file_path: PathBuf,
+    pub evm_state_backup_path: PathBuf,
 }
 
 #[derive(Error, Debug)]
@@ -149,6 +152,14 @@ impl SlotSnapshotPaths {
             &self.snapshot_file_path,
             &new_slot_hardlink_dir.join(self.slot.to_string()),
         )?;
+
+        // Hard link EVM backup folder
+        let evm_source = fs::canonicalize(&self.evm_state_backup_path)?;
+        let evm_target = new_slot_hardlink_dir.join(EVM_STATE_DIR);
+        info!("EVM backup linked {:?} => {:?}", evm_source, evm_target);
+        symlink::symlink_dir(evm_source, evm_target)?;
+        // std::os::unix::fs::symlink(evm_source, evm_target)?;
+
         Ok(())
     }
 }
@@ -378,6 +389,7 @@ where
                     SlotSnapshotPaths {
                         slot,
                         snapshot_file_path: snapshot_path.join(get_snapshot_file_name(slot)),
+                        evm_state_backup_path: snapshot_path.join(EVM_STATE_DIR),
                     }
                 })
                 .collect::<Vec<SlotSnapshotPaths>>();
@@ -521,9 +533,31 @@ pub fn add_snapshot<P: AsRef<Path>>(
         bank_serialize, slot, snapshot_bank_file_path,
     );
 
+    let evm_state_dir = slot_snapshot_dir.join(EVM_STATE_DIR);
+    fs::create_dir_all(&evm_state_dir)?;
+    info!(
+        "Saving EVM state for slot {}, path: {:?}",
+        slot, evm_state_dir
+    );
+
+    let mut evm_state_saving = Measure::start("evm-state-saving-ms");
+    bank.evm_state
+        .write()
+        .unwrap()
+        .storage
+        .save_into(&evm_state_dir)
+        .expect("Unable to save EVM storage data in new place");
+    evm_state_saving.stop();
+    inc_new_counter_info!("evm-state-saving-ms", evm_state_saving.as_ms() as usize);
+    info!(
+        "{} for slot {} at {:?}",
+        evm_state_saving, slot, evm_state_dir
+    );
+
     Ok(SlotSnapshotPaths {
         slot,
         snapshot_file_path: snapshot_bank_file_path,
+        evm_state_backup_path: slot_snapshot_dir.join(EVM_STATE_DIR),
     })
 }
 
@@ -768,6 +802,16 @@ where
     let root_paths = snapshot_paths
         .pop()
         .ok_or_else(|| get_io_error("No snapshots found in snapshots directory"))?;
+
+    info!(
+        "restoring database from storage backup: {:?}",
+        root_paths.evm_state_backup_path
+    );
+    let mut measure = Measure::start("evm state database restore");
+    evm_state::Storage::restore_from(root_paths.evm_state_backup_path, EVM_STATE_STORAGE)
+        .expect("Unable to restore EVM state underlying database from storage backup");
+    measure.stop();
+    info!("{}", measure);
 
     info!("Loading bank from {:?}", &root_paths.snapshot_file_path);
     let bank = deserialize_snapshot_data_file(&root_paths.snapshot_file_path, |mut stream| {

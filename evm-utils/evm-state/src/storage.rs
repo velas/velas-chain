@@ -2,6 +2,7 @@ use std::{
     array::TryFromSliceError,
     convert::{TryFrom, TryInto},
     fmt::{self, Debug, Display},
+    fs,
     io::Cursor,
     marker::PhantomData,
     mem::size_of,
@@ -13,7 +14,11 @@ use std::{
 use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
 use lazy_static::lazy_static;
 use log::*;
-use rocksdb::{self, ColumnFamily, ColumnFamilyDescriptor, IteratorMode, Options, DB};
+use rocksdb::{
+    self,
+    backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
+    ColumnFamily, ColumnFamilyDescriptor, IteratorMode, Options, DB,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::mb_value::MaybeValue;
@@ -121,6 +126,49 @@ where
                 // );
             }
         }
+
+        Ok(())
+    }
+}
+
+impl<V> VersionedStorage<V> {
+    pub fn save_into<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let path = path.as_ref();
+        assert!(
+            path.is_dir() && path.exists(),
+            "storage can be saved only into some existing directory"
+        );
+        info!(
+            "saving storage data into {} (as new backup)",
+            path.display()
+        );
+        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), path)?;
+        engine.create_new_backup_flush(self.db.as_ref(), true)?;
+        Ok(())
+    }
+
+    pub fn restore_from<P1: AsRef<Path>, P2: AsRef<Path>>(path: P1, target: P2) -> Result<()> {
+        let path = path.as_ref();
+        let target = target.as_ref();
+
+        // TODO: check target dir is empty or doesn't exists at all
+        fs::create_dir_all(target).expect("Unable to create target dir");
+
+        assert!(
+            path.is_dir() && path.exists(),
+            "storage can be loaded only from existing directory"
+        );
+        info!(
+            "loading storage data from {} into {} (restore from backup)",
+            path.display(),
+            target.display()
+        );
+        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), path)?;
+        assert!(
+            target.is_dir(),
+            "loaded storage data must lays in target dir"
+        );
+        engine.restore_from_latest_backup(&target, &target, &RestoreOptions::default())?;
 
         Ok(())
     }

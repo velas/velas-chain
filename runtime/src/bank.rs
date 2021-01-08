@@ -96,6 +96,9 @@ pub mod inline_spl_token_v2_0 {
     }
 }
 
+// TODO: get real path from extern configuration
+pub const EVM_STATE_STORAGE: &str = "/tmp/solana/evm-state";
+
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
@@ -644,9 +647,6 @@ impl Bank {
         fn new<T: Default>() -> T {
             T::default()
         }
-
-        // TODO: get real path from extern configuration
-        const EVM_STATE_STORAGE: &str = "/tmp/solana/evm-state";
 
         let evm_state = evm_state::EvmState::load_from(EVM_STATE_STORAGE, fields.slot)
             .expect("Unable to open EVM state storage");
