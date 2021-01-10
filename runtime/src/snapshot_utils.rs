@@ -1,5 +1,5 @@
 use crate::{
-    bank::{Bank, BankSlotDelta, EVM_STATE_STORAGE},
+    bank::{Bank, BankSlotDelta},
     bank_forks::CompressionType,
     hardened_unpack::{unpack_snapshot, UnpackError},
     serde_snapshot::{
@@ -599,6 +599,7 @@ pub fn remove_snapshot<P: AsRef<Path>>(slot: Slot, snapshot_path: P) -> Result<(
 }
 
 pub fn bank_from_archive<P: AsRef<Path>>(
+    evm_state_path: &Path,
     account_paths: &[PathBuf],
     frozen_account_pubkeys: &[Pubkey],
     snapshot_path: &PathBuf,
@@ -620,6 +621,7 @@ pub fn bank_from_archive<P: AsRef<Path>>(
 
     let bank = rebuild_bank_from_snapshots(
         snapshot_version.trim(),
+        evm_state_path,
         account_paths,
         frozen_account_pubkeys,
         &unpacked_snapshots_dir,
@@ -777,6 +779,7 @@ pub fn untar_snapshot_in<P: AsRef<Path>, Q: AsRef<Path>>(
 
 fn rebuild_bank_from_snapshots<P>(
     snapshot_version: &str,
+    evm_state_path: &Path,
     account_paths: &[PathBuf],
     frozen_account_pubkeys: &[Pubkey],
     unpacked_snapshots_dir: &PathBuf,
@@ -808,7 +811,7 @@ where
         root_paths.evm_state_backup_path
     );
     let mut measure = Measure::start("evm state database restore");
-    evm_state::Storage::restore_from(root_paths.evm_state_backup_path, EVM_STATE_STORAGE)
+    evm_state::Storage::restore_from(root_paths.evm_state_backup_path, evm_state_path)
         .expect("Unable to restore EVM state underlying database from storage backup");
     measure.stop();
     info!("{}", measure);
@@ -820,6 +823,7 @@ where
                 SerdeStyle::NEWER,
                 &mut stream,
                 &append_vecs_path,
+                evm_state_path,
                 account_paths,
                 genesis_config,
                 frozen_account_pubkeys,

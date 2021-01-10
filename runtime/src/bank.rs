@@ -66,7 +66,7 @@ use std::{
     convert::TryFrom,
     mem,
     ops::RangeInclusive,
-    path::PathBuf,
+    path::{Path, PathBuf},
     ptr,
     rc::Rc,
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
@@ -95,9 +95,6 @@ pub mod inline_spl_token_v2_0 {
         ];
     }
 }
-
-// TODO: get real path from extern configuration
-pub const EVM_STATE_STORAGE: &str = "/tmp/solana/evm-state";
 
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
 
@@ -473,11 +470,12 @@ impl Default for BlockhashQueue {
 
 impl Bank {
     pub fn new(genesis_config: &GenesisConfig) -> Self {
-        Self::new_with_paths(&genesis_config, Vec::new(), &[])
+        Self::new_with_paths(&genesis_config, None, Vec::new(), &[])
     }
 
     pub fn new_with_paths(
         genesis_config: &GenesisConfig,
+        evm_state_path: Option<&Path>, // TODO: Remove option, currently need for Bank::new, that is used for tests
         paths: Vec<PathBuf>,
         frozen_account_pubkeys: &[Pubkey],
     ) -> Self {
@@ -486,6 +484,9 @@ impl Bank {
         bank.ancestors.insert(bank.slot(), 0);
 
         bank.rc.accounts = Arc::new(Accounts::new(paths, &genesis_config.cluster_type));
+        if let Some(evm_state_path) = evm_state_path {
+            bank.evm_state = RwLock::new(evm_state::EvmState::new(evm_state_path).unwrap());
+        }
         bank.process_genesis_config(genesis_config);
         bank.finish_init(genesis_config);
 
@@ -640,6 +641,7 @@ impl Bank {
     /// Create a bank from explicit arguments and deserialized fields from snapshot
     #[allow(clippy::float_cmp)]
     pub(crate) fn new_from_fields(
+        evm_state: evm_state::EvmState,
         bank_rc: BankRc,
         genesis_config: &GenesisConfig,
         fields: BankFieldsToDeserialize,
@@ -647,9 +649,6 @@ impl Bank {
         fn new<T: Default>() -> T {
             T::default()
         }
-
-        let evm_state = evm_state::EvmState::load_from(EVM_STATE_STORAGE, fields.slot)
-            .expect("Unable to open EVM state storage");
 
         let mut bank = Self {
             rc: bank_rc,

@@ -691,9 +691,12 @@ fn load_bank_forks(
         vec![non_primary_accounts_path]
     };
 
+    let evm_state_path = ledger_path.join("evm-state");
+
     bank_forks_utils::load(
         &genesis_config,
         &blockstore,
+        evm_state_path,
         account_paths,
         snapshot_config.as_ref(),
         process_options,

@@ -117,6 +117,9 @@ where
                 self.db.put(key, value)?;
             }
             Some(data) => {
+                warn!("Found confict previous: previous = {:?}, version = {:?}, previous_in_db = {:?}", previous,
+                version,
+                CODER.deserialize::<Previous<V>>(&data).typed_ctx() );
                 // TODO: assert or do some check
                 // assert_eq!(
                 //     previous,

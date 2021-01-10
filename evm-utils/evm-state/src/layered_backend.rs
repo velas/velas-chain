@@ -143,7 +143,7 @@ pub struct EvmState {
 impl Default for EvmState {
     fn default() -> Self {
         let path = std::env::temp_dir().join("evm-state");
-        Self::load_from(path, Slot::default()).expect("Unable to instantiate default EVM state")
+        Self::new(path).expect("Unable to instantiate default EVM state")
     }
 }
 
@@ -260,6 +260,11 @@ impl EvmState {
 }
 
 impl EvmState {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
+        //TODO: add flags, to asserts for empty storage.
+        Self::load_from(path, 0)
+    }
+
     pub fn load_from<P: AsRef<Path>>(path: P, slot: Slot) -> Result<Self, anyhow::Error> {
         info!(
             "open evm state storage {} for slot {}",

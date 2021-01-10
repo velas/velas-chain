@@ -36,7 +36,7 @@ use solana_vote_program::vote_state::VoteState;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
-    path::PathBuf,
+    path::{Path, PathBuf},
     result,
     sync::Arc,
     time::{Duration, Instant},
@@ -320,6 +320,7 @@ fn initiate_callback(mut bank: &mut Arc<Bank>, genesis_config: &GenesisConfig) {
 pub fn process_blockstore(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
+    evm_state_path: &Path,
     account_paths: Vec<PathBuf>,
     opts: ProcessOptions,
 ) -> BlockstoreProcessorResult {
@@ -335,6 +336,7 @@ pub fn process_blockstore(
     // Setup bank for slot 0
     let mut bank0 = Arc::new(Bank::new_with_paths(
         &genesis_config,
+        Some(evm_state_path),
         account_paths,
         &opts.frozen_accounts,
     ));

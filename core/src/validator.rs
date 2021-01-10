@@ -672,9 +672,13 @@ fn new_banks_from_ledger(
             TransactionHistoryServices::default()
         };
 
+    // TODO: Add evm-state to config.
+    let evm_state_path = ledger_path.join("evm-state");
+
     let (mut bank_forks, mut leader_schedule_cache, snapshot_hash) = bank_forks_utils::load(
         &genesis_config,
         &blockstore,
+        evm_state_path,
         config.account_paths.clone(),
         config.snapshot_config.as_ref(),
         process_options,
