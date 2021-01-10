@@ -318,8 +318,22 @@ mod test {
         let caller_address = tx_create.caller().unwrap();
         let tx_address = tx_create.address().unwrap();
 
-        assert_eq!(state.read().unwrap().basic(caller_address).nonce, 0.into());
-        assert_eq!(state.read().unwrap().basic(tx_address).nonce, 0.into());
+        assert_eq!(
+            state
+                .read()
+                .unwrap()
+                .get_account(caller_address)
+                .map(|account| account.nonce),
+            Some(0.into())
+        );
+        assert_eq!(
+            state
+                .read()
+                .unwrap()
+                .get_account(tx_address)
+                .map(|account| account.nonce),
+            Some(0.into())
+        );
         {
             let mut locked = state.write().unwrap();
             let mut executor_orig = evm_state::Executor::with_config(
@@ -347,8 +361,22 @@ mod test {
             locked.swap_commit(patch);
         }
 
-        assert_eq!(state.read().unwrap().basic(caller_address).nonce, 1.into());
-        assert_eq!(state.read().unwrap().basic(tx_address).nonce, 1.into());
+        assert_eq!(
+            state
+                .read()
+                .unwrap()
+                .get_account(caller_address)
+                .map(|account| account.nonce),
+            Some(1.into())
+        );
+        assert_eq!(
+            state
+                .read()
+                .unwrap()
+                .get_account(tx_address)
+                .map(|account| account.nonce),
+            Some(1.into())
+        );
 
         let tx_call = evm::UnsignedTransaction {
             nonce: 1.into(),
@@ -466,9 +494,9 @@ mod test {
 
         let signer = solana::Address::new_rand();
         vec![
-            crate::transfer_native_to_eth(&signer, 1, tx_call.address().unwrap()),
-            crate::free_ownership(&signer),
-            crate::send_raw_tx(&signer, tx_call),
+            crate::transfer_native_to_eth(signer, 1, tx_call.address().unwrap()),
+            crate::free_ownership(signer),
+            crate::send_raw_tx(signer, tx_call),
         ]
     }
 

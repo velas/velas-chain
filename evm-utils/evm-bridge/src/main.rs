@@ -99,7 +99,7 @@ impl EvmBridge {
             tx.signature.chain_id()
         );
 
-        let ix = solana_evm_loader_program::send_raw_tx(&self.key.pubkey(), tx);
+        let ix = solana_evm_loader_program::send_raw_tx(self.key.pubkey(), tx);
 
         let message = Message::new(&[ix], Some(&self.key.pubkey()));
         let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
@@ -197,7 +197,6 @@ impl BridgeERPC for BridgeERPCImpl {
         let tx: evm::Transaction = rlp::decode(&bytes.0).unwrap();
         let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
         let hash = unsigned_tx.signing_hash(CHAIN_ID.into());
-
         debug!("loaded tx_hash = {}", hash);
         meta.send_tx(tx)
     }

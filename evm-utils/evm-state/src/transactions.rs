@@ -290,8 +290,9 @@ impl From<Transaction> for UnsignedTransaction {
         }
     }
 }
+
 // TODO: Work on logs and state_root.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TransactionReceipt {
     pub transaction: Transaction,
     pub status: evm::ExitReason,
@@ -302,6 +303,7 @@ pub struct TransactionReceipt {
     // pub logs_bloom: LogsBloom,
     pub logs: Vec<Log>,
 }
+
 impl TransactionReceipt {
     pub fn new(
         transaction: Transaction,

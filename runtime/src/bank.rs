@@ -66,7 +66,7 @@ use std::{
     convert::TryFrom,
     mem,
     ops::RangeInclusive,
-    path::PathBuf,
+    path::{Path, PathBuf},
     ptr,
     rc::Rc,
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
@@ -470,11 +470,12 @@ impl Default for BlockhashQueue {
 
 impl Bank {
     pub fn new(genesis_config: &GenesisConfig) -> Self {
-        Self::new_with_paths(&genesis_config, Vec::new(), &[])
+        Self::new_with_paths(&genesis_config, None, Vec::new(), &[])
     }
 
     pub fn new_with_paths(
         genesis_config: &GenesisConfig,
+        evm_state_path: Option<&Path>, // TODO: Remove option, currently need for Bank::new, that is used for tests
         paths: Vec<PathBuf>,
         frozen_account_pubkeys: &[Pubkey],
     ) -> Self {
@@ -483,6 +484,9 @@ impl Bank {
         bank.ancestors.insert(bank.slot(), 0);
 
         bank.rc.accounts = Arc::new(Accounts::new(paths, &genesis_config.cluster_type));
+        if let Some(evm_state_path) = evm_state_path {
+            bank.evm_state = RwLock::new(evm_state::EvmState::new(evm_state_path).unwrap());
+        }
         bank.process_genesis_config(genesis_config);
         bank.finish_init(genesis_config);
 
@@ -531,21 +535,19 @@ impl Bank {
         let fee_rate_governor =
             FeeRateGovernor::new_derived(&parent.fee_rate_governor, parent.signature_count());
 
+        let evm_state = parent
+            .evm_state
+            .read()
+            .expect("parent evm state was poisoned")
+            .try_fork(slot)
+            .expect("unable to fork evm state from parent bank right after freezing it");
+
         let mut new = Bank {
             rc,
             src,
             slot,
             epoch,
-            evm_state: RwLock::new({
-                let mut evm_wl = parent
-                    .evm_state
-                    .write()
-                    .expect("parent evm state was poisoned");
-                evm_wl.freeze();
-                evm_wl
-                    .try_fork()
-                    .expect("Unable to fork EVM state right after freezing it")
-            }),
+            evm_state: RwLock::new(evm_state),
             blockhash_queue: RwLock::new(parent.blockhash_queue.read().unwrap().clone()),
 
             // TODO: clean this up, soo much special-case copying...
@@ -639,6 +641,7 @@ impl Bank {
     /// Create a bank from explicit arguments and deserialized fields from snapshot
     #[allow(clippy::float_cmp)]
     pub(crate) fn new_from_fields(
+        evm_state: evm_state::EvmState,
         bank_rc: BankRc,
         genesis_config: &GenesisConfig,
         fields: BankFieldsToDeserialize,
@@ -646,10 +649,11 @@ impl Bank {
         fn new<T: Default>() -> T {
             T::default()
         }
+
         let mut bank = Self {
             rc: bank_rc,
             src: new(),
-            evm_state: RwLock::new(evm_state::EvmState::new_not_forget_to_deserialize_later()),
+            evm_state: RwLock::new(evm_state),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             ancestors: fields.ancestors,
             hash: RwLock::new(fields.hash),
@@ -1122,6 +1126,12 @@ impl Bank {
 
     pub fn freeze(&self) {
         let mut hash = self.hash.write().unwrap();
+
+        self.evm_state
+            .write()
+            .expect("evm state was poisoned")
+            .freeze();
+
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
@@ -5947,7 +5957,7 @@ mod tests {
         let create_tx = |from_keypair: &Keypair, hash: Hash| {
             let from_pubkey = from_keypair.pubkey();
             let instruction = solana_evm_loader_program::send_raw_tx(
-                &from_pubkey,
+                from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(),
             );
             let message = Message::new(&[instruction], Some(&from_pubkey));

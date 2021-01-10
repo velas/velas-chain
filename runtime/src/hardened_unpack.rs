@@ -156,6 +156,8 @@ fn is_valid_snapshot_archive_entry(parts: &[&str], kind: tar::EntryType) -> bool
             true
         }
         (["snapshots", dir], Directory) if like_slot.is_match(dir) => true,
+        (["snapshots", dir, "evm-state"], Directory) if like_slot.is_match(dir) => true,
+        (["snapshots", dir, "evm-state", ..], _) if like_slot.is_match(dir) => true,
         _ => false,
     }
 }
@@ -265,6 +267,28 @@ mod tests {
         assert!(is_valid_snapshot_archive_entry(
             &["accounts"],
             tar::EntryType::Directory
+        ));
+
+        assert!(is_valid_snapshot_archive_entry(
+            &["snapshots", "3", "evm-state"],
+            tar::EntryType::Directory
+        ));
+
+        assert!(is_valid_snapshot_archive_entry(
+            &["snapshots", "3", "evm-state", "meta"],
+            tar::EntryType::Directory
+        ));
+        assert!(is_valid_snapshot_archive_entry(
+            &["snapshots", "3", "evm-state", "meta", "1"],
+            tar::EntryType::Regular
+        ));
+        assert!(is_valid_snapshot_archive_entry(
+            &["snapshots", "3", "evm-state", "shared"],
+            tar::EntryType::Directory
+        ));
+        assert!(is_valid_snapshot_archive_entry(
+            &["snapshots", "3", "evm-state", "shared", "01.zst"],
+            tar::EntryType::Regular
         ));
 
         assert!(!is_valid_snapshot_archive_entry(

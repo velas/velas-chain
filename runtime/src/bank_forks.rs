@@ -221,6 +221,12 @@ impl BankForks {
         let parents = root_bank.parents();
         banks.extend(parents.iter());
         for bank in banks.iter() {
+            // bank.evm_state
+            //     .write()
+            //     .expect("evm state was poisoned")
+            //     .dump_all()
+            //     .expect("internal evm state error");
+
             let bank_slot = bank.slot();
             if bank.block_height() % self.accounts_hash_interval_slots == 0
                 && bank_slot > self.last_accounts_hash_slot

@@ -3,20 +3,19 @@ use evm::backend::{Apply, Backend, Basic};
 use primitive_types::{H160, H256, U256};
 use sha3::{Digest, Keccak256};
 
+use crate::types::MemoryVicinity;
+
 pub struct EvmBackend {
     pub(crate) evm_state: EvmState,
-    pub(crate) tx_info: crate::layered_backend::MemoryVicinity,
+    pub(crate) tx_info: MemoryVicinity,
 }
 
 impl EvmBackend {
-    pub fn new_from_state(
-        evm_state: EvmState,
-        tx_info: crate::layered_backend::MemoryVicinity,
-    ) -> Self {
+    pub fn new_from_state(evm_state: EvmState, tx_info: MemoryVicinity) -> Self {
         Self { evm_state, tx_info }
     }
 
-    fn tx_info(&self) -> &crate::layered_backend::MemoryVicinity {
+    fn tx_info(&self) -> &MemoryVicinity {
         &self.tx_info
     }
 
@@ -59,9 +58,11 @@ impl EvmBackend {
 
                         for (index, value) in storage {
                             if value == H256::default() {
-                                self.evm_state.storage.remove((address, index));
+                                self.evm_state.accounts_storage.remove((address, index));
                             } else {
-                                self.evm_state.storage.insert((address, index), value);
+                                self.evm_state
+                                    .accounts_storage
+                                    .insert((address, index), value);
                             }
                         }
 

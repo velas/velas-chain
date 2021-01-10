@@ -44,6 +44,8 @@ enum SubCommands {
 
 #[derive(Debug, structopt::StructOpt)]
 struct Args {
+    #[structopt(short = "r", long = "rpc")]
+    rpc_address: Option<String>,
     #[structopt(subcommand)]
     subcommand: SubCommands,
 }
@@ -60,7 +62,10 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     info!("Loading keypair from: {}", keypath);
     let signer = Box::new(read_keypair_file(&keypath).unwrap()) as Box<dyn Signer>;
 
-    let rpc_client = RpcClient::new("http://127.0.0.1:8899".to_string());
+    let address = args
+        .rpc_address
+        .unwrap_or_else(|| "https://api.next.velas.com:8899".to_string());
+    let rpc_client = RpcClient::new(address);
 
     match args.subcommand {
         SubCommands::SendRawTx { raw_tx } => {
@@ -71,7 +76,7 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 solana_sdk::program_utils::limited_deserialize(&buf).unwrap();
 
             debug!("loaded tx = {:?}", tx);
-            let ix = solana_evm_loader_program::send_raw_tx(&signer.pubkey(), tx);
+            let ix = solana_evm_loader_program::send_raw_tx(signer.pubkey(), tx);
 
             let message = Message::new(&[ix], Some(&signer.pubkey()));
             let mut create_account_tx = solana::Transaction::new_unsigned(message);
@@ -96,7 +101,7 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             ether_address,
         } => {
             let ixs = solana_evm_loader_program::transfer_native_to_eth_ixs(
-                &signer.pubkey(),
+                signer.pubkey(),
                 amount,
                 ether_address,
             );

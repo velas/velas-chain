@@ -1,5 +1,3 @@
-use std::fmt;
-
 pub use evm::{
     backend::{Apply, ApplyBackend, Backend, Log},
     executor::StackExecutor,
@@ -11,15 +9,23 @@ pub use primitive_types::{H256, U256};
 pub use secp256k1::rand;
 
 mod error;
-mod evm_backend;
 mod layered_backend;
+
 pub mod transactions;
-mod version_map;
 
 use error::*;
 pub use evm_backend::*;
+pub use layered_backend::Storage;
 pub use layered_backend::*;
 pub use transactions::*;
+pub use types::*;
+
+mod evm_backend;
+mod mb_value;
+mod storage;
+mod types;
+
+use std::fmt;
 
 pub const MAX_TX_LEN: u64 = 3 * 1024 * 1024; // Limit size to 3 MB
 pub const TX_MTU: u64 = 920;
@@ -62,24 +68,6 @@ impl Executor {
         gas_limit: usize,
         block_number: u64,
     ) -> Self {
-        //TODO: Request info from solana blockchain for vicinity
-
-        //         /// Gas price.
-        // pub gas_price: U256,
-        // /// Chain ID.
-        // pub chain_id: U256,
-        // /// Environmental block hashes.
-        // pub block_hashes: Vec<H256>,
-        // /// Environmental block number.
-        // pub block_number: U256,
-        // /// Environmental coinbase.
-        // pub block_coinbase: H160,
-        // /// Environmental block timestamp.
-        // pub block_timestamp: U256,
-        // /// Environmental block difficulty.
-        // pub block_difficulty: U256,
-        // /// Environmental block gas limit.
-        // pub block_gas_limit: U256,
         let vicinity = MemoryVicinity {
             block_gas_limit: gas_limit.into(),
             block_number: block_number.into(),
@@ -169,20 +157,19 @@ impl Executor {
     }
 
     pub fn take_big_tx(&mut self, key: H256) -> Result<Vec<u8>, Error> {
-        let big_tx_storage =
-            if let Some(big_tx_storage) = self.evm.evm_state.big_transactions.get(&key) {
-                debug!("data at get = {:?}", big_tx_storage.tx_chunks);
-                big_tx_storage.clone()
-            } else {
-                return DataNotFound { key }.fail();
-            };
+        let big_tx_storage = if let Some(big_tx_storage) = self.evm.evm_state.get_big_tx(key) {
+            debug!("data at get = {:?}", big_tx_storage.tx_chunks);
+            big_tx_storage.clone()
+        } else {
+            return DataNotFound { key }.fail();
+        };
         self.evm.evm_state.big_transactions.remove(key);
 
         Ok(big_tx_storage.tx_chunks)
     }
 
     pub fn allocate_store(&mut self, key: H256, size: u64) -> Result<(), Error> {
-        if self.evm.evm_state.big_transactions.get(&key).is_some() || size > MAX_TX_LEN {
+        if self.evm.evm_state.get_big_tx(key).is_some() || size > MAX_TX_LEN {
             error!("Double allocation for key = {:?}", key);
             return AllocationError { key, size }.fail();
         };
@@ -200,24 +187,23 @@ impl Executor {
     }
 
     pub fn publish_data(&mut self, key: H256, offset: u64, data: &[u8]) -> Result<(), Error> {
-        let mut big_tx_storage =
-            if let Some(big_tx_storage) = self.evm.evm_state.big_transactions.get(&key) {
-                let max_len = big_tx_storage.tx_chunks.len() as u64;
-                let data_end = offset.saturating_add(data.len() as u64);
-                // check offset to avoid integer overflow
-                if data_end > max_len {
-                    return OutOfBound {
-                        key,
-                        offset,
-                        size: max_len,
-                    }
-                    .fail();
+        let mut big_tx_storage = if let Some(big_tx_storage) = self.evm.evm_state.get_big_tx(key) {
+            let max_len = big_tx_storage.tx_chunks.len() as u64;
+            let data_end = offset.saturating_add(data.len() as u64);
+            // check offset to avoid integer overflow
+            if data_end > max_len {
+                return OutOfBound {
+                    key,
+                    offset,
+                    size: max_len,
                 }
-                big_tx_storage.clone()
-            } else {
-                error!("Failed to write without allocation = {:?}", key);
-                return FailedToWrite { key, offset }.fail();
-            };
+                .fail();
+            }
+            big_tx_storage.clone()
+        } else {
+            error!("Failed to write without allocation = {:?}", key);
+            return FailedToWrite { key, offset }.fail();
+        };
 
         let offset = offset as usize;
         big_tx_storage.tx_chunks[offset..offset + data.len()].copy_from_slice(data);
@@ -243,22 +229,20 @@ impl Executor {
         let block_num = self.evm.tx_info.block_number.as_u64();
         let tx_hash = tx.signing_hash();
 
-        log::debug!("Register tx in evm block={}, tx= {}", block_num, tx_hash);
-        //TODO: replace by entry api
-        let updated_vec = match self.evm.evm_state.txs_in_block.get(&block_num) {
-            None => vec![tx_hash],
-            Some(v) => {
-                let mut v = v.clone();
-                v.push(tx_hash);
-                v
-            }
-        };
+        debug!("Register tx in evm block={}, tx= {}", block_num, tx_hash);
+        // TODO: replace by Entry-like api
+        let mut hashes = self
+            .evm
+            .evm_state
+            .get_txs_in_block(block_num)
+            .unwrap_or_default();
+        hashes.push(tx_hash);
 
-        let index = updated_vec.len() as u64;
+        let index = hashes.len() as u64;
         self.evm
             .evm_state
             .txs_in_block
-            .insert(block_num, updated_vec);
+            .insert(block_num, hashes.into());
 
         let tx_receipt = TransactionReceipt::new(
             tx,
@@ -280,17 +264,22 @@ pub const HELLO_WORLD_CODE:&str = "608060405234801561001057600080fd5b5061011e806
 pub const HELLO_WORLD_ABI: &str = "942ae0a7";
 pub const HELLO_WORLD_RESULT:&str = "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000a68656c6c6f576f726c6400000000000000000000000000000000000000000000";
 pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b506004361060285760003560e01c8063942ae0a714602d575b600080fd5b603360ab565b6040518080602001828103825283818151815260200191508051906020019080838360005b8381101560715780820151818401526020810190506058565b50505050905090810190601f168015609d5780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b60606040518060400160405280600a81526020017f68656c6c6f576f726c640000000000000000000000000000000000000000000081525090509056fea2646970667358221220fa787b95ca91ffe90fdb780b8ee8cb11c474bc63cb8217112c88bc465f7ea7d364736f6c63430007020033";
+
 #[cfg(test)]
-pub mod tests {
+mod test_utils;
+
+#[cfg(test)]
+mod tests {
+    use anyhow::anyhow;
+
+    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
+    use primitive_types::{H160, H256, U256};
+    use sha3::{Digest, Keccak256};
+
+    use crate::test_utils::TmpDir;
 
     use super::Executor;
     use super::*;
-    use assert_matches::assert_matches;
-    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
-
-    use primitive_types::{H160, H256, U256};
-    use sha3::{Digest, Keccak256};
-    use std::sync::RwLock;
 
     fn name_to_key(name: &str) -> H160 {
         let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
@@ -299,36 +288,27 @@ pub mod tests {
 
     #[test]
     fn test_evm_bytecode() {
-        let _ = simple_logger::SimpleLogger::new().init();
+        let _logger_error = simple_logger::SimpleLogger::new().init();
         let accounts = ["contract", "caller"];
 
-        let code = hex::decode(HELLO_WORLD_CODE).unwrap();
-        let data = hex::decode(HELLO_WORLD_ABI).unwrap();
+        let code = hex::decode(HELLO_WORLD_CODE)?;
+        let data = hex::decode(HELLO_WORLD_ABI)?;
 
-        let backend = EvmState::new();
-        let backend = RwLock::new(backend);
+        let tmp_dir = TmpDir::new("test_evm_bytecode");
+        let mut backend = EvmState::load_from(tmp_dir, Slot::default())?;
 
-        {
-            let mut state = backend.write().unwrap();
-
-            for acc in &accounts {
-                let account = name_to_key(acc);
-                let memory = AccountState {
-                    ..Default::default()
-                };
-                state.accounts.insert(account, memory);
-            }
+        for acc in &accounts {
+            let account = name_to_key(acc);
+            let memory = AccountState {
+                ..Default::default()
+            };
+            backend.accounts.insert(account, memory);
         }
 
-        backend.write().unwrap().freeze();
+        backend.freeze();
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(
-            backend.read().unwrap().try_fork().unwrap(),
-            config,
-            usize::max_value(),
-            0,
-        );
+        let mut executor = Executor::with_config(backend.clone(), config, usize::max_value(), 0);
 
         let exit_reason = match executor.with_executor(|e| {
             e.create(
@@ -343,7 +323,10 @@ pub mod tests {
             Capture::Trap(_) => unreachable!(),
         };
 
-        assert_matches!(exit_reason, (ExitReason::Succeed(ExitSucceed::Returned), _));
+        assert!(matches!(
+            exit_reason,
+            (ExitReason::Succeed(ExitSucceed::Returned), _)
+        ));
         let exit_reason = executor.with_executor(|e| {
             e.transact_call(
                 name_to_key("contract"),
@@ -354,21 +337,21 @@ pub mod tests {
             )
         });
 
-        let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
+        let result = hex::decode(HELLO_WORLD_RESULT)?;
         match exit_reason {
             (ExitReason::Succeed(ExitSucceed::Returned), res) if res == result => {}
             any_other => panic!("Not expected result={:?}", any_other),
         }
 
         let patch = executor.deconstruct();
-        backend.write().unwrap().swap_commit(patch);
+        backend.swap_commit(patch);
 
-        let mutex_lock = backend.read().unwrap();
-        let contract = mutex_lock.accounts.get(&name_to_key("contract"));
+        let contract = backend.get_account(name_to_key("contract"));
         assert_eq!(
             &contract.unwrap().code,
             &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap()
         );
+        Ok(())
     }
 
     #[test]

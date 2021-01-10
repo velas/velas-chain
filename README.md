@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://velas.com">
-    <img alt="Solana" src="https://i.imgur.com/1AHYxYP.png" width="250" />
+    <img alt="Velas chain" src="https://i.imgur.com/1AHYxYP.png" width="250" />
   </a>
 </p>
 # Building
@@ -29,8 +29,8 @@ $ sudo apt-get install libssl-dev libudev-dev pkg-config zlib1g-dev llvm clang
 ## **2. Download the source code.**
 
 ```bash
-$ git clone https://github.com/velas/velas.git
-$ cd velas
+$ git clone https://github.com/velas/velas-chain.git
+$ cd velas-chain
 ```
 
 ## **3. Build.**
@@ -53,7 +53,7 @@ $ cargo test
 ```
 
 ### EVM integration
-Info about evm integration is at our [docs](https://docs.next.velas.com/evm).
+Info about EVM integration is at our [docs](https://docs.next.velas.com/evm).
 
 ### Starting a local devnet
 Start your own devnet locally, instructions are in the [online docs](https://docs.next.velas.com/cluster/bench-tps).
