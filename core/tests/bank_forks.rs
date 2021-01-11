@@ -56,7 +56,13 @@ mod tests {
         signature::{Keypair, Signer},
         system_transaction,
     };
-    use std::{fs, path::PathBuf, sync::atomic::AtomicBool, sync::mpsc::channel, sync::Arc};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::atomic::AtomicBool,
+        sync::mpsc::channel,
+        sync::Arc,
+    };
     use tempfile::TempDir;
 
     DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_2_0, Development, V1_2_0_Development);
@@ -86,8 +92,10 @@ mod tests {
             let snapshot_output_path = TempDir::new().unwrap();
             let mut genesis_config_info = create_genesis_config(10_000);
             genesis_config_info.genesis_config.cluster_type = cluster_type;
+            let evm_state_dir = TempDir::new().unwrap();
             let bank0 = Bank::new_with_paths(
                 &genesis_config_info.genesis_config,
+                Some(evm_state_dir.as_ref()),
                 vec![accounts_dir.path().to_path_buf()],
                 &[],
             );
@@ -222,10 +230,10 @@ mod tests {
         let account_paths = &[snapshot_test_config.accounts_dir.path().to_path_buf()];
         let genesis_config = &snapshot_test_config.genesis_config_info.genesis_config;
         restore_from_snapshot(
-            evm_state_path,
             bank_forks,
             last_slot,
             genesis_config,
+            evm_state_path,
             account_paths,
         );
     }
