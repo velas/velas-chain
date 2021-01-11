@@ -3,11 +3,11 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::{self, Debug, Display},
     fs,
-    io::Cursor,
+    io::{Cursor, Error as IoError},
     marker::PhantomData,
     mem::size_of,
     ops::{Deref, Sub},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
 
@@ -20,6 +20,7 @@ use rocksdb::{
     ColumnFamily, ColumnFamilyDescriptor, IteratorMode, Options, DB,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use tempfile::TempDir;
 
 use crate::mb_value::MaybeValue;
 
@@ -39,11 +40,30 @@ pub enum Error {
     BincodeErr(bincode::Error, &'static str),
     #[error("Unable to construct key from bytes")]
     KeyErr(#[from] TryFromSliceError),
+    #[error("Internal IO error: {0:?}")]
+    InternalErr(#[from] IoError),
+}
+
+/// Marker-like wrapper for cleaning temporary directory.
+/// Temporary directory is only used in tests.
+enum Location {
+    Temporary(TempDir),
+    Persisent(PathBuf),
+}
+
+impl AsRef<Path> for Location {
+    fn as_ref(&self) -> &Path {
+        match self {
+            Self::Temporary(temp_dir) => temp_dir.path(),
+            Self::Persisent(path) => path.as_ref(),
+        }
+    }
 }
 
 pub struct VersionedStorage<V> {
     db: Arc<DB>,
     squash_guard: Arc<RwLock<()>>,
+    _location: Arc<Location>,
     _version: PhantomData<V>,
 }
 
@@ -52,6 +72,7 @@ impl<V> Clone for VersionedStorage<V> {
         Self {
             db: Arc::clone(&self.db),
             squash_guard: Arc::clone(&self.squash_guard),
+            _location: Arc::clone(&self._location),
             _version: PhantomData,
         }
     }
@@ -202,14 +223,28 @@ macro_rules! persistent_types {
     }
 }
 
-impl<V> VersionedStorage<V> {
-    pub fn open<P: AsRef<Path>, S: AsRef<str>>(
+impl<V> VersionedStorage<V>
+where
+    V: AsBytePrefix,
+{
+    pub fn open_persistent<P: AsRef<Path>, S: AsRef<str>>(
         path: P,
         column_names: impl IntoIterator<Item = S>,
-    ) -> Result<Self>
-    where
-        V: AsBytePrefix,
-    {
+    ) -> Result<Self> {
+        Self::open(Location::Persisent(path.as_ref().to_owned()), column_names)
+    }
+
+    pub fn create_temporary<S: AsRef<str>>(
+        column_names: impl IntoIterator<Item = S>,
+    ) -> Result<Self> {
+        let temp_dir = TempDir::new()?;
+        Self::open(Location::Temporary(temp_dir), column_names)
+    }
+
+    fn open<S: AsRef<str>>(
+        location: Location,
+        column_names: impl IntoIterator<Item = S>,
+    ) -> Result<Self> {
         let db_opts = default_db_opts();
 
         let descriptors = column_names
@@ -221,12 +256,13 @@ impl<V> VersionedStorage<V> {
             })
             .collect::<Vec<_>>();
 
-        let db = Arc::new(DB::open_cf_descriptors(&db_opts, &path, descriptors)?);
+        let db = Arc::new(DB::open_cf_descriptors(&db_opts, &location, descriptors)?);
         let squash_guard = Arc::new(RwLock::default());
 
         Ok(Self {
             db,
             squash_guard,
+            _location: Arc::new(location),
             _version: PhantomData,
         })
     }
@@ -790,7 +826,7 @@ mod tests {
     fn it_handles_versions_as_expected() -> Result<()> {
         persistent_types! { KV in "kv" => u64 : usize } // TODO: rm, can be any
         let dir = TmpDir::new("it_handles_versions_as_expected");
-        let s = VersionedStorage::<u64>::open(&dir, COLUMN_NAMES)?;
+        let s = VersionedStorage::<u64>::create_temporary(COLUMN_NAMES)?;
         assert_eq!(s.previous_of(0)?, None);
         Ok(())
     }
@@ -820,7 +856,7 @@ mod tests {
 
         let dir = TmpDir::new("it_handles_full_range_mapping");
         {
-            let s = Storage::open(&dir, COLUMN_NAMES)?;
+            let s = Storage::open_persistent(&dir, COLUMN_NAMES)?;
 
             for (&version, map) in &assoc {
                 for (&key, &value) in map {
@@ -832,7 +868,7 @@ mod tests {
             println!("assoc is stored");
         }
         {
-            let s = Storage::open(&dir, COLUMN_NAMES)?;
+            let s = Storage::open_persistent(&dir, COLUMN_NAMES)?;
             for (version, _) in s.versions() {
                 let new_map = s
                     .typed::<KV>()
@@ -902,14 +938,14 @@ mod tests {
         persistent_types! { KV in "kv" => () : V }
         let dir = TmpDir::new("qc_keyless_storage_behaves_like_a_map_with_version_as_key");
         {
-            let s = Storage::open(&dir, COLUMN_NAMES)?;
+            let s = Storage::open_persistent(&dir, COLUMN_NAMES)?;
             for (&k, &v) in &map {
                 s.typed::<KV>().insert(k, v)?;
             }
             s.db.flush()?;
         }
         {
-            let s = Storage::open(&dir, COLUMN_NAMES)?;
+            let s = Storage::open_persistent(&dir, COLUMN_NAMES)?;
             let mut new_map = BTreeMap::new();
             for key in s.typed::<KV>().keys() {
                 new_map.insert(
@@ -928,8 +964,7 @@ mod tests {
     ) -> Result<()> {
         type Storage = VersionedStorage<(ThreadId, K)>;
         persistent_types! { TKV in "tkv" => () : V }
-        let dir = TmpDir::new("qc_two_concurrent_threads_works_on_shared_db_via_version_assoc");
-        let s: Arc<Storage> = Arc::new(Storage::open(&dir, COLUMN_NAMES)?);
+        let s: Arc<Storage> = Arc::new(Storage::create_temporary(COLUMN_NAMES)?);
 
         fn spawn_insert(s: &Arc<Storage>, map: BTreeMap<K, V>) -> JoinHandle<Result<ThreadId>> {
             let s = Arc::clone(s);
@@ -984,8 +1019,7 @@ mod tests {
     ) -> Result<()> {
         type Storage = VersionedStorage<ThreadId>;
         persistent_types! { KV in "kv" => K : V }
-        let dir = TmpDir::new("qc_two_concurrent_threads_works_on_shared_db_via_own_version_slot");
-        let s = Arc::new(Storage::open(&dir, COLUMN_NAMES)?);
+        let s = Arc::new(Storage::create_temporary(COLUMN_NAMES)?);
 
         fn spawn_insert(s: &Arc<Storage>, map: BTreeMap<K, V>) -> JoinHandle<Result<ThreadId>> {
             let s = Arc::clone(s);
@@ -1042,7 +1076,7 @@ mod tests {
         let dir = TmpDir::new("qc_reads_the_same_as_inserts");
 
         {
-            let s = Storage::open(&dir, COLUMN_NAMES)?;
+            let s = Storage::open_persistent(&dir, COLUMN_NAMES)?;
             for (&version, map) in &assoc {
                 for (&k, &v) in map {
                     s.typed::<KV>().insert_with(version, k, v.into())?;
@@ -1052,7 +1086,7 @@ mod tests {
             s.db.flush()?;
         }
         {
-            let s = Storage::open(&dir, COLUMN_NAMES)?;
+            let s = Storage::open_persistent(&dir, COLUMN_NAMES)?;
 
             let mut new_assoc = HashMap::<K, HashMap<K, Option<V>>>::new();
             for (version, _) in s.versions() {

@@ -144,11 +144,32 @@ pub struct EvmState {
     pub storage: Storage,
 }
 
-// TODO: move this logic outside
+/// NOTE: Only for testing purposes.
 impl Default for EvmState {
     fn default() -> Self {
-        let path = std::env::temp_dir().join("evm-state");
-        Self::new(path).expect("Unable to instantiate default EVM state")
+        let storage =
+            Storage::create_temporary(COLUMN_NAMES).expect("Unable to create temporary storage");
+
+        let slot = Slot::default();
+        assert_eq!(
+            None,
+            storage
+                .previous_of(slot)
+                .expect("Unable to retrieve version info from storage")
+        );
+
+        Self {
+            current_slot: slot,
+            previous_slot: None,
+
+            accounts: Layer::empty(),
+            accounts_storage: Layer::empty(),
+            txs_receipts: Layer::empty(),
+            txs_in_block: Layer::empty(),
+            big_transactions: Layer::empty(),
+
+            storage,
+        }
     }
 }
 
@@ -279,7 +300,7 @@ impl EvmState {
             path.as_ref().display(),
             slot
         );
-        let storage = Storage::open(path, COLUMN_NAMES)?;
+        let storage = Storage::open_persistent(path, COLUMN_NAMES)?;
         let previous_slot = storage.previous_of(slot)?;
         debug!(
             "storage reports: previous of {} is {:?}",
