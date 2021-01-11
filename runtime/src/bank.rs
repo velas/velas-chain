@@ -8252,6 +8252,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_bank_hash_consistency() {
         solana_logger::setup();
 
@@ -8337,6 +8338,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_process_stale_slot_with_budget() {
         solana_logger::setup();
 

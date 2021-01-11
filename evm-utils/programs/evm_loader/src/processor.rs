@@ -324,7 +324,7 @@ mod test {
                 .unwrap()
                 .get_account(caller_address)
                 .map(|account| account.nonce),
-            Some(0.into())
+            None,
         );
         assert_eq!(
             state
@@ -332,7 +332,7 @@ mod test {
                 .unwrap()
                 .get_account(tx_address)
                 .map(|account| account.nonce),
-            Some(0.into())
+            None,
         );
         {
             let mut locked = state.write().unwrap();
