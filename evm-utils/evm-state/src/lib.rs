@@ -277,6 +277,7 @@ mod tests {
     use sha3::{Digest, Keccak256};
 
     use crate::test_utils::TmpDir;
+    use tempfile::TempDir;
 
     use super::Executor;
     use super::*;
@@ -291,11 +292,11 @@ mod tests {
         let _logger_error = simple_logger::SimpleLogger::new().init();
         let accounts = ["contract", "caller"];
 
-        let code = hex::decode(HELLO_WORLD_CODE)?;
-        let data = hex::decode(HELLO_WORLD_ABI)?;
+        let code = hex::decode(HELLO_WORLD_CODE).unwrap();
+        let data = hex::decode(HELLO_WORLD_ABI).unwrap();
 
         let tmp_dir = TmpDir::new("test_evm_bytecode");
-        let mut backend = EvmState::load_from(tmp_dir, Slot::default())?;
+        let mut backend = EvmState::load_from(tmp_dir, Slot::default()).unwrap();
 
         for acc in &accounts {
             let account = name_to_key(acc);
@@ -337,7 +338,7 @@ mod tests {
             )
         });
 
-        let result = hex::decode(HELLO_WORLD_RESULT)?;
+        let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
         match exit_reason {
             (ExitReason::Succeed(ExitSucceed::Returned), res) if res == result => {}
             any_other => panic!("Not expected result={:?}", any_other),
@@ -351,7 +352,6 @@ mod tests {
             &contract.unwrap().code,
             &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap()
         );
-        Ok(())
     }
 
     #[test]
@@ -359,12 +359,10 @@ mod tests {
         let _ = simple_logger::SimpleLogger::new().init();
         let accounts = ["contract", "caller"];
 
-        let backend = EvmState::new();
-        let backend = RwLock::new(backend);
+        let state_dir = TempDir::new().unwrap();
+        let mut state = EvmState::new(state_dir.path()).unwrap();
 
         {
-            let mut state = backend.write().unwrap();
-
             for acc in &accounts {
                 let account = name_to_key(acc);
                 let memory = AccountState {
@@ -374,62 +372,41 @@ mod tests {
             }
         }
 
-        backend.write().unwrap().freeze();
+        state.freeze();
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(
-            backend.read().unwrap().clone(),
-            config,
-            usize::max_value(),
-            0,
-        );
+        let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
         let key = H256::random();
         let size = 100;
         let data = vec![0, 1, 2, 3];
         executor.allocate_store(key, size).unwrap();
 
         let patch = executor.deconstruct();
-        backend.write().unwrap().swap_commit(patch);
-        backend.write().unwrap().freeze();
-        let backend = RwLock::new(backend.read().unwrap().try_fork().unwrap());
+        state.swap_commit(patch);
+        state.freeze();
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(
-            backend.read().unwrap().clone(),
-            config,
-            usize::max_value(),
-            0,
-        );
+        let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
         executor.publish_data(key, 0, &data).unwrap();
 
         let patch = executor.deconstruct();
 
-        backend.write().unwrap().swap_commit(patch);
-        backend.write().unwrap().freeze();
+        state.swap_commit(patch);
+        state.freeze();
+
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(
-            backend.read().unwrap().clone(),
-            config,
-            usize::max_value(),
-            0,
-        );
+        let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
         executor
             .publish_data(key, data.len() as u64, &data)
             .unwrap();
 
         let patch = executor.deconstruct();
 
-        backend.write().unwrap().swap_commit(patch);
-        backend.write().unwrap().freeze();
-        let backend = RwLock::new(backend.read().unwrap().try_fork().unwrap());
+        state.swap_commit(patch);
+        state.freeze();
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(
-            backend.read().unwrap().clone(),
-            config,
-            usize::max_value(),
-            0,
-        );
+        let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
         let result = executor.take_big_tx(key).unwrap();
         assert_eq!(&result[..data.len()], &*data);
 
