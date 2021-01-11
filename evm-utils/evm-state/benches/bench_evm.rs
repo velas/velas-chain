@@ -157,7 +157,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             };
             state.set_account(account, memory);
         }
-        state.dump_all().unwrap();
+        state.freeze();
 
         let config = evm::Config::istanbul();
         let mut executor =
@@ -179,7 +179,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let patch = executor.deconstruct();
         state.swap_commit(patch);
 
-        state.dump_all().unwrap();
+        state.freeze();
 
         let contract_address = TransactionAction::Create.address(name_to_key("caller"), 0.into());
         b.iter(|| {

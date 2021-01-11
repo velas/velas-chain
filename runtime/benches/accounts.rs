@@ -12,6 +12,7 @@ use solana_sdk::{
     pubkey::Pubkey,
 };
 use std::{path::PathBuf, sync::Arc};
+use tempfile::TempDir;
 use test::Bencher;
 
 fn deposit_many(bank: &Bank, pubkeys: &mut Vec<Pubkey>, num: usize) {
@@ -36,7 +37,13 @@ fn bench_has_duplicates(bencher: &mut Bencher) {
 #[bench]
 fn test_accounts_create(bencher: &mut Bencher) {
     let (genesis_config, _) = create_genesis_config(10_000);
-    let bank0 = Bank::new_with_paths(&genesis_config, vec![PathBuf::from("bench_a0")], &[]);
+    let evm_state_dir = TempDir::new().unwrap();
+    let bank0 = Bank::new_with_paths(
+        &genesis_config,
+        Some(evm_state_dir.as_ref()),
+        vec![PathBuf::from("bench_a0")],
+        &[],
+    );
     bencher.iter(|| {
         let mut pubkeys: Vec<Pubkey> = vec![];
         deposit_many(&bank0, &mut pubkeys, 1000);
@@ -46,8 +53,10 @@ fn test_accounts_create(bencher: &mut Bencher) {
 #[bench]
 fn test_accounts_squash(bencher: &mut Bencher) {
     let (genesis_config, _) = create_genesis_config(100_000);
+    let evm_state_dir = TempDir::new().unwrap();
     let bank1 = Arc::new(Bank::new_with_paths(
         &genesis_config,
+        Some(evm_state_dir.as_ref()),
         vec![PathBuf::from("bench_a1")],
         &[],
     ));
