@@ -475,7 +475,8 @@ impl Bank {
 
     pub fn new_with_paths(
         genesis_config: &GenesisConfig,
-        evm_state_path: Option<&Path>, // TODO: Remove option, currently need for Bank::new, that is used for tests
+        // TODO: Remove option, currently need for Bank::new, that is used for tests
+        evm_state_path: Option<&Path>,
         paths: Vec<PathBuf>,
         frozen_account_pubkeys: &[Pubkey],
     ) -> Self {
