@@ -12,6 +12,7 @@ mod error;
 mod layered_backend;
 
 pub mod transactions;
+pub mod types;
 
 use error::*;
 pub use evm_backend::*;
@@ -23,7 +24,6 @@ pub use types::*;
 mod evm_backend;
 mod mb_value;
 mod storage;
-mod types;
 
 use std::fmt;
 

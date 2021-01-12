@@ -1,7 +1,7 @@
 pub use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 
-pub(crate) type Slot = u64; // TODO: re-use existing one from sdk package
+pub type Slot = u64; // TODO: re-use existing one from sdk package
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountState {
