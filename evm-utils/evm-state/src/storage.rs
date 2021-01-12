@@ -780,8 +780,7 @@ mod tests {
     use std::thread::{self, JoinHandle};
 
     use quickcheck_macros::quickcheck;
-
-    use crate::test_utils::TmpDir;
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -825,7 +824,7 @@ mod tests {
     #[test]
     fn it_handles_versions_as_expected() -> Result<()> {
         persistent_types! { KV in "kv" => u64 : usize } // TODO: rm, can be any
-        let dir = TmpDir::new("it_handles_versions_as_expected");
+        let dir = tempdir()?;
         let s = VersionedStorage::<u64>::create_temporary(COLUMN_NAMES)?;
         assert_eq!(s.previous_of(0)?, None);
         Ok(())
@@ -854,7 +853,7 @@ mod tests {
             .collect();
         println!("assoc is ready");
 
-        let dir = TmpDir::new("it_handles_full_range_mapping");
+        let dir = tempdir()?;
         {
             let s = Storage::open_persistent(&dir, COLUMN_NAMES)?;
 
@@ -936,7 +935,7 @@ mod tests {
     ) -> Result<()> {
         type Storage = VersionedStorage<K>;
         persistent_types! { KV in "kv" => () : V }
-        let dir = TmpDir::new("qc_keyless_storage_behaves_like_a_map_with_version_as_key");
+        let dir = tempdir()?;
         {
             let s = Storage::open_persistent(&dir, COLUMN_NAMES)?;
             for (&k, &v) in &map {
@@ -1073,7 +1072,7 @@ mod tests {
     fn qc_reads_the_same_as_inserts(assoc: HashMap<K, HashMap<K, Option<V>>>) -> Result<()> {
         type Storage = VersionedStorage<K>;
         persistent_types! { KV in "kv" => K : V }
-        let dir = TmpDir::new("qc_reads_the_same_as_inserts");
+        let dir = tempdir()?;
 
         {
             let s = Storage::open_persistent(&dir, COLUMN_NAMES)?;
