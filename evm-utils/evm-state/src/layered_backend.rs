@@ -418,9 +418,7 @@ mod tests {
     use primitive_types::{H160, H256, U256};
     use rand::rngs::mock::StepRng;
     use rand::Rng;
-
-    use crate::test_utils::TmpDir;
-    use anyhow::anyhow;
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -431,7 +429,7 @@ mod tests {
 
     #[test]
     fn it_handles_my_own_expectations() {
-        let tmp_dir = TmpDir::new("it_handles_my_own_expectations");
+        let tmp_dir = tempdir().unwrap();
         let evm_state = EvmState::load_from(&tmp_dir, 0).unwrap();
         assert_eq!(evm_state.current_slot, 0);
         assert_eq!(evm_state.previous_slot, None);
@@ -568,7 +566,7 @@ mod tests {
         let storage_diff = to_state_diff(storage, BTreeSet::new());
         let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
 
-        let tmp_dir = TmpDir::new("add_two_accounts_check_helpers");
+        let tmp_dir = tempdir().unwrap();
         let mut evm_state = EvmState::load_from(tmp_dir, Default::default()).unwrap();
 
         assert_eq!(
@@ -592,7 +590,7 @@ mod tests {
         let storage_diff = to_state_diff(storage, BTreeSet::new());
         let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
 
-        let tmp_dir = TmpDir::new("fork_add_remove_accounts");
+        let tmp_dir = tempdir().unwrap();
         let mut evm_state = EvmState::load_from(tmp_dir, Default::default()).unwrap();
 
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
@@ -629,7 +627,7 @@ mod tests {
         let accounts_state = generate_accounts_state(SEED, &accounts);
         let accounts_storage = generate_storage(SEED, &accounts);
 
-        let tmp_dir = TmpDir::new("reads_the_same_after_dump");
+        let tmp_dir = tempdir().unwrap();
         let mut evm_state = EvmState::load_from(tmp_dir, 0)?;
 
         for accounts_per_version in accounts.chunks(N_VERSIONS) {
@@ -669,7 +667,7 @@ mod tests {
     fn lookups_thru_forks() {
         let _ = simple_logger::SimpleLogger::new().init();
 
-        let tmp_dir = TmpDir::new("lookups_thru_forks");
+        let tmp_dir = tempdir().unwrap();
         let mut state = EvmState::load_from(tmp_dir, 0).unwrap();
 
         let accounts = generate_accounts_addresses(SEED, 1);
