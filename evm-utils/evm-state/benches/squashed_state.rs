@@ -3,7 +3,7 @@ use std::{collections::HashMap, iter, time::Instant};
 use rand::random;
 use tempfile::TempDir;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use evm_state::{
     types::{AccountState, Slot, H160 as Address, U256},
@@ -21,10 +21,11 @@ fn some_account() -> AccountState {
     }
 }
 
-fn flushed_state_bench(c: &mut Criterion) {
-    let mut group = c.benchmark_group("flushed_state");
+fn squashed_state_bench(c: &mut Criterion) {
+    let mut group = c.benchmark_group("squashed_state");
+    group.throughput(Throughput::Elements(1));
 
-    for &layers in &[0, 1, 10, 100, 1_000, 10_000, 100_000, 1_000_000] {
+    for &layers in &[0, 1, 10, 20, 40, 100, 120, 140, 200, 240, 400, 800] {
         let state_dir = TempDir::new().expect("Unable to create temporary directory");
 
         let slot = Slot::default();
@@ -69,5 +70,5 @@ fn flushed_state_bench(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(flushed_state, flushed_state_bench);
-criterion_main!(flushed_state);
+criterion_group!(squashed_state, squashed_state_bench);
+criterion_main!(squashed_state);

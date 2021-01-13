@@ -189,9 +189,39 @@ impl EvmState {
             "new slot {} with previous {:?}",
             self.current_slot, self.previous_slot
         );
+
         self.storage
             .new_version(self.current_slot, self.previous_slot)
             .expect("Unable to create new version in storage");
+
+        const SQUASH_THRESHOLD: u64 = 100; // TODO: avoid storage reads
+
+        if self.current_slot % SQUASH_THRESHOLD == 0 {
+            self.squash();
+        }
+    }
+
+    pub fn squash(&mut self) {
+        let track: Vec<Slot> = self.storage.track_of(self.current_slot).collect();
+
+        if track.len() > 1 {
+            squash_state(&self.storage, &track).expect("Unable to squash stored state");
+        }
+
+        #[rustfmt::skip]
+        fn squash_state(storage: &Storage, track: &[Slot]) -> anyhow::Result<()> {
+            assert!(track.len() >= 2); // two versions at least
+            assert_eq!(storage.previous_of(track[track.len()-1])?, None);
+
+            storage.typed::<Accounts>().squash_into_rev_pass(&track)?;
+            storage.typed::<AccountsStorage>().squash_into_rev_pass(&track)?;
+            storage.typed::<TransactionReceipts>().squash_into_rev_pass(&track)?;
+            storage.typed::<TransactionsInBlock>().squash_into_rev_pass(&track)?;
+            storage.typed::<BigTransactions>().squash_into_rev_pass(&track)?;
+            // Mark current version as the first one
+            storage.stomp(track[0])?;
+            Ok(())
+        }
     }
 
     // TODO: dump all
