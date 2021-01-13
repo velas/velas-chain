@@ -153,6 +153,20 @@ where
 
         Ok(())
     }
+
+    pub fn stomp(&self, version: V) -> Result<()> {
+        assert!(self.is_exists(version)?);
+        let key = CODER.serialize(&version).typed_ctx()?;
+        let none = CODER.serialize(&None).typed_ctx()?;
+        self.db.put(key, none)?;
+        Ok(())
+    }
+
+    pub fn track_of(&self, version: V) -> impl Iterator<Item = V> + '_ {
+        std::iter::successors(Some(version), move |version| {
+            self.previous_of(*version).unwrap()
+        })
+    }
 }
 
 impl<V> VersionedStorage<V> {
@@ -573,10 +587,11 @@ where
         Ok(data_ref.is_some())
     }
 
-    pub fn squash_into_rev_pass(&self, target: V) -> Result<()>
+    pub fn squash_into_rev_pass(&self, track: &[V]) -> Result<()>
     where
         Previous<V>: DeserializeOwned,
         M::Key: HasMax,
+        V: PartialOrd,
     {
         let _guard = self
             .storage
@@ -584,21 +599,17 @@ where
             .write()
             .expect("squash guard was poisoned");
 
-        let mut track = vec![target];
-        while let Some(prev) = self.storage.previous_of(track[track.len() - 1])? {
-            track.push(prev);
-        }
+        let mut rev_track = track.iter().copied().rev().peekable();
 
-        let mut rev_track = track.into_iter().rev().peekable();
-        while let (Some(current), Some(parent)) = (rev_track.next(), rev_track.peek().copied()) {
+        while let (Some(parent), Some(current)) = (rev_track.next(), rev_track.peek().copied()) {
+            assert!(current > parent);
             for (key, value) in self.prefix_iter_for(parent)? {
                 if !self.has_value_for(current, key)? {
                     self.insert_with(current, key, value)?;
                 }
             }
 
-            self.delete_all_for(parent)?;
-
+            // self.delete_all_for(parent)?;
             // TODO: cleanup all None's
         }
 
@@ -740,6 +751,10 @@ use primitive_types::{H160, H256, H512};
 
 primitive_type_has_max! {
     H160, H256, H512
+}
+
+impl<A: HasMax, B: HasMax> HasMax for (A, B) {
+    const MAX: (A, B) = (A::MAX, B::MAX);
 }
 
 impl<V> Debug for VersionedStorage<V>
@@ -1104,10 +1119,107 @@ mod tests {
         Ok(())
     }
 
+    mod squash {
+        use super::*;
+        use quickcheck::TestResult;
+
+        type Version = u16;
+        type Key = u8;
+        type Value = u64;
+
+        #[quickcheck]
+        fn qc_squashed_state_is_the_same(
+            assoc: BTreeMap<Version, HashMap<Key, Option<Value>>>,
+        ) -> Result<TestResult> {
+            if assoc.len() < 2 {
+                return Ok(TestResult::discard());
+            }
+
+            type Storage = VersionedStorage<Version>;
+            persistent_types! { KV in "kv" => Key : Value }
+
+            let s = Storage::create_temporary(COLUMN_NAMES)?;
+            let ts = s.typed::<KV>();
+
+            let mut prev_version: Option<Version> = None;
+
+            for (version, layer) in &assoc {
+                for (key, value) in layer {
+                    ts.insert_with(*version, *key, value.as_ref().copied().into())?;
+                }
+
+                s.new_version(*version, prev_version.take())?;
+                prev_version = Some(*version);
+            }
+
+            let last_version: Version = assoc.keys().last().copied().unwrap();
+
+            let expected_track: Vec<Version> = assoc.keys().copied().rev().collect();
+            let resulted_track: Vec<Version> = s.track_of(last_version).collect();
+            assert_eq!(expected_track, resulted_track);
+
+            ts.squash_into_rev_pass(&resulted_track)?;
+
+            let expected = assoc.into_iter().rev().fold(
+                BTreeMap::<Key, MaybeValue<Value>>::new(),
+                |mut exp, (_, layer)| {
+                    for (key, value) in layer {
+                        if !exp.contains_key(&key) {
+                            exp.insert(
+                                key,
+                                if let Some(value) = value {
+                                    MaybeValue::Value(value)
+                                } else {
+                                    MaybeValue::Removed
+                                },
+                            );
+                        }
+                    }
+                    exp
+                },
+            );
+
+            let resulted_layer: BTreeMap<Key, MaybeValue<Value>> = ts
+                .prefix_iter_for(last_version)?
+                // .map(|(key, mb_value)| (key, mb_value)))
+                .collect();
+
+            assert_eq!(expected, resulted_layer);
+
+            Ok(TestResult::passed())
+        }
+    }
+
     fn thread_id() -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         std::thread::current().id().hash(&mut hasher);
         hasher.finish()
+    }
+
+    #[test]
+    fn it_squashes_layers_into_last_one() -> anyhow::Result<()> {
+        persistent_types! { KV in "kv" => u8 : u64 }
+        let s = VersionedStorage::<u8>::create_temporary(COLUMN_NAMES)?;
+        let ts = s.typed::<KV>();
+
+        ts.insert_with(0, 42, 13.into())?;
+        ts.insert_with(0, 13, 42.into())?;
+        s.new_version(0, None)?;
+
+        ts.insert_with(1, 17, 19.into())?;
+        ts.insert_with(1, 13, None.into())?;
+        s.new_version(1, Some(0))?;
+
+        let track = s.track_of(1).collect::<Vec<_>>();
+        assert_eq!(track, vec![1, 0]);
+
+        ts.squash_into_rev_pass(&track)?;
+
+        assert_eq!(ts.get_exact_for(1, 42)?, Some(MaybeValue::Value(13)));
+        assert_eq!(ts.get_exact_for(1, 17)?, Some(MaybeValue::Value(19)));
+        assert_eq!(ts.get_exact_for(1, 13)?, Some(MaybeValue::Removed));
+
+        Ok(())
     }
 }
