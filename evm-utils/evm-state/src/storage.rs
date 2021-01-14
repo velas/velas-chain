@@ -17,7 +17,7 @@ use log::*;
 use rocksdb::{
     self,
     backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
-    ColumnFamily, ColumnFamilyDescriptor, IteratorMode, Options, DB,
+    ColumnFamily, ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tempfile::TempDir;
@@ -606,19 +606,34 @@ where
             .write()
             .expect("squash guard was poisoned");
 
-        let mut rev_track = track.iter().copied().rev().peekable();
+        let mut track = track.iter().copied();
 
-        while let (Some(parent), Some(current)) = (rev_track.next(), rev_track.peek().copied()) {
-            assert!(current > parent);
-            for (key, value) in self.prefix_iter_for(parent)? {
-                if !self.has_value_for(current, key)? {
-                    self.insert_with(current, key, value)?;
+        let target = match track.next() {
+            Some(version) => version,
+            None => return Ok(()),
+        };
+
+        let mut rev_track = track.rev();
+
+        let mut batch = WriteBatch::default();
+
+        while let Some(current) = rev_track.next() {
+            assert!(target > current);
+            for (key, value) in self.prefix_iter_for(current)? {
+                let target_key: Vec<u8> = VersionedKey {
+                    version: target,
+                    key,
+                }
+                .try_into()?;
+                if self.db().get_pinned_cf(self.cf(), &target_key)?.is_none() {
+                    batch.put_cf(self.cf(), target_key, CODER.serialize(&value).typed_ctx()?);
                 }
             }
-
-            // self.delete_all_for(parent)?;
-            // TODO: cleanup all None's
         }
+
+        self.db().write(batch)?;
+
+        // TODO: cleanup all target None's
 
         Ok(())
     }

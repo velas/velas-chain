@@ -137,6 +137,7 @@ fn squashed_state_bench(c: &mut Criterion) {
         );
     }
     group.finish();
+
     let mut group = c.benchmark_group("squash_time");
     group.sample_size(10);
 
