@@ -47,6 +47,11 @@ fn squashed_state_bench(c: &mut Criterion) {
             state = state.try_fork(layer).expect("Unable to fork EVM state");
         }
 
+        if layers % 100 == 0 {
+            state.freeze();
+            state.squash();
+        }
+
         group.bench_with_input(BenchmarkId::from_parameter(layers), &layers, move |b, _| {
             let accounts = &accounts;
             let state = &state;

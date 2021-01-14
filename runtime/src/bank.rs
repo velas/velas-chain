@@ -1192,10 +1192,16 @@ impl Bank {
             .for_each(|slot| self.src.status_cache.write().unwrap().add_root(*slot));
         squash_cache_time.stop();
 
+        let mut evm_state = self.evm_state.write().unwrap();
+        let mut squash_evm_state_time = Measure::start("squash_evm_state_time");
+        evm_state.squash();
+        squash_evm_state_time.stop();
+
         datapoint_debug!(
             "tower-observed",
             ("squash_accounts_ms", squash_accounts_time.as_ms(), i64),
-            ("squash_cache_ms", squash_cache_time.as_ms(), i64)
+            ("squash_cache_ms", squash_cache_time.as_ms(), i64),
+            ("squash_evm_state_time", squash_evm_state_time.as_ms(), i64)
         );
     }
 
