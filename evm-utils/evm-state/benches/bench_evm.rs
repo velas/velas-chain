@@ -1,179 +1,220 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{collections::HashSet, iter, time::Instant};
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
-use anyhow::{bail, Context, Result};
 use evm::{ExitReason, ExitSucceed};
 use evm_state::*;
-use primitive_types::{H160, H256, U256};
+use primitive_types::{H160 as Address, H256, U256};
 use sha3::{Digest, Keccak256};
 
-fn name_to_key(name: &str) -> H160 {
-    let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
-    hash.into()
-}
-
-fn prepare_dir<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
-    let path = path.as_ref();
-    if path.exists() {
-        bail!("Path {} is already exists", path.display());
-    }
-    fs::create_dir_all(path).context("Unable to create for bench data")?;
-    Ok(path.to_owned())
-}
-
-fn cleanup_dir<P: AsRef<Path>>(path: P) -> Result<()> {
-    let path = path.as_ref();
-    if !path.exists() {
-        bail!("Path {} is not exists", path.display());
-    }
-    fs::remove_dir_all(path).context("Clean-up")?;
-    Ok(())
+fn name_to_key<S: AsRef<str>>(name: S) -> H160 {
+    H256::from_slice(Keccak256::digest(name.as_ref().as_bytes()).as_slice()).into()
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Evm");
     group.throughput(Throughput::Elements(1));
 
+    let code = hex::decode(HELLO_WORLD_CODE).unwrap();
+    let data = hex::decode(HELLO_WORLD_ABI).unwrap();
+    let expected_result = hex::decode(HELLO_WORLD_RESULT).unwrap();
+
+    let contract = name_to_key("contract");
+
+    const N_ACCOUNTS: usize = 100;
+    let accounts: Vec<Address> = (0..N_ACCOUNTS)
+        .map(|i| format!("account_{}", i))
+        .map(name_to_key)
+        .collect();
+
+    // Ensures there no duplicates in addresses.
+    assert_eq!(
+        iter::once(contract)
+            .chain(accounts.iter().copied())
+            .collect::<HashSet<Address>>()
+            .len(),
+        N_ACCOUNTS + 1 // contract + [account]s
+    );
+
     group.bench_function("call_hello", |b| {
-        let code = hex::decode(HELLO_WORLD_CODE).unwrap();
-        let data = hex::decode(HELLO_WORLD_ABI).unwrap();
-        let accounts = ["contract", "caller"];
+        let mut state = EvmState::default();
 
-        let dir = prepare_dir("call_hello").unwrap();
-        let mut state = EvmState::load_from(&dir, 0).unwrap();
-
-        for acc in &accounts {
-            let account = name_to_key(acc);
-            let memory = AccountState {
-                ..Default::default()
-            };
-            state.set_account(account, memory);
+        for address in iter::once(contract).chain(accounts.iter().copied()) {
+            state.set_account(address, AccountState::default());
         }
 
-        let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
+        let mut executor =
+            Executor::with_config(state, evm::Config::istanbul(), usize::MAX, 0);
 
         let exit_reason = executor.with_executor(|executor| {
             executor.transact_create(
-                name_to_key("caller"),
+                contract,
                 U256::zero(),
-                code,
+                code.clone(),
                 usize::max_value(),
             )
         });
-        let contract_address = TransactionAction::Create.address(name_to_key("caller"), 0.into());
         assert!(matches!(
             exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
         ));
 
+        let contract_address = TransactionAction::Create.address(contract, U256::zero());
+        let mut idx = 0;
         b.iter(|| {
-            let exit_reason = executor.with_executor(|executor| {
+            let exit_reason = black_box(executor.with_executor(|executor| {
                 executor.transact_call(
-                    name_to_key("caller"),
+                    accounts[idx % accounts.len()],
                     contract_address,
                     U256::zero(),
                     data.to_vec(),
-                    usize::max_value(),
+                    usize::MAX,
                 )
-            });
+            }));
 
-            let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
-            match exit_reason {
-                (ExitReason::Succeed(ExitSucceed::Returned), res) if res == result => {}
-                any_other => panic!("Not expected result={:?}", any_other),
-            }
+            assert!(matches!(
+                exit_reason,
+                (ExitReason::Succeed(ExitSucceed::Returned), ref result) if result == &expected_result
+            ));
+
+            idx += 1;
         });
-
-        cleanup_dir(dir).unwrap();
     });
 
     group.bench_function("call_hello_with_executor_recreate", |b| {
-        let code = hex::decode(HELLO_WORLD_CODE).unwrap();
-        let data = hex::decode(HELLO_WORLD_ABI).unwrap();
+        let mut state = EvmState::default();
 
-        let dir = prepare_dir("call_hello_with_executor_recreate").unwrap();
-        let mut state = EvmState::load_from(&dir, 0).unwrap();
-        let config = evm::Config::istanbul();
-
-        let mut executor =
-            Executor::with_config(state.clone(), config.clone(), usize::max_value(), 0);
+        let mut executor = Executor::with_config(
+            state.clone(),
+            evm::Config::istanbul(),
+            usize::MAX,
+            0,
+        );
 
         let exit_reason = executor.with_executor(|executor| {
-            executor.transact_create(
-                name_to_key("caller"),
-                U256::zero(),
-                code,
-                usize::max_value(),
-            )
+            executor.transact_create(contract, U256::zero(), code.clone(), usize::MAX)
         });
         assert!(matches!(
             exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
         ));
 
-        let contract_address = TransactionAction::Create.address(name_to_key("caller"), 0.into());
         let patch = executor.deconstruct();
         state.swap_commit(patch);
 
+        let contract_address = TransactionAction::Create.address(contract, U256::zero());
+        let mut idx = 0;
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), config.clone(), usize::max_value(), 0);
-            let exit_reason = executor.with_executor(|executor| {
+                Executor::with_config(state.clone(), evm::Config::istanbul(), usize::MAX, 0);
+
+            let exit_reason = black_box(executor.with_executor(|executor| {
                 executor.transact_call(
-                    name_to_key("caller"),
+                    accounts[idx % accounts.len()],
                     contract_address,
                     U256::zero(),
                     data.to_vec(),
-                    usize::max_value(),
+                    usize::MAX,
                 )
-            });
+            }));
 
-            let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
-            match exit_reason {
-                (ExitReason::Succeed(ExitSucceed::Returned), res) if res == result => {}
-                any_other => panic!("Not expected result={:?}", any_other),
-            }
+            assert!(matches!(
+                exit_reason,
+                (ExitReason::Succeed(ExitSucceed::Returned), ref result) if result == &expected_result
+            ));
+
+            idx += 1;
         });
-
-        cleanup_dir(dir).unwrap();
     });
 
+    for n_forks in &[0, 1, 10, 50, 100, 1000] {
+        group.bench_with_input(
+            BenchmarkId::new("call_hello_on_frozen_forks", n_forks),
+            n_forks,
+            |b, n_forks| {
+                let slot = Slot::default();
+                let mut state = EvmState::default();
+
+                for address in iter::once(contract).chain(accounts.iter().copied()) {
+                    state.set_account(address, AccountState::default());
+                }
+
+                let mut executor =
+                    Executor::with_config(state.clone(), evm::Config::istanbul(), usize::MAX, 0);
+                let create_transaction_result = executor.with_executor(|executor| {
+                    executor.transact_create(contract, U256::zero(), code.clone(), usize::MAX)
+                });
+                assert!(matches!(
+                    create_transaction_result,
+                    ExitReason::Succeed(ExitSucceed::Returned)
+                ));
+
+                let patch = executor.deconstruct();
+                state.swap_commit(patch);
+
+                for new_slot in (slot + 1)..=*n_forks {
+                    state.freeze();
+                    state = state.try_fork(new_slot).expect("Unable to fork EVM state");
+                }
+
+                let contract = TransactionAction::Create.address(contract, U256::zero());
+
+                let accounts = &accounts;
+                let data = data.clone();
+                let expected_result = &expected_result;
+
+                b.iter_custom(move |iters| {
+                    let mut executor = Executor::with_config(
+                        state.clone(),
+                        evm::Config::istanbul(),
+                        usize::MAX,
+                        0,
+                    );
+
+                    let start = Instant::now();
+
+                    for idx in 0..iters {
+                        let caller = accounts[idx as usize % accounts.len()];
+                        let call_transaction_result =
+                            black_box(executor.with_executor(|executor| {
+                                executor.transact_call(
+                                    caller,
+                                    contract,
+                                    U256::zero(),
+                                    data.to_vec(),
+                                    usize::MAX,
+                                )
+                            }));
+                        assert!(matches!(
+                            call_transaction_result,
+                            (ExitReason::Succeed(ExitSucceed::Returned), ref result) if result == expected_result
+                        ));
+                    }
+
+                    start.elapsed()
+                });
+            },
+        );
+    }
+
     group.bench_function("call_hello_on_dumped_state", |b| {
-        let accounts = ["contract", "caller"];
+        let mut state = EvmState::default();
 
-        let code = hex::decode(HELLO_WORLD_CODE).unwrap();
-        let data = hex::decode(HELLO_WORLD_ABI).unwrap();
+        iter::once(contract)
+            .chain(accounts.iter().copied())
+            .for_each(|address| state.set_account(address, AccountState::default()));
 
-        let dir = prepare_dir("call_hello_on_dumped_state").unwrap();
-        let mut state = EvmState::load_from(&dir, 0).unwrap();
-
-        for acc in &accounts {
-            let account = name_to_key(acc);
-            let memory = AccountState {
-                ..Default::default()
-            };
-            state.set_account(account, memory);
-        }
         state.freeze();
 
-        let config = evm::Config::istanbul();
         let mut executor =
-            Executor::with_config(state.clone(), config.clone(), usize::max_value(), 0);
+            Executor::with_config(state.clone(), evm::Config::istanbul(), usize::MAX, 0);
 
         let exit_reason = executor.with_executor(|executor| {
-            executor.transact_create(
-                name_to_key("caller"),
-                U256::zero(),
-                code,
-                usize::max_value(),
-            )
+            executor.transact_create(contract, U256::zero(), code.clone(), usize::MAX)
         });
         assert!(matches!(
             exit_reason,
-            ExitReason::Succeed(ExitSucceed::Returned),
+            ExitReason::Succeed(ExitSucceed::Returned)
         ));
 
         let patch = executor.deconstruct();
@@ -181,28 +222,29 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         state.freeze();
 
-        let contract_address = TransactionAction::Create.address(name_to_key("caller"), 0.into());
+        let contract_address = TransactionAction::Create.address(contract, U256::zero());
+        let mut idx = 0;
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), config.clone(), usize::max_value(), 0);
+                Executor::with_config(state.clone(), evm::Config::istanbul(), usize::MAX, 0);
+
             let exit_reason = executor.with_executor(|executor| {
                 executor.transact_call(
-                    name_to_key("caller"),
+                    accounts[idx % accounts.len()],
                     contract_address,
                     U256::zero(),
                     data.to_vec(),
-                    usize::max_value(),
+                    usize::MAX,
                 )
             });
 
-            let result = hex::decode(HELLO_WORLD_RESULT).unwrap();
-            match exit_reason {
-                (ExitReason::Succeed(ExitSucceed::Returned), res) if res == result => {}
-                any_other => panic!("Not expected result={:?}", any_other),
-            }
-        });
+            assert!(matches!(
+                exit_reason,
+                (ExitReason::Succeed(ExitSucceed::Returned), ref result) if result == &expected_result
+            ));
 
-        cleanup_dir(dir).unwrap();
+            idx += 1;
+        });
     });
 
     group.finish();
