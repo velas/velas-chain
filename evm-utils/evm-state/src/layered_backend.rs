@@ -193,18 +193,13 @@ impl EvmState {
         self.storage
             .new_version(self.current_slot, self.previous_slot)
             .expect("Unable to create new version in storage");
-
-        const SQUASH_THRESHOLD: u64 = 100; // TODO: avoid storage reads
-
-        if self.current_slot % SQUASH_THRESHOLD == 0 {
-            self.squash();
-        }
     }
 
     pub fn squash(&mut self) {
         let track: Vec<Slot> = self.storage.track_of(self.current_slot).collect();
 
         if track.len() > 1 {
+            info!("squashing evm state into slot {}", track[0]);
             squash_state(&self.storage, &track).expect("Unable to squash stored state");
         }
 
@@ -220,6 +215,7 @@ impl EvmState {
             storage.typed::<BigTransactions>().squash_into_rev_pass(&track)?;
             // Mark current version as the first one
             storage.stomp(track[0])?;
+            storage.flush()?;
             Ok(())
         }
     }

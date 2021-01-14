@@ -167,6 +167,13 @@ where
             self.previous_of(*version).unwrap()
         })
     }
+
+    pub fn flush(&self) -> Result<()> {
+        let mut opts = rocksdb::FlushOptions::new();
+        opts.set_wait(true);
+        self.db.flush_opt(&opts)?;
+        Ok(())
+    }
 }
 
 impl<V> VersionedStorage<V> {
