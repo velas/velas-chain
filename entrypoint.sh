@@ -27,7 +27,7 @@ run_solana_validator() {
   solana --keypair $datadir/identity.json --url $rpc_url create-vote-account $datadir/vote-account.json $datadir/identity.json
   fi
 
-  solana-validator \
+  RUST_LOG=debug solana-validator \
     --max-genesis-archive-unpacked-size 1073741824 \
     --entrypoint $entrypoint  \
     --identity $datadir/identity.json \
@@ -48,7 +48,7 @@ run_solana_bootstrap() {
   solana-validator \
     --enable-rpc-exit \
     --enable-rpc-set-log-filter \
-    --enable_rpc_transaction_history \
+    --enable-rpc-transaction-history \
     --gossip-host $host \
     --ledger $datadir \
     --dynamic-port-range $port_range \
