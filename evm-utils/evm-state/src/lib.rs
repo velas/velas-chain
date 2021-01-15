@@ -350,20 +350,18 @@ mod tests {
         let _ = simple_logger::SimpleLogger::new().init();
         let accounts = ["contract", "caller"];
 
-        let state_dir = tempdir().unwrap();
-        let mut state = EvmState::new(state_dir.path()).unwrap();
+        let mut slot = Slot::default();
+        let mut state = EvmState::default();
 
-        {
-            for acc in &accounts {
-                let account = name_to_key(acc);
-                let memory = AccountState {
-                    ..Default::default()
-                };
-                state.accounts.insert(account, memory);
-            }
+        for acc in &accounts {
+            let account = name_to_key(acc);
+            let memory = AccountState::default();
+            state.accounts.insert(account, memory);
         }
 
         state.freeze();
+        slot += 1;
+        state = state.try_fork(slot).expect("Unable to fork EVM state");
 
         let config = evm::Config::istanbul();
         let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
@@ -375,15 +373,18 @@ mod tests {
         let patch = executor.deconstruct();
         state.swap_commit(patch);
         state.freeze();
+        slot += 1;
+        state = state.try_fork(slot).expect("Unable to fork EVM state");
 
         let config = evm::Config::istanbul();
         let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
         executor.publish_data(key, 0, &data).unwrap();
 
         let patch = executor.deconstruct();
-
         state.swap_commit(patch);
         state.freeze();
+        slot += 1;
+        state = state.try_fork(slot).expect("Unable to fork EVM state");
 
         let config = evm::Config::istanbul();
         let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
@@ -395,6 +396,8 @@ mod tests {
 
         state.swap_commit(patch);
         state.freeze();
+        slot += 1;
+        state = state.try_fork(slot).expect("Unable to fork EVM state");
 
         let config = evm::Config::istanbul();
         let mut executor = Executor::with_config(state, config, usize::max_value(), 0);
