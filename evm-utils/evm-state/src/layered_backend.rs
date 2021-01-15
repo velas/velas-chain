@@ -48,10 +48,6 @@ where
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.map.is_empty()
-    }
-
     pub fn insert(&mut self, key: M::Key, value: M::Value)
     where
         M::Key: Debug,
@@ -426,14 +422,6 @@ impl EvmState {
         // );
 
         std::mem::swap(self, &mut updated);
-    }
-
-    /// True if current layer has no any update, false otherwise.
-    fn is_empty(&self) -> bool {
-        self.accounts.is_empty()
-            && self.accounts_storage.is_empty()
-            && self.txs_receipts.is_empty()
-            && self.txs_in_block.is_empty()
     }
 }
 
