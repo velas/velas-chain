@@ -159,7 +159,7 @@ impl Executor {
     pub fn take_big_tx(&mut self, key: H256) -> Result<Vec<u8>, Error> {
         let big_tx_storage = if let Some(big_tx_storage) = self.evm.evm_state.get_big_tx(key) {
             debug!("data at get = {:?}", big_tx_storage.tx_chunks);
-            big_tx_storage.clone()
+            big_tx_storage
         } else {
             return DataNotFound { key }.fail();
         };
@@ -199,7 +199,7 @@ impl Executor {
                 }
                 .fail();
             }
-            big_tx_storage.clone()
+            big_tx_storage
         } else {
             error!("Failed to write without allocation = {:?}", key);
             return FailedToWrite { key, offset }.fail();
@@ -239,10 +239,7 @@ impl Executor {
         hashes.push(tx_hash);
 
         let index = hashes.len() as u64;
-        self.evm
-            .evm_state
-            .txs_in_block
-            .insert(block_num, hashes.into());
+        self.evm.evm_state.txs_in_block.insert(block_num, hashes);
 
         let tx_receipt = TransactionReceipt::new(
             tx,
@@ -400,7 +397,7 @@ mod tests {
         state.freeze();
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
+        let mut executor = Executor::with_config(state, config, usize::max_value(), 0);
         let result = executor.take_big_tx(key).unwrap();
         assert_eq!(&result[..data.len()], &*data);
 

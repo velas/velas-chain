@@ -390,10 +390,6 @@ mod track {
     use RevTrack::*;
 
     impl<V> RevTrack<V> {
-        fn single(v: V) -> Self {
-            Self::Single(v)
-        }
-
         fn is_prev(&self, other: V) -> bool
         where
             V: Copy + Sub<Output = V> + PartialEq + Stepped,
@@ -613,11 +609,10 @@ where
             None => return Ok(()),
         };
 
-        let mut rev_track = track.rev();
-
+        let rev_track = track.rev();
         let mut batch = WriteBatch::default();
 
-        while let Some(current) = rev_track.next() {
+        for current in rev_track {
             assert!(target > current);
             for (key, value) in self.prefix_iter_for(current)? {
                 let target_key: Vec<u8> = VersionedKey {
@@ -861,7 +856,6 @@ mod tests {
     #[test]
     fn it_handles_versions_as_expected() -> Result<()> {
         persistent_types! { KV in "kv" => u64 : usize } // TODO: rm, can be any
-        let dir = tempdir()?;
         let s = VersionedStorage::<u64>::create_temporary(COLUMN_NAMES)?;
         assert_eq!(s.previous_of(0)?, None);
         Ok(())
@@ -1144,6 +1138,7 @@ mod tests {
     mod squash {
         use super::*;
         use quickcheck::TestResult;
+        use std::collections::btree_map;
 
         type Version = u16;
         type Key = u8;
@@ -1186,15 +1181,12 @@ mod tests {
                 BTreeMap::<Key, MaybeValue<Value>>::new(),
                 |mut exp, (_, layer)| {
                     for (key, value) in layer {
-                        if !exp.contains_key(&key) {
-                            exp.insert(
-                                key,
-                                if let Some(value) = value {
-                                    MaybeValue::Value(value)
-                                } else {
-                                    MaybeValue::Removed
-                                },
-                            );
+                        if let btree_map::Entry::Vacant(entry) = exp.entry(key) {
+                            entry.insert(if let Some(value) = value {
+                                MaybeValue::Value(value)
+                            } else {
+                                MaybeValue::Removed
+                            });
                         }
                     }
                     exp
