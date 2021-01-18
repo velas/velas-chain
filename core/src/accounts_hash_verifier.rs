@@ -115,7 +115,6 @@ impl AccountsHashVerifier {
                 if sender.send(accounts_package).is_err() {}
             }
         }
-
         cluster_info.push_accounts_hashes(hashes.clone());
     }
 

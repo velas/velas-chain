@@ -641,7 +641,7 @@ mod tests {
                 client
                     .get_balance_with_commitment(&kp.pubkey(), CommitmentConfig::recent())
                     .unwrap(),
-                lamports
+                21
             );
         }
     }
@@ -660,7 +660,7 @@ mod tests {
             generate_and_fund_keypairs(client.clone(), None, &id, keypair_count, lamports).unwrap();
 
         for kp in &keypairs {
-            assert_eq!(client.get_balance(&kp.pubkey()).unwrap(), lamports);
+            assert_eq!(client.get_balance(&kp.pubkey()).unwrap(), 21);
         }
     }
 }

@@ -165,17 +165,15 @@ pub fn nonce_authority_arg<'a, 'b>() -> Arg<'a, 'b> {
 pub enum LoaderType {
     Bpf,
     BpfDeprecated,
-    Evm,
 }
 
 impl FromStr for LoaderType {
     type Err = CliError;
     #[inline]
     fn from_str(s: &str) -> Result<LoaderType, CliError> {
-        match s {
+        match s.to_ascii_lowercase().as_str() {
             "bpf" => Ok(LoaderType::Bpf),
             "bpf_deprecated" => Ok(LoaderType::BpfDeprecated),
-            "evm" => Ok(LoaderType::Evm),
             s => Err(CliError::IncorrectLoader(s.to_string())),
         }
     }
@@ -1306,7 +1304,6 @@ fn process_deploy(
     let loader_id = match loader_type {
         LoaderType::Bpf => bpf_loader::id(),
         LoaderType::BpfDeprecated => bpf_loader_deprecated::id(),
-        LoaderType::Evm => evm_loader::id(),
     };
 
     // Build transactions to calculate fees
@@ -1314,8 +1311,7 @@ fn process_deploy(
     let (blockhash, fee_calculator, _) = rpc_client
         .get_recent_blockhash_with_commitment(config.commitment)?
         .value;
-    let minimum_balance =
-        rpc_client.get_minimum_balance_for_rent_exemption(program_data.len() * 2)?;
+    let minimum_balance = rpc_client.get_minimum_balance_for_rent_exemption(program_data.len())?;
     let ix = system_instruction::create_account(
         &config.signers[0].pubkey(),
         &program_id.pubkey(),
@@ -1349,11 +1345,6 @@ fn process_deploy(
         LoaderType::Bpf | LoaderType::BpfDeprecated => {
             loader_instruction::finalize(&program_id.pubkey(), &loader_id)
         }
-        LoaderType::Evm => loader_instruction::finalize_with_caller(
-            &program_id.pubkey(),
-            &loader_id,
-            &signers[0].pubkey(),
-        ),
     };
     let finalize_message = Message::new(&[instruction], Some(&signers[0].pubkey()));
     messages.push(&finalize_message);
@@ -2306,7 +2297,7 @@ pub fn app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'ab, '
                         .long("loader-type")
                         .value_name("LOADER_TYPE")
                         .takes_value(true)
-                        .default_value("Bpf")
+                        .default_value("bpf")
                         .hidden(true) // Don't document this argument to discourage its use
                         .help("Choose loader type")
                 ),

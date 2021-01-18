@@ -2993,7 +2993,7 @@ pub mod tests {
         let largest_accounts: Vec<RpcAccountBalance> =
             serde_json::from_value(json["result"]["value"].clone())
                 .expect("actual response deserialization");
-        assert_eq!(largest_accounts.len(), 19);
+        assert_eq!(largest_accounts.len(), 20);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"getLargestAccounts","params":[{"filter":"nonCirculating"}]}"#;
         let res = io.handle_request_sync(&req, meta);
         let json: Value = serde_json::from_str(&res.unwrap()).unwrap();
