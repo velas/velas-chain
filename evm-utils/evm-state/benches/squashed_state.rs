@@ -2,7 +2,9 @@ use std::{collections::HashSet, iter, time::Instant};
 
 use rand::{prelude::IteratorRandom, random, Rng};
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
 
 use evm_state::{
     types::{AccountState, Slot, H160 as Address, U256},
@@ -141,7 +143,7 @@ fn squashed_state_bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("squash_time");
     group.sample_size(10);
 
-    const ACCOUNTS_PER_SLOT: usize = 12;
+    const ACCOUNTS_PER_SLOT: usize = 1;
 
     for squash_targets in vec![
         (None, 0),
@@ -158,6 +160,7 @@ fn squashed_state_bench(c: &mut Criterion) {
         (None, 10000),
         (Some(5000), 10000),
         (Some(9000), 10000),
+        (Some(100_000), 100_100),
     ] {
         group.bench_with_input(
             BenchmarkId::new(
@@ -204,5 +207,70 @@ fn squashed_state_bench(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(squashed_state, squashed_state_bench);
+fn large_squash_time_bench(c: &mut Criterion) {
+    let mut group = c.benchmark_group("large_squash_time_bench");
+    group.sample_size(10);
+
+    for &(first_squash, target_squash, accounts_per_100k) in &[
+        (100_000, 100_100, 10_000),
+        (1_000_000, 1_000_100, 100),
+        (1_000_000, 1_000_100, 1000),
+        (1_000_000, 1_000_100, 10_000),
+        (1_000_000, 1_000_100, 100_000),
+    ] {
+        assert!(first_squash <= target_squash);
+        assert!(accounts_per_100k <= 100_000);
+
+        group.bench_with_input(
+            BenchmarkId::new(
+                "large squash",
+                format!(
+                    " {} accounts per 100k slots, first on {}, then {}",
+                    accounts_per_100k, first_squash, target_squash
+                ),
+            ),
+            &(first_squash, target_squash),
+            move |b, &(first_squash, target_squash)| {
+                b.iter_batched_ref(
+                    || {
+                        let slot = Slot::default();
+                        let mut state = EvmState::default();
+
+                        // repeat 1/3 of accounts from previous slots
+                        let mut addresses = AddrMixer::new(3);
+                        let mut rng = rand::thread_rng();
+
+                        for new_slot in (slot + 1)..target_squash {
+                            addresses.advance();
+                            if rng.gen_ratio(accounts_per_100k, 100_000) {
+                                let (address, account) = (addresses.next(), some_account());
+                                state.set_account(address, account);
+                            }
+
+                            state.freeze();
+                            if new_slot == first_squash {
+                                state.squash();
+                            }
+                            state = state.try_fork(new_slot).expect("Unable to fork EVM state");
+                        }
+                        state
+                    },
+                    |state| {
+                        state.freeze();
+                        state.squash();
+                    },
+                    BatchSize::NumIterations(1),
+                )
+            },
+        );
+    }
+
+    group.finish();
+}
+
+criterion_group!(
+    squashed_state,
+    squashed_state_bench,
+    large_squash_time_bench
+);
 criterion_main!(squashed_state);
