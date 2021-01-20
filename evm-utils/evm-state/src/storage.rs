@@ -8,7 +8,7 @@ use std::{
     mem::size_of,
     ops::{Deref, Sub},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 
 use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
@@ -62,7 +62,6 @@ impl AsRef<Path> for Location {
 
 pub struct VersionedStorage<V> {
     db: Arc<DB>,
-    squash_guard: Arc<RwLock<()>>,
     _location: Arc<Location>,
     _version: PhantomData<V>,
 }
@@ -71,7 +70,6 @@ impl<V> Clone for VersionedStorage<V> {
     fn clone(&self) -> Self {
         Self {
             db: Arc::clone(&self.db),
-            squash_guard: Arc::clone(&self.squash_guard),
             _location: Arc::clone(&self._location),
             _version: PhantomData,
         }
@@ -279,11 +277,9 @@ where
             .collect::<Vec<_>>();
 
         let db = Arc::new(DB::open_cf_descriptors(&db_opts, &location, descriptors)?);
-        let squash_guard = Arc::new(RwLock::default());
 
         Ok(Self {
             db,
-            squash_guard,
             _location: Arc::new(location),
             _version: PhantomData,
         })
@@ -379,22 +375,25 @@ impl<'a, V, M: PersistentAssoc> PersistentMap<'a, V, M> {
 }
 
 mod track {
-    use std::fmt::{self, Display};
-    use std::ops::{Range, Sub};
+    use std::{
+        collections::VecDeque,
+        fmt::{self, Display},
+        ops::{Range, Sub},
+    };
 
     #[derive(Debug, Clone)]
-    enum RevTrack<V> {
+    enum TrackPiece<V> {
         Single(V),
         Sequence(std::ops::Range<V>),
     }
 
-    use RevTrack::*;
+    use TrackPiece::*;
 
-    impl<V> RevTrack<V> {
-        fn is_prev(&self, other: V) -> bool
-        where
-            V: Copy + Sub<Output = V> + PartialEq + Stepped,
-        {
+    impl<V> TrackPiece<V>
+    where
+        V: Copy + PartialEq + Sub<Output = V> + Stepped,
+    {
+        fn is_prev(&self, other: V) -> bool {
             (match self {
                 Single(v) => *v,
                 Sequence(range) => range.start,
@@ -402,52 +401,104 @@ mod track {
                 == V::ONE
         }
 
-        fn prepend(&mut self, prev: V)
-        where
-            V: Copy,
-        {
+        fn is_next(&self, other: V) -> bool {
+            other
+                - (match self {
+                    Single(v) => *v,
+                    Sequence(range) => range.end,
+                })
+                == V::ONE
+        }
+
+        fn prepend(&mut self, prev: V) {
+            assert!(self.is_prev(prev));
             match self {
                 Single(v) => {
                     *self = Sequence(Range {
                         start: prev,
                         end: *v,
-                    })
+                    });
                 }
-                Sequence(range) => range.start = prev,
+                Sequence(range) => {
+                    range.start = prev;
+                }
+            }
+        }
+
+        fn append(&mut self, next: V) {
+            assert!(self.is_next(next));
+            match self {
+                Single(v) => {
+                    *self = Sequence(Range {
+                        start: *v,
+                        end: next,
+                    });
+                }
+                Sequence(range) => {
+                    range.end = next;
+                }
             }
         }
     }
 
-    pub(super) struct Checked<V>(Vec<RevTrack<V>>);
+    pub(super) struct Track<V>(VecDeque<TrackPiece<V>>);
 
-    impl<V> Default for Checked<V> {
+    impl<V> Default for Track<V> {
         fn default() -> Self {
-            Self(vec![])
+            Self(VecDeque::new())
         }
     }
 
-    impl<V> Checked<V> {
-        pub fn prepend(&mut self, prev: V)
-        where
-            V: Copy + Sub<Output = V> + PartialEq + Stepped,
-        {
-            match self.0.last_mut() {
+    // TODO: separate append and prepend impls as for Track<Order :: Forward | Reverse>
+    impl<V> Track<V>
+    where
+        V: Copy + PartialOrd + PartialEq + Sub<Output = V> + Stepped,
+    {
+        pub fn prepend(&mut self, prev: V) {
+            assert!(self
+                .0
+                .front()
+                .map(|first| prev
+                    < match first {
+                        Single(v) => *v,
+                        Sequence(range) => range.start,
+                    })
+                .unwrap_or(true));
+
+            match self.0.front_mut() {
                 Some(ref mut last) if last.is_prev(prev) => last.prepend(prev),
-                Some(_) | None => self.0.push(Single(prev)),
+                Some(_) | None => self.0.push_front(Single(prev)),
+            }
+        }
+
+        pub fn append(&mut self, next: V) {
+            assert!(self
+                .0
+                .back()
+                .map(|last| next
+                    > match last {
+                        Single(v) => *v,
+                        Sequence(range) => range.end,
+                    })
+                .unwrap_or(true));
+
+            match self.0.back_mut() {
+                Some(ref mut last) if last.is_next(next) => last.append(next),
+                Some(_) | None => self.0.push_back(Single(next)),
             }
         }
     }
 
-    impl<V: Display> Display for RevTrack<V> {
+    impl<V: Display> Display for TrackPiece<V> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self {
                 Single(v) => write!(f, "{}", v),
-                Sequence(range) => write!(f, "{}..{}", range.end, range.start),
+                Sequence(range) => write!(f, "{}..{}", range.start, range.end),
             }
         }
     }
 
-    impl<V: Display> Display for Checked<V> {
+    impl<V: Display> Display for Track<V> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "[")?;
             let mut iter = self.0.iter().peekable();
@@ -462,27 +513,51 @@ mod track {
         }
     }
 
-    #[test]
-    fn it_prints_tracks_as_expected() {
-        impl<V: Display> Checked<V> {
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        impl<V: Display> Track<V> {
             fn assert_display(&self, s: &str) {
                 assert_eq!(format!("{}", self), s);
             }
         }
-        let mut c = Checked::<u64>::default();
-        c.assert_display("[]");
-        c.prepend(42);
-        c.assert_display("[42]");
-        c.prepend(19);
-        c.assert_display("[42, 19]");
-        c.prepend(18);
-        c.assert_display("[42, 19..18]");
-        c.prepend(17);
-        c.assert_display("[42, 19..17]");
-        c.prepend(15);
-        c.prepend(14);
-        c.prepend(13);
-        c.assert_display("[42, 19..17, 15..13]");
+
+        #[test]
+        fn it_prepends_to_track_as_expected() {
+            let mut c = Track::<u64>::default();
+            c.assert_display("[]");
+            c.prepend(42);
+            c.assert_display("[42]");
+            c.prepend(19);
+            c.assert_display("[19, 42]");
+            c.prepend(18);
+            c.assert_display("[18..19, 42]");
+            c.prepend(17);
+            c.assert_display("[17..19, 42]");
+            c.prepend(15);
+            c.prepend(14);
+            c.prepend(13);
+            c.assert_display("[13..15, 17..19, 42]");
+        }
+
+        #[test]
+        fn it_appends_to_track_as_expected() {
+            let mut c = Track::<u64>::default();
+            c.assert_display("[]");
+            c.append(13);
+            c.append(14);
+            c.append(15);
+            c.assert_display("[13..15]");
+            c.append(17);
+            c.assert_display("[13..15, 17]");
+            c.append(18);
+            c.assert_display("[13..15, 17..18]");
+            c.append(19);
+            c.assert_display("[13..15, 17..19]");
+            c.append(42);
+            c.assert_display("[13..15, 17..19, 42]");
+        }
     }
 
     pub trait Stepped {
@@ -518,38 +593,40 @@ where
 
     pub fn get_for(&self, version: V, key: M::Key) -> Result<Option<MaybeValue<M::Value>>>
     where
-        V: Display + Debug + PartialEq + Sub<Output = V> + track::Stepped,
+        V: Display + Debug + PartialEq + PartialOrd + Sub<Output = V> + track::Stepped,
         M::Key: Debug,
         M::Value: Debug,
     {
-        let _guard = self
-            .storage
-            .squash_guard
-            .read()
-            .expect("squash guard was poisoned");
-
         let mut next_version = Some(version);
+        let mut previous: Option<V>; // TOOD: simplify assignment flow
 
-        let mut track = track::Checked::<V>::default();
+        let mut log_track = track::Track::<V>::default();
 
         while let Some(version) = next_version.take() {
-            track.prepend(version);
+            log_track.prepend(version);
+
+            // NOTE: Caches previous version before first get
+            //       to avoid version gaps when squash is in process.
+            // - 'get exact' returns early when squashing was finished;
+            // -  otherwise no value and next lookup is stored previous version;
+            previous = self.storage.previous_of(version)?;
+
             let value = self.get_exact_for(version, key)?;
             if value.is_some() {
                 debug!(
                     "get_for: key {:?} found with track {}: value {:?}",
-                    key, track, &value
+                    key, log_track, &value
                 );
                 return Ok(value);
             } else {
-                let previous = self.storage.previous_of(version)?;
+                let previous = previous.take();
                 assert_ne!(Some(version), previous);
                 next_version = previous;
                 continue;
             }
         }
 
-        debug!("get_for: key {:?} not found {}", key, track);
+        debug!("get_for: key {:?} not found {}", key, log_track);
 
         Ok(None)
     }
@@ -595,14 +672,8 @@ where
     where
         Previous<V>: DeserializeOwned,
         M::Key: HasMax,
-        V: PartialOrd,
+        V: PartialOrd + PartialEq + Sub<Output = V> + track::Stepped + Display,
     {
-        let _guard = self
-            .storage
-            .squash_guard
-            .write()
-            .expect("squash guard was poisoned");
-
         let mut track = track.iter().copied();
 
         let target = match track.next() {
@@ -610,11 +681,15 @@ where
             None => return Ok(()),
         };
 
+        let mut log_track = track::Track::<V>::default();
+
         let rev_track = track.rev();
         let mut batch = WriteBatch::default();
 
         for current in rev_track {
             assert!(target > current);
+            log_track.append(current);
+
             for (key, value) in self.prefix_iter_for(current)? {
                 let target_key: Vec<u8> = VersionedKey {
                     version: target,
@@ -628,6 +703,12 @@ where
         }
 
         self.db().write(batch)?;
+        log::info!(
+            "Storage :: {} was squashed into {} for {}",
+            &std::any::type_name::<V>(),
+            target,
+            log_track
+        );
 
         // TODO: cleanup all target None's
 
@@ -639,12 +720,6 @@ where
         Previous<V>: DeserializeOwned,
         M::Key: HasMax,
     {
-        let _guard = self
-            .storage
-            .squash_guard
-            .write()
-            .expect("squash guard was poisoned");
-
         let mut next_parent_for = target;
 
         while let Some(parent) = self.storage.previous_of(next_parent_for)? {
@@ -659,7 +734,7 @@ where
             next_parent_for = parent;
         }
 
-        Ok(())
+        unreachable!("actually other method is in use")
     }
 
     fn delete_all_for(&self, version: V) -> Result<()>
