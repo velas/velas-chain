@@ -45,7 +45,7 @@ run_solana_bootstrap() {
   declare host=$2
   declare port_range=$3
   declare rpc_port=$4
-  solana-validator \
+  RUST_LOG=debug solana-validator \
     --enable-rpc-exit \
     --enable-rpc-set-log-filter \
     --enable-rpc-transaction-history \
