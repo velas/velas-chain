@@ -122,6 +122,7 @@ pub(crate) fn bank_from_stream<R, P>(
     serde_style: SerdeStyle,
     stream: &mut BufReader<R>,
     append_vecs_path: P,
+    evm_state_path: &Path,
     account_paths: &[PathBuf],
     genesis_config: &GenesisConfig,
     frozen_account_pubkeys: &[Pubkey],
@@ -143,6 +144,7 @@ where
                 accounts_db_fields,
                 genesis_config,
                 frozen_account_pubkeys,
+                evm_state_path,
                 account_paths,
                 append_vecs_path,
                 debug_keys,
@@ -232,6 +234,7 @@ fn reconstruct_bank_from_fields<E, P>(
     accounts_db_fields: AccountsDbFields<E>,
     genesis_config: &GenesisConfig,
     frozen_account_pubkeys: &[Pubkey],
+    evm_state_path: &Path,
     account_paths: &[PathBuf],
     append_vecs_path: P,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
@@ -254,7 +257,10 @@ where
     accounts_db.freeze_accounts(&bank_fields.ancestors, frozen_account_pubkeys);
 
     let bank_rc = BankRc::new(Accounts::new_empty(accounts_db), bank_fields.slot);
+    let evm_state = evm_state::EvmState::load_from(evm_state_path, bank_fields.slot)
+        .expect("Unable to open EVM state storage");
     let bank = Bank::new_from_fields(
+        evm_state,
         bank_rc,
         genesis_config,
         bank_fields,

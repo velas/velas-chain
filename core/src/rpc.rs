@@ -133,7 +133,7 @@ pub struct JsonRpcRequestProcessor {
 impl Metadata for JsonRpcRequestProcessor {}
 
 impl JsonRpcRequestProcessor {
-    fn bank(&self, commitment: Option<CommitmentConfig>) -> Arc<Bank> {
+    pub(crate) fn bank(&self, commitment: Option<CommitmentConfig>) -> Arc<Bank> {
         debug!("RPC commitment_config: {:?}", commitment);
         let r_bank_forks = self.bank_forks.read().unwrap();
 
@@ -462,7 +462,7 @@ impl JsonRpcRequestProcessor {
         }
     }
 
-    fn get_slot(&self, commitment: Option<CommitmentConfig>) -> u64 {
+    pub fn get_slot(&self, commitment: Option<CommitmentConfig>) -> u64 {
         self.bank(commitment).slot()
     }
 
@@ -690,6 +690,31 @@ impl JsonRpcRequestProcessor {
             Ok(result
                 .ok()
                 .map(|confirmed_block| confirmed_block.encode(encoding)))
+        } else {
+            Err(RpcCustomError::BlockNotAvailable { slot }.into())
+        }
+    }
+
+    pub fn get_confirmed_block_hash(&self, slot: Slot) -> Result<Option<String>> {
+        if self.config.enable_rpc_transaction_history
+            && slot
+                <= self
+                    .block_commitment_cache
+                    .read()
+                    .unwrap()
+                    .highest_confirmed_root()
+        {
+            let result = self.blockstore.get_confirmed_block_hash(slot);
+            if result.is_err() {
+                if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                    return Ok(self
+                        .runtime_handle
+                        .block_on(bigtable_ledger_storage.get_confirmed_block_hash(slot))
+                        .ok());
+                }
+            }
+            self.check_slot_cleaned_up(&result, slot)?;
+            Ok(result.ok())
         } else {
             Err(RpcCustomError::BlockNotAvailable { slot }.into())
         }

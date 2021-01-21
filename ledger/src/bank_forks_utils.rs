@@ -32,6 +32,7 @@ fn to_loadresult(
 pub fn load(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
+    evm_state_path: PathBuf,
     account_paths: Vec<PathBuf>,
     shrink_paths: Option<Vec<PathBuf>>,
     snapshot_config: Option<&SnapshotConfig>,
@@ -60,6 +61,7 @@ pub fn load(
                 }
 
                 let deserialized_bank = snapshot_utils::bank_from_archive(
+                    &evm_state_path,
                     &account_paths,
                     &process_options.frozen_accounts,
                     &snapshot_config.snapshot_path,
@@ -111,6 +113,7 @@ pub fn load(
         blockstore_processor::process_blockstore(
             &genesis_config,
             &blockstore,
+            &evm_state_path,
             account_paths,
             process_options,
         ),

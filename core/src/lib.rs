@@ -33,6 +33,7 @@ pub mod crds_value;
 pub mod data_budget;
 pub mod duplicate_shred;
 pub mod epoch_slots;
+pub mod evm_rpc_impl;
 pub mod fetch_stage;
 pub mod fork_choice;
 pub mod gen_keys;

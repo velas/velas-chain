@@ -3171,6 +3171,7 @@ impl AccountsDB {
         }
 
         let is_specially_retained = (solana_sdk::native_loader::check_id(owner) && executable)
+            || solana_sdk::evm_loader::check_id(owner)
             || solana_sdk::sysvar::check_id(owner);
 
         if is_specially_retained {

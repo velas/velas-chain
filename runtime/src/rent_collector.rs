@@ -60,6 +60,7 @@ impl RentCollector {
             || account.rent_epoch > self.epoch
             || sysvar::check_id(&account.owner)
             || *address == incinerator::id()
+            || *address == solana_sdk::evm_state::id()
         {
             0
         } else {

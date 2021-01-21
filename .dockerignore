@@ -1,0 +1,17 @@
+target/*
+docs/node_modules/
+docs/build/
+explorer/node_modules/
+programs/bpf/target/
+Dockerfile
+
+local-cluster/farf/
+core/farf/
+cli/farf/
+bench-tps/farf/
+ledger/farf/
+ledger-tools/farf/
+sdk/farf/
+
+
+config

@@ -530,14 +530,10 @@ impl BankingStage {
         // TODO: Banking stage threads should be prioritized to complete faster then this queue
         // expires.
         let txs = batch.transactions();
-        let pre_balances = if transaction_status_sender.is_some() {
-            bank.collect_balances(batch)
-        } else {
-            vec![]
-        };
 
         let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::new();
 
+        let pre_balances = bank.collect_balances(batch);
         let pre_token_balances = if transaction_status_sender.is_some() {
             collect_token_balances(&bank, &batch, &mut mint_decimals)
         } else {
@@ -552,12 +548,14 @@ impl BankingStage {
             mut retryable_txs,
             tx_count,
             signature_count,
+            patch,
         ) = bank.load_and_execute_transactions(
             batch,
             MAX_PROCESSING_AGE,
             transaction_status_sender.is_some(),
             transaction_status_sender.is_some(),
         );
+
         load_execute_time.stop();
 
         let freeze_lock = bank.freeze_lock();
@@ -583,6 +581,7 @@ impl BankingStage {
                 &results,
                 tx_count,
                 signature_count,
+                patch,
             );
 
             bank_utils::find_and_send_votes(txs, &tx_results, Some(gossip_vote_sender));

@@ -4,6 +4,7 @@ use crate::{
 };
 use log::*;
 use serde::{Deserialize, Serialize};
+use solana_evm_loader_program::EvmProcessor;
 use solana_sdk::{
     account::Account,
     account_utils::StateMut,
@@ -351,6 +352,8 @@ pub struct MessageProcessor {
     programs: Vec<(Pubkey, ProcessInstructionWithContext)>,
     #[serde(skip)]
     native_loader: NativeLoader,
+    #[serde(skip)]
+    evm_processor: EvmProcessor,
 }
 
 impl std::fmt::Debug for MessageProcessor {
@@ -359,6 +362,7 @@ impl std::fmt::Debug for MessageProcessor {
         struct MessageProcessor<'a> {
             programs: Vec<String>,
             native_loader: &'a NativeLoader,
+            evm_processor: &'a EvmProcessor,
         }
 
         // These are just type aliases for work around of Debug-ing above pointers
@@ -382,6 +386,7 @@ impl std::fmt::Debug for MessageProcessor {
                 })
                 .collect::<Vec<_>>(),
             native_loader: &self.native_loader,
+            evm_processor: &self.evm_processor,
         };
 
         write!(f, "{:?}", processor)
@@ -393,6 +398,7 @@ impl Default for MessageProcessor {
         Self {
             programs: vec![],
             native_loader: NativeLoader::default(),
+            evm_processor: EvmProcessor::default(),
         }
     }
 }
@@ -401,6 +407,7 @@ impl Clone for MessageProcessor {
         MessageProcessor {
             programs: self.programs.clone(),
             native_loader: NativeLoader::default(),
+            evm_processor: EvmProcessor::default(),
         }
     }
 }
@@ -470,10 +477,19 @@ impl MessageProcessor {
         keyed_accounts: &[KeyedAccount],
         instruction_data: &[u8],
         invoke_context: &mut dyn InvokeContext,
+        evm_executor: Option<&mut evm_state::Executor>,
     ) -> Result<(), InstructionError> {
         if let Some(root_account) = keyed_accounts.iter().next() {
             let root_id = root_account.unsigned_key();
             if native_loader::check_id(&root_account.owner()?) {
+                if solana_sdk::evm_loader::check_id(root_id) {
+                    return self.evm_processor.process_instruction(
+                        &solana_sdk::evm_loader::id(),
+                        &keyed_accounts[1..], // skip evm program_id
+                        instruction_data,
+                        evm_executor,
+                    );
+                }
                 for (id, process_instruction) in &self.programs {
                     if id == root_id {
                         // Call the builtin program
@@ -679,6 +695,7 @@ impl MessageProcessor {
                 &keyed_accounts,
                 &instruction.data,
                 invoke_context,
+                None,
             );
             if result.is_ok() {
                 // Verify the called program has not misbehaved
@@ -827,6 +844,7 @@ impl MessageProcessor {
         instruction_index: usize,
         feature_set: Arc<FeatureSet>,
         bpf_compute_budget: BpfComputeBudget,
+        evm_executor: Option<&mut evm_state::Executor>,
     ) -> Result<(), InstructionError> {
         // Fixup the special instructions key if present
         // before the account pre-values are taken care of
@@ -864,6 +882,7 @@ impl MessageProcessor {
             &keyed_accounts,
             &instruction.data,
             &mut invoke_context,
+            evm_executor,
         )?;
         Self::verify(
             message,
@@ -892,6 +911,7 @@ impl MessageProcessor {
         instruction_recorders: Option<&[InstructionRecorder]>,
         feature_set: Arc<FeatureSet>,
         bpf_compute_budget: BpfComputeBudget,
+        mut evm_executor: Option<&mut evm_state::Executor>,
     ) -> Result<(), TransactionError> {
         for (instruction_index, instruction) in message.instructions.iter().enumerate() {
             let instruction_recorder = instruction_recorders
@@ -910,6 +930,7 @@ impl MessageProcessor {
                 instruction_index,
                 feature_set.clone(),
                 bpf_compute_budget,
+                evm_executor.as_deref_mut(),
             )
             .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
         }
@@ -1527,6 +1548,7 @@ mod tests {
             None,
             Arc::new(FeatureSet::all_enabled()),
             BpfComputeBudget::new(&FeatureSet::all_enabled()),
+            None,
         );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].borrow().lamports, 100);
@@ -1552,6 +1574,7 @@ mod tests {
             None,
             Arc::new(FeatureSet::all_enabled()),
             BpfComputeBudget::new(&FeatureSet::all_enabled()),
+            None,
         );
         assert_eq!(
             result,
@@ -1581,6 +1604,7 @@ mod tests {
             None,
             Arc::new(FeatureSet::all_enabled()),
             BpfComputeBudget::new(&FeatureSet::all_enabled()),
+            None,
         );
         assert_eq!(
             result,
@@ -1694,6 +1718,7 @@ mod tests {
             None,
             Arc::new(FeatureSet::all_enabled()),
             BpfComputeBudget::new(&FeatureSet::all_enabled()),
+            None,
         );
         assert_eq!(
             result,
@@ -1723,6 +1748,7 @@ mod tests {
             None,
             Arc::new(FeatureSet::all_enabled()),
             BpfComputeBudget::new(&FeatureSet::all_enabled()),
+            None,
         );
         assert_eq!(result, Ok(()));
 
@@ -1749,6 +1775,7 @@ mod tests {
             None,
             Arc::new(FeatureSet::all_enabled()),
             BpfComputeBudget::new(&FeatureSet::all_enabled()),
+            None,
         );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].borrow().lamports, 80);

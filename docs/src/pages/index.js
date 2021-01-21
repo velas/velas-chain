@@ -8,8 +8,8 @@ import styles from "./styles.module.css";
 
 const features = [
   {
-    title: <>⛏ Start Building</>,
-    imageUrl: "developing/programming-model/overview",
+    title: <>⛏ Build an Application</>,
+    imageUrl: "apps",
     description: <>Get started building your decentralized app or marketplace.</>,
   },
   {
@@ -18,11 +18,11 @@ const features = [
     description: <>Validate transactions, secure the network, and earn rewards.</>,
   },
   {
-    title: <>🏛 Create an SPL Token</>,
-    imageUrl: "https://spl.solana.com/token",
+    title: <>🏛 Integrate DApps from EVM</>,
+    imageUrl: "evm",
     description: (
       <>
-        Launch your own SPL Token, Solana's equivalent of ERC-20.
+        Use the full power of EVM infrastructure inside fast and scalable network.
       </>
     ),
   },
@@ -46,11 +46,11 @@ const features = [
     ),
   },
   {
-    title: <>🤯 Learn How Solana Works</>,
+    title: <>🤯 Learn our native chain</>,
     imageUrl: "cluster/overview",
     description: (
       <>
-        Get a high-level understanding of Solana's architecture.
+        Get a high-level view of Solana. Which code is used by our native chain.
       </>
     ),
   }, //
@@ -92,7 +92,7 @@ function Home() {
   return (
     <Layout
       title="Homepage"
-      description="Solana Documentation"
+      description="Description will go into a meta tag in <head />"
     >
       {/* <header className={clsx("hero hero--primary", styles.heroBanner)}> */}
       {/* <div className="container">

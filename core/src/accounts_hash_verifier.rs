@@ -116,7 +116,6 @@ impl AccountsHashVerifier {
                 *pending_snapshot_package.lock().unwrap() = Some(accounts_package);
             }
         }
-
         cluster_info.push_accounts_hashes(hashes.clone());
     }
 

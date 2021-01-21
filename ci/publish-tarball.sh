@@ -91,15 +91,17 @@ echo --- Creating release tarball
   cp "${RELEASE_BASENAME}"/version.yml "${TARBALL_BASENAME}"-$TARGET.yml
 )
 
-# Maybe tarballs are platform agnostic, only publish them from the Linux build
+# Metrics tarball is platform agnostic, only publish it from Linux
 MAYBE_TARBALLS=
 if [[ "$CI_OS_NAME" = linux ]]; then
+  metrics/create-metrics-tarball.sh
   (
     set -x
     sdk/bpf/scripts/package.sh
     [[ -f bpf-sdk.tar.bz2 ]]
+
   )
-  MAYBE_TARBALLS="bpf-sdk.tar.bz2"
+  MAYBE_TARBALLS="bpf-sdk.tar.bz2 solana-metrics.tar.bz2"
 fi
 
 source ci/upload-ci-artifact.sh
@@ -112,12 +114,6 @@ for file in "${TARBALL_BASENAME}"-$TARGET.tar.bz2 "${TARBALL_BASENAME}"-$TARGET.
   fi
 
   if [[ -n $BUILDKITE ]]; then
-    echo --- AWS S3 Store: "$file"
-    upload-s3-artifact "/solana/$file" s3://release.solana.com/"$CHANNEL_OR_TAG"/"$file"
-
-    echo Published to:
-    $DRYRUN ci/format-url.sh https://release.solana.com/"$CHANNEL_OR_TAG"/"$file"
-
     if [[ -n $TAG ]]; then
       ci/upload-github-release-asset.sh "$file"
     fi
@@ -137,23 +133,5 @@ for file in "${TARBALL_BASENAME}"-$TARGET.tar.bz2 "${TARBALL_BASENAME}"-$TARGET.
     appveyor PushArtifact "$file" -FileName "$CHANNEL_OR_TAG"/"$file"
   fi
 done
-
-
-# Create install wrapper for release.solana.com
-if [[ -n $DO_NOT_PUBLISH_TAR ]]; then
-  echo "Skipping publishing install wrapper"
-elif [[ -n $BUILDKITE ]]; then
-  cat > release.solana.com-install <<EOF
-SOLANA_RELEASE=$CHANNEL_OR_TAG
-SOLANA_INSTALL_INIT_ARGS=$CHANNEL_OR_TAG
-SOLANA_DOWNLOAD_ROOT=http://release.solana.com
-EOF
-  cat install/solana-install-init.sh >> release.solana.com-install
-
-  echo --- AWS S3 Store: "install"
-  $DRYRUN upload-s3-artifact "/solana/release.solana.com-install" "s3://release.solana.com/$CHANNEL_OR_TAG/install"
-  echo Published to:
-  $DRYRUN ci/format-url.sh https://release.solana.com/"$CHANNEL_OR_TAG"/install
-fi
 
 echo --- ok

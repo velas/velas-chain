@@ -7,52 +7,35 @@ exchange.
 
 ## Node Setup
 
-We highly recommend setting up at least two nodes on high-grade computers/cloud
-instances, upgrading to newer versions promptly, and keeping an eye on service
-operations with a bundled monitoring tool.
-
-This setup enables you:
-- to have a trusted gateway to the Solana mainnet-beta cluster to get data and
-  submit withdrawal transactions
-- to have full control over how much historical block data is retained
-- to maintain your service availability even if one node fails
-
-Solana nodes demand relatively high computing power to handle our fast blocks
-and high TPS.  For specific requirements, please see
-[hardware recommendations](../running-validator/validator-reqs.md).
+We highly recommend setting up at least two of your own Solana api nodes to
+give you a trusted entrypoint to the network, allow you full control over how
+much data is retained, and ensure you do not miss any data if one node fails.
 
 To run an api node:
 
 1. [Install the Solana command-line tool suite](../cli/install-solana-cli-tools.md)
-2. Start the validator with at least the following parameters:
+2. Boot the node with at least the following parameters:
 
 ```bash
 solana-validator \
   --ledger <LEDGER_PATH> \
   --entrypoint <CLUSTER_ENTRYPOINT> \
   --expected-genesis-hash <EXPECTED_GENESIS_HASH> \
+  --expected-shred-version <EXPECTED_SHRED_VERSION> \
   --rpc-port 8899 \
   --no-voting \
   --enable-rpc-transaction-history \
-  --limit-ledger-size \
+  --limit-ledger-size <SHRED_COUNT> \
   --trusted-validator <VALIDATOR_ADDRESS> \
   --no-untrusted-rpc
 ```
 
 Customize `--ledger` to your desired ledger storage location, and `--rpc-port` to the port you want to expose.
 
-The `--entrypoint` and `--expected-genesis-hash` parameters are all specific to the cluster you are joining.
+The `--entrypoint`, `--expected-genesis-hash`, and `--expected-shred-version` parameters are all specific to the cluster you are joining. The shred version will change on any hard forks in the cluster, so including `--expected-shred-version` ensures you are receiving current data from the cluster you expect.
 [Current parameters for Mainnet Beta](../clusters.md#example-solana-validator-command-line-2)
 
-The `--limit-ledger-size` parameter allows you to specify how many ledger
-[shreds](../terminology.md#shred) your node retains on disk. If you do not
-include this parameter, the validator will keep the entire ledger until it runs
-out of disk space.  The default value attempts to keep the ledger disk usage
-under 500GB.  More or less disk usage may be requested by adding an argument to
-`--limit-ledger-size` if desired. Check `solana-validator --help` for the
-default limit value used by `--limit-ledger-size`.  More information about
-selecting a custom limit value is [available
-here](https://github.com/solana-labs/solana/blob/583cec922b6107e0f85c7e14cb5e642bc7dfb340/core/src/ledger_cleanup_service.rs#L15-L26).
+The `--limit-ledger-size` parameter allows you to specify how many ledger [shreds](../terminology.md#shred) your node retains on disk. If you do not include this parameter, the ledger will keep the entire ledger until it runs out of disk space. A larger value like `--limit-ledger-size 250000000000` is good for a couple days
 
 Specifying one or more `--trusted-validator` parameters can protect you from booting from a malicious snapshot. [More on the value of booting with trusted validators](../running-validator/validator-start.md#trusted-validators)
 
@@ -61,36 +44,11 @@ Optional parameters to consider:
 - `--private-rpc` prevents your RPC port from being published for use by other nodes
 - `--rpc-bind-address` allows you to specify a different IP address to bind the RPC port
 
-### Automatic Restarts and Monitoring
+### Automatic Restarts
 
 We recommend configuring each of your nodes to restart automatically on exit, to
 ensure you miss as little data as possible. Running the solana software as a
 systemd service is one great option.
-
-For monitoring, we provide
-[`solana-watchtower`](https://github.com/solana-labs/solana/blob/master/watchtower/README.md),
-which can monitor your validator and detect with the `solana-validator` process
-is unhealthy. It can directly be configured to alert you via Slack, Telegram,
-Discord, or Twillio. For details, run `solana-watchtower --help`.
-
-```bash
-solana-watchtower --validator-identity <YOUR VALIDATOR IDENTITY>
-```
-
-#### New Software Release Announcements
-
-We release new software frequently (around 1 release / week).
-Sometimes newer versions include incompatible protocol changes, which
-necessitate timely software update to avoid errors in processing blocks.
-
-Our official release announcements for all kinds of releases (normal and
-security) are communicated via a discord channel called
-[`#mb-announcement`](https://discord.com/channels/428295358100013066/669406841830244375)
-(`mb` stands for `mainnet-beta`).
-
-Like staked validators, we expect any exchange-operated validators to be updated
-at your earliest convenience within a business day or two after a normal release
-announcement. For security-related releases, more urgent action may be needed.
 
 ### Ledger Continuity
 
@@ -102,45 +60,14 @@ order to prevent this issue, add the `--no-snapshot-fetch` parameter to your
 `solana-validator` command to receive historical ledger data instead of a
 snapshot.
 
-Do not pass the `--no-snapshot-fetch` parameter on your initial boot as it's not
-possible to boot the node all the way from the genesis block.  Instead boot from
-a snapshot first and then add the `--no-snapshot-fetch` parameter for reboots.
+If you pass the `--no-snapshot-fetch` parameter on your initial boot, it will
+take your node a very long time to catch up. We recommend booting from a
+snapshot first, and then using the `--no-snapshot-fetch` parameter for reboots.
 
 It is important to note that the amount of historical ledger available to your
 nodes is limited to what your trusted validators retain. You will need to ensure
 your nodes do not experience downtimes longer than this span, if ledger
 continuity is crucial for you.
-
-
-### Minimizing Validator Port Exposure
-
-The validator requires that various UDP and TCP ports be open for inbound
-traffic from all other Solana validators.   While this is the most efficient mode of
-operation, and is strongly recommended, it is possible to restrict the
-validator to only require inbound traffic from one other Solana validator.
-
-First add the `--restricted-repair-only-mode` argument.  This will cause the
-validator to operate in a restricted mode where it will not receive pushes from
-the rest of the validators, and instead will need to continually poll other
-validators for blocks.  The validator will only transmit UDP packets to other
-validators using the *Gossip* and *ServeR* ("serve repair") ports, and only
-receive UDP packets on its *Gossip* and *Repair* ports.
-
-The *Gossip* port is bi-directional and allows your validator to remain in
-contact with the rest of the cluster.  Your validator transmits on the *ServeR*
-to make repair requests to obtaining new blocks from the rest of the network,
-since Turbine is now disabled.  Your validator will then receive repair
-responses on the *Repair* port from other validators.
-
-To further restrict the validator to only requesting blocks from one or more
-validators, first determine the identity pubkey for that validator and add the
-`--gossip-pull-validator PUBKEY --repair-validator PUBKEY` arguments for each
-PUBKEY.  This will cause your validator to be a resource drain on each validator
-that you add, so please do this sparingly and only after consulting with the
-target validator.
-
-Your validator should now only be communicating with the explicitly listed
-validators and only on the *Gossip*, *Repair* and *ServeR* ports.
 
 ## Setting up Deposit Accounts
 
@@ -150,11 +77,11 @@ generate a Solana keypair using any of our [wallet tools](../wallet-guide/cli.md
 
 We recommend using a unique deposit account for each of your users.
 
-Solana accounts are charged [rent](developing/programming-model/accounts.md#rent) on creation and once per
+Solana accounts are charged [rent](../apps/rent.md) on creation and once per
 epoch, but they can be made rent-exempt if they contain 2-years worth of rent in
 SOL. In order to find the minimum rent-exempt balance for your deposit accounts,
 query the
-[`getMinimumBalanceForRentExemption` endpoint](developing/clients/jsonrpc-api.md#getminimumbalanceforrentexemption):
+[`getMinimumBalanceForRentExemption` endpoint](../apps/jsonrpc-api.md#getminimumbalanceforrentexemption):
 
 ```bash
 curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc": "2.0","id":1,"method":"getMinimumBalanceForRentExemption","params":[0]}' localhost:8899
@@ -173,13 +100,84 @@ greater security. If so, you will need to move SOL to hot accounts using our
 When a user wants to deposit SOL into your exchange, instruct them to send a
 transfer to the appropriate deposit address.
 
+## Validating User-supplied Account Addresses for Withdrawals in SOL
+
+As withdrawals are irreversible, it may be a good practice to validate the
+account address before authorizing withdrawals into user-supplied accounts
+to prevent accidental user's fund loss.
+
+For a normal account in Solana, its address is simply a Base58-encoded
+actual 256-bit public key of ed25519. Because not all bit pattern is a valid
+public key for the ed25519, it's possible to make sure user-supplied
+account addresses are at least something that may be a correct ed25519 public
+key.
+
+### Java
+
+You can check Solana's normal account address validity by first decoding
+Base58 string and ensuring the decoded bytes are valid ed25519 public keys
+like this:
+
+The following code sample assumes you're using the Maven.
+
+`pom.xml`:
+
+```xml
+<repositories>
+  ...
+  <repository>
+    <id>spring</id>
+    <url>https://repo.spring.io/libs-release/</url>
+  </repository>
+</repositories>
+
+...
+
+<dependencies>
+  ...
+  <dependency>
+      <groupId>io.github.novacrypto</groupId>
+      <artifactId>Base58</artifactId>
+      <version>0.1.3</version>
+  </dependency>
+  <dependency>
+      <groupId>cafe.cryptography</groupId>
+      <artifactId>curve25519-elisabeth</artifactId>
+      <version>0.1.0</version>
+  </dependency>
+<dependencies>
+```
+
+```java
+import io.github.novacrypto.base58.Base58;
+import cafe.cryptography.curve25519.CompressedEdwardsY;
+
+public class PubkeyValidator
+{
+    public static boolean verifyPubkey(String userProvidedPubkey)
+    {
+        try {
+            return _verifyPubkeyInternal(userProvidedPubkey);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static boolean _verifyPubkeyInternal(String maybePubkey) throws Exception
+    {
+        byte[] bytes = Base58.base58Decode(maybePubkey);
+        return !(new CompressedEdwardsY(bytes)).decompress().isSmallOrder();
+    }
+}
+```
+
 ### Poll for Blocks
 
 The easiest way to track all the deposit accounts for your exchange is to poll
 for each confirmed block and inspect for addresses of interest, using the
 JSON-RPC service of your Solana api node.
 
-- To identify which blocks are available, send a [`getConfirmedBlocks` request](developing/clients/jsonrpc-api.md#getconfirmedblocks),
+- To identify which blocks are available, send a [`getConfirmedBlocks` request](../apps/jsonrpc-api.md#getconfirmedblocks),
   passing the last block you have already processed as the start-slot parameter:
 
 ```bash
@@ -190,7 +188,7 @@ curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc": "2.0","id":1,"m
 
 Not every slot produces a block, so there may be gaps in the sequence of integers.
 
-- For each block, request its contents with a [`getConfirmedBlock` request](developing/clients/jsonrpc-api.md#getconfirmedblock):
+- For each block, request its contents with a [`getConfirmedBlock` request](../apps/jsonrpc-api.md#getconfirmedblock):
 
 ```bash
 curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc": "2.0","id":1,"method":"getConfirmedBlock","params":[5, "json"]}' localhost:8899
@@ -273,7 +271,7 @@ can request the block from RPC in binary format, and parse it using either our
 
 You can also query the transaction history of a specific address.
 
-- Send a [`getConfirmedSignaturesForAddress`](developing/clients/jsonrpc-api.md#getconfirmedsignaturesforaddress)
+- Send a [`getConfirmedSignaturesForAddress`](../apps/jsonrpc-api.md#getconfirmedsignaturesforaddress)
   request to the api node, specifying a range of recent slots:
 
 ```bash
@@ -291,7 +289,7 @@ curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc": "2.0","id":1,"m
 ```
 
 - For each signature returned, get the transaction details by sending a
-  [`getConfirmedTransaction`](developing/clients/jsonrpc-api.md#getconfirmedtransaction) request:
+  [`getConfirmedTransaction`](../apps/jsonrpc-api.md#getconfirmedtransaction) request:
 
 ```bash
 curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc": "2.0","id":1,"method":"getConfirmedTransaction","params":["dhjhJp2V2ybQGVfELWM1aZy98guVVsxRCB5KhNiXFjCBMK5KEyzV8smhkVvs3xwkAug31KnpzJpiNPtcD5bG1t6", "json"]}' localhost:8899
@@ -382,14 +380,13 @@ For greater flexibility, you can submit withdrawal transfers asynchronously. In
 these cases, it is your responsibility to verify that the transaction succeeded
 and was finalized by the cluster.
 
-**Note:** Each transaction contains a [recent
-blockhash](developing/programming-model/transactions.md#blockhash-format) to
-indicate its liveness. It is **critical** to wait until this blockhash expires
-before retrying a withdrawal transfer that does not appear to have been
+**Note:** Each transaction contains a [recent blockhash](../transaction.md#blockhash-format)
+to indicate its liveness. It is **critical** to wait until this blockhash
+expires before retrying a withdrawal transfer that does not appear to have been
 confirmed or finalized by the cluster. Otherwise, you risk a double spend. See
 more on [blockhash expiration](#blockhash-expiration) below.
 
-First, get a recent blockhash using the [`getFees` endpoint](developing/clients/jsonrpc-api.md#getfees)
+First, get a recent blockhash using the [`getFees` endpoint](../apps/jsonrpc-api.md#getfees)
 or the CLI command:
 
 ```bash
@@ -404,12 +401,12 @@ solana transfer <USER_ADDRESS> <AMOUNT> --no-wait --blockhash <RECENT_BLOCKHASH>
 ```
 
 You can also build, sign, and serialize the transaction manually, and fire it off to
-the cluster using the JSON-RPC [`sendTransaction` endpoint](developing/clients/jsonrpc-api.md#sendtransaction).
+the cluster using the JSON-RPC [`sendTransaction` endpoint](../apps/jsonrpc-api.md#sendtransaction).
 
 #### Transaction Confirmations & Finality
 
 Get the status of a batch of transactions using the
-[`getSignatureStatuses` JSON-RPC endpoint](developing/clients/jsonrpc-api.md#getsignaturestatuses).
+[`getSignatureStatuses` JSON-RPC endpoint](../apps/jsonrpc-api.md#getsignaturestatuses).
 The `confirmations` field reports how many
 [confirmed blocks](../terminology.md#confirmed-block) have elapsed since the
 transaction was processed. If `confirmations: null`, it is [finalized](../terminology.md#finality).
@@ -449,256 +446,22 @@ curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0", "id":1, "
 #### Blockhash Expiration
 
 When you request a recent blockhash for your withdrawal transaction using the
-[`getFees` endpoint](developing/clients/jsonrpc-api.md#getfees) or `solana fees`, the
+[`getFees` endpoint](../apps/jsonrpc-api.md#getfees) or `solana fees`, the
 response will include the `lastValidSlot`, the last slot in which the blockhash
 will be valid. You can check the cluster slot with a
-[`getSlot` query](developing/clients/jsonrpc-api.md#getslot); once the cluster slot is
+[`getSlot` query](../apps/jsonrpc-api.md#getslot); once the cluster slot is
 greater than `lastValidSlot`, the withdrawal transaction using that blockhash
 should never succeed.
 
 You can also doublecheck whether a particular blockhash is still valid by sending a
-[`getFeeCalculatorForBlockhash`](developing/clients/jsonrpc-api.md#getfeecalculatorforblockhash)
+[`getFeeCalculatorForBlockhash`](../apps/jsonrpc-api.md#getfeecalculatorforblockhash)
 request with the blockhash as a parameter. If the response value is null, the
 blockhash is expired, and the withdrawal transaction should never succeed.
-
-### Validating User-supplied Account Addresses for Withdrawals
-
-As withdrawals are irreversible, it may be a good practice to validate a
-user-supplied account address before authorizing a withdrawal in order to
-prevent accidental loss of user funds.
-
-The address of a normal account in Solana is a Base58-encoded string of a
-256-bit ed25519 public key. Not all bit patterns are valid public keys for the
-ed25519 curve, so it is possible to ensure user-supplied account addresses are
-at least correct ed25519 public keys.
-
-#### Java
-
-Here is a Java example of validating a user-supplied address as a valid ed25519
-public key:
-
-The following code sample assumes you're using the Maven.
-
-`pom.xml`:
-
-```xml
-<repositories>
-  ...
-  <repository>
-    <id>spring</id>
-    <url>https://repo.spring.io/libs-release/</url>
-  </repository>
-</repositories>
-
-...
-
-<dependencies>
-  ...
-  <dependency>
-      <groupId>io.github.novacrypto</groupId>
-      <artifactId>Base58</artifactId>
-      <version>0.1.3</version>
-  </dependency>
-  <dependency>
-      <groupId>cafe.cryptography</groupId>
-      <artifactId>curve25519-elisabeth</artifactId>
-      <version>0.1.0</version>
-  </dependency>
-<dependencies>
-```
-
-```java
-import io.github.novacrypto.base58.Base58;
-import cafe.cryptography.curve25519.CompressedEdwardsY;
-
-public class PubkeyValidator
-{
-    public static boolean verifyPubkey(String userProvidedPubkey)
-    {
-        try {
-            return _verifyPubkeyInternal(userProvidedPubkey);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    public static boolean _verifyPubkeyInternal(String maybePubkey) throws Exception
-    {
-        byte[] bytes = Base58.base58Decode(maybePubkey);
-        return !(new CompressedEdwardsY(bytes)).decompress().isSmallOrder();
-    }
-}
-```
-
-## Supporting the SPL Token Standard
-
-[SPL Token](https://spl.solana.com/token) is the standard for wrapped/synthetic
-token creation and exchange on the Solana blockchain.
-
-The SPL Token workflow is similar to that of native SOL tokens, but there are a
-few differences which will be discussed in this section.
-
-### Token Mints
-
-Each *type* of SPL Token is declared by creating a *mint* account.  This account
-stores metadata describing token features like the supply, number of decimals, and
-various authorities with control over the mint.  Each SPL Token account references
-its associated mint and may only interact with SPL Tokens of that type.
-
-### Installing the `spl-token` CLI Tool
-
-SPL Token accounts are queried and modified using the `spl-token` command line
-utility. The examples provided in this section depend upon having it installed
-on the local system.
-
-`spl-token` is distributed from Rust [crates.io](https://crates.io/crates/spl-token)
-via the Rust `cargo` command line utility. The latest version of `cargo` can be
-installed using a handy one-liner for your platform at [rustup.rs](https://rustup.rs).
-Once `cargo` is installed, `spl-token` can be obtained with the following command:
-
-```
-cargo install spl-token-cli
-```
-
-You can then check the installed version to verify
-
-```
-spl-token --version
-```
-
-Which should result in something like
-
-```text
-spl-token-cli 2.0.1
-```
-
-### Account Creation
-
-SPL Token accounts carry additional requirements that native System Program
-accounts do not:
-
-1. SPL Token accounts must be created before an amount of tokens can be
-deposited.   Token accounts can be created explicitly with the
-`spl-token create-account` command, or implicitly by the
-`spl-token transfer --fund-recipient ...` command.
-1. SPL Token accounts must remain [rent-exempt](developing/programming-model/accounts.md#rent-exemption)
-for the duration of their existence and therefore require a small amount of
-native SOL tokens be deposited at account creation. For SPL Token v2 accounts,
-this amount is 0.00203928 SOL (2,039,280 lamports).
-
-#### Command Line
-To create an SPL Token account with the following properties:
-1. Associated with the given mint
-1. Owned by the funding account's keypair
-
-```
-spl-token create-account <TOKEN_MINT_ADDRESS>
-```
-
-#### Example
-```
-$ spl-token create-account AkUFCWTXb3w9nY2n6SFJvBV6VwvFUCe4KBMCcgLsa2ir
-Creating account 6VzWGL51jLebvnDifvcuEDec17sK6Wupi4gYhm5RzfkV
-Signature: 4JsqZEPra2eDTHtHpB4FMWSfk3UgcCVmkKkP7zESZeMrKmFFkDkNd91pKP3vPVVZZPiu5XxyJwS73Vi5WsZL88D7
-```
-
-Or to create an SPL Token account with a specific keypair:
-```
-$ solana-keygen new -o token-account.json
-$ spl-token create-account AkUFCWTXb3w9nY2n6SFJvBV6VwvFUCe4KBMCcgLsa2ir token-account.json
-Creating account 6VzWGL51jLebvnDifvcuEDec17sK6Wupi4gYhm5RzfkV
-Signature: 4JsqZEPra2eDTHtHpB4FMWSfk3UgcCVmkKkP7zESZeMrKmFFkDkNd91pKP3vPVVZZPiu5XxyJwS73Vi5WsZL88D7
-```
-
-### Checking an Account's Balance
-
-#### Command Line
-```
-spl-token balance <TOKEN_ACCOUNT_ADDRESS>
-```
-
-#### Example
-```
-$ solana balance 6VzWGL51jLebvnDifvcuEDec17sK6Wupi4gYhm5RzfkV
-0
-```
-
-### Token Transfers
-
-The source account for a transfer is the actual token account that contains the
-amount.
-
-The recipient address however can be a normal wallet account.  If an associated
-token account for the given mint does not yet exist for that wallet, the
-transfer will create it provided that the `--fund-recipient` argument as
-provided.
-
-#### Command Line
-```
-spl-token transfer <SENDER_ACCOUNT_ADDRESS> <AMOUNT> <RECIPIENT_WALLET_ADDRESS> --fund-recipient
-```
-
-#### Example
-```
-$ spl-token transfer 6B199xxzw3PkAm25hGJpjj3Wj3WNYNHzDAnt1tEqg5BN 1 6VzWGL51jLebvnDifvcuEDec17sK6Wupi4gYhm5RzfkV
-Transfer 1 tokens
-  Sender: 6B199xxzw3PkAm25hGJpjj3Wj3WNYNHzDAnt1tEqg5BN
-  Recipient: 6VzWGL51jLebvnDifvcuEDec17sK6Wupi4gYhm5RzfkV
-Signature: 3R6tsog17QM8KfzbcbdP4aoMfwgo6hBggJDVy7dZPVmH2xbCWjEj31JKD53NzMrf25ChFjY7Uv2dfCDq4mGFFyAj
-```
-
-### Depositing
-Since each `(user, mint)` pair requires a separate account on chain, it is
-recommended that an exchange create batches of token accounts in advance and assign them
-to users on request. These accounts should all be owned by exchange-controlled
-keypairs.
-
-Monitoring for deposit transactions should follow the [block polling](#poll-for-blocks)
-method described above. Each new block should be scanned for successful transactions
-issuing SPL Token [Transfer](https://github.com/solana-labs/solana-program-library/blob/096d3d4da51a8f63db5160b126ebc56b26346fc8/token/program/src/instruction.rs#L92)
-or [Transfer2](https://github.com/solana-labs/solana-program-library/blob/096d3d4da51a8f63db5160b126ebc56b26346fc8/token/program/src/instruction.rs#L252)
-instructions referencing user accounts, then querying the
-[token account balance](developing/clients/jsonrpc-api.md#gettokenaccountbalance)
-updates.
-
-[Considerations](https://github.com/solana-labs/solana/issues/12318) are being
-made to exend the `preBalance` and `postBalance` transaction status metadata
-fields to include SPL Token balance transfers.
-
-### Withdrawing
-The withdrawal address a user provides should be the same address used for
-regular SOL withdrawal.
-
-Before executing a withdrawal [transfer](#token-transfers),
-the exchange should check the address as
-[described above](#validating-user-supplied-account-addresses-for-withdrawals).
-
-From the withdrawal address, the associated token account for the correct mint
-determined and the transfer issued to that account.  Note that it's possible
-that the associated token account does not yet exist, at which point the
-exchange should fund the account on behalf of the user.  For SPL Token v2
-accounts, funding the withdrawal account will require 0.00203928 SOL (2,039,280
-lamports).
-
-Template `spl-token transfer` command for a withdrawal:
-```
-$ spl-token transfer --fund-recipient <exchange token account> <withdrawal amount> <withdrawal address>
-```
-
-### Other Considerations
-
-#### Freeze Authority
-For regulatory compliance reasons, an SPL Token issuing entity may optionally
-choose to hold "Freeze Authority" over all accounts created in association with
- its mint.  This allows them to [freeze](https://spl.solana.com/token#freezing-accounts)
-the assets in a given account at will, rendering the account unusable until thawed.
-If this feature is in use, the freeze authority's pubkey will be registered in
-the SPL Token's mint account.
 
 ## Testing the Integration
 
 Be sure to test your complete workflow on Solana devnet and testnet
 [clusters](../clusters.md) before moving to production on mainnet-beta. Devnet
 is the most open and flexible, and ideal for initial development, while testnet
-offers more realistic cluster configuration. Both devnet and testnet support a faucet,
-run `solana airdrop 10` to obtain some devnet or testnet SOL for developement and testing.
+offers more realistic cluster configuration. Devnet features a token faucet, but
+you will need to request some testnet SOL to get going on testnet.

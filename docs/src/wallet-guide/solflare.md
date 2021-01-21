@@ -13,7 +13,7 @@ SolFlare also supports staking of SOL tokens.
 As a _non-custodial_ wallet, your private keys are not stored by the SolFlare
 site itself, but rather they are stored in an encrypted
 [Keystore File](#using-a-keystore-file) or on a
-[Ledger Nano S or X hardware wallet](#using-a-ledger-nano-hardware-wallet).
+[Ledger Nano S hardware wallet](#using-a-ledger-nano-s-hardware-wallet).
 
 This guide describes how to set up a wallet using SolFlare, how to send and
 receive SOL tokens, and how to create and manage a stake account.
@@ -22,7 +22,7 @@ receive SOL tokens, and how to create and manage a stake account.
 
 Go to https://www.solflare.com in a supported browser.  Most popular web browsers
 should work when interacting with a Keystore File, but currently only
-Chrome and Brave are supported when interacting with a Ledger Nano.
+Chrome and Brave are supported when interacting with a Ledger Nano S.
 
 ### Using a Keystore File
 
@@ -48,23 +48,21 @@ Keystore file, you will be taken to the Access page directly.
 You will be prompted to enter the password and upload your Keystore file,
 then you will be taken to the wallet interface main page.
 
-### Using a Ledger Nano hardware wallet
-
-*NOTE: Please see [known issues](ledger-live.md#known-issues) for any current
-limitations in using the Nano.*
+### Using a Ledger Nano S hardware wallet
 
 #### Initial Device Setup
-To use a Ledger Nano with SolFlare, first ensure you have
-[set up your Nano](ledger-live.md) and have [installed the latest version of
+To use a Ledger Nano S with SolFlare, first ensure you have
+[set up your Nano S](ledger-live.md) and have [installed the latest version of
 the Solana app](ledger-live.md#upgrade-to-the-latest-version-of-the-solana-app)
 on your device.
 
 #### Select a Ledger address to access
-Plug in your Nano and open the Solana app so the device screen displays
+Plug in your Nano S and open the Solana app.  Acknowledge a message of "Pending
+Ledger Review" by tapping both buttons at once so the device screen displays
 "Application is Ready".
 
 From the SolFlare home page, click "Access a Wallet" then select "Using Ledger
-Nano S | Ledger Nano X".  Under "Select derivation path", select the only option:
+Nano S".  Under "Select derivation path", select the only option:
 
 ```Solana - 44`/501`/```
 
@@ -84,7 +82,7 @@ simply click Logout and re-connect with the correct address.
 
 ## Select a Network
 
-Solana maintains [three distinct networks](../clusters), each of which has
+Solana maintains [three distinct networks](../clusters.md), each of which has
 its own purpose in supporting the Solana ecosystem.  Mainnet Beta is selected by
 default on SolFlare, as this is the permanent network where exchanges and other
 production apps are deployed.  To select a different network, click on the name
@@ -113,7 +111,7 @@ and then it will be submitted to the network.
 ## Staking SOL Tokens
 SolFlare supports creating and managing stake accounts and delegations.  To learn
 about how staking on Solana works in general, check out our
-[Staking Guide](../staking).
+[Staking Guide](../staking.md).
 
 ### Create a Stake Account
 You can use some of the SOL tokens in your wallet to create a new stake account.
@@ -129,7 +127,7 @@ After you submit and [sign the transaction](#signing-a-transaction) you will see
 your new stake account appear in the box labeled "Your Staking Accounts".
 
 Stake accounts created on SolFlare set your wallet address as the
-[staking and withdrawing authority](../staking/stake-accounts#understanding-account-authorities)
+[staking and withdrawing authority](../staking/stake-accounts.md#understanding-account-authorities)
 for your new account, which gives your wallet's key the authority to sign
 for any transactions related to the new stake account.
 
@@ -141,13 +139,13 @@ exist at a different address from your wallet.
 SolFlare will locate any display all stake accounts on the
 [selected network](#select-a-network)
 for which your wallet address is assigned as the
-[stake authority](../staking/stake-accounts#understanding-account-authorities).
+[stake authority](../staking/stake-accounts.md#understanding-account-authorities).
 Stake accounts that were created outside of SolFlare will also be displayed and
 can be managed as long as the wallet you logged in with is assigned as the stake
 authority.
 
 ### Delegate tokens in a Stake Account
-Once you have [selected a validator](../staking#select-a-validator), you may
+Once you have [selected a validator](../staking.md#select-a-validator), you may
 delegate the tokens in one of your stake accounts to them.  From the Staking
 dashboard, click "Delegate" at the right side of a displayed stake account.
 Select the validator you wish to delegate to from the drop down list and click
@@ -176,10 +174,10 @@ it will be accepted by the network.
 If you accessed your wallet using a Keystore file, you will be prompted to enter
 your password any time the key is needed to sign a transaction.
 
-### Using a Ledger Nano
-If you accessed your wallet with a Ledger Nano, you will be prompted to
-confirm the pending transaction details on your device whenever the key is needed
-to sign. On the Nano, use the left and right buttons to view and confirm all of the
+### Using a Ledger Nano S
+If you accessed your wallet with a Ledger Nano S, you will be prompted to confirm
+the pending transaction details on your device whenever the key is needed to sign.
+On the Nano S, use the left and right buttons to view and confirm all of the
 transaction details.  If everything looks correct, keep clicking the right button
 until the screen shows "Approve".  Click both buttons to approve the transaction.
 If something looks incorrect, press the right button once more so the screen shows

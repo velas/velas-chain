@@ -19,6 +19,7 @@ use std::{
     sync::{Arc, RwLock},
     thread::Builder,
 };
+use tempfile::TempDir;
 use test::Bencher;
 
 fn deposit_many(bank: &Bank, pubkeys: &mut Vec<Pubkey>, num: usize) {
@@ -43,8 +44,10 @@ fn bench_has_duplicates(bencher: &mut Bencher) {
 #[bench]
 fn test_accounts_create(bencher: &mut Bencher) {
     let (genesis_config, _) = create_genesis_config(10_000);
+    let evm_state_dir = TempDir::new().unwrap();
     let bank0 = Bank::new_with_paths(
         &genesis_config,
+        Some(evm_state_dir.as_ref()),
         vec![PathBuf::from("bench_a0")],
         &[],
         None,
@@ -62,8 +65,10 @@ fn test_accounts_create(bencher: &mut Bencher) {
 fn test_accounts_squash(bencher: &mut Bencher) {
     let (mut genesis_config, _) = create_genesis_config(100_000);
     genesis_config.rent.burn_percent = 100; // Avoid triggering an assert in Bank::distribute_rent_to_validators()
+    let evm_state_dir = TempDir::new().unwrap();
     let mut prev_bank = Arc::new(Bank::new_with_paths(
         &genesis_config,
+        Some(evm_state_dir.as_ref()),
         vec![PathBuf::from("bench_a1")],
         &[],
         None,

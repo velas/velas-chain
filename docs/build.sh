@@ -16,7 +16,6 @@ source ../ci/rust-version.sh
 
 # Build from /src into /build
 npm run build
-echo $?
 
 # Publish only from merge commits and release tags
 if [[ -n $CI ]]; then

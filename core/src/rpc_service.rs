@@ -10,6 +10,7 @@ use crate::{
     send_transaction_service::{LeaderInfo, SendTransactionService},
     validator::ValidatorExit,
 };
+use evm_rpc::*;
 use jsonrpc_core::MetaIoHandler;
 use jsonrpc_http_server::{
     hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
@@ -364,6 +365,10 @@ impl JsonRpcService {
                 let mut io = MetaIoHandler::default();
                 let rpc = RpcSolImpl;
                 io.extend_with(rpc.to_delegate());
+                let ether_basic = super::evm_rpc_impl::BasicERPCImpl;
+                io.extend_with(ether_basic.to_delegate());
+                let chain_mock = super::evm_rpc_impl::ChainMockERPCImpl;
+                io.extend_with(chain_mock.to_delegate());
 
                 let request_middleware = RpcRequestMiddleware::new(
                     ledger_path,

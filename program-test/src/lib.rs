@@ -627,7 +627,8 @@ impl ProgramTest {
         // `bank.commit_transactions()` so that the fee calculator in the child bank will be
         // initialized with a non-zero fee.
         assert_eq!(bank.signature_count(), 0);
-        bank.commit_transactions(&[], None, &mut [], &[], 0, 1);
+        let update = bank.evm_state.read().unwrap().clone();
+        bank.commit_transactions(&[], None, &mut [], &[], 0, 1, update);
         assert_eq!(bank.signature_count(), 1);
 
         // Advance beyond slot 0 for a slightly more realistic test environment

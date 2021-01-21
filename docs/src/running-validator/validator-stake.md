@@ -71,18 +71,17 @@ account.
 This is a normal transaction so the standard transaction fee will apply. The
 transaction fee range is defined by the genesis block. The actual fee will
 fluctuate based on transaction load. You can determine the current fee via the
-[RPC API “getRecentBlockhash”](developing/clients/jsonrpc-api.md#getrecentblockhash)
+[RPC API “getRecentBlockhash”](../apps/jsonrpc-api.md#getrecentblockhash)
 before submitting a transaction.
 
 Learn more about [transaction fees here](../implemented-proposals/transaction-fees.md).
 
 ## Validator Stake Warm-up
 
-To combat various attacks on consensus, new stake delegations are subject to
-a [warm-up](/staking/stake-accounts#delegation-warmup-and-cooldown)
-period.
+Stakes need to warm up, and warmup increments are applied at Epoch boundaries,
+so it can take an hour or more for stake to come fully online.
 
-Monitor a validator's stake during warmup by:
+To monitor your validator during its warmup period:
 
 - View your vote account:`solana vote-account ~/vote-account-keypair.json` This displays the current state of all the votes the validator has submitted to the network.
 - View your stake account, the delegation preference and details of your stake:`solana stake-account ~/validator-stake-keypair.json`

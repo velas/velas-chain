@@ -274,7 +274,7 @@ fn test_validator_exit_2() {
 #[test]
 #[serial]
 fn test_leader_failure_4() {
-    solana_logger::setup();
+    solana_logger::setup_with("debug");
     error!("test_leader_failure_4");
     let num_nodes = 4;
     let mut validator_config = ValidatorConfig::default();
@@ -1571,17 +1571,14 @@ fn test_validator_saves_tower() {
         }
         sleep(Duration::from_millis(10));
     }
-
     // Stop validator and check saved tower
     let validator_info = cluster.exit_node(&validator_id);
     let tower1 = Tower::restore(&ledger_path, &validator_id).unwrap();
     trace!("tower1: {:?}", tower1);
     assert_eq!(tower1.root(), 0);
-
     // Restart the validator and wait for a new root
     cluster.restart_node(&validator_id, validator_info);
     let validator_client = cluster.get_validator_client(&validator_id).unwrap();
-
     // Wait for the first root
     loop {
         if let Ok(root) = validator_client.get_slot_with_commitment(CommitmentConfig::root()) {

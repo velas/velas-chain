@@ -590,6 +590,7 @@ mod tests {
     use solana_net_utils::find_available_port_in_range;
     use solana_perf::packet::{Packet, Packets};
     use std::net::{IpAddr, Ipv4Addr};
+    use tempfile::TempDir;
 
     #[test]
     fn test_skip_repair() {
@@ -601,8 +602,15 @@ mod tests {
             full_leader_cache: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, cached_leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, cached_leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
         let leader_schedule_cache = Arc::new(cached_leader_schedule);
         let bank_forks = Arc::new(RwLock::new(bank_forks));
 

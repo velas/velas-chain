@@ -137,6 +137,12 @@ pub trait SyncClient {
     fn poll_for_signature(&self, signature: &Signature) -> Result<()>;
 
     fn get_new_blockhash(&self, blockhash: &Hash) -> Result<(Hash, FeeCalculator)>;
+    //
+    // Evm scope
+    //
+
+    /// Get account balance or 0 if not found.
+    fn get_evm_balance(&self, pubkey: &evm_state::Address) -> Result<evm_state::U256>;
 }
 
 pub trait AsyncClient {

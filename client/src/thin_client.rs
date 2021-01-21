@@ -562,6 +562,15 @@ impl SyncClient for ThinClient {
             .get_new_blockhash(blockhash)
             .map_err(|e| e.into())
     }
+
+    // evm scope
+
+    /// Get account balance or 0 if not found.
+    fn get_evm_balance(&self, pubkey: &evm_state::Address) -> TransportResult<evm_state::U256> {
+        self.rpc_client()
+            .get_evm_balance(pubkey)
+            .map_err(|e| e.into())
+    }
 }
 
 impl AsyncClient for ThinClient {

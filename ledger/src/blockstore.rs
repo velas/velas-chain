@@ -1765,6 +1765,28 @@ impl Blockstore {
         Ok(root_iterator.next().unwrap_or_default())
     }
 
+    pub fn get_confirmed_block_hash(&self, slot: Slot) -> Result<String> {
+        datapoint_info!(
+            "blockstore-rpc-api",
+            ("method", "get_confirmed_block_hash".to_string(), String)
+        );
+        let lowest_cleanup_slot = self.lowest_cleanup_slot.read().unwrap();
+        // lowest_cleanup_slot is the last slot that was not cleaned up by
+        // LedgerCleanupService
+        if *lowest_cleanup_slot > 0 && *lowest_cleanup_slot >= slot {
+            return Err(BlockstoreError::SlotCleanedUp);
+        }
+        if self.is_root(slot) {
+            let slot_entries = self.get_slot_entries(slot, 0)?;
+            if !slot_entries.is_empty() {
+                let blockhash = get_last_hash(slot_entries.iter())
+                    .unwrap_or_else(|| panic!("Rooted slot {:?} must have blockhash", slot));
+                return Ok(blockhash.to_string());
+            }
+        }
+        Err(BlockstoreError::SlotNotRooted)
+    }
+
     pub fn get_confirmed_block(&self, slot: Slot) -> Result<ConfirmedBlock> {
         datapoint_info!(
             "blockstore-rpc-api",

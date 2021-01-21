@@ -597,49 +597,33 @@ impl RpcClient {
         &self,
         transaction: &Transaction,
     ) -> ClientResult<Signature> {
-        let signature = self.send_transaction(transaction)?;
-        let recent_blockhash = if uses_durable_nonce(transaction).is_some() {
-            self.get_recent_blockhash_with_commitment(CommitmentConfig::recent())?
-                .value
-                .0
-        } else {
-            transaction.message.recent_blockhash
-        };
-        let status = loop {
-            let status = self.get_signature_status(&signature)?;
-            if status.is_none() {
-                if self
-                    .get_fee_calculator_for_blockhash_with_commitment(
-                        &recent_blockhash,
-                        CommitmentConfig::recent(),
-                    )?
-                    .value
-                    .is_none()
-                {
-                    break status;
+        // TODO: Durable nonce, and check if block was rollbacked
+
+        const SEND_RETRIES: usize = 20;
+        const STATUS_RETRIES: usize = 20;
+
+        for _ in 0..SEND_RETRIES {
+            let signature = self.send_transaction(transaction)?;
+            for status_retrie in 0..STATUS_RETRIES {
+                if let Some(v) = self.get_signature_status(&signature)? {
+                    return Ok(v.map(|_| signature)?);
                 }
-            } else {
-                break status;
+                if cfg!(not(test)) && status_retrie < STATUS_RETRIES
+                // Ignore sleep at last step.
+                {
+                    // Retry twice a second
+                    sleep(Duration::from_millis(500));
+                }
             }
-            if cfg!(not(test)) {
-                // Retry twice a second
-                sleep(Duration::from_millis(500));
-            }
-        };
-        if let Some(result) = status {
-            match result {
-                Ok(_) => Ok(signature),
-                Err(err) => Err(err.into()),
-            }
-        } else {
-            Err(RpcError::ForUser(
-                "unable to confirm transaction. \
-                                  This can happen in situations such as transaction expiration \
-                                  and insufficient fee-payer funds"
-                    .to_string(),
-            )
-            .into())
         }
+
+        return Err(RpcError::ForUser(
+            "unable to confirm transaction. \
+                                This can happen in situations such as transaction expiration \
+                                and insufficient fee-payer funds"
+                .to_string(),
+        )
+        .into());
     }
 
     /// Note that `get_account` returns `Err(..)` if the account does not exist whereas
@@ -1406,6 +1390,26 @@ impl RpcClient {
 
     pub fn validator_exit(&self) -> ClientResult<bool> {
         self.send(RpcRequest::ValidatorExit, Value::Null)
+    }
+
+    // EVM scope.
+    pub fn get_evm_transaction_count(
+        &self,
+        address: &evm_state::Address,
+    ) -> ClientResult<evm_state::U256> {
+        self.send::<evm_rpc::Hex<_>>(
+            RpcRequest::EthGetTransactionCount,
+            json!([evm_rpc::Hex(*address)]),
+        )
+        .map(|h| h.0)
+    }
+
+    pub fn get_evm_balance(&self, address: &evm_state::Address) -> ClientResult<evm_state::U256> {
+        self.send::<evm_rpc::Hex<_>>(
+            RpcRequest::EthGetBalance,
+            json!([evm_rpc::Hex(*address), "latest"]),
+        )
+        .map(|h| h.0)
     }
 
     pub fn send<T>(&self, request: RpcRequest, params: Value) -> ClientResult<T>

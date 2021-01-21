@@ -268,6 +268,21 @@ impl SyncClient for BankClient {
     fn get_epoch_info(&self) -> Result<EpochInfo> {
         Ok(self.bank.get_epoch_info())
     }
+
+    // Evm scope
+
+    /// Get account balance or 0 if not found.
+    fn get_evm_balance(&self, pubkey: &evm_state::Address) -> Result<evm_state::U256> {
+        let account = self
+            .bank
+            .evm_state
+            .read()
+            .unwrap()
+            .get_account(*pubkey)
+            .unwrap_or_default();
+
+        Ok(account.balance)
+    }
 }
 
 impl BankClient {

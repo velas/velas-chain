@@ -69,7 +69,6 @@ use thiserror::Error;
 use url::Url;
 
 pub const DEFAULT_RPC_TIMEOUT_SECONDS: &str = "30";
-
 #[derive(Debug, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum CliCommand {
@@ -380,6 +379,8 @@ pub enum CliError {
     RpcRequestError(String),
     #[error("keypair file not found: {0}")]
     KeypairFileNotFound(String),
+    #[error("incorrect loader provided: {0}")]
+    IncorrectLoader(String),
 }
 
 impl From<Box<dyn error::Error>> for CliError {

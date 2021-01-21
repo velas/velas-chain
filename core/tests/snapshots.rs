@@ -63,7 +63,7 @@ mod tests {
     use std::{
         collections::HashSet,
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
             mpsc::channel,
@@ -79,6 +79,7 @@ mod tests {
     DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_2_0, MainnetBeta, V1_2_0_MainnetBeta);
 
     struct SnapshotTestConfig {
+        evm_state_dir: TempDir,
         accounts_dir: TempDir,
         snapshot_dir: TempDir,
         _snapshot_output_path: TempDir,
@@ -93,6 +94,7 @@ mod tests {
             cluster_type: ClusterType,
             snapshot_interval_slots: u64,
         ) -> SnapshotTestConfig {
+            let evm_state_dir = TempDir::new().unwrap();
             let accounts_dir = TempDir::new().unwrap();
             let snapshot_dir = TempDir::new().unwrap();
             let snapshot_output_path = TempDir::new().unwrap();
@@ -100,6 +102,7 @@ mod tests {
             genesis_config_info.genesis_config.cluster_type = cluster_type;
             let bank0 = Bank::new_with_paths(
                 &genesis_config_info.genesis_config,
+                Some(evm_state_dir.as_ref()),
                 vec![accounts_dir.path().to_path_buf()],
                 &[],
                 None,
@@ -120,6 +123,7 @@ mod tests {
             };
             bank_forks.set_snapshot_config(Some(snapshot_config.clone()));
             SnapshotTestConfig {
+                evm_state_dir,
                 accounts_dir,
                 snapshot_dir,
                 _snapshot_output_path: snapshot_output_path,
@@ -134,6 +138,7 @@ mod tests {
         old_bank_forks: &BankForks,
         old_last_slot: Slot,
         old_genesis_config: &GenesisConfig,
+        evm_state_path: &Path,
         account_paths: &[PathBuf],
     ) {
         let (snapshot_path, snapshot_package_output_path) = old_bank_forks
@@ -145,6 +150,7 @@ mod tests {
         let old_last_bank = old_bank_forks.get(old_last_slot).unwrap();
 
         let deserialized_bank = snapshot_utils::bank_from_archive(
+            evm_state_path,
             &account_paths,
             &[],
             &old_bank_forks
@@ -243,9 +249,16 @@ mod tests {
         snapshot_utils::archive_snapshot_package(&snapshot_package).unwrap();
 
         // Restore bank from snapshot
+        let evm_state_path = snapshot_test_config.evm_state_dir.path();
         let account_paths = &[snapshot_test_config.accounts_dir.path().to_path_buf()];
         let genesis_config = &snapshot_test_config.genesis_config_info.genesis_config;
-        restore_from_snapshot(bank_forks, last_slot, genesis_config, account_paths);
+        restore_from_snapshot(
+            bank_forks,
+            last_slot,
+            genesis_config,
+            evm_state_path,
+            account_paths,
+        );
     }
 
     fn run_test_bank_forks_snapshot_n(

@@ -44,7 +44,7 @@ use solana_transaction_status::token_balances::{
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     result,
     sync::Arc,
     time::{Duration, Instant},
@@ -349,9 +349,10 @@ pub struct ProcessOptions {
     pub accounts_db_caching_enabled: bool,
 }
 
-pub fn process_blockstore(
+pub fn process_blockstore<P: AsRef<Path>>(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
+    evm_state_path: P,
     account_paths: Vec<PathBuf>,
     opts: ProcessOptions,
 ) -> BlockstoreProcessorResult {
@@ -367,6 +368,7 @@ pub fn process_blockstore(
     // Setup bank for slot 0
     let bank0 = Bank::new_with_paths(
         &genesis_config,
+        Some(evm_state_path.as_ref()),
         account_paths,
         &opts.frozen_accounts,
         opts.debug_keys.clone(),
@@ -1165,6 +1167,7 @@ pub mod tests {
         vote_transaction,
     };
     use std::{collections::BTreeSet, sync::RwLock};
+    use tempfile::TempDir;
     use trees::tr;
 
     #[test]
@@ -1200,9 +1203,12 @@ pub mod tests {
             Ok(_)
         );
 
+        let evm_state_dir = TempDir::new().unwrap();
+
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
+            &evm_state_dir,
             Vec::new(),
             ProcessOptions {
                 poh_verify: true,
@@ -1243,10 +1249,13 @@ pub mod tests {
             Ok(_)
         );
 
+        let evm_state_dir = TempDir::new().unwrap();
+
         // Should return slot 0, the last slot on the fork that is valid
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
+            &evm_state_dir,
             Vec::new(),
             ProcessOptions {
                 poh_verify: true,
@@ -1260,9 +1269,12 @@ pub mod tests {
         let _last_slot2_entry_hash =
             fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 2, 0, blockhash);
 
+        let evm_state_dir = TempDir::new().unwrap();
+
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
+            &evm_state_dir,
             Vec::new(),
             ProcessOptions {
                 poh_verify: true,
@@ -1322,8 +1334,15 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
     }
 
@@ -1387,8 +1406,15 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]); // slot 1 isn't "full", we stop at slot zero
 
@@ -1406,8 +1432,16 @@ pub mod tests {
         };
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 3, 0, blockhash);
         // Slot 0 should not show up in the ending bank_forks_info
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
 
         // slot 1 isn't "full", we stop at slot zero
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0, 3]);
@@ -1473,8 +1507,15 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
 
         // One fork, other one is ignored b/c not a descendant of the root
         assert_eq!(frozen_bank_slots(&bank_forks), vec![4]);
@@ -1552,8 +1593,15 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![1, 2, 3, 4]);
         assert_eq!(bank_forks.working_bank().slot(), 4);
@@ -1608,9 +1656,11 @@ pub mod tests {
         blockstore.set_dead_slot(2).unwrap();
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 3, 1, slot1_blockhash);
 
+        let evm_state_dir = TempDir::new().unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
+            &evm_state_dir,
             Vec::new(),
             ProcessOptions::default(),
         )
@@ -1657,9 +1707,11 @@ pub mod tests {
         blockstore.set_dead_slot(4).unwrap();
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 3, 1, slot1_blockhash);
 
+        let evm_state_dir = TempDir::new().unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
+            &evm_state_dir,
             Vec::new(),
             ProcessOptions::default(),
         )
@@ -1709,9 +1761,12 @@ pub mod tests {
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 2, 0, blockhash);
         blockstore.set_dead_slot(1).unwrap();
         blockstore.set_dead_slot(2).unwrap();
+
+        let evm_state_dir = TempDir::new().unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
+            &evm_state_dir,
             Vec::new(),
             ProcessOptions::default(),
         )
@@ -1763,8 +1818,15 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
 
         // There is one fork, head is last_slot + 1
         assert_eq!(frozen_bank_slots(&bank_forks), vec![last_slot + 1]);
@@ -1906,8 +1968,15 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0, 1]);
         assert_eq!(bank_forks.root(), 0);
@@ -1935,8 +2004,15 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
         let bank = bank_forks[0].clone();
@@ -1953,7 +2029,15 @@ pub mod tests {
             override_num_threads: Some(1),
             ..ProcessOptions::default()
         };
-        process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
         PAR_THREAD_POOL.with(|pool| {
             assert_eq!(pool.borrow().current_num_threads(), 1);
         });
@@ -1969,8 +2053,15 @@ pub mod tests {
             full_leader_cache: true,
             ..ProcessOptions::default()
         };
-        let (_bank_forks, leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (_bank_forks, leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
         assert_eq!(leader_schedule.max_schedules(), std::usize::MAX);
     }
 
@@ -2030,7 +2121,15 @@ pub mod tests {
             entry_callback: Some(entry_callback),
             ..ProcessOptions::default()
         };
-        process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
         assert_eq!(*callback_counter.write().unwrap(), 2);
     }
 
@@ -2668,8 +2767,15 @@ pub mod tests {
             dev_halt_at_slot: Some(0),
             ..ProcessOptions::default()
         };
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_path = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            evm_state_path.path(),
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
 
         // Should be able to fetch slot 0 because we specified halting at slot 0, even
         // if there is a greater root at slot 1.
@@ -2901,6 +3007,7 @@ pub mod tests {
     ) -> EpochSchedule {
         let bank = Bank::new_with_paths(
             &genesis_config,
+            None,
             account_paths,
             &[],
             None,
@@ -3164,8 +3271,15 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts.clone()).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts.clone(),
+        )
+        .unwrap();
 
         // prepare to add votes
         let last_vote_bank_hash = bank_forks.get(last_main_fork_slot - 1).unwrap().hash();
@@ -3196,8 +3310,15 @@ pub mod tests {
             &leader_keypair,
         );
 
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts.clone()).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts.clone(),
+        )
+        .unwrap();
 
         assert_eq!(bank_forks.root(), expected_root_slot);
         assert_eq!(
@@ -3251,8 +3372,15 @@ pub mod tests {
             &leader_keypair,
         );
 
-        let (bank_forks, _leader_schedule) =
-            process_blockstore(&genesis_config, &blockstore, Vec::new(), opts).unwrap();
+        let evm_state_dir = TempDir::new().unwrap();
+        let (bank_forks, _leader_schedule) = process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &evm_state_dir,
+            Vec::new(),
+            opts,
+        )
+        .unwrap();
 
         assert_eq!(bank_forks.root(), really_expected_root_slot);
     }

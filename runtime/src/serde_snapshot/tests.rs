@@ -201,6 +201,7 @@ fn test_bank_serialize_style(serde_style: SerdeStyle) {
     let rdr = Cursor::new(&buf[..]);
     let mut reader = std::io::BufReader::new(&buf[rdr.position() as usize..]);
 
+    let evm_state_dir = TempDir::new().unwrap();
     // Create a new set of directories for this bank's accounts
     let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
     let ref_sc = StatusCacheRc::default();
@@ -212,6 +213,7 @@ fn test_bank_serialize_style(serde_style: SerdeStyle) {
         serde_style,
         &mut reader,
         copied_accounts.path(),
+        &evm_state_dir.path(),
         &dbank_paths,
         &genesis_config,
         &[],
