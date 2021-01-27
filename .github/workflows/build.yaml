@@ -34,5 +34,4 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "::set-output name=repository::$ECR_REPOSITORY"
           echo "::set-output name=image_tag::$IMAGE_TAG"
-  deploy:
 
