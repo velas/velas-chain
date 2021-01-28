@@ -1,0 +1,26 @@
+name: Run tests
+
+on: 
+  pull_request
+  schedule:
+    - cron: "0 10 * * *"
+
+jobs:  
+  test:
+    name: test
+    runs-on: build
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        continue-on-error: true  # WARNING: only for this example, remove it!
+        with:
+          command: test
+
