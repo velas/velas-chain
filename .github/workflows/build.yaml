@@ -1,4 +1,4 @@
-name: CI to ECR
+name: Build
 on:
   workflow_dispatch:
   push:
