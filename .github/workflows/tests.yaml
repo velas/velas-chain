@@ -20,6 +20,7 @@ jobs:
           override: true
       - name: install dependencies
         run: |
+          apt-get update
           apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang      
       - name: Run cargo test
         uses: actions-rs/cargo@v1
