@@ -533,31 +533,33 @@ pub fn add_snapshot<P: AsRef<Path>>(
         bank_serialize, slot, snapshot_bank_file_path,
     );
 
-    let evm_state_dir = slot_snapshot_dir.join(EVM_STATE_DIR);
-    fs::create_dir_all(&evm_state_dir)?;
-    info!(
-        "Saving EVM state for slot {}, path: {:?}",
-        slot, evm_state_dir
-    );
+    let evm_state_backup_dir = slot_snapshot_dir.join(EVM_STATE_DIR);
 
-    let mut evm_state_saving = Measure::start("evm-state-saving-ms");
-    bank.evm_state
-        .write()
-        .unwrap()
+    let mut wl_acquire = Measure::start("evm_state_write_lock_acquire_time");
+    let evm_state = bank.evm_state.write().unwrap();
+    wl_acquire.stop();
+    debug!("EVM state write acquire time lock {}", wl_acquire);
+
+    let mut evm_state_backup = Measure::start("evm-state-backup-ms");
+    let backup_path = evm_state
         .storage
-        .save_into(&evm_state_dir)
+        .backup()
         .expect("Unable to save EVM storage data in new place");
-    evm_state_saving.stop();
-    inc_new_counter_info!("evm-state-saving-ms", evm_state_saving.as_ms() as usize);
+    evm_state_backup.stop();
+    info!("EVM state backup done in {:?}", backup_path);
+
+    symlink::symlink_dir(&backup_path, &evm_state_backup_dir)?;
+
+    inc_new_counter_info!("evm-state-backup-ms", evm_state_backup.as_ms() as usize);
     info!(
-        "{} for slot {} at {:?}",
-        evm_state_saving, slot, evm_state_dir
+        "EVM state backup {} for slot {} at {:?}",
+        evm_state_backup, slot, evm_state_backup_dir
     );
 
     Ok(SlotSnapshotPaths {
         slot,
         snapshot_file_path: snapshot_bank_file_path,
-        evm_state_backup_path: slot_snapshot_dir.join(EVM_STATE_DIR),
+        evm_state_backup_path: evm_state_backup_dir,
     })
 }
 

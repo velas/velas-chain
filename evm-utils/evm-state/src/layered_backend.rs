@@ -342,6 +342,11 @@ impl EvmState {
         })
     }
 
+    // Getter
+    pub fn current_slot(&self) -> Slot {
+        self.current_slot
+    }
+
     pub fn get_account(&self, address: H160) -> Option<AccountState> {
         self.lookup(&self.accounts, address).map(Cow::into_owned)
     }
@@ -366,9 +371,16 @@ impl EvmState {
             .map(Cow::into_owned)
     }
 
-    // NOTE: currently used in benches only
+    // TODO: currently used in benches only, remove
     pub fn set_account(&mut self, address: H160, state: AccountState) {
         self.accounts.insert(address, state);
+    }
+    // TODO: remove, access via executor context
+    pub fn set_big_transaction(&mut self, hash: H256, bytes: impl Iterator<Item = u8>) {
+        let data = BigTransactionStorage {
+            tx_chunks: bytes.collect(),
+        };
+        self.big_transactions.insert(hash, data);
     }
 
     // TODO: Optimize, using bloom filters.

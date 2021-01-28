@@ -1,77 +1,17 @@
-use std::{collections::HashSet, iter, time::Instant};
+use std::time::Instant;
 
-use rand::{prelude::IteratorRandom, random, Rng};
+use rand::Rng;
 
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
 
 use evm_state::{
-    types::{AccountState, Slot, H160 as Address, U256},
+    types::{AccountState, Slot, H160 as Address},
     EvmState,
 };
 
-const AVERAGE_DATA_SIZE: usize = 2 * 1024;
-
-fn some_account() -> AccountState {
-    AccountState {
-        nonce: U256::from(random::<u64>()),
-        balance: U256::from(random::<u64>()),
-        code: iter::repeat_with(random)
-            .take(rand::thread_rng().gen_range(0, 2 * AVERAGE_DATA_SIZE))
-            .collect(),
-    }
-}
-
-fn unique_random_accounts() -> impl Iterator<Item = (Address, AccountState)> {
-    let mut addresses = HashSet::new();
-
-    iter::repeat_with(Address::random)
-        .filter(move |addr| addresses.insert(*addr))
-        .zip(iter::repeat_with(some_account))
-}
-
-/// Random accounts generator with chance to repeat existing address as 1 / repeat_prob
-struct AddrMixer {
-    repeat_prob: u32,
-    current: HashSet<Address>,
-    previous: HashSet<Address>,
-}
-
-impl AddrMixer {
-    fn new(repeat_prob: u32) -> Self {
-        Self {
-            repeat_prob,
-            current: HashSet::new(),
-            previous: HashSet::new(),
-        }
-    }
-
-    fn next(&mut self) -> Address {
-        let mut rng = rand::thread_rng();
-        if rng.gen_ratio(1, self.repeat_prob) {
-            match self.previous.iter().choose(&mut rng) {
-                Some(addr) => *addr,
-                None => self.new_addr(),
-            }
-        } else {
-            self.new_addr()
-        }
-    }
-
-    fn new_addr(&mut self) -> Address {
-        loop {
-            let addr = random();
-            if !self.previous.contains(&addr) && self.current.insert(addr) {
-                return addr;
-            }
-        }
-    }
-
-    fn advance(&mut self) {
-        self.previous.extend(self.current.drain());
-    }
-}
+mod utils;
 
 fn squashed_state_bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("squashed_state");
@@ -97,7 +37,7 @@ fn squashed_state_bench(c: &mut Criterion) {
         let mut state = EvmState::default();
 
         let accounts: Vec<(Address, AccountState)> =
-            unique_random_accounts().take(N_ACCOUNTS).collect();
+            utils::unique_random_accounts().take(N_ACCOUNTS).collect();
 
         for (address, account) in accounts.iter().cloned() {
             state.set_account(address, account);
@@ -178,12 +118,13 @@ fn squashed_state_bench(c: &mut Criterion) {
                         let mut state = EvmState::default();
 
                         // repeat 1/3 of accounts from previous slots
-                        let mut addresses = AddrMixer::new(3);
+                        let mut addresses = utils::AddrMixer::new(3);
 
                         for new_slot in (slot + 1)..=*squash_target_2 {
                             addresses.advance();
                             for _ in 0..ACCOUNTS_PER_SLOT {
-                                let (address, account) = (addresses.next(), some_account());
+                                let (address, account) =
+                                    (addresses.some_addr(), utils::some_account());
                                 state.set_account(address, account);
                             }
 
@@ -237,13 +178,14 @@ fn large_squash_time_bench(c: &mut Criterion) {
                         let mut state = EvmState::default();
 
                         // repeat 1/3 of accounts from previous slots
-                        let mut addresses = AddrMixer::new(3);
+                        let mut addresses = utils::AddrMixer::new(3);
                         let mut rng = rand::thread_rng();
 
                         for new_slot in (slot + 1)..target_squash {
                             addresses.advance();
                             if rng.gen_ratio(accounts_per_100k, 100_000) {
-                                let (address, account) = (addresses.next(), some_account());
+                                let (address, account) =
+                                    (addresses.some_addr(), utils::some_account());
                                 state.set_account(address, account);
                             }
 
