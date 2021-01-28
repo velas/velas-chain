@@ -17,10 +17,11 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-
+      - name: install dependencies
+        run: |
+          apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang      
       - name: Run cargo test
         uses: actions-rs/cargo@v1
-        continue-on-error: true  # WARNING: only for this example, remove it!
         with:
           command: test
 

@@ -1,7 +1,7 @@
 name: CI to ECR
 on:
   push:
-    branches: [develop,feature/ci-build]
+    branches: [develop]
 
 jobs:
   docker-build-push:
