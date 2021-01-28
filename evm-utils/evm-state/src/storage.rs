@@ -44,17 +44,20 @@ pub enum Error {
     InternalErr(#[from] IoError),
 }
 
+const BACKUP_SUBDIR: &str = "backup";
+
 /// Marker-like wrapper for cleaning temporary directory.
 /// Temporary directory is only used in tests.
+#[derive(Clone)]
 enum Location {
-    Temporary(TempDir),
+    Temporary(Arc<TempDir>),
     Persisent(PathBuf),
 }
 
 impl AsRef<Path> for Location {
     fn as_ref(&self) -> &Path {
         match self {
-            Self::Temporary(temp_dir) => temp_dir.path(),
+            Self::Temporary(temp_dir) => temp_dir.as_ref().path(),
             Self::Persisent(path) => path.as_ref(),
         }
     }
@@ -62,7 +65,7 @@ impl AsRef<Path> for Location {
 
 pub struct VersionedStorage<V> {
     db: Arc<DB>,
-    _location: Arc<Location>,
+    location: Location,
     _version: PhantomData<V>,
 }
 
@@ -70,7 +73,7 @@ impl<V> Clone for VersionedStorage<V> {
     fn clone(&self) -> Self {
         Self {
             db: Arc::clone(&self.db),
-            _location: Arc::clone(&self._location),
+            location: self.location.clone(),
             _version: PhantomData,
         }
     }
@@ -174,20 +177,19 @@ where
     }
 }
 
+const KEEP_N_BACKUPS: usize = 12; // TODO: tweak it
+
 impl<V> VersionedStorage<V> {
-    pub fn save_into<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let path = path.as_ref();
-        assert!(
-            path.is_dir() && path.exists(),
-            "storage can be saved only into some existing directory"
-        );
-        info!(
-            "saving storage data into {} (as new backup)",
-            path.display()
-        );
-        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), path)?;
+    pub fn backup(&self) -> Result<PathBuf> {
+        let backup_dir = self.location.as_ref().join(BACKUP_SUBDIR);
+        info!("backup storage data into {}", backup_dir.display());
+
+        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), &backup_dir)?;
+        if engine.get_backup_info().len() > KEEP_N_BACKUPS {
+            engine.purge_old_backups(KEEP_N_BACKUPS)?;
+        }
         engine.create_new_backup_flush(self.db.as_ref(), true)?;
-        Ok(())
+        Ok(backup_dir)
     }
 
     pub fn restore_from<P1: AsRef<Path>, P2: AsRef<Path>>(path: P1, target: P2) -> Result<()> {
@@ -257,7 +259,7 @@ where
         column_names: impl IntoIterator<Item = S>,
     ) -> Result<Self> {
         let temp_dir = TempDir::new()?;
-        Self::open(Location::Temporary(temp_dir), column_names)
+        Self::open(Location::Temporary(Arc::new(temp_dir)), column_names)
     }
 
     fn open<S: AsRef<str>>(
@@ -279,7 +281,7 @@ where
 
         Ok(Self {
             db,
-            _location: Arc::new(location),
+            location,
             _version: PhantomData,
         })
     }
