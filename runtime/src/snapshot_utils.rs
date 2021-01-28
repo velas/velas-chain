@@ -560,19 +560,23 @@ pub fn add_snapshot<P: AsRef<Path>>(
         .write()
         .unwrap()
         .storage
-        .save_into(&evm_state_dir)
+        .backup()
         .expect("Unable to save EVM storage data in new place");
-    evm_state_saving.stop();
-    inc_new_counter_info!("evm-state-saving-ms", evm_state_saving.as_ms() as usize);
+    evm_state_backup.stop();
+    info!("EVM state backup done in {:?}", backup_path);
+
+    symlink::symlink_dir(&backup_path, &evm_state_backup_dir)?;
+
+    inc_new_counter_info!("evm-state-backup-ms", evm_state_backup.as_ms() as usize);
     info!(
-        "{} for slot {} at {:?}",
-        evm_state_saving, slot, evm_state_dir
+        "EVM state backup {} for slot {} at {:?}",
+        evm_state_backup, slot, evm_state_backup_dir
     );
 
     Ok(SlotSnapshotPaths {
         slot,
         snapshot_file_path: snapshot_bank_file_path,
-        evm_state_backup_path: slot_snapshot_dir.join(EVM_STATE_DIR),
+        evm_state_backup_path: evm_state_backup_dir,
     })
 }
 

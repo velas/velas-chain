@@ -2111,11 +2111,12 @@ impl Bank {
         let mut write_lock = Measure::start("evm_state_write_lock_acquire_time");
         let mut evm_state = self.evm_state.write().unwrap();
         write_lock.stop();
-        debug!("EVM state write lock {}", write_lock);
+        debug!("EVM state write lock acquire time {}", write_lock);
 
         let mut squash_evm_state_time = Measure::start("squash_evm_state_time");
         evm_state.squash();
         squash_evm_state_time.stop();
+        debug!("EVM state squash time {}", squash_evm_state_time);
 
         datapoint_debug!(
             "tower-observed",
