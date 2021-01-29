@@ -107,6 +107,7 @@ args=(
   --require-tower
   --accounts-db-caching-enabled
   --snapshot-interval-slots 100
+  --snapshot-compression gzip
 )
 # shellcheck disable=SC2086
 solana-validator "${args[@]}" $SOLANA_RUN_SH_VALIDATOR_ARGS &

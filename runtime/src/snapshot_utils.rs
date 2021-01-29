@@ -548,17 +548,15 @@ pub fn add_snapshot<P: AsRef<Path>>(
         "{} for slot {} at {:?}",
         bank_serialize, slot, snapshot_bank_file_path,
     );
+    let evm_state_backup_dir = slot_snapshot_dir.join(EVM_STATE_DIR);
 
-    let evm_state_dir = slot_snapshot_dir.join(EVM_STATE_DIR);
-    fs::create_dir_all(&evm_state_dir)?;
-    info!(
-        "Saving EVM state for slot {}, path: {:?}",
-        slot, evm_state_dir
-    );
-    let mut evm_state_saving = Measure::start("evm-state-saving-ms");
-    bank.evm_state
-        .write()
-        .unwrap()
+    let mut wl_acquire = Measure::start("evm_state_write_lock_acquire_time");
+    let evm_state = bank.evm_state.write().unwrap();
+    wl_acquire.stop();
+    debug!("EVM state write acquire time lock {}", wl_acquire);
+
+    let mut evm_state_backup = Measure::start("evm-state-backup-ms");
+    let backup_path = evm_state
         .storage
         .backup()
         .expect("Unable to save EVM storage data in new place");
@@ -827,6 +825,13 @@ where
         root_paths.evm_state_backup_path
     );
     let mut measure = Measure::start("evm state database restore");
+    if evm_state_path.exists() {
+        warn!(
+            "deleting existing evm state folder {}",
+            evm_state_path.display()
+        );
+        fs::remove_dir_all(evm_state_path)?;
+    }
     evm_state::Storage::restore_from(root_paths.evm_state_backup_path, evm_state_path)
         .expect("Unable to restore EVM state underlying database from storage backup");
     measure.stop();

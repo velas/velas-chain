@@ -1,5 +1,5 @@
 use std::{
-    any::type_name, borrow::Cow, collections::BTreeMap, fmt::Debug, marker::PhantomData,
+    any::type_name, borrow::Cow, collections::BTreeMap, fmt::Debug, fs, marker::PhantomData,
     ops::Deref, path::Path,
 };
 
@@ -313,7 +313,12 @@ impl EvmState {
 
 impl EvmState {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
-        //TODO: add flags, to asserts for empty storage.
+        let path = path.as_ref();
+        if path.is_dir() && path.exists() {
+            warn!("deleting existing state {}", path.display());
+            fs::remove_dir_all(path)?;
+            fs::create_dir(path)?;
+        }
         Self::load_from(path, 0)
     }
 
