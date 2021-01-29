@@ -813,6 +813,13 @@ where
         root_paths.evm_state_backup_path
     );
     let mut measure = Measure::start("evm state database restore");
+    if evm_state_path.exists() {
+        warn!(
+            "deleting existing evm state folder {}",
+            evm_state_path.display()
+        );
+        fs::remove_dir_all(evm_state_path)?;
+    }
     evm_state::Storage::restore_from(root_paths.evm_state_backup_path, evm_state_path)
         .expect("Unable to restore EVM state underlying database from storage backup");
     measure.stop();

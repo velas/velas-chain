@@ -105,6 +105,7 @@ args=(
   --enable-rpc-transaction-history
   --init-complete-file "$dataDir"/init-completed
   --snapshot-interval-slots 100
+  --snapshot-compression gzip
 )
 solana-validator "${args[@]}" &
 validator=$!
