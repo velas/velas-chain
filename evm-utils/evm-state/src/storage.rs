@@ -707,7 +707,7 @@ where
         self.db().write(batch)?;
         log::info!(
             "Storage :: {} was squashed into {} for {}",
-            &std::any::type_name::<V>(),
+            std::any::type_name::<M>(),
             target,
             log_track
         );
