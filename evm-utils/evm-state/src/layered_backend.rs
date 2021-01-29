@@ -193,6 +193,7 @@ impl EvmState {
 
     pub fn squash(&mut self) {
         let track: Vec<Slot> = self.storage.track_of(self.current_slot).collect();
+        debug!("track of slot {} is {:?}", self.current_slot, track);
 
         if track.len() > 1 {
             info!("squashing evm state into slot {}", track[0]);
