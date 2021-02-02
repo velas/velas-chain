@@ -551,9 +551,19 @@ pub fn add_snapshot<P: AsRef<Path>>(
     let evm_state_backup_dir = slot_snapshot_dir.join(EVM_STATE_DIR);
 
     let mut wl_acquire = Measure::start("evm_state_write_lock_acquire_time");
-    let evm_state = bank.evm_state.write().unwrap();
+    let mut evm_state = bank.evm_state.write().unwrap();
     wl_acquire.stop();
     debug!("EVM state write acquire time lock {}", wl_acquire);
+
+    let mut squash_evm_state_time = Measure::start("squash_evm_state_time");
+    evm_state.squash();
+    squash_evm_state_time.stop();
+    debug!("EVM state squash time {}", squash_evm_state_time);
+
+    inc_new_counter_info!(
+        "squash_evm_state_time",
+        squash_evm_state_time.as_ms() as usize
+    );
 
     let mut evm_state_backup = Measure::start("evm-state-backup-ms");
     let backup_path = evm_state

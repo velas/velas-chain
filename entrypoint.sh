@@ -37,7 +37,7 @@ run_solana_validator() {
     --enable-rpc-exit \
     --enable-rpc-set-log-filter \
     --dynamic-port-range $port_range \
-    --snapshot-interval-slots 100 # temporary solution while evm is not persistent
+    --snapshot-interval-slots 200
 }
 
 run_solana_bootstrap() {
@@ -56,7 +56,7 @@ run_solana_bootstrap() {
     --identity $datadir/identity.json \
     --vote-account $datadir/vote-account.json \
     --log - \
-    --snapshot-interval-slots 100 # temporary solution while evm is not persistent
+    --snapshot-interval-slots 200
 }
 
 run_evm_bridge() {

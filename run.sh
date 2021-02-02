@@ -103,7 +103,6 @@ args=(
   --enable-rpc-exit
   --enable-rpc-transaction-history
   --init-complete-file "$dataDir"/init-completed
-  --snapshot-compression none
   --require-tower
   --accounts-db-caching-enabled
   --snapshot-interval-slots 100

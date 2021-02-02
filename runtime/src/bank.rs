@@ -2108,22 +2108,10 @@ impl Bank {
             .for_each(|slot| self.src.status_cache.write().unwrap().add_root(*slot));
         squash_cache_time.stop();
 
-        let mut write_lock = Measure::start("evm_state_write_lock_acquire_time");
-        let mut evm_state = self.evm_state.write().unwrap();
-        write_lock.stop();
-        debug!("EVM state write lock acquire time {}", write_lock);
-
-        let mut squash_evm_state_time = Measure::start("squash_evm_state_time");
-        evm_state.squash();
-        squash_evm_state_time.stop();
-        debug!("EVM state squash time {}", squash_evm_state_time);
-
         datapoint_debug!(
             "tower-observed",
             ("squash_accounts_ms", squash_accounts_time.as_ms(), i64),
             ("squash_cache_ms", squash_cache_time.as_ms(), i64),
-            ("evm_state_write_lock_acquire_time", write_lock.as_ms(), i64),
-            ("squash_evm_state_time", squash_evm_state_time.as_ms(), i64)
         );
     }
 
