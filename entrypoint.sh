@@ -1,31 +1,57 @@
 #!/bin/bash
-set -x
+set -ex
 
+MIN_VALIDATOR_STAKE=10001 # 10k min stake + rent exempt
+MIN_RENT_FEE=100 # Some value that should be enough for fee
 DATADIR=/data/solana
 NODE_TYPE=$1  #validator/bootstrap
+NETWORK="devnet" #devnet/testnet/mainnet
 mkdir -p $DATADIR
 get_my_ip() {
   curl ifconfig.me
+}
+
+stake_account_exist() {
+  solana --keypair $datadir/identity.json --url $rpc_url stake-account $datadir/stake-account.json
+}
+
+vote_account_exist() {
+  solana --keypair $datadir/identity.json --url $rpc_url vote-account $datadir/vote-account.json
 }
 
 run_solana_validator() {
   declare datadir=$1
   declare entrypoint=$2
   declare port_range=$3
-  rpc_url=`solana-gossip rpc-url --timeout 180 --entrypoint $entrypoint` # get rpc url
-  rpc_url=`solana-gossip rpc-url --timeout 30 --entrypoint $entrypoint` # get rpc url
+
+  set +e # FALL BACK to entrypoint RPC, DONT FAIL.
+  rpc_url=$(solana-gossip rpc-url --timeout 180 --entrypoint $entrypoint) # get rpc url
   if [ $? -ne 0 ]; then
     rpc_url=http://$(echo $entrypoint | cut -d ':' -f 1):8899
   fi
-  solana-keygen new --no-passphrase -so $datadir/identity.json #try to generate identity
-  solana-keygen new --no-passphrase -so $datadir/vote-account.json #try to generate vote account
+  set -e
 
-  solana --keypair $datadir/identity.json --url $rpc_url vote-account $datadir/vote-account.json
-  keystatus_exitcode=$?
-  if [ $keystatus_exitcode = 1 ]; then
-  solana --keypair /config/faucet.json --url $rpc_url transfer $datadir/identity.json 500
-  solana --keypair $datadir/identity.json --url $rpc_url create-vote-account $datadir/vote-account.json $datadir/identity.json
+  if ! vote_account_exist; then
+    solana-keygen new --no-passphrase -so $datadir/identity.json #try to generate identity
+    solana-keygen new --no-passphrase -so $datadir/vote-account.json #try to generate vote account
+    solana --keypair /config/faucet.json --url $rpc_url transfer $datadir/identity.json $(($MIN_VALIDATOR_STAKE + $MIN_RENT_FEE))
+    solana --keypair $datadir/identity.json --url $rpc_url create-vote-account $datadir/vote-account.json $datadir/identity.json
   fi
+
+  case "$NETWORK" in
+    # airdrop on testnet devnet
+    "testnet"|"devnet")
+      if ! stake_account_exist; then
+        # TODO: Airdrop tokens if not enough
+        vote_account=$(solana address --keypair $datadir/vote-account.json)
+        solana-keygen new --no-passphrase -so $datadir/stake-account.json
+        solana --keypair $datadir/identity.json --url $rpc_url create-stake-account $datadir/stake-account.json $MIN_VALIDATOR_STAKE
+        stake_account=$(solana address --keypair $datadir/stake-account.json)
+        solana --keypair $datadir/identity.json --url $rpc_url delegate-stake --force $stake_account $vote_account
+      fi
+      ;;
+  esac
+
 
   RUST_LOG=debug solana-validator \
     --max-genesis-archive-unpacked-size 1073741824 \
@@ -34,6 +60,7 @@ run_solana_validator() {
     --vote-account $datadir/vote-account.json \
     --ledger $datadir \
     --log - \
+    --no-poh-speed-test \
     --enable-rpc-exit \
     --enable-rpc-set-log-filter \
     --dynamic-port-range $port_range \
@@ -56,6 +83,7 @@ run_solana_bootstrap() {
     --identity $datadir/identity.json \
     --vote-account $datadir/vote-account.json \
     --log - \
+    --no-poh-speed-test \
     --snapshot-interval-slots 200
 }
 
@@ -126,8 +154,8 @@ case "${NODE_TYPE}" in
   "validator")    
     ENTRYPOINT=$2
     PORT_RANGE=$3
-    mkdir $DATADIR/v
-    cp $DATADIR/genesis.bin $DATADIR/v/genesis.bin
+    mkdir -p $DATADIR/v
+    cp /config/genesis.bin $DATADIR/v/genesis.bin
     DATADIR=$DATADIR/v
     run_solana_validator $DATADIR $ENTRYPOINT $PORT_RANGE
     ;;
