@@ -617,13 +617,13 @@ impl RpcClient {
             }
         }
 
-        return Err(RpcError::ForUser(
+        Err(RpcError::ForUser(
             "unable to confirm transaction. \
                                 This can happen in situations such as transaction expiration \
                                 and insufficient fee-payer funds"
                 .to_string(),
         )
-        .into());
+        .into())
     }
 
     /// Note that `get_account` returns `Err(..)` if the account does not exist whereas
