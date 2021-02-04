@@ -493,7 +493,7 @@ impl RPCTransaction {
         receipt: evm_state::transactions::TransactionReceipt,
         block_hash: H256,
     ) -> Result<Self, crate::Error> {
-        let ref tx = receipt.transaction;
+        let tx = &receipt.transaction;
         let address = tx.address().map_err(|_| Error::InvalidParams)?.into();
 
         let (to, creates) = match tx.action {
@@ -523,7 +523,7 @@ impl RPCReceipt {
         receipt: evm_state::transactions::TransactionReceipt,
         block_hash: H256,
     ) -> Result<Self, crate::Error> {
-        let ref tx = receipt.transaction;
+        let tx = &receipt.transaction;
         let address = tx.address().map_err(|_| Error::InvalidParams)?.into();
         let (to, contract_address) = match tx.action {
             evm_state::transactions::TransactionAction::Call(_) => (Some(address), None),
@@ -558,7 +558,7 @@ impl RPCReceipt {
             transaction_hash: tx_hash,
             transaction_index: tx_index,
             block_hash: block_hash.into(),
-            block_number: block_number,
+            block_number,
             logs,
             status: Hex(if let evm_state::ExitReason::Succeed(_) = receipt.status {
                 1
