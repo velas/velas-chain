@@ -30,6 +30,7 @@ solana-sdk = { path = "../sdk", version = "1.5.3" }
 solana-transaction-status = { path = "../transaction-status", version = "1.5.3" }
 solana-version = { path = "../version", version = "1.5.3" }
 solana-vote-program = { path = "../programs/vote", version = "1.5.3" }
+solana-stake-program = { path = "../programs/stake", version = "1.5.3" }
 thiserror = "1.0"
 tungstenite = "0.10.1"
 url = "2.1.1"

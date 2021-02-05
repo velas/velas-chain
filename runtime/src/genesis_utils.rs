@@ -20,6 +20,7 @@ const VALIDATOR_LAMPORTS: u64 = 42;
 // fun fact: rustc is very close to make this const fn.
 pub fn bootstrap_validator_stake_lamports() -> u64 {
     StakeState::get_rent_exempt_reserve(&Rent::default())
+        + solana_stake_program::stake_state::MIN_DELEGATE_STAKE_AMOUNT
 }
 
 pub struct ValidatorVoteKeypairs {
