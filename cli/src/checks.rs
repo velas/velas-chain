@@ -152,6 +152,7 @@ mod tests {
         rpc_response::{Response, RpcResponseContext},
     };
     use solana_sdk::system_instruction;
+    use solana_stake_program::stake_state::MIN_DELEGATE_STAKE_AMOUNT;
     use std::collections::HashMap;
 
     #[test]
@@ -216,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_check_account_for_balance() {
-        let account_balance = 50;
+        let account_balance = MIN_DELEGATE_STAKE_AMOUNT + 400;
         let account_balance_response = json!(Response {
             context: RpcResponseContext { slot: 1 },
             value: json!(account_balance),

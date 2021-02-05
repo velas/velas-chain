@@ -4,14 +4,18 @@ use solana_sdk::{
     clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     pubkey::Pubkey,
 };
+use std::collections::HashMap;
+
+pub use solana_stake_program::stake_state::{
+    MIN_STAKERS_TO_BE_MAJORITY, NUM_MAJOR_STAKERS_FOR_FILTERING,
+};
 
 /// Return the leader schedule for the given epoch.
 pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
     bank.epoch_staked_nodes(epoch).map(|stakes| {
         let mut seed = [0u8; 32];
         seed[0..8].copy_from_slice(&epoch.to_le_bytes());
-        let mut stakes: Vec<_> = stakes.into_iter().collect();
-        sort_stakes(&mut stakes);
+        let stakes = retain_sort_stakers(stakes);
         LeaderSchedule::new(
             &stakes,
             seed,
@@ -19,6 +23,15 @@ pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
             NUM_CONSECUTIVE_LEADER_SLOTS,
         )
     })
+}
+
+fn retain_sort_stakers(stakes: HashMap<Pubkey, u64>) -> Vec<(Pubkey, u64)> {
+    let mut stakes: Vec<_> = stakes.into_iter().collect();
+    sort_stakes(&mut stakes);
+    if num_major_stakers(&stakes) >= NUM_MAJOR_STAKERS_FOR_FILTERING {
+        retain_major_stakers(&mut stakes)
+    }
+    stakes
 }
 
 /// Return the leader for the given slot.
@@ -48,6 +61,17 @@ fn sort_stakes(stakes: &mut Vec<(Pubkey, u64)>) {
 
     // Now that it's sorted, we can do an O(n) dedup.
     stakes.dedup();
+}
+
+fn num_major_stakers(stakes: &Vec<(Pubkey, u64)>) -> usize {
+    stakes
+        .iter()
+        .filter(|s| s.1 >= MIN_STAKERS_TO_BE_MAJORITY)
+        .count()
+}
+
+fn retain_major_stakers(stakes: &mut Vec<(Pubkey, u64)>) {
+    stakes.retain(|s| s.1 >= MIN_STAKERS_TO_BE_MAJORITY);
 }
 
 #[cfg(test)]
@@ -114,5 +138,47 @@ mod tests {
         let mut stakes = vec![(pubkey0, 1), (pubkey1, 1)];
         sort_stakes(&mut stakes);
         assert_eq!(stakes, vec![(pubkey1, 1), (pubkey0, 1)]);
+    }
+
+    #[test]
+    fn majoirty_test() {
+        let mut stakes = HashMap::new();
+        // Test case without majoirty
+        for _ in 0..30 {
+            stakes.insert(Pubkey::new_unique(), 1);
+        }
+        let num_stakers = retain_sort_stakers(stakes.clone());
+        assert_eq!(num_stakers.len(), 30);
+
+        for _ in 0..30 {
+            stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY - 1);
+        }
+        let num_stakers = retain_sort_stakers(stakes.clone());
+        assert_eq!(num_stakers.len(), 60);
+
+        // Test case for majoirty < NUM_MAJOR_STAKERS_FOR_FILTERING
+        for _ in 0..(NUM_MAJOR_STAKERS_FOR_FILTERING - 1) {
+            stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY);
+        }
+        let num_stakers = retain_sort_stakers(stakes.clone());
+        assert_eq!(
+            num_stakers.len(),
+            60 + (NUM_MAJOR_STAKERS_FOR_FILTERING - 1)
+        );
+
+        // Test case for majoirty >= MIN_MAJOIRTY
+        // Should remove all nodes without majoirty stake.
+
+        stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY);
+        let num_stakers = retain_sort_stakers(stakes.clone());
+        assert_eq!(num_stakers.len(), NUM_MAJOR_STAKERS_FOR_FILTERING);
+
+        // Test case where more than NUM_MAJOR_STAKERS_FOR_FILTERING, should keep all majority in stakers.
+        for n in 0..30 {
+            stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY + n * 100);
+        }
+        let num_stakers = retain_sort_stakers(stakes.clone());
+        assert_eq!(num_stakers.len(), NUM_MAJOR_STAKERS_FOR_FILTERING + 30);
+        assert_eq!(stakes.len(), NUM_MAJOR_STAKERS_FOR_FILTERING + 30 + 60)
     }
 }

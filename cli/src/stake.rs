@@ -37,6 +37,7 @@ use solana_sdk::{
     clock::{Clock, Epoch, Slot, UnixTimestamp, SECONDS_PER_DAY},
     feature, feature_set,
     message::Message,
+    native_token::lamports_to_sol,
     pubkey::Pubkey,
     system_instruction::SystemError,
     sysvar::{
@@ -47,7 +48,9 @@ use solana_sdk::{
 };
 use solana_stake_program::{
     stake_instruction::{self, LockupArgs, StakeError},
-    stake_state::{Authorized, Lockup, Meta, StakeAuthorize, StakeState},
+    stake_state::{
+        Authorized, Lockup, Meta, StakeAuthorize, StakeState, MIN_DELEGATE_STAKE_AMOUNT,
+    },
 };
 use solana_vote_program::vote_state::VoteState;
 use std::{convert::TryInto, ops::Deref, sync::Arc};
@@ -932,8 +935,18 @@ pub fn process_create_stake_account(
             return Err(CliError::BadParameter(err_msg).into());
         }
 
-        let minimum_balance =
-            rpc_client.get_minimum_balance_for_rent_exemption(std::mem::size_of::<StakeState>())?;
+        if lamports < MIN_DELEGATE_STAKE_AMOUNT {
+            return Err(CliError::BadParameter(format!(
+                "need at least {} VLX to start staking, provided VLX: {}",
+                lamports_to_sol(MIN_DELEGATE_STAKE_AMOUNT),
+                lamports_to_sol(lamports)
+            ))
+            .into());
+        }
+
+        let minimum_balance = MIN_DELEGATE_STAKE_AMOUNT
+            + rpc_client
+                .get_minimum_balance_for_rent_exemption(std::mem::size_of::<StakeState>())?;
 
         if lamports < minimum_balance {
             return Err(CliError::BadParameter(format!(
@@ -1244,8 +1257,18 @@ pub fn process_split_stake(
             return Err(CliError::BadParameter(err_msg).into());
         }
 
-        let minimum_balance =
-            rpc_client.get_minimum_balance_for_rent_exemption(std::mem::size_of::<StakeState>())?;
+        if lamports < MIN_DELEGATE_STAKE_AMOUNT {
+            return Err(CliError::BadParameter(format!(
+                "need at least {} VLX to start staking, provided VLX: {}",
+                lamports_to_sol(MIN_DELEGATE_STAKE_AMOUNT),
+                lamports_to_sol(lamports)
+            ))
+            .into());
+        }
+
+        let minimum_balance = MIN_DELEGATE_STAKE_AMOUNT
+            + rpc_client
+                .get_minimum_balance_for_rent_exemption(std::mem::size_of::<StakeState>())?;
 
         if lamports < minimum_balance {
             return Err(CliError::BadParameter(format!(

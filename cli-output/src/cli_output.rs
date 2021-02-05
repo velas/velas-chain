@@ -303,6 +303,7 @@ pub struct CliValidatorsStakeByVersion {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliValidators {
+    pub majority_count: u64,
     pub total_active_stake: u64,
     pub total_current_stake: u64,
     pub total_delinquent_stake: u64,
@@ -359,6 +360,13 @@ impl fmt::Display for CliValidators {
                 },
             )
         }
+
+        writeln_name_value(
+            f,
+            "Validators majority count:",
+            &self.majority_count.to_string(),
+        )?;
+
         writeln_name_value(
             f,
             "Active Stake:",

@@ -2072,6 +2072,7 @@ mod tests {
         signature::{keypair_from_seed, read_keypair_file, write_keypair_file, Keypair, Presigner},
         transaction::TransactionError,
     };
+    use solana_stake_program::stake_state::MIN_DELEGATE_STAKE_AMOUNT;
     use std::path::PathBuf;
 
     fn make_tmp_path(name: &str) -> String {
@@ -2400,13 +2401,13 @@ mod tests {
             pubkey: None,
             use_lamports_unit: true,
         };
-        assert_eq!(process_command(&config).unwrap(), "50 lamports");
+        assert_eq!(process_command(&config).unwrap(), "10000000000400 lamports");
 
         config.command = CliCommand::Balance {
             pubkey: None,
             use_lamports_unit: false,
         };
-        assert_eq!(process_command(&config).unwrap(), "0.00000005 SOL");
+        assert_eq!(process_command(&config).unwrap(), "10000.0000004 SOL");
 
         let good_signature = Signature::new(&bs58::decode(SIGNATURE).into_vec().unwrap());
         config.command = CliCommand::Confirm(good_signature);
@@ -2460,7 +2461,7 @@ mod tests {
                 unix_timestamp: 0,
                 custodian,
             },
-            amount: SpendAmount::Some(30),
+            amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
             sign_only: false,
             blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
             nonce_account: None,
@@ -2469,8 +2470,7 @@ mod tests {
             from: 0,
         };
         config.signers = vec![&keypair, &bob_keypair];
-        let result = process_command(&config);
-        assert!(result.is_ok());
+        process_command(&config).unwrap();
 
         let stake_account_pubkey = solana_sdk::pubkey::new_rand();
         let to_pubkey = solana_sdk::pubkey::new_rand();
@@ -2487,8 +2487,7 @@ mod tests {
             fee_payer: 0,
         };
         config.signers = vec![&keypair];
-        let result = process_command(&config);
-        assert!(result.is_ok());
+        process_command(&config).unwrap();
 
         let stake_account_pubkey = solana_sdk::pubkey::new_rand();
         config.command = CliCommand::DeactivateStake {
@@ -2500,8 +2499,7 @@ mod tests {
             nonce_authority: 0,
             fee_payer: 0,
         };
-        let result = process_command(&config);
-        assert!(result.is_ok());
+        process_command(&config).unwrap();
 
         let stake_account_pubkey = solana_sdk::pubkey::new_rand();
         let split_stake_account = Keypair::new();
@@ -2514,12 +2512,11 @@ mod tests {
             nonce_authority: 0,
             split_stake_account: 1,
             seed: None,
-            lamports: 30,
+            lamports: MIN_DELEGATE_STAKE_AMOUNT + 400,
             fee_payer: 0,
         };
         config.signers = vec![&keypair, &split_stake_account];
-        let result = process_command(&config);
-        assert!(result.is_ok());
+        process_command(&config).unwrap();
 
         let stake_account_pubkey = solana_sdk::pubkey::new_rand();
         let source_stake_account_pubkey = solana_sdk::pubkey::new_rand();
@@ -2535,8 +2532,7 @@ mod tests {
             fee_payer: 0,
         };
         config.signers = vec![&keypair, &merge_stake_account];
-        let result = process_command(&config);
-        assert!(dbg!(result).is_ok());
+        process_command(&config).unwrap();
 
         config.command = CliCommand::GetSlot;
         assert_eq!(process_command(&config).unwrap(), "0");

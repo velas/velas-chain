@@ -4706,6 +4706,7 @@ dependencies = [
  "solana-logger 1.5.3",
  "solana-net-utils",
  "solana-sdk",
+ "solana-stake-program",
  "solana-transaction-status",
  "solana-version",
  "solana-vote-program",

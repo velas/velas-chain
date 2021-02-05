@@ -1710,6 +1710,13 @@ pub fn process_show_validators(
                 .unwrap_or_else(|| unknown_version.clone()),
         );
     }
+    let majority_count = vote_accounts
+        .current
+        .iter()
+        .filter(|v| {
+            v.activated_stake >= solana_stake_program::stake_state::MIN_STAKERS_TO_BE_MAJORITY
+        })
+        .count() as u64;
 
     let total_active_stake = vote_accounts
         .current
@@ -1775,6 +1782,7 @@ pub fn process_show_validators(
     }
 
     let cli_validators = CliValidators {
+        majority_count,
         total_active_stake,
         total_current_stake,
         total_delinquent_stake,

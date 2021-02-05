@@ -22,7 +22,15 @@ use solana_sdk::{
 use solana_vote_program::vote_state::{VoteState, VoteStateVersions};
 use std::{collections::HashSet, convert::TryFrom};
 
-pub const MIN_DELEGATE_STAKE_AMOUNT: u64 = solana_sdk::native_token::sol_to_lamports_u64(100_000);
+/// Minimal amount for delegate to create stake account. = 10k
+pub const MIN_DELEGATE_STAKE_AMOUNT: u64 = solana_sdk::native_token::sol_to_lamports_u64(10_000);
+
+/// Amount of stake to be in majority = 1M
+pub const MIN_STAKERS_TO_BE_MAJORITY: u64 =
+    solana_sdk::native_token::sol_to_lamports_u64(1_000_000);
+
+/// Number of stakers with lamports more than 1M, to start filtering = 19
+pub const NUM_MAJOR_STAKERS_FOR_FILTERING: usize = 19;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Copy, AbiExample)]
 #[allow(clippy::large_enum_variant)]

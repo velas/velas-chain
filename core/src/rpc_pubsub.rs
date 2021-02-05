@@ -513,7 +513,7 @@ mod tests {
     };
     use solana_stake_program::{
         self, stake_instruction,
-        stake_state::{Authorized, Lockup, StakeAuthorize, StakeState},
+        stake_state::{Authorized, Lockup, StakeAuthorize, StakeState, MIN_DELEGATE_STAKE_AMOUNT},
     };
     use solana_vote_program::vote_transaction;
     use std::{
@@ -689,7 +689,7 @@ mod tests {
             genesis_config,
             mint_keypair: alice,
             ..
-        } = create_genesis_config(10_000);
+        } = create_genesis_config(10_000 + MIN_DELEGATE_STAKE_AMOUNT);
 
         let new_stake_authority = solana_sdk::pubkey::new_rand();
         let stake_authority = Keypair::new();
@@ -727,7 +727,12 @@ mod tests {
             }),
         );
 
-        let tx = system_transaction::transfer(&alice, &from.pubkey(), 51, blockhash);
+        let tx = system_transaction::transfer(
+            &alice,
+            &from.pubkey(),
+            51 + MIN_DELEGATE_STAKE_AMOUNT,
+            blockhash,
+        );
         process_transaction_and_notify(&bank_forks, &tx, &rpc.subscriptions, 1).unwrap();
 
         let authorized = Authorized::auto(&stake_authority.pubkey());
@@ -736,7 +741,7 @@ mod tests {
             &stake_account.pubkey(),
             &authorized,
             &Lockup::default(),
-            51,
+            51 + MIN_DELEGATE_STAKE_AMOUNT,
         );
         let message = Message::new(&ixs, Some(&from.pubkey()));
         let tx = Transaction::new(&[&from, &stake_account], message, blockhash);
@@ -760,7 +765,7 @@ mod tests {
                    "context": { "slot": 1 },
                    "value": {
                        "owner": stake_program_id.to_string(),
-                       "lamports": 51,
+                       "lamports": 51 + MIN_DELEGATE_STAKE_AMOUNT,
                        "data": bs58::encode(expected_data).into_string(),
                        "executable": false,
                        "rentEpoch": 0,

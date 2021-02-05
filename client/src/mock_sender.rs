@@ -12,6 +12,7 @@ use solana_sdk::{
     signature::Signature,
     transaction::{self, Transaction, TransactionError},
 };
+use solana_stake_program::stake_state::MIN_DELEGATE_STAKE_AMOUNT;
 use solana_transaction_status::TransactionStatus;
 use solana_version::Version;
 use std::{collections::HashMap, sync::RwLock};
@@ -54,7 +55,7 @@ impl RpcSender for MockSender {
             })?,
             RpcRequest::GetBalance => serde_json::to_value(Response {
                 context: RpcResponseContext { slot: 1 },
-                value: Value::Number(Number::from(50)),
+                value: Value::Number(Number::from(MIN_DELEGATE_STAKE_AMOUNT + 400)),
             })?,
             RpcRequest::GetRecentBlockhash => serde_json::to_value(Response {
                 context: RpcResponseContext { slot: 1 },
