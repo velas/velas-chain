@@ -106,7 +106,7 @@ impl EvmProcessor {
                 }
                 account.lamports -= lamports;
                 evm_state_account.lamports += lamports;
-                executor.with_executor(|e| e.deposit(ether_address, gweis));
+                executor.with_executor(|e| e.state_mut().deposit(ether_address, gweis));
             }
             EvmInstruction::EvmBigTransaction(big_tx) => {
                 let accounts_iter = &mut keyed_accounts.iter();

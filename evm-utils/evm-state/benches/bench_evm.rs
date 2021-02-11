@@ -44,14 +44,14 @@ fn criterion_benchmark(c: &mut Criterion) {
         }
 
         let mut executor =
-            Executor::with_config(state, evm::Config::istanbul(), usize::MAX, 0);
+            Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), 0);
 
         let exit_reason = executor.with_executor(|executor| {
             executor.transact_create(
                 contract,
                 U256::zero(),
                 code.clone(),
-                usize::max_value(),
+                u64::max_value(),
             )
         });
         assert!(matches!(
@@ -68,7 +68,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     contract_address,
                     U256::zero(),
                     data.to_vec(),
-                    usize::MAX,
+                    u64::max_value(),
                 )
             }));
 
@@ -87,12 +87,12 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut executor = Executor::with_config(
             state.clone(),
             evm::Config::istanbul(),
-            usize::MAX,
+            u64::max_value(),
             0,
         );
 
         let exit_reason = executor.with_executor(|executor| {
-            executor.transact_create(contract, U256::zero(), code.clone(), usize::MAX)
+            executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
         });
         assert!(matches!(
             exit_reason,
@@ -106,7 +106,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), evm::Config::istanbul(), usize::MAX, 0);
+                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), 0);
 
             let exit_reason = black_box(executor.with_executor(|executor| {
                 executor.transact_call(
@@ -114,7 +114,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     contract_address,
                     U256::zero(),
                     data.to_vec(),
-                    usize::MAX,
+                    u64::max_value(),
                 )
             }));
 
@@ -140,9 +140,9 @@ fn criterion_benchmark(c: &mut Criterion) {
                 }
 
                 let mut executor =
-                    Executor::with_config(state.clone(), evm::Config::istanbul(), usize::MAX, 0);
+                    Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), 0);
                 let create_transaction_result = executor.with_executor(|executor| {
-                    executor.transact_create(contract, U256::zero(), code.clone(), usize::MAX)
+                    executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
                 });
                 assert!(matches!(
                     create_transaction_result,
@@ -167,7 +167,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     let mut executor = Executor::with_config(
                         state.clone(),
                         evm::Config::istanbul(),
-                        usize::MAX,
+                        u64::max_value(),
                         0,
                     );
 
@@ -182,7 +182,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                                     contract,
                                     U256::zero(),
                                     data.to_vec(),
-                                    usize::MAX,
+                                    u64::max_value(),
                                 )
                             }));
                         assert!(matches!(
@@ -207,10 +207,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         state.freeze();
 
         let mut executor =
-            Executor::with_config(state.clone(), evm::Config::istanbul(), usize::MAX, 0);
+            Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), 0);
 
         let exit_reason = executor.with_executor(|executor| {
-            executor.transact_create(contract, U256::zero(), code.clone(), usize::MAX)
+            executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
         });
         assert!(matches!(
             exit_reason,
@@ -226,7 +226,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), evm::Config::istanbul(), usize::MAX, 0);
+                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), 0);
 
             let exit_reason = executor.with_executor(|executor| {
                 executor.transact_call(
@@ -234,7 +234,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     contract_address,
                     U256::zero(),
                     data.to_vec(),
-                    usize::MAX,
+                    u64::max_value(),
                 )
             });
 

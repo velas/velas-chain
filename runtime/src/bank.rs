@@ -2945,7 +2945,7 @@ impl Bank {
         let mut evm_executor = evm_state::Executor::with_config(
             evm_state,
             evm_state::Config::istanbul(),
-            usize::MAX,
+            u64::max_value(),
             self.slot(),
         );
 
