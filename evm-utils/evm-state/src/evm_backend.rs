@@ -1,7 +1,6 @@
 use crate::EvmState;
 use evm::backend::{Apply, Backend, Basic};
 use primitive_types::{H160, H256, U256};
-use sha3::{Digest, Keccak256};
 
 use crate::types::MemoryVicinity;
 
@@ -131,20 +130,6 @@ impl Backend for EvmBackend {
         }
     }
 
-    fn code_hash(&self, address: H160) -> H256 {
-        self.evm_state
-            .get_account(address)
-            .map(|v| H256::from_slice(Keccak256::digest(&v.code).as_slice()))
-            .unwrap_or_else(|| H256::from_slice(Keccak256::digest(&[]).as_slice()))
-    }
-
-    fn code_size(&self, address: H160) -> usize {
-        self.evm_state
-            .get_account(address)
-            .map(|v| v.code.len())
-            .unwrap_or(0)
-    }
-
     fn code(&self, address: H160) -> Vec<u8> {
         self.evm_state
             .get_account(address)
@@ -156,6 +141,10 @@ impl Backend for EvmBackend {
         self.evm_state
             .get_storage(address, index)
             .unwrap_or_default()
+    }
+
+    fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
+        Some(self.storage(address, index))
     }
 }
 

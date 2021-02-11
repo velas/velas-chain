@@ -413,7 +413,7 @@ fn call(
     meta: JsonRpcRequestProcessor,
     tx: RPCTransaction,
     _block: Option<String>,
-) -> Result<(evm_state::ExitReason, Vec<u8>, usize), Error> {
+) -> Result<(evm_state::ExitReason, Vec<u8>, u64), Error> {
     let caller = tx.from.map(|a| a.0).unwrap_or_default();
 
     let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
@@ -424,7 +424,6 @@ fn call(
         .unwrap_or_else(|| 300000000.into())
         .try_into()
         .map_err(|_| Error::InvalidParams)?;
-    let gas_limit = gas_limit as usize;
 
     let bank = meta.bank(DEFAULT_COMITTMENT);
     let evm_state = bank

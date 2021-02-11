@@ -256,6 +256,30 @@ mod tests {
     }
 
     #[test]
+    fn hex_deserialize_pritmitive_types() {
+        assert_eq!(
+            U256::from(0x7bb9369dcbaec019 as u64),
+            serde_json::from_str::<Hex<U256>>("\"0x7bb9369dcbaec019\"")
+                .unwrap()
+                .0
+        );
+
+        assert_eq!(
+            H256::from_slice(
+                b"\x11\x22\x33\x44\x55\x66\x77\x88\x99\x00\
+            \x11\x22\x33\x44\x55\x66\x77\x88\x99\x00\
+            \x11\x22\x33\x44\x55\x66\x77\x88\x99\x00\
+            \x11\x22"
+            ),
+            serde_json::from_str::<Hex<H256>>(
+                "\"0x1122334455667788990011223344556677889900112233445566778899001122\""
+            )
+            .unwrap()
+            .0
+        );
+    }
+
+    #[test]
     fn bytes_single_digit() {
         assert_eq!("\"0x01\"", serde_json::to_string(&Bytes(vec![1])).unwrap());
     }

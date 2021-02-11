@@ -155,7 +155,7 @@ impl TransactionAction {
                 rlp.append(&nonce);
 
                 Address::from(H256::from_slice(
-                    Keccak256::digest(rlp.out().as_slice()).as_slice(),
+                    Keccak256::digest(rlp.out().as_ref()).as_slice(),
                 ))
             }
         }

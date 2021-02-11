@@ -1,3 +1,4 @@
+use evm::executor::{MemoryStackState, StackSubstateMetadata};
 pub use evm::{
     backend::{Apply, ApplyBackend, Backend, Log},
     executor::StackExecutor,
@@ -50,7 +51,7 @@ impl FromKey for secp256k1::SecretKey {
 pub struct Executor {
     evm: EvmBackend,
     config: Config,
-    used_gas: usize,
+    used_gas: u64,
 }
 
 impl fmt::Debug for Executor {
@@ -62,12 +63,7 @@ impl fmt::Debug for Executor {
 }
 
 impl Executor {
-    pub fn with_config(
-        state: EvmState,
-        config: Config,
-        gas_limit: usize,
-        block_number: u64,
-    ) -> Self {
+    pub fn with_config(state: EvmState, config: Config, gas_limit: u64, block_number: u64) -> Self {
         let vicinity = MemoryVicinity {
             block_gas_limit: gas_limit.into(),
             block_number: block_number.into(),
@@ -88,8 +84,10 @@ impl Executor {
 
         self.evm.tx_info.origin = caller;
         self.evm.tx_info.gas_price = evm_tx.gas_price;
-        let gas_limit = self.evm.block_gas_limit().as_usize() - self.used_gas;
-        let mut executor = StackExecutor::new(&self.evm, gas_limit, &self.config);
+        let gas_limit = self.evm.block_gas_limit().as_u64() - self.used_gas;
+        let metadata = StackSubstateMetadata::new(gas_limit, &self.config);
+        let state = MemoryStackState::new(metadata, &self.evm);
+        let mut executor = StackExecutor::new(state, &self.config);
         let result = match evm_tx.action {
             TransactionAction::Call(addr) => {
                 debug!(
@@ -101,7 +99,7 @@ impl Executor {
                     addr,
                     evm_tx.value,
                     evm_tx.input.clone(),
-                    evm_tx.gas_limit.as_usize(),
+                    evm_tx.gas_limit.as_u64(),
                 )
             }
             TransactionAction::Create => {
@@ -115,7 +113,7 @@ impl Executor {
                         caller,
                         evm_tx.value,
                         evm_tx.input.clone(),
-                        evm_tx.gas_limit.as_usize(),
+                        evm_tx.gas_limit.as_u64(),
                     ),
                     vec![],
                 )
@@ -123,8 +121,8 @@ impl Executor {
         };
         let used_gas = executor.used_gas();
 
-        assert!(used_gas + self.used_gas <= self.evm.tx_info.block_gas_limit.as_usize());
-        let (updates, logs) = executor.deconstruct();
+        assert!(used_gas + self.used_gas <= self.evm.tx_info.block_gas_limit.as_u64());
+        let (updates, logs) = executor.into_state().deconstruct();
         self.evm.apply(updates, false);
         self.register_tx_receipt(evm_tx, used_gas.into(), logs, result.clone());
         self.used_gas += used_gas;
@@ -136,19 +134,23 @@ impl Executor {
     /// Usefull for testing and transfering tokens from evm to solana and back.
     pub fn with_executor<F, U>(&mut self, func: F) -> U
     where
-        F: FnOnce(&mut StackExecutor<'_, '_, EvmBackend>) -> U,
+        F: for<'a> FnOnce(&mut StackExecutor<'a, MemoryStackState<'a, 'a, EvmBackend>>) -> U,
     {
-        let gas_limit = self.evm.block_gas_limit().as_usize() - self.used_gas;
-        let mut executor = StackExecutor::new(&self.evm, gas_limit, &self.config);
-        let result = func(&mut executor);
-        let used_gas = executor.used_gas();
-        let (updates, _logs) = executor.deconstruct();
-        self.used_gas += used_gas;
+        let ((updates, _logs), result) = {
+            let gas_limit = self.evm.block_gas_limit().as_u64() - self.used_gas;
+            let metadata = StackSubstateMetadata::new(gas_limit, &self.config);
+            let state = MemoryStackState::new(metadata, &self.evm);
+            let mut executor = StackExecutor::new(state, &self.config);
+            let result = func(&mut executor);
+            // let used_gas = executor.used_gas();
+            let state = executor.into_state();
+            (state.deconstruct(), result)
+        };
         self.evm.apply(updates, false);
         result
     }
 
-    pub fn used_gas(&self) -> usize {
+    pub fn used_gas(&self) -> u64 {
         self.used_gas
     }
 
@@ -300,7 +302,7 @@ mod tests {
         backend.freeze();
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(backend.clone(), config, usize::max_value(), 0);
+        let mut executor = Executor::with_config(backend.clone(), config, u64::max_value(), 0);
 
         let exit_reason = match executor.with_executor(|e| {
             e.create(
@@ -364,7 +366,7 @@ mod tests {
         state = state.try_fork(slot).expect("Unable to fork EVM state");
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
+        let mut executor = Executor::with_config(state.clone(), config, u64::max_value(), 0);
         let key = H256::random();
         let size = 100;
         let data = vec![0, 1, 2, 3];
@@ -377,7 +379,7 @@ mod tests {
         state = state.try_fork(slot).expect("Unable to fork EVM state");
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
+        let mut executor = Executor::with_config(state.clone(), config, u64::max_value(), 0);
         executor.publish_data(key, 0, &data).unwrap();
 
         let patch = executor.deconstruct();
@@ -387,7 +389,7 @@ mod tests {
         state = state.try_fork(slot).expect("Unable to fork EVM state");
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state.clone(), config, usize::max_value(), 0);
+        let mut executor = Executor::with_config(state.clone(), config, u64::max_value(), 0);
         executor
             .publish_data(key, data.len() as u64, &data)
             .unwrap();
@@ -400,7 +402,7 @@ mod tests {
         state = state.try_fork(slot).expect("Unable to fork EVM state");
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state, config, usize::max_value(), 0);
+        let mut executor = Executor::with_config(state, config, u64::max_value(), 0);
         let result = executor.take_big_tx(key).unwrap();
         assert_eq!(&result[..data.len()], &*data);
 
