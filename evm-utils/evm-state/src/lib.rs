@@ -145,7 +145,7 @@ impl Executor {
     /// Usefull for testing and transfering tokens from evm to solana and back.
     pub fn with_executor<F, U>(&mut self, func: F) -> U
     where
-        F: for<'a> FnOnce(&mut StackExecutor<'a, MemoryStackState<'a, 'a, EvmBackend>>) -> U,
+        F: for<'a> FnOnce(&mut StackExecutor<'a, 'a, MemoryStackState<'a, 'a, EvmBackend>>) -> U,
     {
         let ((updates, _logs), result) = {
             let gas_limit = self.evm.block_gas_limit().as_u64() - self.used_gas;

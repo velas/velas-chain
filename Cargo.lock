@@ -1202,6 +1202,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethabi"
+version = "13.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53d4e679d6864bc26210feb5cf044e245741cd9d7701b35c00440a6e84d61399"
+dependencies = [
+ "anyhow",
+ "ethereum-types",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha3 0.9.1",
+ "thiserror",
+ "uint 0.9.0",
+]
+
+[[package]]
 name = "ethbloom"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1248,8 +1264,6 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b46f945d7548bea2affc1a48168f6d7e832bae914e0d90627a2ea2a7ba63001"
 dependencies = [
  "ethereum",
  "evm-core",
@@ -1299,8 +1313,6 @@ dependencies = [
 [[package]]
 name = "evm-core"
 version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc372feb219651f8ae872e6ec0f84b346053c058bd0e8408b1f44a2a796bfecd"
 dependencies = [
  "parity-scale-codec",
  "primitive-types 0.8.0",
@@ -1310,8 +1322,6 @@ dependencies = [
 [[package]]
 name = "evm-gasometer"
 version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5737059b7a570b3e28a0126b02e0e36e218cc828b29dddbbae73d0b97fce1e0a"
 dependencies = [
  "evm-core",
  "evm-runtime",
@@ -1339,8 +1349,6 @@ dependencies = [
 [[package]]
 name = "evm-runtime"
 version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95726118dbc5f76ed1ee300e685950e58e52a1c4db454a7635aba636c7002186"
 dependencies = [
  "evm-core",
  "primitive-types 0.8.0",
@@ -4891,13 +4899,16 @@ version = "0.1.0"
 dependencies = [
  "assert_matches",
  "bincode",
+ "ethabi",
  "evm-state",
  "hex",
  "log 0.4.13",
+ "once_cell",
  "primitive-types 0.8.0",
  "serde",
  "sha3 0.9.1",
  "simple_logger",
+ "snafu",
  "solana-logger 1.5.3",
  "solana-sdk",
 ]

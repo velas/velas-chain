@@ -1,3 +1,6 @@
+mod account_structure;
+mod precompiles;
+
 pub mod instructions;
 pub mod processor;
 
@@ -14,8 +17,16 @@ pub mod scope {
 
         const LAMPORTS_TO_GWEI_PRICE: u64 = 1_000_000_000; // Lamports is 1/10^9 of SOLs while GWEI is 1/10^18
 
+        // Convert lamports to gwei
         pub fn lamports_to_gwei(lamports: u64) -> U256 {
             U256::from(lamports) * U256::from(LAMPORTS_TO_GWEI_PRICE)
+        }
+
+        // Convert gweis back to lamports, return change as second element.
+        pub fn gweis_to_lamports(gweis: U256) -> (u64, U256) {
+            let lamports = U256::from(gweis) / U256::from(LAMPORTS_TO_GWEI_PRICE);
+            let gweis = U256::from(gweis) % U256::from(LAMPORTS_TO_GWEI_PRICE);
+            (lamports.as_u64(), gweis)
         }
     }
     pub mod solana {
