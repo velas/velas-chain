@@ -5595,6 +5595,7 @@ dependencies = [
  "crossbeam-channel 0.4.4",
  "dashmap",
  "dir-diff",
+ "evm-rpc",
  "evm-state",
  "flate2",
  "fnv",
@@ -7156,9 +7157,10 @@ dependencies = [
 [[package]]
 name = "triedb"
 version = "0.5.0"
+source = "git+https://github.com/velas/triedb.git?branch=chore/bump-deps#197dbaaa8d5e8a9011ac97aed15ff144f745fca5"
 dependencies = [
  "primitive-types",
- "rlp 0.4.6",
+ "rlp",
  "rocksdb",
  "sha3 0.9.1",
  "thiserror",

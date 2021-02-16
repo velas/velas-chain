@@ -3,29 +3,27 @@ pub use evm::{
     backend::{Apply, ApplyBackend, Backend, Log},
     executor::StackExecutor,
     Config, Context, Handler, Transfer,
+    {ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed},
 };
-pub use evm::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed};
-use log::{debug, error};
+
 pub use primitive_types::{H256, U256};
 pub use secp256k1::rand;
 use snafu::ensure;
 
-mod error;
-mod layered_backend;
-
 pub mod transactions;
 pub mod types;
 
-use error::*;
-pub use evm_backend::*;
-pub use layered_backend::Storage;
-pub use layered_backend::*;
 pub use transactions::*;
 pub use types::*;
+pub use {evm_backend::EvmBackend, layered_backend::EvmState, storage::Storage};
 
+mod error;
 mod evm_backend;
-mod mb_value;
+mod layered_backend;
 mod storage;
+
+use error::*;
+use log::*;
 
 use std::fmt;
 
@@ -174,66 +172,60 @@ impl Executor {
     }
 
     pub fn get_tx_receipt_by_hash(&mut self, tx: H256) -> Option<TransactionReceipt> {
-        self.evm.evm_state.get_tx_receipt_by_hash(tx)
+        self.evm.evm_state.get_transaction_receipt(tx)
     }
 
     pub fn take_big_tx(&mut self, key: H256) -> Result<Vec<u8>, Error> {
-        let big_tx_storage = if let Some(big_tx_storage) = self.evm.evm_state.get_big_tx(key) {
-            debug!("data at get = {:?}", big_tx_storage.tx_chunks);
-            big_tx_storage
+        if let Some(transaction) = self.evm.evm_state.take_transaction(key) {
+            debug!("Data at {} = {:?}", key, transaction);
+            Ok(transaction)
         } else {
-            return DataNotFound { key }.fail();
-        };
-        self.evm.evm_state.big_transactions.remove(key);
-
-        Ok(big_tx_storage.tx_chunks)
+            DataNotFound { key }.fail()
+        }
     }
 
     pub fn allocate_store(&mut self, key: H256, size: u64) -> Result<(), Error> {
-        if self.evm.evm_state.get_big_tx(key).is_some() || size > MAX_TX_LEN {
-            error!("Double allocation for key = {:?}", key);
+        if size > MAX_TX_LEN {
+            error!(
+                "Requested store size {} is greater than allowed {}",
+                size, MAX_TX_LEN
+            );
             return AllocationError { key, size }.fail();
-        };
+        }
+        if self.evm.evm_state.get_transaction(key).is_some() {
+            error!("Double allocation for key {:?}", key);
+            return AllocationError { key, size }.fail();
+        }
 
-        let big_tx_storage = BigTransactionStorage {
-            tx_chunks: vec![0; size as usize],
-        };
+        let store = vec![0; size as usize];
 
-        self.evm
-            .evm_state
-            .big_transactions
-            .insert(key, big_tx_storage);
+        self.evm.evm_state.set_transaction(key, store);
 
         Ok(())
     }
 
     pub fn publish_data(&mut self, key: H256, offset: u64, data: &[u8]) -> Result<(), Error> {
-        let mut big_tx_storage = if let Some(big_tx_storage) = self.evm.evm_state.get_big_tx(key) {
-            let max_len = big_tx_storage.tx_chunks.len() as u64;
-            let data_end = offset.saturating_add(data.len() as u64);
-            // check offset to avoid integer overflow
-            if data_end > max_len {
-                return OutOfBound {
-                    key,
-                    offset,
-                    size: max_len,
-                }
-                .fail();
+        let store = match self.evm.evm_state.get_transaction_mut(key) {
+            Some(store) => store,
+            None => {
+                error!("Failed to write without allocation = {:?}", key);
+                return FailedToWrite { key, offset }.fail();
             }
-            big_tx_storage
-        } else {
-            error!("Failed to write without allocation = {:?}", key);
-            return FailedToWrite { key, offset }.fail();
         };
 
+        let max_len = store.len() as u64;
+        let data_end = offset.saturating_add(data.len() as u64);
+        // Check offset to avoid integer overflow
+        if data_end > max_len {
+            return OutOfBound {
+                key,
+                offset,
+                size: max_len,
+            }
+            .fail();
+        }
         let offset = offset as usize;
-        big_tx_storage.tx_chunks[offset..offset + data.len()].copy_from_slice(data);
-
-        self.evm
-            .evm_state
-            .big_transactions
-            .insert(key, big_tx_storage);
-
+        store[offset..(offset + data.len())].copy_from_slice(data);
         Ok(())
     }
 
@@ -250,27 +242,31 @@ impl Executor {
         let block_num = self.evm.tx_info.block_number.as_u64();
         let tx_hash = tx.signing_hash();
 
-        debug!("Register tx in evm block={}, tx= {}", block_num, tx_hash);
+        debug!("Register tx in EVM block = {}, tx = {}", block_num, tx_hash);
         // TODO: replace by Entry-like api
         let mut hashes = self
             .evm
             .evm_state
-            .get_txs_in_block(block_num)
+            .get_transactions_in_block(block_num)
             .unwrap_or_default();
+
         hashes.push(tx_hash);
 
         let index = hashes.len() as u64;
-        self.evm.evm_state.txs_in_block.insert(block_num, hashes);
 
-        let tx_receipt = TransactionReceipt::new(
-            tx,
-            used_gas,
-            block_num,
-            index,
-            logs.into_iter().collect(),
-            result,
+        // TODO(hrls): self.evm.evm_state.txs_in_block.insert(block_num, hashes);
+
+        self.evm.evm_state.set_transaction_receipt(
+            tx_hash,
+            TransactionReceipt::new(
+                tx,
+                used_gas,
+                block_num,
+                index,
+                logs.into_iter().collect(),
+                result,
+            ),
         );
-        self.evm.evm_state.txs_receipts.insert(tx_hash, tx_receipt);
     }
 
     pub fn deconstruct(self) -> EvmState {
@@ -289,8 +285,6 @@ mod tests {
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
 
-    use tempfile::tempdir;
-
     use super::Executor;
     use super::*;
 
@@ -302,26 +296,12 @@ mod tests {
     #[test]
     fn test_evm_bytecode() {
         let _logger_error = simple_logger::SimpleLogger::new().init();
-        let accounts = ["contract", "caller"];
 
         let code = hex::decode(HELLO_WORLD_CODE).unwrap();
         let data = hex::decode(HELLO_WORLD_ABI).unwrap();
 
-        let tmp_dir = tempdir().unwrap();
-        let mut backend = EvmState::load_from(&tmp_dir, Slot::default()).unwrap();
-
-        for acc in &accounts {
-            let account = name_to_key(acc);
-            let memory = AccountState {
-                ..Default::default()
-            };
-            backend.accounts.insert(account, memory);
-        }
-
-        backend.freeze();
-
-        let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(backend.clone(), config, u64::max_value(), 0);
+        let mut executor =
+            Executor::with_config(EvmState::default(), evm::Config::istanbul(), u64::MAX, 0);
 
         let exit_reason = match executor.with_executor(|e| {
             e.create(
@@ -340,9 +320,10 @@ mod tests {
             exit_reason,
             (ExitReason::Succeed(ExitSucceed::Returned), _)
         ));
+
         let exit_reason = executor.with_executor(|e| {
             e.transact_call(
-                name_to_key("contract"),
+                name_to_key("caller"),
                 name_to_key("contract"),
                 U256::zero(),
                 data.to_vec(),
@@ -356,72 +337,51 @@ mod tests {
             any_other => panic!("Not expected result={:?}", any_other),
         }
 
-        let patch = executor.deconstruct();
-        backend.swap_commit(patch);
+        let mut state = executor.deconstruct();
+        state.apply();
 
-        let contract = backend.get_account(name_to_key("contract"));
-        assert_eq!(
-            &contract.unwrap().code,
-            &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap()
+        let contract = Vec::<u8>::from(
+            state
+                .get_account_state(name_to_key("contract"))
+                .map(|acc| acc.code)
+                .unwrap(),
         );
+
+        assert_eq!(&contract, &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap());
     }
 
     #[test]
     fn test_freeze_fork_save_storage() {
         let _ = simple_logger::SimpleLogger::new().init();
-        let accounts = ["contract", "caller"];
 
-        let mut slot = Slot::default();
-        let mut state = EvmState::default();
-
-        for acc in &accounts {
-            let account = name_to_key(acc);
-            let memory = AccountState::default();
-            state.accounts.insert(account, memory);
-        }
-
-        state.freeze();
-        slot += 1;
-        state = state.try_fork(slot).expect("Unable to fork EVM state");
-
-        let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state.clone(), config, u64::max_value(), 0);
+        let mut executor =
+            Executor::with_config(EvmState::default(), evm::Config::istanbul(), u64::MAX, 0);
         let key = H256::random();
         let size = 100;
         let data = vec![0, 1, 2, 3];
         executor.allocate_store(key, size).unwrap();
 
-        let patch = executor.deconstruct();
-        state.swap_commit(patch);
-        state.freeze();
-        slot += 1;
-        state = state.try_fork(slot).expect("Unable to fork EVM state");
+        let mut state = executor.deconstruct();
+        state.apply();
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state.clone(), config, u64::max_value(), 0);
+        let mut executor = Executor::with_config(state, config, u64::MAX, 0);
         executor.publish_data(key, 0, &data).unwrap();
 
-        let patch = executor.deconstruct();
-        state.swap_commit(patch);
-        state.freeze();
-        slot += 1;
-        state = state.try_fork(slot).expect("Unable to fork EVM state");
+        let mut state = executor.deconstruct();
+        state.apply();
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state.clone(), config, u64::max_value(), 0);
+        let mut executor = Executor::with_config(state, config, u64::MAX, 0);
         executor
             .publish_data(key, data.len() as u64, &data)
             .unwrap();
 
-        let patch = executor.deconstruct();
-
-        state.swap_commit(patch);
-        state.freeze();
-        slot += 1;
-        state = state.try_fork(slot).expect("Unable to fork EVM state");
+        let mut state = executor.deconstruct();
+        state.apply();
 
         let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state, config, u64::max_value(), 0);
+        let mut executor = Executor::with_config(state, config, u64::MAX, 0);
         let result = executor.take_big_tx(key).unwrap();
         assert_eq!(&result[..data.len()], &*data);
 

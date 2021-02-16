@@ -69,6 +69,7 @@ pub(crate) struct DeserializableVersionedBank {
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) message_processor: MessageProcessor,
+    pub(crate) evm_state_root: evm_rpc::Hex<evm_state::H256>,
 }
 
 impl Into<BankFieldsToDeserialize> for DeserializableVersionedBank {
@@ -105,6 +106,7 @@ impl Into<BankFieldsToDeserialize> for DeserializableVersionedBank {
             stakes: self.stakes,
             epoch_stakes: self.epoch_stakes,
             is_delta: self.is_delta,
+            evm_state_root: self.evm_state_root.0,
         }
     }
 }
@@ -145,6 +147,7 @@ pub(crate) struct SerializableVersionedBank<'a> {
     pub(crate) epoch_stakes: &'a HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) message_processor: MessageProcessor,
+    pub(crate) evm_state_root: evm_rpc::Hex<evm_state::H256>,
 }
 
 impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedBank<'a> {
@@ -186,6 +189,7 @@ impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedB
             epoch_stakes: rhs.epoch_stakes,
             is_delta: rhs.is_delta,
             message_processor: new(),
+            evm_state_root: evm_rpc::Hex(rhs.evm_state_root),
         }
     }
 }

@@ -568,6 +568,7 @@ pub(crate) struct BankFieldsToDeserialize {
     pub(crate) stakes: Stakes,
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
+    pub(crate) evm_state_root: evm_state::H256,
 }
 
 // Bank's common fields shared by all supported snapshot versions for serialization.
@@ -607,6 +608,7 @@ pub(crate) struct BankFieldsToSerialize<'a> {
     pub(crate) stakes: &'a RwLock<Stakes>,
     pub(crate) epoch_stakes: &'a HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
+    pub(crate) evm_state_root: evm_state::H256,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -990,8 +992,7 @@ impl Bank {
             .evm_state
             .read()
             .expect("parent evm state was poisoned")
-            .try_fork(slot)
-            .expect("unable to fork evm state from parent bank right after freezing it");
+            .fork(slot);
 
         let mut new = Bank {
             rc,
@@ -1267,6 +1268,7 @@ impl Bank {
             stakes: &self.stakes,
             epoch_stakes: &self.epoch_stakes,
             is_delta: self.is_delta.load(Relaxed),
+            evm_state_root: self.evm_state.read().unwrap().root,
         }
     }
 
@@ -2034,7 +2036,8 @@ impl Bank {
         self.evm_state
             .write()
             .expect("evm state was poisoned")
-            .freeze();
+            .apply();
+
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
@@ -3239,10 +3242,8 @@ impl Bank {
         let overwritten_vote_accounts =
             self.update_cached_accounts(txs, iteration_order, executed, loaded_accounts);
 
-        self.evm_state
-            .write()
-            .expect("bank evm state was poisoned")
-            .swap_commit(patch);
+        *self.evm_state.write().expect("bank evm state was poisoned") = patch;
+
         // once committed there is no way to unroll
         write_time.stop();
         debug!("store: {}us txs_len={}", write_time.as_us(), txs.len(),);
@@ -4966,7 +4967,10 @@ fn is_simple_vote_transaction(transaction: &Transaction) -> bool {
         if program_pubkey == solana_vote_program::id() {
             if let Ok(vote_instruction) = limited_deserialize::<VoteInstruction>(&instruction.data)
             {
-                return matches!(vote_instruction, VoteInstruction::Vote(_) | VoteInstruction::VoteSwitch(_, _));
+                return matches!(
+                    vote_instruction,
+                    VoteInstruction::Vote(_) | VoteInstruction::VoteSwitch(_, _)
+                );
             }
         }
     }

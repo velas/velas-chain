@@ -1,8 +1,9 @@
-use crate::EvmState;
 use evm::backend::{Apply, Backend, Basic};
 use primitive_types::{H160, H256, U256};
 
-use crate::types::MemoryVicinity;
+use log::*;
+
+use crate::{types::*, EvmState};
 
 pub struct EvmBackend {
     pub(crate) evm_state: EvmState,
@@ -18,7 +19,7 @@ impl EvmBackend {
         &self.tx_info
     }
 
-    pub fn apply<A, I>(&mut self, values: A, delete_empty: bool)
+    pub fn apply<A, I>(&mut self, values: A, _delete_empty: bool)
     where
         A: IntoIterator<Item = Apply<I>>,
         I: IntoIterator<Item = (H256, H256)>,
@@ -32,48 +33,36 @@ impl EvmBackend {
                     storage,
                     reset_storage: _,
                 } => {
-                    log::debug!("Apply::Modify address = {}, basic = {:?}", address, basic);
-                    // TODO: rollback on insert fail.
-                    // TODO: clear account storage on delete.
-                    let is_empty = {
-                        let mut account = self.evm_state.get_account(address).unwrap_or_default();
-                        account.balance = basic.balance;
-                        account.nonce = basic.nonce;
-                        if let Some(code) = code {
-                            account.code = code;
-                        }
-                        let is_empty_state = account.balance == U256::zero()
-                            && account.nonce == U256::zero()
-                            && account.code.is_empty();
+                    debug!("Apply::Modify address = {}, basic = {:?}", address, basic);
 
-                        self.evm_state.accounts.insert(address, account);
+                    // TODO: Rollback on insert fail.
+                    // TODO: Clear account storage on delete.
 
-                        // TODO: Clear storage on reset_storage = true
-                        // if reset_storage {
-                        // 	account.storage = BTreeMap::new();
-                        // }
+                    let mut account_state = self
+                        .evm_state
+                        .get_account_state(address)
+                        .unwrap_or_default();
 
-                        // TODO: Clear zeros data (H256::default())
+                    account_state.nonce = basic.nonce;
+                    account_state.balance = basic.balance;
 
-                        for (index, value) in storage {
-                            if value == H256::default() {
-                                self.evm_state.accounts_storage.remove((address, index));
-                            } else {
-                                self.evm_state
-                                    .accounts_storage
-                                    .insert((address, index), value);
-                            }
-                        }
-
-                        is_empty_state
-                    };
-
-                    if is_empty && delete_empty {
-                        self.evm_state.accounts.remove(address);
+                    if let Some(code) = code {
+                        account_state.code = code.into();
                     }
+
+                    self.evm_state.ext_storage(address, storage);
+
+                    if !account_state.is_empty() {
+                        self.evm_state.set_account_state(address, account_state);
+                    } else {
+                        self.evm_state.remove_account(address);
+                    }
+
+                    // TODO: Clear storage on reset_storage = true
+                    // TODO: Clear zeros data (H256::default())
                 }
                 Apply::Delete { address } => {
-                    self.evm_state.accounts.remove(address);
+                    self.evm_state.remove_account(address);
                 }
             }
         }
@@ -84,9 +73,11 @@ impl Backend for EvmBackend {
     fn gas_price(&self) -> U256 {
         self.tx_info().gas_price
     }
+
     fn origin(&self) -> H160 {
         self.tx_info().origin
     }
+
     fn block_hash(&self, number: U256) -> H256 {
         if number >= self.tx_info().block_number
             || self.tx_info().block_number - number - U256::one()
@@ -119,22 +110,24 @@ impl Backend for EvmBackend {
     }
 
     fn exists(&self, address: H160) -> bool {
-        self.evm_state.get_account(address).is_some()
+        self.evm_state.get_account_state(address).is_some()
     }
 
     fn basic(&self, address: H160) -> Basic {
-        let a = self.evm_state.get_account(address).unwrap_or_default();
-        Basic {
-            balance: a.balance,
-            nonce: a.nonce,
-        }
+        let AccountState { balance, nonce, .. } = self
+            .evm_state
+            .get_account_state(address)
+            .unwrap_or_default();
+
+        Basic { balance, nonce }
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
         self.evm_state
-            .get_account(address)
-            .map(|v| v.code)
-            .unwrap_or_default()
+            .get_account_state(address)
+            .map(|account_state| account_state.code)
+            .unwrap_or_else(Code::empty)
+            .into()
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
@@ -151,12 +144,14 @@ impl Backend for EvmBackend {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::EvmBackend;
-    use crate::EvmState;
+    use crate::{EvmBackend, EvmState};
 
     #[test]
     fn check_that_balance_zero_by_default() {
         let evm_backend = EvmBackend::new_from_state(EvmState::default(), Default::default());
-        assert_eq!(evm_backend.basic(H160::random()).balance, U256::from(0));
+        for _ in 0..1000 {
+            let address = H160::random();
+            assert_eq!(evm_backend.basic(address).balance, U256::zero());
+        }
     }
 }

@@ -432,7 +432,7 @@ mod test {
             state
                 .read()
                 .unwrap()
-                .get_account(caller_address)
+                .get_account_state(caller_address)
                 .map(|account| account.nonce),
             None,
         );
@@ -440,7 +440,7 @@ mod test {
             state
                 .read()
                 .unwrap()
-                .get_account(tx_address)
+                .get_account_state(tx_address)
                 .map(|account| account.nonce),
             None,
         );
@@ -466,16 +466,14 @@ mod test {
                 .is_ok());
             println!("cx = {:?}", executor);
 
-            let patch = executor_orig.deconstruct();
-
-            locked.swap_commit(patch);
+            executor_orig.deconstruct().apply();
         }
 
         assert_eq!(
             state
                 .read()
                 .unwrap()
-                .get_account(caller_address)
+                .get_account_state(caller_address)
                 .map(|account| account.nonce),
             Some(1.into())
         );
@@ -483,7 +481,7 @@ mod test {
             state
                 .read()
                 .unwrap()
-                .get_account(tx_address)
+                .get_account_state(tx_address)
                 .map(|account| account.nonce),
             Some(1.into())
         );
@@ -520,17 +518,15 @@ mod test {
                 .is_ok());
             println!("cx = {:?}", executor);
 
-            let patch = executor_orig.deconstruct();
-
-            locked.swap_commit(patch);
+            executor_orig.deconstruct().apply();
         }
 
         let receipt = state
             .read()
             .unwrap()
-            .get_tx_receipt_by_hash(tx_hash)
-            .unwrap()
-            .clone();
+            .get_transaction_receipt(tx_hash)
+            .unwrap();
+
         assert!(matches!(
             receipt.status,
             ExitReason::Succeed(ExitSucceed::Returned)
