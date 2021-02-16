@@ -24,8 +24,8 @@ pub mod scope {
 
         // Convert gweis back to lamports, return change as second element.
         pub fn gweis_to_lamports(gweis: U256) -> (u64, U256) {
-            let lamports = U256::from(gweis) / U256::from(LAMPORTS_TO_GWEI_PRICE);
-            let gweis = U256::from(gweis) % U256::from(LAMPORTS_TO_GWEI_PRICE);
+            let lamports = gweis / U256::from(LAMPORTS_TO_GWEI_PRICE);
+            let gweis = gweis % U256::from(LAMPORTS_TO_GWEI_PRICE);
             (lamports.as_u64(), gweis)
         }
     }

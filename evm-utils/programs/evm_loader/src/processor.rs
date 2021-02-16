@@ -214,7 +214,10 @@ pub fn dummy_call() -> evm::Transaction {
 #[cfg(test)]
 mod test {
     use super::*;
-    use evm_state::transactions::{TransactionAction, TransactionSignature};
+    use evm_state::{
+        transactions::{TransactionAction, TransactionSignature},
+        FromKey,
+    };
     use evm_state::{ExitReason, ExitSucceed};
     use primitive_types::{H160, H256, U256};
     use solana_sdk::keyed_account::KeyedAccount;
@@ -537,13 +540,13 @@ mod test {
 
     #[test]
     fn execute_native_transfer_tx() {
-        let mut executor = evm_state::Executor::with_config(
+        let mut executor_orig = evm_state::Executor::with_config(
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
             0,
         );
-        let mut executor = Some(&mut executor);
+        let mut executor = Some(&mut executor_orig);
         let processor = EvmProcessor::default();
         let user_account = RefCell::new(solana_sdk::account::Account {
             lamports: 1000,
@@ -593,6 +596,262 @@ mod test {
         assert_eq!(
             keyed_accounts[1].try_account_ref_mut().unwrap().owner,
             solana_sdk::system_program::id()
+        );
+
+        let state = executor_orig.deconstruct();
+        assert_eq!(
+            state.get_account(ether_dummy_address).unwrap().balance,
+            crate::scope::evm::lamports_to_gwei(1000)
+        )
+    }
+
+    #[test]
+    fn execute_transfer_to_native_without_needed_account() {
+        let mut executor_orig = evm_state::Executor::with_config(
+            evm_state::EvmState::default(),
+            evm_state::Config::istanbul(),
+            10000000,
+            0,
+        );
+        let mut executor = Some(&mut executor_orig);
+        let processor = EvmProcessor::default();
+        let first_user_account = RefCell::new(solana_sdk::account::Account {
+            lamports: 1000,
+            data: vec![],
+            owner: crate::ID,
+            executable: false,
+            rent_epoch: 0,
+        });
+        let user_id = Pubkey::new_unique();
+        let user_keyed_account = KeyedAccount::new(&user_id, true, &first_user_account);
+
+        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account, user_keyed_account];
+        let mut rand = evm_state::rand::thread_rng();
+        let ether_sc = evm::SecretKey::new(&mut rand);
+        let ether_dummy_address = ether_sc.to_address();
+
+        let lamports_before = keyed_accounts[0].try_account_ref_mut().unwrap().lamports;
+
+        let lamports_to_send = 1000;
+        let lamports_to_send_back = 300;
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::SwapNativeToEther {
+                    lamports: lamports_to_send,
+                    ether_address: ether_dummy_address
+                })
+                .unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_ok());
+        println!("cx = {:?}", executor);
+
+        assert_eq!(
+            keyed_accounts[0].try_account_ref_mut().unwrap().lamports,
+            lamports_before + lamports_to_send
+        );
+        assert_eq!(keyed_accounts[1].try_account_ref_mut().unwrap().lamports, 0);
+
+        let mut state = executor_orig.deconstruct();
+        assert_eq!(
+            state.get_account(ether_dummy_address).unwrap().balance,
+            crate::scope::evm::lamports_to_gwei(lamports_to_send)
+        );
+
+        // Transfer back
+
+        let second_user_account = RefCell::new(solana_sdk::account::Account {
+            lamports: 0,
+            data: vec![],
+            owner: crate::ID,
+            executable: false,
+            rent_epoch: 0,
+        });
+        let user_id = Pubkey::new_unique();
+        let user_keyed_account = KeyedAccount::new(&user_id, true, &second_user_account);
+
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account, user_keyed_account];
+
+        let fake_user_id = Pubkey::new_unique();
+
+        let tx_call = evm::UnsignedTransaction {
+            nonce: 1.into(),
+            gas_price: 1.into(),
+            gas_limit: 300000.into(),
+            action: TransactionAction::Call(*precompiles::ETH_TO_SOL_ADDR),
+            value: crate::scope::evm::lamports_to_gwei(lamports_to_send_back),
+            input: precompiles::ETH_TO_SOL_CODE
+                .abi
+                .encode_input(&[ethabi::Token::FixedBytes(fake_user_id.to_bytes().to_vec())])
+                .unwrap(),
+        };
+
+        let tx_call = tx_call.sign(&ether_sc, None);
+        {
+            let mut executor_orig = evm_state::Executor::with_config(
+                state.clone(),
+                evm_state::Config::istanbul(),
+                10000000,
+                0,
+            );
+            let mut executor = Some(&mut executor_orig);
+
+            // Error transaction has no needed account.
+            assert!(processor
+                .process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
+                        .unwrap(),
+                    executor.as_deref_mut()
+                )
+                .is_err());
+            println!("cx = {:?}", executor);
+
+            let patch = executor_orig.deconstruct();
+
+            state.swap_commit(patch);
+        }
+
+        // Nothing should change, because of error
+        assert_eq!(
+            keyed_accounts[0].try_account_ref_mut().unwrap().lamports,
+            lamports_before + lamports_to_send
+        );
+        assert_eq!(first_user_account.borrow().lamports, 0);
+        assert_eq!(second_user_account.borrow().lamports, 0);
+
+        assert_eq!(
+            state.get_account(ether_dummy_address).unwrap().balance,
+            crate::scope::evm::lamports_to_gwei(lamports_to_send)
+        );
+    }
+
+    #[test]
+    fn execute_transfer_roundtrip() {
+        let mut executor_orig = evm_state::Executor::with_config(
+            evm_state::EvmState::default(),
+            evm_state::Config::istanbul(),
+            10000000,
+            0,
+        );
+        let mut executor = Some(&mut executor_orig);
+        let processor = EvmProcessor::default();
+        let first_user_account = RefCell::new(solana_sdk::account::Account {
+            lamports: 1000,
+            data: vec![],
+            owner: crate::ID,
+            executable: false,
+            rent_epoch: 0,
+        });
+        let user_id = Pubkey::new_unique();
+        let user_keyed_account = KeyedAccount::new(&user_id, true, &first_user_account);
+
+        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account, user_keyed_account];
+        let mut rand = evm_state::rand::thread_rng();
+        let ether_sc = evm::SecretKey::new(&mut rand);
+        let ether_dummy_address = ether_sc.to_address();
+
+        let lamports_before = keyed_accounts[0].try_account_ref_mut().unwrap().lamports;
+
+        let lamports_to_send = 1000;
+        let lamports_to_send_back = 300;
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::SwapNativeToEther {
+                    lamports: lamports_to_send,
+                    ether_address: ether_dummy_address
+                })
+                .unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_ok());
+        println!("cx = {:?}", executor);
+
+        assert_eq!(
+            keyed_accounts[0].try_account_ref_mut().unwrap().lamports,
+            lamports_before + lamports_to_send
+        );
+        assert_eq!(keyed_accounts[1].try_account_ref_mut().unwrap().lamports, 0);
+
+        let mut state = executor_orig.deconstruct();
+        assert_eq!(
+            state.get_account(ether_dummy_address).unwrap().balance,
+            crate::scope::evm::lamports_to_gwei(lamports_to_send)
+        );
+
+        // Transfer back
+
+        let second_user_account = RefCell::new(solana_sdk::account::Account {
+            lamports: 0,
+            data: vec![],
+            owner: crate::ID,
+            executable: false,
+            rent_epoch: 0,
+        });
+        let user_id = Pubkey::new_unique();
+        let user_keyed_account = KeyedAccount::new(&user_id, true, &second_user_account);
+
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account, user_keyed_account];
+
+        let tx_call = evm::UnsignedTransaction {
+            nonce: 1.into(),
+            gas_price: 1.into(),
+            gas_limit: 300000.into(),
+            action: TransactionAction::Call(*precompiles::ETH_TO_SOL_ADDR),
+            value: crate::scope::evm::lamports_to_gwei(lamports_to_send_back),
+            input: precompiles::ETH_TO_SOL_CODE
+                .abi
+                .encode_input(&[ethabi::Token::FixedBytes(user_id.to_bytes().to_vec())])
+                .unwrap(),
+        };
+
+        let tx_call = tx_call.sign(&ether_sc, None);
+        {
+            let mut executor_orig = evm_state::Executor::with_config(
+                state.clone(),
+                evm_state::Config::istanbul(),
+                10000000,
+                0,
+            );
+            let mut executor = Some(&mut executor_orig);
+
+            assert!(processor
+                .process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
+                        .unwrap(),
+                    executor.as_deref_mut()
+                )
+                .is_ok());
+            println!("cx = {:?}", executor);
+
+            let patch = executor_orig.deconstruct();
+
+            state.swap_commit(patch);
+        }
+
+        assert_eq!(
+            keyed_accounts[0].try_account_ref_mut().unwrap().lamports,
+            lamports_before + lamports_to_send - lamports_to_send_back
+        );
+        assert_eq!(first_user_account.borrow().lamports, 0);
+        assert_eq!(second_user_account.borrow().lamports, lamports_to_send_back);
+
+        assert_eq!(
+            state.get_account(ether_dummy_address).unwrap().balance,
+            crate::scope::evm::lamports_to_gwei(lamports_to_send - lamports_to_send_back)
         );
     }
 
