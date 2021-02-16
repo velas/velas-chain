@@ -83,6 +83,23 @@ impl Builtin {
     }
 }
 
+//
+// Builtins collection.
+//
+
+pub static BUILTINS_MAP: Lazy<HashMap<H160, Builtin>> = Lazy::new(|| {
+    let mut builtins = HashMap::new();
+
+    assert!(builtins
+        .insert(ETH_TO_SOL.address, ETH_TO_SOL.clone())
+        .is_none());
+    builtins
+});
+
+//
+// Builtins declaration below
+//
+
 static ETH_TO_SOL: Lazy<Builtin> = Lazy::new(|| {
     let abi = Function {
         name: String::from("transferToNative"),
@@ -102,61 +119,61 @@ static ETH_TO_SOL: Lazy<Builtin> = Lazy::new(|| {
     .expect("Serialization of static data should be determenistic and never fail.");
 
     // TOOD: Modify gas left.
-    let implementation: BuiltinImplementation =
-        &|accounts: AccountStructure, inputs: Vec<Token>, gas_left, cx| -> CallResult {
-            ensure!(
-                inputs.len() == 1,
-                ParamsCountMismatch {
-                    expected: 1 as usize,
-                    got: inputs.len()
+    fn implementation(
+        accounts: AccountStructure,
+        inputs: Vec<Token>,
+        gas_left: Option<u64>,
+        cx: &Context,
+    ) -> CallResult {
+        // EVM should ensure that user has enough tokens, before calling this precompile.
+        ensure!(
+            inputs.len() == 1,
+            ParamsCountMismatch {
+                expected: 1 as usize,
+                got: inputs.len()
+            }
+        );
+
+        let bytes = match &inputs[0] {
+            Token::FixedBytes(bytes) if bytes.len() == 32 => bytes,
+            t => {
+                return UnexpectedInput {
+                    expected: String::from("bytes32"),
+                    got: t.to_string(),
                 }
-            );
-
-            let bytes = match &inputs[0] {
-                Token::FixedBytes(bytes) if bytes.len() == 32 => bytes,
-                t => {
-                    return UnexpectedInput {
-                        expected: String::from("bytes32"),
-                        got: t.to_string(),
-                    }
-                    .fail()
-                    .map_err(Into::into)
-                }
-            };
-            let pk = Pubkey::new(&bytes);
-            let account = if let Some(account) = accounts.find_user(&pk) {
-                account
-            } else {
-                return AccountNotFound { public_key: pk }
-                    .fail()
-                    .map_err(Into::into);
-            };
-
-            // TODO: return change back
-            let (lamports, change) = gweis_to_lamports(cx.apparent_value);
-
-            let mut evm_account = accounts
-                .evm_state
-                .try_account_ref_mut()
-                .with_context(|| NativeChainInstructionError {})?;
-
-            let mut account = account
-                .try_account_ref_mut()
-                .with_context(|| NativeChainInstructionError {})?;
-
-            evm_account.lamports -= lamports;
-            account.lamports += lamports;
-            Ok((ExitSucceed::Returned, vec![], 0))
+                .fail()
+                .map_err(Into::into)
+            }
+        };
+        let pk = Pubkey::new(&bytes);
+        let user = if let Some(account) = accounts.find_user(&pk) {
+            account
+        } else {
+            return AccountNotFound { public_key: pk }
+                .fail()
+                .map_err(Into::into);
         };
 
-    Builtin::new(vec![0xb1, 0xd6, 0x92, 0x7a], address, abi, implementation)
-});
+        // TODO: return change back
+        let (lamports, change) = gweis_to_lamports(cx.apparent_value);
 
-pub static BUILTINS_MAP: Lazy<HashMap<H160, Builtin>> = Lazy::new(|| {
-    let mut builtins = HashMap::new();
+        let mut evm_account = accounts
+            .evm
+            .try_account_ref_mut()
+            .with_context(|| NativeChainInstructionError {})?;
 
-    assert!(builtins
-        .insert(ETH_TO_SOL.address, ETH_TO_SOL.clone())
-        .is_none());
-    builtins
+        let mut user_account = user
+            .try_account_ref_mut()
+            .with_context(|| NativeChainInstructionError {})?;
+
+        if lamports > evm_account.lamports {
+            return InsufficientFunds { lamports }.fail().map_err(Into::into);
+        }
+
+        evm_account.lamports -= lamports;
+        user_account.lamports += lamports;
+        Ok((ExitSucceed::Returned, vec![], 0))
+    };
+
+    Builtin::new(vec![0xb1, 0xd6, 0x92, 0x7a], address, abi, &implementation)
 });

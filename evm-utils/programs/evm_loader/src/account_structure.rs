@@ -2,32 +2,32 @@ use std::cell::RefCell;
 
 use solana_sdk::{account::Account, keyed_account::KeyedAccount, pubkey::Pubkey};
 #[derive(Copy, Clone, Debug)]
+/// Helper structure that wrap all solana accounts, that is needed for evm loader.
+/// It will restrict and provide access to needed solana accounts in:
+/// 1. Instruction handlers (ExecuteTx, SwapToEvm, FreeOwnership) - full access to evm state.
+/// 2. Builtin contracts (SwapToNative) - Full access to evm state.
+/// 3. User written evm2native callbacks (SwapERCToSol, CallSolMethod) - Full access to specific users account,
+///   call from users account, read/credit access to evm state. (TBD)
+///
 pub struct AccountStructure<'a> {
-    pub evm_state: &'a KeyedAccount<'a>,
-    pub first_user: &'a KeyedAccount<'a>,
-    pub rest: &'a [KeyedAccount<'a>],
+    pub evm: &'a KeyedAccount<'a>,
+    pub users: &'a [KeyedAccount<'a>],
 }
 
 impl<'a> AccountStructure<'a> {
-    pub fn new(
-        evm_state: &'a KeyedAccount<'a>,
-        users: &'a [KeyedAccount<'a>],
-    ) -> Option<AccountStructure<'a>> {
-        users
-            .split_first()
-            .map(|(first_user, rest)| AccountStructure {
-                evm_state,
-                first_user,
-                rest,
-            })
+    /// Create new account structure, from keyed accounts.
+    pub fn new(evm: &'a KeyedAccount<'a>, users: &'a [KeyedAccount<'a>]) -> AccountStructure<'a> {
+        AccountStructure { evm, users }
     }
 
-    pub fn find_user(&self, key: &Pubkey) -> Option<&KeyedAccount> {
-        if self.first_user.unsigned_key() == key {
-            return Some(&self.first_user);
-        }
+    /// Returns account of the first user.
+    pub fn user(&self) -> Option<&KeyedAccount> {
+        self.users.get(0)
+    }
 
-        for keyed_account in self.rest {
+    /// Find user by its public key.
+    pub fn find_user(&self, key: &Pubkey) -> Option<&KeyedAccount> {
+        for keyed_account in self.users {
             if keyed_account.unsigned_key() == key {
                 return Some(keyed_account);
             }
@@ -36,6 +36,7 @@ impl<'a> AccountStructure<'a> {
         None
     }
 
+    /// Create AccountStructure for testing purposes, with random accounts.
     pub(crate) fn testing<F, U>(num_keys: usize, func: F) -> U
     where
         F: for<'r> Fn(AccountStructure<'r>) -> U,
@@ -63,7 +64,7 @@ impl<'a> AccountStructure<'a> {
             .map(|(user_key, user_account)| KeyedAccount::new(&user_key, false, &user_account))
             .collect();
         let borrowed_keys: &[_] = &keyed_accounts;
-        let structure = AccountStructure::new(&evm_state, borrowed_keys).unwrap();
+        let structure = AccountStructure::new(&evm_state, borrowed_keys);
         func(structure)
     }
 }

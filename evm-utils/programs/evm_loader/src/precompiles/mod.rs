@@ -51,6 +51,12 @@ enum PrecompileErrors {
     #[snafu(display("Failed to find account, account_pk = {}", public_key))]
     AccountNotFound { public_key: Pubkey },
 
+    #[snafu(display(
+        "No enough tokens, on EVM state account, to credit request = {}",
+        lamports
+    ))]
+    InsufficientFunds { lamports: u64 },
+
     #[snafu(display("Native chain Instruction error source = {}", source))]
     NativeChainInstructionError {
         source: solana_sdk::instruction::InstructionError,
@@ -95,7 +101,7 @@ mod test {
     fn call_transfer_to_native_failed_incorrect_addr() {
         let addr = H160::from_str("56454c41532d434841494e000000000053574150").unwrap();
         let input =
-            hex::decode("b1d6927a1111111111111111111111111111111111111111111111111111111111111111")
+            hex::decode("b1d6927a1111111111111111111111111111111111111111111111111111111111111111") // func_hash + 0x111..111 in bytes32
                 .unwrap();
         let cx = Context {
             address: H160::from_str("56454c41532d434841494e000000000053574150").unwrap(),
@@ -119,19 +125,20 @@ mod test {
             caller: H160::from_str("56454c41532d434841494e000000000053574150").unwrap(),
             apparent_value: lamports_to_gwei(1),
         };
-        AccountStructure::testing(0, |structure: AccountStructure| {
+        AccountStructure::testing(0, |accounts: AccountStructure| {
+            let user = accounts.user().unwrap();
             let input = hex::decode(format!(
                 "b1d6927a{}",
-                hex::encode(structure.first_user.unsigned_key().to_bytes())
+                hex::encode(user.unsigned_key().to_bytes())
             ))
             .unwrap();
-            let lamports_before = structure.first_user.lamports().unwrap();
+            let lamports_before = user.lamports().unwrap();
             assert!(matches!(
-                dbg!(entrypoint_static(structure, addr, &input, None, &cx)),
+                dbg!(entrypoint_static(accounts, addr, &input, None, &cx)),
                 Some(Ok((ExitSucceed::Returned, _, 0)))
             ));
 
-            let lamports_after = structure.first_user.lamports().unwrap();
+            let lamports_after = user.lamports().unwrap();
             assert_eq!(lamports_before + 1, lamports_after)
         })
     }
