@@ -1,18 +1,16 @@
+use super::error::*;
+use primitive_types::{H160, H256, H512, U128, U256, U512};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use snafu::ResultExt;
 use std::fmt::{self, LowerHex};
 use std::marker::PhantomData;
 use std::str::FromStr;
-
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
-
-use primitive_types::{H160, H256, H512, U128, U256, U512};
 
 #[derive(Debug, Default, Hash, Clone, PartialEq, Eq)]
 pub struct Hex<T>(pub T);
 
 #[derive(Debug, Clone)]
 pub struct Bytes(pub Vec<u8>);
-
-type Error = (); // TODO: Rewrite errors.
 
 fn format_hex_trimmed<T: LowerHex>(val: &T) -> String {
     let hex_str = format!("{:x}", val);
@@ -22,7 +20,10 @@ fn format_hex_trimmed<T: LowerHex>(val: &T) -> String {
 impl<T: FormatHex> Hex<T> {
     pub fn from_hex(data: &str) -> Result<Self, Error> {
         if &data[0..2] != "0x" {
-            return Err(());
+            return InvalidHexPrefix {
+                input_data: data.to_string(),
+            }
+            .fail();
         }
         T::from_hex(&data[2..]).map(Hex)
     }
@@ -41,7 +42,9 @@ impl FormatHex for usize {
     }
 
     fn from_hex(data: &str) -> Result<Self, Error> {
-        Self::from_str_radix(data, 16).map_err(|_| ())
+        Self::from_str_radix(data, 16).with_context(|| IntError {
+            input_data: data.to_string(),
+        })
     }
 }
 
@@ -50,7 +53,9 @@ impl FormatHex for u8 {
         format_hex_trimmed(self)
     }
     fn from_hex(data: &str) -> Result<Self, Error> {
-        Self::from_str_radix(data, 16).map_err(|_| ())
+        Self::from_str_radix(data, 16).with_context(|| IntError {
+            input_data: data.to_string(),
+        })
     }
 }
 
@@ -59,7 +64,9 @@ impl FormatHex for u16 {
         format_hex_trimmed(self)
     }
     fn from_hex(data: &str) -> Result<Self, Error> {
-        Self::from_str_radix(data, 16).map_err(|_| ())
+        Self::from_str_radix(data, 16).with_context(|| IntError {
+            input_data: data.to_string(),
+        })
     }
 }
 impl FormatHex for u32 {
@@ -67,7 +74,9 @@ impl FormatHex for u32 {
         format_hex_trimmed(self)
     }
     fn from_hex(data: &str) -> Result<Self, Error> {
-        Self::from_str_radix(data, 16).map_err(|_| ())
+        Self::from_str_radix(data, 16).with_context(|| IntError {
+            input_data: data.to_string(),
+        })
     }
 }
 
@@ -76,7 +85,9 @@ impl FormatHex for u64 {
         format_hex_trimmed(self)
     }
     fn from_hex(data: &str) -> Result<Self, Error> {
-        Self::from_str_radix(data, 16).map_err(|_| ())
+        Self::from_str_radix(data, 16).with_context(|| IntError {
+            input_data: data.to_string(),
+        })
     }
 }
 
@@ -85,7 +96,9 @@ impl FormatHex for U128 {
         format_hex_trimmed(self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).map_err(|_| ())
+        FromStr::from_str(&s).with_context(|| BigIntError {
+            input_data: s.to_string(),
+        })
     }
 }
 
@@ -94,7 +107,9 @@ impl FormatHex for U256 {
         format_hex_trimmed(self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).map_err(|_| ())
+        FromStr::from_str(&s).with_context(|| BigIntError {
+            input_data: s.to_string(),
+        })
     }
 }
 
@@ -103,7 +118,9 @@ impl FormatHex for U512 {
         format_hex_trimmed(self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).map_err(|_| ())
+        FromStr::from_str(&s).with_context(|| BigIntError {
+            input_data: s.to_string(),
+        })
     }
 }
 
@@ -112,7 +129,9 @@ impl FormatHex for H512 {
         format!("0x{:x}", self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).map_err(|_| ())
+        FromStr::from_str(&s).with_context(|| HexError {
+            input_data: s.to_string(),
+        })
     }
 }
 
@@ -121,7 +140,9 @@ impl FormatHex for H256 {
         format!("0x{:x}", self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).map_err(|_| ())
+        FromStr::from_str(&s).with_context(|| HexError {
+            input_data: s.to_string(),
+        })
     }
 }
 
@@ -130,7 +151,9 @@ impl FormatHex for H160 {
         format!("0x{:x}", self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).map_err(|_| ())
+        FromStr::from_str(&s).with_context(|| HexError {
+            input_data: s.to_string(),
+        })
     }
 }
 

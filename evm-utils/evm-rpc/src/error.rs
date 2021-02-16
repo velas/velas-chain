@@ -1,46 +1,126 @@
-use hex::FromHexError;
+use jsonrpc_core::Error as JRpcError;
 use rlp::DecoderError;
+use rustc_hex::FromHexError;
+use snafu::Snafu;
 use std::num::ParseIntError;
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
+#[snafu(visibility = "pub")]
 pub enum Error {
-    InvalidParams,
-    HexError,
-    IntError,
-    UnsupportedTrieQuery,
-    ECDSAError,
-    NotFound,
-    RlpError,
-    CallError,
-    UnknownSourceMapJump,
+    #[snafu(display("Failed to decode Hex({})", input_data))]
+    HexError {
+        input_data: String,
+        source: FromHexError,
+    },
+
+    #[snafu(display("Invalid hex prefix in Hex({})", input_data))]
+    InvalidHexPrefix { input_data: String },
+
+    #[snafu(display("Failed to decode Rlp struct {} ({})", struct_name, input_data))]
+    RlpError {
+        struct_name: String,
+        input_data: String,
+        source: DecoderError,
+    },
+
+    #[snafu(display("Failed to parse integer({})", input_data))]
+    IntError {
+        input_data: String,
+        source: ParseIntError,
+    },
+
+    #[snafu(display("Failed to parse BigInt({})", input_data))]
+    BigIntError {
+        input_data: String,
+        source: uint::FromHexError,
+    },
+
+    #[snafu(display("Failed to cast BigInt({}) to short int.", input_data))]
+    BigIntTrimFailed { input_data: String, error: String },
+
+    #[snafu(display("Failed to find block {}", input_data))]
+    BlockNotFound { input_data: String },
+
+    #[snafu(display("Failed to process native chain request"))]
+    NativeRpcError { source: JRpcError },
+
+    #[snafu(display("Failed to execute request, rpc return error"))]
+    ProxyRpcError { source: anyhow::Error },
+
+    #[snafu(display("Error in evm processing layer"))]
+    EvmStateError { source: evm_state::error::Error },
+
+    #[snafu(display("Method unimplemented"))]
+    Unimplemented {},
+    // InvalidParams {
+
+    // }
+    // UnsupportedTrieQuery,
+    // NotFound,
+    // CallError,
+    // UnknownSourceMapJump
 }
 
-impl From<DecoderError> for Error {
-    fn from(_val: DecoderError) -> Error {
-        Error::RlpError
+pub fn internal_error_with_details<T: ToString, U: ToString>(
+    code: i64,
+    message: &T,
+    data: &U,
+) -> JRpcError {
+    JRpcError {
+        code: jsonrpc_core::ErrorCode::ServerError(code),
+        message: message.to_string(),
+        data: serde_json::Value::String(data.to_string()).into(),
     }
 }
 
-impl From<FromHexError> for Error {
-    fn from(_val: FromHexError) -> Error {
-        Error::HexError
+pub fn internal_error<T: ToString>(code: i64, message: &T) -> JRpcError {
+    JRpcError {
+        code: jsonrpc_core::ErrorCode::ServerError(code),
+        message: message.to_string(),
+        data: None,
     }
 }
+const NATIVE_RPC_ERROR: i64 = 1001;
+const EVM_STATE_RPC_ERROR: i64 = 1002;
+const PROXY_RPC_ERROR: i64 = 1003;
 
-impl From<ParseIntError> for Error {
-    fn from(_val: ParseIntError) -> Error {
-        Error::IntError
-    }
-}
+const BLOCK_NOT_FOUND_RPC_ERROR: i64 = 2001;
 
-impl From<secp256k1::Error> for Error {
-    fn from(_val: secp256k1::Error) -> Error {
-        Error::ECDSAError
-    }
-}
+impl Into<JRpcError> for Error {
+    fn into(self) -> JRpcError {
+        match &self {
+            Error::HexError { source, .. } => {
+                JRpcError::invalid_params_with_details(self.to_string(), source)
+            }
+            Error::InvalidHexPrefix { .. } => JRpcError::invalid_params(self.to_string()),
+            Error::RlpError { source, .. } => {
+                JRpcError::invalid_params_with_details(self.to_string(), source)
+            }
+            Error::IntError { source, .. } => {
+                JRpcError::invalid_params_with_details(self.to_string(), source)
+            }
+            Error::BigIntError { source, .. } => {
+                JRpcError::invalid_params_with_details(self.to_string(), source)
+            }
 
-impl Into<jsonrpc_core::Error> for Error {
-    fn into(self) -> jsonrpc_core::Error {
-        jsonrpc_core::Error::invalid_request()
+            Error::BigIntTrimFailed { error, .. } => {
+                JRpcError::invalid_params_with_details(self.to_string(), error)
+            }
+            Error::NativeRpcError { source } => {
+                internal_error_with_details(NATIVE_RPC_ERROR, &self, &source)
+            }
+            Error::EvmStateError { source } => {
+                internal_error_with_details(EVM_STATE_RPC_ERROR, &self, &source)
+            }
+            Error::ProxyRpcError { source } => {
+                internal_error_with_details(PROXY_RPC_ERROR, &self, &source)
+            }
+            Error::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &self),
+            Error::Unimplemented {} => {
+                let mut error = JRpcError::invalid_request();
+                error.message = self.to_string();
+                error
+            }
+        }
     }
 }
