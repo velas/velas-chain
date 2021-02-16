@@ -1,3 +1,4 @@
+use super::account_structure::AccountStructure;
 use super::instructions::{EvmBigTransaction, EvmInstruction};
 use super::scope::*;
 use log::*;
@@ -14,25 +15,6 @@ pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
     iter.next().ok_or(InstructionError::NotEnoughAccountKeys)
 }
 
-/// Ensure that first account is program itself, and it's locked for writes.
-fn check_evm_account<'a, 'b>(
-    keyed_accounts: &'a [KeyedAccount<'b>],
-) -> Result<(&'a KeyedAccount<'b>, &'a [KeyedAccount<'b>]), InstructionError> {
-    let first = keyed_accounts
-        .first()
-        .ok_or(InstructionError::NotEnoughAccountKeys)?;
-
-    trace!("first = {:?}", first);
-    trace!("all = {:?}", keyed_accounts);
-    if first.unsigned_key() != &solana::evm_state::id() || !first.is_writable() {
-        error!("First account is not evm, or not writable");
-        return Err(InstructionError::MissingAccount);
-    }
-
-    let keyed_accounts = &keyed_accounts[1..];
-    Ok((first, keyed_accounts))
-}
-
 #[derive(Default, Debug, Clone)]
 pub struct EvmProcessor {}
 
@@ -46,15 +28,15 @@ impl EvmProcessor {
     ) -> Result<(), InstructionError> {
         let executor = executor.expect("Evm execution from crossprogram is not allowed.");
 
-        let (evm_state_account, keyed_accounts) = check_evm_account(keyed_accounts)?;
-        let mut evm_state_account = evm_state_account.try_account_ref_mut()?;
+        let (evm_state_account, keyed_accounts) = Self::check_evm_account(keyed_accounts)?;
+
+        let accounts = AccountStructure::new(evm_state_account, keyed_accounts);
 
         let ix = limited_deserialize(data)?;
         debug!("Run evm exec with ix = {:?}.", ix);
         match ix {
             EvmInstruction::EvmTransaction { evm_tx } => {
-                // TODO: Handle gas price
-                // TODO: validate tx signature
+                // TODO: Handle gas price in EVM Bridge
                 let result = executor
                     .transaction_execute(evm_tx)
                     .map_err(|_| InstructionError::InvalidArgument)?;
@@ -64,65 +46,83 @@ impl EvmProcessor {
                 }
             }
             EvmInstruction::FreeOwnership {} => {
-                let accounts_iter = &mut keyed_accounts.iter();
-                let signer_account = next_account_info(accounts_iter)?;
-                signer_account.try_account_ref_mut()?.owner = solana_sdk::system_program::id();
+                let mut user = accounts
+                    .user()
+                    .ok_or_else(|| {
+                        error!("Not enough accounts");
+                        InstructionError::InvalidArgument
+                    })?
+                    .try_account_ref_mut()?;
+
+                if user.owner != crate::ID {
+                    return Err(InstructionError::InvalidError);
+                }
+                user.owner = solana_sdk::system_program::id();
             }
             EvmInstruction::SwapNativeToEther {
                 lamports,
                 ether_address,
-            } => {
-                let accounts_iter = &mut keyed_accounts.iter();
-                let signer_account = next_account_info(accounts_iter)?;
-                let gweis = evm::lamports_to_gwei(lamports);
-                debug!(
-                    "Sending lamports to Gwei tokens from={},to={}",
-                    signer_account.unsigned_key(),
-                    ether_address
-                );
-
-                if keyed_accounts.is_empty() {
-                    error!("Not enough accounts");
-                    return Err(InstructionError::InvalidArgument);
-                }
-
-                if lamports == 0 {
-                    return Ok(());
-                }
-
-                if signer_account.signer_key().is_none() {
-                    debug!("SwapNativeToEther: from must sign");
-                    return Err(InstructionError::MissingRequiredSignature);
-                }
-
-                let mut account = signer_account.try_account_ref_mut()?;
-                if lamports > account.lamports {
-                    debug!(
-                        "SwapNativeToEther: insufficient lamports ({}, need {})",
-                        account.lamports, lamports
-                    );
-                    return Err(InstructionError::InsufficientFunds);
-                }
-                account.lamports -= lamports;
-                evm_state_account.lamports += lamports;
-                executor.with_executor(|e| e.state_mut().deposit(ether_address, gweis));
-            }
+            } => self.process_swap_to_native(executor, accounts, lamports, ether_address)?,
             EvmInstruction::EvmBigTransaction(big_tx) => {
-                let accounts_iter = &mut keyed_accounts.iter();
-                let signer_account = next_account_info(accounts_iter)?;
-                self.process_big_tx(signer_account, executor, big_tx)?
+                self.process_big_tx(executor, accounts, big_tx)?
             }
         }
         Ok(())
     }
 
+    fn process_swap_to_native(
+        &self,
+        executor: &mut Executor,
+        accounts: AccountStructure,
+        lamports: u64,
+        evm_address: evm::Address,
+    ) -> Result<(), InstructionError> {
+        let gweis = evm::lamports_to_gwei(lamports);
+        let user = accounts.user().ok_or_else(|| {
+            error!("Not enough accounts");
+            InstructionError::InvalidArgument
+        })?;
+        debug!(
+            "Sending lamports to Gwei tokens from={},to={}",
+            user.unsigned_key(),
+            evm_address
+        );
+
+        if lamports == 0 {
+            return Ok(());
+        }
+
+        if user.signer_key().is_none() {
+            debug!("SwapNativeToEther: from must sign");
+            return Err(InstructionError::MissingRequiredSignature);
+        }
+
+        let mut user_account = user.try_account_ref_mut()?;
+        if lamports > user_account.lamports {
+            debug!(
+                "SwapNativeToEther: insufficient lamports ({}, need {})",
+                user_account.lamports, lamports
+            );
+            return Err(InstructionError::InsufficientFunds);
+        }
+
+        user_account.lamports -= lamports;
+        accounts.evm.try_account_ref_mut()?.lamports += lamports;
+        executor.with_executor(|e| e.state_mut().deposit(evm_address, gweis));
+        Ok(())
+    }
+
     fn process_big_tx(
         &self,
-        signer_account: &KeyedAccount<'_>,
         executor: &mut Executor,
+        accounts: AccountStructure,
         big_tx: EvmBigTransaction,
     ) -> Result<(), InstructionError> {
-        let key = big_tx.get_key(*signer_account.unsigned_key());
+        let user = accounts.user().ok_or_else(|| {
+            error!("Not enough accounts");
+            InstructionError::InvalidArgument
+        })?;
+        let key = big_tx.get_key(*user.unsigned_key());
         debug!("executing big_tx = {:?}", big_tx);
         match big_tx {
             EvmBigTransaction::EvmTransactionAllocate {
@@ -168,6 +168,25 @@ impl EvmProcessor {
             }
         }
         Ok(())
+    }
+
+    /// Ensure that first account is program itself, and it's locked for writes.
+    fn check_evm_account<'a, 'b>(
+        keyed_accounts: &'a [KeyedAccount<'b>],
+    ) -> Result<(&'a KeyedAccount<'b>, &'a [KeyedAccount<'b>]), InstructionError> {
+        let first = keyed_accounts
+            .first()
+            .ok_or(InstructionError::NotEnoughAccountKeys)?;
+
+        trace!("first = {:?}", first);
+        trace!("all = {:?}", keyed_accounts);
+        if first.unsigned_key() != &solana::evm_state::id() || !first.is_writable() {
+            error!("First account is not evm, or not writable");
+            return Err(InstructionError::MissingAccount);
+        }
+
+        let keyed_accounts = &keyed_accounts[1..];
+        Ok((first, keyed_accounts))
     }
 }
 
@@ -599,7 +618,7 @@ mod test {
             },
             _rest => solana_sdk::account::Account {
                 lamports: 20000000,
-                owner: native_loader::id(),
+                owner: crate::ID, // EVM should only operate with accounts that it owns.
                 data: vec![0u8],
                 executable: false,
                 rent_epoch: 0,

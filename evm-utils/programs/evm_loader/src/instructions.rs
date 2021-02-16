@@ -47,14 +47,18 @@ impl EvmBigTransaction {
 pub enum EvmInstruction {
     /// Execute native evm transaction.
     ///
+    /// Outer args:
+    /// account_key[0] - `[writable]`. EVM state account, used for lock.
+    /// account_key[1] - `[readable]`. Optional argument, used in case tokens swaps from evm back to native.
     ///
     EvmTransaction {
         evm_tx: evm::Transaction,
     },
+
     /// Transfer native lamports to ethereum.
     ///
     /// Outer args:
-    /// account_key[0] - `[writable]. Evm state account, used for lock.
+    /// account_key[0] - `[writable]`. Evm state account, used for lock.
     /// account_key[1] - `[writable, signer]`. Owner account that's allowed to manage withdrawal of his account by transfering ownership.
     ///
     /// Inner args:
@@ -65,10 +69,11 @@ pub enum EvmInstruction {
         lamports: u64,
         ether_address: evm::Address,
     },
+
     /// Transfer user account ownership back to system program.
     ///
     /// Outer args:
-    /// account_key[0] - `[writable]. Evm state account, used for lock.
+    /// account_key[0] - `[writable]`. Evm state account, used for lock.
     /// account_key[1] - `[writable, signer]`. Owner account that's allowed to manage withdrawal of his account by transfering ownership.
     ///
     FreeOwnership {},
@@ -77,7 +82,7 @@ pub enum EvmInstruction {
     // / Transfer gweis to solana lamports.
     // /
     // / Outer args:
-    // / account_key[0] - `[writable]. Evm state account, used for lock.
+    // / account_key[0] - `[writable]`. Evm state account, used for lock.
     // / account_key[1] - `[writable, signer]`. Owner account that's allowed to manage withdrawal of his account by transfering ownership.
     // /
     // / Inner args:
