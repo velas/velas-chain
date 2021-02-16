@@ -54,7 +54,6 @@ impl EvmProcessor {
         match ix {
             EvmInstruction::EvmTransaction { evm_tx } => {
                 // TODO: Handle gas price
-                // TODO: Handle nonce
                 // TODO: validate tx signature
                 let result = executor
                     .transaction_execute(evm_tx)
@@ -183,7 +182,7 @@ pub fn dummy_call() -> evm::Transaction {
     ));
 
     let tx_call = evm::UnsignedTransaction {
-        nonce: 1.into(),
+        nonce: 0.into(),
         gas_price: 1.into(),
         gas_limit: 300000.into(),
         action: evm::TransactionAction::Call(dummy_address),
@@ -268,7 +267,7 @@ mod test {
         println!("cx = {:?}", executor);
         let tx_address = tx_create.address().unwrap();
         let tx_call = evm::UnsignedTransaction {
-            nonce: 0.into(),
+            nonce: 1.into(),
             gas_price: 1.into(),
             gas_limit: 300000.into(),
             action: TransactionAction::Call(tx_address),
@@ -293,6 +292,94 @@ mod test {
             .unwrap()
             .get_tx_receipt_by_hash(tx_hash)
             .is_some())
+    }
+
+    #[test]
+    fn tx_preserve_nonce() {
+        let mut executor = evm_state::Executor::with_config(
+            evm_state::EvmState::default(),
+            evm_state::Config::istanbul(),
+            10000000,
+            0,
+        );
+        let mut executor = Some(&mut executor);
+        let processor = EvmProcessor::default();
+        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account];
+        let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
+        let burn_addr = H160::zero();
+        let tx_0 = evm::UnsignedTransaction {
+            nonce: 0.into(),
+            gas_price: 1.into(),
+            gas_limit: 300000.into(),
+            action: TransactionAction::Call(burn_addr),
+            value: 0.into(),
+            input: vec![],
+        };
+        let tx_0_sign = tx_0.clone().sign(&secret_key, None);
+        let mut tx_1 = tx_0.clone();
+        tx_1.nonce += 1.into();
+        let tx_1_sign = tx_1.sign(&secret_key, None);
+
+        let mut tx_0_shadow = tx_0.clone();
+        tx_0_shadow.input = vec![1];
+
+        let tx_0_shadow_sign = tx_0.sign(&secret_key, None);
+
+        // Execute of second tx should fail.
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmTransaction {
+                    evm_tx: tx_1_sign.clone()
+                })
+                .unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_err());
+
+        // First tx should execute successfully.
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmTransaction {
+                    evm_tx: tx_0_sign.clone()
+                })
+                .unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_ok());
+
+        // Executing copy of first tx with different signature, should not pass too.
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmTransaction {
+                    evm_tx: tx_0_shadow_sign.clone()
+                })
+                .unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_err());
+
+        // But executing of second tx now should succeed.
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmTransaction {
+                    evm_tx: tx_1_sign.clone()
+                })
+                .unwrap(),
+                executor.as_deref_mut()
+            )
+            .is_ok());
+
+        println!("cx = {:?}", executor);
     }
 
     #[test]
@@ -544,7 +631,7 @@ mod test {
 
             let data: EvmInstruction = limited_deserialize(&ix.data).unwrap();
             println!("Executing = {:?}", data);
-            let mut keyed_accounts: Vec<_> = ix
+            let keyed_accounts: Vec<_> = ix
                 .accounts
                 .iter()
                 .map(|k| {
@@ -561,6 +648,22 @@ mod test {
                 .collect();
 
             println!("Keyed accounts = {:?}", keyed_accounts);
+            // First execution without evm state key, should fail.
+            let err = processor
+                .process_instruction(
+                    &crate::ID,
+                    &keyed_accounts[1..],
+                    &bincode::serialize(&data).unwrap(),
+                    executor.as_deref_mut(),
+                )
+                .unwrap_err();
+
+            match err {
+                InstructionError::NotEnoughAccountKeys | InstructionError::MissingAccount => {}
+                rest => panic!("Unexpected result = {:?}", rest),
+            }
+
+            // Because first execution is fail, state didn't changes, and second execution should pass.
             processor
                 .process_instruction(
                     &crate::ID,
@@ -569,20 +672,6 @@ mod test {
                     executor.as_deref_mut(),
                 )
                 .unwrap();
-            keyed_accounts.remove(0);
-
-            let err = processor
-                .process_instruction(
-                    &crate::ID,
-                    &keyed_accounts,
-                    &bincode::serialize(&data).unwrap(),
-                    executor.as_deref_mut(),
-                )
-                .unwrap_err();
-            match err {
-                InstructionError::NotEnoughAccountKeys | InstructionError::MissingAccount => {}
-                rest => panic!("Unexpected result = {:?}", rest),
-            }
         }
     }
 

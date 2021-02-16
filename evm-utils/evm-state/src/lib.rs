@@ -8,6 +8,7 @@ pub use evm::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed};
 use log::{debug, error};
 pub use primitive_types::{H256, U256};
 pub use secp256k1::rand;
+use snafu::ensure;
 
 mod error;
 mod layered_backend;
@@ -82,8 +83,18 @@ impl Executor {
     ) -> Result<(evm::ExitReason, Vec<u8>), Error> {
         let caller = evm_tx.caller()?;
 
+        let state_nonce = self.evm.basic(caller).nonce;
+        ensure!(
+            evm_tx.nonce == state_nonce,
+            NonceNotEqual {
+                tx_nonce: evm_tx.nonce,
+                state_nonce,
+            }
+        );
+
         self.evm.tx_info.origin = caller;
         self.evm.tx_info.gas_price = evm_tx.gas_price;
+
         let gas_limit = self.evm.block_gas_limit().as_u64() - self.used_gas;
         let metadata = StackSubstateMetadata::new(gas_limit, &self.config);
         let state = MemoryStackState::new(metadata, &self.evm);

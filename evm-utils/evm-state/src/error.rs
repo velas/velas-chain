@@ -1,7 +1,7 @@
 use snafu::{Backtrace, Snafu};
 
 use evm::ExitFatal;
-use primitive_types::H256;
+use primitive_types::{H256, U256};
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility = "pub(crate)")]
@@ -15,6 +15,14 @@ pub enum Error {
         transaction_hash: H256,
         source: secp256k1::Error,
     },
+
+    #[snafu(display(
+        "Transaction nonce {} differs from state nonce {}",
+        tx_nonce,
+        state_nonce
+    ))]
+    NonceNotEqual { tx_nonce: U256, state_nonce: U256 },
+
     #[snafu(display(
         "Fatal evm error while executing tx {:x}: {:?}",
         transaction_hash,
