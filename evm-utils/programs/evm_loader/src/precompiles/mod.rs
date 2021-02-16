@@ -12,14 +12,14 @@ use solana_sdk::{keyed_account::KeyedAccount, pubkey::Pubkey};
 
 mod builtins;
 use builtins::BUILTINS_MAP;
+pub use builtins::{eth_to_sol_parse_inputs, ETH_TO_SOL_ADDR, ETH_TO_SOL_CODE};
 
 use crate::account_structure::AccountStructure;
 
-/// Exit result, if succeed, returns `ExitSucceed` - info about execution, Vec<u8> - output data, u64 - gas cost
-type CallResult = Result<(ExitSucceed, Vec<u8>, u64), ExitError>;
+type CallResult = evm_state::PrecompileCallResult;
 
 #[derive(Debug, Snafu)]
-enum PrecompileErrors {
+pub enum PrecompileErrors {
     #[snafu(display("Cannot parse function {} abi = {}", name, source))]
     FailedToParse { name: String, source: ethabi::Error },
 
@@ -81,6 +81,14 @@ fn entrypoint_static(
             .get(&address)?
             .parse_and_eval(accounts, function_abi_input, gas_left, cx);
     Some(result)
+}
+
+pub(crate) fn entrypoint<'a>(
+    accounts: AccountStructure<'a>,
+) -> impl FnMut(H160, &[u8], Option<u64>, &Context) -> Option<CallResult> + 'a {
+    move |address, function_abi_input, gas_left, cx| {
+        entrypoint_static(accounts, address, function_abi_input, gas_left, cx)
+    }
 }
 
 #[cfg(test)]

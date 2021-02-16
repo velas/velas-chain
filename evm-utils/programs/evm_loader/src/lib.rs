@@ -1,5 +1,5 @@
 mod account_structure;
-mod precompiles;
+pub mod precompiles;
 
 pub mod instructions;
 pub mod processor;

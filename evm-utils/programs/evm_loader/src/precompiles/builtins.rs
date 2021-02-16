@@ -20,7 +20,6 @@ type BuiltinImplementation =
 pub struct Builtin {
     // TODO: Replace by real function hash calculation
     function_hash: Vec<u8>,
-    address: H160,
     abi: Function,
     implementation: BuiltinImplementation,
 }
@@ -28,31 +27,20 @@ pub struct Builtin {
 impl Builtin {
     pub fn new(
         function_hash: Vec<u8>,
-        address: H160,
         abi: Function,
         implementation: BuiltinImplementation,
     ) -> Self {
         assert_eq!(function_hash.len(), 4);
         Self {
             function_hash,
-            address,
             abi,
             implementation,
         }
     }
-    fn parse_abi(schema: &Function, input: &[u8]) -> Result<Vec<Token>, ExitError> {
-        Ok(schema.decode_input(input).with_context(|| FailedToParse {
-            name: schema.name.clone(),
-        })?)
-    }
-
-    pub fn parse_and_eval(
+    pub fn parse_abi(
         &self,
-        accounts: AccountStructure,
         function_abi_input: &[u8],
-        gas_limit: Option<u64>,
-        cx: &Context,
-    ) -> CallResult {
+    ) -> Result<Vec<Token>, super::PrecompileErrors> {
         ensure!(
             function_abi_input.len() >= 4,
             InputToShort {
@@ -69,7 +57,22 @@ impl Builtin {
             }
         );
 
-        let tokens = Self::parse_abi(&self.abi, input)?;
+        Ok(self
+            .abi
+            .decode_input(input)
+            .with_context(|| FailedToParse {
+                name: self.abi.name.clone(),
+            })?)
+    }
+
+    pub fn parse_and_eval(
+        &self,
+        accounts: AccountStructure,
+        function_abi_input: &[u8],
+        gas_limit: Option<u64>,
+        cx: &Context,
+    ) -> CallResult {
+        let tokens = self.parse_abi(function_abi_input)?;
 
         ensure!(
             tokens.len() == self.abi.inputs.len(),
@@ -91,7 +94,7 @@ pub static BUILTINS_MAP: Lazy<HashMap<H160, Builtin>> = Lazy::new(|| {
     let mut builtins = HashMap::new();
 
     assert!(builtins
-        .insert(ETH_TO_SOL.address, ETH_TO_SOL.clone())
+        .insert(*ETH_TO_SOL_ADDR, ETH_TO_SOL_CODE.clone())
         .is_none());
     builtins
 });
@@ -100,7 +103,40 @@ pub static BUILTINS_MAP: Lazy<HashMap<H160, Builtin>> = Lazy::new(|| {
 // Builtins declaration below
 //
 
-static ETH_TO_SOL: Lazy<Builtin> = Lazy::new(|| {
+// TODO: Implement some procedural macro to render this in more
+pub static ETH_TO_SOL_ADDR: Lazy<H160> = Lazy::new(|| {
+    H160::from_str(concat!(
+        "56454c41532d434841494e", // 'VELAS-CHAIN'
+        "0000000000",             // just spaces
+        "53574150",               // 'SWAP'
+    ))
+    .expect("Serialization of static data should be determenistic and never fail.")
+});
+
+pub fn eth_to_sol_parse_inputs(inputs: Vec<Token>) -> Result<Pubkey, super::PrecompileErrors> {
+    ensure!(
+        inputs.len() == 1,
+        ParamsCountMismatch {
+            expected: 1 as usize,
+            got: inputs.len()
+        }
+    );
+
+    let bytes = match &inputs[0] {
+        Token::FixedBytes(bytes) if bytes.len() == 32 => bytes,
+        t => {
+            return UnexpectedInput {
+                expected: String::from("bytes32"),
+                got: t.to_string(),
+            }
+            .fail()
+        }
+    };
+
+    Ok(Pubkey::new(&bytes))
+}
+
+pub static ETH_TO_SOL_CODE: Lazy<Builtin> = Lazy::new(|| {
     let abi = Function {
         name: String::from("transferToNative"),
         inputs: vec![Param {
@@ -110,13 +146,6 @@ static ETH_TO_SOL: Lazy<Builtin> = Lazy::new(|| {
         outputs: vec![],
         constant: false,
     };
-    // TODO: Implement some procedural macro to render this in more
-    let address = H160::from_str(concat!(
-        "56454c41532d434841494e", // 'VELAS-CHAIN'
-        "0000000000",             // just spaces
-        "53574150",               // 'SWAP'
-    ))
-    .expect("Serialization of static data should be determenistic and never fail.");
 
     // TOOD: Modify gas left.
     fn implementation(
@@ -126,26 +155,8 @@ static ETH_TO_SOL: Lazy<Builtin> = Lazy::new(|| {
         cx: &Context,
     ) -> CallResult {
         // EVM should ensure that user has enough tokens, before calling this precompile.
-        ensure!(
-            inputs.len() == 1,
-            ParamsCountMismatch {
-                expected: 1 as usize,
-                got: inputs.len()
-            }
-        );
 
-        let bytes = match &inputs[0] {
-            Token::FixedBytes(bytes) if bytes.len() == 32 => bytes,
-            t => {
-                return UnexpectedInput {
-                    expected: String::from("bytes32"),
-                    got: t.to_string(),
-                }
-                .fail()
-                .map_err(Into::into)
-            }
-        };
-        let pk = Pubkey::new(&bytes);
+        let pk = eth_to_sol_parse_inputs(inputs)?;
         let user = if let Some(account) = accounts.find_user(&pk) {
             account
         } else {
@@ -175,5 +186,5 @@ static ETH_TO_SOL: Lazy<Builtin> = Lazy::new(|| {
         Ok((ExitSucceed::Returned, vec![], 0))
     };
 
-    Builtin::new(vec![0xb1, 0xd6, 0x92, 0x7a], address, abi, &implementation)
+    Builtin::new(vec![0xb1, 0xd6, 0x92, 0x7a], abi, &implementation)
 });
