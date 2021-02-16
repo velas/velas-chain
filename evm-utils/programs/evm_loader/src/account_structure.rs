@@ -1,6 +1,4 @@
-use std::cell::RefCell;
-
-use solana_sdk::{account::Account, keyed_account::KeyedAccount, pubkey::Pubkey};
+use solana_sdk::{keyed_account::KeyedAccount, pubkey::Pubkey};
 #[derive(Copy, Clone, Debug)]
 /// Helper structure that wrap all solana accounts, that is needed for evm loader.
 /// It will restrict and provide access to needed solana accounts in:
@@ -37,10 +35,13 @@ impl<'a> AccountStructure<'a> {
     }
 
     /// Create AccountStructure for testing purposes, with random accounts.
+    #[cfg(test)]
     pub(crate) fn testing<F, U>(num_keys: usize, func: F) -> U
     where
         F: for<'r> Fn(AccountStructure<'r>) -> U,
     {
+        use solana_sdk::account::Account;
+        use std::cell::RefCell;
         let evm_key = Pubkey::new_unique();
         let evm_account = RefCell::new(crate::create_state_account());
         let evm_state = KeyedAccount::new(&evm_key, false, &evm_account);

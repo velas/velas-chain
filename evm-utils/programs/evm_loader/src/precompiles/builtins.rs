@@ -1,16 +1,15 @@
-use snafu::{ensure, ResultExt, Snafu};
-use std::{borrow::BorrowMut, cell::RefCell};
+use snafu::{ensure, ResultExt};
 use std::{collections::HashMap, str::FromStr};
 
 use ethabi::{Function, Param, ParamType, Token};
-use evm_state::{Context, ExitError, ExitSucceed};
+use evm_state::{Context, ExitSucceed};
 use once_cell::sync::Lazy;
 use primitive_types::H160;
 
 use super::*;
 use crate::account_structure::AccountStructure;
 use crate::scope::evm::gweis_to_lamports;
-use solana_sdk::{keyed_account::KeyedAccount, pubkey::Pubkey};
+use solana_sdk::pubkey::Pubkey;
 
 // Currently only static is allowed (but it can be closure).
 type BuiltinImplementation =
@@ -20,7 +19,7 @@ type BuiltinImplementation =
 pub struct Builtin {
     // TODO: Replace by real function hash calculation
     function_hash: Vec<u8>,
-    abi: Function,
+    pub abi: Function,
     implementation: BuiltinImplementation,
 }
 
@@ -117,7 +116,7 @@ pub fn eth_to_sol_parse_inputs(inputs: Vec<Token>) -> Result<Pubkey, super::Prec
     ensure!(
         inputs.len() == 1,
         ParamsCountMismatch {
-            expected: 1 as usize,
+            expected: 1_usize,
             got: inputs.len()
         }
     );
@@ -151,7 +150,7 @@ pub static ETH_TO_SOL_CODE: Lazy<Builtin> = Lazy::new(|| {
     fn implementation(
         accounts: AccountStructure,
         inputs: Vec<Token>,
-        gas_left: Option<u64>,
+        _gas_left: Option<u64>,
         cx: &Context,
     ) -> CallResult {
         // EVM should ensure that user has enough tokens, before calling this precompile.
@@ -166,7 +165,7 @@ pub static ETH_TO_SOL_CODE: Lazy<Builtin> = Lazy::new(|| {
         };
 
         // TODO: return change back
-        let (lamports, change) = gweis_to_lamports(cx.apparent_value);
+        let (lamports, _change) = gweis_to_lamports(cx.apparent_value);
 
         let mut evm_account = accounts
             .evm

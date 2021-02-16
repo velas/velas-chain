@@ -1,14 +1,9 @@
 use hex::FromHexError;
-use snafu::{ensure, ResultExt, Snafu};
-use std::cell::RefCell;
-use std::{collections::HashMap, str::FromStr};
+use snafu::Snafu;
 
-use ethabi::{Function, Param, ParamType, Token};
-use evm_state::{Context, ExitError, ExitSucceed};
-use once_cell::sync::Lazy;
+use evm_state::{Context, ExitError};
 use primitive_types::H160;
-
-use solana_sdk::{keyed_account::KeyedAccount, pubkey::Pubkey};
+use solana_sdk::pubkey::Pubkey;
 
 mod builtins;
 use builtins::BUILTINS_MAP;
@@ -83,9 +78,9 @@ fn entrypoint_static(
     Some(result)
 }
 
-pub(crate) fn entrypoint<'a>(
-    accounts: AccountStructure<'a>,
-) -> impl FnMut(H160, &[u8], Option<u64>, &Context) -> Option<CallResult> + 'a {
+pub(crate) fn entrypoint(
+    accounts: AccountStructure,
+) -> impl FnMut(H160, &[u8], Option<u64>, &Context) -> Option<CallResult> + '_ {
     move |address, function_abi_input, gas_left, cx| {
         entrypoint_static(accounts, address, function_abi_input, gas_left, cx)
     }
@@ -99,6 +94,8 @@ mod test {
 
     use super::builtins::BUILTINS_MAP;
     use super::*;
+    use evm_state::ExitSucceed;
+    use std::str::FromStr;
 
     #[test]
     fn check_num_builtins() {
