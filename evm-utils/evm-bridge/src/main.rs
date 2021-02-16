@@ -1,8 +1,5 @@
 use log::*;
 
-use solana_sdk::{
-    clock::DEFAULT_TICKS_PER_SECOND, commitment_config::CommitmentLevel, instruction::AccountMeta,
-};
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
@@ -11,15 +8,20 @@ use std::{collections::HashMap, net::SocketAddr};
 use evm_rpc::basic::BasicERPC;
 use evm_rpc::bridge::BridgeERPC;
 use evm_rpc::chain_mock::ChainMockERPC;
+use evm_rpc::error::*;
 use evm_rpc::*;
 use evm_state::*;
 use sha3::{Digest, Keccak256};
 
 use jsonrpc_core::Result;
 use serde_json::json;
+use snafu::ResultExt;
 
 use solana_account_decoder::{parse_token::UiTokenAmount, UiAccount};
 use solana_evm_loader_program::{scope::*, tx_chunks::TxChunks};
+use solana_sdk::{
+    clock::DEFAULT_TICKS_PER_SECOND, commitment_config::CommitmentLevel, instruction::AccountMeta,
+};
 
 use solana_runtime::commitment::BlockCommitmentArray;
 use solana_sdk::{
@@ -89,7 +91,7 @@ impl EvmBridge {
                 Ok(_tx) => return Ok(Hex(hash)),
                 Err(e) => {
                     error!("Error creating big tx = {}", e);
-                    return Err(evm_rpc::Error::InvalidParams);
+                    return Err(e);
                 }
             }
         }
@@ -145,10 +147,8 @@ impl EvmBridge {
         self.rpc_client
             .send_transaction_with_config(&send_raw_tx, RpcSendTransactionConfig::default())
             .map(|_| Hex(hash))
-            .map_err(|err| {
-                error!("Err = {}", err);
-                evm_rpc::Error::InvalidParams
-            })
+            .map_err(Into::into)
+            .with_context(|| ProxyRpcError {})
     }
 }
 
@@ -159,7 +159,9 @@ macro_rules! proxy_evm_rpc {
         RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*]))
             .map_err(|e| {
                 error!("Json rpc error = {:?}", e);
-                evm_rpc::Error::InvalidParams
+                evm_rpc::Error::ProxyRpcError{
+                    source: e.into()
+                }
             })
         }
     )
@@ -180,7 +182,7 @@ impl BridgeERPC for BridgeERPCImpl {
         _address: Hex<Address>,
         _data: Bytes,
     ) -> EvmResult<Bytes> {
-        Err(evm_rpc::Error::NotFound)
+        Err(evm_rpc::Error::Unimplemented {})
     }
 
     fn send_transaction(
@@ -235,7 +237,7 @@ impl BridgeERPC for BridgeERPCImpl {
     }
 
     fn compilers(&self, _meta: Self::Metadata) -> EvmResult<Vec<String>> {
-        Err(evm_rpc::Error::NotFound)
+        Err(evm_rpc::Error::Unimplemented {})
     }
 }
 
@@ -341,7 +343,7 @@ impl ChainMockERPC for ChainMockERPCProxy {
         _meta: Self::Metadata,
         _block_hash: Hex<H256>,
     ) -> EvmResult<Option<Hex<usize>>> {
-        Err(evm_rpc::Error::NotFound)
+        Err(evm_rpc::Error::Unimplemented {})
     }
 
     fn uncle_by_block_hash_and_index(
@@ -350,7 +352,7 @@ impl ChainMockERPC for ChainMockERPCProxy {
         _block_hash: Hex<H256>,
         _uncle_id: Hex<U256>,
     ) -> EvmResult<Option<RPCBlock>> {
-        Err(evm_rpc::Error::NotFound)
+        Err(evm_rpc::Error::Unimplemented {})
     }
 
     fn uncle_by_block_number_and_index(
@@ -359,7 +361,7 @@ impl ChainMockERPC for ChainMockERPCProxy {
         _block: String,
         _uncle_id: Hex<U256>,
     ) -> EvmResult<Option<RPCBlock>> {
-        Err(evm_rpc::Error::NotFound)
+        Err(evm_rpc::Error::Unimplemented {})
     }
 
     fn block_uncles_count_by_hash(
@@ -367,7 +369,7 @@ impl ChainMockERPC for ChainMockERPCProxy {
         _meta: Self::Metadata,
         _block_hash: Hex<H256>,
     ) -> EvmResult<Option<Hex<usize>>> {
-        Err(evm_rpc::Error::NotFound)
+        Err(evm_rpc::Error::Unimplemented {})
     }
 
     fn block_uncles_count_by_number(
@@ -375,7 +377,7 @@ impl ChainMockERPC for ChainMockERPCProxy {
         _meta: Self::Metadata,
         _block: String,
     ) -> EvmResult<Option<Hex<usize>>> {
-        Err(evm_rpc::Error::NotFound)
+        Err(evm_rpc::Error::Unimplemented {})
     }
 
     fn transaction_by_block_hash_and_index(
@@ -384,7 +386,7 @@ impl ChainMockERPC for ChainMockERPCProxy {
         _block_hash: Hex<H256>,
         _tx_id: Hex<U256>,
     ) -> EvmResult<Option<RPCTransaction>> {
-        Err(evm_rpc::Error::NotFound)
+        Err(evm_rpc::Error::Unimplemented {})
     }
 
     fn transaction_by_block_number_and_index(
@@ -393,7 +395,7 @@ impl ChainMockERPC for ChainMockERPCProxy {
         _block: String,
         _tx_id: Hex<U256>,
     ) -> EvmResult<Option<RPCTransaction>> {
-        Err(evm_rpc::Error::NotFound)
+        Err(evm_rpc::Error::Unimplemented {})
     }
 }
 
@@ -1045,23 +1047,12 @@ fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn log_instruction_custom_error(
-    result: ClientResult<Signature>,
-) -> StdResult<Signature, Box<dyn std::error::Error>> {
-    match result {
-        Err(err) => {
-            return Err(err.into());
-        }
-        Ok(sig) => Ok(sig),
-    }
-}
-
 fn send_and_confirm_transactions<T: Signers>(
     rpc_client: &RpcClient,
     mut transactions: Vec<solana::Transaction>,
     signer_keys: &T,
-) -> StdResult<(), Box<dyn std::error::Error>> {
-    const SEND_RETRIES: usize = 53;
+) -> StdResult<(), anyhow::Error> {
+    const SEND_RETRIES: usize = 5;
     const STATUS_RETRIES: usize = 15;
 
     for _ in 0..SEND_RETRIES {
@@ -1133,14 +1124,14 @@ fn send_and_confirm_transactions<T: Signers>(
             transactions.push(transaction);
         }
     }
-    Err("Transactions failed".into())
+    Err(anyhow::Error::msg("Transactions failed"))
 }
 
 fn deploy_big_tx(
     rpc_client: &RpcClient,
     payer: &solana_sdk::signature::Keypair,
     tx: &evm::Transaction,
-) -> StdResult<(), Box<dyn std::error::Error>> {
+) -> EvmResult<()> {
     let payer_pubkey = payer.pubkey();
 
     let storage = solana_sdk::signature::Keypair::new();

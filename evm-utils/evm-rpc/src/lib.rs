@@ -1,13 +1,17 @@
-mod error;
-mod serialize;
-pub use self::error::Error;
-pub use self::serialize::*;
-use evm_state::*;
+use std::collections::HashMap;
+
 use jsonrpc_derive::rpc;
 use primitive_types::{H256, U256};
 use serde::{Deserialize, Serialize};
+use snafu::ResultExt;
 
-use std::collections::HashMap;
+mod serialize;
+use error::*;
+use evm_state::*;
+
+pub mod error;
+pub use self::error::Error;
+pub use self::serialize::*;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
@@ -494,7 +498,7 @@ impl RPCTransaction {
         block_hash: H256,
     ) -> Result<Self, crate::Error> {
         let tx = &receipt.transaction;
-        let address = tx.address().map_err(|_| Error::InvalidParams)?.into();
+        let address = tx.address().with_context(|| EvmStateError)?.into();
 
         let (to, creates) = match tx.action {
             evm_state::transactions::TransactionAction::Call(_) => (Some(address), None),
@@ -502,7 +506,7 @@ impl RPCTransaction {
         };
         let hash = tx.signing_hash();
         Ok(RPCTransaction {
-            from: Some(tx.caller().map_err(|_| Error::InvalidParams)?.into()),
+            from: Some(tx.caller().with_context(|| EvmStateError)?.into()),
             to,
             creates,
             gas: Some(tx.gas_limit.into()),
@@ -524,7 +528,7 @@ impl RPCReceipt {
         block_hash: H256,
     ) -> Result<Self, crate::Error> {
         let tx = &receipt.transaction;
-        let address = tx.address().map_err(|_| Error::InvalidParams)?.into();
+        let address = tx.address().with_context(|| EvmStateError)?.into();
         let (to, contract_address) = match tx.action {
             evm_state::transactions::TransactionAction::Call(_) => (Some(address), None),
             evm_state::transactions::TransactionAction::Create => (None, Some(address)),
