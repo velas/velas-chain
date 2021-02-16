@@ -46,13 +46,15 @@ solana-sdk = { path = "../sdk", version = "1.5.3" }
 solana-stake-program = { path = "../programs/stake", version = "1.5.3" }
 solana-vote-program = { path = "../programs/vote", version = "1.5.3" }
 solana-secp256k1-program = { path = "../programs/secp256k1", version = "1.5.3" }
-solana-evm-loader-program = {path = "../evm-utils/programs/evm_loader"}
+solana-evm-loader-program = { path = "../evm-utils/programs/evm_loader" }
 symlink = "0.1.0"
 tar = "0.4.28"
 tempfile = "3.1.0"
 thiserror = "1.0"
 zstd = "0.5.1"
-evm-state = { path = "../evm-utils/evm-state", version = "0.1"}
+evm-state = { path = "../evm-utils/evm-state" }
+evm-rpc = { path = "../evm-utils/evm-rpc" }
+
 
 [lib]
 crate-type = ["lib"]

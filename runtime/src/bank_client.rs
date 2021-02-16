@@ -278,7 +278,7 @@ impl SyncClient for BankClient {
             .evm_state
             .read()
             .unwrap()
-            .get_account(*pubkey)
+            .get_account_state(*pubkey)
             .unwrap_or_default();
 
         Ok(account.balance)

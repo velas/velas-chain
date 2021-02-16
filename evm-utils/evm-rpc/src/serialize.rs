@@ -1,10 +1,14 @@
-use primitive_types::{H160, H256, H512, U128, U256, U512};
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{self, LowerHex};
 use std::marker::PhantomData;
 use std::str::FromStr;
-#[derive(Debug, Hash, Clone, Eq, PartialEq)]
+
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+
+use primitive_types::{H160, H256, H512, U128, U256, U512};
+
+#[derive(Debug, Default, Hash, Clone, PartialEq, Eq)]
 pub struct Hex<T>(pub T);
+
 #[derive(Debug, Clone)]
 pub struct Bytes(pub Vec<u8>);
 

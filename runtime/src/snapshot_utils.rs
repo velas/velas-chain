@@ -556,7 +556,7 @@ pub fn add_snapshot<P: AsRef<Path>>(
     debug!("EVM state write acquire time lock {}", wl_acquire);
 
     let mut squash_evm_state_time = Measure::start("squash_evm_state_time");
-    evm_state.squash();
+    // TODO(hrls): evm_state.gc();
     squash_evm_state_time.stop();
     debug!("EVM state squash time {}", squash_evm_state_time);
 
@@ -567,7 +567,7 @@ pub fn add_snapshot<P: AsRef<Path>>(
 
     let mut evm_state_backup = Measure::start("evm-state-backup-ms");
     let backup_path = evm_state
-        .storage
+        .kvs
         .backup()
         .expect("Unable to save EVM storage data in new place");
     evm_state_backup.stop();

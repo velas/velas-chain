@@ -145,14 +145,14 @@ impl ChainMockERPC for ChainMockERPCImpl {
                     solana_sdk::hash::Hash::from_str(&block.previous_blockhash).unwrap();
                 let bank = meta.bank(None);
                 let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
-                let tx_hashes = evm_lock.get_txs_in_block(block_num);
+                let tx_hashes = evm_lock.get_transactions_in_block(block_num);
                 let transactions = if full {
                     let txs = tx_hashes
                         .iter()
                         .flatten()
                         .map(|tx_hash| {
                             evm_lock
-                                .get_tx_receipt_by_hash(*tx_hash)
+                                .get_transaction_receipt(*tx_hash)
                                 .expect("Transaction exist")
                         })
                         .filter_map(|receipt| {
@@ -278,7 +278,7 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Hex<U256>, Error> {
         let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
-        let account = evm_state.get_account(address.0).unwrap_or_default();
+        let account = evm_state.get_account_state(address.0).unwrap_or_default();
         Ok(Hex(account.balance))
     }
 
@@ -304,7 +304,7 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Hex<U256>, Error> {
         let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
-        let account = evm_state.get_account(address.0).unwrap_or_default();
+        let account = evm_state.get_account_state(address.0).unwrap_or_default();
         Ok(Hex(account.nonce))
     }
 
@@ -316,8 +316,8 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Bytes, Error> {
         let bank = meta.bank(block_to_commitment(block));
         let evm_state = bank.evm_state.read().unwrap();
-        let account = evm_state.get_account(address.0).unwrap_or_default();
-        Ok(Bytes(account.code))
+        let account = evm_state.get_account_state(address.0).unwrap_or_default();
+        Ok(Bytes(account.code.into()))
     }
 
     fn transaction_by_hash(
@@ -327,7 +327,7 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Option<RPCTransaction>, Error> {
         let bank = meta.bank(CommitmentConfig::recent().into());
         let evm_state = bank.evm_state.read().unwrap();
-        let receipt = evm_state.get_tx_receipt_by_hash(tx_hash.0);
+        let receipt = evm_state.get_transaction_receipt(tx_hash.0);
 
         Ok(match receipt {
             Some(receipt) => {
@@ -351,7 +351,8 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Option<RPCReceipt>, Error> {
         let bank = meta.bank(CommitmentConfig::recent().into());
         let evm_state = bank.evm_state.read().unwrap();
-        let receipt = evm_state.get_tx_receipt_by_hash(tx_hash.0);
+        let receipt = evm_state.get_transaction_receipt(tx_hash.0);
+
         Ok(match receipt {
             Some(receipt) => {
                 let block_hash = meta

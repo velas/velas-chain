@@ -257,8 +257,12 @@ where
     accounts_db.freeze_accounts(&bank_fields.ancestors, frozen_account_pubkeys);
 
     let bank_rc = BankRc::new(Accounts::new_empty(accounts_db), bank_fields.slot);
-    let evm_state = evm_state::EvmState::load_from(evm_state_path, bank_fields.slot)
-        .expect("Unable to open EVM state storage");
+    let evm_state = evm_state::EvmState::load_from(
+        evm_state_path,
+        bank_fields.slot,
+        bank_fields.evm_state_root,
+    )
+    .expect("Unable to open EVM state storage");
     let bank = Bank::new_from_fields(
         evm_state,
         bank_rc,
