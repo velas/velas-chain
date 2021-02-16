@@ -1,6 +1,8 @@
 use log::*;
 
-use solana_sdk::{clock::DEFAULT_TICKS_PER_SECOND, commitment_config::CommitmentLevel};
+use solana_sdk::{
+    clock::DEFAULT_TICKS_PER_SECOND, commitment_config::CommitmentLevel, instruction::AccountMeta,
+};
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
@@ -76,6 +78,7 @@ impl EvmBridge {
         }
     }
 
+    /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
     fn send_tx(&self, tx: evm::Transaction) -> FutureEvmResult<Hex<H256>> {
         let hash = tx.signing_hash();
         let bytes = bincode::serialize(&tx).unwrap();
@@ -99,7 +102,36 @@ impl EvmBridge {
             tx.signature.chain_id()
         );
 
-        let ix = solana_evm_loader_program::send_raw_tx(self.key.pubkey(), tx);
+        let mut meta_keys = vec![];
+
+        // Shortcut for swap tokens to native, will add solana account to transaction.
+        if let TransactionAction::Call(addr) = tx.action {
+            use solana_evm_loader_program::precompiles::*;
+            trace!("Calling addr = {} ", addr);
+            trace!("ETH_TO_SOL addr = {} ", *ETH_TO_SOL_ADDR);
+            if addr == *ETH_TO_SOL_ADDR {
+                debug!("Found transferToNative transaction");
+                match ETH_TO_SOL_CODE
+                    .parse_abi(&tx.input)
+                    .and_then(eth_to_sol_parse_inputs)
+                {
+                    Ok(pk) => {
+                        info!("Adding account to meta = {}", pk);
+                        meta_keys.push(pk)
+                    }
+                    Err(e) => {
+                        error!("Error in parsing abi = {}", e);
+                    }
+                }
+            }
+        }
+
+        let mut ix = solana_evm_loader_program::send_raw_tx(self.key.pubkey(), tx);
+
+        // Add meta accounts as additional arguments
+        for account in meta_keys {
+            ix.accounts.push(AccountMeta::new(account, false))
+        }
 
         let message = Message::new(&[ix], Some(&self.key.pubkey()));
         let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
