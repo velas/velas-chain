@@ -32,6 +32,9 @@ use std::fmt;
 pub const MAX_TX_LEN: u64 = 3 * 1024 * 1024; // Limit size to 3 MB
 pub const TX_MTU: u64 = 920;
 
+/// Exit result, if succeed, returns `ExitSucceed` - info about execution, Vec<u8> - output data, u64 - gas cost
+pub type PrecompileCallResult = Result<(ExitSucceed, Vec<u8>, u64), ExitError>;
+
 pub trait FromKey {
     fn to_public_key(&self) -> secp256k1::PublicKey;
     fn to_address(&self) -> crate::Address;
@@ -77,10 +80,14 @@ impl Executor {
         }
     }
 
-    pub fn transaction_execute(
+    pub fn transaction_execute<F>(
         &mut self,
         evm_tx: Transaction,
-    ) -> Result<(evm::ExitReason, Vec<u8>), Error> {
+        mut precompiles: F,
+    ) -> Result<(evm::ExitReason, Vec<u8>), Error>
+    where
+        F: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
+    {
         let caller = evm_tx.caller()?;
 
         let state_nonce = self.evm.basic(caller).nonce;
@@ -98,7 +105,8 @@ impl Executor {
         let gas_limit = self.evm.block_gas_limit().as_u64() - self.used_gas;
         let metadata = StackSubstateMetadata::new(gas_limit, &self.config);
         let state = MemoryStackState::new(metadata, &self.evm);
-        let mut executor = StackExecutor::new(state, &self.config);
+        let mut executor =
+            StackExecutor::new_with_precompile(state, &self.config, &mut precompiles);
         let result = match evm_tx.action {
             TransactionAction::Call(addr) => {
                 debug!(

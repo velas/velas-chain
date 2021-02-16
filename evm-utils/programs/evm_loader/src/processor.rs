@@ -1,5 +1,6 @@
 use super::account_structure::AccountStructure;
 use super::instructions::{EvmBigTransaction, EvmInstruction};
+use super::precompiles;
 use super::scope::*;
 use log::*;
 
@@ -38,7 +39,7 @@ impl EvmProcessor {
             EvmInstruction::EvmTransaction { evm_tx } => {
                 // TODO: Handle gas price in EVM Bridge
                 let result = executor
-                    .transaction_execute(evm_tx)
+                    .transaction_execute(evm_tx, precompiles::entrypoint(accounts))
                     .map_err(|_| InstructionError::InvalidArgument)?;
                 debug!("Exit status = {:?}", result);
                 if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
@@ -156,7 +157,7 @@ impl EvmProcessor {
 
                 debug!("Executing evm tx = {:?}.", tx);
                 let result = executor
-                    .transaction_execute(tx)
+                    .transaction_execute(tx, precompiles::entrypoint(accounts))
                     .map_err(|_| InstructionError::InvalidArgument)?;
                 debug!("Exit status = {:?}", result);
                 match result.0 {
