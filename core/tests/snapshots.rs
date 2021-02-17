@@ -10,21 +10,25 @@ macro_rules! DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS {
             const CLUSTER_TYPE: ClusterType = ClusterType::$y;
 
             #[test]
+            #[cfg(feature = "multiple-db-in-thread")]
             fn test_bank_forks_status_cache_snapshot_n() {
                 run_test_bank_forks_status_cache_snapshot_n(SNAPSHOT_VERSION, CLUSTER_TYPE)
             }
 
             #[test]
+            #[cfg(feature = "multiple-db-in-thread")]
             fn test_bank_forks_snapshot_n() {
                 run_test_bank_forks_snapshot_n(SNAPSHOT_VERSION, CLUSTER_TYPE)
             }
 
             #[test]
+            #[cfg(feature = "multiple-db-in-thread")]
             fn test_concurrent_snapshot_packaging() {
                 run_test_concurrent_snapshot_packaging(SNAPSHOT_VERSION, CLUSTER_TYPE)
             }
 
             #[test]
+            #[cfg(feature = "multiple-db-in-thread")]
             fn test_slots_to_snapshot() {
                 run_test_slots_to_snapshot(SNAPSHOT_VERSION, CLUSTER_TYPE)
             }

@@ -64,6 +64,7 @@ use tempfile::TempDir;
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_ledger_cleanup_service() {
     solana_logger::setup();
     error!("test_ledger_cleanup_service");
@@ -120,6 +121,7 @@ fn test_spend_and_verify_all_nodes_1() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_spend_and_verify_all_nodes_2() {
     solana_logger::setup();
     error!("test_spend_and_verify_all_nodes_2");
@@ -135,6 +137,7 @@ fn test_spend_and_verify_all_nodes_2() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_spend_and_verify_all_nodes_3() {
     solana_logger::setup();
     error!("test_spend_and_verify_all_nodes_3");
@@ -150,6 +153,7 @@ fn test_spend_and_verify_all_nodes_3() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_local_cluster_signature_subscribe() {
     solana_logger::setup();
     let num_nodes = 2;
@@ -252,6 +256,7 @@ fn test_validator_exit_default_config_should_panic() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_validator_exit_2() {
     solana_logger::setup();
     error!("test_validator_exit_2");
@@ -273,6 +278,7 @@ fn test_validator_exit_2() {
 // Cluster needs a supermajority to remain, so the minimum size for this test is 4
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_leader_failure_4() {
     solana_logger::setup_with("debug");
     error!("test_leader_failure_4");
@@ -452,6 +458,7 @@ fn test_cluster_partition_1_1() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_cluster_partition_1_1_1() {
     let empty = |_: &mut LocalCluster| {};
     let on_partition_resolved = |cluster: &mut LocalCluster| {
@@ -497,6 +504,7 @@ fn create_custom_leader_schedule(
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_kill_heaviest_partition() {
     // This test:
     // 1) Spins up four partitions, the heaviest being the first with more stake
@@ -573,6 +581,7 @@ fn run_kill_partition_switch_threshold<F>(
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_kill_partition_switch_threshold_no_progress() {
     let max_switch_threshold_failure_pct = 1.0 - 2.0 * SWITCH_FORK_THRESHOLD;
     let total_stake = 10_000;
@@ -601,6 +610,7 @@ fn test_kill_partition_switch_threshold_no_progress() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_kill_partition_switch_threshold_progress() {
     let max_switch_threshold_failure_pct = 1.0 - 2.0 * SWITCH_FORK_THRESHOLD;
     let total_stake = 10_000;
@@ -642,6 +652,7 @@ fn test_kill_partition_switch_threshold_progress() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_two_unbalanced_stakes() {
     solana_logger::setup();
     error!("test_two_unbalanced_stakes");
@@ -676,6 +687,7 @@ fn test_two_unbalanced_stakes() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_forwarding() {
     // Set up a cluster where one node is never the leader, so all txs sent to this node
     // will be have to be forwarded in order to be confirmed
@@ -742,6 +754,7 @@ fn test_restart_node() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_listener_startup() {
     let mut config = ClusterConfig {
         node_stakes: vec![100; 1],
@@ -757,6 +770,7 @@ fn test_listener_startup() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_mainnet_beta_cluster_type() {
     solana_logger::setup();
 
@@ -888,6 +902,7 @@ fn test_frozen_account_from_genesis() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_frozen_account_from_snapshot() {
     solana_logger::setup();
     let validator_identity =
@@ -928,6 +943,7 @@ fn test_frozen_account_from_snapshot() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_consistency_halt() {
     solana_logger::setup();
     let snapshot_interval_slots = 20;
@@ -1017,6 +1033,7 @@ fn test_consistency_halt() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_snapshot_download() {
     solana_logger::setup();
     // First set up the cluster with 1 node
@@ -1077,6 +1094,7 @@ fn test_snapshot_download() {
 #[allow(unused_attributes)]
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_snapshot_restart_tower() {
     solana_logger::setup();
     // First set up the cluster with 2 nodes
@@ -1146,6 +1164,7 @@ fn test_snapshot_restart_tower() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_snapshots_blockstore_floor() {
     solana_logger::setup();
     // First set up the cluster with 1 snapshotting leader
@@ -1243,6 +1262,7 @@ fn test_snapshots_blockstore_floor() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_snapshots_restart_validity() {
     solana_logger::setup();
     let snapshot_interval_slots = 10;
@@ -1363,6 +1383,7 @@ fn test_faulty_node(faulty_node_type: BroadcastStageType) {
 }
 
 #[test]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_wait_for_max_stake() {
     solana_logger::setup();
     let mut validator_config = ValidatorConfig::default();
@@ -1424,6 +1445,7 @@ fn test_no_voting() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_optimistic_confirmation_violation_detection() {
     solana_logger::setup();
     let buf = std::env::var("OPTIMISTIC_CONF_TEST_DUMP_LOG")
@@ -1530,6 +1552,7 @@ fn test_optimistic_confirmation_violation_detection() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_validator_saves_tower() {
     solana_logger::setup();
 
@@ -2013,12 +2036,14 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_future_tower_master_only() {
     do_test_future_tower(ClusterMode::MasterOnly);
 }
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_future_tower_master_slave() {
     do_test_future_tower(ClusterMode::MasterSlave);
 }
@@ -2141,24 +2166,28 @@ fn test_hard_fork_invalidates_tower() {
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_no_optimistic_confirmation_violation_with_tower() {
     do_test_optimistic_confirmation_violation_with_or_without_tower(true);
 }
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_optimistic_confirmation_violation_without_tower() {
     do_test_optimistic_confirmation_violation_with_or_without_tower(false);
 }
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_run_test_load_program_accounts_root() {
     run_test_load_program_accounts(CommitmentConfig::root());
 }
 
 #[test]
 #[serial]
+#[cfg(feature = "multiple-db-in-thread")]
 fn test_run_test_load_program_accounts_partition_root() {
     run_test_load_program_accounts_partition(CommitmentConfig::root());
 }
