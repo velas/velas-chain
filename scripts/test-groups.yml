@@ -1,0 +1,15 @@
+evm: 
+  items: 
+    - ".*evm.*"
+  
+long-tests:
+    items:
+      - "core"
+      - "local-cluster"
+    features:
+      - "multiple-db-in-thread"
+
+all: 
+    items:
+      - ".*"
+
