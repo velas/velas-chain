@@ -11,7 +11,7 @@ pub fn some_account() -> AccountState {
         nonce: U256::from(random::<u64>()),
         balance: U256::from(random::<u64>()),
         code: iter::repeat_with(random)
-            .take(rand::thread_rng().gen_range(0, 2 * AVERAGE_DATA_SIZE))
+            .take(rand::thread_rng().gen_range(0..=2 * AVERAGE_DATA_SIZE))
             .collect(),
     }
 }

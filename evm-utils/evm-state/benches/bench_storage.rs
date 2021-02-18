@@ -44,7 +44,7 @@ fn add_some_and_advance(state: &mut EvmState, params: &Params) {
             if rng.gen() {
                 state.set_big_transaction(
                     H256::random(),
-                    iter::repeat_with(random).take(rng.gen_range(0, 2 * BIG_TX_AVERAGE_SIZE)),
+                    iter::repeat_with(random).take(rng.gen_range(0..=2 * BIG_TX_AVERAGE_SIZE)),
                 );
             }
         }

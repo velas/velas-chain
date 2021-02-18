@@ -14,13 +14,13 @@ rand2 = { version = "=0.6.1", package = "rand" }
 rocksdb = { version = "0.15.0", default-features = false }
 
 primitive-types = "0.8.0"
-keccak-hash = "0.5"
+keccak-hash = "0.6"
 log = "0.4.11"
 simple_logger = "1.11"
 hex = "0.4.2"
 serde = "1.0"
 sha3 = "0.9.1"
-rand = "0.7.3"
+rand = "0.8.3"
 rlp = "0.5.0"
 thiserror = "1.0.22"
 anyhow = "1.0.34"

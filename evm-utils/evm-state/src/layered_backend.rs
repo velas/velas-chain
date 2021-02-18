@@ -482,7 +482,7 @@ mod tests {
 
         let nonce = U256::from_little_endian(&nonce);
         let balance = U256::from_little_endian(&balance);
-        let code_len: usize = rng.gen_range(0, MAX_SIZE);
+        let code_len: usize = rng.gen_range(0..=MAX_SIZE);
         let code = (0..code_len).into_iter().map(|_| rng.gen()).collect();
 
         AccountState {
@@ -509,7 +509,7 @@ mod tests {
         let mut map = BTreeMap::new();
 
         for acc in accounts {
-            let storage_len = rng.gen_range(0, MAX_SIZE);
+            let storage_len = rng.gen_range(0..=MAX_SIZE);
             for _ in 0..storage_len {
                 let addr: [u8; 32] = rng.gen();
                 let data: [u8; 32] = rng.gen();
