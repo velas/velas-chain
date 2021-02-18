@@ -79,12 +79,26 @@ set +e
 
 features=($(format_features_arg $(list_features "$1")))
 
+# Run cargo test for specific target, with provided params
+cargo_test () {
+    cargo test --$1 --no-fail-fast -j8 --manifest-path $2 $3 "${@:4}" -- --test-threads=10
+    
+}
+
 echo Running items: $items
 for v in $items
 do
     echo Running tests for $v
     set -x
     cargo check --all-targets --manifest-path $v
-    cargo test --all-targets --no-fail-fast -j8 --manifest-path $v $features "${@:2}" -- --test-threads=10
+    # Run tests seperately for each target, to avoid fast fail,
+    # if some of target cannot be compilet with toolchain.
+    for target in bins tests examples
+    do
+        cargo_test $target $v $features "${@:2}"
+    done
+    # cargo test --bins --no-fail-fast -j8 --manifest-path $v $features "${@:2}" -- --test-threads=10
+    # cargo test --tests --no-fail-fast -j8 --manifest-path $v $features "${@:2}" -- --test-threads=10
     set +x
 done
+
