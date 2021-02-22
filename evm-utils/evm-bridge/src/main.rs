@@ -107,14 +107,10 @@ impl EvmBridge {
         // Shortcut for swap tokens to native, will add solana account to transaction.
         if let TransactionAction::Call(addr) = tx.action {
             use solana_evm_loader_program::precompiles::*;
-            trace!("Calling addr = {} ", addr);
-            trace!("ETH_TO_SOL addr = {} ", *ETH_TO_SOL_ADDR);
+
             if addr == *ETH_TO_SOL_ADDR {
                 debug!("Found transferToNative transaction");
-                match ETH_TO_SOL_CODE
-                    .parse_abi(&tx.input)
-                    .and_then(eth_to_sol_parse_inputs)
-                {
+                match ETH_TO_SOL_CODE.parse_abi(&tx.input) {
                     Ok(pk) => {
                         info!("Adding account to meta = {}", pk);
                         meta_keys.push(pk)

@@ -1,88 +1,84 @@
-use hex::FromHexError;
-use snafu::Snafu;
-
-use evm_state::{Context, ExitError};
+use evm_state::{Context, ExitSucceed};
 use primitive_types::H160;
-use solana_sdk::pubkey::Pubkey;
 
+mod abi_parse;
 mod builtins;
+mod errors;
+pub use abi_parse::*;
 use builtins::BUILTINS_MAP;
-pub use builtins::{eth_to_sol_parse_inputs, ETH_TO_SOL_ADDR, ETH_TO_SOL_CODE};
+pub use builtins::{ETH_TO_SOL_ADDR, ETH_TO_SOL_CODE};
+pub use errors::PrecompileErrors;
 
 use crate::account_structure::AccountStructure;
 
-type CallResult = evm_state::PrecompileCallResult;
+pub type Result<T, Err = PrecompileErrors> = std::result::Result<T, Err>;
+type CallResult = Result<PrecompileOk>;
 
-#[derive(Debug, Snafu)]
-pub enum PrecompileErrors {
-    #[snafu(display("Cannot parse function {} abi = {}", name, source))]
-    FailedToParse { name: String, source: ethabi::Error },
-
-    #[snafu(display("Cannot parse function input {} error = {}", arg_type, source))]
-    FailedToParseInput {
-        arg_type: String,
-        source: FromHexError,
-    },
-    #[snafu(display(
-        "Input len lesser than 4 bytes, expected to be function hash, input_len = {}",
-        input_len
-    ))]
-    InputToShort { input_len: usize },
-    #[snafu(display("Function hash, not equal, expected = {}, got = {}", expected, got))]
-    MismatchFunctionHash { expected: String, got: String },
-    #[snafu(display(
-        "Received different params count, expected = {}, got = {}",
-        expected,
-        got
-    ))]
-    ParamsCountMismatch { expected: usize, got: usize },
-
-    #[snafu(display(
-        "Function received unexpected input, expected = {}, got = {}",
-        expected,
-        got
-    ))]
-    UnexpectedInput { expected: String, got: String },
-    #[snafu(display("Failed to find account, account_pk = {}", public_key))]
-    AccountNotFound { public_key: Pubkey },
-
-    #[snafu(display(
-        "No enough tokens, on EVM state account, to credit request = {}",
-        lamports
-    ))]
-    InsufficientFunds { lamports: u64 },
-
-    #[snafu(display("Native chain Instruction error source = {}", source))]
-    NativeChainInstructionError {
-        source: solana_sdk::instruction::InstructionError,
-    },
+/// If precompile succeed, returns `ExitSucceed` - info about execution, Vec<u8> - output data, u64 - gas cost
+pub struct PrecompileOk {
+    reason: ExitSucceed,
+    bytes: Vec<u8>,
+    gas_used: u64,
 }
 
-impl From<PrecompileErrors> for ExitError {
-    fn from(rhs: PrecompileErrors) -> Self {
-        ExitError::Other(rhs.to_string().into())
+impl PrecompileOk {
+    pub fn new(reason: ExitSucceed, bytes: Vec<u8>, gas_used: u64) -> PrecompileOk {
+        Self {
+            reason,
+            bytes,
+            gas_used,
+        }
+    }
+}
+
+impl From<PrecompileOk> for (ExitSucceed, Vec<u8>, u64) {
+    fn from(ok: PrecompileOk) -> Self {
+        (ok.reason, ok.bytes, ok.gas_used)
+    }
+}
+
+pub struct PrecompileContext<'a> {
+    accounts: AccountStructure<'a>,
+    #[allow(unused)]
+    gas_limit: Option<u64>,
+    evm_context: &'a Context,
+}
+impl<'a> PrecompileContext<'a> {
+    fn new(
+        accounts: AccountStructure<'a>,
+        gas_limit: Option<u64>,
+        evm_context: &'a Context,
+    ) -> Self {
+        Self {
+            accounts,
+            gas_limit,
+            evm_context,
+        }
     }
 }
 
 fn entrypoint_static(
-    accounts: AccountStructure,
     address: H160,
     function_abi_input: &[u8],
-    gas_left: Option<u64>,
-    cx: &Context,
-) -> Option<CallResult> {
-    let result =
-        BUILTINS_MAP
-            .get(&address)?
-            .parse_and_eval(accounts, function_abi_input, gas_left, cx);
+    cx: PrecompileContext,
+) -> Option<evm_state::PrecompileCallResult> {
+    let method = BUILTINS_MAP.get(&address)?;
+    let result = method(function_abi_input, cx)
+        .map(Into::into)
+        .map_err(Into::into);
     Some(result)
 }
 
 pub(crate) fn entrypoint(
     accounts: AccountStructure,
-) -> impl FnMut(H160, &[u8], Option<u64>, &Context) -> Option<CallResult> + '_ {
+) -> impl FnMut(H160, &[u8], Option<u64>, &Context) -> Option<evm_state::PrecompileCallResult> + '_
+{
     move |address, function_abi_input, gas_left, cx| {
-        entrypoint_static(accounts, address, function_abi_input, gas_left, cx)
+        entrypoint_static(
+            address,
+            function_abi_input,
+            PrecompileContext::new(accounts, gas_left, cx),
+        )
     }
 }
 
@@ -94,7 +90,7 @@ mod test {
 
     use super::builtins::BUILTINS_MAP;
     use super::*;
-    use evm_state::ExitSucceed;
+    use evm_state::{ExitError, ExitSucceed};
     use std::str::FromStr;
 
     #[test]
@@ -113,9 +109,9 @@ mod test {
             caller: H160::from_str("56454c41532d434841494e000000000053574150").unwrap(),
             apparent_value: U256::from(1),
         };
-        AccountStructure::testing(0, |structure| {
+        AccountStructure::testing(0, |accounts| {
             assert_eq!(
-                dbg!(entrypoint_static(structure, addr, &input, None, &cx).unwrap()),
+                dbg!(entrypoint_static(addr, &input, PrecompileContext::new(accounts, None, &cx)).unwrap()),
                 Err(ExitError::Other("Failed to find account, account_pk = 29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2".into())) // equal to 0x111..111 in base58
             );
         })
@@ -139,7 +135,11 @@ mod test {
             .unwrap();
             let lamports_before = user.lamports().unwrap();
             assert!(matches!(
-                dbg!(entrypoint_static(accounts, addr, &input, None, &cx)),
+                dbg!(entrypoint_static(
+                    addr,
+                    &input,
+                    PrecompileContext::new(accounts, None, &cx)
+                )),
                 Some(Ok((ExitSucceed::Returned, _, 0)))
             ));
 
