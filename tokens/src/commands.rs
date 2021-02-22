@@ -32,7 +32,7 @@ use solana_sdk::{
 };
 use solana_stake_program::{
     stake_instruction::{self, LockupArgs},
-    stake_state::{Authorized, Lockup, StakeAuthorize},
+    stake_state::{Authorized, Lockup, StakeAuthorize, MIN_DELEGATE_STAKE_AMOUNT},
 };
 use solana_transaction_status::TransactionStatus;
 use spl_associated_token_account_v1_0::get_associated_token_address;
@@ -911,6 +911,7 @@ pub fn test_process_distribute_tokens_with_client(
 pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keypair: Keypair) {
     let exit = Arc::new(AtomicBool::default());
     let fee_payer = Keypair::new();
+    let min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let transaction = transfer(
         client,
         sol_to_lamports(1.0),
@@ -937,7 +938,7 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
         &stake_account_address,
         &authorized,
         &lockup,
-        sol_to_lamports(3000.0),
+        3 * min_stake,
     );
     let message = Message::new(&instructions, Some(&sender_keypair.pubkey()));
     let signers = [&sender_keypair, &stake_account_keypair];
@@ -947,7 +948,7 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
         .send_and_confirm_transaction_with_spinner(&transaction)
         .unwrap();
 
-    let expected_amount = sol_to_lamports(1000.0);
+    let expected_amount = 2 * min_stake + sol_to_lamports(1000.0);
     let alice_pubkey = solana_sdk::pubkey::new_rand();
     let file = NamedTempFile::new().unwrap();
     let input_csv = file.path().to_str().unwrap().to_string();
@@ -978,7 +979,7 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
         stake_authority: Box::new(stake_authority),
         withdraw_authority: Box::new(withdraw_authority),
         lockup_authority: None,
-        unlocked_sol: sol_to_lamports(1.0),
+        unlocked_sol: min_stake,
     };
     let args = DistributeTokensArgs {
         fee_payer: Box::new(fee_payer),
@@ -1000,14 +1001,11 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
     assert_eq!(transaction_infos[0].recipient, alice_pubkey);
     assert_eq!(transaction_infos[0].amount, expected_amount);
 
-    assert_eq!(
-        client.get_balance(&alice_pubkey).unwrap(),
-        sol_to_lamports(1.0),
-    );
+    assert_eq!(client.get_balance(&alice_pubkey).unwrap(), min_stake,);
     let new_stake_account_address = transaction_infos[0].new_stake_account_address.unwrap();
     assert_eq!(
         client.get_balance(&new_stake_account_address).unwrap(),
-        expected_amount - sol_to_lamports(1.0),
+        expected_amount - min_stake,
     );
 
     check_output_file(&output_path, &db::open_db(&transaction_db, true).unwrap());
@@ -1020,13 +1018,10 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
     assert_eq!(transaction_infos[0].recipient, alice_pubkey);
     assert_eq!(transaction_infos[0].amount, expected_amount);
 
-    assert_eq!(
-        client.get_balance(&alice_pubkey).unwrap(),
-        sol_to_lamports(1.0),
-    );
+    assert_eq!(client.get_balance(&alice_pubkey).unwrap(), min_stake,);
     assert_eq!(
         client.get_balance(&new_stake_account_address).unwrap(),
-        expected_amount - sol_to_lamports(1.0),
+        expected_amount - min_stake,
     );
 
     check_output_file(&output_path, &db::open_db(&transaction_db, true).unwrap());
@@ -1577,8 +1572,8 @@ mod tests {
         let sender_keypair_file = tmp_file_path("keypair_file", &alice.pubkey());
         write_keypair_file(&alice, &sender_keypair_file).unwrap();
 
-        let allocation_amount = 1000.0;
-        let unlocked_sol = 1.0;
+        let allocation_amount = lamports_to_sol(2 * MIN_DELEGATE_STAKE_AMOUNT) + 1000.0;
+        let unlocked_sol = lamports_to_sol(MIN_DELEGATE_STAKE_AMOUNT) + 1.0;
         let stake_args = initialize_stake_account(
             sol_to_lamports(allocation_amount),
             sol_to_lamports(unlocked_sol),
@@ -1596,7 +1591,7 @@ mod tests {
         check_payer_balances(1, &allocations, &client, &args).unwrap();
 
         // Underfunded stake-account
-        let expensive_allocation_amount = 5000.0;
+        let expensive_allocation_amount = lamports_to_sol(5 * MIN_DELEGATE_STAKE_AMOUNT) + 5000.0;
         let expensive_allocations = vec![Allocation {
             recipient: solana_sdk::pubkey::new_rand().to_string(),
             amount: sol_to_lamports(expensive_allocation_amount),
@@ -1684,8 +1679,8 @@ mod tests {
         let sender_keypair_file = tmp_file_path("keypair_file", &alice.pubkey());
         write_keypair_file(&alice, &sender_keypair_file).unwrap();
 
-        let allocation_amount = 1000.0;
-        let unlocked_sol = 1.0;
+        let allocation_amount = lamports_to_sol(2 * MIN_DELEGATE_STAKE_AMOUNT) + 1000.0;
+        let unlocked_sol = lamports_to_sol(MIN_DELEGATE_STAKE_AMOUNT) + 1.0;
         let stake_args = initialize_stake_account(
             sol_to_lamports(allocation_amount),
             sol_to_lamports(unlocked_sol),

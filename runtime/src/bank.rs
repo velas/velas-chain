@@ -5016,6 +5016,7 @@ pub(crate) mod tests {
         vote_instruction,
         vote_state::{self, BlockTimestamp, Vote, VoteInit, VoteState, MAX_LOCKOUT_HISTORY},
     };
+    use stake_state::MIN_DELEGATE_STAKE_AMOUNT;
     use std::{result, thread::Builder, time::Duration};
 
     #[test]
@@ -8720,11 +8721,13 @@ pub(crate) mod tests {
 
     #[test]
     fn test_bank_cloned_stake_delegations() {
+        let min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
+
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config_with_leader(500, &solana_sdk::pubkey::new_rand(), 1);
+        } = create_genesis_config_with_leader(min_stake + 500, &solana_sdk::pubkey::new_rand(), 1);
         let bank = Arc::new(Bank::new(&genesis_config));
 
         let stake_delegations = bank.cloned_stake_delegations();
@@ -8751,7 +8754,7 @@ pub(crate) mod tests {
             &vote_keypair.pubkey(),
             &Authorized::auto(&stake_keypair.pubkey()),
             &Lockup::default(),
-            10,
+            min_stake,
         ));
 
         let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
