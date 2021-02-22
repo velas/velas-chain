@@ -5,7 +5,12 @@ use log::*;
 use primitive_types::H256;
 use rlp::{Decodable, Encodable};
 use rocksdb::DB;
-use triedb::{empty_trie_hash, rocksdb::RocksMemoryTrieMut, FixedTrieMut};
+use triedb::{
+    empty_trie_hash,
+    gc::{ItemCounter, TrieCollection},
+    rocksdb::{RocksDatabaseHandle, RocksHandle, RocksMemoryTrieMut},
+    FixedTrieMut,
+};
 
 use crate::{
     storage::{Codes, Receipts, Storage as KVS, TransactionHashesPerBlock, Transactions},
@@ -51,7 +56,12 @@ impl Default for EvmState {
 
 impl EvmState {
     pub fn apply(&mut self) {
-        let mut accounts_trie = self.typed_for::<H160, Account>(self.root);
+        let r = RocksHandle::new(RocksDatabaseHandle::new(self.kvs.db.clone()));
+
+        let mut storage_tries = TrieCollection::new(r.clone(), StaticEntries::default());
+        let mut account_tries = TrieCollection::new(r, StaticEntries::default());
+
+        let mut accounts = FixedTrieMut::<_, H160, Account>::new(account_tries.trie_for(self.root));
 
         for (address, account_state) in std::mem::take(&mut self.accounts) {
             if let Some(AccountState {
@@ -61,7 +71,7 @@ impl EvmState {
             }) = account_state
             {
                 // TODO: Self::get_account if applicable
-                let mut account = accounts_trie.get(&address).unwrap_or_default();
+                let mut account = accounts.get(&address).unwrap_or_default();
 
                 account.nonce = nonce;
                 account.balance = balance;
@@ -72,35 +82,35 @@ impl EvmState {
                     account.code_hash = code_hash;
                 }
 
-                let mut storage_trie = self.typed_for::<H256, H256>(account.storage_root);
+                let mut storage = FixedTrieMut::<_, H256, H256>::new(
+                    storage_tries.trie_for(account.storage_root),
+                );
+
                 for (index, value) in self.storages.remove(&address).into_iter().flatten() {
                     if value != H256::default() {
-                        storage_trie.insert(&index, &value);
+                        storage.insert(&index, &value);
                     } else {
-                        storage_trie.delete(&index);
+                        storage.delete(&index);
                     }
                 }
-                let storage_root = storage_trie
-                    .to_trie()
-                    .apply()
-                    .expect("Unable to apply storage updates");
+
+                let storage_patch = storage.to_trie().into_patch();
+                let storage_root = storage_tries.apply(storage_patch);
                 account.storage_root = storage_root;
 
-                accounts_trie.insert(&address, &account);
+                accounts.insert(&address, &account);
             } else {
-                accounts_trie.delete(&address);
+                accounts.delete(&address);
             }
         }
 
         debug_assert!(
             self.storages.is_empty(),
-            "There is some unhanled data in storage"
+            "There is some unhandled data in storage"
         );
 
-        let new_root = accounts_trie
-            .to_trie()
-            .apply()
-            .expect("Unable to apply accounts updates");
+        let accounts_patch = accounts.to_trie().into_patch();
+        let new_root = account_tries.apply(accounts_patch);
 
         self.kvs.set::<TransactionHashesPerBlock>(
             self.slot,
@@ -322,6 +332,18 @@ impl EvmState {
                 });
         }
         result
+    }
+}
+
+#[derive(Default)]
+struct StaticEntries {}
+
+impl ItemCounter for StaticEntries {
+    fn increase(&mut self, _: H256) -> usize {
+        1
+    }
+    fn decrease(&mut self, _: H256) -> usize {
+        1
     }
 }
 
@@ -601,5 +623,68 @@ mod tests {
 
         let recv_state = state.get_account_state(account).unwrap();
         assert_eq!(recv_state, account_state);
+    }
+
+    #[test]
+    fn it_works() {
+        let _ = simple_logger::SimpleLogger::new().init();
+
+        let mut state = EvmState::default();
+
+        let addr = H160::random();
+        assert_eq!(state.get_account_state(addr), None);
+
+        let new_state = AccountState {
+            nonce: U256::from(1),
+            ..Default::default()
+        };
+
+        state.set_account_state(addr, new_state.clone());
+        assert_eq!(state.get_account_state(addr), Some(new_state.clone()));
+
+        state.apply();
+
+        assert_eq!(state.get_account_state(addr), Some(new_state.clone()));
+
+        let another_addr = H160::random();
+
+        assert_ne!(addr, another_addr);
+        assert_eq!(state.get_account_state(another_addr), None);
+
+        state.set_account_state(
+            addr,
+            AccountState {
+                nonce: U256::from(2),
+                ..new_state
+            },
+        );
+
+        state.set_account_state(
+            another_addr,
+            AccountState {
+                nonce: U256::from(1),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            state.get_account_state(addr).map(|acc| acc.nonce),
+            Some(U256::from(2))
+        );
+        assert_eq!(
+            state.get_account_state(another_addr).map(|acc| acc.nonce),
+            Some(U256::from(1))
+        );
+
+        state.apply();
+
+        assert_eq!(
+            state.get_account_state(addr).map(|acc| acc.nonce),
+            Some(U256::from(2))
+        );
+        assert_eq!(
+            state.get_account_state(another_addr).map(|acc| acc.nonce),
+            Some(U256::from(1))
+        );
     }
 }
