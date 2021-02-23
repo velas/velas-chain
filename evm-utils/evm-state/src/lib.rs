@@ -292,9 +292,351 @@ mod tests {
     use super::Executor;
     use super::*;
 
+    #[allow(clippy::type_complexity)]
+    fn noop_precompile(
+        _: H160,
+        _: &[u8],
+        _: Option<u64>,
+        _: &Context,
+    ) -> Option<Result<(ExitSucceed, Vec<u8>, u64), ExitError>> {
+        None
+    }
+
     fn name_to_key(name: &str) -> H160 {
         let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
         hash.into()
+    }
+
+    const METACOIN_CODE: &str = include_str!("../metacoin.code");
+    const INITIAL_BALANCE: u64 = 100_000;
+
+    #[test]
+    fn it_handles_metacoin() {
+        use ethabi::Token;
+
+        #[derive(Clone)]
+        struct Persona {
+            nonce: u64,
+            secret: secp256k1::key::SecretKey,
+        }
+
+        impl Persona {
+            fn new() -> Self {
+                let mut rng = secp256k1::rand::thread_rng();
+                let secret = secp256k1::key::SecretKey::new(&mut rng);
+                let nonce = 0;
+                Self { nonce, secret }
+            }
+
+            fn address(&self) -> Address {
+                self.secret.to_address()
+            }
+
+            // tx_create
+            fn create(&self, bytes: impl AsRef<[u8]>) -> Transaction {
+                let unsigned = UnsignedTransaction {
+                    nonce: self.nonce.into(),
+                    gas_price: U256::zero(),
+                    gas_limit: U256::from(u64::MAX),
+                    action: TransactionAction::Create,
+                    value: U256::zero(),
+                    input: bytes.as_ref().to_vec(),
+                };
+
+                unsigned.sign(&self.secret, None)
+            }
+
+            // tx_call
+            fn call(&self, address: Address, bytes: impl AsRef<[u8]>) -> Transaction {
+                let unsigned = UnsignedTransaction {
+                    nonce: self.nonce.into(),
+                    gas_price: U256::zero(),
+                    gas_limit: U256::from(u64::MAX),
+                    action: TransactionAction::Call(address),
+                    value: U256::zero(),
+                    input: bytes.as_ref().to_vec(),
+                };
+
+                unsigned.sign(&self.secret, None)
+            }
+        }
+
+        mod metacoin {
+            use ethabi::{Function, Param, ParamType};
+            use once_cell::sync::Lazy;
+
+            pub static GET_BALANCE: Lazy<Function> = Lazy::new(|| Function {
+                name: "getBalance".to_string(),
+                inputs: vec![Param {
+                    name: "addr".to_string(),
+                    kind: ParamType::Address,
+                }],
+                outputs: vec![Param {
+                    name: "".to_string(),
+                    kind: ParamType::Uint(256),
+                }],
+                constant: true,
+            });
+
+            pub static SEND_COIN: Lazy<Function> = Lazy::new(|| Function {
+                name: "sendCoin".to_string(),
+                inputs: vec![
+                    Param {
+                        name: "receiver".to_string(),
+                        kind: ParamType::Address,
+                    },
+                    Param {
+                        name: "amount".to_string(),
+                        kind: ParamType::Uint(256),
+                    },
+                ],
+                outputs: vec![Param {
+                    name: "sufficient".to_string(),
+                    kind: ParamType::Bool,
+                }],
+                constant: false,
+            });
+        }
+
+        let _logger = simple_logger::SimpleLogger::new().init();
+
+        let code = hex::decode(METACOIN_CODE).unwrap();
+
+        let mut executor =
+            Executor::with_config(EvmState::default(), evm::Config::istanbul(), u64::MAX, 0);
+
+        let mut alice = Persona::new();
+        let create_tx = alice.create(&code);
+        let contract = create_tx.address().unwrap();
+
+        assert!(matches!(
+            executor
+                .transaction_execute(create_tx, noop_precompile)
+                .unwrap(),
+            (ExitReason::Succeed(ExitSucceed::Returned), _)
+        ));
+
+        alice.nonce += 1;
+
+        let call_tx = alice.call(
+            contract,
+            &metacoin::GET_BALANCE
+                .encode_input(&[Token::Address(alice.address())])
+                .unwrap(),
+        );
+
+        let (exit_reason, bytes) = executor
+            .transaction_execute(call_tx, noop_precompile)
+            .unwrap();
+
+        assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+        assert_eq!(
+            metacoin::GET_BALANCE.decode_output(&bytes).unwrap(),
+            vec![Token::Uint(U256::from(INITIAL_BALANCE))]
+        );
+
+        alice.nonce += 1;
+
+        let mut bob = Persona::new();
+
+        // Alice sends coin to Bob
+
+        let send_tx = alice.call(
+            contract,
+            &metacoin::SEND_COIN
+                .encode_input(&[
+                    Token::Address(bob.address()),
+                    Token::Uint(U256::from(INITIAL_BALANCE / 4)),
+                ])
+                .unwrap(),
+        );
+
+        let (exit_reason, bytes) = executor
+            .transaction_execute(send_tx, noop_precompile)
+            .unwrap();
+        assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+        assert_eq!(
+            metacoin::SEND_COIN.decode_output(&bytes).unwrap(),
+            vec![Token::Bool(true)]
+        );
+
+        alice.nonce += 1;
+
+        // Alice checks Bob balance
+
+        let call_tx = alice.call(
+            contract,
+            &metacoin::GET_BALANCE
+                .encode_input(&[Token::Address(bob.address())])
+                .unwrap(),
+        );
+
+        let (exit_reason, bytes) = executor
+            .transaction_execute(call_tx, noop_precompile)
+            .unwrap();
+        assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+        assert_eq!(
+            metacoin::GET_BALANCE.decode_output(&bytes).unwrap(),
+            vec![Token::Uint(U256::from(INITIAL_BALANCE / 4))]
+        );
+
+        alice.nonce += 1;
+
+        // Bob checks Alice balance
+
+        let call_tx = bob.call(
+            contract,
+            &metacoin::GET_BALANCE
+                .encode_input(&[Token::Address(alice.address())])
+                .unwrap(),
+        );
+
+        let (exit_reason, bytes) = executor
+            .transaction_execute(call_tx, noop_precompile)
+            .unwrap();
+        assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+        assert_eq!(
+            metacoin::GET_BALANCE.decode_output(&bytes).unwrap(),
+            vec![Token::Uint(U256::from(INITIAL_BALANCE * 3 / 4))]
+        );
+
+        bob.nonce += 1;
+
+        let mut state = executor.deconstruct();
+        state.apply();
+
+        // In this realm Bob returns coins to Alice
+        {
+            let mut alice = alice.clone();
+            let mut bob = bob.clone();
+            let state = state.fork(state.slot + 1);
+            let mut executor = Executor::with_config(state, evm::Config::istanbul(), u64::MAX, 0);
+
+            let send_tx = bob.call(
+                contract,
+                &metacoin::SEND_COIN
+                    .encode_input(&[
+                        Token::Address(alice.address()),
+                        Token::Uint(U256::from(INITIAL_BALANCE / 4)),
+                    ])
+                    .unwrap(),
+            );
+
+            let (exit_reason, bytes) = executor
+                .transaction_execute(send_tx, noop_precompile)
+                .unwrap();
+            assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+            assert_eq!(
+                metacoin::SEND_COIN.decode_output(&bytes).unwrap(),
+                vec![Token::Bool(true)]
+            );
+
+            bob.nonce += 1;
+
+            // Alice check self balance
+
+            let call_tx = alice.call(
+                contract,
+                &metacoin::GET_BALANCE
+                    .encode_input(&[Token::Address(alice.address())])
+                    .unwrap(),
+            );
+
+            let (exit_reason, bytes) = executor
+                .transaction_execute(call_tx, noop_precompile)
+                .unwrap();
+            assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+            assert_eq!(
+                metacoin::GET_BALANCE.decode_output(&bytes).unwrap(),
+                vec![Token::Uint(U256::from(INITIAL_BALANCE))]
+            );
+
+            alice.nonce += 1;
+
+            // Alice checks Bob balance
+
+            let call_tx = alice.call(
+                contract,
+                &metacoin::GET_BALANCE
+                    .encode_input(&[Token::Address(bob.address())])
+                    .unwrap(),
+            );
+
+            let (exit_reason, bytes) = executor
+                .transaction_execute(call_tx, noop_precompile)
+                .unwrap();
+            assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+            assert_eq!(
+                metacoin::GET_BALANCE.decode_output(&bytes).unwrap(),
+                vec![Token::Uint(U256::zero())]
+            );
+        }
+
+        // In this realm Alice sends all coins to Bob
+        {
+            // NOTE: ensure slots are different
+            let state = state.fork(state.slot + 2);
+            let mut executor = Executor::with_config(state, evm::Config::istanbul(), u64::MAX, 0);
+
+            let send_tx = alice.call(
+                contract,
+                &metacoin::SEND_COIN
+                    .encode_input(&[
+                        Token::Address(bob.address()),
+                        Token::Uint(U256::from(INITIAL_BALANCE * 3 / 4)),
+                    ])
+                    .unwrap(),
+            );
+
+            let (exit_reason, bytes) = executor
+                .transaction_execute(send_tx, noop_precompile)
+                .unwrap();
+            assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+            assert_eq!(
+                metacoin::SEND_COIN.decode_output(&bytes).unwrap(),
+                vec![Token::Bool(true)]
+            );
+
+            alice.nonce += 1;
+
+            // Alice check self balance
+
+            let call_tx = alice.call(
+                contract,
+                &metacoin::GET_BALANCE
+                    .encode_input(&[Token::Address(alice.address())])
+                    .unwrap(),
+            );
+
+            let (exit_reason, bytes) = executor
+                .transaction_execute(call_tx, noop_precompile)
+                .unwrap();
+            assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+            assert_eq!(
+                metacoin::GET_BALANCE.decode_output(&bytes).unwrap(),
+                vec![Token::Uint(U256::zero())]
+            );
+
+            alice.nonce += 1;
+
+            // Alice checks Bob balance
+
+            let call_tx = alice.call(
+                contract,
+                &metacoin::GET_BALANCE
+                    .encode_input(&[Token::Address(bob.address())])
+                    .unwrap(),
+            );
+
+            let (exit_reason, bytes) = executor
+                .transaction_execute(call_tx, noop_precompile)
+                .unwrap();
+            assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+            assert_eq!(
+                metacoin::GET_BALANCE.decode_output(&bytes).unwrap(),
+                vec![Token::Uint(U256::from(INITIAL_BALANCE))]
+            );
+        }
     }
 
     #[test]
