@@ -596,7 +596,10 @@ mod test {
 
         let state = executor_orig.deconstruct();
         assert_eq!(
-            state.get_account(ether_dummy_address).unwrap().balance,
+            state
+                .get_account_state(ether_dummy_address)
+                .unwrap()
+                .balance,
             crate::scope::evm::lamports_to_gwei(1000)
         )
     }
@@ -654,7 +657,10 @@ mod test {
 
         let mut state = executor_orig.deconstruct();
         assert_eq!(
-            state.get_account(ether_dummy_address).unwrap().balance,
+            state
+                .get_account_state(ether_dummy_address)
+                .unwrap()
+                .balance,
             crate::scope::evm::lamports_to_gwei(lamports_to_send)
         );
 
@@ -709,9 +715,7 @@ mod test {
                 .is_err());
             println!("cx = {:?}", executor);
 
-            let patch = executor_orig.deconstruct();
-
-            state.swap_commit(patch);
+            executor_orig.deconstruct().apply();
         }
 
         // Nothing should change, because of error
@@ -723,7 +727,10 @@ mod test {
         assert_eq!(second_user_account.borrow().lamports, 0);
 
         assert_eq!(
-            state.get_account(ether_dummy_address).unwrap().balance,
+            state
+                .get_account_state(ether_dummy_address)
+                .unwrap()
+                .balance,
             crate::scope::evm::lamports_to_gwei(lamports_to_send)
         );
     }
@@ -781,7 +788,10 @@ mod test {
 
         let mut state = executor_orig.deconstruct();
         assert_eq!(
-            state.get_account(ether_dummy_address).unwrap().balance,
+            state
+                .get_account_state(ether_dummy_address)
+                .unwrap()
+                .balance,
             crate::scope::evm::lamports_to_gwei(lamports_to_send)
         );
 
@@ -833,9 +843,7 @@ mod test {
                 .is_ok());
             println!("cx = {:?}", executor);
 
-            let patch = executor_orig.deconstruct();
-
-            state.swap_commit(patch);
+            executor_orig.deconstruct().apply();
         }
 
         assert_eq!(
@@ -846,7 +854,10 @@ mod test {
         assert_eq!(second_user_account.borrow().lamports, lamports_to_send_back);
 
         assert_eq!(
-            state.get_account(ether_dummy_address).unwrap().balance,
+            state
+                .get_account_state(ether_dummy_address)
+                .unwrap()
+                .balance,
             crate::scope::evm::lamports_to_gwei(lamports_to_send - lamports_to_send_back)
         );
     }
