@@ -1,3 +1,5 @@
+use std::{collections::HashMap, iter::FromIterator};
+
 use evm::backend::{Apply, Backend, Basic};
 use primitive_types::{H160, H256, U256};
 
@@ -34,6 +36,9 @@ impl EvmBackend {
                     reset_storage: _,
                 } => {
                     debug!("Apply::Modify address = {}, basic = {:?}", address, basic);
+
+                    let storage = HashMap::<H256, H256>::from_iter(storage);
+                    debug!("Apply::Modify storage = {:?}", storage);
 
                     // TODO: Rollback on insert fail.
                     // TODO: Clear account storage on delete.
