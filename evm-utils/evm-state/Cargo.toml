@@ -41,9 +41,5 @@ name = "bench_evm"
 harness = false
 
 [[bench]]
-name = "squashed_state"
-harness = false
-
-[[bench]]
 name = "bench_storage"
 harness = false

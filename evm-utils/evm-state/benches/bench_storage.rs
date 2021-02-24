@@ -34,29 +34,28 @@ fn add_some_and_advance(state: &mut EvmState, params: &Params) {
     let mut rng = rand::thread_rng();
 
     for _ in 0..params.n_slots {
-        let slot = state.current_slot();
+        let slot = state.slot;
         addresses.advance();
 
         if rng.gen_ratio(params.accounts_per_100k as u32, 100_000) {
             let (address, account) = (addresses.some_addr(), utils::some_account());
-            state.set_account(address, account);
+            state.set_account_state(address, account);
 
             if rng.gen() {
-                state.set_big_transaction(
+                state.set_transaction(
                     H256::random(),
-                    iter::repeat_with(random).take(rng.gen_range(0..=2 * BIG_TX_AVERAGE_SIZE)),
+                    iter::repeat_with(random)
+                        .take(rng.gen_range(0..=2 * BIG_TX_AVERAGE_SIZE))
+                        .collect(),
                 );
             }
         }
 
-        state.freeze();
-        if slot % params.squash_each == 0 {
-            state.squash();
-        }
-        *state = state.try_fork(slot + 1).expect("Unable to fork EVM state");
+        state.apply();
+        *state = state.fork(slot + 1);
     }
 
-    state.freeze();
+    state.apply();
 }
 
 fn fill_new_db_then_backup(c: &mut Criterion) {
@@ -76,7 +75,9 @@ fn fill_new_db_then_backup(c: &mut Criterion) {
             let mut state =
                 EvmState::new(&dir).expect("Unable to create new EVM state in temporary directory");
             add_some_and_advance(&mut state, &params);
-            let slot = state.current_slot();
+
+            let slot = state.slot;
+            let root = state.root;
             drop(state);
 
             group.bench_with_input(
@@ -85,7 +86,7 @@ fn fill_new_db_then_backup(c: &mut Criterion) {
                 |b, _params| {
                     b.iter_batched(
                         || {
-                            let state = EvmState::load_from(&dir, slot)
+                            let state = EvmState::load_from(&dir, slot, root)
                                 .expect("Unable to load EVM state from temporary directory");
 
                             let empty_dir = tempdir().unwrap();
@@ -94,7 +95,7 @@ fn fill_new_db_then_backup(c: &mut Criterion) {
                             (state, empty_dir)
                         },
                         |(state, target_dir)| {
-                            let _ = state.storage.backup().expect(
+                            let _ = state.kvs.backup().expect(
                                 "Unable to save EVM state storage data into temporary directory",
                             );
                             (state, target_dir) // drop outside
@@ -137,7 +138,9 @@ fn fill_new_db_then_backup_and_then_backup_again(c: &mut Criterion) {
         let mut state =
             EvmState::new(&dir).expect("Unable to create new EVM state in temporary directory");
         add_some_and_advance(&mut state, &params1);
-        let slot = state.current_slot();
+
+        let slot = state.slot;
+        let root = state.root;
         drop(state);
 
         group.bench_with_input(
@@ -146,17 +149,17 @@ fn fill_new_db_then_backup_and_then_backup_again(c: &mut Criterion) {
             |b, _params| {
                 b.iter_batched(
                     || {
-                        let mut state = EvmState::load_from(&dir, slot)
+                        let mut state = EvmState::load_from(&dir, slot, root)
                             .expect("Unable to load EVM state from temporary directory");
 
-                        let _ = state.storage.backup().unwrap();
+                        let _ = state.kvs.backup().unwrap();
 
                         add_some_and_advance(&mut state, &params2);
 
                         state
                     },
                     |state| {
-                        let _ = state.storage.backup().unwrap();
+                        let _ = state.kvs.backup().unwrap();
                         state // drop outside
                     },
                     BatchSize::NumIterations(1),

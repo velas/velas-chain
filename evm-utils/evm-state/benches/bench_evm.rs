@@ -40,7 +40,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut state = EvmState::default();
 
         for address in iter::once(contract).chain(accounts.iter().copied()) {
-            state.set_account(address, AccountState::default());
+            state.set_account_state(address, AccountState::default());
         }
 
         let mut executor =
@@ -82,10 +82,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     group.bench_function("call_hello_with_executor_recreate", |b| {
-        let mut state = EvmState::default();
-
         let mut executor = Executor::with_config(
-            state.clone(),
+            EvmState::default(),
             evm::Config::istanbul(),
             u64::max_value(),
             0,
@@ -99,8 +97,8 @@ fn criterion_benchmark(c: &mut Criterion) {
             ExitReason::Succeed(ExitSucceed::Returned)
         ));
 
-        let patch = executor.deconstruct();
-        state.swap_commit(patch);
+        let mut state = executor.deconstruct();
+        state.apply();
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
         let mut idx = 0;
@@ -136,11 +134,11 @@ fn criterion_benchmark(c: &mut Criterion) {
                 let mut state = EvmState::default();
 
                 for address in iter::once(contract).chain(accounts.iter().copied()) {
-                    state.set_account(address, AccountState::default());
+                    state.set_account_state(address, AccountState::default());
                 }
 
                 let mut executor =
-                    Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), 0);
+                    Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), 0);
                 let create_transaction_result = executor.with_executor(|executor| {
                     executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
                 });
@@ -149,12 +147,12 @@ fn criterion_benchmark(c: &mut Criterion) {
                     ExitReason::Succeed(ExitSucceed::Returned)
                 ));
 
-                let patch = executor.deconstruct();
-                state.swap_commit(patch);
+                let mut state = executor.deconstruct();
+                state.apply();
 
                 for new_slot in (slot + 1)..=*n_forks {
-                    state.freeze();
-                    state = state.try_fork(new_slot).expect("Unable to fork EVM state");
+                    // state.freeze();
+                    state = state.fork(new_slot);
                 }
 
                 let contract = TransactionAction::Create.address(contract, U256::zero());
@@ -202,12 +200,12 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         iter::once(contract)
             .chain(accounts.iter().copied())
-            .for_each(|address| state.set_account(address, AccountState::default()));
+            .for_each(|address| state.set_account_state(address, AccountState::default()));
 
-        state.freeze();
+        state.apply();
 
         let mut executor =
-            Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), 0);
+            Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), 0);
 
         let exit_reason = executor.with_executor(|executor| {
             executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
@@ -217,10 +215,8 @@ fn criterion_benchmark(c: &mut Criterion) {
             ExitReason::Succeed(ExitSucceed::Returned)
         ));
 
-        let patch = executor.deconstruct();
-        state.swap_commit(patch);
-
-        state.freeze();
+        let mut state = executor.deconstruct();
+        state.apply();
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
         let mut idx = 0;

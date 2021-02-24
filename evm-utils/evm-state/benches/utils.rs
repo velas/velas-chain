@@ -12,7 +12,8 @@ pub fn some_account() -> AccountState {
         balance: U256::from(random::<u64>()),
         code: iter::repeat_with(random)
             .take(rand::thread_rng().gen_range(0..=2 * AVERAGE_DATA_SIZE))
-            .collect(),
+            .collect::<Vec<u8>>()
+            .into(),
     }
 }
 
