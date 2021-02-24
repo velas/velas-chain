@@ -25,9 +25,8 @@ pub struct EvmState {
 
     pub kvs: KVS,
 
-    /// None indicates removed account
-    accounts: HashMap<H160, Option<AccountState>>,
-    storages: HashMap<H160, HashMap<H256, H256>>,
+    /// Maybe::Nothing indicates removed account
+    states: HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>,
 
     transactions: HashMap<H256, TransactionChunks>,
     receipts: HashMap<H256, TransactionReceipt>,
@@ -45,11 +44,25 @@ impl Default for EvmState {
             root,
             kvs,
 
-            accounts: HashMap::new(),
-            storages: HashMap::new(),
+            states: HashMap::new(),
 
             transactions: HashMap::new(),
             receipts: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Maybe<T> {
+    Just(T),
+    Nothing,
+}
+
+impl<T> Into<Option<T>> for Maybe<T> {
+    fn into(self) -> Option<T> {
+        match self {
+            Self::Just(val) => Some(val),
+            Self::Nothing => None,
         }
     }
 }
@@ -63,14 +76,13 @@ impl EvmState {
 
         let mut accounts = FixedTrieMut::<_, H160, Account>::new(account_tries.trie_for(self.root));
 
-        for (address, account_state) in std::mem::take(&mut self.accounts) {
-            if let Some(AccountState {
+        for (address, (state, storages)) in std::mem::take(&mut self.states) {
+            if let Maybe::Just(AccountState {
                 nonce,
                 balance,
                 code,
-            }) = account_state
+            }) = state
             {
-                // TODO: Self::get_account if applicable
                 let mut account = accounts.get(&address).unwrap_or_default();
 
                 account.nonce = nonce;
@@ -86,7 +98,7 @@ impl EvmState {
                     storage_tries.trie_for(account.storage_root),
                 );
 
-                for (index, value) in self.storages.remove(&address).into_iter().flatten() {
+                for (index, value) in storages {
                     if value != H256::default() {
                         storage.insert(&index, &value);
                     } else {
@@ -103,11 +115,6 @@ impl EvmState {
                 accounts.delete(&address);
             }
         }
-
-        debug_assert!(
-            self.storages.is_empty(),
-            "There is some unhandled data in storage"
-        );
 
         let accounts_patch = accounts.to_trie().into_patch();
         let new_root = account_tries.apply(accounts_patch);
@@ -140,8 +147,7 @@ impl EvmState {
             root: self.root,
             kvs: self.kvs.clone(),
 
-            accounts: HashMap::new(),
-            storages: HashMap::new(),
+            states: HashMap::new(),
 
             transactions: HashMap::new(),
             receipts: HashMap::new(),
@@ -158,42 +164,57 @@ impl EvmState {
 
 impl EvmState {
     pub fn get_account_state(&self, address: H160) -> Option<AccountState> {
-        self.accounts.get(&address).cloned().unwrap_or_else(|| {
-            self.typed_for(self.root).get(&address).map(
-                |Account {
-                     nonce,
-                     balance,
-                     code_hash,
-                     ..
-                 }| {
-                    let code = self
-                        .kvs
-                        .get::<Codes>(code_hash)
-                        // TODO: default only when code_hash == Code::default().hash()
-                        .unwrap_or_default();
+        self.states
+            .get(&address)
+            .map(|(state, _)| state.clone().into())
+            .unwrap_or_else(|| {
+                self.typed_for(self.root).get(&address).map(
+                    |Account {
+                         nonce,
+                         balance,
+                         code_hash,
+                         ..
+                     }| {
+                        let code = self
+                            .kvs
+                            .get::<Codes>(code_hash)
+                            // TODO: default only when code_hash == Code::default().hash()
+                            .unwrap_or_default();
 
-                    AccountState {
-                        nonce,
-                        balance,
-                        code,
-                    }
-                },
-            )
-        })
+                        AccountState {
+                            nonce,
+                            balance,
+                            code,
+                        }
+                    },
+                )
+            })
     }
 
     pub fn set_account_state(&mut self, address: H160, account_state: AccountState) {
-        self.accounts.insert(address, Some(account_state));
+        use std::collections::hash_map::Entry::*;
+
+        match self.states.entry(address) {
+            Occupied(mut e) => {
+                e.get_mut().0 = Maybe::Just(account_state);
+            }
+            Vacant(e) => {
+                e.insert((Maybe::Just(account_state), HashMap::new()));
+            }
+        };
     }
 
     pub fn remove_account(&mut self, address: H160) {
-        self.accounts.insert(address, None);
+        self.states
+            .entry(address)
+            .and_modify(|(state, _)| *state = Maybe::Nothing)
+            .or_insert_with(|| (Maybe::Nothing, HashMap::new()));
     }
 
     pub fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
-        self.storages
+        self.states
             .get(&address)
-            .and_then(|indices| indices.get(&index))
+            .and_then(|(_, indices)| indices.get(&index))
             .copied()
             .or_else(|| {
                 self.typed_for(self.root).get(&address).and_then(
@@ -213,10 +234,12 @@ impl EvmState {
         address: H160,
         indexed_values: impl IntoIterator<Item = (H256, H256)>,
     ) {
-        self.storages
+        let (_, storage) = self
+            .states
             .entry(address)
-            .or_default()
-            .extend(indexed_values);
+            .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()));
+
+        storage.extend(indexed_values);
     }
 
     // Transactions
@@ -283,8 +306,7 @@ impl EvmState {
             root,
             kvs,
 
-            accounts: HashMap::new(),
-            storages: HashMap::new(),
+            states: HashMap::new(),
 
             transactions: HashMap::new(),
             receipts: HashMap::new(),
