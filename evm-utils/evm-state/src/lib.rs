@@ -25,7 +25,7 @@ mod storage;
 use error::*;
 use log::*;
 
-use std::fmt;
+use std::{fmt, time::Instant};
 
 pub const MAX_TX_LEN: u64 = 3 * 1024 * 1024; // Limit size to 3 MB
 pub const TX_MTU: u64 = 920;
@@ -140,7 +140,14 @@ impl Executor {
 
         assert!(used_gas + self.used_gas <= self.evm.tx_info.block_gas_limit.as_u64());
         let (updates, logs) = executor.into_state().deconstruct();
+
+        let apply_start = Instant::now();
         self.evm.apply(updates, false);
+        debug!(
+            "EVM state apply takes {} us",
+            apply_start.elapsed().as_micros()
+        );
+
         self.register_tx_receipt(evm_tx, used_gas.into(), logs, result.clone());
         self.used_gas += used_gas;
 
@@ -187,7 +194,7 @@ impl Executor {
     pub fn allocate_store(&mut self, key: H256, size: u64) -> Result<(), Error> {
         if size > MAX_TX_LEN {
             error!(
-                "Requested store size {} is greater than allowed {}",
+                "Requested store size {} is greater than allowed transaction length {}",
                 size, MAX_TX_LEN
             );
             return AllocationError { key, size }.fail();
@@ -230,6 +237,7 @@ impl Executor {
     }
 
     // TODO: Handle duplicates, statuses.
+    // TODO: rename it for more clever side effects
     fn register_tx_receipt<I>(
         &mut self,
         tx: transactions::Transaction,
@@ -243,30 +251,26 @@ impl Executor {
         let tx_hash = tx.signing_hash();
 
         debug!("Register tx in EVM block = {}, tx = {}", block_num, tx_hash);
-        // TODO: replace by Entry-like api
-        let mut hashes = self
+
+        let tx_hashes = self
             .evm
             .evm_state
             .get_transactions_in_block(block_num)
-            .unwrap_or_default();
+            .expect("Receipts without transaction is nonsense");
 
-        hashes.push(tx_hash);
+        assert!(tx_hashes.contains(&tx_hash));
 
-        let index = hashes.len() as u64;
-
-        // TODO(hrls): self.evm.evm_state.txs_in_block.insert(block_num, hashes);
-
-        self.evm.evm_state.set_transaction_receipt(
-            tx_hash,
-            TransactionReceipt::new(
-                tx,
-                used_gas,
-                block_num,
-                index,
-                logs.into_iter().collect(),
-                result,
-            ),
+        let index = tx_hashes.len() as u64;
+        let receipt = TransactionReceipt::new(
+            tx,
+            used_gas,
+            block_num,
+            index,
+            logs.into_iter().collect(),
+            result,
         );
+
+        self.evm.evm_state.set_transaction_receipt(tx_hash, receipt);
     }
 
     pub fn deconstruct(self) -> EvmState {

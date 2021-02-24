@@ -69,6 +69,7 @@ pub(crate) struct DeserializableVersionedBank {
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) message_processor: MessageProcessor,
+    // TODO: remove Hex wrapper and ser/de as plain H256
     pub(crate) evm_state_root: evm_rpc::Hex<evm_state::H256>,
 }
 

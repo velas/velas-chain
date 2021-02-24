@@ -119,19 +119,14 @@ impl EvmState {
         let accounts_patch = accounts.to_trie().into_patch();
         let new_root = account_tries.apply(accounts_patch);
 
-        self.kvs.set::<TransactionHashesPerBlock>(
-            self.slot,
-            self.transactions.keys().copied().collect(),
-        );
-
         for (hash, transaction) in self.transactions.iter() {
             self.kvs.set::<Transactions>(*hash, transaction.to_vec());
         }
 
-        // for (hash, transaction) in std::mem::take(&mut self.transactions) {
-        //     // assert_eq!(hash, transaction.hash());
-        //     self.kvs.set::<Transactions>(hash, transaction);
-        // }
+        self.kvs.set::<TransactionHashesPerBlock>(
+            self.slot,
+            self.transactions.keys().copied().collect(),
+        );
 
         for (hash, receipt) in std::mem::take(&mut self.receipts) {
             self.kvs.set::<Receipts>(hash, receipt);
@@ -648,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn it_works() {
+    fn it_handles_accounts_state_get_set_expectations() {
         let _ = simple_logger::SimpleLogger::new().init();
 
         let mut state = EvmState::default();
