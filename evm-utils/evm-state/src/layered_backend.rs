@@ -14,7 +14,7 @@ use triedb::{
 
 use crate::{
     storage::{Codes, Receipts, Storage as KVS, TransactionHashesPerBlock, Transactions},
-    transactions::TransactionReceipt,
+    transactions::{Transaction, TransactionReceipt},
     types::*,
 };
 
@@ -28,7 +28,8 @@ pub struct EvmState {
     /// Maybe::Nothing indicates removed account
     states: HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>,
 
-    transactions: HashMap<H256, TransactionChunks>,
+    chunks: HashMap<H256, TransactionChunks>,
+    transactions: HashMap<H256, Transaction>,
     receipts: HashMap<H256, TransactionReceipt>,
 }
 
@@ -46,6 +47,7 @@ impl Default for EvmState {
 
             states: HashMap::new(),
 
+            chunks: HashMap::new(),
             transactions: HashMap::new(),
             receipts: HashMap::new(),
         }
@@ -119,14 +121,20 @@ impl EvmState {
         let accounts_patch = accounts.to_trie().into_patch();
         let new_root = account_tries.apply(accounts_patch);
 
-        for (hash, transaction) in self.transactions.iter() {
-            self.kvs.set::<Transactions>(*hash, transaction.to_vec());
-        }
+        // Extend existing hashes for current block
+        let hashes = self
+            .kvs
+            .get::<TransactionHashesPerBlock>(self.slot)
+            .into_iter()
+            .flatten()
+            .chain(self.transactions.keys().copied())
+            .collect();
 
-        self.kvs.set::<TransactionHashesPerBlock>(
-            self.slot,
-            self.transactions.keys().copied().collect(),
-        );
+        self.kvs.set::<TransactionHashesPerBlock>(self.slot, hashes);
+
+        for (hash, transaction) in std::mem::take(&mut self.transactions) {
+            self.kvs.set::<Transactions>(hash, transaction);
+        }
 
         for (hash, receipt) in std::mem::take(&mut self.receipts) {
             self.kvs.set::<Receipts>(hash, receipt);
@@ -144,6 +152,7 @@ impl EvmState {
 
             states: HashMap::new(),
 
+            chunks: self.chunks.clone(),
             transactions: HashMap::new(),
             receipts: HashMap::new(),
         }
@@ -239,25 +248,30 @@ impl EvmState {
 
     // Transactions
 
-    pub fn get_transaction(&self, address: H256) -> Option<TransactionChunks> {
+    pub fn get_transaction(&self, address: H256) -> Option<Transaction> {
         self.transactions
             .get(&address)
             .cloned()
             .or_else(|| self.kvs.get::<Transactions>(address))
     }
 
-    // TODO: reflect some usages logic: allocate storage / extend storage
-    pub fn set_transaction(&mut self, address: H256, transaction: TransactionChunks) {
+    pub fn set_transaction(&mut self, address: H256, transaction: Transaction) {
         self.transactions.insert(address, transaction);
     }
 
-    // TODO: persist it!
-    pub fn get_transaction_mut(&mut self, address: H256) -> Option<&mut TransactionChunks> {
-        self.transactions.get_mut(&address)
-    }
-
-    pub fn take_transaction(&mut self, address: H256) -> Option<TransactionChunks> {
-        self.transactions.remove(&address)
+    pub fn get_transactions_in_block(&self, block: Slot) -> Option<Vec<H256>> {
+        let applied = self.kvs.get::<TransactionHashesPerBlock>(block);
+        if self.slot == block {
+            Some(
+                self.transactions
+                    .keys()
+                    .copied()
+                    .chain(applied.into_iter().flatten())
+                    .collect(),
+            )
+        } else {
+            applied
+        }
     }
 
     // Transaction Receipts
@@ -271,6 +285,22 @@ impl EvmState {
 
     pub fn set_transaction_receipt(&mut self, transaction: H256, receipt: TransactionReceipt) {
         self.receipts.insert(transaction, receipt);
+    }
+
+    // TODO: persist it!
+    // TODO: reflect some usages logic: allocate storage / extend storage
+
+    pub fn allocate_chunks(&mut self, address: H256, size: usize) {
+        self.chunks
+            .insert(address, TransactionChunks::new(size as usize));
+    }
+
+    pub fn get_mut_chunks(&mut self, address: H256) -> Option<&mut TransactionChunks> {
+        self.chunks.get_mut(&address)
+    }
+
+    pub fn take_chunks(&mut self, address: H256) -> Option<CompleteTransaction> {
+        self.chunks.remove(&address).map(CompleteTransaction::from)
     }
 }
 
@@ -303,17 +333,10 @@ impl EvmState {
 
             states: HashMap::new(),
 
+            chunks: HashMap::new(),
             transactions: HashMap::new(),
             receipts: HashMap::new(),
         })
-    }
-
-    pub fn get_transactions_in_block(&self, block_num: Slot) -> Option<Vec<H256>> {
-        if self.slot == block_num {
-            Some(self.transactions.keys().copied().collect())
-        } else {
-            self.kvs.get::<TransactionHashesPerBlock>(block_num)
-        }
     }
 
     // TODO: Optimize, using bloom filters.

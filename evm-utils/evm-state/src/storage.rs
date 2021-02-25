@@ -18,7 +18,10 @@ use rocksdb::{
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 
-use crate::{transactions::TransactionReceipt, types::*};
+use crate::{
+    transactions::{Transaction, TransactionReceipt},
+    types::*,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -151,7 +154,7 @@ pub enum Transactions {}
 impl SubStorage for Transactions {
     const COLUMN_NAME: &'static str = "transactions";
     type Key = H256;
-    type Value = TransactionChunks;
+    type Value = Transaction;
 }
 
 pub enum Receipts {}
