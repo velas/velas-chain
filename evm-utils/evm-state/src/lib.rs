@@ -307,7 +307,7 @@ mod tests {
         hash.into()
     }
 
-    const METACOIN_CODE: &str = include_str!("../metacoin.code");
+    const METACOIN_CODE: &str = include_str!("../tests/MetaCoin.bin");
     const INITIAL_BALANCE: u64 = 100_000;
 
     #[test]
