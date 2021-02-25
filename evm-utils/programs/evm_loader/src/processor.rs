@@ -141,30 +141,31 @@ impl EvmProcessor {
                 }
             }
             EvmBigTransaction::EvmTransactionExecute { .. } => {
-                let tx = match executor.take_big_tx(key) {
+                let tx_chunks = match executor.take_big_tx(key) {
+                    Ok(tx) => tx,
                     Err(e) => {
                         error!("Error taking big transaction = {:?}", e);
                         return Err(InstructionError::InvalidArgument);
                     }
-                    Ok(tx) => tx,
                 };
 
-                debug!("Trying to deserialize tx ={:?}", tx);
-                let tx: evm::Transaction = bincode::deserialize(&tx).map_err(|e| {
-                    debug!("real error = {:?}", e);
-                    InstructionError::InvalidArgument
-                })?;
+                debug!("Trying to deserialize tx chunks = {:?}", tx_chunks);
+                let tx: evm::Transaction = match bincode::deserialize(&tx_chunks) {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        debug!("Transaction chunks deserialize error = {:?}", e);
+                        return Err(InstructionError::InvalidArgument);
+                    }
+                };
 
-                debug!("Executing evm tx = {:?}.", tx);
+                debug!("Executing EVM tx = {:?}.", tx);
                 let result = executor
                     .transaction_execute(tx, precompiles::entrypoint(accounts))
                     .map_err(|_| InstructionError::InvalidArgument)?;
-                debug!("Exit status = {:?}", result);
-                match result.0 {
-                    ExitReason::Fatal(_) | ExitReason::Error(_) => {
-                        return Err(InstructionError::InvalidError)
-                    }
-                    _ => {}
+
+                debug!("Execute exit status = {:?}", result);
+                if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
+                    return Err(InstructionError::InvalidError);
                 }
             }
         }

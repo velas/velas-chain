@@ -71,6 +71,12 @@ impl Executor {
             block_number: block_number.into(),
             ..Default::default()
         };
+
+        assert_eq!(
+            state.slot as u64, block_number,
+            "Fork state before execute on them"
+        );
+
         Executor {
             evm: EvmBackend::new_from_state(state, vicinity),
             config,
@@ -148,7 +154,8 @@ impl Executor {
             apply_start.elapsed().as_micros()
         );
 
-        self.register_tx_receipt(evm_tx, used_gas.into(), logs, result.clone());
+        self.register_tx_with_receipt(evm_tx, used_gas.into(), result.clone(), logs);
+
         self.used_gas += used_gas;
 
         Ok(result)
@@ -178,19 +185,6 @@ impl Executor {
         self.used_gas
     }
 
-    pub fn get_tx_receipt_by_hash(&mut self, tx: H256) -> Option<TransactionReceipt> {
-        self.evm.evm_state.get_transaction_receipt(tx)
-    }
-
-    pub fn take_big_tx(&mut self, key: H256) -> Result<Vec<u8>, Error> {
-        if let Some(transaction) = self.evm.evm_state.take_transaction(key) {
-            debug!("Data at {} = {:?}", key, transaction);
-            Ok(transaction)
-        } else {
-            DataNotFound { key }.fail()
-        }
-    }
-
     pub fn allocate_store(&mut self, key: H256, size: u64) -> Result<(), Error> {
         if size > MAX_TX_LEN {
             error!(
@@ -199,78 +193,93 @@ impl Executor {
             );
             return AllocationError { key, size }.fail();
         }
-        if self.evm.evm_state.get_transaction(key).is_some() {
+
+        if self.evm.evm_state.get_mut_chunks(key).is_some() {
             error!("Double allocation for key {:?}", key);
             return AllocationError { key, size }.fail();
         }
 
-        let store = vec![0; size as usize];
-
-        self.evm.evm_state.set_transaction(key, store);
+        self.evm.evm_state.allocate_chunks(key, size as usize);
 
         Ok(())
     }
 
     pub fn publish_data(&mut self, key: H256, offset: u64, data: &[u8]) -> Result<(), Error> {
-        let store = match self.evm.evm_state.get_transaction_mut(key) {
-            Some(store) => store,
+        let chunks = match self.evm.evm_state.get_mut_chunks(key) {
+            Some(chunks) => chunks,
             None => {
-                error!("Failed to write without allocation = {:?}", key);
+                error!("Failed to write without allocation for key {:?}", key);
                 return FailedToWrite { key, offset }.fail();
             }
         };
 
-        let max_len = store.len() as u64;
-        let data_end = offset.saturating_add(data.len() as u64);
+        let expected_data_size = chunks.size();
+        let actual_data_size = (offset as usize).saturating_add(data.len());
+
         // Check offset to avoid integer overflow
-        if data_end > max_len {
-            return OutOfBound {
+        if actual_data_size > expected_data_size {
+            let err = OutOfBound {
                 key,
                 offset,
-                size: max_len,
-            }
-            .fail();
+                size: expected_data_size as u64,
+            };
+            warn!("Failed to publish data: {:?}", err);
+            return err.fail();
         }
-        let offset = offset as usize;
-        store[offset..(offset + data.len())].copy_from_slice(data);
+
+        chunks.extend(offset as usize, data);
+
         Ok(())
     }
 
+    pub fn take_big_tx(&mut self, key: H256) -> Result<Vec<u8>, Error> {
+        if let Some(tx_complete_chunks) = self.evm.evm_state.take_chunks(key) {
+            debug!("Data at {} = {:?}", key, tx_complete_chunks);
+            Ok(tx_complete_chunks.into())
+        } else {
+            DataNotFound { key }.fail()
+        }
+    }
+
     // TODO: Handle duplicates, statuses.
-    // TODO: rename it for more clever side effects
-    fn register_tx_receipt<I>(
+    fn register_tx_with_receipt(
         &mut self,
         tx: transactions::Transaction,
         used_gas: U256,
-        logs: I,
         result: (evm::ExitReason, Vec<u8>),
-    ) where
-        I: IntoIterator<Item = Log>,
-    {
+        logs: impl IntoIterator<Item = Log>,
+    ) {
         let block_num = self.evm.tx_info.block_number.as_u64();
         let tx_hash = tx.signing_hash();
 
-        debug!("Register tx in EVM block = {}, tx = {}", block_num, tx_hash);
+        assert_eq!(block_num, self.evm.evm_state.slot);
+
+        debug!("Register tx = {} in EVM block = {}", tx_hash, block_num);
+
+        self.evm.evm_state.set_transaction(tx_hash, tx.clone());
 
         let tx_hashes = self
             .evm
             .evm_state
             .get_transactions_in_block(block_num)
-            .expect("Receipts without transaction is nonsense");
+            .expect("The block must be the same as in state and contains some transactions");
 
         assert!(tx_hashes.contains(&tx_hash));
 
-        let index = tx_hashes.len() as u64;
         let receipt = TransactionReceipt::new(
             tx,
             used_gas,
             block_num,
-            index,
+            tx_hashes.len() as u64,
             logs.into_iter().collect(),
             result,
         );
 
         self.evm.evm_state.set_transaction_receipt(tx_hash, receipt);
+    }
+
+    pub fn get_tx_receipt_by_hash(&mut self, tx: H256) -> Option<TransactionReceipt> {
+        self.evm.evm_state.get_transaction_receipt(tx)
     }
 
     pub fn deconstruct(self) -> EvmState {
@@ -509,8 +518,11 @@ mod tests {
         {
             let mut alice = alice.clone();
             let mut bob = bob.clone();
-            let state = state.fork(state.slot + 1);
-            let mut executor = Executor::with_config(state, evm::Config::istanbul(), u64::MAX, 0);
+
+            let new_slot = state.slot + 1;
+            let state = state.fork(new_slot);
+            let mut executor =
+                Executor::with_config(state, evm::Config::istanbul(), u64::MAX, new_slot);
 
             let send_tx = bob.call(
                 contract,
@@ -575,8 +587,10 @@ mod tests {
         // In this realm Alice sends all coins to Bob
         {
             // NOTE: ensure slots are different
-            let state = state.fork(state.slot + 2);
-            let mut executor = Executor::with_config(state, evm::Config::istanbul(), u64::MAX, 0);
+            let new_slot = state.slot + 2;
+            let state = state.fork(new_slot);
+            let mut executor =
+                Executor::with_config(state, evm::Config::istanbul(), u64::MAX, new_slot);
 
             let send_tx = alice.call(
                 contract,
