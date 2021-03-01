@@ -1,7 +1,8 @@
 mod account_structure;
-pub mod precompiles;
+pub mod tx_chunks;
 
 pub mod instructions;
+pub mod precompiles;
 pub mod processor;
 
 pub static ID: solana_sdk::pubkey::Pubkey = solana_sdk::evm_loader::ID;
@@ -82,16 +83,14 @@ pub(crate) fn free_ownership(owner: solana::Address) -> solana::Instruction {
     Instruction::new(crate::ID, &EvmInstruction::FreeOwnership {}, account_metas)
 }
 
-pub fn big_tx_allocate(owner: &solana::Address, seed: evm::H256, len: u64) -> solana::Instruction {
+pub fn big_tx_allocate(storage: &solana::Address, size: usize) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
-        AccountMeta::new(*owner, true),
+        AccountMeta::new(*storage, true),
     ];
-    let big_tx = EvmBigTransaction::EvmTransactionAllocate {
-        seed,
-        len,
-        _pay_for_data: None,
-    };
+
+    let big_tx = EvmBigTransaction::EvmTransactionAllocate { size: size as u64 };
+
     Instruction::new(
         crate::ID,
         &EvmInstruction::EvmBigTransaction(big_tx),
@@ -99,21 +98,17 @@ pub fn big_tx_allocate(owner: &solana::Address, seed: evm::H256, len: u64) -> so
     )
 }
 
-pub fn big_tx_write(
-    owner: &solana::Address,
-    seed: evm::H256,
-    offset: u64,
-    chunk: Vec<u8>,
-) -> solana::Instruction {
+pub fn big_tx_write(storage: &solana::Address, offset: u64, chunk: Vec<u8>) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
-        AccountMeta::new(*owner, true),
+        AccountMeta::new(*storage, true),
     ];
+
     let big_tx = EvmBigTransaction::EvmTransactionWrite {
-        seed,
         offset,
         data: chunk,
     };
+
     Instruction::new(
         crate::ID,
         &EvmInstruction::EvmBigTransaction(big_tx),
@@ -121,12 +116,14 @@ pub fn big_tx_write(
     )
 }
 
-pub fn big_tx_execute(owner: &solana::Address, seed: evm::H256) -> solana::Instruction {
+pub fn big_tx_execute(storage: &solana::Address) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
-        AccountMeta::new(*owner, true),
+        AccountMeta::new(*storage, true),
     ];
-    let big_tx = EvmBigTransaction::EvmTransactionExecute { seed };
+
+    let big_tx = EvmBigTransaction::EvmTransactionExecute {};
+
     Instruction::new(
         crate::ID,
         &EvmInstruction::EvmBigTransaction(big_tx),

@@ -19,7 +19,7 @@ use jsonrpc_core::Result;
 use serde_json::json;
 
 use solana_account_decoder::{parse_token::UiTokenAmount, UiAccount};
-use solana_evm_loader_program::scope::*;
+use solana_evm_loader_program::{scope::*, tx_chunks::TxChunks};
 
 use solana_runtime::commitment::BlockCommitmentArray;
 use solana_sdk::{
@@ -30,7 +30,7 @@ use solana_sdk::{
     message::Message,
     signature::{Signature, Signer},
     signers::Signers,
-    transaction,
+    system_instruction, transaction,
 };
 use solana_transaction_status::{
     EncodedConfirmedBlock, EncodedConfirmedTransaction, TransactionStatus, UiTransactionEncoding,
@@ -83,9 +83,9 @@ impl EvmBridge {
         let hash = tx.signing_hash();
         let bytes = bincode::serialize(&tx).unwrap();
 
-        if bytes.len() > evm::TX_MTU as usize {
+        if bytes.len() > evm::TX_MTU {
             debug!("Sending tx = {}, by chunks", hash);
-            match deploy_big_tx(&self.key, &self.rpc_client, &tx) {
+            match deploy_big_tx(&self.rpc_client, &self.key, &tx) {
                 Ok(_tx) => return Ok(Hex(hash)),
                 Err(e) => {
                     error!("Error creating big tx = {}", e);
@@ -155,7 +155,7 @@ impl EvmBridge {
 macro_rules! proxy_evm_rpc {
     ($rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
         {
-        debug!("evm proxy received {}", stringify!($rpc_call));
+        trace!("evm proxy received {}", stringify!($rpc_call));
         RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*]))
             .map_err(|e| {
                 error!("Json rpc error = {:?}", e);
@@ -684,7 +684,7 @@ impl RpcSol for RpcSolProxy {
     ) -> Result<RpcResponse<Vec<Option<TransactionStatus>>>> {
         proxy_sol_rpc!(
             meta.rpc_client,
-            GetMinimumBalanceForRentExemption,
+            GetSignatureStatuses,
             signature_strs,
             config
         )
@@ -998,7 +998,7 @@ impl<M: jsonrpc_core::Metadata> Middleware<M> for LoggingMiddleware {
         F: Fn(Call, M) -> X + Send + Sync,
         X: futures::Future<Item = Option<Output>> + Send + 'static,
     {
-        debug!("On Request = {:?}", call);
+        debug!(target: "jsonrpc_core", "On Request = {:?}", call);
         futures::future::Either::B(next(call, meta))
     }
 }
@@ -1050,8 +1050,7 @@ pub fn log_instruction_custom_error(
 ) -> StdResult<Signature, Box<dyn std::error::Error>> {
     match result {
         Err(err) => {
-            format!("Error processing transaction = {}", err);
-            return Err("Error processing transaction".into());
+            return Err(err.into());
         }
         Ok(sig) => Ok(sig),
     }
@@ -1062,7 +1061,7 @@ fn send_and_confirm_transactions<T: Signers>(
     mut transactions: Vec<solana::Transaction>,
     signer_keys: &T,
 ) -> StdResult<(), Box<dyn std::error::Error>> {
-    const SEND_RETRIES: usize = 5;
+    const SEND_RETRIES: usize = 53;
     const STATUS_RETRIES: usize = 15;
 
     for _ in 0..SEND_RETRIES {
@@ -1077,15 +1076,18 @@ fn send_and_confirm_transactions<T: Signers>(
                     sleep(Duration::from_millis(1000 / DEFAULT_TICKS_PER_SECOND));
                 }
 
+                debug!("Sending {:?}", transaction.signatures);
+
                 let signature = rpc_client
                     .send_transaction_with_config(
                         &transaction,
                         RpcSendTransactionConfig {
-                            skip_preflight: true,
+                            skip_preflight: true, // NOTE: was true
                             ..RpcSendTransactionConfig::default()
                         },
                     )
                     .ok();
+
                 (transaction, signature)
             })
             .collect::<Vec<_>>();
@@ -1099,18 +1101,20 @@ fn send_and_confirm_transactions<T: Signers>(
             }
 
             transactions_signatures.retain(|(_transaction, signature)| {
-                signature
+                let tx_status = signature
                     .and_then(|signature| rpc_client.get_signature_statuses(&[signature]).ok())
-                    .map(|RpcResponse { context: _, value }| match &value[0] {
-                        Some(transaction_status)
-                            if matches!(transaction_status.confirmations, Some(0)) =>
-                        {
-                            false
-                        }
-                        None => false,
-                        _ => true,
-                    })
-                    .unwrap_or(false)
+                    .and_then(|RpcResponse { mut value, .. }| value.remove(0));
+
+                // Remove confirmed
+                if let Some(TransactionStatus {
+                    confirmations: Some(confirmations),
+                    ..
+                }) = tx_status
+                {
+                    confirmations == 0 // retain unconfirmed
+                } else {
+                    true
+                }
             });
 
             if transactions_signatures.is_empty() {
@@ -1119,11 +1123,12 @@ fn send_and_confirm_transactions<T: Signers>(
         }
 
         // Re-sign any failed transactions with a new blockhash and retry
-        let (blockhash, _fee_calculator) = rpc_client
+        let (blockhash, _) = rpc_client
             .get_new_blockhash(&transactions_signatures[0].0.message().recent_blockhash)?;
 
         for (mut transaction, _) in transactions_signatures {
             transaction.try_sign(signer_keys, blockhash)?;
+            debug!("Resending {:?}", transaction.signatures);
             transactions.push(transaction);
         }
     }
@@ -1131,81 +1136,134 @@ fn send_and_confirm_transactions<T: Signers>(
 }
 
 fn deploy_big_tx(
-    keypair: &solana_sdk::signature::Keypair,
     rpc_client: &RpcClient,
+    payer: &solana_sdk::signature::Keypair,
     tx: &evm::Transaction,
 ) -> StdResult<(), Box<dyn std::error::Error>> {
-    let pubkey = keypair.pubkey();
+    let payer_pubkey = payer.pubkey();
+
+    let storage = solana_sdk::signature::Keypair::new();
+    let storage_pubkey = storage.pubkey();
+
+    let signers = [payer, &storage];
+
+    debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
     let tx_bytes = bincode::serialize(&tx)?;
+    debug!(
+        "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
+        storage_pubkey,
+        tx_bytes.len(),
+        TxChunks::new(tx_bytes.as_slice()).crc(),
+    );
 
-    let seed = H256::random();
-    let (blockhash, _fee_calculator, _) = rpc_client
+    let balance = rpc_client.get_minimum_balance_for_rent_exemption(tx_bytes.len())?;
+
+    let (blockhash, _, _) = rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::max())?
         .value;
 
-    let ix = solana_evm_loader_program::big_tx_allocate(&pubkey, seed, tx_bytes.len() as u64);
-    let message = Message::new(&[ix], Some(&pubkey));
-
-    let signers = [keypair];
-    let create_account_tx = solana::Transaction::new(&signers, message, blockhash);
-
-    error!(
-        "transaction signature = {}",
-        create_account_tx.signatures[0]
+    let create_storage_ix = system_instruction::create_account(
+        &payer_pubkey,
+        &storage_pubkey,
+        balance,
+        tx_bytes.len() as u64,
+        &solana_evm_loader_program::ID,
     );
-    let mut write_messages = vec![];
-    for (chunk, i) in tx_bytes.chunks(evm_state::TX_MTU as usize).zip(0..) {
-        let instruction = solana_evm_loader_program::big_tx_write(
-            &pubkey,
-            seed,
-            (i * evm_state::TX_MTU) as u64,
-            chunk.to_vec(),
-        );
-        let message = Message::new(&[instruction], Some(&pubkey));
-        write_messages.push(message);
-    }
 
-    let instruction = solana_evm_loader_program::big_tx_execute(&pubkey, seed);
-    let finalize_message = Message::new(&[instruction], Some(&signers[0].pubkey()));
+    let allocate_storage_ix =
+        solana_evm_loader_program::big_tx_allocate(&storage_pubkey, tx_bytes.len());
 
-    trace!("Creating program account");
-    let result = rpc_client.send_and_confirm_transaction(&create_account_tx);
-    log_instruction_custom_error(result)?;
+    let create_and_allocate_tx = solana::Transaction::new_signed_with_payer(
+        &[create_storage_ix, allocate_storage_ix],
+        Some(&payer_pubkey),
+        &signers,
+        blockhash,
+    );
 
-    let (blockhash, _fee_calculator) = rpc_client.get_new_blockhash(&blockhash)?;
+    debug!(
+        "Create and allocate tx signatures = {:?}",
+        create_and_allocate_tx.signatures
+    );
 
-    let mut write_transactions = vec![];
-    for message in write_messages.into_iter() {
-        let mut tx = solana::Transaction::new_unsigned(message);
-        tx.try_sign(&signers, blockhash)?;
-        write_transactions.push(tx);
-    }
+    rpc_client
+        .send_and_confirm_transaction(&create_and_allocate_tx)
+        .map(|signature| {
+            debug!(
+                "Create and allocate {} tx was done, signature = {:?}",
+                storage_pubkey, signature
+            )
+        })
+        .map_err(|e| {
+            error!("Error create and allocate {} tx: {:?}", storage_pubkey, e);
+            e
+        })?;
 
-    trace!("Writing transaction data");
-    let result = send_and_confirm_transactions(&rpc_client, write_transactions, &signers);
-    if let Err(e) = result {
-        format!("Error sending write data = {}", e);
-        return Err("Error sending write data".into());
-    }
-    let (blockhash, _fee_calculator, _) = rpc_client
+    let (blockhash, _) = rpc_client.get_new_blockhash(&blockhash)?;
+
+    let write_data_txs: Vec<solana::Transaction> = tx_bytes
+        // TODO: encapsulate
+        .chunks(evm_state::TX_MTU)
+        .enumerate()
+        .map(|(i, chunk)| {
+            solana_evm_loader_program::big_tx_write(
+                &storage_pubkey,
+                (i * evm_state::TX_MTU) as u64,
+                chunk.to_vec(),
+            )
+        })
+        .map(|instruction| {
+            solana::Transaction::new_signed_with_payer(
+                &[instruction],
+                Some(&payer_pubkey),
+                &signers,
+                blockhash,
+            )
+        })
+        .collect();
+
+    debug!("Write data txs: {:?}", write_data_txs);
+
+    send_and_confirm_transactions(&rpc_client, write_data_txs, &signers)
+        .map(|_| debug!("All write txs for storage {} was done", storage_pubkey))
+        .map_err(|e| {
+            error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
+            e
+        })?;
+
+    let (blockhash, _, _) = rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::recent())?
         .value;
 
-    let mut finalize_tx = solana::Transaction::new_unsigned(finalize_message);
-    finalize_tx.try_sign(&signers, blockhash)?;
-
-    trace!("Finalizing program account");
-    let result = rpc_client.send_transaction_with_config(
-        &finalize_tx,
-        RpcSendTransactionConfig {
-            skip_preflight: false,
-            preflight_commitment: Some(CommitmentLevel::Recent),
-            ..Default::default()
-        },
+    let execute_tx = solana::Transaction::new_signed_with_payer(
+        &[solana_evm_loader_program::big_tx_execute(&storage_pubkey)],
+        Some(&payer_pubkey),
+        &signers,
+        blockhash,
     );
 
-    log_instruction_custom_error(result)?;
+    debug!("Execute EVM transaction at storage {} ...", storage_pubkey);
+
+    let rpc_send_cfg = RpcSendTransactionConfig {
+        skip_preflight: false,
+        preflight_commitment: Some(CommitmentLevel::Recent),
+        ..Default::default()
+    };
+
+    rpc_client
+        .send_transaction_with_config(&execute_tx, rpc_send_cfg)
+        .map(|signature| {
+            debug!(
+                "Execute EVM tx at {} was done, signature = {:?}",
+                storage_pubkey, signature
+            )
+        })
+        .map_err(|e| {
+            error!("Execute EVM tx at {} failed: {:?}", storage_pubkey, e);
+            e
+        })?;
+
+    // TODO: here we can transfer back lamports and delete storage
 
     Ok(())
 }
