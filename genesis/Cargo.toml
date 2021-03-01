@@ -27,6 +27,8 @@ solana-stake-program = { path = "../programs/stake", version = "1.5.3" }
 solana-version = { path = "../version", version = "1.5.3" }
 solana-vest-program = { path = "../programs/vest", version = "1.5.3" }
 solana-vote-program = { path = "../programs/vote", version = "1.5.3" }
+evm-state = { path = "../evm-utils/evm-state" }
+evm-rpc = { path = "../evm-utils/evm-rpc" }
 tempfile = "3.1.0"
 
 [[bin]]
@@ -38,3 +40,7 @@ name = "solana_genesis"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = ["with_evm"]
+with_evm = []

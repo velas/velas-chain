@@ -690,7 +690,7 @@ fn load_bank_forks(
         vec![non_primary_accounts_path]
     };
 
-    let evm_state_path = ledger_path.join("evm-state");
+    let evm_state_path = ledger_path.to_path_buf();
 
     bank_forks_utils::load(
         &genesis_config,

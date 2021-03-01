@@ -3334,7 +3334,7 @@ pub fn create_new_ledger(
     drop(blockstore);
 
     let archive_path = ledger_path.join("genesis.tar.bz2");
-    let args = vec![
+    let mut args = vec![
         "jcfhS",
         archive_path.to_str().unwrap(),
         "-C",
@@ -3342,6 +3342,11 @@ pub fn create_new_ledger(
         "genesis.bin",
         "rocksdb",
     ];
+
+    if genesis_config.evm_root_hash.is_some() {
+        args.push("evm-state-genesis")
+    }
+
     let output = std::process::Command::new("tar")
         .args(&args)
         .output()

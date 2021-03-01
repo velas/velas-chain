@@ -288,6 +288,10 @@ fn is_valid_genesis_archive_entry(parts: &[&str], kind: tar::EntryType) -> bool 
         (["rocksdb"], Directory) => true,
         (["rocksdb", ..], GNUSparse) => true,
         (["rocksdb", ..], Regular) => true,
+        (["evm-state-genesis"], Directory) => true,
+        (["evm-state-genesis", ..], GNUSparse) => true,
+        (["evm-state-genesis", ..], Regular) => true,
+        (["evm-state-genesis", ..], Directory) => true,
         _ => false,
     }
 }

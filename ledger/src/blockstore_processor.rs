@@ -352,7 +352,7 @@ pub struct ProcessOptions {
 pub fn process_blockstore<P: AsRef<Path>>(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
-    evm_state_path: P,
+    evm_state_root_path: P,
     account_paths: Vec<PathBuf>,
     opts: ProcessOptions,
 ) -> BlockstoreProcessorResult {
@@ -368,7 +368,7 @@ pub fn process_blockstore<P: AsRef<Path>>(
     // Setup bank for slot 0
     let bank0 = Bank::new_with_paths(
         &genesis_config,
-        Some(evm_state_path.as_ref()),
+        Some(evm_state_root_path.as_ref()),
         account_paths,
         &opts.frozen_accounts,
         opts.debug_keys.clone(),

@@ -294,16 +294,29 @@ impl EvmState {
 }
 
 impl EvmState {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
-        let path = path.as_ref();
+    pub fn new<P: AsRef<Path>>(path: P, root_hash: Option<H256>) -> Result<Self, anyhow::Error> {
+        let evm_state = path.as_ref().to_path_buf().join("evm-state");
 
-        if path.is_dir() && path.exists() {
-            warn!("deleting existing state {}", path.display());
-            fs::remove_dir_all(path)?;
-            fs::create_dir(path)?;
+        if evm_state.is_dir() && evm_state.exists() {
+            warn!("deleting existing state {}", evm_state.display());
+            fs::remove_dir_all(&evm_state)?;
+            fs::create_dir(&evm_state)?;
         }
 
-        Self::load_from(path, Slot::default(), empty_trie_hash())
+        let root_hash = if let Some(root_hash) = root_hash {
+            let evm_genesis = path.as_ref().to_path_buf().join("evm-state-genesis");
+            info!(
+                "Found evm root_hash: {:?}. Trying to load evm state from genesis: {}",
+                root_hash,
+                evm_genesis.display()
+            );
+            KVS::restore_from(evm_genesis, &evm_state)?;
+            root_hash
+        } else {
+            empty_trie_hash()
+        };
+
+        Self::load_from(evm_state, Slot::default(), root_hash)
     }
 
     pub fn load_from<P: AsRef<Path>>(

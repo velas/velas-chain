@@ -1,10 +1,12 @@
 use derive_more::{From, Into};
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use triedb::empty_trie_hash;
 
+pub use evm::backend::MemoryAccount;
 pub use primitive_types::{H160, H256, U256};
 
 pub type Slot = u64; // TODO: re-use existing one from sdk package

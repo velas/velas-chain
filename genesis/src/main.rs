@@ -12,7 +12,7 @@ use solana_clap_utils::{
     input_parsers::{cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime},
     input_validators::{is_pubkey_or_keypair, is_rfc3339_datetime, is_valid_percentage},
 };
-use solana_genesis::{genesis_accounts::add_genesis_accounts, Base64Account};
+use solana_genesis::Base64Account;
 use solana_ledger::{
     blockstore::create_new_ledger, blockstore_db::AccessType, poh::compute_hashes_per_tick,
 };
@@ -33,6 +33,7 @@ use solana_sdk::{
 };
 use solana_stake_program::stake_state::{self, StakeState};
 use solana_vote_program::vote_state::{self, VoteState};
+use stake_state::MIN_DELEGATE_STAKE_AMOUNT;
 use std::{
     collections::HashMap,
     error,
@@ -133,7 +134,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .to_string();
     // stake account
     let default_bootstrap_validator_stake_lamports = &sol_to_lamports(0.5)
-        .max(StakeState::get_rent_exempt_reserve(&rent))
+        .max(StakeState::get_rent_exempt_reserve(&rent) + MIN_DELEGATE_STAKE_AMOUNT)
         .to_string();
 
     let default_target_tick_duration =
@@ -141,10 +142,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let default_ticks_per_slot = &clock::DEFAULT_TICKS_PER_SLOT.to_string();
     let default_cluster_type = "mainnet-beta";
     let default_genesis_archive_unpacked_size = MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string();
-
-    let matches = App::new(crate_name!())
+    let version = solana_version::version!();
+    let app = App::new(crate_name!())
         .about(crate_description!())
-        .version(solana_version::version!())
+        .version(version)
         .arg(
             Arg::with_name("creation_time")
                 .long("creation-time")
@@ -380,8 +381,18 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .takes_value(true)
                 .possible_values(&["pico", "full", "none"])
                 .help("Selects inflation"),
+        );
+    let matches = if cfg!(feature = "with_evm") {
+        app.arg(
+            Arg::with_name("evm-root")
+                .long("evm-root")
+                .takes_value(true)
+                .help("Root hash for evm state snapshot, Used to verify snapshot integrity."),
         )
-        .get_matches();
+    } else {
+        app
+    }
+    .get_matches();
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
@@ -427,7 +438,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let bootstrap_validator_stake_lamports = rent_exempt_check(
         &matches,
         "bootstrap_validator_stake_lamports",
-        StakeState::get_rent_exempt_reserve(&rent),
+        StakeState::get_rent_exempt_reserve(&rent) + stake_state::MIN_DELEGATE_STAKE_AMOUNT,
     )?;
 
     let bootstrap_stake_authorized_pubkey =
@@ -511,6 +522,22 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         ..GenesisConfig::default()
     };
 
+    if cfg!(feature = "with_evm") {
+        let root = value_t!(matches, "evm-root", String);
+        match root {
+            Ok(root) => {
+                let root_hash = evm_rpc::Hex::<evm_state::H256>::from_hex(&root).unwrap();
+                genesis_config.set_evm_state_file(root_hash.0)
+            }
+            Err(e) => {
+                eprintln!(
+                    "EVM root was not found but genesis was compilet with `with_evm` feature {}",
+                    e
+                );
+            }
+        }
+    }
+
     if let Ok(raw_inflation) = value_t!(matches, "inflation", String) {
         let inflation = match raw_inflation.as_str() {
             "pico" => Inflation::pico(),
@@ -573,6 +600,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     }
 
     solana_stake_program::add_genesis_accounts(&mut genesis_config);
+
     if genesis_config.cluster_type == ClusterType::Development {
         solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
     }
@@ -592,7 +620,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .map(|(_key, account)| account.lamports)
         .sum::<u64>();
 
-    add_genesis_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
+    // TODO: add_genesis_accounts for evm.
+    // add_genesis_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
 
     if let Some(values) = matches.values_of("bpf_program") {
         let values: Vec<&str> = values.collect::<Vec<_>>();
