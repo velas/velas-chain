@@ -20,6 +20,9 @@ use crate::{
 };
 use bincode::{deserialize, serialize};
 use chrono::{TimeZone, Utc};
+use evm_state::H256;
+use itertools::Itertools;
+use log::warn;
 use memmap2::Mmap;
 use std::{
     collections::BTreeMap,
@@ -33,7 +36,10 @@ use std::{
 
 // deprecated default that is no longer used
 pub const UNUSED_DEFAULT: u64 = 1024;
+pub const EVM_STATE_FILE: &str = "evm_genesis.bin";
 
+// Dont load to memory accounts, more specified count
+const IN_MEMORY_EVM_ACCOUNTS_MAX: usize = 1000;
 // The order can't align with release lifecycle only to remain ABI-compatible...
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, AbiEnumVisitor, AbiExample)]
 pub enum ClusterType {
@@ -89,6 +95,8 @@ pub struct GenesisConfig {
     pub epoch_schedule: EpochSchedule,
     /// network runlevel
     pub cluster_type: ClusterType,
+    /// Initial data for evm part
+    pub evm_root_hash: Option<H256>,
 }
 
 // useful for basic tests
@@ -125,6 +133,7 @@ impl Default for GenesisConfig {
             rent: Rent::default(),
             epoch_schedule: EpochSchedule::default(),
             cluster_type: ClusterType::Development,
+            evm_root_hash: None,
         }
     }
 }
@@ -198,7 +207,53 @@ impl GenesisConfig {
         std::fs::create_dir_all(&ledger_path)?;
 
         let mut file = File::create(Self::genesis_filename(&ledger_path))?;
-        file.write_all(&serialized)
+        file.write_all(&serialized)?;
+        self.try_generate_evm_state(ledger_path)
+    }
+
+    pub fn try_generate_evm_state(&self, ledger_path: &Path) -> Result<(), std::io::Error> {
+        let root_hash = if let Some(root_hash) = self.evm_root_hash {
+            root_hash
+        } else {
+            warn!("Generating genesis without evm state");
+            match self.cluster_type {
+                ClusterType::Development => return Ok(()),
+                cluster_type => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Trying to generate genesis for cluster = {:?} without evm state root hash provided.", cluster_type),
+                    ))
+                }
+            }
+        };
+        let mut evm_genesis_path = ledger_path.to_path_buf();
+        evm_genesis_path.push(EVM_STATE_FILE);
+        let accounts = evm_genesis::read_accounts(&evm_genesis_path)?;
+
+        let mut evm_state_path = ledger_path.to_path_buf();
+        evm_state_path.push("evm-state");
+        let mut evm_state = evm_state::EvmState::new(evm_state_path, None)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
+        for chunk in &accounts.chunks(IN_MEMORY_EVM_ACCOUNTS_MAX) {
+            let chunk: Result<Vec<_>, _> = chunk.collect();
+            let chunk = chunk?;
+            log::info!("Adding {} accounts to evm state.", chunk.len());
+            evm_state.set_initial(chunk);
+            evm_state.commit();
+        }
+        assert_eq!(evm_state.root, root_hash);
+        let mut evm_backup = ledger_path.to_path_buf();
+        evm_backup.push("evm-state-genesis");
+
+        let tmp_backup = evm_state
+            .kvs
+            .backup()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
+        std::fs::rename(tmp_backup, evm_backup)
+    }
+
+    pub fn set_evm_state_file(&mut self, root_hash: H256) {
+        self.evm_root_hash = Some(root_hash)
     }
 
     pub fn add_account(&mut self, pubkey: Pubkey, account: Account) {
@@ -283,8 +338,239 @@ impl fmt::Display for GenesisConfig {
     }
 }
 
+mod evm_genesis {
+    use evm_rpc::{Bytes, Hex};
+    use evm_state::{MemoryAccount, H160, H256, U256};
+
+    use serde::{de, Deserialize, Serialize};
+    use serde_json::{de::IoRead, Deserializer};
+    use sha3::{Digest, Keccak256};
+    use std::collections::BTreeMap;
+    use std::fs::File;
+    use std::io::{BufRead, BufReader, Error, ErrorKind};
+    use std::iter;
+    use std::path::Path;
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct ExtendedMemoryAccount {
+        /// Account nonce.
+        #[serde(deserialize_with = "deserialize_skip_hex_prefix")]
+        pub nonce: U256,
+        /// Account balance.
+        #[serde(deserialize_with = "deserialize_skip_hex_prefix")]
+        pub balance: U256,
+        /// Full account storage.
+        pub storage: Option<BTreeMap<Hex<H256>, Hex<H256>>>,
+        /// Account code.
+        #[serde(deserialize_with = "deserialize_skip_hex_prefix_bytes")]
+        #[serde(default)]
+        pub code: Option<Bytes>,
+        pub code_hash: Option<Hex<H256>>,
+        pub storage_root: Option<Hex<H256>>,
+    }
+
+    fn deserialize_skip_hex_prefix<'de, D>(deserializer: D) -> Result<U256, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        let data = String::deserialize(deserializer)?;
+        U256::from_str_radix(&data, 16).map_err(|e| de::Error::custom(format!("{}", e)))
+    }
+
+    fn deserialize_skip_hex_prefix_bytes<'de, D>(deserializer: D) -> Result<Option<Bytes>, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        let data = Option::<String>::deserialize(deserializer)?;
+        data.map(|data| {
+            hex::decode(data)
+                .map(Bytes)
+                .map_err(|e| de::Error::custom(format!("{}", e)))
+        })
+        .transpose()
+    }
+
+    impl From<ExtendedMemoryAccount> for MemoryAccount {
+        fn from(extended: ExtendedMemoryAccount) -> MemoryAccount {
+            let result = MemoryAccount {
+                nonce: extended.nonce,
+                balance: extended.balance,
+                storage: extended
+                    .storage
+                    .into_iter()
+                    .flatten()
+                    .map(|(k, v)| (k.0, v.0))
+                    .collect(),
+                code: extended.code.unwrap_or_else(|| Bytes(Vec::new())).0,
+            };
+            result
+        }
+    }
+
+    /// Streaming deserializer for key,value pair in json.
+    /// input format is following:
+    ///
+    /// line0:   { "state": {
+    /// line1-N: "0x....": {...},
+    /// lineN:   }}
+    ///
+    /// serde_json StreamDeserializer can only work with valid json Value. '"key":{object}' - is not a valid json Value.
+    ///
+    pub struct StreamAccountReader<R> {
+        reader: R,
+    }
+
+    impl<'a, R: BufRead> StreamAccountReader<IoRead<R>> {
+        pub fn new(mut reader: R) -> Result<Self, Error> {
+            let mut buffer = String::new();
+
+            let _header_size = reader.read_line(&mut buffer)?;
+            if buffer.as_str() != "{ \"state\": {\n" {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    format!("Trying to read header of evm state json file, and it is invalid, should be '{{ \"state\": {{' got: {}", buffer),
+                ));
+            }
+
+            Ok(Self {
+                reader: IoRead::new(reader),
+            })
+        }
+    }
+
+    impl<'a, R: serde_json::de::Read<'a>> StreamAccountReader<R> {
+        /// Return true if end brackets found.
+        fn end_brackets(&mut self) -> Result<bool, Error> {
+            self.skip_whitespaces()?;
+            let end_bracket = self
+                .reader
+                .peek()
+                .map_err(|e| Error::new(ErrorKind::Other, format!("Read buffer error {:?}", e)))?;
+
+            if let Some(b'}') = end_bracket {
+                // json should close 'state' object, and main object: '{"state": { .. }}'
+                for _ in 0..2 {
+                    // check that 3 brackets found
+                    let end_bracket = self.reader.next().map_err(|e| {
+                        Error::new(ErrorKind::Other, format!("Read buffer error {:?}", e))
+                    })?;
+                    if end_bracket.is_none() {
+                        return Err(Error::new(
+                            ErrorKind::Other,
+                            format!("No enough end brackets at end of file found."),
+                        ));
+                    }
+                }
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+
+        fn skip_trailing_comma(&mut self) -> Result<(), Error> {
+            if let Some(b',') = self.reader.peek()? {
+                self.reader.discard()
+            }
+            Ok(())
+        }
+
+        fn skip_whitespaces(&mut self) -> Result<(), Error> {
+            while let Some(c) = self.reader.peek()? {
+                // Discard all whitespaces, return if other
+                if !char::from(c).is_whitespace() {
+                    return Ok(());
+                }
+
+                self.reader.discard()
+            }
+            Ok(())
+        }
+
+        fn skip_colon(&mut self) -> Result<(), Error> {
+            match self.reader.next() {
+                Ok(Some(b':')) => Ok(()),
+                s => Err(Error::new(
+                    ErrorKind::Other,
+                    format!("cannot skip colon {:?}", s),
+                )),
+            }
+        }
+
+        fn read_token<T: serde::de::DeserializeOwned>(&mut self) -> Result<T, Error> {
+            let mut stream = Deserializer::new(&mut self.reader).into_iter::<T>();
+
+            match stream.next() {
+                None => Err(Error::new(
+                    ErrorKind::Other,
+                    format!("Buffer ended unexpected"),
+                )),
+                Some(Err(e)) => Err(Error::new(
+                    ErrorKind::Other,
+                    format!("Deserialization error {:?}", e),
+                )),
+                Some(Ok(o)) => Ok(o),
+            }
+        }
+
+        /// Read account, try to validate code_hash and storage_root.
+        ///
+        /// Result<Option<...>> instead of Option<Result<>>, to allow power of `Try` for error handling.
+        pub fn read_account(&mut self) -> Result<Option<(H160, MemoryAccount)>, Error> {
+            if self.end_brackets()? {
+                return Ok(None);
+            }
+            let key: Hex<H160> = self.read_token()?;
+            self.skip_colon()?;
+
+            let value: ExtendedMemoryAccount = self.read_token()?;
+
+            self.skip_trailing_comma()?;
+
+            match (&value.storage_root, &value.storage) {
+                (Some(expected_storage), Some(storage)) => {
+                    let storage_root = triehash_ethereum::sec_trie_root(
+                        storage
+                            .iter()
+                            .map(|(k, v)| (&k.0, rlp::encode(&U256::from_big_endian(&v.0[..])))),
+                    );
+                    assert_eq!(storage_root, expected_storage.0, "Storage hash mismatched")
+                }
+                (None, None) => {}
+                _ => panic!(
+                    "Expected storage_root and storage properties to exist in account: {:?}.",
+                    key
+                ),
+            }
+            match (&value.code_hash, &value.code) {
+                (Some(expected_code), Some(code)) => {
+                    let code_hash = H256::from_slice(Keccak256::digest(&code.0).as_slice());
+                    assert_eq!(code_hash, expected_code.0, "Code hash mismatched")
+                }
+                (None, None) => {}
+                _ => panic!(
+                    "Expected code_hash and code properties to exist in account: {:?}.",
+                    key
+                ),
+            }
+
+            Ok(Some((key.0, value.into())))
+        }
+    }
+
+    pub fn read_accounts(
+        evm_state_snapshot: &Path,
+    ) -> Result<impl Iterator<Item = Result<(H160, MemoryAccount), Error>>, Error> {
+        let evm_file = BufReader::new(File::open(&evm_state_snapshot)?);
+
+        let mut reader = StreamAccountReader::new(evm_file)?;
+        Ok(iter::from_fn(move || reader.read_account().transpose()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use evm_state::{MemoryAccount, H160};
+
+    use super::evm_genesis::*;
     use super::*;
     use crate::signature::{Keypair, Signer};
     use std::path::PathBuf;
@@ -335,5 +621,100 @@ mod tests {
         let loaded_config = GenesisConfig::load(&path).expect("load");
         assert_eq!(config.hash(), loaded_config.hash());
         let _ignored = std::fs::remove_file(&path);
+    }
+
+    fn check_evm_genesis_file(data: &str) -> Result<BTreeMap<H160, MemoryAccount>, std::io::Error> {
+        let mut reader = StreamAccountReader::new(data.as_bytes())?;
+
+        std::iter::from_fn(move || reader.read_account().transpose()).collect()
+    }
+
+    #[test]
+    fn test_invalid_evm_genesis() {
+        let no_header = r#"
+            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"}
+        }}"#;
+        assert!(dbg!(check_evm_genesis_file(no_header)).is_err());
+
+        let no_footer = r#"{ "state": {
+            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"}
+        "#;
+        assert!(dbg!(check_evm_genesis_file(no_footer)).is_err());
+
+        let no_colon = r#"{ "state": {
+            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c", {"balance": "2544faa778090e00000", "nonce": "0"}
+        }}"#;
+        assert!(dbg!(check_evm_genesis_file(no_colon)).is_err());
+
+        let not_valid_key = r#"{ "state": {
+            "0xKKKKKKKKKKKKKKKKKKKKK": {"balance": "2544faa778090e00000", "nonce": "0"}
+        }}"#;
+        assert!(dbg!(check_evm_genesis_file(not_valid_key)).is_err());
+    }
+
+    #[test]
+    #[should_panic]
+    fn invalid_code_hash() {
+        let invalid_code_hash = r#"{ "state": {
+            "0x984cf4e0001003d4ef5328d0fea9a3a430b78027": {"balance": "0", "nonce": "1", "code_hash": "0x11111111111111111111111110be7c0893f036ad196680a723a9665e3681e165", "code": "60102233" }
+        }}"#;
+        let _expect_panic = check_evm_genesis_file(invalid_code_hash);
+    }
+    #[test]
+    #[should_panic]
+    fn invalid_storage_hash() {
+        let invalid_storage_hash = r#"{ "state": {
+            "0x984cf4e0001003d4ef5328d0fea9a3a430b78037": {"balance": "0", "nonce": "1", "storage_root": "0x11111111111111111111111110be7c0893f036ad196680a723a9665e3681e165", "storage": {
+                    "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
+                    "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
+            }}
+        }}"#;
+        let _expect_panic = check_evm_genesis_file(invalid_storage_hash);
+    }
+
+    #[test]
+    fn test_valid_evm_genesis() {
+        let json_one_account = r#"{ "state": {
+            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"}
+        }}"#;
+        assert_eq!(check_evm_genesis_file(json_one_account).unwrap().len(), 1);
+
+        let json_two_accounts = r#"{ "state": {
+            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"},
+            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5e": {"balance": "2544faa778090e00000", "nonce": "0"}
+        }}"#;
+        assert_eq!(check_evm_genesis_file(json_two_accounts).unwrap().len(), 2);
+
+        let json_two_accounts_full = r#"{ "state": {
+            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"},
+            "0x984cf4e0001003d4ef5328d0fea9a3a430b78027": {"balance": "0", "nonce": "1", "code_hash": "0x5304993ef62b8112c1e117e13d564987d722edb2588c485c7a074aac542ad710", "code": "60102233", "storage_root": "0xee496207d2c8ef7e41788519fc346ced8255be4850587f290b84d63bf405266a", "storage": {
+                    "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
+                    "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
+            }}
+        }}"#;
+        assert_eq!(
+            check_evm_genesis_file(json_two_accounts_full)
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let json_two_accounts_full = r#"{ "state": {
+            "0x984cf4e0001003d4ef5328d0fea9a3a430b78027": {"balance": "0", "nonce": "1", "code_hash": "0x5304993ef62b8112c1e117e13d564987d722edb2588c485c7a074aac542ad710", "code": "60102233", "storage_root": "0xee496207d2c8ef7e41788519fc346ced8255be4850587f290b84d63bf405266a", "storage": {
+                    "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
+                    "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
+            }},
+            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"},
+            "0x984cf4e0001003d4ef5328d0fea9a3a430b78037": {"balance": "0", "nonce": "1", "storage_root": "0xee496207d2c8ef7e41788519fc346ced8255be4850587f290b84d63bf405266a", "storage": {
+                    "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
+                    "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
+            }}
+        }}"#;
+        assert_eq!(
+            check_evm_genesis_file(json_two_accounts_full)
+                .unwrap()
+                .len(),
+            3
+        );
     }
 }

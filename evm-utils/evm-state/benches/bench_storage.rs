@@ -73,8 +73,8 @@ fn fill_new_db_then_backup(c: &mut Criterion) {
         .for_each(|params| {
             let dir = tempdir().unwrap();
 
-            let mut state =
-                EvmState::new(&dir).expect("Unable to create new EVM state in temporary directory");
+            let mut state = EvmState::new(&dir, None)
+                .expect("Unable to create new EVM state in temporary directory");
             add_some_and_advance(&mut state, &params);
 
             let slot = state.slot;
@@ -136,8 +136,8 @@ fn fill_new_db_then_backup_and_then_backup_again(c: &mut Criterion) {
     .for_each(|(params1, params2)| {
         let dir = tempdir().unwrap();
 
-        let mut state =
-            EvmState::new(&dir).expect("Unable to create new EVM state in temporary directory");
+        let mut state = EvmState::new(&dir, None)
+            .expect("Unable to create new EVM state in temporary directory");
         add_some_and_advance(&mut state, &params1);
 
         let slot = state.slot;

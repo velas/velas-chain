@@ -623,7 +623,7 @@ pub fn remove_snapshot<P: AsRef<Path>>(slot: Slot, snapshot_path: P) -> Result<(
 
 #[allow(clippy::too_many_arguments)]
 pub fn bank_from_archive<P: AsRef<Path>>(
-    evm_state_path: &Path,
+    evm_state_root_path: &Path,
     account_paths: &[PathBuf],
     frozen_account_pubkeys: &[Pubkey],
     snapshot_path: &PathBuf,
@@ -651,7 +651,7 @@ pub fn bank_from_archive<P: AsRef<Path>>(
 
     let bank = rebuild_bank_from_snapshots(
         snapshot_version.trim(),
-        evm_state_path,
+        evm_state_root_path,
         account_paths,
         frozen_account_pubkeys,
         &unpacked_snapshots_dir,
@@ -800,7 +800,7 @@ pub fn untar_snapshot_in<P: AsRef<Path>, Q: AsRef<Path>>(
 #[allow(clippy::too_many_arguments)]
 fn rebuild_bank_from_snapshots<P>(
     snapshot_version: &str,
-    evm_state_path: &Path,
+    evm_state_root_path: &Path,
     account_paths: &[PathBuf],
     frozen_account_pubkeys: &[Pubkey],
     unpacked_snapshots_dir: &PathBuf,
@@ -835,14 +835,15 @@ where
         root_paths.evm_state_backup_path
     );
     let mut measure = Measure::start("evm state database restore");
+    let evm_state_path = evm_state_root_path.join("evm-state");
     if evm_state_path.exists() {
         warn!(
             "deleting existing evm state folder {}",
             evm_state_path.display()
         );
-        fs::remove_dir_all(evm_state_path)?;
+        fs::remove_dir_all(&evm_state_path)?;
     }
-    evm_state::Storage::restore_from(root_paths.evm_state_backup_path, evm_state_path)
+    evm_state::Storage::restore_from(root_paths.evm_state_backup_path, &evm_state_path)
         .expect("Unable to restore EVM state underlying database from storage backup");
     measure.stop();
     info!("{}", measure);
@@ -857,7 +858,7 @@ where
                 SerdeStyle::NEWER,
                 &mut stream,
                 &append_vecs_path,
-                evm_state_path,
+                &evm_state_path,
                 account_paths,
                 genesis_config,
                 frozen_account_pubkeys,

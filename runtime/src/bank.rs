@@ -898,7 +898,7 @@ impl Bank {
     pub fn new_with_paths(
         genesis_config: &GenesisConfig,
         // TODO: Remove option, currently need for Bank::new, that is used for tests
-        evm_state_path: Option<&Path>,
+        evm_state_root_path: Option<&Path>,
         paths: Vec<PathBuf>,
         frozen_account_pubkeys: &[Pubkey],
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
@@ -917,8 +917,11 @@ impl Bank {
             account_indexes,
             accounts_db_caching_enabled,
         ));
-        if let Some(evm_state_path) = evm_state_path {
-            bank.evm_state = RwLock::new(evm_state::EvmState::new(evm_state_path).unwrap());
+        if let Some(evm_state_root_path) = evm_state_root_path {
+            bank.evm_state = RwLock::new(
+                evm_state::EvmState::new(evm_state_root_path, genesis_config.evm_root_hash)
+                    .unwrap(),
+            );
         }
         bank.process_genesis_config(genesis_config);
         bank.finish_init(genesis_config, additional_builtins);
@@ -4238,6 +4241,11 @@ impl Bank {
             accounts_delta_hash.hash.as_ref(),
             &signature_count_buf,
             self.last_blockhash().as_ref(),
+            self.evm_state
+                .read()
+                .expect("evm state poisoned")
+                .root
+                .as_ref(),
         ]);
 
         if let Some(buf) = self

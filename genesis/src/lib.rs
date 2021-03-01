@@ -1,5 +1,5 @@
 pub mod address_generator;
-pub mod genesis_accounts;
+pub mod solana_genesis_accounts;
 pub mod stakes;
 pub mod unlocks;
 
