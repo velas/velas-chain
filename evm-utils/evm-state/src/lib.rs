@@ -28,7 +28,7 @@ use log::*;
 use std::{fmt, time::Instant};
 
 pub const MAX_TX_LEN: u64 = 3 * 1024 * 1024; // Limit size to 3 MB
-pub const TX_MTU: usize = 920;
+pub const TX_MTU: usize = 908;
 
 /// Exit result, if succeed, returns `ExitSucceed` - info about execution, Vec<u8> - output data, u64 - gas cost
 pub type PrecompileCallResult = Result<(ExitSucceed, Vec<u8>, u64), ExitError>;
