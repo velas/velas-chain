@@ -80,7 +80,7 @@ mod tests {
 
         let data_size = data.len();
         let mut chunks = TxChunks::new(vec![0; data_size]);
-        chunks.init(data_size);
+        chunks.init(data_size).unwrap();
         data.chunks(BATCH_SIZE)
             .enumerate()
             .for_each(|(i, chunk)| chunks.push(i * BATCH_SIZE, chunk).unwrap());

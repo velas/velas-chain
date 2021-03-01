@@ -239,7 +239,6 @@ mod test {
     use solana_sdk::program_utils::limited_deserialize;
     use solana_sdk::sysvar::rent::Rent;
 
-    use std::sync::RwLock;
     use std::{cell::RefCell, collections::BTreeMap};
 
     fn dummy_eth_tx() -> evm_state::transactions::Transaction {
@@ -657,7 +656,7 @@ mod test {
         );
         assert_eq!(keyed_accounts[1].try_account_ref_mut().unwrap().lamports, 0);
 
-        let mut state = executor_orig.deconstruct();
+        let state = executor_orig.deconstruct();
         assert_eq!(
             state
                 .get_account_state(ether_dummy_address)
@@ -1178,8 +1177,13 @@ mod test {
         use solana_sdk::transaction::Transaction;
 
         let storage = Keypair::new();
+        let bridge = Keypair::new();
         let ix = crate::big_tx_write(&storage.pubkey(), 0, vec![1; evm::TX_MTU]);
-        let tx_before = Transaction::new(&[&storage], Message::new(&[ix], None), hash(&[1]));
+        let tx_before = Transaction::new(
+            &[&bridge, &storage],
+            Message::new(&[ix], Some(&bridge.pubkey())),
+            hash(&[1]),
+        );
         let tx = bincode::serialize(&tx_before).unwrap();
         let tx: Transaction = limited_deserialize(&tx).unwrap();
         assert_eq!(tx_before, tx);

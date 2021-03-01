@@ -1086,6 +1086,7 @@ fn send_and_confirm_transactions<T: Signers>(
                             ..RpcSendTransactionConfig::default()
                         },
                     )
+                    .map_err(|e| error!("Send transaction error: {:?}", e))
                     .ok();
 
                 (transaction, signature)
@@ -1128,7 +1129,7 @@ fn send_and_confirm_transactions<T: Signers>(
 
         for (mut transaction, _) in transactions_signatures {
             transaction.try_sign(signer_keys, blockhash)?;
-            debug!("Resending {:?}", transaction.signatures);
+            debug!("Resending {:?}", transaction);
             transactions.push(transaction);
         }
     }
