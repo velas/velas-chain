@@ -9,6 +9,8 @@ use solana_sdk::instruction::InstructionError;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{keyed_account::KeyedAccount, program_utils::limited_deserialize};
 
+use super::tx_chunks::TxChunks;
+
 /// Return the next AccountInfo or a NotEnoughAccountKeys error
 pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
     iter: &mut I,
@@ -40,7 +42,10 @@ impl EvmProcessor {
                 // TODO: Handle gas price in EVM Bridge
                 let result = executor
                     .transaction_execute(evm_tx, precompiles::entrypoint(accounts))
-                    .map_err(|_| InstructionError::InvalidArgument)?;
+                    .map_err(|e| {
+                        error!("Exec tx error: {:?}", e);
+                        InstructionError::InvalidArgument
+                    })?;
                 debug!("Exit status = {:?}", result);
                 if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
                     return Err(InstructionError::InvalidError);
@@ -65,7 +70,7 @@ impl EvmProcessor {
                 ether_address,
             } => self.process_swap_to_native(executor, accounts, lamports, ether_address)?,
             EvmInstruction::EvmBigTransaction(big_tx) => {
-                self.process_big_tx(executor, accounts, big_tx)?
+                self.process_big_tx(executor, accounts, big_tx)?;
             }
         }
         Ok(())
@@ -119,57 +124,64 @@ impl EvmProcessor {
         accounts: AccountStructure,
         big_tx: EvmBigTransaction,
     ) -> Result<(), InstructionError> {
-        let user = accounts.user().ok_or_else(|| {
-            error!("Not enough accounts");
-            InstructionError::InvalidArgument
-        })?;
-        let key = big_tx.get_key(*user.unsigned_key());
         debug!("executing big_tx = {:?}", big_tx);
+
+        let mut storage = accounts
+            .user()
+            .ok_or_else(|| {
+                error!("Not enough accounts");
+                InstructionError::InvalidArgument
+            })?
+            .try_account_ref_mut()?;
+
+        // TODO: storage.owner == crate::ID;
+
+        let mut tx_chunks = TxChunks::new(storage.data.as_mut_slice());
+
         match big_tx {
-            EvmBigTransaction::EvmTransactionAllocate {
-                len, _pay_for_data, ..
-            } => {
-                if let Err(e) = executor.allocate_store(key, len) {
-                    error!("Error processing alocation = {:?}", e);
-                    return Err(InstructionError::InvalidArgument);
-                }
-            }
-            EvmBigTransaction::EvmTransactionWrite { offset, data, .. } => {
-                if let Err(e) = executor.publish_data(key, offset, &data) {
-                    error!("Error processing data_write = {:?}", e);
-                    return Err(InstructionError::InvalidArgument);
-                }
-            }
-            EvmBigTransaction::EvmTransactionExecute { .. } => {
-                let tx_chunks = match executor.take_big_tx(key) {
-                    Ok(tx) => tx,
-                    Err(e) => {
-                        error!("Error taking big transaction = {:?}", e);
-                        return Err(InstructionError::InvalidArgument);
-                    }
-                };
+            EvmBigTransaction::EvmTransactionAllocate { size } => {
+                tx_chunks.init(size as usize).map_err(|e| {
+                    error!("Tx allocate error: {:?}", e);
+                    InstructionError::InvalidArgument
+                })?;
 
-                debug!("Trying to deserialize tx chunks = {:?}", tx_chunks);
-                let tx: evm::Transaction = match bincode::deserialize(&tx_chunks) {
-                    Ok(tx) => tx,
-                    Err(e) => {
-                        debug!("Transaction chunks deserialize error = {:?}", e);
-                        return Err(InstructionError::InvalidArgument);
-                    }
-                };
+                Ok(())
+            }
 
-                debug!("Executing EVM tx = {:?}.", tx);
+            EvmBigTransaction::EvmTransactionWrite { offset, data } => {
+                debug!("Tx chunks: Write offset = {}, data = {:?}", offset, data);
+                tx_chunks.push(offset as usize, data).map_err(|e| {
+                    error!("Tx write error: {:?}", e);
+                    InstructionError::InvalidArgument
+                })?;
+
+                Ok(())
+            }
+
+            EvmBigTransaction::EvmTransactionExecute {} => {
+                debug!("Tx chunks crc = {:#x}", tx_chunks.crc());
+
+                let bytes = tx_chunks.take();
+
+                debug!("Trying to deserialize tx chunks byte = {:?}", bytes);
+                let tx = bincode::deserialize(&bytes).map_err(|e| {
+                    debug!("Tx chunks deserialize error: {:?}", e);
+                    InstructionError::InvalidArgument
+                })?;
+
+                debug!("Executing EVM tx = {:?}", tx);
                 let result = executor
                     .transaction_execute(tx, precompiles::entrypoint(accounts))
                     .map_err(|_| InstructionError::InvalidArgument)?;
 
-                debug!("Execute exit status = {:?}", result);
+                debug!("Execute tx exit status = {:?}", result);
                 if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
-                    return Err(InstructionError::InvalidError);
+                    Err(InstructionError::InvalidError)
+                } else {
+                    Ok(())
                 }
             }
         }
-        Ok(())
     }
 
     /// Ensure that first account is program itself, and it's locked for writes.
@@ -212,6 +224,7 @@ pub fn dummy_call() -> evm::Transaction {
     };
     tx_call.sign(&secret_key, None)
 }
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -408,7 +421,7 @@ mod test {
 
     #[test]
     fn execute_tx_with_state_apply() {
-        let state = RwLock::new(evm_state::EvmState::default());
+        let mut state = evm_state::EvmState::default();
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account());
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
@@ -431,24 +444,19 @@ mod test {
 
         assert_eq!(
             state
-                .read()
-                .unwrap()
                 .get_account_state(caller_address)
                 .map(|account| account.nonce),
             None,
         );
         assert_eq!(
             state
-                .read()
-                .unwrap()
                 .get_account_state(tx_address)
                 .map(|account| account.nonce),
             None,
         );
         {
-            let mut locked = state.write().unwrap();
             let mut executor_orig = evm_state::Executor::with_config(
-                locked.clone(),
+                state.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
                 0,
@@ -467,21 +475,18 @@ mod test {
                 .is_ok());
             println!("cx = {:?}", executor);
 
-            executor_orig.deconstruct().apply();
+            state = executor_orig.deconstruct();
+            state.apply();
         }
 
         assert_eq!(
             state
-                .read()
-                .unwrap()
                 .get_account_state(caller_address)
                 .map(|account| account.nonce),
             Some(1.into())
         );
         assert_eq!(
             state
-                .read()
-                .unwrap()
                 .get_account_state(tx_address)
                 .map(|account| account.nonce),
             Some(1.into())
@@ -499,9 +504,8 @@ mod test {
         let tx_hash = tx_call.signing_hash(None);
         let tx_call = tx_call.sign(&secret_key, None);
         {
-            let mut locked = state.write().unwrap();
             let mut executor_orig = evm_state::Executor::with_config(
-                locked.clone(),
+                state.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
                 0,
@@ -519,14 +523,11 @@ mod test {
                 .is_ok());
             println!("cx = {:?}", executor);
 
-            executor_orig.deconstruct().apply();
+            state = executor_orig.deconstruct();
+            state.apply();
         }
 
-        let receipt = state
-            .read()
-            .unwrap()
-            .get_transaction_receipt(tx_hash)
-            .unwrap();
+        let receipt = state.get_transaction_receipt(tx_hash).unwrap();
 
         assert!(matches!(
             receipt.status,
@@ -738,6 +739,8 @@ mod test {
 
     #[test]
     fn execute_transfer_roundtrip() {
+        let _ = simple_logger::SimpleLogger::new().init();
+
         let mut executor_orig = evm_state::Executor::with_config(
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
@@ -767,18 +770,20 @@ mod test {
 
         let lamports_to_send = 1000;
         let lamports_to_send_back = 300;
-        assert!(processor
+
+        processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::SwapNativeToEther {
                     lamports: lamports_to_send,
-                    ether_address: ether_dummy_address
+                    ether_address: ether_dummy_address,
                 })
                 .unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
             )
-            .is_ok());
+            .unwrap();
+
         println!("cx = {:?}", executor);
 
         assert_eq!(
@@ -788,6 +793,7 @@ mod test {
         assert_eq!(keyed_accounts[1].try_account_ref_mut().unwrap().lamports, 0);
 
         let mut state = executor_orig.deconstruct();
+        // state.apply();
         assert_eq!(
             state
                 .get_account_state(ether_dummy_address)
@@ -812,7 +818,7 @@ mod test {
         let keyed_accounts = [evm_keyed_account, user_keyed_account];
 
         let tx_call = evm::UnsignedTransaction {
-            nonce: 1.into(),
+            nonce: 0.into(),
             gas_price: 1.into(),
             gas_limit: 300000.into(),
             action: TransactionAction::Call(*precompiles::ETH_TO_SOL_ADDR),
@@ -833,18 +839,19 @@ mod test {
             );
             let mut executor = Some(&mut executor_orig);
 
-            assert!(processor
+            processor
                 .process_instruction(
                     &crate::ID,
                     &keyed_accounts,
                     &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
                         .unwrap(),
-                    executor.as_deref_mut()
+                    executor.as_deref_mut(),
                 )
-                .is_ok());
+                .unwrap();
             println!("cx = {:?}", executor);
 
-            executor_orig.deconstruct().apply();
+            state = executor_orig.deconstruct();
+            state.apply();
         }
 
         assert_eq!(
@@ -896,7 +903,7 @@ mod test {
 
     #[test]
     fn each_solana_tx_should_contain_writeable_evm_state() {
-        simple_logger::SimpleLogger::new().init().unwrap();
+        let _ = simple_logger::SimpleLogger::new().init();
         let mut executor = evm_state::Executor::with_config(
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
@@ -977,7 +984,7 @@ mod test {
 
         let user_account = RefCell::new(solana_sdk::account::Account {
             lamports: 1000,
-            data: vec![],
+            data: vec![0; evm_state::MAX_TX_LEN as usize],
             owner: crate::ID,
             executable: false,
             rent_epoch: 0,
@@ -988,9 +995,7 @@ mod test {
         let keyed_accounts = [evm_keyed_account, user_keyed_account];
 
         let big_transaction = EvmBigTransaction::EvmTransactionAllocate {
-            len: evm_state::MAX_TX_LEN + 1,
-            _pay_for_data: None,
-            seed: H256::zero(),
+            size: evm_state::MAX_TX_LEN + 1,
         };
         assert!(processor
             .process_instruction(
@@ -1003,9 +1008,7 @@ mod test {
         println!("cx = {:?}", executor);
 
         let big_transaction = EvmBigTransaction::EvmTransactionAllocate {
-            len: evm_state::MAX_TX_LEN,
-            _pay_for_data: None,
-            seed: H256::zero(),
+            size: evm_state::MAX_TX_LEN,
         };
 
         processor
@@ -1021,6 +1024,8 @@ mod test {
 
     #[test]
     fn big_tx_write_out_of_bound() {
+        let _ = simple_logger::SimpleLogger::new().init();
+
         let mut executor = evm_state::Executor::with_config(
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
@@ -1032,9 +1037,11 @@ mod test {
         let evm_account = RefCell::new(crate::create_state_account());
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
 
+        let batch_size: u64 = 500;
+
         let user_account = RefCell::new(solana_sdk::account::Account {
             lamports: 1000,
-            data: vec![],
+            data: vec![0; batch_size as usize],
             owner: crate::ID,
             executable: false,
             rent_epoch: 0,
@@ -1044,13 +1051,7 @@ mod test {
 
         let keyed_accounts = [evm_keyed_account, user_keyed_account];
 
-        let batch_size = 500;
-
-        let big_transaction = EvmBigTransaction::EvmTransactionAllocate {
-            len: batch_size,
-            _pay_for_data: None,
-            seed: H256::zero(),
-        };
+        let big_transaction = EvmBigTransaction::EvmTransactionAllocate { size: batch_size };
         processor
             .process_instruction(
                 &crate::ID,
@@ -1064,7 +1065,6 @@ mod test {
         // out of bound write
         let big_transaction = EvmBigTransaction::EvmTransactionWrite {
             offset: batch_size,
-            seed: H256::zero(),
             data: vec![1],
         };
 
@@ -1081,7 +1081,6 @@ mod test {
         // out of bound write
         let big_transaction = EvmBigTransaction::EvmTransactionWrite {
             offset: 0,
-            seed: H256::zero(),
             data: vec![1; batch_size as usize + 1],
         };
 
@@ -1099,7 +1098,6 @@ mod test {
         // Write in bounds
         let big_transaction = EvmBigTransaction::EvmTransactionWrite {
             offset: 0,
-            seed: H256::zero(),
             data: vec![1; batch_size as usize],
         };
 
@@ -1116,7 +1114,6 @@ mod test {
         // Overlaped writes is allowed
         let big_transaction = EvmBigTransaction::EvmTransactionWrite {
             offset: batch_size - 1,
-            seed: H256::zero(),
             data: vec![1],
         };
 
@@ -1159,7 +1156,6 @@ mod test {
 
         let big_transaction = EvmBigTransaction::EvmTransactionWrite {
             offset: 0,
-            seed: H256::zero(),
             data: vec![1],
         };
 
@@ -1181,14 +1177,9 @@ mod test {
         use solana_sdk::signature::{Keypair, Signer};
         use solana_sdk::transaction::Transaction;
 
-        let owner = Keypair::new();
-        let ix = crate::big_tx_write(
-            &owner.pubkey(),
-            H256::random(),
-            0,
-            vec![1; evm::TX_MTU as usize],
-        );
-        let tx_before = Transaction::new(&[&owner], Message::new(&[ix], None), hash(&[1]));
+        let storage = Keypair::new();
+        let ix = crate::big_tx_write(&storage.pubkey(), 0, vec![1; evm::TX_MTU]);
+        let tx_before = Transaction::new(&[&storage], Message::new(&[ix], None), hash(&[1]));
         let tx = bincode::serialize(&tx_before).unwrap();
         let tx: Transaction = limited_deserialize(&tx).unwrap();
         assert_eq!(tx_before, tx);
