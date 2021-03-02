@@ -155,7 +155,7 @@ case "${NODE_TYPE}" in
     ENTRYPOINT=$2
     PORT_RANGE=$3
     mkdir -p $DATADIR/v
-    cp /config/genesis.bin $DATADIR/v/genesis.bin
+    # cp /config/genesis.bin $DATADIR/v/genesis.bin
     DATADIR=$DATADIR/v
     run_solana_validator $DATADIR $ENTRYPOINT $PORT_RANGE
     ;;
