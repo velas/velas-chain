@@ -41,7 +41,7 @@ fn add_some_and_advance(state: &mut EvmState, params: &Params) {
             let (address, account) = (addresses.some_addr(), utils::some_account());
             state.set_account_state(address, account);
 
-            // TODO: set add transactions
+            // TODO: add some transactions into state
             // if rng.gen() {
             //     state.set_transaction(
             //         H256::random(),
