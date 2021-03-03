@@ -207,7 +207,7 @@ impl EvmProcessor {
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
 #[doc(hidden)]
-pub fn dummy_call() -> evm::Transaction {
+pub fn dummy_call(nonce: usize) -> evm::Transaction {
     let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
     let dummy_address = evm::addr_from_public_key(&evm::PublicKey::from_secret_key(
         &evm::SECP256K1,
@@ -215,13 +215,14 @@ pub fn dummy_call() -> evm::Transaction {
     ));
 
     let tx_call = evm::UnsignedTransaction {
-        nonce: 0.into(),
+        nonce: nonce.into(),
         gas_price: 1.into(),
         gas_limit: 300000.into(),
         action: evm::TransactionAction::Call(dummy_address),
         value: 0.into(),
         input: vec![],
     };
+
     tx_call.sign(&secret_key, None)
 }
 
@@ -870,7 +871,7 @@ mod test {
     }
 
     fn all_ixs() -> Vec<solana_sdk::instruction::Instruction> {
-        let tx_call = dummy_call();
+        let tx_call = dummy_call(0);
 
         let signer = solana::Address::new_unique();
         vec![

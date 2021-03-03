@@ -551,7 +551,7 @@ pub fn add_snapshot<P: AsRef<Path>>(
     let evm_state_backup_dir = slot_snapshot_dir.join(EVM_STATE_DIR);
 
     let mut wl_acquire = Measure::start("evm_state_write_lock_acquire_time");
-    let mut evm_state = bank.evm_state.write().unwrap();
+    let evm_state = bank.evm_state.write().unwrap();
     wl_acquire.stop();
     debug!("EVM state write acquire time lock {}", wl_acquire);
 

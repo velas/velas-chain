@@ -7760,6 +7760,8 @@ pub(crate) mod tests {
 
     #[test]
     fn test_interleaving_locks_evm_tx() {
+        solana_logger::setup();
+
         let (genesis_config, mint_keypair) = create_genesis_config(20000 * 3);
         let bank = Bank::new(&genesis_config);
         let alice = Keypair::new();
@@ -7768,17 +7770,17 @@ pub(crate) mod tests {
         assert!(bank.transfer(20000, &mint_keypair, &alice.pubkey()).is_ok());
         assert!(bank.transfer(20000, &mint_keypair, &bob.pubkey()).is_ok());
 
-        let create_tx = |from_keypair: &Keypair, hash: Hash| {
+        let create_tx = |from_keypair: &Keypair, hash: Hash, nonce: usize| {
             let from_pubkey = from_keypair.pubkey();
             let instruction = solana_evm_loader_program::send_raw_tx(
                 from_pubkey,
-                solana_evm_loader_program::processor::dummy_call(),
+                solana_evm_loader_program::processor::dummy_call(nonce),
             );
             let message = Message::new(&[instruction], Some(&from_pubkey));
             Transaction::new(&[from_keypair], message, hash)
         };
 
-        let tx1 = create_tx(&alice, genesis_config.hash());
+        let tx1 = create_tx(&alice, genesis_config.hash(), 0);
         let first_call = vec![tx1];
 
         let lock_result = bank.prepare_batch(&first_call, None);
@@ -7796,15 +7798,16 @@ pub(crate) mod tests {
 
         // try executing an evm transaction from other key, but while lock is active
         let blockhash = bank.last_blockhash();
-        let tx = create_tx(&bob, blockhash);
+        let tx = create_tx(&bob, blockhash, 1);
         assert_eq!(
             bank.process_transaction(&tx),
             Err(TransactionError::AccountInUse)
         );
+
         // the second time should fail as well
         // this verifies that `unlock_accounts` doesn't unlock `AccountInUse` accounts
         let blockhash = bank.last_blockhash();
-        let tx = create_tx(&bob, blockhash);
+        let tx = create_tx(&bob, blockhash, 1);
         assert_eq!(
             bank.process_transaction(&tx),
             Err(TransactionError::AccountInUse)
@@ -7813,8 +7816,9 @@ pub(crate) mod tests {
         drop(lock_result);
 
         let blockhash = bank.last_blockhash();
-        let tx = create_tx(&bob, blockhash);
-        assert!(bank.process_transaction(&tx).is_ok());
+        let tx = create_tx(&bob, blockhash, 1);
+
+        bank.process_transaction(&tx).unwrap();
     }
 
     #[test]
