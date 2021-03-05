@@ -9,7 +9,7 @@ use triedb::{
     empty_trie_hash,
     gc::{ItemCounter, TrieCollection},
     rocksdb::{RocksDatabaseHandle, RocksHandle, RocksMemoryTrieMut},
-    FixedTrieMut,
+    FixedSecureTrieMut,
 };
 
 use crate::{
@@ -76,7 +76,8 @@ impl EvmState {
         let mut storage_tries = TrieCollection::new(r.clone(), StaticEntries::default());
         let mut account_tries = TrieCollection::new(r, StaticEntries::default());
 
-        let mut accounts = FixedTrieMut::<_, H160, Account>::new(account_tries.trie_for(self.root));
+        let mut accounts =
+            FixedSecureTrieMut::<_, H160, Account>::new(account_tries.trie_for(self.root));
 
         for (address, (state, storages)) in std::mem::take(&mut self.states) {
             if let Maybe::Just(AccountState {
@@ -96,12 +97,13 @@ impl EvmState {
                     account.code_hash = code_hash;
                 }
 
-                let mut storage = FixedTrieMut::<_, H256, H256>::new(
+                let mut storage = FixedSecureTrieMut::<_, H256, U256>::new(
                     storage_tries.trie_for(account.storage_root),
                 );
 
                 for (index, value) in storages {
                     if value != H256::default() {
+                        let value = U256::from_big_endian(&value[..]);
                         storage.insert(&index, &value);
                     } else {
                         storage.delete(&index);
@@ -158,11 +160,11 @@ impl EvmState {
         }
     }
 
-    fn typed_for<K: Encodable, V: Encodable + Decodable>(
+    fn typed_for<K: AsRef<[u8]>, V: Encodable + Decodable>(
         &self,
         root: H256,
-    ) -> FixedTrieMut<RocksMemoryTrieMut<Arc<DB>>, K, V> {
-        FixedTrieMut::new(RocksMemoryTrieMut::new(self.kvs.db.clone(), root))
+    ) -> FixedSecureTrieMut<RocksMemoryTrieMut<Arc<DB>>, K, V> {
+        FixedSecureTrieMut::new(RocksMemoryTrieMut::new(self.kvs.db.clone(), root))
     }
 }
 
@@ -223,11 +225,16 @@ impl EvmState {
             .or_else(|| {
                 self.typed_for(self.root).get(&address).and_then(
                     |Account { storage_root, .. }| {
-                        FixedTrieMut::new(RocksMemoryTrieMut::new(
+                        FixedSecureTrieMut::new(RocksMemoryTrieMut::new(
                             self.kvs.db.as_ref(),
                             storage_root,
                         ))
                         .get(&index)
+                        .map(|value: U256| {
+                            let mut encoded = H256::default();
+                            value.to_big_endian(encoded.as_bytes_mut());
+                            encoded
+                        })
                     },
                 )
             })
@@ -372,6 +379,31 @@ impl EvmState {
                 });
         }
         result
+    }
+
+    pub fn set_initial(
+        &mut self,
+        accounts: impl IntoIterator<Item = (H160, evm::backend::MemoryAccount)>,
+    ) {
+        for (
+            address,
+            evm::backend::MemoryAccount {
+                nonce,
+                balance,
+                storage,
+                code,
+            },
+        ) in accounts
+        {
+            let account_state = AccountState {
+                nonce,
+                balance,
+                code: code.into(),
+            };
+
+            self.set_account_state(address, account_state);
+            self.ext_storage(address, storage);
+        }
     }
 }
 

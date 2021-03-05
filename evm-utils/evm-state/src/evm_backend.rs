@@ -1,6 +1,6 @@
 use std::{collections::HashMap, iter::FromIterator};
 
-use evm::backend::{Apply, Backend, Basic};
+use evm::backend::{Apply, Backend, Basic, MemoryVicinity};
 use primitive_types::{H160, H256, U256};
 
 use log::*;
@@ -15,6 +15,10 @@ pub struct EvmBackend {
 impl EvmBackend {
     pub fn new_from_state(evm_state: EvmState, tx_info: MemoryVicinity) -> Self {
         Self { evm_state, tx_info }
+    }
+
+    pub fn into_state(self) -> EvmState {
+        self.evm_state
     }
 
     fn tx_info(&self) -> &MemoryVicinity {
@@ -149,11 +153,11 @@ impl Backend for EvmBackend {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{EvmBackend, EvmState};
+    use crate::{default_vicinity, EvmBackend, EvmState};
 
     #[test]
     fn check_that_balance_zero_by_default() {
-        let evm_backend = EvmBackend::new_from_state(EvmState::default(), Default::default());
+        let evm_backend = EvmBackend::new_from_state(EvmState::default(), default_vicinity());
         for _ in 0..1000 {
             let address = H160::random();
             assert_eq!(evm_backend.basic(address).balance, U256::zero());
