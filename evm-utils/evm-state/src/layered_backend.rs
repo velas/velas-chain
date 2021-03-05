@@ -70,7 +70,7 @@ impl<T> Into<Option<T>> for Maybe<T> {
 }
 
 impl EvmState {
-    pub fn apply(&mut self) {
+    pub fn commit(&mut self) {
         let r = RocksHandle::new(RocksDatabaseHandle::new(self.kvs.db.clone()));
 
         let mut storage_tries = TrieCollection::new(r.clone(), StaticEntries::default());
@@ -575,7 +575,7 @@ mod tests {
         let mut evm_state = EvmState::default();
 
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
-        evm_state.apply();
+        evm_state.commit();
 
         assert_state(&evm_state, &accounts_state_diff, &storage_diff);
 
@@ -632,7 +632,7 @@ mod tests {
                 evm_state.ext_storage(*account, storage);
             }
 
-            evm_state.apply();
+            evm_state.commit();
             evm_state = evm_state.fork(evm_state.slot + 1);
         }
 
@@ -657,7 +657,7 @@ mod tests {
         state.set_account_state(account, account_state.clone());
 
         for _ in 0..42 {
-            state.apply();
+            state.commit();
             state = state.fork(state.slot + 1);
         }
 
@@ -682,7 +682,7 @@ mod tests {
         state.set_account_state(addr, new_state.clone());
         assert_eq!(state.get_account_state(addr), Some(new_state.clone()));
 
-        state.apply();
+        state.commit();
 
         assert_eq!(state.get_account_state(addr), Some(new_state.clone()));
 
@@ -716,7 +716,7 @@ mod tests {
             Some(U256::from(1))
         );
 
-        state.apply();
+        state.commit();
 
         assert_eq!(
             state.get_account_state(addr).map(|acc| acc.nonce),

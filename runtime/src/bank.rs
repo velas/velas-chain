@@ -2036,7 +2036,7 @@ impl Bank {
         self.evm_state
             .write()
             .expect("evm state was poisoned")
-            .apply();
+            .commit();
 
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
