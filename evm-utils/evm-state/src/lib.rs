@@ -1,6 +1,6 @@
 use evm::executor::{MemoryStackState, StackSubstateMetadata};
 pub use evm::{
-    backend::{Apply, ApplyBackend, Backend, Log},
+    backend::{Apply, ApplyBackend, Backend, Log, MemoryVicinity},
     executor::StackExecutor,
     Config, Context, Handler, Transfer,
     {ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed},
@@ -69,7 +69,7 @@ impl Executor {
         let vicinity = MemoryVicinity {
             block_gas_limit: gas_limit.into(),
             block_number: block_number.into(),
-            ..Default::default()
+            ..default_vicinity()
         };
 
         assert_eq!(
@@ -284,6 +284,20 @@ impl Executor {
 
     pub fn deconstruct(self) -> EvmState {
         self.evm.evm_state
+    }
+}
+
+pub(crate) fn default_vicinity() -> MemoryVicinity {
+    MemoryVicinity {
+        gas_price: U256::zero(),
+        origin: H160::default(),
+        chain_id: U256::zero(),
+        block_hashes: Vec::new(),
+        block_number: U256::zero(),
+        block_coinbase: H160::default(),
+        block_timestamp: U256::zero(),
+        block_difficulty: U256::zero(),
+        block_gas_limit: U256::max_value(),
     }
 }
 
