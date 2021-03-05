@@ -475,7 +475,7 @@ mod test {
             println!("cx = {:?}", executor);
 
             state = executor_orig.deconstruct();
-            state.apply();
+            state.commit();
         }
 
         assert_eq!(
@@ -523,7 +523,7 @@ mod test {
             println!("cx = {:?}", executor);
 
             state = executor_orig.deconstruct();
-            state.apply();
+            state.commit();
         }
 
         let receipt = state.get_transaction_receipt(tx_hash).unwrap();
@@ -716,7 +716,7 @@ mod test {
                 .is_err());
             println!("cx = {:?}", executor);
 
-            executor_orig.deconstruct().apply();
+            executor_orig.deconstruct().commit();
         }
 
         // Nothing should change, because of error
@@ -850,7 +850,7 @@ mod test {
             println!("cx = {:?}", executor);
 
             state = executor_orig.deconstruct();
-            state.apply();
+            state.commit();
         }
 
         assert_eq!(

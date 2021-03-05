@@ -43,8 +43,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             state.set_account_state(address, AccountState::default());
         }
 
+        let slot = state.slot;
         let mut executor =
-            Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), 0);
+            Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), slot);
 
         let exit_reason = executor.with_executor(|executor| {
             executor.transact_create(
@@ -98,13 +99,13 @@ fn criterion_benchmark(c: &mut Criterion) {
         ));
 
         let mut state = executor.deconstruct();
-        state.apply();
+        state.commit();
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
         let mut idx = 0;
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), 0);
+                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), state.slot);
 
             let exit_reason = black_box(executor.with_executor(|executor| {
                 executor.transact_call(
@@ -130,15 +131,15 @@ fn criterion_benchmark(c: &mut Criterion) {
             BenchmarkId::new("call_hello_on_frozen_forks", n_forks),
             n_forks,
             |b, n_forks| {
-                let slot = Slot::default();
                 let mut state = EvmState::default();
 
                 for address in iter::once(contract).chain(accounts.iter().copied()) {
                     state.set_account_state(address, AccountState::default());
                 }
 
+                let slot = state.slot;
                 let mut executor =
-                    Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), 0);
+                    Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), slot);
                 let create_transaction_result = executor.with_executor(|executor| {
                     executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
                 });
@@ -148,7 +149,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 ));
 
                 let mut state = executor.deconstruct();
-                state.apply();
+                state.commit();
 
                 for new_slot in (slot + 1)..=*n_forks {
                     // state.freeze();
@@ -166,7 +167,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                         state.clone(),
                         evm::Config::istanbul(),
                         u64::max_value(),
-                        0,
+                        state.slot,
                     );
 
                     let start = Instant::now();
@@ -202,10 +203,11 @@ fn criterion_benchmark(c: &mut Criterion) {
             .chain(accounts.iter().copied())
             .for_each(|address| state.set_account_state(address, AccountState::default()));
 
-        state.apply();
+        state.commit();
 
+        let slot = state.slot;
         let mut executor =
-            Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), 0);
+            Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), slot);
 
         let exit_reason = executor.with_executor(|executor| {
             executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
@@ -216,13 +218,13 @@ fn criterion_benchmark(c: &mut Criterion) {
         ));
 
         let mut state = executor.deconstruct();
-        state.apply();
+        state.commit();
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
         let mut idx = 0;
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), 0);
+                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), state.slot);
 
             let exit_reason = executor.with_executor(|executor| {
                 executor.transact_call(

@@ -41,21 +41,22 @@ fn add_some_and_advance(state: &mut EvmState, params: &Params) {
             let (address, account) = (addresses.some_addr(), utils::some_account());
             state.set_account_state(address, account);
 
-            if rng.gen() {
-                state.set_transaction(
-                    H256::random(),
-                    iter::repeat_with(random)
-                        .take(rng.gen_range(0..=2 * BIG_TX_AVERAGE_SIZE))
-                        .collect(),
-                );
-            }
+            // TODO: set add transactions
+            // if rng.gen() {
+            //     state.set_transaction(
+            //         H256::random(),
+            //         iter::repeat_with(random)
+            //             .take(rng.gen_range(0..=2 * BIG_TX_AVERAGE_SIZE))
+            //             .collect(),
+            //     );
+            // }
         }
 
-        state.apply();
+        state.commit();
         *state = state.fork(slot + 1);
     }
 
-    state.apply();
+    state.commit();
 }
 
 fn fill_new_db_then_backup(c: &mut Criterion) {

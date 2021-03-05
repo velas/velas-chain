@@ -512,7 +512,7 @@ mod tests {
         bob.nonce += 1;
 
         let mut state = executor.deconstruct();
-        state.apply();
+        state.commit();
 
         // In this realm Bob returns coins to Alice
         {
@@ -698,7 +698,7 @@ mod tests {
         }
 
         let mut state = executor.deconstruct();
-        state.apply();
+        state.commit();
 
         let contract = Vec::<u8>::from(
             state
@@ -722,14 +722,14 @@ mod tests {
         executor.allocate_store(key, size).unwrap();
 
         let mut state = executor.deconstruct();
-        state.apply();
+        state.commit();
 
         let config = evm::Config::istanbul();
         let mut executor = Executor::with_config(state, config, u64::MAX, 0);
         executor.publish_data(key, 0, &data).unwrap();
 
         let mut state = executor.deconstruct();
-        state.apply();
+        state.commit();
 
         let config = evm::Config::istanbul();
         let mut executor = Executor::with_config(state, config, u64::MAX, 0);
@@ -738,7 +738,7 @@ mod tests {
             .unwrap();
 
         let mut state = executor.deconstruct();
-        state.apply();
+        state.commit();
 
         let config = evm::Config::istanbul();
         let mut executor = Executor::with_config(state, config, u64::MAX, 0);
