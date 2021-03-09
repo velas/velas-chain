@@ -9,52 +9,6 @@ pub use primitive_types::{H160, H256, U256};
 
 pub type Slot = u64; // TODO: re-use existing one from sdk package
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TransactionChunks(Vec<Option<u8>>);
-
-impl TransactionChunks {
-    pub fn new(size: usize) -> Self {
-        Self(std::iter::repeat(None).take(size).collect())
-    }
-
-    pub fn extend(&mut self, offset: usize, data: impl AsRef<[u8]>) {
-        let data = data.as_ref();
-
-        assert!(offset + data.len() <= self.0.len());
-
-        self.0[offset..(offset + data.len())]
-            .iter_mut()
-            .zip(data.iter())
-            .for_each(|(hole, byte)| {
-                if hole.is_some() {
-                    log::warn!("Overriding some already existed data in transaction chunks");
-                }
-                *hole = Some(*byte);
-            });
-    }
-
-    pub fn size(&self) -> usize {
-        self.0.len()
-    }
-
-    fn is_complete(&self) -> bool {
-        self.0.iter().all(|hole| hole.is_some())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Into)]
-pub struct CompleteTransaction(Vec<u8>);
-
-impl From<TransactionChunks> for CompleteTransaction {
-    fn from(chunks: TransactionChunks) -> Self {
-        if !chunks.is_complete() {
-            log::warn!("Making complete transaction from chunks with holes");
-        }
-
-        Self(chunks.0.into_iter().map(|hole| hole.unwrap_or(0)).collect())
-    }
-}
-
 #[derive(Default, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountState {
     /// Account nonce.
