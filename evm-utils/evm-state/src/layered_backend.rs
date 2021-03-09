@@ -28,7 +28,6 @@ pub struct EvmState {
     /// Maybe::Nothing indicates removed account
     states: HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>,
 
-    chunks: HashMap<H256, TransactionChunks>,
     transactions: HashMap<H256, Transaction>,
     receipts: HashMap<H256, TransactionReceipt>,
 }
@@ -47,7 +46,6 @@ impl Default for EvmState {
 
             states: HashMap::new(),
 
-            chunks: HashMap::new(),
             transactions: HashMap::new(),
             receipts: HashMap::new(),
         }
@@ -155,7 +153,6 @@ impl EvmState {
 
             states: HashMap::new(),
 
-            chunks: self.chunks.clone(),
             transactions: HashMap::new(),
             receipts: HashMap::new(),
         }
@@ -294,22 +291,6 @@ impl EvmState {
     pub fn set_transaction_receipt(&mut self, transaction: H256, receipt: TransactionReceipt) {
         self.receipts.insert(transaction, receipt);
     }
-
-    // TODO: persist it!
-    // TODO: reflect some usages logic: allocate storage / extend storage
-
-    pub fn allocate_chunks(&mut self, address: H256, size: usize) {
-        self.chunks
-            .insert(address, TransactionChunks::new(size as usize));
-    }
-
-    pub fn get_mut_chunks(&mut self, address: H256) -> Option<&mut TransactionChunks> {
-        self.chunks.get_mut(&address)
-    }
-
-    pub fn take_chunks(&mut self, address: H256) -> Option<CompleteTransaction> {
-        self.chunks.remove(&address).map(CompleteTransaction::from)
-    }
 }
 
 impl EvmState {
@@ -341,7 +322,6 @@ impl EvmState {
 
             states: HashMap::new(),
 
-            chunks: HashMap::new(),
             transactions: HashMap::new(),
             receipts: HashMap::new(),
         })
@@ -787,7 +767,7 @@ mod tests {
         state.set_account_state(address, account_state);
         state.ext_storage(address, storage_mod);
 
-        state.apply();
+        state.commit();
         let account = state.get_account(address).unwrap();
 
         assert_eq!(
@@ -822,7 +802,7 @@ mod tests {
         state.set_account_state(address, account_state);
         state.ext_storage(address, storage_mod);
 
-        state.apply();
+        state.commit();
         let account = state.get_account(address).unwrap();
 
         assert_eq!(
@@ -850,19 +830,19 @@ mod tests {
             address,
             Some((H256::from_low_u64_be(0), H256::from_low_u64_be(0x1234))),
         );
-        state.apply();
+        state.commit();
 
         state.ext_storage(
             address,
             Some((H256::from_low_u64_be(1), H256::from_low_u64_be(0x1234))),
         );
-        state.apply();
+        state.commit();
 
         state.ext_storage(
             address,
             Some((H256::from_low_u64_be(1), H256::from_low_u64_be(0))),
         );
-        state.apply();
+        state.commit();
 
         let account = state.get_account(address).unwrap();
 

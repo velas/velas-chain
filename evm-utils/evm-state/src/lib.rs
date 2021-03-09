@@ -185,62 +185,6 @@ impl Executor {
         self.used_gas
     }
 
-    pub fn allocate_store(&mut self, key: H256, size: u64) -> Result<(), Error> {
-        if size > MAX_TX_LEN {
-            error!(
-                "Requested store size {} is greater than allowed transaction length {}",
-                size, MAX_TX_LEN
-            );
-            return AllocationError { key, size }.fail();
-        }
-
-        if self.evm.evm_state.get_mut_chunks(key).is_some() {
-            error!("Double allocation for key {:?}", key);
-            return AllocationError { key, size }.fail();
-        }
-
-        self.evm.evm_state.allocate_chunks(key, size as usize);
-
-        Ok(())
-    }
-
-    pub fn publish_data(&mut self, key: H256, offset: u64, data: &[u8]) -> Result<(), Error> {
-        let chunks = match self.evm.evm_state.get_mut_chunks(key) {
-            Some(chunks) => chunks,
-            None => {
-                error!("Failed to write without allocation for key {:?}", key);
-                return FailedToWrite { key, offset }.fail();
-            }
-        };
-
-        let expected_data_size = chunks.size();
-        let actual_data_size = (offset as usize).saturating_add(data.len());
-
-        // Check offset to avoid integer overflow
-        if actual_data_size > expected_data_size {
-            let err = OutOfBound {
-                key,
-                offset,
-                size: expected_data_size as u64,
-            };
-            warn!("Failed to publish data: {:?}", err);
-            return err.fail();
-        }
-
-        chunks.extend(offset as usize, data);
-
-        Ok(())
-    }
-
-    pub fn take_big_tx(&mut self, key: H256) -> Result<Vec<u8>, Error> {
-        if let Some(tx_complete_chunks) = self.evm.evm_state.take_chunks(key) {
-            debug!("Data at {} = {:?}", key, tx_complete_chunks);
-            Ok(tx_complete_chunks.into())
-        } else {
-            DataNotFound { key }.fail()
-        }
-    }
-
     // TODO: Handle duplicates, statuses.
     fn register_tx_with_receipt(
         &mut self,
@@ -722,43 +666,5 @@ mod tests {
         );
 
         assert_eq!(&contract, &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap());
-    }
-
-    #[test]
-    fn test_freeze_fork_save_storage() {
-        let _ = simple_logger::SimpleLogger::new().init();
-
-        let mut executor =
-            Executor::with_config(EvmState::default(), evm::Config::istanbul(), u64::MAX, 0);
-        let key = H256::random();
-        let size = 100;
-        let data = vec![0, 1, 2, 3];
-        executor.allocate_store(key, size).unwrap();
-
-        let mut state = executor.deconstruct();
-        state.commit();
-
-        let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state, config, u64::MAX, 0);
-        executor.publish_data(key, 0, &data).unwrap();
-
-        let mut state = executor.deconstruct();
-        state.commit();
-
-        let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state, config, u64::MAX, 0);
-        executor
-            .publish_data(key, data.len() as u64, &data)
-            .unwrap();
-
-        let mut state = executor.deconstruct();
-        state.commit();
-
-        let config = evm::Config::istanbul();
-        let mut executor = Executor::with_config(state, config, u64::MAX, 0);
-        let result = executor.take_big_tx(key).unwrap();
-        assert_eq!(&result[..data.len()], &*data);
-
-        assert_eq!(&result[data.len()..2 * data.len()], &*data)
     }
 }
