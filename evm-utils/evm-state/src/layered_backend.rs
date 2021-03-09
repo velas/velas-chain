@@ -132,6 +132,7 @@ impl EvmState {
             .chain(self.transactions.keys().copied())
             .collect();
 
+        // TODO: store only non-empty hashes
         self.kvs.set::<TransactionHashesPerBlock>(self.slot, hashes);
 
         for (hash, transaction) in std::mem::take(&mut self.transactions) {
@@ -421,7 +422,10 @@ impl ItemCounter for StaticEntries {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        str::FromStr,
+    };
 
     use primitive_types::{H160, H256, U256};
     use rand::rngs::mock::StepRng;
@@ -433,6 +437,12 @@ mod tests {
     const MAX_SIZE: usize = 32; // Max size of test collections.
 
     const SEED: u64 = 1;
+
+    impl EvmState {
+        fn get_account(&self, address: H160) -> Option<Account> {
+            self.typed_for(self.root).get(&address)
+        }
+    }
 
     fn generate_account_by_seed(seed: u64) -> AccountState {
         let mut rng = StepRng::new(seed * RANDOM_INCR + seed, RANDOM_INCR);
@@ -757,6 +767,109 @@ mod tests {
         assert_eq!(
             state.get_account_state(another_addr).map(|acc| acc.nonce),
             Some(U256::from(1))
+        );
+    }
+
+    #[test]
+    // https://github.com/openethereum/parity-ethereum/blob/v2.7.2-stable/ethcore/account-state/src/account.rs#L667
+    fn it_checks_storage_at() {
+        let address = H160::zero();
+
+        let account_state = AccountState {
+            nonce: 0.into(),
+            balance: 69.into(),
+            code: Code::empty(),
+        };
+
+        let storage_mod = Some((H256::zero(), H256::from_low_u64_be(0x1234)));
+
+        let mut state = EvmState::default();
+        state.set_account_state(address, account_state);
+        state.ext_storage(address, storage_mod);
+
+        state.apply();
+        let account = state.get_account(address).unwrap();
+
+        assert_eq!(
+            state.get_storage(address, H256::zero()),
+            Some(H256::from_low_u64_be(0x1234))
+        );
+        assert_eq!(
+            state.get_storage(address, H256::from_low_u64_be(0x01)),
+            None
+        );
+        assert_eq!(
+            account.storage_root,
+            H256::from_str("c57e1afb758b07f8d2c8f13a3b6e44fa5ff94ab266facc5a4fd3f062426e50b2")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    // https://github.com/openethereum/parity-ethereum/blob/v2.7.2-stable/ethcore/account-state/src/account.rs#L705
+    fn it_checks_commit_storage() {
+        let address = H160::zero();
+
+        let account_state = AccountState {
+            nonce: 0.into(),
+            balance: 69.into(),
+            code: Code::empty(),
+        };
+
+        let storage_mod = Some((H256::from_low_u64_be(0), H256::from_low_u64_be(0x1234)));
+
+        let mut state = EvmState::default();
+        state.set_account_state(address, account_state);
+        state.ext_storage(address, storage_mod);
+
+        state.apply();
+        let account = state.get_account(address).unwrap();
+
+        assert_eq!(
+            account.storage_root,
+            H256::from_str("c57e1afb758b07f8d2c8f13a3b6e44fa5ff94ab266facc5a4fd3f062426e50b2")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    // https://github.com/openethereum/parity-ethereum/blob/v2.7.2-stable/ethcore/account-state/src/account.rs#L716
+    fn it_checks_commit_remove_commit_storage() {
+        let address = H160::zero();
+
+        let account_state = AccountState {
+            nonce: 0.into(),
+            balance: 69.into(),
+            code: Code::empty(),
+        };
+
+        let mut state = EvmState::default();
+        state.set_account_state(address, account_state);
+
+        state.ext_storage(
+            address,
+            Some((H256::from_low_u64_be(0), H256::from_low_u64_be(0x1234))),
+        );
+        state.apply();
+
+        state.ext_storage(
+            address,
+            Some((H256::from_low_u64_be(1), H256::from_low_u64_be(0x1234))),
+        );
+        state.apply();
+
+        state.ext_storage(
+            address,
+            Some((H256::from_low_u64_be(1), H256::from_low_u64_be(0))),
+        );
+        state.apply();
+
+        let account = state.get_account(address).unwrap();
+
+        assert_eq!(
+            account.storage_root,
+            H256::from_str("c57e1afb758b07f8d2c8f13a3b6e44fa5ff94ab266facc5a4fd3f062426e50b2")
+                .unwrap()
         );
     }
 }
