@@ -30,7 +30,7 @@ use solana_sdk::{
     epoch_info::EpochInfo,
     epoch_schedule::EpochSchedule,
     message::Message,
-    signature::{Signature, Signer},
+    signature::Signer,
     signers::Signers,
     system_instruction, transaction,
 };
@@ -39,8 +39,8 @@ use solana_transaction_status::{
 };
 
 use solana_client::{
-    client_error::Result as ClientResult, rpc_client::RpcClient, rpc_config::*,
-    rpc_request::RpcRequest, rpc_response::Response as RpcResponse, rpc_response::*,
+    rpc_client::RpcClient, rpc_config::*, rpc_request::RpcRequest,
+    rpc_response::Response as RpcResponse, rpc_response::*,
 };
 
 use solana_core::rpc::RpcSol;
@@ -147,8 +147,7 @@ impl EvmBridge {
         self.rpc_client
             .send_transaction_with_config(&send_raw_tx, RpcSendTransactionConfig::default())
             .map(|_| Hex(hash))
-            .map_err(Into::into)
-            .with_context(|| ProxyRpcError {})
+            .as_proxy_error()
     }
 }
 
@@ -1141,7 +1140,7 @@ fn deploy_big_tx(
 
     debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
-    let tx_bytes = bincode::serialize(&tx)?;
+    let tx_bytes = bincode::serialize(&tx).as_proxy_error()?;
     debug!(
         "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
         storage_pubkey,
@@ -1149,10 +1148,13 @@ fn deploy_big_tx(
         TxChunks::new(tx_bytes.as_slice()).crc(),
     );
 
-    let balance = rpc_client.get_minimum_balance_for_rent_exemption(tx_bytes.len())?;
+    let balance = rpc_client
+        .get_minimum_balance_for_rent_exemption(tx_bytes.len())
+        .as_proxy_error()?;
 
     let (blockhash, _, _) = rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::max())?
+        .get_recent_blockhash_with_commitment(CommitmentConfig::max())
+        .as_proxy_error()?
         .value;
 
     let create_storage_ix = system_instruction::create_account(
@@ -1189,9 +1191,10 @@ fn deploy_big_tx(
         .map_err(|e| {
             error!("Error create and allocate {} tx: {:?}", storage_pubkey, e);
             e
-        })?;
+        })
+        .as_proxy_error()?;
 
-    let (blockhash, _) = rpc_client.get_new_blockhash(&blockhash)?;
+    let (blockhash, _) = rpc_client.get_new_blockhash(&blockhash).as_proxy_error()?;
 
     let write_data_txs: Vec<solana::Transaction> = tx_bytes
         // TODO: encapsulate
@@ -1221,10 +1224,12 @@ fn deploy_big_tx(
         .map_err(|e| {
             error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
             e
-        })?;
+        })
+        .as_proxy_error()?;
 
     let (blockhash, _, _) = rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::recent())?
+        .get_recent_blockhash_with_commitment(CommitmentConfig::recent())
+        .as_proxy_error()?
         .value;
 
     let execute_tx = solana::Transaction::new_signed_with_payer(
@@ -1253,9 +1258,30 @@ fn deploy_big_tx(
         .map_err(|e| {
             error!("Execute EVM tx at {} failed: {:?}", storage_pubkey, e);
             e
-        })?;
+        })
+        .as_proxy_error()?;
 
     // TODO: here we can transfer back lamports and delete storage
 
     Ok(())
 }
+
+trait AsProxyRpcError<T> {
+    fn as_proxy_error(self) -> EvmResult<T>;
+}
+
+impl<T, Err> AsProxyRpcError<T> for StdResult<T, Err>
+where
+    anyhow::Error: From<Err>,
+{
+    fn as_proxy_error(self) -> EvmResult<T> {
+        self.map_err(anyhow::Error::from)
+            .with_context(|| ProxyRpcError {})
+    }
+}
+
+// impl<T> AsProxyRpcError<T> for StdResult<T, anyhow::Error> {
+//     fn as_proxy_error(self) -> EvmResult<T> {
+//         self.with_context(|| ProxyRpcError {})
+//     }
+// }

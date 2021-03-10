@@ -38,8 +38,8 @@ pub enum Error {
     #[snafu(display("Failed to cast BigInt({}) to short int.", input_data))]
     BigIntTrimFailed { input_data: String, error: String },
 
-    #[snafu(display("Failed to find block {}", input_data))]
-    BlockNotFound { input_data: String },
+    #[snafu(display("Failed to find block {}", block))]
+    BlockNotFound { block: evm_state::Slot },
 
     #[snafu(display("Failed to process native chain request"))]
     NativeRpcError { source: JRpcError },
@@ -89,34 +89,33 @@ const BLOCK_NOT_FOUND_RPC_ERROR: i64 = 2001;
 impl Into<JRpcError> for Error {
     fn into(self) -> JRpcError {
         match &self {
-            Error::HexError { source, .. } => {
+            Self::HexError { source, .. } => {
                 JRpcError::invalid_params_with_details(self.to_string(), source)
             }
-            Error::InvalidHexPrefix { .. } => JRpcError::invalid_params(self.to_string()),
-            Error::RlpError { source, .. } => {
+            Self::InvalidHexPrefix { .. } => JRpcError::invalid_params(self.to_string()),
+            Self::RlpError { source, .. } => {
                 JRpcError::invalid_params_with_details(self.to_string(), source)
             }
-            Error::IntError { source, .. } => {
+            Self::IntError { source, .. } => {
                 JRpcError::invalid_params_with_details(self.to_string(), source)
             }
-            Error::BigIntError { source, .. } => {
+            Self::BigIntError { source, .. } => {
                 JRpcError::invalid_params_with_details(self.to_string(), source)
             }
-
-            Error::BigIntTrimFailed { error, .. } => {
+            Self::BigIntTrimFailed { error, .. } => {
                 JRpcError::invalid_params_with_details(self.to_string(), error)
             }
-            Error::NativeRpcError { source } => {
+            Self::NativeRpcError { source } => {
                 internal_error_with_details(NATIVE_RPC_ERROR, &self, &source)
             }
-            Error::EvmStateError { source } => {
+            Self::EvmStateError { source } => {
                 internal_error_with_details(EVM_STATE_RPC_ERROR, &self, &source)
             }
-            Error::ProxyRpcError { source } => {
+            Self::ProxyRpcError { source } => {
                 internal_error_with_details(PROXY_RPC_ERROR, &self, &source)
             }
-            Error::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &self),
-            Error::Unimplemented {} => {
+            Self::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &self),
+            Self::Unimplemented {} => {
                 let mut error = JRpcError::invalid_request();
                 error.message = self.to_string();
                 error
