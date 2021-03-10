@@ -1,15 +1,20 @@
-use crate::rpc::JsonRpcRequestProcessor;
-use evm_rpc::basic::BasicERPC;
-use evm_rpc::chain_mock::ChainMockERPC;
-use evm_rpc::error::*;
-use evm_rpc::*;
-use evm_state::*;
+use std::convert::TryInto;
+use std::str::FromStr;
+
 use sha3::{Digest, Keccak256};
 use snafu::ResultExt;
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use solana_transaction_status::UiTransactionEncoding;
-use std::convert::TryInto;
-use std::str::FromStr;
+
+use evm_rpc::{
+    basic::BasicERPC,
+    chain_mock::ChainMockERPC,
+    error::{self, Error},
+    Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTransaction,
+};
+use evm_state::{Address, Config, Gas, LogFilter, H256, U256};
+
+use crate::rpc::JsonRpcRequestProcessor;
 
 const CHAIN_ID: u64 = 0x77;
 
@@ -35,9 +40,12 @@ fn block_to_commitment(block: Option<String>) -> Option<CommitmentConfig> {
     Some(CommitmentConfig { commitment })
 }
 
-fn block_to_confirmed_num(block: Option<&str>, meta: &JsonRpcRequestProcessor) -> Option<u64> {
+fn block_to_confirmed_num(
+    block: Option<impl AsRef<str>>,
+    meta: &JsonRpcRequestProcessor,
+) -> Option<u64> {
     let block = block?;
-    match block {
+    match block.as_ref() {
         "pending" => None,
         "earliest" => Some(meta.get_first_available_block()),
         "latest" => Some(meta.get_slot(None)),
@@ -139,7 +147,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
         }
         let block = match meta
             .get_confirmed_block(block_num, UiTransactionEncoding::Binary.into())
-            .with_context(|| NativeRpcError {})?
+            .with_context(|| error::NativeRpcError {})?
         {
             Some(block) => block,
             None => return Ok(None),
@@ -160,9 +168,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
                         .get_transaction_receipt(*tx_hash)
                         .expect("Transaction exist")
                 })
-                .filter_map(|receipt| {
-                    RPCTransaction::new_from_receipt(receipt, block_hash.clone()).ok()
-                })
+                .filter_map(|receipt| RPCTransaction::new_from_receipt(receipt, block_hash).ok())
                 .collect();
             Either::Right(txs)
         } else {
@@ -338,9 +344,9 @@ impl BasicERPC for BasicERPCImpl {
             Some(receipt) => {
                 let block_hash = meta
                     .get_confirmed_block_hash(receipt.block_number)
-                    .with_context(|| NativeRpcError {})?;
+                    .with_context(|| error::NativeRpcError {})?;
                 let block_hash = block_hash.ok_or(Error::BlockNotFound {
-                    input_data: receipt.block_number.to_string(),
+                    block: receipt.block_number,
                 })?;
                 let block_hash = solana_sdk::hash::Hash::from_str(&block_hash).unwrap();
                 let block_hash = H256::from_slice(&block_hash.0);
@@ -364,9 +370,9 @@ impl BasicERPC for BasicERPCImpl {
             Some(receipt) => {
                 let block_hash = meta
                     .get_confirmed_block_hash(receipt.block_number)
-                    .with_context(|| NativeRpcError {})?;
+                    .with_context(|| error::NativeRpcError {})?;
                 let block_hash = block_hash.ok_or(Error::BlockNotFound {
-                    input_data: receipt.block_number.to_string(),
+                    block: receipt.block_number,
                 })?;
                 let block_hash = solana_sdk::hash::Hash::from_str(&block_hash).unwrap();
                 let block_hash = H256::from_slice(&block_hash.0);
@@ -401,10 +407,8 @@ impl BasicERPC for BasicERPCImpl {
         let slot = bank.slot();
 
         let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
-        let to = block_to_confirmed_num(log_filter.to_block.as_ref().map(AsRef::as_ref), &meta)
-            .unwrap_or(slot);
-        let from = block_to_confirmed_num(log_filter.from_block.as_ref().map(AsRef::as_ref), &meta)
-            .unwrap_or(slot);
+        let to = block_to_confirmed_num(log_filter.to_block.as_ref(), &meta).unwrap_or(slot);
+        let from = block_to_confirmed_num(log_filter.from_block.as_ref(), &meta).unwrap_or(slot);
 
         let filter = LogFilter {
             address: log_filter.address.map(|k| k.0),

@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 
 mod serialize;
-use error::*;
-use evm_state::*;
+use error::EvmStateError;
+use evm_state::{Address, Gas, LogWithLocation};
 
 pub mod error;
 pub use self::error::Error;
