@@ -36,7 +36,7 @@ use std::{
 
 // deprecated default that is no longer used
 pub const UNUSED_DEFAULT: u64 = 1024;
-pub const EVM_STATE_FILE: &str = "evm_genesis.bin";
+pub const EVM_GENESIS: &str = "evm-state-genesis";
 
 // Dont load to memory accounts, more specified count
 const IN_MEMORY_EVM_ACCOUNTS_MAX: usize = 1000;
@@ -96,7 +96,7 @@ pub struct GenesisConfig {
     /// network runlevel
     pub cluster_type: ClusterType,
     /// Initial data for evm part
-    pub evm_root_hash: Option<H256>,
+    pub evm_root_hash: H256,
 }
 
 // useful for basic tests
@@ -133,7 +133,7 @@ impl Default for GenesisConfig {
             rent: Rent::default(),
             epoch_schedule: EpochSchedule::default(),
             cluster_type: ClusterType::Development,
-            evm_root_hash: None,
+            evm_root_hash: evm_state::empty_trie_hash(),
         }
     }
 }
@@ -207,17 +207,32 @@ impl GenesisConfig {
         std::fs::create_dir_all(&ledger_path)?;
 
         let mut file = File::create(Self::genesis_filename(&ledger_path))?;
-        file.write_all(&serialized)?;
-        self.try_generate_evm_state(ledger_path)
+        file.write_all(&serialized)
     }
 
-    pub fn try_generate_evm_state(&self, ledger_path: &Path) -> Result<(), std::io::Error> {
-        let root_hash = if let Some(root_hash) = self.evm_root_hash {
-            root_hash
+    pub fn generate_evm_state(
+        &self,
+        ledger_path: &Path,
+        evm_state_json: Option<&Path>,
+    ) -> Result<(), std::io::Error> {
+        let evm_state_path = tempfile::TempDir::new()?;
+        let mut evm_state = evm_state::EvmState::new(evm_state_path.path())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
+
+        if let Some(evm_state_json) = evm_state_json {
+            let accounts = evm_genesis::read_accounts(evm_state_json.as_ref())?;
+
+            for chunk in &accounts.chunks(IN_MEMORY_EVM_ACCOUNTS_MAX) {
+                let chunk: Result<Vec<_>, _> = chunk.collect();
+                let chunk = chunk?;
+                log::info!("Adding {} accounts to evm state.", chunk.len());
+                evm_state.set_initial(chunk);
+                evm_state.commit();
+            }
         } else {
-            warn!("Generating genesis without evm state");
+            warn!("Generating genesis with empty evm state");
             match self.cluster_type {
-                ClusterType::Development => return Ok(()),
+                ClusterType::Development => (),
                 cluster_type => {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
@@ -226,34 +241,22 @@ impl GenesisConfig {
                 }
             }
         };
-        let mut evm_genesis_path = ledger_path.to_path_buf();
-        evm_genesis_path.push(EVM_STATE_FILE);
-        let accounts = evm_genesis::read_accounts(&evm_genesis_path)?;
 
-        let mut evm_state_path = ledger_path.to_path_buf();
-        evm_state_path.push("evm-state");
-        let mut evm_state = evm_state::EvmState::new(evm_state_path, None)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
-        for chunk in &accounts.chunks(IN_MEMORY_EVM_ACCOUNTS_MAX) {
-            let chunk: Result<Vec<_>, _> = chunk.collect();
-            let chunk = chunk?;
-            log::info!("Adding {} accounts to evm state.", chunk.len());
-            evm_state.set_initial(chunk);
-            evm_state.commit();
-        }
-        assert_eq!(evm_state.root, root_hash);
+        assert_eq!(evm_state.root, self.evm_root_hash);
         let mut evm_backup = ledger_path.to_path_buf();
-        evm_backup.push("evm-state-genesis");
+        evm_backup.push(EVM_GENESIS);
 
         let tmp_backup = evm_state
             .kvs
             .backup()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
-        std::fs::rename(tmp_backup, evm_backup)
+        std::fs::create_dir_all(ledger_path)?;
+        evm_genesis::copy_dir(tmp_backup, evm_backup).unwrap(); // use copy instead of move, to work with cross device-links (backup makes hardlink and is immovable between devices).
+        Ok(())
     }
 
-    pub fn set_evm_state_file(&mut self, root_hash: H256) {
-        self.evm_root_hash = Some(root_hash)
+    pub fn set_evm_root_hash(&mut self, root_hash: H256) {
+        self.evm_root_hash = root_hash;
     }
 
     pub fn add_account(&mut self, pubkey: Pubkey, account: Account) {
@@ -338,18 +341,67 @@ impl fmt::Display for GenesisConfig {
     }
 }
 
-mod evm_genesis {
+pub mod evm_genesis {
     use evm_rpc::{Bytes, Hex};
     use evm_state::{MemoryAccount, H160, H256, U256};
 
     use serde::{de, Deserialize, Serialize};
     use serde_json::{de::IoRead, Deserializer};
     use sha3::{Digest, Keccak256};
-    use std::collections::BTreeMap;
     use std::fs::File;
     use std::io::{BufRead, BufReader, Error, ErrorKind};
     use std::iter;
     use std::path::Path;
+    use std::{collections::BTreeMap, io::Write};
+
+    use std::fs;
+    use std::path::PathBuf;
+
+    pub fn copy_dir(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), std::io::Error> {
+        let mut stack = Vec::new();
+        stack.push(PathBuf::from(from.as_ref()));
+
+        let output_root = PathBuf::from(to.as_ref());
+        let input_root = PathBuf::from(from.as_ref()).components().count();
+
+        while let Some(working_path) = stack.pop() {
+            // Generate a relative path
+            let src: PathBuf = working_path.components().skip(input_root).collect();
+
+            // Create a destination if missing
+            let dest = if src.components().count() == 0 {
+                output_root.clone()
+            } else {
+                output_root.join(&src)
+            };
+            if fs::metadata(&dest).is_err() {
+                fs::create_dir_all(&dest)?;
+            }
+
+            for entry in fs::read_dir(working_path)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    match path.file_name() {
+                        Some(filename) => {
+                            let dest_path = dest.join(filename);
+                            fs::copy(&path, &dest_path)?;
+                        }
+                        None => {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                format!("Cannot copy file {}", path.display()),
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 
     #[derive(Debug, Serialize, Deserialize)]
     struct ExtendedMemoryAccount {
@@ -564,6 +616,13 @@ mod evm_genesis {
         let mut reader = StreamAccountReader::new(evm_file)?;
         Ok(iter::from_fn(move || reader.read_account().transpose()))
     }
+
+    pub fn generate_evm_state_json(file: &Path) -> Result<H256, Error> {
+        let json = b"{ \"state\": {\n}}";
+        let mut file = std::fs::File::create(file)?;
+        file.write_all(&*json)?;
+        Ok(evm_state::empty_trie_hash())
+    }
 }
 
 #[cfg(test)]
@@ -593,6 +652,41 @@ mod tests {
         let _ignored = std::fs::remove_file(&path);
 
         path
+    }
+
+    #[test]
+    fn test_evm_genesis_config() {
+        let faucet_keypair = Keypair::new();
+        let mut config = GenesisConfig::default();
+        config.add_account(
+            faucet_keypair.pubkey(),
+            Account::new(10_000, 0, &Pubkey::default()),
+        );
+        config.add_account(
+            solana_sdk::pubkey::new_rand(),
+            Account::new(1, 0, &Pubkey::default()),
+        );
+        config.add_native_instruction_processor("hi".to_string(), solana_sdk::pubkey::new_rand());
+
+        assert_eq!(config.accounts.len(), 2);
+        assert!(config
+            .accounts
+            .iter()
+            .any(|(pubkey, account)| *pubkey == faucet_keypair.pubkey()
+                && account.lamports == 10_000));
+
+        let path = &make_tmp_path("genesis_config");
+        let evm_state_path = &make_tmp_path("evm_state_path");
+        let evm_state_root = evm_genesis::generate_evm_state_json(evm_state_path).unwrap();
+        config.evm_root_hash = evm_state_root;
+        config
+            .generate_evm_state(&path, Some(evm_state_path))
+            .expect("generate_evm_state");
+        config.write(&path).expect("write");
+        let loaded_config = GenesisConfig::load(&path).expect("load");
+        assert_eq!(config.hash(), loaded_config.hash());
+        let _ignored = std::fs::remove_file(&evm_state_path);
+        let _ignored = std::fs::remove_file(&path);
     }
 
     #[test]

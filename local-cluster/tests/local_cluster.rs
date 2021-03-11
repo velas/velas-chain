@@ -48,6 +48,7 @@ use solana_sdk::{
     signature::{Keypair, Signer},
     system_program, system_transaction,
 };
+use solana_stake_program::stake_state::MIN_DELEGATE_STAKE_AMOUNT;
 use solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY;
 use std::{
     collections::{HashMap, HashSet},
@@ -286,8 +287,8 @@ fn test_leader_failure_4() {
     let mut validator_config = ValidatorConfig::default();
     validator_config.rpc_config.enable_validator_exit = true;
     let mut config = ClusterConfig {
-        cluster_lamports: 10_000,
-        node_stakes: vec![100; 4],
+        cluster_lamports: 1000 * MIN_DELEGATE_STAKE_AMOUNT,
+        node_stakes: vec![MIN_DELEGATE_STAKE_AMOUNT + 400; 4],
         validator_configs: vec![validator_config; num_nodes],
         ..ClusterConfig::default()
     };
@@ -956,10 +957,10 @@ fn test_consistency_halt() {
         .validator_config
         .accounts_hash_fault_injection_slots = 40;
 
-    let validator_stake = 10_000;
+    let validator_stake = MIN_DELEGATE_STAKE_AMOUNT + 100;
     let mut config = ClusterConfig {
         node_stakes: vec![validator_stake],
-        cluster_lamports: 100_000,
+        cluster_lamports: validator_stake * 10,
         validator_configs: vec![leader_snapshot_test_config.validator_config],
         ..ClusterConfig::default()
     };

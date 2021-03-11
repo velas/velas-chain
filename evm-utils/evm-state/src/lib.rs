@@ -11,13 +11,14 @@ pub use secp256k1::rand;
 use snafu::ensure;
 
 pub mod error;
-
 pub mod transactions;
 pub mod types;
 
 pub use transactions::*;
 pub use types::*;
 pub use {evm_backend::EvmBackend, layered_backend::EvmState, storage::Storage};
+
+pub use triedb::empty_trie_hash;
 
 mod evm_backend;
 mod layered_backend;

@@ -603,10 +603,12 @@ mod tests {
             ..ProcessOptions::default()
         };
         let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         let (bank_forks, cached_leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
             &evm_state_dir,
+            evm_genesis_path,
             Vec::new(),
             opts,
         )

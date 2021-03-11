@@ -388,6 +388,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .long("evm-root")
                 .takes_value(true)
                 .help("Root hash for evm state snapshot, Used to verify snapshot integrity."),
+        ).arg(
+            Arg::with_name("evm-state-file")
+                .long("evm-state-file")
+                .takes_value(true)
+                .help("Path to EVM state json file, can be retrived from `parity export state` command."),
         )
     } else {
         app
@@ -527,16 +532,18 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         match root {
             Ok(root) => {
                 let root_hash = evm_rpc::Hex::<evm_state::H256>::from_hex(&root).unwrap();
-                genesis_config.set_evm_state_file(root_hash.0)
+                genesis_config.set_evm_root_hash(root_hash.0)
             }
             Err(e) => {
                 eprintln!(
-                    "EVM root was not found but genesis was compilet with `with_evm` feature {}",
+                    "EVM root was not found but genesis was compiled with `with_evm` feature {}",
                     e
                 );
             }
         }
     }
+
+    let evm_state_json = matches.value_of("evm-state-file").map(PathBuf::from);
 
     if let Ok(raw_inflation) = value_t!(matches, "inflation", String) {
         let inflation = match raw_inflation.as_str() {
@@ -664,6 +671,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     solana_logger::setup();
     create_new_ledger(
         &ledger_path,
+        evm_state_json.as_ref().map(AsRef::as_ref),
         &genesis_config,
         max_genesis_archive_unpacked_size,
         AccessType::PrimaryOnly,

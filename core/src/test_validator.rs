@@ -279,6 +279,7 @@ impl TestValidator {
 
                 let _ = create_new_ledger(
                     ledger_path,
+                    None,
                     &genesis_config,
                     MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
                     solana_ledger::blockstore_db::AccessType::PrimaryOnly,

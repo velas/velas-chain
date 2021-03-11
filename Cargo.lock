@@ -2474,6 +2474,7 @@ dependencies = [
 [[package]]
 name = "keccak-hasher"
 version = "0.1.1"
+source = "git+https://github.com/velas/evm-tests?branch=master#366e949448f022d054d51a461c3118007a23bb54"
 dependencies = [
  "ethereum-types",
  "hash-db",
@@ -5732,6 +5733,7 @@ dependencies = [
  "solana-logger 1.5.3",
  "solana-program 1.5.3",
  "solana-sdk-macro 1.5.3",
+ "tempfile",
  "thiserror",
  "tiny-bip39",
  "triehash-ethereum",
@@ -7218,6 +7220,7 @@ dependencies = [
 [[package]]
 name = "triehash-ethereum"
 version = "0.2.0"
+source = "git+https://github.com/velas/evm-tests?branch=master#366e949448f022d054d51a461c3118007a23bb54"
 dependencies = [
  "ethereum-types",
  "keccak-hasher",

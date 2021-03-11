@@ -976,12 +976,14 @@ fn new_banks_from_ledger(
         };
 
     // TODO: Add evm-state to config.
-    let evm_state_path = ledger_path.to_path_buf();
+    let evm_state_path = ledger_path.join("evm-state");
+    let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
 
     let (mut bank_forks, mut leader_schedule_cache, snapshot_hash) = bank_forks_utils::load(
         &genesis_config,
         &blockstore,
-        evm_state_path,
+        &evm_state_path,
+        &evm_genesis_path,
         config.account_paths.clone(),
         config.account_shrink_paths.clone(),
         config.snapshot_config.as_ref(),

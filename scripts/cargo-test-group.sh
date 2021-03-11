@@ -12,8 +12,8 @@ set -e
 get_workspace_members() {
     # Get absolute path of worspace_root
     declare workspace_root="$(cd $directory/../; pwd)"
-    # Find path to all Cargo.toml expect root
-    for folder in $(find $workspace_root -path "$workspace_root/*/*" -name "Cargo.toml")
+    # Find path to all Cargo.toml expect root, and ignore local .cargo registry cahe dirrectory
+    for folder in $(find $workspace_root -path "$workspace_root/*/*" -name "Cargo.toml" | grep -v './.cargo/registry')
     do
         # Remove Cargo.toml from path, to better regexp.
         dirname $folder
@@ -92,7 +92,7 @@ do
     set -x
     cargo check --all-targets --manifest-path $v
     # Run tests seperately for each target, to avoid fast fail,
-    # if some of target cannot be compilet with toolchain.
+    # if some of target cannot be compiled with toolchain.
     for target in bins tests examples
     do
         cargo_test $target $v $features "${@:2}"

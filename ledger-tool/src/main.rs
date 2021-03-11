@@ -690,12 +690,14 @@ fn load_bank_forks(
         vec![non_primary_accounts_path]
     };
 
-    let evm_state_path = ledger_path.to_path_buf();
+    let evm_state_path = ledger_path.join("evm-state");
+    let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
 
     bank_forks_utils::load(
         &genesis_config,
         &blockstore,
         evm_state_path,
+        evm_genesis_path,
         account_paths,
         None,
         snapshot_config.as_ref(),
@@ -1399,6 +1401,7 @@ fn main() {
 
             create_new_ledger(
                 &output_directory,
+                None,
                 &genesis_config,
                 solana_runtime::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
                 AccessType::PrimaryOnly,
