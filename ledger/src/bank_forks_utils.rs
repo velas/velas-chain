@@ -13,7 +13,7 @@ use solana_runtime::{
     snapshot_utils,
 };
 use solana_sdk::{clock::Slot, genesis_config::GenesisConfig, hash::Hash};
-use std::{fs, path::PathBuf, process, result};
+use std::{fs, path::Path, path::PathBuf, process, result};
 
 pub type LoadResult = result::Result<
     (BankForks, LeaderScheduleCache, Option<(Slot, Hash)>),
@@ -32,7 +32,8 @@ fn to_loadresult(
 pub fn load(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
-    evm_state_root_path: PathBuf,
+    evm_state_path: impl AsRef<Path>,
+    evm_genesis_path: impl AsRef<Path>,
     account_paths: Vec<PathBuf>,
     shrink_paths: Option<Vec<PathBuf>>,
     snapshot_config: Option<&SnapshotConfig>,
@@ -61,7 +62,7 @@ pub fn load(
                 }
 
                 let deserialized_bank = snapshot_utils::bank_from_archive(
-                    &evm_state_root_path,
+                    &evm_state_path.as_ref(),
                     &account_paths,
                     &process_options.frozen_accounts,
                     &snapshot_config.snapshot_path,
@@ -113,7 +114,8 @@ pub fn load(
         blockstore_processor::process_blockstore(
             &genesis_config,
             &blockstore,
-            &evm_state_root_path,
+            &evm_state_path,
+            evm_genesis_path,
             account_paths,
             process_options,
         ),

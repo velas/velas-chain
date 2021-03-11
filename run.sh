@@ -82,6 +82,7 @@ else
     --max-genesis-archive-unpacked-size=300000000 \
     $SOLANA_RUN_SH_GENESIS_ARGS
     # --evm-root="0x7b343e0165c8f354ac7b1e7e7889389f42927ccb9d0330b3036fb749e12795ba" \
+    # --evm-state-file="../state.json" \
 fi
 
 abort() {

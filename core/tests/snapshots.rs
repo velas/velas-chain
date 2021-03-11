@@ -84,6 +84,7 @@ mod tests {
 
     struct SnapshotTestConfig {
         evm_state_dir: TempDir,
+        evm_ledger_path: TempDir,
         accounts_dir: TempDir,
         snapshot_dir: TempDir,
         _snapshot_output_path: TempDir,
@@ -99,14 +100,34 @@ mod tests {
             snapshot_interval_slots: u64,
         ) -> SnapshotTestConfig {
             let evm_state_dir = TempDir::new().unwrap();
+            let evm_state_json = TempDir::new().unwrap();
+            let evm_ledger_path = TempDir::new().unwrap();
             let accounts_dir = TempDir::new().unwrap();
             let snapshot_dir = TempDir::new().unwrap();
             let snapshot_output_path = TempDir::new().unwrap();
             let mut genesis_config_info = create_genesis_config(10_000);
+            let evm_state_json_file = evm_state_json
+                .path()
+                .join(solana_sdk::genesis_config::EVM_GENESIS);
+            let root = solana_sdk::genesis_config::evm_genesis::generate_evm_state_json(
+                &evm_state_json_file,
+            )
+            .unwrap();
+            genesis_config_info.genesis_config.evm_root_hash = root;
+            genesis_config_info
+                .genesis_config
+                .generate_evm_state(evm_ledger_path.path(), Some(&evm_state_json_file))
+                .unwrap();
             genesis_config_info.genesis_config.cluster_type = cluster_type;
             let bank0 = Bank::new_with_paths(
                 &genesis_config_info.genesis_config,
-                Some(evm_state_dir.as_ref()),
+                Some((
+                    evm_state_dir.as_ref(),
+                    evm_ledger_path
+                        .path()
+                        .join(solana_sdk::genesis_config::EVM_GENESIS)
+                        .as_ref(),
+                )),
                 vec![accounts_dir.path().to_path_buf()],
                 &[],
                 None,
@@ -128,6 +149,7 @@ mod tests {
             bank_forks.set_snapshot_config(Some(snapshot_config.clone()));
             SnapshotTestConfig {
                 evm_state_dir,
+                evm_ledger_path,
                 accounts_dir,
                 snapshot_dir,
                 _snapshot_output_path: snapshot_output_path,

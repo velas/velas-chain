@@ -898,7 +898,7 @@ impl Bank {
     pub fn new_with_paths(
         genesis_config: &GenesisConfig,
         // TODO: Remove option, currently need for Bank::new, that is used for tests
-        evm_state_root_path: Option<&Path>,
+        evm_paths: Option<(&Path, &Path)>,
         paths: Vec<PathBuf>,
         frozen_account_pubkeys: &[Pubkey],
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
@@ -917,10 +917,15 @@ impl Bank {
             account_indexes,
             accounts_db_caching_enabled,
         ));
-        if let Some(evm_state_root_path) = evm_state_root_path {
+
+        if let Some((evm_state_path, evm_genesis_path)) = evm_paths {
             bank.evm_state = RwLock::new(
-                evm_state::EvmState::new(evm_state_root_path, genesis_config.evm_root_hash)
-                    .unwrap(),
+                evm_state::EvmState::new_from_genesis(
+                    evm_state_path,
+                    evm_genesis_path,
+                    genesis_config.evm_root_hash,
+                )
+                .unwrap(),
             );
         }
         bank.process_genesis_config(genesis_config);
@@ -11397,9 +11402,15 @@ pub(crate) mod tests {
         };
         let evm_state_path = tempfile::TempDir::new().unwrap();
 
+        let ledger_path = tempfile::TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path
+            .path()
+            .join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config.generate_evm_state(ledger_path.path(), None);
+
         let bank0 = Arc::new(Bank::new_with_paths(
             &genesis_config,
-            Some(evm_state_path.path()),
+            Some((evm_state_path.path(), &evm_genesis_path)),
             Vec::new(),
             &[],
             None,

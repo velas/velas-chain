@@ -61,6 +61,7 @@ use std::{
     },
     time::Duration,
 };
+use tempfile::TempDir;
 use thiserror::Error;
 use trees::{Tree, TreeWalk};
 
@@ -3308,11 +3309,14 @@ fn slot_has_updates(slot_meta: &SlotMeta, slot_meta_backup: &Option<SlotMeta>) -
 // Returns the blockhash that can be used to append entries with.
 pub fn create_new_ledger(
     ledger_path: &Path,
+    evm_state_json: Option<&Path>,
     genesis_config: &GenesisConfig,
     max_genesis_archive_unpacked_size: u64,
     access_type: AccessType,
 ) -> Result<Hash> {
     Blockstore::destroy(ledger_path)?;
+
+    genesis_config.generate_evm_state(&ledger_path, evm_state_json)?;
     genesis_config.write(&ledger_path)?;
 
     // Fill slot 0 with ticks that link back to the genesis_config to bootstrap the ledger.
@@ -3334,18 +3338,15 @@ pub fn create_new_ledger(
     drop(blockstore);
 
     let archive_path = ledger_path.join("genesis.tar.bz2");
-    let mut args = vec![
+    let args = vec![
         "jcfhS",
         archive_path.to_str().unwrap(),
         "-C",
         ledger_path.to_str().unwrap(),
         "genesis.bin",
         "rocksdb",
+        "evm-state-genesis",
     ];
-
-    if genesis_config.evm_root_hash.is_some() {
-        args.push("evm-state-genesis")
-    }
 
     let output = std::process::Command::new("tar")
         .args(&args)
@@ -3488,8 +3489,13 @@ pub fn create_new_ledger_from_name(
     access_type: AccessType,
 ) -> (PathBuf, Hash) {
     let ledger_path = get_ledger_path_from_name(name);
+    let temp_dir = TempDir::new().unwrap();
+    let evm_state_json = temp_dir.path().join("evm-state.json");
+    let _root_hash =
+        solana_sdk::genesis_config::evm_genesis::generate_evm_state_json(&evm_state_json).unwrap();
     let blockhash = create_new_ledger(
         &ledger_path,
+        Some(evm_state_json.as_ref()),
         genesis_config,
         MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         access_type,

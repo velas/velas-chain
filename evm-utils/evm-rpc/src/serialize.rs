@@ -6,7 +6,7 @@ use std::fmt::{self, LowerHex};
 use std::marker::PhantomData;
 use std::str::FromStr;
 
-#[derive(Debug, Default, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Default, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Hex<T>(pub T);
 
 #[derive(Debug, Clone)]
