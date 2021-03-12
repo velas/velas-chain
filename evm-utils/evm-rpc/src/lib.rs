@@ -94,6 +94,7 @@ pub struct RPCTransaction {
     pub block_hash: Option<Hex<H256>>,
     pub block_number: Option<Hex<U256>>,
     pub transaction_index: Option<Hex<usize>>,
+    pub chain_id: Option<Hex<U256>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -504,7 +505,10 @@ impl RPCTransaction {
             evm_state::transactions::TransactionAction::Call(_) => (Some(address), None),
             evm_state::transactions::TransactionAction::Create => (None, Some(address)),
         };
+
         let hash = tx.signing_hash();
+        let chain_id = tx.signature.chain_id().map(U256::from).map(Hex);
+
         Ok(RPCTransaction {
             from: Some(tx.caller().with_context(|| EvmStateError)?.into()),
             to,
@@ -518,6 +522,7 @@ impl RPCTransaction {
             transaction_index: Some((receipt.index as usize).into()),
             block_hash: Some(block_hash.into()),
             block_number: Some(Hex(receipt.block_number.into())),
+            chain_id,
         })
     }
 }
@@ -535,7 +540,7 @@ impl RPCReceipt {
         };
         let tx_hash = Hex(tx.signing_hash());
         let tx_index: Hex<_> = (receipt.index as usize).into();
-        let block_number = Hex(receipt.block_number.into());
+        let block_number = Hex(U256::from(receipt.block_number));
 
         let logs = receipt
             .logs

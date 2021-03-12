@@ -1,12 +1,15 @@
-use super::error::*;
-use primitive_types::{H160, H256, H512, U128, U256, U512};
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
-use snafu::ResultExt;
 use std::fmt::{self, LowerHex};
 use std::marker::PhantomData;
 use std::str::FromStr;
 
-#[derive(Debug, Default, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+use super::error::*;
+
+use derive_more::Deref;
+use primitive_types::{H160, H256, H512, U128, U256, U512};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use snafu::ResultExt;
+
+#[derive(Debug, Default, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deref)]
 pub struct Hex<T>(pub T);
 
 #[derive(Debug, Clone)]

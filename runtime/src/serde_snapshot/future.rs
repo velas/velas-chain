@@ -70,6 +70,7 @@ pub(crate) struct DeserializableVersionedBank {
     pub(crate) is_delta: bool,
     pub(crate) message_processor: MessageProcessor,
     // TODO: remove Hex wrapper and ser/de as plain H256
+    pub(crate) evm_chain_id: evm_state::U256,
     pub(crate) evm_state_root: evm_rpc::Hex<evm_state::H256>,
 }
 
@@ -107,6 +108,7 @@ impl Into<BankFieldsToDeserialize> for DeserializableVersionedBank {
             stakes: self.stakes,
             epoch_stakes: self.epoch_stakes,
             is_delta: self.is_delta,
+            evm_chain_id: self.evm_chain_id,
             evm_state_root: self.evm_state_root.0,
         }
     }

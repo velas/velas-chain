@@ -8,6 +8,7 @@ extern crate solana_exchange_program;
 extern crate solana_vest_program;
 
 use clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches};
+use evm_state::U256;
 use solana_clap_utils::{
     input_parsers::{cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime},
     input_validators::{is_pubkey_or_keypair, is_rfc3339_datetime, is_valid_percentage},
@@ -22,7 +23,7 @@ use solana_sdk::{
     clock,
     epoch_schedule::EpochSchedule,
     fee_calculator::FeeRateGovernor,
-    genesis_config::{ClusterType, GenesisConfig},
+    genesis_config::{self, ClusterType, GenesisConfig},
     inflation::Inflation,
     native_token::sol_to_lamports,
     poh_config::PohConfig,
@@ -393,7 +394,14 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .long("evm-state-file")
                 .takes_value(true)
                 .help("Path to EVM state json file, can be retrived from `parity export state` command."),
+        ).arg(
+            Arg::with_name("evm_chain_id")
+                .required(false)
+                .long("evm-chain-id")
+                .takes_value(true)
+                .help("EVM chain id"),
         )
+
     } else {
         app
     }
@@ -516,6 +524,16 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         vec![]
     };
 
+    let evm_chain_id = if matches.value_of("evm_chain_id").is_some() {
+        value_t_or_exit!(matches, "evm_chain_id", U256)
+    } else {
+        match cluster_type {
+            ClusterType::MainnetBeta => *genesis_config::EVM_MAINNET_CHAIN_ID,
+            ClusterType::Testnet => *genesis_config::EVM_TESTNET_CHAIN_ID,
+            ClusterType::Devnet | ClusterType::Development => *genesis_config::EVM_DEVELOP_CHAIN_ID,
+        }
+    };
+
     let mut genesis_config = GenesisConfig {
         native_instruction_processors,
         ticks_per_slot,
@@ -524,6 +542,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         rent,
         poh_config,
         cluster_type,
+        evm_chain_id,
         ..GenesisConfig::default()
     };
 

@@ -242,6 +242,8 @@ mod test {
 
     use std::{cell::RefCell, collections::BTreeMap};
 
+    const CHAIN_ID: u64 = 0xdead;
+
     fn dummy_eth_tx() -> evm_state::transactions::Transaction {
         evm_state::transactions::Transaction {
             nonce: U256::zero(),
@@ -272,6 +274,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
+            CHAIN_ID.into(),
             0,
         );
         let mut executor = Some(&mut executor);
@@ -288,7 +291,7 @@ mod test {
             value: 0.into(),
             input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec(),
         };
-        let tx_create = tx_create.sign(&secret_key, None);
+        let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
 
         assert!(processor
             .process_instruction(
@@ -313,7 +316,7 @@ mod test {
         };
 
         let tx_hash = tx_call.signing_hash(None);
-        let tx_call = tx_call.sign(&secret_key, None);
+        let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
 
         assert!(processor
             .process_instruction(
@@ -337,6 +340,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
+            CHAIN_ID.into(),
             0,
         );
         let mut executor = Some(&mut executor);
@@ -354,15 +358,15 @@ mod test {
             value: 0.into(),
             input: vec![],
         };
-        let tx_0_sign = tx_0.clone().sign(&secret_key, None);
+        let tx_0_sign = tx_0.clone().sign(&secret_key, Some(CHAIN_ID));
         let mut tx_1 = tx_0.clone();
         tx_1.nonce += 1.into();
-        let tx_1_sign = tx_1.sign(&secret_key, None);
+        let tx_1_sign = tx_1.sign(&secret_key, Some(CHAIN_ID));
 
         let mut tx_0_shadow = tx_0.clone();
         tx_0_shadow.input = vec![1];
 
-        let tx_0_shadow_sign = tx_0.sign(&secret_key, None);
+        let tx_0_shadow_sign = tx_0.sign(&secret_key, Some(CHAIN_ID));
 
         // Execute of second tx should fail.
         assert!(processor
@@ -382,10 +386,7 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_0_sign.clone()
-                })
-                .unwrap(),
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_0_sign }).unwrap(),
                 executor.as_deref_mut()
             )
             .is_ok());
@@ -437,7 +438,7 @@ mod test {
             input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec(),
         };
 
-        let tx_create = tx_create.sign(&secret_key, None);
+        let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
 
         let caller_address = tx_create.caller().unwrap();
         let tx_address = tx_create.address().unwrap();
@@ -459,6 +460,7 @@ mod test {
                 state.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
+                CHAIN_ID.into(),
                 0,
             );
             let mut executor = Some(&mut executor_orig);
@@ -466,10 +468,8 @@ mod test {
                 .process_instruction(
                     &crate::ID,
                     &keyed_accounts,
-                    &bincode::serialize(&EvmInstruction::EvmTransaction {
-                        evm_tx: tx_create.clone()
-                    })
-                    .unwrap(),
+                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create })
+                        .unwrap(),
                     executor.as_deref_mut()
                 )
                 .is_ok());
@@ -502,12 +502,13 @@ mod test {
         };
 
         let tx_hash = tx_call.signing_hash(None);
-        let tx_call = tx_call.sign(&secret_key, None);
+        let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
         {
             let mut executor_orig = evm_state::Executor::with_config(
                 state.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
+                CHAIN_ID.into(),
                 0,
             );
             let mut executor = Some(&mut executor_orig);
@@ -542,6 +543,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
+            CHAIN_ID.into(),
             0,
         );
         let mut executor = Some(&mut executor_orig);
@@ -612,6 +614,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
+            CHAIN_ID.into(),
             0,
         );
         let mut executor = Some(&mut executor_orig);
@@ -695,12 +698,13 @@ mod test {
                 .unwrap(),
         };
 
-        let tx_call = tx_call.sign(&ether_sc, None);
+        let tx_call = tx_call.sign(&ether_sc, Some(CHAIN_ID));
         {
             let mut executor_orig = evm_state::Executor::with_config(
                 state.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
+                CHAIN_ID.into(),
                 0,
             );
             let mut executor = Some(&mut executor_orig);
@@ -745,6 +749,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
+            CHAIN_ID.into(),
             0,
         );
         let mut executor = Some(&mut executor_orig);
@@ -829,12 +834,13 @@ mod test {
                 .unwrap(),
         };
 
-        let tx_call = tx_call.sign(&ether_sc, None);
+        let tx_call = tx_call.sign(&ether_sc, Some(CHAIN_ID));
         {
             let mut executor_orig = evm_state::Executor::with_config(
                 state.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
+                CHAIN_ID.into(),
                 0,
             );
             let mut executor = Some(&mut executor_orig);
@@ -908,6 +914,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
+            CHAIN_ID.into(),
             0,
         );
         let mut executor = Some(&mut executor);
@@ -975,6 +982,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
+            CHAIN_ID.into(),
             0,
         );
         let mut executor = Some(&mut executor);
@@ -1030,6 +1038,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
+            CHAIN_ID.into(),
             0,
         );
         let mut executor = Some(&mut executor);
@@ -1135,6 +1144,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
+            CHAIN_ID.into(),
             0,
         );
         let mut executor = Some(&mut executor);
