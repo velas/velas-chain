@@ -18,12 +18,15 @@ use crate::{
     system_program,
     timing::years_as_slots,
 };
+use evm_state::U256;
+
 use bincode::{deserialize, serialize};
 use chrono::{TimeZone, Utc};
 use evm_state::H256;
 use itertools::Itertools;
 use log::warn;
 use memmap2::Mmap;
+use once_cell::sync::Lazy;
 use std::{
     collections::BTreeMap,
     fmt,
@@ -97,7 +100,13 @@ pub struct GenesisConfig {
     pub cluster_type: ClusterType,
     /// Initial data for evm part
     pub evm_root_hash: H256,
+    /// EVM chain id
+    pub evm_chain_id: U256,
 }
+
+pub static EVM_MAINNET_CHAIN_ID: Lazy<U256> = Lazy::new(|| U256::from(105));
+pub static EVM_TESTNET_CHAIN_ID: Lazy<U256> = Lazy::new(|| U256::from(111));
+pub static EVM_DEVELOP_CHAIN_ID: Lazy<U256> = Lazy::new(|| U256::from(0xdead));
 
 // useful for basic tests
 pub fn create_genesis_config(lamports: u64) -> (GenesisConfig, Keypair) {
@@ -134,6 +143,7 @@ impl Default for GenesisConfig {
             epoch_schedule: EpochSchedule::default(),
             cluster_type: ClusterType::Development,
             evm_root_hash: evm_state::empty_trie_hash(),
+            evm_chain_id: *EVM_DEVELOP_CHAIN_ID,
         }
     }
 }
@@ -307,6 +317,7 @@ impl fmt::Display for GenesisConfig {
              Capitalization: {} SOL in {} accounts\n\
              Native instruction processors: {:#?}\n\
              Rewards pool: {:#?}\n\
+             EVM chain id: {}\n\
              ",
             Utc.timestamp(self.creation_time, 0).to_rfc3339(),
             self.cluster_type,
@@ -337,6 +348,7 @@ impl fmt::Display for GenesisConfig {
             self.accounts.len(),
             self.native_instruction_processors,
             self.rewards_pools,
+            self.evm_chain_id,
         )
     }
 }
@@ -702,6 +714,7 @@ mod tests {
             Account::new(1, 0, &Pubkey::default()),
         );
         config.add_native_instruction_processor("hi".to_string(), solana_sdk::pubkey::new_rand());
+        config.evm_chain_id = U256::from(0x42);
 
         assert_eq!(config.accounts.len(), 2);
         assert!(config

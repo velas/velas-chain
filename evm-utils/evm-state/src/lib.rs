@@ -67,8 +67,15 @@ impl fmt::Debug for Executor {
 }
 
 impl Executor {
-    pub fn with_config(state: EvmState, config: Config, gas_limit: u64, block_number: u64) -> Self {
+    pub fn with_config(
+        state: EvmState,
+        config: Config,
+        gas_limit: u64,
+        chain_id: U256,
+        block_number: u64,
+    ) -> Self {
         let vicinity = MemoryVicinity {
+            chain_id,
             block_gas_limit: gas_limit.into(),
             block_number: block_number.into(),
             ..default_vicinity()
@@ -102,6 +109,17 @@ impl Executor {
             NonceNotEqual {
                 tx_nonce: evm_tx.nonce,
                 state_nonce,
+            }
+        );
+
+        let tx_chain_id = evm_tx.signature.chain_id().map(U256::from);
+        let chain_id = self.evm.chain_id();
+
+        ensure!(
+            tx_chain_id == Some(chain_id),
+            WrongChainId {
+                chain_id,
+                tx_chain_id,
             }
         );
 
@@ -233,6 +251,8 @@ impl Executor {
     }
 }
 
+// TODO: mark as test only,
+//  there is only one place where MemoryVicinity instantiates
 pub(crate) fn default_vicinity() -> MemoryVicinity {
     MemoryVicinity {
         gas_price: U256::zero(),
@@ -247,6 +267,7 @@ pub(crate) fn default_vicinity() -> MemoryVicinity {
     }
 }
 
+// TODO: move out these blobs to test files
 pub const HELLO_WORLD_CODE:&str = "608060405234801561001057600080fd5b5061011e806100206000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063942ae0a714602d575b600080fd5b603360ab565b6040518080602001828103825283818151815260200191508051906020019080838360005b8381101560715780820151818401526020810190506058565b50505050905090810190601f168015609d5780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b60606040518060400160405280600a81526020017f68656c6c6f576f726c640000000000000000000000000000000000000000000081525090509056fea2646970667358221220fa787b95ca91ffe90fdb780b8ee8cb11c474bc63cb8217112c88bc465f7ea7d364736f6c63430007020033";
 pub const HELLO_WORLD_ABI: &str = "942ae0a7";
 pub const HELLO_WORLD_RESULT:&str = "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000a68656c6c6f576f726c6400000000000000000000000000000000000000000000";
@@ -260,6 +281,11 @@ mod tests {
 
     use super::Executor;
     use super::*;
+
+    use once_cell::sync::Lazy;
+
+    // NOTE: value must not overflow i32::MAX at least
+    static TEST_CHAIN_ID: Lazy<U256> = Lazy::new(|| U256::from(0x42));
 
     #[allow(clippy::type_complexity)]
     fn noop_precompile(
@@ -279,100 +305,157 @@ mod tests {
     const METACOIN_CODE: &str = include_str!("../tests/MetaCoin.bin");
     const INITIAL_BALANCE: u64 = 100_000;
 
+    #[derive(Clone)]
+    struct Persona {
+        nonce: u64,
+        secret: secp256k1::key::SecretKey,
+    }
+
+    impl Persona {
+        fn new() -> Self {
+            let mut rng = secp256k1::rand::thread_rng();
+            let secret = secp256k1::key::SecretKey::new(&mut rng);
+            let nonce = 0;
+            Self { nonce, secret }
+        }
+
+        fn address(&self) -> Address {
+            self.secret.to_address()
+        }
+
+        fn unsigned(
+            &self,
+            action: TransactionAction,
+            bytes: impl AsRef<[u8]>,
+        ) -> UnsignedTransaction {
+            UnsignedTransaction {
+                nonce: self.nonce.into(),
+                gas_price: U256::zero(),
+                gas_limit: U256::from(u64::MAX),
+                action,
+                value: U256::zero(),
+                input: bytes.as_ref().to_vec(),
+            }
+        }
+
+        // tx_create
+        fn create(&self, bytes: impl AsRef<[u8]>) -> Transaction {
+            self.unsigned(TransactionAction::Create, bytes)
+                .sign(&self.secret, Some(TEST_CHAIN_ID.as_u64()))
+        }
+
+        // tx_call
+        fn call(&self, address: Address, bytes: impl AsRef<[u8]>) -> Transaction {
+            self.unsigned(TransactionAction::Call(address), bytes)
+                .sign(&self.secret, Some(TEST_CHAIN_ID.as_u64()))
+        }
+    }
+
+    mod metacoin {
+        use ethabi::{Function, Param, ParamType};
+        use once_cell::sync::Lazy;
+
+        pub static GET_BALANCE: Lazy<Function> = Lazy::new(|| Function {
+            name: "getBalance".to_string(),
+            inputs: vec![Param {
+                name: "addr".to_string(),
+                kind: ParamType::Address,
+            }],
+            outputs: vec![Param {
+                name: "".to_string(),
+                kind: ParamType::Uint(256),
+            }],
+            constant: true,
+        });
+
+        pub static SEND_COIN: Lazy<Function> = Lazy::new(|| Function {
+            name: "sendCoin".to_string(),
+            inputs: vec![
+                Param {
+                    name: "receiver".to_string(),
+                    kind: ParamType::Address,
+                },
+                Param {
+                    name: "amount".to_string(),
+                    kind: ParamType::Uint(256),
+                },
+            ],
+            outputs: vec![Param {
+                name: "sufficient".to_string(),
+                kind: ParamType::Bool,
+            }],
+            constant: false,
+        });
+    }
+
+    #[test]
+    fn it_execute_only_txs_with_correct_chain_id() {
+        let _logger = simple_logger::SimpleLogger::new().init();
+
+        let chain_id = U256::from(0xeba);
+        let another_chain_id = U256::from(0xb0ba);
+
+        let mut executor = Executor::with_config(
+            EvmState::default(),
+            evm::Config::istanbul(),
+            u64::MAX,
+            chain_id,
+            0,
+        );
+
+        let code = hex::decode(METACOIN_CODE).unwrap();
+
+        let alice = Persona::new();
+        let create_tx = alice.unsigned(TransactionAction::Create, &code);
+
+        let wrong_tx = create_tx.clone().sign(&alice.secret, None);
+        assert!(matches!(
+            executor
+                .transaction_execute(wrong_tx, noop_precompile)
+                .unwrap_err(),
+            Error::WrongChainId {
+                chain_id: err_chain_id,
+                tx_chain_id,
+            } if (err_chain_id, tx_chain_id) == (chain_id, None)
+        ));
+
+        let wrong_tx = create_tx
+            .clone()
+            .sign(&alice.secret, Some(another_chain_id.as_u64()));
+        assert!(matches!(
+            executor
+                .transaction_execute(wrong_tx, noop_precompile)
+                .unwrap_err(),
+            Error::WrongChainId {
+                chain_id: err_chain_id,
+                tx_chain_id,
+            } if (err_chain_id, tx_chain_id) == (chain_id, Some(another_chain_id))
+        ));
+
+        let create_tx = create_tx.sign(&alice.secret, Some(chain_id.as_u64()));
+        assert!(matches!(
+            executor
+                .transaction_execute(create_tx, noop_precompile)
+                .unwrap(),
+            (ExitReason::Succeed(ExitSucceed::Returned), _)
+        ));
+    }
+
     #[test]
     fn it_handles_metacoin() {
         use ethabi::Token;
-
-        #[derive(Clone)]
-        struct Persona {
-            nonce: u64,
-            secret: secp256k1::key::SecretKey,
-        }
-
-        impl Persona {
-            fn new() -> Self {
-                let mut rng = secp256k1::rand::thread_rng();
-                let secret = secp256k1::key::SecretKey::new(&mut rng);
-                let nonce = 0;
-                Self { nonce, secret }
-            }
-
-            fn address(&self) -> Address {
-                self.secret.to_address()
-            }
-
-            // tx_create
-            fn create(&self, bytes: impl AsRef<[u8]>) -> Transaction {
-                let unsigned = UnsignedTransaction {
-                    nonce: self.nonce.into(),
-                    gas_price: U256::zero(),
-                    gas_limit: U256::from(u64::MAX),
-                    action: TransactionAction::Create,
-                    value: U256::zero(),
-                    input: bytes.as_ref().to_vec(),
-                };
-
-                unsigned.sign(&self.secret, None)
-            }
-
-            // tx_call
-            fn call(&self, address: Address, bytes: impl AsRef<[u8]>) -> Transaction {
-                let unsigned = UnsignedTransaction {
-                    nonce: self.nonce.into(),
-                    gas_price: U256::zero(),
-                    gas_limit: U256::from(u64::MAX),
-                    action: TransactionAction::Call(address),
-                    value: U256::zero(),
-                    input: bytes.as_ref().to_vec(),
-                };
-
-                unsigned.sign(&self.secret, None)
-            }
-        }
-
-        mod metacoin {
-            use ethabi::{Function, Param, ParamType};
-            use once_cell::sync::Lazy;
-
-            pub static GET_BALANCE: Lazy<Function> = Lazy::new(|| Function {
-                name: "getBalance".to_string(),
-                inputs: vec![Param {
-                    name: "addr".to_string(),
-                    kind: ParamType::Address,
-                }],
-                outputs: vec![Param {
-                    name: "".to_string(),
-                    kind: ParamType::Uint(256),
-                }],
-                constant: true,
-            });
-
-            pub static SEND_COIN: Lazy<Function> = Lazy::new(|| Function {
-                name: "sendCoin".to_string(),
-                inputs: vec![
-                    Param {
-                        name: "receiver".to_string(),
-                        kind: ParamType::Address,
-                    },
-                    Param {
-                        name: "amount".to_string(),
-                        kind: ParamType::Uint(256),
-                    },
-                ],
-                outputs: vec![Param {
-                    name: "sufficient".to_string(),
-                    kind: ParamType::Bool,
-                }],
-                constant: false,
-            });
-        }
 
         let _logger = simple_logger::SimpleLogger::new().init();
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
-        let mut executor =
-            Executor::with_config(EvmState::default(), evm::Config::istanbul(), u64::MAX, 0);
+        let mut executor = Executor::with_config(
+            EvmState::default(),
+            evm::Config::istanbul(),
+            u64::MAX,
+            *TEST_CHAIN_ID,
+            0,
+        );
 
         let mut alice = Persona::new();
         let create_tx = alice.create(&code);
@@ -481,8 +564,13 @@ mod tests {
 
             let new_slot = state.slot + 1;
             let state = state.fork(new_slot);
-            let mut executor =
-                Executor::with_config(state, evm::Config::istanbul(), u64::MAX, new_slot);
+            let mut executor = Executor::with_config(
+                state,
+                evm::Config::istanbul(),
+                u64::MAX,
+                *TEST_CHAIN_ID,
+                new_slot,
+            );
 
             let send_tx = bob.call(
                 contract,
@@ -549,8 +637,13 @@ mod tests {
             // NOTE: ensure slots are different
             let new_slot = state.slot + 2;
             let state = state.fork(new_slot);
-            let mut executor =
-                Executor::with_config(state, evm::Config::istanbul(), u64::MAX, new_slot);
+            let mut executor = Executor::with_config(
+                state,
+                evm::Config::istanbul(),
+                u64::MAX,
+                *TEST_CHAIN_ID,
+                new_slot,
+            );
 
             let send_tx = alice.call(
                 contract,
@@ -620,8 +713,13 @@ mod tests {
         let code = hex::decode(HELLO_WORLD_CODE).unwrap();
         let data = hex::decode(HELLO_WORLD_ABI).unwrap();
 
-        let mut executor =
-            Executor::with_config(EvmState::default(), evm::Config::istanbul(), u64::MAX, 0);
+        let mut executor = Executor::with_config(
+            EvmState::default(),
+            evm::Config::istanbul(),
+            u64::MAX,
+            *TEST_CHAIN_ID,
+            0,
+        );
 
         let exit_reason = match executor.with_executor(|e| {
             e.create(

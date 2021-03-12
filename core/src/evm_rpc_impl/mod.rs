@@ -16,8 +16,6 @@ use evm_state::{Address, Config, Gas, LogFilter, H256, U256};
 
 use crate::rpc::JsonRpcRequestProcessor;
 
-const CHAIN_ID: u64 = 0x77;
-
 const DEFAULT_COMITTMENT: Option<CommitmentConfig> = Some(CommitmentConfig {
     commitment: CommitmentLevel::Recent,
 });
@@ -57,12 +55,14 @@ pub struct ChainMockERPCImpl;
 impl ChainMockERPC for ChainMockERPCImpl {
     type Metadata = JsonRpcRequestProcessor;
 
-    fn network_id(&self, _meta: Self::Metadata) -> Result<String, Error> {
-        Ok(format!("0x{:x}", CHAIN_ID))
+    fn network_id(&self, meta: Self::Metadata) -> Result<String, Error> {
+        let bank = meta.bank(None);
+        Ok(format!("{:#x}", bank.evm_chain_id))
     }
 
-    fn chain_id(&self, _meta: Self::Metadata) -> Result<Hex<u64>, Error> {
-        Ok(Hex(CHAIN_ID))
+    fn chain_id(&self, meta: Self::Metadata) -> Result<Hex<u64>, Error> {
+        let bank = meta.bank(None);
+        Ok(Hex(bank.evm_chain_id.as_u64()))
     }
 
     // TODO: Add network info
@@ -443,6 +443,17 @@ fn call(
         })?;
 
     let bank = meta.bank(DEFAULT_COMITTMENT);
+
+    let chain_id = bank.evm_chain_id;
+    let tx_chain_id = tx.chain_id.map(|v| *v);
+
+    if tx_chain_id != Some(chain_id) {
+        return Err(Error::WrongChainId {
+            chain_id,
+            tx_chain_id,
+        });
+    }
+
     let evm_state = bank
         .evm_state
         .read()
@@ -450,8 +461,13 @@ fn call(
 
     let evm_state = evm_state.clone(); // TODO: revise
 
-    let mut executor =
-        evm_state::Executor::with_config(evm_state, Config::istanbul(), gas_limit, bank.slot());
+    let mut executor = evm_state::Executor::with_config(
+        evm_state,
+        Config::istanbul(),
+        gas_limit,
+        bank.evm_chain_id,
+        bank.slot(),
+    );
 
     let result = if let Some(address) = tx.to {
         let address = address.0;

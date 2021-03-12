@@ -46,19 +46,21 @@ use solana_client::{
 use solana_core::rpc::RpcSol;
 
 use std::result::Result as StdResult;
+
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
 type FutureEvmResult<T> = EvmResult<T>;
 
-const CHAIN_ID: u64 = 0x77;
-
 pub struct EvmBridge {
+    evm_chain_id: U256,
     key: solana_sdk::signature::Keypair,
     accounts: HashMap<evm_state::Address, evm_state::SecretKey>,
     rpc_client: RpcClient,
 }
 
 impl EvmBridge {
-    fn new(keypath: &str, evm_keys: Vec<SecretKey>, addr: String) -> Self {
+    fn new(evm_chain_id: U256, keypath: &str, evm_keys: Vec<SecretKey>, addr: String) -> Self {
+        info!("EVM chain id {}", evm_chain_id);
+
         let accounts = evm_keys
             .into_iter()
             .map(|secret_key| {
@@ -74,6 +76,7 @@ impl EvmBridge {
 
         info!("Loading keypair from: {}", keypath);
         Self {
+            evm_chain_id,
             key: solana_sdk::signature::read_keypair_file(&keypath).unwrap(),
             accounts,
             rpc_client,
@@ -211,7 +214,7 @@ impl BridgeERPC for BridgeERPCImpl {
             input: tx.data.map(|a| a.0).unwrap_or_default(),
         };
 
-        let tx = tx_create.sign(&secret_key, CHAIN_ID.into());
+        let tx = tx_create.sign(&secret_key, Some(meta.evm_chain_id.as_u64()));
 
         meta.send_tx(tx)
     }
@@ -225,7 +228,7 @@ impl BridgeERPC for BridgeERPCImpl {
 
         let tx: evm::Transaction = rlp::decode(&bytes.0).unwrap();
         let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
-        let hash = unsigned_tx.signing_hash(CHAIN_ID.into());
+        let hash = unsigned_tx.signing_hash(Some(meta.evm_chain_id.as_u64()));
         debug!("loaded tx_hash = {}", hash);
         meta.send_tx(tx)
     }
@@ -244,12 +247,13 @@ pub struct ChainMockERPCProxy;
 impl ChainMockERPC for ChainMockERPCProxy {
     type Metadata = Arc<EvmBridge>;
 
-    fn network_id(&self, _meta: Self::Metadata) -> EvmResult<String> {
-        Ok(format!("{}", CHAIN_ID))
+    fn network_id(&self, meta: Self::Metadata) -> EvmResult<String> {
+        // NOTE: also we can get chain id from meta, but expects the same value
+        Ok(format!("{}", meta.evm_chain_id))
     }
 
-    fn chain_id(&self, _meta: Self::Metadata) -> EvmResult<Hex<u64>> {
-        Ok(Hex(CHAIN_ID))
+    fn chain_id(&self, meta: Self::Metadata) -> EvmResult<Hex<u64>> {
+        Ok(Hex(meta.evm_chain_id.as_u64()))
     }
 
     // TODO: Add network info
@@ -975,6 +979,8 @@ struct Args {
     rpc_address: String,
     #[structopt(default_value = "127.0.0.1:8545")]
     binding_address: SocketAddr,
+    #[structopt(default_value = "0xdead")]
+    evm_chain_id: U256,
 }
 
 use jsonrpc_http_server::jsonrpc_core::*;
@@ -1012,7 +1018,9 @@ fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| solana_cli_config::Config::default().keypair_path);
     let server_path = args.rpc_address;
     let binding_address = args.binding_address;
+
     let meta = EvmBridge::new(
+        args.evm_chain_id,
         &keyfile_path,
         vec![evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap()],
         server_path,

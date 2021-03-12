@@ -335,6 +335,7 @@ pub fn addr_from_public_key(key: &PublicKey) -> H160 {
 mod test {
     use super::*;
     use secp256k1::{PublicKey, SecretKey, SECP256K1};
+
     #[test]
     fn test_valid_addr() {
         let addr = H160::from_str("9Edb9E0B88Dbf2a29aE121a657e1860aEceaA53D").unwrap();
@@ -353,6 +354,7 @@ mod test {
         let secret_key =
             SecretKey::from_str("fb507dc8bc8ea30aa275702108e6a22f66096e274a1c4c36e709b12a13dd0e76")
                 .unwrap();
+
         let tx = UnsignedTransaction {
             nonce: U256::from(1),
             gas_price: U256::from(2),
@@ -361,14 +363,15 @@ mod test {
             value: U256::from(4),
             input: vec![2; 3],
         };
+
         let chain_id = 0x77;
+
         let mut stream = RlpStream::new();
         tx.signing_rlp_append(&mut stream, Some(chain_id));
         println!("rlp = {}", hex::encode(stream.out()));
         println!("hash = {:x}", tx.signing_hash(Some(chain_id)));
 
         let tx = tx.sign(&secret_key, Some(chain_id));
-
         assert_eq!(tx.signature.chain_id(), Some(chain_id));
         assert_eq!(tx.caller().unwrap(), addr);
     }

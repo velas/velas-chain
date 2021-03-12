@@ -62,4 +62,10 @@ pub enum Error {
         size: u64,
         backtrace: Backtrace,
     },
+
+    #[snafu(display("Wrong chain id, expected={}, but tx={:?}", chain_id, tx_chain_id,))]
+    WrongChainId {
+        chain_id: U256,
+        tx_chain_id: Option<U256>,
+    },
 }

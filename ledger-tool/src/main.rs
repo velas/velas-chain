@@ -956,6 +956,12 @@ fn main() {
                     ),
             )
             .arg(
+                Arg::with_name("evm_chain_id")
+                    .long("evm-chain-id")
+                    .takes_value(true)
+                    .help("EVM chain ID")
+            )
+            .arg(
                 Arg::with_name("output_directory")
                     .index(1)
                     .value_name("DIR")

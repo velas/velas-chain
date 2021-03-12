@@ -568,6 +568,7 @@ pub(crate) struct BankFieldsToDeserialize {
     pub(crate) stakes: Stakes,
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
+    pub(crate) evm_chain_id: evm_state::U256,
     pub(crate) evm_state_root: evm_state::H256,
 }
 
@@ -608,6 +609,7 @@ pub(crate) struct BankFieldsToSerialize<'a> {
     pub(crate) stakes: &'a RwLock<Stakes>,
     pub(crate) epoch_stakes: &'a HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
+    pub(crate) evm_chain_id: evm_state::U256,
     pub(crate) evm_state_root: evm_state::H256,
 }
 
@@ -721,6 +723,7 @@ pub struct Bank {
     /// The set of parents including this bank
     pub ancestors: Ancestors,
 
+    pub evm_chain_id: evm_state::U256,
     pub evm_state: RwLock<evm_state::EvmState>,
 
     /// Hash of this Bank's state. Only meaningful after freezing.
@@ -910,6 +913,7 @@ impl Bank {
         bank.ancestors.insert(bank.slot(), 0);
         bank.transaction_debug_keys = debug_keys;
         bank.cluster_type = Some(genesis_config.cluster_type);
+        bank.evm_chain_id = genesis_config.evm_chain_id;
 
         bank.rc.accounts = Arc::new(Accounts::new_with_config(
             paths,
@@ -1007,6 +1011,7 @@ impl Bank {
             src,
             slot,
             epoch,
+            evm_chain_id: parent.evm_chain_id,
             evm_state: RwLock::new(evm_state),
             blockhash_queue: RwLock::new(parent.blockhash_queue.read().unwrap().clone()),
 
@@ -1152,6 +1157,7 @@ impl Bank {
         let mut bank = Self {
             rc: bank_rc,
             src: new(),
+            evm_chain_id: genesis_config.evm_chain_id,
             evm_state: RwLock::new(evm_state),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             ancestors: fields.ancestors,
@@ -1276,6 +1282,7 @@ impl Bank {
             stakes: &self.stakes,
             epoch_stakes: &self.epoch_stakes,
             is_delta: self.is_delta.load(Relaxed),
+            evm_chain_id: self.evm_chain_id,
             evm_state_root: self.evm_state.read().unwrap().root,
         }
     }
@@ -2957,6 +2964,7 @@ impl Bank {
             evm_state,
             evm_state::Config::istanbul(),
             u64::max_value(),
+            self.evm_chain_id,
             self.slot(),
         );
 

@@ -1,8 +1,10 @@
+use std::num::ParseIntError;
+
 use jsonrpc_core::Error as JRpcError;
+use primitive_types::U256;
 use rlp::DecoderError;
 use rustc_hex::FromHexError;
 use snafu::Snafu;
-use std::num::ParseIntError;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility = "pub")]
@@ -52,9 +54,13 @@ pub enum Error {
 
     #[snafu(display("Method unimplemented"))]
     Unimplemented {},
-    // InvalidParams {
 
-    // }
+    #[snafu(display("Wrong EVM chain id, expected={}, but tx={:?}", chain_id, tx_chain_id))]
+    WrongChainId {
+        chain_id: U256,
+        tx_chain_id: Option<U256>,
+    },
+    // InvalidParams {},
     // UnsupportedTrieQuery,
     // NotFound,
     // CallError,
@@ -108,6 +114,7 @@ impl Into<JRpcError> for Error {
             Self::NativeRpcError { source } => {
                 internal_error_with_details(NATIVE_RPC_ERROR, &self, &source)
             }
+            Self::WrongChainId { .. } => JRpcError::invalid_params(self.to_string()),
             Self::EvmStateError { source } => {
                 internal_error_with_details(EVM_STATE_RPC_ERROR, &self, &source)
             }
