@@ -83,7 +83,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("call_hello_with_executor_recreate", |b| {
+    group.bench_function("call_hello_with_executor_recreate_raw", |b| {
         let mut executor = Executor::with_config(
             EvmState::default(),
             evm::Config::istanbul(),
@@ -104,27 +104,81 @@ fn criterion_benchmark(c: &mut Criterion) {
         state.commit();
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
-        let mut idx = 0;
+        let mut rng = secp256k1::rand::thread_rng();
+        let user_key = secp256k1::key::SecretKey::new(&mut rng);
+        let caller = user_key.to_address();
+
+        let tx = UnsignedTransaction {
+            nonce: 0.into(),
+            gas_price: 1.into(),
+            gas_limit: u64::max_value().into(),
+            action: TransactionAction::Call(contract_address),
+            value: 0.into(),
+            input: data.to_vec()
+        };
         b.iter(|| {
             let mut executor =
                 Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), chain_id,state.slot);
 
-            let exit_reason = black_box(executor.with_executor(|executor| {
-                executor.transact_call(
-                    accounts[idx % accounts.len()],
-                    contract_address,
-                    U256::zero(),
-                    data.to_vec(),
-                    u64::max_value(),
-                )
-            }));
+            let exit_reason = black_box(executor.transaction_execute_unsinged(
+                caller,
+                tx,
+                |_,_,_,_| None
+            )).unwrap();
 
             assert!(matches!(
                 exit_reason,
                 (ExitReason::Succeed(ExitSucceed::Returned), ref result) if result == &expected_result
             ));
 
-            idx += 1;
+        });
+    });
+
+    group.bench_function("call_hello_with_signature_verify_single_key", |b| {
+        let mut executor = Executor::with_config(
+            EvmState::default(),
+            evm::Config::istanbul(),
+            u64::max_value(),
+            0,
+        );
+
+        let exit_reason = executor.with_executor(|executor| {
+            executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
+        });
+        assert!(matches!(
+            exit_reason,
+            ExitReason::Succeed(ExitSucceed::Returned)
+        ));
+
+        let mut state = executor.deconstruct();
+        state.commit();
+
+        let contract_address = TransactionAction::Create.address(contract, U256::zero());
+        let mut rng = secp256k1::rand::thread_rng();
+        let user_key = secp256k1::key::SecretKey::new(&mut rng);
+        let tx = UnsignedTransaction {
+            nonce: 0.into(),
+            gas_price: 1.into(),
+            gas_limit: u64::max_value().into(),
+            action: TransactionAction::Call(contract_address),
+            value: 0.into(),
+            input: data.to_vec()
+        }.sign(&user_key, None);
+
+        b.iter(|| {
+            let mut executor =
+                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), state.slot);
+
+            let exit_reason = black_box(executor.transaction_execute(
+                tx.clone(),
+                |_,_,_,_| None
+            )).unwrap();
+
+            assert!(matches!(
+                exit_reason,
+                (ExitReason::Succeed(ExitSucceed::Returned), ref result) if result == &expected_result
+            ));
+
         });
     });
 

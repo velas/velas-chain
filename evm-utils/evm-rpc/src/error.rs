@@ -1,7 +1,6 @@
 use std::num::ParseIntError;
 
 use jsonrpc_core::Error as JRpcError;
-use primitive_types::U256;
 use rlp::DecoderError;
 use rustc_hex::FromHexError;
 use snafu::Snafu;

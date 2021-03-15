@@ -153,3 +153,21 @@ pub fn create_state_account() -> solana_sdk::account::Account {
         rent_epoch: 0,
     }
 }
+
+///
+/// Calculate evm::Address for solana::Pubkey, that can be used to call transaction from solana::bpf scope, into evm scope.
+/// Native chain address is hashed and prefixed with [0xac, 0xc0] bytes.
+///
+pub fn evm_address_for_program(program_account: solana::Address) -> evm::Address {
+    use primitive_types::{H160, H256};
+    use sha3::{Digest, Keccak256};
+
+    const ADDR_PREFIX: &[u8] = &[0xAC, 0xC0]; // ACC prefix for each account
+
+    let addr_hash = Keccak256::digest(&program_account.to_bytes());
+    let hash_bytes = H256::from_slice(addr_hash.as_slice());
+    let mut short_hash = H160::from(hash_bytes);
+    short_hash.as_bytes_mut()[0..2].copy_from_slice(ADDR_PREFIX);
+
+    short_hash
+}

@@ -20,8 +20,8 @@ impl<'a> AccountStructure<'a> {
     }
 
     /// Returns account of the first user.
-    pub fn user(&self) -> Option<&KeyedAccount> {
-        self.users.get(0)
+    pub fn first(&self) -> Option<&KeyedAccount> {
+        self.users.first()
     }
 
     /// Find user by its public key.

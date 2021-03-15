@@ -27,10 +27,11 @@ mod storage;
 use error::*;
 use log::*;
 
-use std::{fmt, time::Instant};
+use std::fmt;
 
 pub const MAX_TX_LEN: u64 = 3 * 1024 * 1024; // Limit size to 3 MB
 pub const TX_MTU: usize = 908;
+pub const CHAIN_ID: u64 = 0x77;
 
 /// Exit result, if succeed, returns `ExitSucceed` - info about execution, Vec<u8> - output data, u64 - gas cost
 pub type PrecompileCallResult = Result<(ExitSucceed, Vec<u8>, u64), ExitError>;
@@ -92,27 +93,38 @@ impl Executor {
             used_gas: 0,
         }
     }
-
-    pub fn transaction_execute<F>(
+    fn transaction_execute_raw<F>(
         &mut self,
-        evm_tx: Transaction,
+        caller: H160,
+        nonce: U256,
+        gas_price: U256,
+        gas_limit: U256,
+
+        action: TransactionAction,
+        input: Vec<u8>,
+        value: U256,
+        tx_chain_id: Option<u64>,
         mut precompiles: F,
-    ) -> Result<(evm::ExitReason, Vec<u8>), Error>
+    ) -> Result<
+        (
+            (evm::ExitReason, Vec<u8>),
+            u64,
+            impl IntoIterator<Item = Log>,
+        ),
+        Error,
+    >
     where
         F: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
     {
-        let caller = evm_tx.caller()?;
-
         let state_nonce = self.evm.basic(caller).nonce;
         ensure!(
-            evm_tx.nonce == state_nonce,
+            nonce == state_nonce,
             NonceNotEqual {
-                tx_nonce: evm_tx.nonce,
+                tx_nonce: nonce,
                 state_nonce,
             }
         );
 
-        let tx_chain_id = evm_tx.signature.chain_id();
         let chain_id = self.evm.chain_id().as_u64();
 
         ensure!(
@@ -124,40 +136,29 @@ impl Executor {
         );
 
         self.evm.tx_info.origin = caller;
-        self.evm.tx_info.gas_price = evm_tx.gas_price;
+        self.evm.tx_info.gas_price = gas_price;
 
-        let gas_limit = self.evm.block_gas_limit().as_u64() - self.used_gas;
-        let metadata = StackSubstateMetadata::new(gas_limit, &self.config);
+        let block_gas_limit_left = self.evm.block_gas_limit().as_u64() - self.used_gas;
+        let metadata = StackSubstateMetadata::new(block_gas_limit_left, &self.config);
         let state = MemoryStackState::new(metadata, &self.evm);
         let mut executor =
             StackExecutor::new_with_precompile(state, &self.config, &mut precompiles);
-        let result = match evm_tx.action {
+        let result = match action {
             TransactionAction::Call(addr) => {
                 debug!(
                     "TransactionAction::Call caller  = {}, to = {}.",
                     caller, addr
                 );
-                executor.transact_call(
-                    caller,
-                    addr,
-                    evm_tx.value,
-                    evm_tx.input.clone(),
-                    evm_tx.gas_limit.as_u64(),
-                )
+                executor.transact_call(caller, addr, value, input, gas_limit.as_u64())
             }
             TransactionAction::Create => {
-                let addr = evm_tx.address();
+                let addr = TransactionAction::Create.address(caller, nonce);
                 debug!(
                     "TransactionAction::Create caller  = {}, to = {:?}.",
                     caller, addr
                 );
                 (
-                    executor.transact_create(
-                        caller,
-                        evm_tx.value,
-                        evm_tx.input.clone(),
-                        evm_tx.gas_limit.as_u64(),
-                    ),
+                    executor.transact_create(caller, value, input, gas_limit.as_u64()),
                     vec![],
                 )
             }
@@ -167,16 +168,85 @@ impl Executor {
         assert!(used_gas + self.used_gas <= self.evm.tx_info.block_gas_limit.as_u64());
         let (updates, logs) = executor.into_state().deconstruct();
 
-        let apply_start = Instant::now();
         self.evm.apply(updates, false);
-        debug!(
-            "EVM state apply takes {} us",
-            apply_start.elapsed().as_micros()
-        );
-
-        self.register_tx_with_receipt(evm_tx, used_gas.into(), result.clone(), logs);
 
         self.used_gas += used_gas;
+
+        Ok((result, used_gas, logs))
+    }
+
+    /// Perform transaction execution without verify signature.
+    pub fn transaction_execute_unsinged<F>(
+        &mut self,
+        caller: H160,
+        tx: UnsignedTransaction,
+        precompiles: F,
+    ) -> Result<(evm::ExitReason, Vec<u8>), Error>
+    where
+        F: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
+    {
+        // TODO use u64 for chain_id
+        let chain_id = Some(self.evm.chain_id().as_u64());
+        let (result, used_gas, logs) = self.transaction_execute_raw(
+            caller,
+            tx.nonce,
+            tx.gas_price,
+            tx.gas_limit,
+            tx.action,
+            tx.input.clone(),
+            tx.value,
+            chain_id,
+            precompiles,
+        )?;
+        let unsigned_tx = UnsignedTransactionWithCaller {
+            unsigned_tx: tx,
+            caller,
+            chain_id: chain_id,
+        };
+
+        self.register_tx_with_receipt(
+            TransactionInReceipt::Unsigned(unsigned_tx),
+            used_gas.into(),
+            result.clone(),
+            logs,
+        );
+        Ok(result)
+    }
+
+    pub fn transaction_execute<F>(
+        &mut self,
+        evm_tx: Transaction,
+        precompiles: F,
+    ) -> Result<(evm::ExitReason, Vec<u8>), Error>
+    where
+        F: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
+    {
+        let caller = evm_tx.caller()?; // This method verify signature.
+
+        let nonce = evm_tx.nonce;
+        let gas_price = evm_tx.gas_price;
+        let gas_limit = evm_tx.gas_limit;
+        let action = evm_tx.action;
+        let input = evm_tx.input.clone();
+        let value = evm_tx.value;
+
+        let (result, used_gas, logs) = self.transaction_execute_raw(
+            caller,
+            nonce,
+            gas_price,
+            gas_limit,
+            action,
+            input,
+            value,
+            evm_tx.signature.chain_id(),
+            precompiles,
+        )?;
+        self.register_tx_with_receipt(
+            TransactionInReceipt::Signed(evm_tx),
+            used_gas.into(),
+            result.clone(),
+            logs,
+        );
 
         Ok(result)
     }
@@ -208,19 +278,20 @@ impl Executor {
     // TODO: Handle duplicates, statuses.
     fn register_tx_with_receipt(
         &mut self,
-        tx: transactions::Transaction,
+        tx: TransactionInReceipt,
         used_gas: U256,
         result: (evm::ExitReason, Vec<u8>),
         logs: impl IntoIterator<Item = Log>,
     ) {
         let block_num = self.evm.tx_info.block_number.as_u64();
-        let tx_hash = tx.signing_hash();
+        let tx_hash = match &tx {
+            TransactionInReceipt::Signed(tx) => tx.signing_hash(),
+            TransactionInReceipt::Unsigned(tx) => tx.unsigned_tx.signing_hash(Some(CHAIN_ID)),
+        };
 
         assert_eq!(block_num, self.evm.evm_state.slot);
 
         debug!("Register tx = {} in EVM block = {}", tx_hash, block_num);
-
-        self.evm.evm_state.set_transaction(tx_hash, tx.clone());
 
         let tx_hashes = self
             .evm
@@ -228,13 +299,13 @@ impl Executor {
             .get_transactions_in_block(block_num)
             .expect("The block must be the same as in state and contains some transactions");
 
-        assert!(tx_hashes.contains(&tx_hash));
+        assert!(!tx_hashes.contains(&tx_hash));
 
         let receipt = TransactionReceipt::new(
             tx,
             used_gas,
             block_num,
-            tx_hashes.len() as u64,
+            tx_hashes.len() as u64 + 1,
             logs.into_iter().collect(),
             result,
         );

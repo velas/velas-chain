@@ -2042,11 +2042,17 @@ impl Bank {
         // record and commit are finished, those transactions will be
         // committed before this write lock can be obtained here.
         let mut hash = self.hash.write().unwrap();
+        let apply_start = std::time::Instant::now();
 
         self.evm_state
             .write()
             .expect("evm state was poisoned")
             .commit();
+
+        debug!(
+            "EVM state apply takes {} us",
+            apply_start.elapsed().as_micros()
+        );
 
         if *hash == Hash::default() {
             // finish up any deferred changes to account state

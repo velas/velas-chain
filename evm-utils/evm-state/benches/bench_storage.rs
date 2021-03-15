@@ -1,19 +1,14 @@
-use std::{fs, iter};
+use std::fs;
 
 use derive_more::Display;
-use rand::{random, Rng};
+use rand::Rng;
 use tempfile::tempdir;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
-use evm_state::{
-    types::{Slot, H256},
-    EvmState,
-};
+use evm_state::{types::Slot, EvmState};
 
 mod utils;
-
-const BIG_TX_AVERAGE_SIZE: usize = 4096;
 
 #[derive(Clone, Display)]
 #[display(

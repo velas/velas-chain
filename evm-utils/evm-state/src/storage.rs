@@ -1,5 +1,6 @@
 use std::{
     array::TryFromSliceError,
+    borrow::Borrow,
     fs,
     io::Error as IoError,
     path::{Path, PathBuf},
@@ -63,7 +64,7 @@ impl AsRef<Path> for Location {
 
 #[derive(Clone, Debug)]
 pub struct Storage {
-    pub(crate) db: Arc<DB>,
+    pub(crate) db: Arc<DBWithClose>,
     location: Location,
 }
 
@@ -91,7 +92,7 @@ impl Storage {
         let db = DB::open_cf_descriptors(&db_opts, &location, descriptors)?;
 
         Ok(Self {
-            db: Arc::new(db),
+            db: Arc::new(DBWithClose(db)),
             location,
         })
     }
@@ -134,6 +135,34 @@ impl Storage {
         engine.restore_from_latest_backup(&target, &target, &RestoreOptions::default())?;
 
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+// Hack to close rocksdb background threads.
+pub struct DBWithClose(DB);
+
+impl Drop for DBWithClose {
+    fn drop(&mut self) {
+        self.0.cancel_all_background_work(true);
+    }
+}
+impl AsRef<DB> for DBWithClose {
+    fn as_ref(&self) -> &DB {
+        &self.0
+    }
+}
+
+impl<'a> Borrow<DB> for &'a DBWithClose {
+    fn borrow(&self) -> &DB {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for DBWithClose {
+    type Target = DB;
+    fn deref(&self) -> &DB {
+        &self.0
     }
 }
 

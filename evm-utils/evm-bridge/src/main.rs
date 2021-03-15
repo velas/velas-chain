@@ -227,6 +227,10 @@ impl BridgeERPC for BridgeERPCImpl {
         debug!("send_raw_transaction");
 
         let tx: evm::Transaction = rlp::decode(&bytes.0).unwrap();
+
+        // TODO: Check chain_id.
+        // TODO: check gas price.
+
         let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
         let hash = unsigned_tx.signing_hash(Some(meta.evm_chain_id));
         debug!("loaded tx_hash = {}", hash);
@@ -253,7 +257,7 @@ impl ChainMockERPC for ChainMockERPCProxy {
     }
 
     fn chain_id(&self, meta: Self::Metadata) -> EvmResult<Hex<u64>> {
-        Ok(Hex(meta.evm_chain_id.as_u64()))
+        Ok(Hex(meta.evm_chain_id))
     }
 
     // TODO: Add network info

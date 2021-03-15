@@ -9,7 +9,6 @@ extern crate solana_exchange_program;
 extern crate solana_vest_program;
 
 use clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches};
-use evm_state::U256;
 use solana_clap_utils::{
     input_parsers::{cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime},
     input_validators::{is_pubkey_or_keypair, is_rfc3339_datetime, is_valid_percentage},
@@ -528,9 +527,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         value_t_or_exit!(matches, "evm_chain_id", u64)
     } else {
         match cluster_type {
-            ClusterType::MainnetBeta => *genesis_config::EVM_MAINNET_CHAIN_ID,
-            ClusterType::Testnet => *genesis_config::EVM_TESTNET_CHAIN_ID,
-            ClusterType::Devnet | ClusterType::Development => *genesis_config::EVM_DEVELOP_CHAIN_ID,
+            ClusterType::MainnetBeta => genesis_config::EVM_MAINNET_CHAIN_ID,
+            ClusterType::Testnet => genesis_config::EVM_TESTNET_CHAIN_ID,
+            ClusterType::Devnet | ClusterType::Development => genesis_config::EVM_DEVELOP_CHAIN_ID,
         }
     };
 

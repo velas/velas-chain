@@ -74,7 +74,7 @@ impl Transaction {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct UnsignedTransaction {
     pub nonce: U256,
     pub gas_price: U256,
@@ -291,14 +291,27 @@ impl From<Transaction> for UnsignedTransaction {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum TransactionInReceipt {
+    Signed(Transaction),
+    Unsigned(UnsignedTransactionWithCaller),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UnsignedTransactionWithCaller {
+    pub unsigned_tx: UnsignedTransaction,
+    pub caller: H160,
+    pub chain_id: Option<u64>,
+}
+
 // TODO: Work on logs and state_root.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TransactionReceipt {
-    pub transaction: Transaction,
+    pub transaction: TransactionInReceipt,
     pub status: evm::ExitReason,
     pub block_number: u64,
     pub index: u64,
-    // pub state_root: H256,
+    // pub state_root: H256, // State root not needed in newer evm versions
     pub used_gas: Gas,
     // pub logs_bloom: LogsBloom,
     pub logs: Vec<Log>,
@@ -306,7 +319,7 @@ pub struct TransactionReceipt {
 
 impl TransactionReceipt {
     pub fn new(
-        transaction: Transaction,
+        transaction: TransactionInReceipt,
         used_gas: Gas,
         block_number: u64,
         index: u64,

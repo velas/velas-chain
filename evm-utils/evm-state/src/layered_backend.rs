@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, fs, path::Path, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, fs, path::Path};
 
 use log::*;
 
@@ -13,8 +13,8 @@ use triedb::{
 };
 
 use crate::{
-    storage::{Codes, Receipts, Storage as KVS, TransactionHashesPerBlock, Transactions},
-    transactions::{Transaction, TransactionReceipt},
+    storage::{Codes, Receipts, Storage as KVS, TransactionHashesPerBlock},
+    transactions::TransactionReceipt,
     types::*,
 };
 
@@ -28,7 +28,6 @@ pub struct EvmState {
     /// Maybe::Nothing indicates removed account
     states: HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>,
 
-    transactions: HashMap<H256, Transaction>,
     receipts: HashMap<H256, TransactionReceipt>,
 }
 
@@ -46,7 +45,6 @@ impl Default for EvmState {
 
             states: HashMap::new(),
 
-            transactions: HashMap::new(),
             receipts: HashMap::new(),
         }
     }
@@ -69,7 +67,7 @@ impl<T> Into<Option<T>> for Maybe<T> {
 
 impl EvmState {
     pub fn commit(&mut self) {
-        let r = RocksHandle::new(RocksDatabaseHandle::new(self.kvs.db.clone()));
+        let r = RocksHandle::new(RocksDatabaseHandle::new(self.kvs.db.as_ref()));
 
         let mut storage_tries = TrieCollection::new(r.clone(), StaticEntries::default());
         let mut account_tries = TrieCollection::new(r, StaticEntries::default());
@@ -127,15 +125,11 @@ impl EvmState {
             .get::<TransactionHashesPerBlock>(self.slot)
             .into_iter()
             .flatten()
-            .chain(self.transactions.keys().copied())
+            .chain(self.receipts.keys().copied())
             .collect();
 
         // TODO: store only non-empty hashes
         self.kvs.set::<TransactionHashesPerBlock>(self.slot, hashes);
-
-        for (hash, transaction) in std::mem::take(&mut self.transactions) {
-            self.kvs.set::<Transactions>(hash, transaction);
-        }
 
         for (hash, receipt) in std::mem::take(&mut self.receipts) {
             self.kvs.set::<Receipts>(hash, receipt);
@@ -153,7 +147,6 @@ impl EvmState {
 
             states: HashMap::new(),
 
-            transactions: HashMap::new(),
             receipts: HashMap::new(),
         }
     }
@@ -161,8 +154,8 @@ impl EvmState {
     fn typed_for<K: AsRef<[u8]>, V: Encodable + Decodable>(
         &self,
         root: H256,
-    ) -> FixedSecureTrieMut<RocksMemoryTrieMut<Arc<DB>>, K, V> {
-        FixedSecureTrieMut::new(RocksMemoryTrieMut::new(self.kvs.db.clone(), root))
+    ) -> FixedSecureTrieMut<RocksMemoryTrieMut<&DB>, K, V> {
+        FixedSecureTrieMut::new(RocksMemoryTrieMut::new(self.kvs.db.as_ref(), root))
     }
 }
 
@@ -253,22 +246,11 @@ impl EvmState {
 
     // Transactions
 
-    pub fn get_transaction(&self, address: H256) -> Option<Transaction> {
-        self.transactions
-            .get(&address)
-            .cloned()
-            .or_else(|| self.kvs.get::<Transactions>(address))
-    }
-
-    pub fn set_transaction(&mut self, address: H256, transaction: Transaction) {
-        self.transactions.insert(address, transaction);
-    }
-
     pub fn get_transactions_in_block(&self, block: Slot) -> Option<Vec<H256>> {
         let applied = self.kvs.get::<TransactionHashesPerBlock>(block);
         if self.slot == block {
             Some(
-                self.transactions
+                self.receipts
                     .keys()
                     .copied()
                     .chain(applied.into_iter().flatten())
@@ -338,7 +320,6 @@ impl EvmState {
 
             states: HashMap::new(),
 
-            transactions: HashMap::new(),
             receipts: HashMap::new(),
         })
     }

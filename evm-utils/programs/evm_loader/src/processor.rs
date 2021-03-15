@@ -36,7 +36,7 @@ impl EvmProcessor {
         let accounts = AccountStructure::new(evm_state_account, keyed_accounts);
 
         let ix = limited_deserialize(data)?;
-        debug!("Run evm exec with ix = {:?}.", ix);
+        trace!("Run evm exec with ix = {:?}.", ix);
         match ix {
             EvmInstruction::EvmTransaction { evm_tx } => {
                 // TODO: Handle gas price in EVM Bridge
@@ -46,17 +46,52 @@ impl EvmProcessor {
                         error!("Exec tx error: {:?}", e);
                         InstructionError::InvalidArgument
                     })?;
-                debug!("Exit status = {:?}", result);
+                trace!("Exit status = {:?}", result);
+                if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
+                    return Err(InstructionError::InvalidError);
+                }
+            }
+            EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => {
+                // TODO: Check that it is from program?
+                // TODO: Gas limit?
+                let program_account = accounts.first().ok_or_else(|| {
+                    error!("Not enough accounts");
+                    InstructionError::NotEnoughAccountKeys
+                })?;
+                let key = if let Some(key) = program_account.signer_key() {
+                    key
+                } else {
+                    error!("Account not a signer");
+                    return Err(InstructionError::MissingRequiredSignature);
+                };
+                let from_expected = crate::evm_address_for_program(*key);
+
+                if from_expected != from {
+                    error!("From is not calculated with evm_address_for_program");
+                    return Err(InstructionError::InvalidArgument);
+                }
+
+                let result = executor
+                    .transaction_execute_unsinged(
+                        from,
+                        unsigned_tx,
+                        precompiles::entrypoint(accounts),
+                    )
+                    .map_err(|e| {
+                        error!("Exec unsigned tx error: {:?}", e);
+                        InstructionError::InvalidArgument
+                    })?;
+                trace!("Exit status = {:?}", result);
                 if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
                     return Err(InstructionError::InvalidError);
                 }
             }
             EvmInstruction::FreeOwnership {} => {
                 let mut user = accounts
-                    .user()
+                    .first()
                     .ok_or_else(|| {
                         error!("Not enough accounts");
-                        InstructionError::InvalidArgument
+                        InstructionError::NotEnoughAccountKeys
                     })?
                     .try_account_ref_mut()?;
 
@@ -84,9 +119,9 @@ impl EvmProcessor {
         evm_address: evm::Address,
     ) -> Result<(), InstructionError> {
         let gweis = evm::lamports_to_gwei(lamports);
-        let user = accounts.user().ok_or_else(|| {
+        let user = accounts.first().ok_or_else(|| {
             error!("Not enough accounts");
-            InstructionError::InvalidArgument
+            InstructionError::NotEnoughAccountKeys
         })?;
         debug!(
             "Sending lamports to Gwei tokens from={},to={}",
@@ -127,7 +162,7 @@ impl EvmProcessor {
         debug!("executing big_tx = {:?}", big_tx);
 
         let mut storage = accounts
-            .user()
+            .first()
             .ok_or_else(|| {
                 error!("Not enough accounts");
                 InstructionError::InvalidArgument

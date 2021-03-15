@@ -127,7 +127,7 @@ mod test {
             apparent_value: lamports_to_gwei(1),
         };
         AccountStructure::testing(0, |accounts: AccountStructure| {
-            let user = accounts.user().unwrap();
+            let user = accounts.first().unwrap();
             let input = hex::decode(format!(
                 "b1d6927a{}",
                 hex::encode(user.unsigned_key().to_bytes())

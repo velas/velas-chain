@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 
 mod serialize;
-use error::EvmStateError;
-use evm_state::{Address, Gas, LogWithLocation};
+use self::error::EvmStateError;
+use evm_state::{Address, Gas, LogWithLocation, TransactionInReceipt};
 
 pub mod error;
 pub use self::error::Error;
@@ -94,7 +94,6 @@ pub struct RPCTransaction {
     pub block_hash: Option<Hex<H256>>,
     pub block_number: Option<Hex<U256>>,
     pub transaction_index: Option<Hex<usize>>,
-    pub chain_id: Option<Hex<U256>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -498,31 +497,69 @@ impl RPCTransaction {
         receipt: evm_state::transactions::TransactionReceipt,
         block_hash: H256,
     ) -> Result<Self, crate::Error> {
-        let tx = &receipt.transaction;
-        let address = tx.address().with_context(|| EvmStateError)?.into();
-
-        let (to, creates) = match tx.action {
-            evm_state::transactions::TransactionAction::Call(_) => (Some(address), None),
-            evm_state::transactions::TransactionAction::Create => (None, Some(address)),
+        let (to, creates, hash, from, gas_limit, gas_price, input, value, nonce) = match receipt
+            .transaction
+        {
+            TransactionInReceipt::Signed(tx) => {
+                let hash = tx.signing_hash();
+                let from = tx.caller().with_context(|| EvmStateError)?;
+                let gas_limit = tx.gas_limit;
+                let gas_price = tx.gas_price;
+                let input = tx.input;
+                let value = tx.value;
+                let nonce = tx.nonce;
+                let (to, creates) = match tx.action {
+                    evm_state::transactions::TransactionAction::Call(address) => {
+                        (Some(address), None)
+                    }
+                    evm_state::transactions::TransactionAction::Create => (
+                        None,
+                        Some(
+                            evm_state::transactions::TransactionAction::Create.address(from, nonce),
+                        ),
+                    ),
+                };
+                (
+                    to, creates, hash, from, gas_limit, gas_price, input, value, nonce,
+                )
+            }
+            TransactionInReceipt::Unsigned(tx) => {
+                let hash = tx.unsigned_tx.signing_hash(tx.chain_id);
+                let from = tx.caller;
+                let gas_limit = tx.unsigned_tx.gas_limit;
+                let gas_price = tx.unsigned_tx.gas_price;
+                let input = tx.unsigned_tx.input;
+                let value = tx.unsigned_tx.value;
+                let nonce = tx.unsigned_tx.nonce;
+                let (to, creates) = match tx.unsigned_tx.action {
+                    evm_state::transactions::TransactionAction::Call(address) => {
+                        (Some(address), None)
+                    }
+                    evm_state::transactions::TransactionAction::Create => (
+                        None,
+                        Some(
+                            evm_state::transactions::TransactionAction::Create.address(from, nonce),
+                        ),
+                    ),
+                };
+                (
+                    to, creates, hash, from, gas_limit, gas_price, input, value, nonce,
+                )
+            }
         };
-
-        let hash = tx.signing_hash();
-        let chain_id = tx.signature.chain_id().map(U256::from).map(Hex);
-
         Ok(RPCTransaction {
-            from: Some(tx.caller().with_context(|| EvmStateError)?.into()),
-            to,
-            creates,
-            gas: Some(tx.gas_limit.into()),
-            gas_price: Some(tx.gas_price.into()),
-            value: Some(tx.value.into()),
-            data: Some(tx.input.clone().into()),
-            nonce: Some(tx.nonce.into()),
+            from: Some(from.into()),
+            to: to.map(Hex),
+            creates: creates.map(Hex),
+            gas: Some(gas_limit.into()),
+            gas_price: Some(gas_price.into()),
+            value: Some(value.into()),
+            data: Some(input.clone().into()),
+            nonce: Some(nonce.into()),
             hash: Some(hash.into()),
             transaction_index: Some((receipt.index as usize).into()),
             block_hash: Some(block_hash.into()),
             block_number: Some(Hex(receipt.block_number.into())),
-            chain_id,
         })
     }
 }
@@ -532,13 +569,45 @@ impl RPCReceipt {
         receipt: evm_state::transactions::TransactionReceipt,
         block_hash: H256,
     ) -> Result<Self, crate::Error> {
-        let tx = &receipt.transaction;
-        let address = tx.address().with_context(|| EvmStateError)?.into();
-        let (to, contract_address) = match tx.action {
-            evm_state::transactions::TransactionAction::Call(_) => (Some(address), None),
-            evm_state::transactions::TransactionAction::Create => (None, Some(address)),
+        let (to, contract_address, tx_hash) = match receipt.transaction {
+            TransactionInReceipt::Signed(tx) => {
+                let from = tx.caller().with_context(|| EvmStateError)?;
+                let nonce = tx.nonce;
+                let (to, creates) = match tx.action {
+                    evm_state::transactions::TransactionAction::Call(address) => {
+                        (Some(address), None)
+                    }
+                    evm_state::transactions::TransactionAction::Create => (
+                        None,
+                        Some(
+                            evm_state::transactions::TransactionAction::Create.address(from, nonce),
+                        ),
+                    ),
+                };
+
+                let hash = tx.signing_hash();
+                (to, creates, hash)
+            }
+            TransactionInReceipt::Unsigned(tx) => {
+                let from = tx.caller;
+                let nonce = tx.unsigned_tx.nonce;
+                let (to, creates) = match tx.unsigned_tx.action {
+                    evm_state::transactions::TransactionAction::Call(address) => {
+                        (Some(address), None)
+                    }
+                    evm_state::transactions::TransactionAction::Create => (
+                        None,
+                        Some(
+                            evm_state::transactions::TransactionAction::Create.address(from, nonce),
+                        ),
+                    ),
+                };
+
+                let hash = tx.unsigned_tx.signing_hash(tx.chain_id);
+                (to, creates, hash)
+            }
         };
-        let tx_hash = Hex(tx.signing_hash());
+
         let tx_index: Hex<_> = (receipt.index as usize).into();
         let block_number = Hex(U256::from(receipt.block_number));
 
@@ -549,7 +618,7 @@ impl RPCReceipt {
             .map(|(id, log)| RPCLog {
                 removed: false,
                 log_index: Hex(id),
-                transaction_hash: tx_hash,
+                transaction_hash: tx_hash.into(),
                 transaction_index: tx_index,
                 block_hash: block_hash.into(),
                 block_number,
@@ -560,11 +629,11 @@ impl RPCReceipt {
             .collect();
 
         Ok(RPCReceipt {
-            to,
-            contract_address,
+            to: to.map(Hex),
+            contract_address: contract_address.map(Hex),
             gas_used: receipt.used_gas.into(),
             cumulative_gas_used: receipt.used_gas.into(),
-            transaction_hash: tx_hash,
+            transaction_hash: tx_hash.into(),
             transaction_index: tx_index,
             block_hash: block_hash.into(),
             block_number,
@@ -577,20 +646,6 @@ impl RPCReceipt {
         })
     }
 }
-
-// #[derive(Serialize, Deserialize, Debug, Clone)]
-// #[serde(rename_all = "camelCase")]
-// pub struct RPCLog {
-//     pub removed: bool,
-//     pub log_index: Hex<usize>,
-//     pub transaction_index: Hex<usize>,
-//     pub transaction_hash: Hex<H256>,
-//     pub block_hash: Hex<H256>,
-//     pub block_number: Hex<U256>,
-//     pub address: Hex<Address>,
-//     pub data: Bytes,
-//     pub topics: Vec<Hex<H256>>,
-// }
 
 impl From<LogWithLocation> for RPCLog {
     fn from(log: LogWithLocation) -> Self {

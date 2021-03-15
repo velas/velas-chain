@@ -7,9 +7,7 @@
 
 **/*.rs.bk
 .cargo
-
 /config/
-
 .cache
 
 # log files
@@ -21,6 +19,7 @@ log-*/
 /.idea/
 /solana.iml
 /.vscode/
+/.devcontainer/
 
 # fetch-spl.sh artifacts
 /spl-genesis-args.sh

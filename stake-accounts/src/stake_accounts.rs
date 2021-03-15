@@ -285,12 +285,14 @@ mod tests {
         genesis_config::create_genesis_config,
         signature::{Keypair, Signer},
     };
-    use solana_stake_program::stake_state::StakeState;
+    use solana_stake_program::stake_state::{StakeState, MIN_DELEGATE_STAKE_AMOUNT};
 
     fn create_bank(lamports: u64) -> (Bank, Keypair, u64) {
-        let (genesis_config, mint_keypair) = create_genesis_config(lamports);
+        let (genesis_config, mint_keypair) =
+            create_genesis_config(lamports + MIN_DELEGATE_STAKE_AMOUNT);
         let bank = Bank::new(&genesis_config);
-        let rent = bank.get_minimum_balance_for_rent_exemption(std::mem::size_of::<StakeState>());
+        let rent = bank.get_minimum_balance_for_rent_exemption(std::mem::size_of::<StakeState>())
+            + MIN_DELEGATE_STAKE_AMOUNT;
         (bank, mint_keypair, rent)
     }
 

@@ -443,17 +443,6 @@ fn call(
         })?;
 
     let bank = meta.bank(DEFAULT_COMITTMENT);
-
-    let chain_id = bank.evm_chain_id;
-    let tx_chain_id = tx.chain_id.map(|v| v.as_u64());
-
-    if tx_chain_id != Some(chain_id) {
-        return Err(Error::WrongChainId {
-            chain_id,
-            tx_chain_id,
-        });
-    }
-
     let evm_state = bank
         .evm_state
         .read()
