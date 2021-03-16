@@ -15,6 +15,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Evm");
     group.throughput(Throughput::Elements(1));
 
+    let chain_id = U256::from(42);
     let code = hex::decode(HELLO_WORLD_CODE).unwrap();
     let data = hex::decode(HELLO_WORLD_ABI).unwrap();
     let expected_result = hex::decode(HELLO_WORLD_RESULT).unwrap();
@@ -45,7 +46,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         let slot = state.slot;
         let mut executor =
-            Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), slot);
+            Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), chain_id, slot);
 
         let exit_reason = executor.with_executor(|executor| {
             executor.transact_create(
@@ -87,6 +88,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             EvmState::default(),
             evm::Config::istanbul(),
             u64::max_value(),
+            chain_id,
             0,
         );
 
@@ -105,7 +107,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), state.slot);
+                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), chain_id,state.slot);
 
             let exit_reason = black_box(executor.with_executor(|executor| {
                 executor.transact_call(
@@ -139,7 +141,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
                 let slot = state.slot;
                 let mut executor =
-                    Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), slot);
+                    Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), chain_id, slot);
                 let create_transaction_result = executor.with_executor(|executor| {
                     executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
                 });
@@ -167,6 +169,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                         state.clone(),
                         evm::Config::istanbul(),
                         u64::max_value(),
+                        chain_id,
                         state.slot,
                     );
 
@@ -207,7 +210,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         let slot = state.slot;
         let mut executor =
-            Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), slot);
+            Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), chain_id, slot);
 
         let exit_reason = executor.with_executor(|executor| {
             executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
@@ -224,7 +227,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), state.slot);
+                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), chain_id, state.slot);
 
             let exit_reason = executor.with_executor(|executor| {
                 executor.transact_call(
