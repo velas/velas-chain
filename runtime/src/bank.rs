@@ -7838,7 +7838,7 @@ pub(crate) mod tests {
             let from_pubkey = from_keypair.pubkey();
             let instruction = solana_evm_loader_program::send_raw_tx(
                 from_pubkey,
-                solana_evm_loader_program::processor::dummy_call(nonce),
+                solana_evm_loader_program::processor::dummy_call(nonce).0,
             );
             let message = Message::new(&[instruction], Some(&from_pubkey));
             Transaction::new(&[from_keypair], message, hash)

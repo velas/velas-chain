@@ -54,6 +54,23 @@ pub fn send_raw_tx(signer: solana::Address, evm_tx: evm::Transaction) -> solana:
     )
 }
 
+pub fn authorized_tx(
+    sender: solana::Address,
+    unsigned_tx: evm::UnsignedTransaction,
+) -> solana::Instruction {
+    let account_metas = vec![
+        AccountMeta::new(solana::evm_state::ID, false),
+        AccountMeta::new(sender, true),
+    ];
+
+    let from = evm_address_for_program(sender);
+    Instruction::new(
+        crate::ID,
+        &EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx },
+        account_metas,
+    )
+}
+
 pub(crate) fn transfer_native_to_eth(
     owner: solana::Address,
     lamports: u64,

@@ -243,7 +243,7 @@ const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
 const TEST_CHAIN_ID: u64 = 0xdead;
 #[doc(hidden)]
-pub fn dummy_call(nonce: usize) -> evm::Transaction {
+pub fn dummy_call(nonce: usize) -> (evm::Transaction, evm::UnsignedTransaction) {
     let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
     let dummy_address = evm::addr_from_public_key(&evm::PublicKey::from_secret_key(
         &evm::SECP256K1,
@@ -259,7 +259,10 @@ pub fn dummy_call(nonce: usize) -> evm::Transaction {
         input: vec![],
     };
 
-    tx_call.sign(&secret_key, Some(TEST_CHAIN_ID))
+    (
+        tx_call.clone().sign(&secret_key, Some(TEST_CHAIN_ID)),
+        tx_call,
+    )
 }
 
 #[cfg(test)]
@@ -910,13 +913,14 @@ mod test {
     }
 
     fn all_ixs() -> Vec<solana_sdk::instruction::Instruction> {
-        let tx_call = dummy_call(0);
+        let (tx_call, unsigned_tx) = dummy_call(0);
 
         let signer = solana::Address::new_unique();
         vec![
             crate::transfer_native_to_eth(signer, 1, tx_call.address().unwrap()),
             crate::free_ownership(signer),
             crate::send_raw_tx(signer, tx_call),
+            crate::authorized_tx(signer, unsigned_tx),
         ]
     }
 
@@ -1007,6 +1011,100 @@ mod test {
                 )
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn authorized_tx_only_from_signer() {
+        let _ = simple_logger::SimpleLogger::new().init();
+        let mut executor = evm_state::Executor::with_config(
+            evm_state::EvmState::default(),
+            evm_state::Config::istanbul(),
+            10000000,
+            CHAIN_ID.into(),
+            0,
+        );
+
+        let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
+        let mut executor = Some(&mut executor);
+
+        let tx_create = evm::UnsignedTransaction {
+            nonce: 0.into(),
+            gas_price: 1.into(),
+            gas_limit: 300000.into(),
+            action: TransactionAction::Create,
+            value: 0.into(),
+            input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec(),
+        };
+
+        let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
+
+        let processor = EvmProcessor::default();
+
+        let first_user_account = RefCell::new(solana_sdk::account::Account {
+            lamports: 1000,
+            data: vec![],
+            owner: crate::ID,
+            executable: false,
+            rent_epoch: 0,
+        });
+        let user_id = Pubkey::new_unique();
+        let user_keyed_account = KeyedAccount::new(&user_id, false, &first_user_account);
+
+        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account, user_keyed_account];
+
+        let dummy_address = tx_create.address().unwrap();
+        let ix = crate::send_raw_tx(user_id, tx_create);
+        processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &ix.data,
+                executor.as_deref_mut(),
+            )
+            .unwrap();
+
+        let unsigned_tx = evm::UnsignedTransaction {
+            nonce: 0.into(),
+            gas_price: 1.into(),
+            gas_limit: 300000.into(),
+            action: TransactionAction::Call(dummy_address),
+            value: 0.into(),
+            input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
+        };
+
+        let ix = crate::authorized_tx(user_id, unsigned_tx);
+
+        println!("Keyed accounts = {:?}", &keyed_accounts);
+        // First execution without signer user key, should fail.
+        let err = processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &ix.data,
+                executor.as_deref_mut(),
+            )
+            .unwrap_err();
+
+        match err {
+            InstructionError::MissingRequiredSignature => {}
+            rest => panic!("Unexpected result = {:?}", rest),
+        }
+
+        let user_keyed_account = KeyedAccount::new(&user_id, true, &first_user_account);
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        let keyed_accounts = [evm_keyed_account, user_keyed_account];
+
+        // Because first execution is fail, state didn't changes, and second execution should pass.
+        processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &ix.data,
+                executor.as_deref_mut(),
+            )
+            .unwrap();
     }
 
     #[test]
