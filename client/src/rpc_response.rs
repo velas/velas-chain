@@ -1,7 +1,7 @@
 use crate::client_error;
 use solana_account_decoder::{parse_token::UiTokenAmount, UiAccount};
 use solana_sdk::{
-    clock::{Epoch, Slot},
+    clock::{Epoch, Slot, UnixTimestamp},
     fee_calculator::{FeeCalculator, FeeRateGovernor},
     inflation::Inflation,
     transaction::{Result, TransactionError},
@@ -99,6 +99,15 @@ pub struct SlotInfo {
     pub slot: Slot,
     pub parent: Slot,
     pub root: Slot,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum SlotUpdate {
+    OptimisticConfirmation { slot: Slot, timestamp: u64 },
+    FirstShredReceived { slot: Slot, timestamp: u64 },
+    Frozen { slot: Slot, timestamp: u64 },
+    Root { slot: Slot, timestamp: u64 },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -286,6 +295,7 @@ pub struct RpcConfirmedTransactionStatusWithSignature {
     pub slot: Slot,
     pub err: Option<TransactionError>,
     pub memo: Option<String>,
+    pub block_time: Option<UnixTimestamp>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -304,12 +314,14 @@ impl From<ConfirmedTransactionStatusWithSignature> for RpcConfirmedTransactionSt
             slot,
             err,
             memo,
+            block_time,
         } = value;
         Self {
             signature: signature.to_string(),
             slot,
             err,
             memo,
+            block_time,
         }
     }
 }

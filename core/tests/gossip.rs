@@ -1,3 +1,4 @@
+#![allow(clippy::integer_arithmetic)]
 #[macro_use]
 extern crate log;
 
@@ -7,8 +8,14 @@ use solana_core::gossip_service::GossipService;
 use solana_runtime::bank_forks::BankForks;
 
 use solana_perf::packet::Packet;
-use solana_sdk::signature::{Keypair, Signer};
-use solana_sdk::timing::timestamp;
+use solana_sdk::{
+    hash::Hash,
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    timing::timestamp,
+    transaction::Transaction,
+};
+use solana_vote_program::{vote_instruction, vote_state::Vote};
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
@@ -19,8 +26,14 @@ fn test_node(exit: &Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSoc
     let keypair = Arc::new(Keypair::new());
     let mut test_node = Node::new_localhost_with_pubkey(&keypair.pubkey());
     let cluster_info = Arc::new(ClusterInfo::new(test_node.info.clone(), keypair));
-    let gossip_service =
-        GossipService::new(&cluster_info, None, test_node.sockets.gossip, None, exit);
+    let gossip_service = GossipService::new(
+        &cluster_info,
+        None,
+        test_node.sockets.gossip,
+        None,
+        true, // should_check_duplicate_instance
+        exit,
+    );
     let _ = cluster_info.my_contact_info();
     (
         cluster_info,
@@ -41,6 +54,7 @@ fn test_node_with_bank(
         Some(bank_forks),
         test_node.sockets.gossip,
         None,
+        true, // should_check_duplicate_instance
         exit,
     );
     let _ = cluster_info.my_contact_info();
@@ -269,7 +283,21 @@ pub fn cluster_info_scale() {
         let mut time = Measure::start("votes");
         let tx = test_tx();
         warn!("tx.message.account_keys: {:?}", tx.message.account_keys);
-        nodes[0].0.push_vote(0, tx.clone());
+        let vote = Vote::new(
+            vec![1, 3, num_votes + 5], // slots
+            Hash::default(),
+        );
+        let ix = vote_instruction::vote(
+            &Pubkey::new_unique(), // vote_pubkey
+            &Pubkey::new_unique(), // authorized_voter_pubkey
+            vote,
+        );
+        let tx = Transaction::new_with_payer(
+            &[ix], // instructions
+            None,  // payer
+        );
+        let tower = vec![num_votes + 5];
+        nodes[0].0.push_vote(&tower, tx.clone());
         let mut success = false;
         for _ in 0..(30 * 5) {
             let mut not_done = 0;

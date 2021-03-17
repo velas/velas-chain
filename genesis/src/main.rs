@@ -1,4 +1,5 @@
 //! A command-line executable for generating the chain's genesis config.
+#![allow(clippy::integer_arithmetic)]
 
 #[macro_use]
 extern crate solana_budget_program;
@@ -486,8 +487,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 poh_config.hashes_per_tick = Some(hashes_per_tick);
             }
             ClusterType::Devnet | ClusterType::Testnet | ClusterType::MainnetBeta => {
-                poh_config.hashes_per_tick =
-                    Some(clock::DEFAULT_HASHES_PER_SECOND / clock::DEFAULT_TICKS_PER_SECOND);
+                poh_config.hashes_per_tick = Some(clock::DEFAULT_HASHES_PER_TICK);
             }
         },
         "sleep" => {

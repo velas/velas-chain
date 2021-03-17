@@ -1,6 +1,9 @@
 use crate::{
-    parse_bpf_loader::parse_bpf_loader, parse_stake::parse_stake, parse_system::parse_system,
-    parse_token::parse_token, parse_vote::parse_vote,
+    parse_bpf_loader::{parse_bpf_loader, parse_bpf_upgradeable_loader},
+    parse_stake::parse_stake,
+    parse_system::parse_system,
+    parse_token::parse_token,
+    parse_vote::parse_vote,
 };
 use inflector::Inflector;
 use serde_json::Value;
@@ -14,17 +17,25 @@ use thiserror::Error;
 
 lazy_static! {
     static ref BPF_LOADER_PROGRAM_ID: Pubkey = solana_sdk::bpf_loader::id();
-    static ref MEMO_PROGRAM_ID: Pubkey =
+    static ref BPF_UPGRADEABLE_LOADER_PROGRAM_ID: Pubkey = solana_sdk::bpf_loader_upgradeable::id();
+    static ref MEMO_V1_PROGRAM_ID: Pubkey =
         Pubkey::from_str(&spl_memo_v1_0::id().to_string()).unwrap();
+    static ref MEMO_V3_PROGRAM_ID: Pubkey =
+        Pubkey::from_str(&spl_memo_v3_0::id().to_string()).unwrap();
     static ref STAKE_PROGRAM_ID: Pubkey = solana_stake_program::id();
     static ref SYSTEM_PROGRAM_ID: Pubkey = system_program::id();
     static ref TOKEN_PROGRAM_ID: Pubkey = spl_token_id_v2_0();
     static ref VOTE_PROGRAM_ID: Pubkey = solana_vote_program::id();
     static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableProgram> = {
         let mut m = HashMap::new();
-        m.insert(*MEMO_PROGRAM_ID, ParsableProgram::SplMemo);
+        m.insert(*MEMO_V1_PROGRAM_ID, ParsableProgram::SplMemo);
+        m.insert(*MEMO_V3_PROGRAM_ID, ParsableProgram::SplMemo);
         m.insert(*TOKEN_PROGRAM_ID, ParsableProgram::SplToken);
         m.insert(*BPF_LOADER_PROGRAM_ID, ParsableProgram::BpfLoader);
+        m.insert(
+            *BPF_UPGRADEABLE_LOADER_PROGRAM_ID,
+            ParsableProgram::BpfUpgradeableLoader,
+        );
         m.insert(*STAKE_PROGRAM_ID, ParsableProgram::Stake);
         m.insert(*SYSTEM_PROGRAM_ID, ParsableProgram::System);
         m.insert(*VOTE_PROGRAM_ID, ParsableProgram::Vote);
@@ -70,6 +81,7 @@ pub enum ParsableProgram {
     SplMemo,
     SplToken,
     BpfLoader,
+    BpfUpgradeableLoader,
     Stake,
     System,
     Vote,
@@ -88,6 +100,9 @@ pub fn parse(
         ParsableProgram::SplToken => serde_json::to_value(parse_token(instruction, account_keys)?)?,
         ParsableProgram::BpfLoader => {
             serde_json::to_value(parse_bpf_loader(instruction, account_keys)?)?
+        }
+        ParsableProgram::BpfUpgradeableLoader => {
+            serde_json::to_value(parse_bpf_upgradeable_loader(instruction, account_keys)?)?
         }
         ParsableProgram::Stake => serde_json::to_value(parse_stake(instruction, account_keys)?)?,
         ParsableProgram::System => serde_json::to_value(parse_system(instruction, account_keys)?)?,
@@ -131,10 +146,18 @@ mod test {
             data: vec![240, 159, 166, 150],
         };
         assert_eq!(
-            parse(&MEMO_PROGRAM_ID, &memo_instruction, &[]).unwrap(),
+            parse(&MEMO_V1_PROGRAM_ID, &memo_instruction, &[]).unwrap(),
             ParsedInstruction {
                 program: "spl-memo".to_string(),
-                program_id: MEMO_PROGRAM_ID.to_string(),
+                program_id: MEMO_V1_PROGRAM_ID.to_string(),
+                parsed: json!("🦖"),
+            }
+        );
+        assert_eq!(
+            parse(&MEMO_V3_PROGRAM_ID, &memo_instruction, &[]).unwrap(),
+            ParsedInstruction {
+                program: "spl-memo".to_string(),
+                program_id: MEMO_V3_PROGRAM_ID.to_string(),
                 parsed: json!("🦖"),
             }
         );

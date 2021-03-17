@@ -5,7 +5,6 @@ use crate::{
     cluster_info_vote_listener::VerifiedVoteReceiver,
     cluster_slots::ClusterSlots,
     repair_weight::RepairWeight,
-    repair_weighted_traversal::Contains,
     result::Result,
     serve_repair::{RepairType, ServeRepair, DEFAULT_NONCE},
 };
@@ -15,7 +14,9 @@ use solana_ledger::{
     shred::Nonce,
 };
 use solana_measure::measure::Measure;
-use solana_runtime::{bank::Bank, bank_forks::BankForks, commitment::VOTE_THRESHOLD_SIZE};
+use solana_runtime::{
+    bank::Bank, bank_forks::BankForks, commitment::VOTE_THRESHOLD_SIZE, contains::Contains,
+};
 use solana_sdk::{clock::Slot, epoch_schedule::EpochSchedule, pubkey::Pubkey, timing::timestamp};
 use std::{
     collections::{HashMap, HashSet},
@@ -402,12 +403,12 @@ impl RepairService {
     }
 
     /// Repairs any fork starting at the input slot
-    pub fn generate_repairs_for_fork(
+    pub fn generate_repairs_for_fork<'a>(
         blockstore: &Blockstore,
         repairs: &mut Vec<RepairType>,
         max_repairs: usize,
         slot: Slot,
-        duplicate_slot_repair_statuses: &dyn Contains<Slot>,
+        duplicate_slot_repair_statuses: &impl Contains<'a, Slot>,
     ) {
         let mut pending_slots = vec![slot];
         while repairs.len() < max_repairs && !pending_slots.is_empty() {
@@ -1047,7 +1048,7 @@ mod test {
         // a valid target for repair
         let dead_slot = 9;
         let cluster_slots = ClusterSlots::default();
-        cluster_slots.insert_node_id(dead_slot, Arc::new(valid_repair_peer.id));
+        cluster_slots.insert_node_id(dead_slot, valid_repair_peer.id);
         cluster_info.insert_info(valid_repair_peer);
 
         // Not enough time has passed, should not update the
@@ -1177,7 +1178,7 @@ mod test {
         let cluster_slots = ClusterSlots::default();
         let duplicate_slot_repair_statuses = HashMap::new();
         let keypairs = ValidatorVoteKeypairs::new_rand();
-        let only_node_id = Arc::new(keypairs.node_keypair.pubkey());
+        let only_node_id = keypairs.node_keypair.pubkey();
         let GenesisConfigInfo { genesis_config, .. } =
             genesis_utils::create_genesis_config_with_vote_accounts(
                 1_000_000_000,

@@ -17,7 +17,6 @@ use solana_sdk::{
     signature::Signature,
 };
 use solana_storage_proto::convert::generated;
-use solana_transaction_status::TransactionStatusMeta;
 use std::{collections::HashMap, fs, marker::PhantomData, path::Path, sync::Arc};
 use thiserror::Error;
 
@@ -64,7 +63,7 @@ pub enum BlockstoreError {
     RocksDb(#[from] rocksdb::Error),
     SlotNotRooted,
     DeadSlot,
-    IO(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
     Serialize(#[from] Box<bincode::ErrorKind>),
     FsExtraError(#[from] fs_extra::error::Error),
     SlotCleanedUp,
@@ -75,6 +74,7 @@ pub enum BlockstoreError {
     NoVoteTimestampsInRange,
     ProtobufEncodeError(#[from] prost::EncodeError),
     ProtobufDecodeError(#[from] prost::DecodeError),
+    ParentEntriesUnavailable,
 }
 pub type Result<T> = std::result::Result<T, BlockstoreError>;
 
@@ -185,9 +185,10 @@ impl From<&str> for BlockstoreRecoveryMode {
         }
     }
 }
-impl Into<DBRecoveryMode> for BlockstoreRecoveryMode {
-    fn into(self) -> DBRecoveryMode {
-        match self {
+
+impl From<BlockstoreRecoveryMode> for DBRecoveryMode {
+    fn from(brm: BlockstoreRecoveryMode) -> Self {
+        match brm {
             BlockstoreRecoveryMode::TolerateCorruptedTailRecords => {
                 DBRecoveryMode::TolerateCorruptedTailRecords
             }
@@ -404,6 +405,7 @@ pub trait Column {
     fn key(index: Self::Index) -> Vec<u8>;
     fn index(key: &[u8]) -> Self::Index;
     fn primary_index(index: Self::Index) -> Slot;
+    #[allow(clippy::wrong_self_convention)]
     fn as_index(slot: Slot) -> Self::Index;
 }
 
@@ -413,10 +415,6 @@ pub trait ColumnName {
 
 pub trait TypedColumn: Column {
     type Type: Serialize + DeserializeOwned;
-}
-
-impl TypedColumn for columns::TransactionStatus {
-    type Type = TransactionStatusMeta;
 }
 
 impl TypedColumn for columns::AddressSignatures {
@@ -488,6 +486,9 @@ impl Column for columns::TransactionStatus {
 
 impl ColumnName for columns::TransactionStatus {
     const NAME: &'static str = TRANSACTION_STATUS_CF;
+}
+impl ProtobufColumn for columns::TransactionStatus {
+    type Type = generated::TransactionStatusMeta;
 }
 
 impl Column for columns::AddressSignatures {

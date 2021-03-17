@@ -7,21 +7,12 @@ use std::net::SocketAddr;
 
 pub const NUM_PACKETS: usize = 1024 * 8;
 
-pub const PACKETS_PER_BATCH: usize = 256;
+pub const PACKETS_PER_BATCH: usize = 128;
 pub const NUM_RCVMMSGS: usize = 128;
-pub const PACKETS_BATCH_SIZE: usize = PACKETS_PER_BATCH * PACKET_DATA_SIZE;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Packets {
     pub packets: PinnedVec<Packet>,
-}
-
-//auto derive doesn't support large arrays
-impl Default for Packets {
-    fn default() -> Packets {
-        let packets = PinnedVec::with_capacity(NUM_RCVMMSGS);
-        Packets { packets }
-    }
 }
 
 pub type PacketsRecycler = Recycler<PinnedVec<Packet>>;
@@ -32,19 +23,26 @@ impl Packets {
         Self { packets }
     }
 
-    pub fn new_with_recycler(recycler: PacketsRecycler, size: usize, name: &'static str) -> Self {
-        let mut packets = recycler.allocate(name);
-        packets.reserve_and_pin(size);
+    pub fn with_capacity(capacity: usize) -> Self {
+        let packets = PinnedVec::with_capacity(capacity);
         Packets { packets }
+    }
+
+    pub fn new_with_recycler(recycler: PacketsRecycler, size: usize) -> Option<Self> {
+        let maybe_packets = recycler.allocate();
+        maybe_packets.map(|mut packets| {
+            packets.reserve_and_pin(size);
+            Packets { packets }
+        })
     }
     pub fn new_with_recycler_data(
         recycler: &PacketsRecycler,
-        name: &'static str,
         mut packets: Vec<Packet>,
-    ) -> Self {
-        let mut vec = Self::new_with_recycler(recycler.clone(), packets.len(), name);
-        vec.packets.append(&mut packets);
-        vec
+    ) -> Option<Self> {
+        Self::new_with_recycler(recycler.clone(), packets.len()).map(|mut vec| {
+            vec.packets.append(&mut packets);
+            vec
+        })
     }
 
     pub fn set_addr(&mut self, addr: &SocketAddr) {
@@ -61,7 +59,7 @@ impl Packets {
 pub fn to_packets_chunked<T: Serialize>(xs: &[T], chunks: usize) -> Vec<Packets> {
     let mut out = vec![];
     for x in xs.chunks(chunks) {
-        let mut p = Packets::default();
+        let mut p = Packets::with_capacity(x.len());
         p.packets.resize(x.len(), Packet::default());
         for (i, o) in x.iter().zip(p.packets.iter_mut()) {
             Packet::populate_packet(o, None, i).expect("serialize request");
@@ -71,6 +69,7 @@ pub fn to_packets_chunked<T: Serialize>(xs: &[T], chunks: usize) -> Vec<Packets>
     out
 }
 
+#[cfg(test)]
 pub fn to_packets<T: Serialize>(xs: &[T]) -> Vec<Packets> {
     to_packets_chunked(xs, NUM_PACKETS)
 }
@@ -79,11 +78,7 @@ pub fn to_packets_with_destination<T: Serialize>(
     recycler: PacketsRecycler,
     dests_and_data: &[(SocketAddr, T)],
 ) -> Packets {
-    let mut out = Packets::new_with_recycler(
-        recycler,
-        dests_and_data.len(),
-        "to_packets_with_destination",
-    );
+    let mut out = Packets::new_with_recycler(recycler, dests_and_data.len()).unwrap();
     out.packets.resize(dests_and_data.len(), Packet::default());
     for (dest_and_data, o) in dests_and_data.iter().zip(out.packets.iter_mut()) {
         if !dest_and_data.0.ip().is_unspecified() && dest_and_data.0.port() != 0 {
@@ -141,9 +136,9 @@ mod tests {
 
     #[test]
     fn test_to_packets_pinning() {
-        let recycler = PacketsRecycler::default();
+        let recycler = PacketsRecycler::new_without_limit("");
         for i in 0..2 {
-            let _first_packets = Packets::new_with_recycler(recycler.clone(), i + 1, "first one");
+            let _first_packets = Packets::new_with_recycler(recycler.clone(), i + 1);
         }
     }
 }

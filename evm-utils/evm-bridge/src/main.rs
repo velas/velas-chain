@@ -970,6 +970,22 @@ impl RpcSol for RpcSolProxy {
             limit
         )
     }
+
+    fn get_health(&self, meta: Self::Metadata) -> Result<String> {
+        proxy_sol_rpc!(meta.rpc_client, GetHealth)
+    }
+
+    fn get_snapshot_slot(&self, meta: Self::Metadata) -> Result<Slot> {
+        proxy_sol_rpc!(meta.rpc_client, GetSnapshotSlot)
+    }
+
+    fn get_max_retransmit_slot(&self, meta: Self::Metadata) -> Result<Slot> {
+        proxy_sol_rpc!(meta.rpc_client, GetMaxRetransmitSlot)
+    }
+
+    fn get_max_shred_insert_slot(&self, meta: Self::Metadata) -> Result<Slot> {
+        proxy_sol_rpc!(meta.rpc_client, GetMaxShredInsertSlot)
+    }
 }
 
 #[derive(Debug, structopt::StructOpt)]

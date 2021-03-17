@@ -1,6 +1,6 @@
 //! The `fetch_stage` batches input from a UDP socket and sends it to a channel.
 
-use crate::banking_stage::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET;
+use crate::banking_stage::HOLD_TRANSACTIONS_SLOT_OFFSET;
 use crate::poh_recorder::PohRecorder;
 use crate::result::{Error, Result};
 use solana_measure::thread_mem_usage;
@@ -26,10 +26,19 @@ impl FetchStage {
         tpu_forwards_sockets: Vec<UdpSocket>,
         exit: &Arc<AtomicBool>,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
+        coalesce_ms: u64,
     ) -> (Self, PacketReceiver) {
         let (sender, receiver) = channel();
         (
-            Self::new_with_sender(sockets, tpu_forwards_sockets, exit, &sender, &poh_recorder),
+            Self::new_with_sender(
+                sockets,
+                tpu_forwards_sockets,
+                exit,
+                &sender,
+                &poh_recorder,
+                None,
+                coalesce_ms,
+            ),
             receiver,
         )
     }
@@ -39,6 +48,8 @@ impl FetchStage {
         exit: &Arc<AtomicBool>,
         sender: &PacketSender,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
+        allocated_packet_limit: Option<u32>,
+        coalesce_ms: u64,
     ) -> Self {
         let tx_sockets = sockets.into_iter().map(Arc::new).collect();
         let tpu_forwards_sockets = tpu_forwards_sockets.into_iter().map(Arc::new).collect();
@@ -48,6 +59,8 @@ impl FetchStage {
             exit,
             &sender,
             &poh_recorder,
+            allocated_packet_limit,
+            coalesce_ms,
         )
     }
 
@@ -68,11 +81,11 @@ impl FetchStage {
             }
         }
 
-        if poh_recorder.lock().unwrap().would_be_leader(
-            FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET
-                .saturating_add(1)
-                .saturating_mul(DEFAULT_TICKS_PER_SLOT),
-        ) {
+        if poh_recorder
+            .lock()
+            .unwrap()
+            .would_be_leader(HOLD_TRANSACTIONS_SLOT_OFFSET.saturating_mul(DEFAULT_TICKS_PER_SLOT))
+        {
             inc_new_counter_debug!("fetch_stage-honor_forwards", len);
             for packets in batch {
                 if sendr.send(packets).is_err() {
@@ -92,8 +105,11 @@ impl FetchStage {
         exit: &Arc<AtomicBool>,
         sender: &PacketSender,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
+        limit: Option<u32>,
+        coalesce_ms: u64,
     ) -> Self {
-        let recycler: PacketsRecycler = Recycler::warmed(1000, 1024);
+        let recycler: PacketsRecycler =
+            Recycler::warmed(1000, 1024, limit, "fetch_stage_recycler_shrink");
 
         let tpu_threads = sockets.into_iter().map(|socket| {
             streamer::receiver(
@@ -102,6 +118,7 @@ impl FetchStage {
                 sender.clone(),
                 recycler.clone(),
                 "fetch_stage",
+                coalesce_ms,
             )
         });
 
@@ -113,6 +130,7 @@ impl FetchStage {
                 forward_sender.clone(),
                 recycler.clone(),
                 "fetch_forward_stage",
+                coalesce_ms,
             )
         });
 

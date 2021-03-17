@@ -1,11 +1,12 @@
 //! A command-line executable for monitoring the health of a cluster
+#![allow(clippy::integer_arithmetic)]
 
 use {
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg},
     log::*,
     solana_clap_utils::{
         input_parsers::pubkeys_of,
-        input_validators::{is_pubkey_or_keypair, is_url},
+        input_validators::{is_parsable, is_pubkey_or_keypair, is_url},
     },
     solana_cli_output::display::format_labeled_address,
     solana_client::{client_error, rpc_client::RpcClient, rpc_response::RpcVoteAccountStatus},
@@ -29,6 +30,7 @@ struct Config {
     ignore_http_bad_gateway: bool,
     interval: Duration,
     json_rpc_url: String,
+    minimum_validator_identity_balance: u64,
     monitor_active_stake: bool,
     unhealthy_threshold: usize,
     validator_identity_pubkeys: Vec<Pubkey>,
@@ -103,6 +105,15 @@ fn get_config() -> Config {
                 .help("Validator identities to monitor for delinquency")
         )
         .arg(
+            Arg::with_name("minimum_validator_identity_balance")
+                .long("minimum-validator-identity-balance")
+                .value_name("SOL")
+                .takes_value(true)
+                .default_value("10")
+                .validator(is_parsable::<f64>)
+                .help("Alert when the validator identity balance is less than this amount of SOL")
+        )
+        .arg(
             // Deprecated parameter, now always enabled
             Arg::with_name("no_duplicate_notifications")
                 .long("no-duplicate-notifications")
@@ -133,6 +144,11 @@ fn get_config() -> Config {
 
     let interval = Duration::from_secs(value_t_or_exit!(matches, "interval", u64));
     let unhealthy_threshold = value_t_or_exit!(matches, "unhealthy_threshold", usize);
+    let minimum_validator_identity_balance = sol_to_lamports(value_t_or_exit!(
+        matches,
+        "minimum_validator_identity_balance",
+        f64
+    ));
     let json_rpc_url =
         value_t!(matches, "json_rpc_url", String).unwrap_or_else(|_| config.json_rpc_url.clone());
     let validator_identity_pubkeys: Vec<_> = pubkeys_of(&matches, "validator_identities")
@@ -148,6 +164,7 @@ fn get_config() -> Config {
         ignore_http_bad_gateway,
         interval,
         json_rpc_url,
+        minimum_validator_identity_balance,
         monitor_active_stake,
         unhealthy_threshold,
         validator_identity_pubkeys,
@@ -224,9 +241,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     .sum();
 
                 let total_stake = total_current_stake + total_delinquent_stake;
-                let current_stake_percent = total_current_stake * 100 / total_stake;
+                let current_stake_percent = total_current_stake as f64 * 100. / total_stake as f64;
                 info!(
-                    "Current stake: {}% | Total stake: {}, current stake: {}, delinquent: {}",
+                    "Current stake: {:.2}% | Total stake: {}, current stake: {}, delinquent: {}",
                     current_stake_percent,
                     Sol(total_stake),
                     Sol(total_current_stake),
@@ -254,10 +271,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     ));
                 }
 
-                if config.monitor_active_stake && current_stake_percent < 80 {
+                if config.monitor_active_stake && current_stake_percent < 80. {
                     failures.push((
                         "current-stake",
-                        format!("Current stake is {}%", current_stake_percent),
+                        format!("Current stake is {:.2}%", current_stake_percent),
                     ));
                 }
 
@@ -283,9 +300,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     }
 
                     if let Some(balance) = validator_balances.get(&validator_identity) {
-                        if *balance < sol_to_lamports(10.) {
-                            // At 1 SOL/day for validator voting fees, this gives over a week to
-                            // find some more SOL
+                        if *balance < config.minimum_validator_identity_balance {
                             failures.push((
                                 "balance",
                                 format!("{} has {}", formatted_validator_identity, Sol(*balance)),

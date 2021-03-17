@@ -11,6 +11,7 @@ use crate::{
     completed_data_sets_service::CompletedDataSetsSender,
     consensus::Tower,
     ledger_cleanup_service::LedgerCleanupService,
+    max_slots::MaxSlots,
     optimistically_confirmed_bank_tracker::BankNotificationSender,
     poh_recorder::PohRecorder,
     replay_stage::{ReplayStage, ReplayStageConfig},
@@ -30,7 +31,7 @@ use solana_ledger::{
 };
 use solana_runtime::{
     accounts_background_service::{
-        ABSRequestHandler, ABSRequestSender, AccountsBackgroundService, SendDroppedBankCallback,
+        AbsRequestHandler, AbsRequestSender, AccountsBackgroundService, SendDroppedBankCallback,
         SnapshotRequestHandler,
     },
     bank_forks::{BankForks, SnapshotConfig},
@@ -79,6 +80,10 @@ pub struct TvuConfig {
     pub repair_validators: Option<HashSet<Pubkey>>,
     pub accounts_hash_fault_injection_slots: u64,
     pub accounts_db_caching_enabled: bool,
+    pub test_hash_calculation: bool,
+    pub use_index_hash_calculation: bool,
+    pub rocksdb_compaction_interval: Option<u64>,
+    pub rocksdb_max_compaction_jitter: Option<u64>,
 }
 
 impl Tvu {
@@ -116,6 +121,7 @@ impl Tvu {
         completed_data_sets_sender: CompletedDataSetsSender,
         bank_notification_sender: Option<BankNotificationSender>,
         tvu_config: TvuConfig,
+        max_slots: &Arc<MaxSlots>,
     ) -> Self {
         let keypair: Arc<Keypair> = cluster_info.keypair.clone();
 
@@ -139,6 +145,7 @@ impl Tvu {
             &fetch_sender,
             Some(bank_forks.clone()),
             &exit,
+            None,
         );
 
         let (verified_sender, verified_receiver) = unbounded();
@@ -150,6 +157,8 @@ impl Tvu {
 
         let cluster_slots = Arc::new(ClusterSlots::default());
         let (duplicate_slots_reset_sender, duplicate_slots_reset_receiver) = unbounded();
+        let compaction_interval = tvu_config.rocksdb_compaction_interval;
+        let max_compaction_jitter = tvu_config.rocksdb_max_compaction_jitter;
         let retransmit_stage = RetransmitStage::new(
             bank_forks.clone(),
             leader_schedule_cache,
@@ -168,6 +177,8 @@ impl Tvu {
             verified_vote_receiver,
             tvu_config.repair_validators,
             completed_data_sets_sender,
+            max_slots,
+            Some(subscriptions.clone()),
         );
 
         let (ledger_cleanup_slot_sender, ledger_cleanup_slot_receiver) = channel();
@@ -216,15 +227,15 @@ impl Tvu {
         let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
 
         // Before replay starts, set the callbacks in each of the banks in BankForks
-        for bank in bank_forks.read().unwrap().banks.values() {
+        for bank in bank_forks.read().unwrap().banks().values() {
             bank.set_callback(Some(Box::new(SendDroppedBankCallback::new(
                 pruned_banks_sender.clone(),
             ))));
         }
 
-        let accounts_background_request_sender = ABSRequestSender::new(snapshot_request_sender);
+        let accounts_background_request_sender = AbsRequestSender::new(snapshot_request_sender);
 
-        let accounts_background_request_handler = ABSRequestHandler {
+        let accounts_background_request_handler = AbsRequestHandler {
             snapshot_request_handler,
             pruned_banks_receiver,
         };
@@ -266,6 +277,8 @@ impl Tvu {
                 blockstore.clone(),
                 max_ledger_shreds,
                 &exit,
+                compaction_interval,
+                max_compaction_jitter,
             )
         });
 
@@ -274,6 +287,8 @@ impl Tvu {
             &exit,
             accounts_background_request_handler,
             tvu_config.accounts_db_caching_enabled,
+            tvu_config.test_hash_calculation,
+            tvu_config.use_index_hash_calculation,
         );
 
         Tvu {
@@ -397,6 +412,7 @@ pub mod tests {
             completed_data_sets_sender,
             None,
             TvuConfig::default(),
+            &Arc::new(MaxSlots::default()),
         );
         exit.store(true, Ordering::Relaxed);
         tvu.join().unwrap();

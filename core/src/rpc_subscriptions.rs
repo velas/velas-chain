@@ -17,7 +17,7 @@ use solana_client::{
     rpc_filter::RpcFilterType,
     rpc_response::{
         ProcessedSignatureResult, ReceivedSignatureResult, Response, RpcKeyedAccount,
-        RpcLogsResponse, RpcResponseContext, RpcSignatureResult, SlotInfo,
+        RpcLogsResponse, RpcResponseContext, RpcSignatureResult, SlotInfo, SlotUpdate,
     },
 };
 use solana_measure::measure::Measure;
@@ -31,9 +31,10 @@ use solana_runtime::{
 use solana_sdk::{
     account::Account,
     clock::{Slot, UnixTimestamp},
-    commitment_config::{CommitmentConfig, CommitmentLevel},
+    commitment_config::CommitmentConfig,
     pubkey::Pubkey,
     signature::Signature,
+    timing::timestamp,
     transaction,
 };
 use solana_vote_program::vote_state::Vote;
@@ -86,6 +87,7 @@ pub struct RpcVote {
 
 enum NotificationEntry {
     Slot(SlotInfo),
+    SlotUpdate(SlotUpdate),
     Vote(Vote),
     Root(Slot),
     Bank(CommitmentSlots),
@@ -99,6 +101,9 @@ impl std::fmt::Debug for NotificationEntry {
             NotificationEntry::Root(root) => write!(f, "Root({})", root),
             NotificationEntry::Vote(vote) => write!(f, "Vote({:?})", vote),
             NotificationEntry::Slot(slot_info) => write!(f, "Slot({:?})", slot_info),
+            NotificationEntry::SlotUpdate(slot_update) => {
+                write!(f, "SlotUpdate({:?})", slot_update)
+            }
             NotificationEntry::Bank(commitment_slots) => {
                 write!(f, "Bank({{slot: {:?}}})", commitment_slots.slot)
             }
@@ -146,6 +151,7 @@ type RpcSignatureSubscriptions = RwLock<
     >,
 >;
 type RpcSlotSubscriptions = RwLock<HashMap<SubscriptionId, Sink<SlotInfo>>>;
+type RpcSlotUpdateSubscriptions = RwLock<HashMap<SubscriptionId, Sink<Arc<SlotUpdate>>>>;
 type RpcVoteSubscriptions = RwLock<HashMap<SubscriptionId, Sink<RpcVote>>>;
 type RpcRootSubscriptions = RwLock<HashMap<SubscriptionId, Sink<Slot>>>;
 
@@ -227,14 +233,14 @@ where
             },
         ) in hashmap.iter()
         {
-            let slot = match commitment.commitment {
-                CommitmentLevel::Max => commitment_slots.highest_confirmed_root,
-                CommitmentLevel::Recent => commitment_slots.slot,
-                CommitmentLevel::Root => commitment_slots.root,
-                CommitmentLevel::Single | CommitmentLevel::SingleGossip => {
-                    commitment_slots.highest_confirmed_slot
-                }
+            let slot = if commitment.is_finalized() {
+                commitment_slots.highest_confirmed_root
+            } else if commitment.is_confirmed() {
+                commitment_slots.highest_confirmed_slot
+            } else {
+                commitment_slots.slot
             };
+
             if let Some(bank) = bank_forks.read().unwrap().get(slot).cloned() {
                 let results = bank_method(&bank, hashmap_key);
                 let mut w_last_notified_slot = last_notified_slot.write().unwrap();
@@ -392,6 +398,7 @@ struct Subscriptions {
     gossip_program_subscriptions: Arc<RpcProgramSubscriptions>,
     gossip_signature_subscriptions: Arc<RpcSignatureSubscriptions>,
     slot_subscriptions: Arc<RpcSlotSubscriptions>,
+    slots_updates_subscriptions: Arc<RpcSlotUpdateSubscriptions>,
     vote_subscriptions: Arc<RpcVoteSubscriptions>,
     root_subscriptions: Arc<RpcRootSubscriptions>,
 }
@@ -471,6 +478,7 @@ impl RpcSubscriptions {
         let gossip_program_subscriptions = Arc::new(RpcProgramSubscriptions::default());
         let gossip_signature_subscriptions = Arc::new(RpcSignatureSubscriptions::default());
         let slot_subscriptions = Arc::new(RpcSlotSubscriptions::default());
+        let slots_updates_subscriptions = Arc::new(RpcSlotUpdateSubscriptions::default());
         let vote_subscriptions = Arc::new(RpcVoteSubscriptions::default());
         let root_subscriptions = Arc::new(RpcRootSubscriptions::default());
         let notification_sender = Arc::new(Mutex::new(notification_sender));
@@ -488,6 +496,7 @@ impl RpcSubscriptions {
             gossip_program_subscriptions,
             gossip_signature_subscriptions,
             slot_subscriptions,
+            slots_updates_subscriptions,
             vote_subscriptions,
             root_subscriptions,
         };
@@ -636,28 +645,23 @@ impl RpcSubscriptions {
         let config = config.unwrap_or_default();
         let commitment = config
             .commitment
-            .unwrap_or_else(CommitmentConfig::single_gossip);
+            .unwrap_or_else(CommitmentConfig::confirmed);
 
-        let slot = match commitment.commitment {
-            CommitmentLevel::Max => self
-                .block_commitment_cache
+        let slot = if commitment.is_finalized() {
+            self.block_commitment_cache
                 .read()
                 .unwrap()
-                .highest_confirmed_root(),
-            CommitmentLevel::Recent => self.block_commitment_cache.read().unwrap().slot(),
-            CommitmentLevel::Root => self.block_commitment_cache.read().unwrap().root(),
-            CommitmentLevel::Single => self
-                .block_commitment_cache
-                .read()
-                .unwrap()
-                .highest_confirmed_slot(),
-            CommitmentLevel::SingleGossip => self
-                .optimistically_confirmed_bank
+                .highest_confirmed_root()
+        } else if commitment.is_confirmed() {
+            self.optimistically_confirmed_bank
                 .read()
                 .unwrap()
                 .bank
-                .slot(),
+                .slot()
+        } else {
+            self.block_commitment_cache.read().unwrap().slot()
         };
+
         let last_notified_slot = if let Some((_account, slot)) = self
             .bank_forks
             .read()
@@ -670,7 +674,7 @@ impl RpcSubscriptions {
             0
         };
 
-        let mut subscriptions = if commitment.commitment == CommitmentLevel::SingleGossip {
+        let mut subscriptions = if commitment.is_confirmed() {
             self.subscriptions
                 .gossip_account_subscriptions
                 .write()
@@ -715,9 +719,9 @@ impl RpcSubscriptions {
         let commitment = config
             .account_config
             .commitment
-            .unwrap_or_else(CommitmentConfig::single_gossip);
+            .unwrap_or_else(CommitmentConfig::confirmed);
 
-        let mut subscriptions = if commitment.commitment == CommitmentLevel::SingleGossip {
+        let mut subscriptions = if commitment.is_confirmed() {
             self.subscriptions
                 .gossip_program_subscriptions
                 .write()
@@ -762,10 +766,10 @@ impl RpcSubscriptions {
         sub_id: SubscriptionId,
         subscriber: Subscriber<Response<RpcLogsResponse>>,
     ) {
-        let commitment = commitment.unwrap_or_else(CommitmentConfig::single_gossip);
+        let commitment = commitment.unwrap_or_else(CommitmentConfig::confirmed);
 
         {
-            let mut subscriptions = if commitment.commitment == CommitmentLevel::SingleGossip {
+            let mut subscriptions = if commitment.is_confirmed() {
                 self.subscriptions
                     .gossip_logs_subscriptions
                     .write()
@@ -873,9 +877,9 @@ impl RpcSubscriptions {
             .map(|config| (config.commitment, config.enable_received_notification))
             .unwrap_or_default();
 
-        let commitment = commitment.unwrap_or_else(CommitmentConfig::single_gossip);
+        let commitment = commitment.unwrap_or_else(CommitmentConfig::confirmed);
 
-        let mut subscriptions = if commitment.commitment == CommitmentLevel::SingleGossip {
+        let mut subscriptions = if commitment.is_confirmed() {
             self.subscriptions
                 .gossip_signature_subscriptions
                 .write()
@@ -915,10 +919,14 @@ impl RpcSubscriptions {
         self.enqueue_notification(NotificationEntry::Bank(commitment_slots));
     }
 
-    /// Notify SingleGossip commitment-level subscribers of changes to any accounts or new
+    /// Notify Confirmed commitment-level subscribers of changes to any accounts or new
     /// signatures.
     pub fn notify_gossip_subscribers(&self, slot: Slot) {
         self.enqueue_notification(NotificationEntry::Gossip(slot));
+    }
+
+    pub fn notify_slot_update(&self, slot_update: SlotUpdate) {
+        self.enqueue_notification(NotificationEntry::SlotUpdate(slot_update));
     }
 
     pub fn add_slot_subscription(&self, sub_id: SubscriptionId, subscriber: Subscriber<SlotInfo>) {
@@ -929,6 +937,29 @@ impl RpcSubscriptions {
 
     pub fn remove_slot_subscription(&self, id: &SubscriptionId) -> bool {
         let mut subscriptions = self.subscriptions.slot_subscriptions.write().unwrap();
+        subscriptions.remove(id).is_some()
+    }
+
+    pub fn add_slots_updates_subscription(
+        &self,
+        sub_id: SubscriptionId,
+        subscriber: Subscriber<Arc<SlotUpdate>>,
+    ) {
+        let sink = subscriber.assign_id(sub_id.clone()).unwrap();
+        let mut subscriptions = self
+            .subscriptions
+            .slots_updates_subscriptions
+            .write()
+            .unwrap();
+        subscriptions.insert(sub_id, sink);
+    }
+
+    pub fn remove_slots_updates_subscription(&self, id: &SubscriptionId) -> bool {
+        let mut subscriptions = self
+            .subscriptions
+            .slots_updates_subscriptions
+            .write()
+            .unwrap();
         subscriptions.remove(id).is_some()
     }
 
@@ -975,6 +1006,10 @@ impl RpcSubscriptions {
     pub fn notify_roots(&self, mut rooted_slots: Vec<Slot>) {
         rooted_slots.sort_unstable();
         rooted_slots.into_iter().for_each(|root| {
+            self.enqueue_notification(NotificationEntry::SlotUpdate(SlotUpdate::Root {
+                slot: root,
+                timestamp: timestamp(),
+            }));
             self.enqueue_notification(NotificationEntry::Root(root));
         });
     }
@@ -1023,6 +1058,15 @@ impl RpcSubscriptions {
                             notifier.notify(slot_info, sink);
                         }
                     }
+                    NotificationEntry::SlotUpdate(slot_update) => {
+                        let subscriptions =
+                            subscriptions.slots_updates_subscriptions.read().unwrap();
+                        let slot_update = Arc::new(slot_update);
+                        for (_, sink) in subscriptions.iter() {
+                            inc_new_counter_info!("rpc-subscription-notify-slots-updates", 1);
+                            notifier.notify(slot_update.clone(), sink);
+                        }
+                    }
                     // These notifications are only triggered by votes observed on gossip,
                     // unlike `NotificationEntry::Gossip`, which also accounts for slots seen
                     // in VoteState's from bank states built in ReplayStage.
@@ -1039,6 +1083,7 @@ impl RpcSubscriptions {
                             inc_new_counter_info!("rpc-subscription-notify-vote", 1);
                             notifier.notify(
                                 RpcVote {
+                                    // TODO: Remove clones
                                     slots: vote_info.slots.clone(),
                                     hash: bs58::encode(vote_info.hash).into_string(),
                                     timestamp: vote_info.timestamp,
@@ -1084,9 +1129,14 @@ impl RpcSubscriptions {
                     NotificationEntry::SignaturesReceived(slot_signatures) => {
                         RpcSubscriptions::process_signatures_received(
                             &slot_signatures,
+                            &subscriptions.gossip_signature_subscriptions,
+                            &notifier,
+                        );
+                        RpcSubscriptions::process_signatures_received(
+                            &slot_signatures,
                             &subscriptions.signature_subscriptions,
                             &notifier,
-                        )
+                        );
                     }
                 },
                 Err(RecvTimeoutError::Timeout) => {
@@ -1374,7 +1424,7 @@ pub(crate) mod tests {
         subscriptions.add_account_subscription(
             alice.pubkey(),
             Some(RpcAccountInfoConfig {
-                commitment: Some(CommitmentConfig::recent()),
+                commitment: Some(CommitmentConfig::processed()),
                 encoding: None,
                 data_slice: None,
             }),
@@ -1433,7 +1483,7 @@ pub(crate) mod tests {
         subscriptions.add_account_subscription(
             alice.pubkey(),
             Some(RpcAccountInfoConfig {
-                commitment: Some(CommitmentConfig::recent()),
+                commitment: Some(CommitmentConfig::processed()),
                 encoding: None,
                 data_slice: None,
             }),
@@ -1529,7 +1579,7 @@ pub(crate) mod tests {
             solana_stake_program::id(),
             Some(RpcProgramAccountsConfig {
                 account_config: RpcAccountInfoConfig {
-                    commitment: Some(CommitmentConfig::recent()),
+                    commitment: Some(CommitmentConfig::processed()),
                     ..RpcAccountInfoConfig::default()
                 },
                 ..RpcProgramAccountsConfig::default()
@@ -1605,7 +1655,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let next_bank = Bank::new_from_parent(
-            &bank_forks.banks[&0].clone(),
+            &bank_forks.get(0).unwrap().clone(),
             &solana_sdk::pubkey::new_rand(),
             1,
         );
@@ -1658,7 +1708,7 @@ pub(crate) mod tests {
         subscriptions.add_signature_subscription(
             past_bank_tx.signatures[0],
             Some(RpcSignatureSubscribeConfig {
-                commitment: Some(CommitmentConfig::recent()),
+                commitment: Some(CommitmentConfig::processed()),
                 enable_received_notification: Some(false),
             }),
             SubscriptionId::Number(1),
@@ -1667,7 +1717,7 @@ pub(crate) mod tests {
         subscriptions.add_signature_subscription(
             past_bank_tx.signatures[0],
             Some(RpcSignatureSubscribeConfig {
-                commitment: Some(CommitmentConfig::root()),
+                commitment: Some(CommitmentConfig::finalized()),
                 enable_received_notification: Some(false),
             }),
             SubscriptionId::Number(2),
@@ -1676,7 +1726,7 @@ pub(crate) mod tests {
         subscriptions.add_signature_subscription(
             processed_tx.signatures[0],
             Some(RpcSignatureSubscribeConfig {
-                commitment: Some(CommitmentConfig::recent()),
+                commitment: Some(CommitmentConfig::processed()),
                 enable_received_notification: Some(false),
             }),
             SubscriptionId::Number(3),
@@ -1685,7 +1735,7 @@ pub(crate) mod tests {
         subscriptions.add_signature_subscription(
             unprocessed_tx.signatures[0],
             Some(RpcSignatureSubscribeConfig {
-                commitment: Some(CommitmentConfig::recent()),
+                commitment: Some(CommitmentConfig::processed()),
                 enable_received_notification: Some(false),
             }),
             SubscriptionId::Number(4),
@@ -1695,7 +1745,7 @@ pub(crate) mod tests {
         subscriptions.add_signature_subscription(
             unprocessed_tx.signatures[0],
             Some(RpcSignatureSubscribeConfig {
-                commitment: Some(CommitmentConfig::recent()),
+                commitment: Some(CommitmentConfig::processed()),
                 enable_received_notification: Some(true),
             }),
             SubscriptionId::Number(5),
@@ -1892,7 +1942,7 @@ pub(crate) mod tests {
     fn test_add_and_remove_subscription() {
         let mut subscriptions: HashMap<u64, HashMap<SubscriptionId, SubscriptionData<(), ()>>> =
             HashMap::new();
-        let commitment = CommitmentConfig::single_gossip();
+        let commitment = CommitmentConfig::confirmed();
 
         let num_keys = 5;
         for key in 0..num_keys {
@@ -1982,7 +2032,7 @@ pub(crate) mod tests {
         subscriptions.add_account_subscription(
             alice.pubkey(),
             Some(RpcAccountInfoConfig {
-                commitment: Some(CommitmentConfig::single_gossip()),
+                commitment: Some(CommitmentConfig::confirmed()),
                 encoding: None,
                 data_slice: None,
             }),
@@ -2063,7 +2113,7 @@ pub(crate) mod tests {
         subscriptions.add_account_subscription(
             alice.pubkey(),
             Some(RpcAccountInfoConfig {
-                commitment: Some(CommitmentConfig::single_gossip()),
+                commitment: Some(CommitmentConfig::confirmed()),
                 encoding: None,
                 data_slice: None,
             }),

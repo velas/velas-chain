@@ -8,6 +8,7 @@ use serde_derive::{Deserialize, Serialize};
 use solana_sdk::{
     clock::{Epoch, UnixTimestamp},
     decode_error::DecodeError,
+    feature_set,
     instruction::{AccountMeta, Instruction, InstructionError},
     keyed_account::{from_keyed_account, get_signers, next_keyed_account, KeyedAccount},
     process_instruction::InvokeContext,
@@ -41,6 +42,12 @@ pub enum StakeError {
 
     #[error("stake account merge failed due to different authority, lockups or state")]
     MergeMismatch,
+
+    #[error("custodian address not present")]
+    CustodianMissing,
+
+    #[error("custodian signature not present")]
+    CustodianSignatureMissing,
 }
 
 impl<E> DecodeError<E> for StakeError {
@@ -66,8 +73,10 @@ pub enum StakeInstruction {
     ///
     /// # Account references
     ///   0. [WRITE] Stake account to be updated
-    ///   1. [] (reserved for future use) Clock sysvar
+    ///   1. [] Clock sysvar
     ///   2. [SIGNER] The stake or withdraw authority
+    ///   3. Optional: [SIGNER] Lockup authority, if updating StakeAuthorize::Withdrawer before
+    ///      lockup expiration
     Authorize(Pubkey, StakeAuthorize),
 
     /// Delegate a stake to a particular vote account
@@ -122,8 +131,23 @@ pub enum StakeInstruction {
     ///   1. [SIGNER] Lockup authority
     SetLockup(LockupArgs),
 
-    /// Merge two stake accounts. Both accounts must be deactivated and have identical lockup and
-    /// authority keys.
+    /// Merge two stake accounts.
+    ///
+    /// Both accounts must have identical lockup and authority keys. A merge
+    /// is possible between two stakes in the following states with no additional
+    /// conditions:
+    ///
+    /// * two deactivated stakes
+    /// * an inactive stake into an activating stake during its activation epoch
+    ///
+    /// For the following cases, the voter pubkey and vote credits observed must match:
+    ///
+    /// * two activated stakes
+    /// * two activating accounts that share an activation epoch, during the activation epoch
+    ///
+    /// All other combinations of stake states will fail to merge, including all
+    /// "transient" states, where a stake is activating or deactivating with a
+    /// non-zero effective stake.
     ///
     /// # Account references
     ///   0. [WRITE] Destination stake account for the merge
@@ -138,6 +162,9 @@ pub enum StakeInstruction {
     /// # Account references
     ///   0. [WRITE] Stake account to be updated
     ///   1. [SIGNER] Base key of stake or withdraw authority
+    ///   2. [] Clock sysvar
+    ///   3. Optional: [SIGNER] Lockup authority, if updating StakeAuthorize::Withdrawer before
+    ///      lockup expiration
     AuthorizeWithSeed(AuthorizeWithSeedArgs),
 }
 
@@ -251,7 +278,7 @@ pub fn split_with_seed(
     stake_pubkey: &Pubkey,
     authorized_pubkey: &Pubkey,
     lamports: u64,
-    split_stake_pubkey: &Pubkey, // derived using create_address_with_seed()
+    split_stake_pubkey: &Pubkey, // derived using create_with_seed()
     base: &Pubkey,               // base
     seed: &str,                  // seed
 ) -> Vec<Instruction> {
@@ -343,12 +370,17 @@ pub fn authorize(
     authorized_pubkey: &Pubkey,
     new_authorized_pubkey: &Pubkey,
     stake_authorize: StakeAuthorize,
+    custodian_pubkey: Option<&Pubkey>,
 ) -> Instruction {
-    let account_metas = vec![
+    let mut account_metas = vec![
         AccountMeta::new(*stake_pubkey, false),
         AccountMeta::new_readonly(sysvar::clock::id(), false),
         AccountMeta::new_readonly(*authorized_pubkey, true),
     ];
+
+    if let Some(custodian_pubkey) = custodian_pubkey {
+        account_metas.push(AccountMeta::new_readonly(*custodian_pubkey, true));
+    }
 
     Instruction::new(
         id(),
@@ -364,11 +396,17 @@ pub fn authorize_with_seed(
     authority_owner: &Pubkey,
     new_authorized_pubkey: &Pubkey,
     stake_authorize: StakeAuthorize,
+    custodian_pubkey: Option<&Pubkey>,
 ) -> Instruction {
-    let account_metas = vec![
+    let mut account_metas = vec![
         AccountMeta::new(*stake_pubkey, false),
         AccountMeta::new_readonly(*authority_base, true),
+        AccountMeta::new_readonly(sysvar::clock::id(), false),
     ];
+
+    if let Some(custodian_pubkey) = custodian_pubkey {
+        account_metas.push(AccountMeta::new_readonly(*custodian_pubkey, true));
+    }
 
     let args = AuthorizeWithSeedArgs {
         new_authorized_pubkey: *new_authorized_pubkey,
@@ -447,7 +485,7 @@ pub fn process_instruction(
     _program_id: &Pubkey,
     keyed_accounts: &[KeyedAccount],
     data: &[u8],
-    _invoke_context: &mut dyn InvokeContext,
+    invoke_context: &mut dyn InvokeContext,
 ) -> Result<(), InstructionError> {
     trace!("process_instruction: {:?}", data);
     trace!("keyed_accounts: {:?}", keyed_accounts);
@@ -458,7 +496,11 @@ pub fn process_instruction(
     let me = &next_keyed_account(keyed_accounts)?;
 
     if me.owner()? != id() {
-        return Err(InstructionError::IncorrectProgramId);
+        if invoke_context.is_feature_active(&feature_set::check_program_owner::id()) {
+            return Err(InstructionError::InvalidAccountOwner);
+        } else {
+            return Err(InstructionError::IncorrectProgramId);
+        }
     }
 
     match limited_deserialize(data)? {
@@ -468,17 +510,66 @@ pub fn process_instruction(
             &from_keyed_account::<Rent>(next_keyed_account(keyed_accounts)?)?,
         ),
         StakeInstruction::Authorize(authorized_pubkey, stake_authorize) => {
-            me.authorize(&signers, &authorized_pubkey, stake_authorize)
+            let require_custodian_for_locked_stake_authorize = invoke_context.is_feature_active(
+                &feature_set::require_custodian_for_locked_stake_authorize::id(),
+            );
+
+            if require_custodian_for_locked_stake_authorize {
+                let clock = from_keyed_account::<Clock>(next_keyed_account(keyed_accounts)?)?;
+                let _current_authority = next_keyed_account(keyed_accounts)?;
+                let custodian = keyed_accounts.next().map(|ka| ka.unsigned_key());
+
+                me.authorize(
+                    &signers,
+                    &authorized_pubkey,
+                    stake_authorize,
+                    require_custodian_for_locked_stake_authorize,
+                    &clock,
+                    custodian,
+                )
+            } else {
+                me.authorize(
+                    &signers,
+                    &authorized_pubkey,
+                    stake_authorize,
+                    require_custodian_for_locked_stake_authorize,
+                    &Clock::default(),
+                    None,
+                )
+            }
         }
         StakeInstruction::AuthorizeWithSeed(args) => {
             let authority_base = next_keyed_account(keyed_accounts)?;
-            me.authorize_with_seed(
-                &authority_base,
-                &args.authority_seed,
-                &args.authority_owner,
-                &args.new_authorized_pubkey,
-                args.stake_authorize,
-            )
+            let require_custodian_for_locked_stake_authorize = invoke_context.is_feature_active(
+                &feature_set::require_custodian_for_locked_stake_authorize::id(),
+            );
+
+            if require_custodian_for_locked_stake_authorize {
+                let clock = from_keyed_account::<Clock>(next_keyed_account(keyed_accounts)?)?;
+                let custodian = keyed_accounts.next().map(|ka| ka.unsigned_key());
+
+                me.authorize_with_seed(
+                    &authority_base,
+                    &args.authority_seed,
+                    &args.authority_owner,
+                    &args.new_authorized_pubkey,
+                    args.stake_authorize,
+                    require_custodian_for_locked_stake_authorize,
+                    &clock,
+                    custodian,
+                )
+            } else {
+                me.authorize_with_seed(
+                    &authority_base,
+                    &args.authority_seed,
+                    &args.authority_owner,
+                    &args.new_authorized_pubkey,
+                    args.stake_authorize,
+                    require_custodian_for_locked_stake_authorize,
+                    &Clock::default(),
+                    None,
+                )
+            }
         }
         StakeInstruction::DelegateStake => {
             let vote = next_keyed_account(keyed_accounts)?;
@@ -498,6 +589,7 @@ pub fn process_instruction(
         StakeInstruction::Merge => {
             let source_stake = &next_keyed_account(keyed_accounts)?;
             me.merge(
+                invoke_context,
                 source_stake,
                 &from_keyed_account::<Clock>(next_keyed_account(keyed_accounts)?)?,
                 &from_keyed_account::<StakeHistory>(next_keyed_account(keyed_accounts)?)?,
@@ -635,7 +727,8 @@ mod tests {
                 &Pubkey::default(),
                 &Pubkey::default(),
                 &Pubkey::default(),
-                StakeAuthorize::Staker
+                StakeAuthorize::Staker,
+                None,
             )),
             Err(InstructionError::InvalidAccountData),
         );
@@ -713,16 +806,17 @@ mod tests {
                 &Authorized::default(),
                 &Lockup::default()
             )),
-            Err(InstructionError::IncorrectProgramId),
+            Err(InstructionError::InvalidAccountOwner),
         );
         assert_eq!(
             process_instruction(&authorize(
                 &spoofed_stake_state_pubkey(),
                 &Pubkey::default(),
                 &Pubkey::default(),
-                StakeAuthorize::Staker
+                StakeAuthorize::Staker,
+                None,
             )),
-            Err(InstructionError::IncorrectProgramId),
+            Err(InstructionError::InvalidAccountOwner),
         );
         assert_eq!(
             process_instruction(
@@ -733,7 +827,7 @@ mod tests {
                     &Pubkey::default(),
                 )[1]
             ),
-            Err(InstructionError::IncorrectProgramId),
+            Err(InstructionError::InvalidAccountOwner),
         );
         assert_eq!(
             process_instruction(
@@ -754,7 +848,7 @@ mod tests {
                     &Pubkey::default(),
                 )[0]
             ),
-            Err(InstructionError::IncorrectProgramId),
+            Err(InstructionError::InvalidAccountOwner),
         );
         assert_eq!(
             process_instruction(
@@ -777,7 +871,7 @@ mod tests {
                     "seed"
                 )[1]
             ),
-            Err(InstructionError::IncorrectProgramId),
+            Err(InstructionError::InvalidAccountOwner),
         );
         assert_eq!(
             process_instruction(&delegate_stake(
@@ -785,7 +879,7 @@ mod tests {
                 &Pubkey::default(),
                 &Pubkey::default(),
             )),
-            Err(InstructionError::IncorrectProgramId),
+            Err(InstructionError::InvalidAccountOwner),
         );
         assert_eq!(
             process_instruction(&withdraw(
@@ -795,14 +889,14 @@ mod tests {
                 100,
                 None,
             )),
-            Err(InstructionError::IncorrectProgramId),
+            Err(InstructionError::InvalidAccountOwner),
         );
         assert_eq!(
             process_instruction(&deactivate_stake(
                 &spoofed_stake_state_pubkey(),
                 &Pubkey::default()
             )),
-            Err(InstructionError::IncorrectProgramId),
+            Err(InstructionError::InvalidAccountOwner),
         );
         assert_eq!(
             process_instruction(&set_lockup(
@@ -810,7 +904,7 @@ mod tests {
                 &LockupArgs::default(),
                 &Pubkey::default()
             )),
-            Err(InstructionError::IncorrectProgramId),
+            Err(InstructionError::InvalidAccountOwner),
         );
     }
 

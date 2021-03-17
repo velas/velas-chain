@@ -18,8 +18,8 @@ use solana_rayon_threadlimit::get_thread_count;
 use solana_runtime::{
     accounts_index::AccountIndex,
     bank::{
-        Bank, InnerInstructionsList, TransactionBalancesSet, TransactionExecutionResult,
-        TransactionLogMessages, TransactionResults,
+        Bank, ExecuteTimings, InnerInstructionsList, TransactionBalancesSet,
+        TransactionExecutionResult, TransactionLogMessages, TransactionResults,
     },
     bank_forks::BankForks,
     bank_utils,
@@ -106,6 +106,7 @@ fn execute_batch(
     bank: &Arc<Bank>,
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
+    timings: &mut ExecuteTimings,
 ) -> Result<()> {
     let record_token_balances = transaction_status_sender.is_some();
 
@@ -124,6 +125,7 @@ fn execute_batch(
             transaction_status_sender.is_some(),
             transaction_status_sender.is_some(),
             transaction_status_sender.is_some(),
+            timings,
         );
 
     bank_utils::find_and_send_votes(batch.transactions(), &tx_results, replay_vote_sender);
@@ -134,7 +136,7 @@ fn execute_batch(
         ..
     } = tx_results;
 
-    if let Some(sender) = transaction_status_sender {
+    if let Some(transaction_status_sender) = transaction_status_sender {
         let post_token_balances = if record_token_balances {
             collect_token_balances(&bank, &batch, &mut mint_decimals)
         } else {
@@ -153,7 +155,7 @@ fn execute_batch(
             token_balances,
             inner_instructions,
             transaction_logs,
-            sender,
+            transaction_status_sender,
         );
     }
 
@@ -167,22 +169,35 @@ fn execute_batches(
     entry_callback: Option<&ProcessCallback>,
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
+    timings: &mut ExecuteTimings,
 ) -> Result<()> {
     inc_new_counter_debug!("bank-par_execute_entries-count", batches.len());
-    let results: Vec<Result<()>> = PAR_THREAD_POOL.with(|thread_pool| {
-        thread_pool.borrow().install(|| {
-            batches
-                .into_par_iter()
-                .map_with(transaction_status_sender, |sender, batch| {
-                    let result = execute_batch(batch, bank, sender.clone(), replay_vote_sender);
-                    if let Some(entry_callback) = entry_callback {
-                        entry_callback(bank);
-                    }
-                    result
-                })
-                .collect()
-        })
-    });
+    let (results, new_timings): (Vec<Result<()>>, Vec<ExecuteTimings>) =
+        PAR_THREAD_POOL.with(|thread_pool| {
+            thread_pool.borrow().install(|| {
+                batches
+                    .into_par_iter()
+                    .map_with(transaction_status_sender, |sender, batch| {
+                        let mut timings = ExecuteTimings::default();
+                        let result = execute_batch(
+                            batch,
+                            bank,
+                            sender.clone(),
+                            replay_vote_sender,
+                            &mut timings,
+                        );
+                        if let Some(entry_callback) = entry_callback {
+                            entry_callback(bank);
+                        }
+                        (result, timings)
+                    })
+                    .unzip()
+            })
+        });
+
+    for timing in new_timings {
+        timings.accumulate(&timing);
+    }
 
     first_err(&results)
 }
@@ -206,6 +221,7 @@ pub fn process_entries(
         None,
         transaction_status_sender,
         replay_vote_sender,
+        &mut ExecuteTimings::default(),
     )
 }
 
@@ -216,6 +232,7 @@ fn process_entries_with_callback(
     entry_callback: Option<&ProcessCallback>,
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
+    timings: &mut ExecuteTimings,
 ) -> Result<()> {
     // accumulator for entries that can be processed in parallel
     let mut batches = vec![];
@@ -233,6 +250,7 @@ fn process_entries_with_callback(
                     entry_callback,
                     transaction_status_sender.clone(),
                     replay_vote_sender,
+                    timings,
                 )?;
                 batches.clear();
                 for hash in &tick_hashes {
@@ -289,6 +307,7 @@ fn process_entries_with_callback(
                     entry_callback,
                     transaction_status_sender.clone(),
                     replay_vote_sender,
+                    timings,
                 )?;
                 batches.clear();
             }
@@ -300,6 +319,7 @@ fn process_entries_with_callback(
         entry_callback,
         transaction_status_sender,
         replay_vote_sender,
+        timings,
     )?;
     for hash in tick_hashes {
         bank.register_tick(&hash);
@@ -347,6 +367,7 @@ pub struct ProcessOptions {
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
     pub account_indexes: HashSet<AccountIndex>,
     pub accounts_db_caching_enabled: bool,
+    pub allow_dead_slots: bool,
 }
 
 pub fn process_blockstore(
@@ -459,7 +480,7 @@ fn do_process_blockstore_from_root(
             if opts.full_leader_cache {
                 leader_schedule_cache.set_max_schedules(std::usize::MAX);
             }
-            let initial_forks = load_frozen_forks(
+            let mut initial_forks = load_frozen_forks(
                 &bank,
                 &meta,
                 blockstore,
@@ -469,6 +490,8 @@ fn do_process_blockstore_from_root(
                 recyclers,
                 transaction_status_sender,
             )?;
+            initial_forks.sort_by_key(|bank| bank.slot());
+
             (initial_forks, leader_schedule_cache)
         } else {
             // If there's no meta for the input `start_slot`, then we started from a snapshot
@@ -525,12 +548,12 @@ pub fn verify_ticks(
 
     if next_bank_tick_height > max_bank_tick_height {
         warn!("Too many entry ticks found in slot: {}", bank.slot());
-        return Err(BlockError::InvalidTickCount);
+        return Err(BlockError::TooManyTicks);
     }
 
     if next_bank_tick_height < max_bank_tick_height && slot_full {
-        warn!("Too few entry ticks found in slot: {}", bank.slot());
-        return Err(BlockError::InvalidTickCount);
+        info!("Too few entry ticks found in slot: {}", bank.slot());
+        return Err(BlockError::TooFewTicks);
     }
 
     if next_bank_tick_height == max_bank_tick_height {
@@ -579,6 +602,7 @@ fn confirm_full_slot(
         replay_vote_sender,
         opts.entry_callback.as_ref(),
         recyclers,
+        opts.allow_dead_slots,
     )?;
 
     if !bank.is_complete() {
@@ -597,6 +621,7 @@ pub struct ConfirmationTiming {
     pub transaction_verify_elapsed: u64,
     pub fetch_elapsed: u64,
     pub fetch_fail_elapsed: u64,
+    pub execute_timings: ExecuteTimings,
 }
 
 impl Default for ConfirmationTiming {
@@ -608,6 +633,7 @@ impl Default for ConfirmationTiming {
             transaction_verify_elapsed: 0,
             fetch_elapsed: 0,
             fetch_fail_elapsed: 0,
+            execute_timings: ExecuteTimings::default(),
         }
     }
 }
@@ -630,6 +656,7 @@ impl ConfirmationProgress {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn confirm_slot(
     blockstore: &Blockstore,
     bank: &Arc<Bank>,
@@ -640,13 +667,14 @@ pub fn confirm_slot(
     replay_vote_sender: Option<&ReplayVoteSender>,
     entry_callback: Option<&ProcessCallback>,
     recyclers: &VerifyRecyclers,
+    allow_dead_slots: bool,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
 
     let (entries, num_shreds, slot_full) = {
         let mut load_elapsed = Measure::start("load_elapsed");
         let load_result = blockstore
-            .get_slot_entries_with_shred_info(slot, progress.num_shreds, false)
+            .get_slot_entries_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
             .map_err(BlockstoreProcessorError::FailedToLoadEntries);
         load_elapsed.stop();
         if load_result.is_err() {
@@ -703,6 +731,7 @@ pub fn confirm_slot(
     };
 
     let mut replay_elapsed = Measure::start("replay_elapsed");
+    let mut execute_timings = ExecuteTimings::default();
     let process_result = process_entries_with_callback(
         bank,
         &entries,
@@ -710,10 +739,13 @@ pub fn confirm_slot(
         entry_callback,
         transaction_status_sender,
         replay_vote_sender,
+        &mut execute_timings,
     )
     .map_err(BlockstoreProcessorError::from);
     replay_elapsed.stop();
     timing.replay_elapsed += replay_elapsed.as_us();
+
+    timing.execute_timings.accumulate(&execute_timings);
 
     if let Some(mut verifier) = verifier {
         let verified = verifier.finish_verify(&entries);
@@ -1070,11 +1102,15 @@ pub struct TransactionStatusBatch {
     pub statuses: Vec<TransactionExecutionResult>,
     pub balances: TransactionBalancesSet,
     pub token_balances: TransactionTokenBalancesSet,
-    pub inner_instructions: Vec<Option<InnerInstructionsList>>,
-    pub transaction_logs: Vec<TransactionLogMessages>,
+    pub inner_instructions: Option<Vec<Option<InnerInstructionsList>>>,
+    pub transaction_logs: Option<Vec<TransactionLogMessages>>,
 }
 
-pub type TransactionStatusSender = Sender<TransactionStatusBatch>;
+#[derive(Clone)]
+pub struct TransactionStatusSender {
+    pub sender: Sender<TransactionStatusBatch>,
+    pub enable_cpi_and_log_storage: bool,
+}
 
 pub fn send_transaction_status_batch(
     bank: Arc<Bank>,
@@ -1088,16 +1124,25 @@ pub fn send_transaction_status_batch(
     transaction_status_sender: TransactionStatusSender,
 ) {
     let slot = bank.slot();
-    if let Err(e) = transaction_status_sender.send(TransactionStatusBatch {
-        bank,
-        transactions: transactions.to_vec(),
-        iteration_order,
-        statuses,
-        balances,
-        token_balances,
-        inner_instructions,
-        transaction_logs,
-    }) {
+    let (inner_instructions, transaction_logs) =
+        if !transaction_status_sender.enable_cpi_and_log_storage {
+            (None, None)
+        } else {
+            (Some(inner_instructions), Some(transaction_logs))
+        };
+    if let Err(e) = transaction_status_sender
+        .sender
+        .send(TransactionStatusBatch {
+            bank,
+            transactions: transactions.to_vec(),
+            iteration_order,
+            statuses,
+            balances,
+            token_balances,
+            inner_instructions,
+            transaction_logs,
+        })
+    {
         trace!(
             "Slot {} transaction_status send batch failed: {:?}",
             slot,
@@ -3055,7 +3100,16 @@ pub mod tests {
         let entry = next_entry(&new_blockhash, 1, vec![tx]);
         entries.push(entry);
 
-        process_entries_with_callback(&bank0, &entries, true, None, None, None).unwrap();
+        process_entries_with_callback(
+            &bank0,
+            &entries,
+            true,
+            None,
+            None,
+            None,
+            &mut ExecuteTimings::default(),
+        )
+        .unwrap();
         assert_eq!(bank0.get_balance(&keypair.pubkey()), 1)
     }
 
@@ -3149,6 +3203,7 @@ pub mod tests {
             false,
             false,
             false,
+            &mut ExecuteTimings::default(),
         );
         let (err, signature) = get_first_error(&batch, fee_collection_results).unwrap();
         // First error found should be for the 2nd transaction, due to iteration_order

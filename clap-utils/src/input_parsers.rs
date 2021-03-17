@@ -167,12 +167,12 @@ pub fn resolve_signer(
     name: &str,
     wallet_manager: &mut Option<Arc<RemoteWalletManager>>,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    Ok(resolve_signer_from_path(
+    resolve_signer_from_path(
         matches,
         matches.value_of(name).unwrap(),
         name,
         wallet_manager,
-    )?)
+    )
 }
 
 pub fn lamports_of_sol(matches: &ArgMatches<'_>, name: &str) -> Option<u64> {
@@ -184,14 +184,9 @@ pub fn cluster_type_of(matches: &ArgMatches<'_>, name: &str) -> Option<ClusterTy
 }
 
 pub fn commitment_of(matches: &ArgMatches<'_>, name: &str) -> Option<CommitmentConfig> {
-    matches.value_of(name).map(|value| match value {
-        "max" => CommitmentConfig::max(),
-        "recent" => CommitmentConfig::recent(),
-        "root" => CommitmentConfig::root(),
-        "single" => CommitmentConfig::single(),
-        "singleGossip" => CommitmentConfig::single_gossip(),
-        _ => CommitmentConfig::default(),
-    })
+    matches
+        .value_of(name)
+        .map(|value| CommitmentConfig::from_str(value).unwrap_or_default())
 }
 
 #[cfg(test)]

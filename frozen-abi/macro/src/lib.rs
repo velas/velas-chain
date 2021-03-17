@@ -1,3 +1,4 @@
+#![allow(clippy::integer_arithmetic)]
 extern crate proc_macro;
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
@@ -71,6 +72,7 @@ fn filter_allow_attrs(attrs: &mut Vec<Attribute>) {
     });
 }
 
+#[allow(deprecated)]
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 fn quote_for_specialization_detection() -> TokenStream2 {
     lazy_static! {

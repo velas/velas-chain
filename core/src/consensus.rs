@@ -1,7 +1,4 @@
-use crate::{
-    progress_map::{LockoutIntervals, ProgressMap},
-    pubkey_references::PubkeyReferences,
-};
+use crate::progress_map::{LockoutIntervals, ProgressMap};
 use chrono::prelude::*;
 use solana_ledger::{ancestor_iterator::AncestorIterator, blockstore::Blockstore, blockstore_db};
 use solana_measure::measure::Measure;
@@ -214,7 +211,6 @@ impl Tower {
         bank_slot: Slot,
         vote_accounts: F,
         ancestors: &HashMap<Slot, HashSet<Slot>>,
-        all_pubkeys: &mut PubkeyReferences,
     ) -> ComputedBankState
     where
         F: IntoIterator<Item = (Pubkey, (u64, ArcVoteAccount))>,
@@ -247,7 +243,6 @@ impl Tower {
                 Ok(vote_state) => vote_state.clone(),
             };
             for vote in &vote_state.votes {
-                let key = all_pubkeys.get_or_insert(&key);
                 lockout_intervals
                     .entry(vote.expiration_slot())
                     .or_insert_with(Vec::new)
@@ -359,7 +354,7 @@ impl Tower {
         slot: Slot,
         hash: Hash,
         last_voted_slot_in_bank: Option<Slot>,
-    ) -> (Vote, usize) {
+    ) -> (Vote, Vec<Slot> /*VoteState.tower*/) {
         let mut local_vote_state = local_vote_state.clone();
         let vote = Vote::new(vec![slot], hash);
         local_vote_state.process_vote_unchecked(&vote);
@@ -379,7 +374,7 @@ impl Tower {
             slots,
             local_vote_state.votes
         );
-        (Vote::new(slots, hash), local_vote_state.votes.len() - 1)
+        (Vote::new(slots, hash), local_vote_state.tower())
     }
 
     fn last_voted_slot_in_bank(bank: &Bank, vote_account_pubkey: &Pubkey) -> Option<Slot> {
@@ -388,7 +383,11 @@ impl Tower {
         slot
     }
 
-    pub fn new_vote_from_bank(&self, bank: &Bank, vote_account_pubkey: &Pubkey) -> (Vote, usize) {
+    pub fn new_vote_from_bank(
+        &self,
+        bank: &Bank,
+        vote_account_pubkey: &Pubkey,
+    ) -> (Vote, Vec<Slot> /*VoteState.tower*/) {
         let voted_slot = Self::last_voted_slot_in_bank(bank, vote_account_pubkey);
         Self::new_vote(&self.lockouts, bank.slot(), bank.hash(), voted_slot)
     }
@@ -846,10 +845,9 @@ impl Tower {
         assert!(
             self.last_vote == Vote::default() && self.lockouts.votes.is_empty()
                 || self.last_vote != Vote::default() && !self.lockouts.votes.is_empty(),
-            format!(
-                "last vote: {:?} lockouts.votes: {:?}",
-                self.last_vote, self.lockouts.votes
-            )
+            "last vote: {:?} lockouts.votes: {:?}",
+            self.last_vote,
+            self.lockouts.votes
         );
 
         if let Some(last_voted_slot) = self.last_voted_slot() {
@@ -1132,7 +1130,7 @@ impl Tower {
 #[derive(Error, Debug)]
 pub enum TowerError {
     #[error("IO Error: {0}")]
-    IOError(#[from] std::io::Error),
+    IoError(#[from] std::io::Error),
 
     #[error("Serialization Error: {0}")]
     SerializeError(#[from] bincode::Error),
@@ -1158,7 +1156,7 @@ pub enum TowerError {
 
 impl TowerError {
     pub fn is_file_missing(&self) -> bool {
-        if let TowerError::IOError(io_err) = &self {
+        if let TowerError::IoError(io_err) = &self {
             io_err.kind() == std::io::ErrorKind::NotFound
         } else {
             false
@@ -1247,7 +1245,7 @@ pub mod test {
     };
     use solana_ledger::{blockstore::make_slot_entries, get_tmp_ledger_path};
     use solana_runtime::{
-        accounts_background_service::ABSRequestSender,
+        accounts_background_service::AbsRequestSender,
         bank::Bank,
         bank_forks::BankForks,
         genesis_utils::{
@@ -1266,7 +1264,6 @@ pub mod test {
         collections::HashMap,
         fs::{remove_file, OpenOptions},
         io::{Read, Seek, SeekFrom, Write},
-        rc::Rc,
         sync::RwLock,
     };
     use tempfile::TempDir;
@@ -1376,7 +1373,6 @@ pub mod test {
                 &VoteTracker::default(),
                 &ClusterSlots::default(),
                 &self.bank_forks,
-                &mut PubkeyReferences::default(),
                 &mut self.heaviest_subtree_fork_choice,
             );
 
@@ -1389,7 +1385,7 @@ pub mod test {
                 .clone();
 
             // Try to vote on the given slot
-            let descendants = self.bank_forks.read().unwrap().descendants();
+            let descendants = self.bank_forks.read().unwrap().descendants().clone();
             let SelectVoteAndResetForkResult {
                 heaviest_fork_failures,
                 ..
@@ -1420,8 +1416,7 @@ pub mod test {
                 new_root,
                 &self.bank_forks,
                 &mut self.progress,
-                &ABSRequestSender::default(),
-                &mut PubkeyReferences::default(),
+                &AbsRequestSender::default(),
                 None,
                 &mut self.heaviest_subtree_fork_choice,
             )
@@ -1463,7 +1458,7 @@ pub mod test {
                 .lockout_intervals
                 .entry(lockout_interval.1)
                 .or_default()
-                .push((lockout_interval.0, Rc::new(*vote_account_pubkey)));
+                .push((lockout_interval.0, *vote_account_pubkey));
         }
 
         fn can_progress_on_fork(
@@ -1692,7 +1687,12 @@ pub mod test {
             fork_progress.fork_stats.computed = true;
         }
         let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
-        let mut descendants = vote_simulator.bank_forks.read().unwrap().descendants();
+        let mut descendants = vote_simulator
+            .bank_forks
+            .read()
+            .unwrap()
+            .descendants()
+            .clone();
         let mut tower = Tower::new_with_key(&my_pubkey);
 
         // Last vote is 47
@@ -1823,7 +1823,12 @@ pub mod test {
         tower.lockouts.root_slot = Some(43);
         // Refresh ancestors and descendants for new root.
         let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
-        let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
+        let descendants = vote_simulator
+            .bank_forks
+            .read()
+            .unwrap()
+            .descendants()
+            .clone();
 
         assert_eq!(
             tower.check_switch_threshold(
@@ -1989,13 +1994,7 @@ pub mod test {
             bank_weight,
             pubkey_votes,
             ..
-        } = Tower::collect_vote_lockouts(
-            &Pubkey::default(),
-            1,
-            accounts.into_iter(),
-            &ancestors,
-            &mut PubkeyReferences::default(),
-        );
+        } = Tower::collect_vote_lockouts(&Pubkey::default(), 1, accounts.into_iter(), &ancestors);
         assert_eq!(voted_stakes[&0], 2);
         assert_eq!(total_stake, 2);
         let mut pubkey_votes = Arc::try_unwrap(pubkey_votes).unwrap();
@@ -2047,7 +2046,6 @@ pub mod test {
             MAX_LOCKOUT_HISTORY as u64,
             accounts.into_iter(),
             &ancestors,
-            &mut PubkeyReferences::default(),
         );
         for i in 0..MAX_LOCKOUT_HISTORY {
             assert_eq!(voted_stakes[&(i as u64)], 2);
@@ -2268,10 +2266,10 @@ pub mod test {
     #[test]
     fn test_new_vote() {
         let local = VoteState::default();
-        let vote = Tower::new_vote(&local, 0, Hash::default(), None);
+        let (vote, tower_slots) = Tower::new_vote(&local, 0, Hash::default(), None);
         assert_eq!(local.votes.len(), 0);
-        assert_eq!(vote.0.slots, vec![0]);
-        assert_eq!(vote.1, 0);
+        assert_eq!(vote.slots, vec![0]);
+        assert_eq!(tower_slots, vec![0]);
     }
 
     #[test]
@@ -2291,9 +2289,9 @@ pub mod test {
         };
         local.process_vote_unchecked(&vote);
         assert_eq!(local.votes.len(), 1);
-        let vote = Tower::new_vote(&local, 1, Hash::default(), Some(0));
-        assert_eq!(vote.0.slots, vec![1]);
-        assert_eq!(vote.1, 1);
+        let (vote, tower_slots) = Tower::new_vote(&local, 1, Hash::default(), Some(0));
+        assert_eq!(vote.slots, vec![1]);
+        assert_eq!(tower_slots, vec![0, 1]);
     }
 
     #[test]
@@ -2306,10 +2304,10 @@ pub mod test {
         };
         local.process_vote_unchecked(&vote);
         assert_eq!(local.votes.len(), 1);
-        let vote = Tower::new_vote(&local, 3, Hash::default(), Some(0));
-        //first vote expired, so index should be 0
-        assert_eq!(vote.0.slots, vec![3]);
-        assert_eq!(vote.1, 0);
+        let (vote, tower_slots) = Tower::new_vote(&local, 3, Hash::default(), Some(0));
+        assert_eq!(vote.slots, vec![3]);
+        // First vote expired, so should be evicted from tower.
+        assert_eq!(tower_slots, vec![3]);
     }
 
     #[test]
@@ -2354,7 +2352,6 @@ pub mod test {
             vote_to_evaluate,
             accounts.clone().into_iter(),
             &ancestors,
-            &mut PubkeyReferences::default(),
         );
         assert!(tower.check_vote_stake_threshold(vote_to_evaluate, &voted_stakes, total_stake,));
 
@@ -2371,7 +2368,6 @@ pub mod test {
             vote_to_evaluate,
             accounts.into_iter(),
             &ancestors,
-            &mut PubkeyReferences::default(),
         );
         assert!(!tower.check_vote_stake_threshold(vote_to_evaluate, &voted_stakes, total_stake,));
     }
@@ -2483,7 +2479,12 @@ pub mod test {
         }
 
         let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
-        let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
+        let descendants = vote_simulator
+            .bank_forks
+            .read()
+            .unwrap()
+            .descendants()
+            .clone();
         let mut tower = Tower::new_with_key(&my_pubkey);
 
         tower.record_vote(43, Hash::default());
@@ -2575,7 +2576,12 @@ pub mod test {
         let mut slot_history = SlotHistory::default();
         vote_simulator.set_root(replayed_root_slot);
         let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
-        let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
+        let descendants = vote_simulator
+            .bank_forks
+            .read()
+            .unwrap()
+            .descendants()
+            .clone();
         for slot in &[0, 1, 2, 43, replayed_root_slot] {
             slot_history.add(*slot);
         }
@@ -2697,7 +2703,7 @@ pub mod test {
                 remove_file(path).unwrap();
             },
         );
-        assert_matches!(loaded, Err(TowerError::IOError(_)))
+        assert_matches!(loaded, Err(TowerError::IoError(_)))
     }
 
     #[test]

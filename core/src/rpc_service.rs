@@ -3,6 +3,7 @@
 use crate::{
     bigtable_upload_service::BigTableUploadService,
     cluster_info::ClusterInfo,
+    max_slots::MaxSlots,
     optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
     poh_recorder::PohRecorder,
     rpc::*,
@@ -17,6 +18,7 @@ use jsonrpc_http_server::{
     RequestMiddlewareAction, ServerBuilder,
 };
 use regex::Regex;
+use solana_client::rpc_cache::LargestAccountsCache;
 use solana_ledger::blockstore::Blockstore;
 use solana_metrics::inc_new_counter_info;
 use solana_runtime::{
@@ -34,6 +36,8 @@ use std::{
     thread::{self, Builder, JoinHandle},
 };
 use tokio::runtime;
+
+const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
 
 pub struct JsonRpcService {
     thread_hdl: JoinHandle<()>,
@@ -63,7 +67,7 @@ impl RpcRequestMiddleware {
         Self {
             ledger_path,
             snapshot_archive_path_regex: Regex::new(
-                r"/snapshot-\d+-[[:alnum:]]+\.(tar|tar\.bz2|tar\.zst|tar\.gz)$",
+                r"^/snapshot-\d+-[[:alnum:]]+\.(tar|tar\.bz2|tar\.zst|tar\.gz)$",
             )
             .unwrap(),
             snapshot_config,
@@ -160,7 +164,7 @@ impl RpcRequestMiddleware {
     fn health_check(&self) -> &'static str {
         let response = match self.health.check() {
             RpcHealthStatus::Ok => "ok",
-            RpcHealthStatus::Behind => "behind",
+            RpcHealthStatus::Behind { num_slots: _ } => "behind",
         };
         info!("health check: {}", response);
         response
@@ -271,6 +275,7 @@ impl JsonRpcService {
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         send_transaction_retry_ms: u64,
         send_transaction_leader_forward_count: u64,
+        max_slots: Arc<MaxSlots>,
     ) -> Self {
         info!("rpc bound to {:?}", rpc_addr);
         info!("rpc configuration: {:?}", config);
@@ -282,6 +287,10 @@ impl JsonRpcService {
             config.health_check_slot_distance,
             override_health_check,
         ));
+
+        let largest_accounts_cache = Arc::new(RwLock::new(LargestAccountsCache::new(
+            LARGEST_ACCOUNTS_CACHE_DURATION,
+        )));
 
         let tpu_address = cluster_info.my_contact_info().tpu;
         let mut runtime = runtime::Builder::new()
@@ -298,6 +307,7 @@ impl JsonRpcService {
                 runtime
                     .block_on(solana_storage_bigtable::LedgerStorage::new(
                         !config.enable_bigtable_ledger_upload,
+                        config.rpc_bigtable_timeout,
                     ))
                     .map(|bigtable_ledger_storage| {
                         info!("BigTable ledger storage initialized");
@@ -330,6 +340,7 @@ impl JsonRpcService {
 
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             config,
+            snapshot_config.clone(),
             bank_forks.clone(),
             block_commitment_cache,
             blockstore,
@@ -340,6 +351,8 @@ impl JsonRpcService {
             &runtime,
             bigtable_ledger_storage,
             optimistically_confirmed_bank,
+            largest_accounts_cache,
+            max_slots,
         );
 
         let leader_info =
@@ -357,6 +370,20 @@ impl JsonRpcService {
         let test_request_processor = request_processor.clone();
 
         let ledger_path = ledger_path.to_path_buf();
+
+        // sadly, some parts of our current rpc implemention block the jsonrpc's
+        // _socket-listening_ event loop for too long, due to (blocking) long IO or intesive CPU,
+        // causing no further processing of incoming requests and ultimatily innocent clients timing-out.
+        // So create a (shared) multi-threaded event_loop for jsonrpc and set its .threads() to 1,
+        // so that we avoid the single-threaded event loops from being created automatically by
+        // jsonrpc for threads when .threads(N > 1) is given.
+        let event_loop = {
+            tokio_01::runtime::Builder::new()
+                .core_threads(rpc_threads)
+                .name_prefix("sol-rpc-el")
+                .build()
+                .unwrap()
+        };
 
         let (close_handle_sender, close_handle_receiver) = channel();
         let thread_hdl = Builder::new()
@@ -380,7 +407,8 @@ impl JsonRpcService {
                     io,
                     move |_req: &hyper::Request<hyper::Body>| request_processor.clone(),
                 )
-                .threads(rpc_threads)
+                .event_loop_executor(event_loop.executor())
+                .threads(1)
                 .cors(DomainsValidation::AllowOnly(vec![
                     AccessControlAllowOrigin::Any,
                 ]))
@@ -488,6 +516,7 @@ mod tests {
             optimistically_confirmed_bank,
             1000,
             1,
+            Arc::new(MaxSlots::default()),
         );
         let thread = rpc_service.thread_hdl.thread();
         assert_eq!(thread.name().unwrap(), "solana-jsonrpc");
@@ -558,6 +587,9 @@ mod tests {
         ));
         assert!(rrm_with_snapshot_config.is_file_get_path(
             "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "../snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(rrm_with_snapshot_config
             .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.gz"));

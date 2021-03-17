@@ -12,6 +12,20 @@ pub(super) struct SerializableAccountStorageEntry {
     accounts_current_len: usize,
 }
 
+pub trait SerializableStorage {
+    fn id(&self) -> AppendVecId;
+    fn current_len(&self) -> usize;
+}
+
+impl SerializableStorage for SerializableAccountStorageEntry {
+    fn id(&self) -> AppendVecId {
+        self.id
+    }
+    fn current_len(&self) -> usize {
+        self.accounts_current_len
+    }
+}
+
 #[cfg(all(test, RUSTC_WITH_SPECIALIZATION))]
 impl solana_frozen_abi::abi_example::IgnoreAsHelper for SerializableAccountStorageEntry {}
 
@@ -21,12 +35,6 @@ impl From<&AccountStorageEntry> for SerializableAccountStorageEntry {
             id: rhs.append_vec_id(),
             accounts_current_len: rhs.accounts.len(),
         }
-    }
-}
-
-impl Into<AccountStorageEntry> for SerializableAccountStorageEntry {
-    fn into(self) -> AccountStorageEntry {
-        AccountStorageEntry::new_empty_map(self.id, self.accounts_current_len)
     }
 }
 
@@ -74,45 +82,46 @@ pub(crate) struct DeserializableVersionedBank {
     pub(crate) evm_state_root: evm_rpc::Hex<evm_state::H256>,
 }
 
-impl Into<BankFieldsToDeserialize> for DeserializableVersionedBank {
-    fn into(self) -> BankFieldsToDeserialize {
+impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
+    fn from(dvb: DeserializableVersionedBank) -> Self {
         BankFieldsToDeserialize {
-            blockhash_queue: self.blockhash_queue,
-            ancestors: self.ancestors,
-            hash: self.hash,
-            parent_hash: self.parent_hash,
-            parent_slot: self.parent_slot,
-            hard_forks: self.hard_forks,
-            transaction_count: self.transaction_count,
-            tick_height: self.tick_height,
-            signature_count: self.signature_count,
-            capitalization: self.capitalization,
-            max_tick_height: self.max_tick_height,
-            hashes_per_tick: self.hashes_per_tick,
-            ticks_per_slot: self.ticks_per_slot,
-            ns_per_slot: self.ns_per_slot,
-            genesis_creation_time: self.genesis_creation_time,
-            slots_per_year: self.slots_per_year,
-            unused: self.unused,
-            slot: self.slot,
-            epoch: self.epoch,
-            block_height: self.block_height,
-            collector_id: self.collector_id,
-            collector_fees: self.collector_fees,
-            fee_calculator: self.fee_calculator,
-            fee_rate_governor: self.fee_rate_governor,
-            collected_rent: self.collected_rent,
-            rent_collector: self.rent_collector,
-            epoch_schedule: self.epoch_schedule,
-            inflation: self.inflation,
-            stakes: self.stakes,
-            epoch_stakes: self.epoch_stakes,
-            is_delta: self.is_delta,
-            evm_chain_id: self.evm_chain_id,
-            evm_state_root: self.evm_state_root.0,
+            blockhash_queue: dvb.blockhash_queue,
+            ancestors: dvb.ancestors,
+            hash: dvb.hash,
+            parent_hash: dvb.parent_hash,
+            parent_slot: dvb.parent_slot,
+            hard_forks: dvb.hard_forks,
+            transaction_count: dvb.transaction_count,
+            tick_height: dvb.tick_height,
+            signature_count: dvb.signature_count,
+            capitalization: dvb.capitalization,
+            max_tick_height: dvb.max_tick_height,
+            hashes_per_tick: dvb.hashes_per_tick,
+            ticks_per_slot: dvb.ticks_per_slot,
+            ns_per_slot: dvb.ns_per_slot,
+            genesis_creation_time: dvb.genesis_creation_time,
+            slots_per_year: dvb.slots_per_year,
+            unused: dvb.unused,
+            slot: dvb.slot,
+            epoch: dvb.epoch,
+            block_height: dvb.block_height,
+            collector_id: dvb.collector_id,
+            collector_fees: dvb.collector_fees,
+            fee_calculator: dvb.fee_calculator,
+            fee_rate_governor: dvb.fee_rate_governor,
+            collected_rent: dvb.collected_rent,
+            rent_collector: dvb.rent_collector,
+            epoch_schedule: dvb.epoch_schedule,
+            inflation: dvb.inflation,
+            stakes: dvb.stakes,
+            epoch_stakes: dvb.epoch_stakes,
+            is_delta: dvb.is_delta,
+            evm_chain_id: dvb.evm_chain_id,
+            evm_state_root: dvb.evm_state_root.0,
         }
     }
 }
+
 // Serializable version of Bank, not Deserializable to avoid cloning by using refs.
 // Sync fields with DeserializableVersionedBank!
 #[derive(Serialize)]
@@ -213,7 +222,7 @@ impl<'a> TypeContext<'a> for Context {
     {
         (
             SerializableVersionedBank::from(serializable_bank.bank.get_fields_to_serialize()),
-            SerializableAccountsDB::<'a, Self> {
+            SerializableAccountsDb::<'a, Self> {
                 accounts_db: &*serializable_bank.bank.rc.accounts.accounts_db,
                 slot: serializable_bank.bank.rc.slot,
                 account_storage_entries: serializable_bank.snapshot_storages,
@@ -225,7 +234,7 @@ impl<'a> TypeContext<'a> for Context {
 
     fn serialize_accounts_db_fields<S: serde::ser::Serializer>(
         serializer: S,
-        serializable_db: &SerializableAccountsDB<'a, Self>,
+        serializable_db: &SerializableAccountsDb<'a, Self>,
     ) -> std::result::Result<S::Ok, S::Error>
     where
         Self: std::marker::Sized,

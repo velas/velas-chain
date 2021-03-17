@@ -1,4 +1,5 @@
 use crate::{
+    accounts_db::AccountsDb,
     accounts_index::AccountIndex,
     bank::{Bank, BankSlotDelta, Builtins},
     bank_forks::ArchiveFormat,
@@ -6,12 +7,15 @@ use crate::{
     serde_snapshot::{
         bank_from_stream, bank_to_stream, SerdeStyle, SnapshotStorage, SnapshotStorages,
     },
-    snapshot_package::{AccountsPackage, AccountsPackageSendError, AccountsPackageSender},
+    snapshot_package::{
+        AccountsPackage, AccountsPackagePre, AccountsPackageSendError, AccountsPackageSender,
+    },
 };
 use bincode::{config::Options, serialize_into};
 use bzip2::bufread::BzDecoder;
 use flate2::read::GzDecoder;
 use log::*;
+use rayon::ThreadPool;
 use regex::Regex;
 use solana_measure::measure::Measure;
 use solana_sdk::{clock::Slot, genesis_config::GenesisConfig, hash::Hash, pubkey::Pubkey};
@@ -21,7 +25,7 @@ use std::{
     cmp::Ordering,
     fmt,
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Error as IOError, ErrorKind, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Error as IoError, ErrorKind, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::{self, ExitStatus},
     str::FromStr,
@@ -106,7 +110,7 @@ pub struct SlotSnapshotPaths {
 #[derive(Error, Debug)]
 pub enum SnapshotError {
     #[error("I/O error: {0}")]
-    IO(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
 
     #[error("serialization error: {0}")]
     Serialize(#[from] bincode::Error),
@@ -146,7 +150,8 @@ pub fn package_snapshot<P: AsRef<Path>, Q: AsRef<Path>>(
     snapshot_storages: SnapshotStorages,
     archive_format: ArchiveFormat,
     snapshot_version: SnapshotVersion,
-) -> Result<AccountsPackage> {
+    hash_for_testing: Option<Hash>,
+) -> Result<AccountsPackagePre> {
     // Hard link all the snapshots we need for this package
     let snapshot_tmpdir = tempfile::Builder::new()
         .prefix(&format!("{}{}-", TMP_SNAPSHOT_PREFIX, bank.slot()))
@@ -176,28 +181,25 @@ pub fn package_snapshot<P: AsRef<Path>, Q: AsRef<Path>>(
         symlink::symlink_dir(evm_source, evm_target)?;
     }
 
-    let snapshot_package_output_file = get_snapshot_archive_path(
-        &snapshot_package_output_path,
-        &(bank.slot(), bank.get_accounts_hash()),
-        &archive_format,
-    );
-
-    let package = AccountsPackage::new(
+    let package = AccountsPackagePre::new(
         bank.slot(),
         bank.block_height(),
         status_cache_slot_deltas,
         snapshot_tmpdir,
         snapshot_storages,
-        snapshot_package_output_file,
         bank.get_accounts_hash(),
         archive_format,
         snapshot_version,
+        snapshot_package_output_path.as_ref().to_path_buf(),
+        bank.capitalization(),
+        hash_for_testing,
+        bank.simple_capitalization_enabled(),
     );
 
     Ok(package)
 }
 
-fn get_archive_ext(archive_format: &ArchiveFormat) -> &'static str {
+fn get_archive_ext(archive_format: ArchiveFormat) -> &'static str {
     match archive_format {
         ArchiveFormat::TarBzip2 => ".tar.bz2",
         ArchiveFormat::TarGzip => ".tar.gz",
@@ -297,7 +299,7 @@ pub fn archive_snapshot_package(snapshot_package: &AccountsPackage) -> Result<()
         f.write_all(snapshot_package.snapshot_version.as_str().as_bytes())?;
     }
 
-    let file_ext = get_archive_ext(&snapshot_package.archive_format);
+    let file_ext = get_archive_ext(snapshot_package.archive_format);
 
     // Tar the staging directory into the archive at `archive_path`
     //
@@ -323,7 +325,7 @@ pub fn archive_snapshot_package(snapshot_package: &AccountsPackage) -> Result<()
 
     match &mut tar.stdout {
         None => {
-            return Err(SnapshotError::IO(IOError::new(
+            return Err(SnapshotError::Io(IoError::new(
                 ErrorKind::Other,
                 "tar stdout unavailable".to_string(),
             )));
@@ -526,7 +528,7 @@ pub fn add_snapshot<P: AsRef<Path>>(
     let mut bank_serialize = Measure::start("bank-serialize-ms");
     let bank_snapshot_serializer = move |stream: &mut BufWriter<File>| -> Result<()> {
         let serde_style = match snapshot_version {
-            SnapshotVersion::V1_2_0 => SerdeStyle::NEWER,
+            SnapshotVersion::V1_2_0 => SerdeStyle::Newer,
         };
         bank_to_stream(serde_style, stream.by_ref(), bank, snapshot_storages)?;
         Ok(())
@@ -626,7 +628,7 @@ pub fn bank_from_archive<P: AsRef<Path>>(
     evm_state_path: &Path,
     account_paths: &[PathBuf],
     frozen_account_pubkeys: &[Pubkey],
-    snapshot_path: &PathBuf,
+    snapshot_path: &Path,
     snapshot_tar: P,
     archive_format: ArchiveFormat,
     genesis_config: &GenesisConfig,
@@ -672,12 +674,12 @@ pub fn bank_from_archive<P: AsRef<Path>>(
     Ok(bank)
 }
 
-pub fn get_snapshot_archive_path<P: AsRef<Path>>(
-    snapshot_output_dir: P,
+pub fn get_snapshot_archive_path(
+    snapshot_output_dir: PathBuf,
     snapshot_hash: &(Slot, Hash),
-    archive_format: &ArchiveFormat,
+    archive_format: ArchiveFormat,
 ) -> PathBuf {
-    snapshot_output_dir.as_ref().join(format!(
+    snapshot_output_dir.join(format!(
         "snapshot-{}-{}{}",
         snapshot_hash.0,
         snapshot_hash.1,
@@ -803,7 +805,7 @@ fn rebuild_bank_from_snapshots<P>(
     evm_state_path: &Path,
     account_paths: &[PathBuf],
     frozen_account_pubkeys: &[Pubkey],
-    unpacked_snapshots_dir: &PathBuf,
+    unpacked_snapshots_dir: &Path,
     append_vecs_path: P,
     genesis_config: &GenesisConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
@@ -854,7 +856,7 @@ where
     let bank = deserialize_snapshot_data_file(&root_paths.snapshot_file_path, |mut stream| {
         Ok(match snapshot_version_enum {
             SnapshotVersion::V1_2_0 => bank_from_stream(
-                SerdeStyle::NEWER,
+                SerdeStyle::Newer,
                 &mut stream,
                 &append_vecs_path,
                 &evm_state_path,
@@ -899,7 +901,7 @@ fn get_bank_snapshot_dir<P: AsRef<Path>>(path: P, slot: Slot) -> PathBuf {
 
 fn get_io_error(error: &str) -> SnapshotError {
     warn!("Snapshot Error: {:?}", error);
-    SnapshotError::IO(IOError::new(ErrorKind::Other, error))
+    SnapshotError::Io(IoError::new(ErrorKind::Other, error))
 }
 
 pub fn verify_snapshot_archive<P, Q, R>(
@@ -946,6 +948,7 @@ pub fn snapshot_bank(
     snapshot_package_output_path: &Path,
     snapshot_version: SnapshotVersion,
     archive_format: &ArchiveFormat,
+    hash_for_testing: Option<Hash>,
 ) -> Result<()> {
     let storages: Vec<_> = root_bank.get_snapshot_storages();
     let mut add_snapshot_time = Measure::start("add-snapshot-ms");
@@ -966,13 +969,99 @@ pub fn snapshot_bank(
         status_cache_slot_deltas,
         snapshot_package_output_path,
         storages,
-        archive_format.clone(),
+        *archive_format,
         snapshot_version,
+        hash_for_testing,
     )?;
 
     accounts_package_sender.send(package)?;
 
     Ok(())
+}
+
+/// Convenience function to create a snapshot archive out of any Bank, regardless of state.  The
+/// Bank will be frozen during the process.
+pub fn bank_to_snapshot_archive<P: AsRef<Path>, Q: AsRef<Path>>(
+    snapshot_path: P,
+    bank: &Bank,
+    snapshot_version: Option<SnapshotVersion>,
+    snapshot_package_output_path: Q,
+    archive_format: ArchiveFormat,
+    thread_pool: Option<&ThreadPool>,
+) -> Result<PathBuf> {
+    let snapshot_version = snapshot_version.unwrap_or_default();
+
+    assert!(bank.is_complete());
+    bank.squash(); // Bank may not be a root
+    bank.force_flush_accounts_cache();
+    bank.clean_accounts(true);
+    bank.update_accounts_hash();
+    bank.rehash(); // Bank accounts may have been manually modified by the caller
+
+    let temp_dir = tempfile::tempdir_in(snapshot_path)?;
+
+    let storages: Vec<_> = bank.get_snapshot_storages();
+    let slot_snapshot_paths = add_snapshot(&temp_dir, &bank, &storages, snapshot_version)?;
+    let package = package_snapshot(
+        &bank,
+        &slot_snapshot_paths,
+        &temp_dir,
+        bank.src.slot_deltas(&bank.src.roots()),
+        snapshot_package_output_path,
+        storages,
+        archive_format,
+        snapshot_version,
+        None,
+    )?;
+
+    let package = process_accounts_package_pre(package, thread_pool);
+
+    archive_snapshot_package(&package)?;
+    Ok(package.tar_output_file)
+}
+
+pub fn process_accounts_package_pre(
+    accounts_package: AccountsPackagePre,
+    thread_pool: Option<&ThreadPool>,
+) -> AccountsPackage {
+    let mut time = Measure::start("hash");
+
+    let hash = accounts_package.hash; // temporarily remaining here
+    if let Some(expected_hash) = accounts_package.hash_for_testing {
+        let (hash, lamports) = AccountsDb::calculate_accounts_hash_without_index(
+            &accounts_package.storages,
+            accounts_package.simple_capitalization_testing,
+            thread_pool,
+        );
+
+        assert_eq!(accounts_package.expected_capitalization, lamports);
+
+        assert_eq!(expected_hash, hash);
+    };
+    time.stop();
+
+    datapoint_info!(
+        "accounts_hash_verifier",
+        ("calculate_hash", time.as_us(), i64),
+    );
+
+    let tar_output_file = get_snapshot_archive_path(
+        accounts_package.snapshot_output_dir,
+        &(accounts_package.slot, hash),
+        accounts_package.archive_format,
+    );
+
+    AccountsPackage::new(
+        accounts_package.slot,
+        accounts_package.block_height,
+        accounts_package.slot_deltas,
+        accounts_package.snapshot_links,
+        accounts_package.storages,
+        tar_output_file,
+        hash,
+        accounts_package.archive_format,
+        accounts_package.snapshot_version,
+    )
 }
 
 #[cfg(test)]
@@ -1010,7 +1099,7 @@ mod tests {
                 Ok(())
             },
         );
-        assert_matches!(result, Err(SnapshotError::IO(ref message)) if message.to_string().starts_with("too large snapshot data file to serialize"));
+        assert_matches!(result, Err(SnapshotError::Io(ref message)) if message.to_string().starts_with("too large snapshot data file to serialize"));
     }
 
     #[test]
@@ -1059,7 +1148,7 @@ mod tests {
             expected_consumed_size - 1,
             |stream| Ok(deserialize_from::<_, u32>(stream)?),
         );
-        assert_matches!(result, Err(SnapshotError::IO(ref message)) if message.to_string().starts_with("too large snapshot data file to deserialize"));
+        assert_matches!(result, Err(SnapshotError::Io(ref message)) if message.to_string().starts_with("too large snapshot data file to deserialize"));
     }
 
     #[test]
@@ -1084,7 +1173,7 @@ mod tests {
             expected_consumed_size * 2,
             |stream| Ok(deserialize_from::<_, u32>(stream)?),
         );
-        assert_matches!(result, Err(SnapshotError::IO(ref message)) if message.to_string().starts_with("invalid snapshot data file"));
+        assert_matches!(result, Err(SnapshotError::Io(ref message)) if message.to_string().starts_with("invalid snapshot data file"));
     }
 
     #[test]

@@ -76,6 +76,9 @@ impl<T: Default + Clone + Sized> Reset for PinnedVec<T> {
     fn set_recycler(&mut self, recycler: Weak<RecyclerX<Self>>) {
         self.recycler = Some(recycler);
     }
+    fn unset_recycler(&mut self) {
+        self.recycler = None;
+    }
 }
 
 impl<T: Clone + Default + Sized> Default for PinnedVec<T> {
@@ -89,18 +92,17 @@ impl<T: Clone + Default + Sized> Default for PinnedVec<T> {
     }
 }
 
-impl<T: Clone + Default + Sized> Into<Vec<T>> for PinnedVec<T> {
-    fn into(mut self) -> Vec<T> {
-        if self.pinned {
-            unpin(self.x.as_mut_ptr());
-            self.pinned = false;
+impl<T: Clone + Default + Sized> From<PinnedVec<T>> for Vec<T> {
+    fn from(mut pinned_vec: PinnedVec<T>) -> Self {
+        if pinned_vec.pinned {
+            unpin(pinned_vec.x.as_mut_ptr());
+            pinned_vec.pinned = false;
         }
-        self.pinnable = false;
-        self.recycler = None;
-        std::mem::take(&mut self.x)
+        pinned_vec.pinnable = false;
+        pinned_vec.recycler = None;
+        std::mem::take(&mut pinned_vec.x)
     }
 }
-
 pub struct PinnedIter<'a, T>(std::slice::Iter<'a, T>);
 
 pub struct PinnedIterMut<'a, T>(std::slice::IterMut<'a, T>);

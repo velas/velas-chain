@@ -1,10 +1,11 @@
+#![allow(clippy::integer_arithmetic)]
 use serial_test_derive::serial;
 use solana_bench_tps::bench::{do_bench_tps, generate_and_fund_keypairs};
 use solana_bench_tps::cli::Config;
 use solana_client::thin_client::create_client;
 use solana_core::cluster_info::VALIDATOR_PORT_RANGE;
 use solana_core::validator::ValidatorConfig;
-use solana_faucet::faucet::run_local_faucet;
+use solana_faucet::faucet::run_local_faucet_with_port;
 use solana_local_cluster::local_cluster::{ClusterConfig, LocalCluster};
 use solana_sdk::signature::{Keypair, Signer};
 use std::sync::{mpsc::channel, Arc};
@@ -36,8 +37,11 @@ fn test_bench_tps_local_cluster(config: Config) {
     ));
 
     let (addr_sender, addr_receiver) = channel();
-    run_local_faucet(faucet_keypair, addr_sender, None);
-    let faucet_addr = addr_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+    run_local_faucet_with_port(faucet_keypair, addr_sender, None, 0);
+    let faucet_addr = addr_receiver
+        .recv_timeout(Duration::from_secs(2))
+        .expect("run_local_faucet")
+        .expect("faucet_addr");
 
     let lamports_per_account = 100;
 

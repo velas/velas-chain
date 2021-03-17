@@ -4,7 +4,6 @@ use crate::{
     optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
     optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSender},
     poh_recorder::PohRecorder,
-    pubkey_references::LockedPubkeyReferences,
     result::{Error, Result},
     rpc_subscriptions::RpcSubscriptions,
     sigverify,
@@ -45,8 +44,8 @@ use std::{
 };
 
 // Map from a vote account to the authorized voter for an epoch
-pub type VerifiedLabelVotePacketsSender = CrossbeamSender<Vec<(CrdsValueLabel, Packets)>>;
-pub type VerifiedLabelVotePacketsReceiver = CrossbeamReceiver<Vec<(CrdsValueLabel, Packets)>>;
+pub type VerifiedLabelVotePacketsSender = CrossbeamSender<Vec<(CrdsValueLabel, Slot, Packets)>>;
+pub type VerifiedLabelVotePacketsReceiver = CrossbeamReceiver<Vec<(CrdsValueLabel, Slot, Packets)>>;
 pub type VerifiedVoteTransactionsSender = CrossbeamSender<Vec<Transaction>>;
 pub type VerifiedVoteTransactionsReceiver = CrossbeamReceiver<Vec<Transaction>>;
 pub type VerifiedVoteSender = CrossbeamSender<(Pubkey, Vec<Slot>)>;
@@ -57,15 +56,15 @@ pub struct SlotVoteTracker {
     // Maps pubkeys that have voted for this slot
     // to whether or not we've seen the vote on gossip.
     // True if seen on gossip, false if only seen in replay.
-    voted: HashMap<Arc<Pubkey>, bool>,
+    voted: HashMap<Pubkey, bool>,
     optimistic_votes_tracker: HashMap<Hash, VoteStakeTracker>,
-    updates: Option<Vec<Arc<Pubkey>>>,
+    updates: Option<Vec<Pubkey>>,
     gossip_only_stake: u64,
 }
 
 impl SlotVoteTracker {
     #[allow(dead_code)]
-    pub fn get_updates(&mut self) -> Option<Vec<Arc<Pubkey>>> {
+    pub fn get_updates(&mut self) -> Option<Vec<Pubkey>> {
         self.updates.take()
     }
 
@@ -85,7 +84,6 @@ pub struct VoteTracker {
     epoch_authorized_voters: RwLock<HashMap<Epoch, Arc<EpochAuthorizedVoters>>>,
     leader_schedule_epoch: RwLock<Epoch>,
     current_epoch: RwLock<Epoch>,
-    keys: LockedPubkeyReferences,
     epoch_schedule: EpochSchedule,
 }
 
@@ -157,21 +155,19 @@ impl VoteTracker {
     }
 
     #[cfg(test)]
-    pub fn insert_vote(&self, slot: Slot, pubkey: Arc<Pubkey>) {
+    pub fn insert_vote(&self, slot: Slot, pubkey: Pubkey) {
         let mut w_slot_vote_trackers = self.slot_vote_trackers.write().unwrap();
 
         let slot_vote_tracker = w_slot_vote_trackers.entry(slot).or_default();
 
         let mut w_slot_vote_tracker = slot_vote_tracker.write().unwrap();
 
-        w_slot_vote_tracker.voted.insert(pubkey.clone(), true);
+        w_slot_vote_tracker.voted.insert(pubkey, true);
         if let Some(ref mut updates) = w_slot_vote_tracker.updates {
-            updates.push(pubkey.clone())
+            updates.push(pubkey)
         } else {
-            w_slot_vote_tracker.updates = Some(vec![pubkey.clone()]);
+            w_slot_vote_tracker.updates = Some(vec![pubkey]);
         }
-
-        self.keys.get_or_insert(&pubkey);
     }
 
     fn progress_leader_schedule_epoch(&self, root_bank: &Bank) {
@@ -221,7 +217,6 @@ impl VoteTracker {
                 .write()
                 .unwrap()
                 .retain(|epoch, _| *epoch >= root_epoch);
-            self.keys.purge();
             *self.current_epoch.write().unwrap() = root_epoch;
         }
     }
@@ -337,10 +332,11 @@ impl ClusterInfoVoteListener {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn verify_votes(
         votes: Vec<Transaction>,
         labels: Vec<CrdsValueLabel>,
-    ) -> (Vec<Transaction>, Vec<(CrdsValueLabel, Packets)>) {
+    ) -> (Vec<Transaction>, Vec<(CrdsValueLabel, Slot, Packets)>) {
         let msgs = packet::to_packets_chunked(&votes, 1);
         let r = sigverify::ed25519_verify_cpu(&msgs);
 
@@ -358,8 +354,10 @@ impl ClusterInfoVoteListener {
             msgs,
         )
         .filter_map(|(label, vote, verify_result, packet)| {
+            let slot = vote_transaction::parse_vote_transaction(&vote)
+                .and_then(|(_, vote, _)| vote.slots.last().copied())?;
             if *verify_result != 0 {
-                Some((vote, (label, packet)))
+                Some((vote, (label, slot, packet)))
             } else {
                 None
             }
@@ -382,7 +380,7 @@ impl ClusterInfoVoteListener {
                 return Ok(());
             }
 
-            if let Err(e) = verified_vote_packets.get_and_process_vote_packets(
+            if let Err(e) = verified_vote_packets.receive_and_process_vote_packets(
                 &verified_vote_label_packets_receiver,
                 &mut update_version,
             ) {
@@ -402,7 +400,10 @@ impl ClusterInfoVoteListener {
                 if let Some(bank) = bank {
                     let last_version = bank.last_vote_sync.load(Ordering::Relaxed);
                     let (new_version, msgs) = verified_vote_packets.get_latest_votes(last_version);
-                    verified_packets_sender.send(msgs)?;
+                    inc_new_counter_info!("bank_send_loop_batch_size", msgs.packets.len());
+                    inc_new_counter_info!("bank_send_loop_num_batches", 1);
+                    verified_packets_sender.send(vec![msgs])?;
+                    #[allow(deprecated)]
                     bank.last_vote_sync.compare_and_swap(
                         last_version,
                         new_version,
@@ -546,7 +547,7 @@ impl ClusterInfoVoteListener {
         root_bank: &Bank,
         subscriptions: &RpcSubscriptions,
         verified_vote_sender: &VerifiedVoteSender,
-        diff: &mut HashMap<Slot, HashMap<Arc<Pubkey>, bool>>,
+        diff: &mut HashMap<Slot, HashMap<Pubkey, bool>>,
         new_optimistic_confirmed_slots: &mut Vec<(Slot, Hash)>,
         is_gossip_vote: bool,
         bank_notification_sender: &Option<BankNotificationSender>,
@@ -571,7 +572,6 @@ impl ClusterInfoVoteListener {
                 continue;
             }
             let epoch_stakes = epoch_stakes.unwrap();
-            let unduplicated_pubkey = vote_tracker.keys.get_or_insert(&vote_pubkey);
 
             // The last vote slot, which is the greatest slot in the stack
             // of votes in a vote transaction, qualifies for optimistic confirmation.
@@ -590,7 +590,7 @@ impl ClusterInfoVoteListener {
                     vote_tracker,
                     last_vote_slot,
                     last_vote_hash,
-                    unduplicated_pubkey.clone(),
+                    *vote_pubkey,
                     stake,
                     total_stake,
                 );
@@ -625,7 +625,7 @@ impl ClusterInfoVoteListener {
 
             diff.entry(slot)
                 .or_default()
-                .entry(unduplicated_pubkey)
+                .entry(*vote_pubkey)
                 .and_modify(|seen_in_gossip_previously| {
                     *seen_in_gossip_previously = *seen_in_gossip_previously || is_gossip_vote
                 })
@@ -680,7 +680,7 @@ impl ClusterInfoVoteListener {
         verified_vote_sender: &VerifiedVoteSender,
         bank_notification_sender: &Option<BankNotificationSender>,
     ) -> Vec<(Slot, Hash)> {
-        let mut diff: HashMap<Slot, HashMap<Arc<Pubkey>, bool>> = HashMap::new();
+        let mut diff: HashMap<Slot, HashMap<Pubkey, bool>> = HashMap::new();
         let mut new_optimistic_confirmed_slots = vec![];
 
         // Process votes from gossip and ReplayStage
@@ -747,9 +747,7 @@ impl ClusterInfoVoteListener {
                 // no other writers to `slot_vote_tracker` that
                 // `is_new || is_new_from_gossip`. In both cases we want to record
                 // `is_new_from_gossip` for the `pubkey` entry.
-                w_slot_tracker
-                    .voted
-                    .insert(pubkey.clone(), seen_in_gossip_above);
+                w_slot_tracker.voted.insert(pubkey, seen_in_gossip_above);
                 w_slot_tracker.updates.as_mut().unwrap().push(pubkey);
             }
 
@@ -764,7 +762,7 @@ impl ClusterInfoVoteListener {
         vote_tracker: &VoteTracker,
         slot: Slot,
         hash: Hash,
-        pubkey: Arc<Pubkey>,
+        pubkey: Pubkey,
         stake: u64,
         total_epoch_stake: u64,
     ) -> (bool, bool) {
@@ -824,7 +822,7 @@ mod tests {
         use bincode::serialized_size;
         info!("max vote size {}", serialized_size(&vote_tx).unwrap());
 
-        let msgs = packet::to_packets(&[vote_tx]); // panics if won't fit
+        let msgs = packet::to_packets_chunked(&[vote_tx], 1); // panics if won't fit
 
         assert_eq!(msgs.len(), 1);
     }
@@ -901,10 +899,10 @@ mod tests {
         let (vote_tracker, bank, _, _) = setup();
 
         // Check outdated slots are purged with new root
-        let new_voter = Arc::new(solana_sdk::pubkey::new_rand());
+        let new_voter = solana_sdk::pubkey::new_rand();
         // Make separate copy so the original doesn't count toward
         // the ref count, which would prevent cleanup
-        let new_voter_ = Arc::new(*new_voter);
+        let new_voter_ = new_voter;
         vote_tracker.insert_vote(bank.slot(), new_voter_);
         assert!(vote_tracker
             .slot_vote_trackers
@@ -921,7 +919,6 @@ mod tests {
 
         // Check `keys` and `epoch_authorized_voters` are purged when new
         // root bank moves to the next epoch
-        assert!(vote_tracker.keys.0.read().unwrap().contains(&new_voter));
         let current_epoch = bank.epoch();
         let new_epoch_bank = Bank::new_from_parent(
             &bank,
@@ -930,7 +927,6 @@ mod tests {
                 .get_first_slot_in_epoch(current_epoch + 1),
         );
         vote_tracker.progress_with_new_root_bank(&new_epoch_bank);
-        assert!(!vote_tracker.keys.0.read().unwrap().contains(&new_voter));
         assert_eq!(
             *vote_tracker.current_epoch.read().unwrap(),
             current_epoch + 1
@@ -1430,13 +1426,6 @@ mod tests {
 
     #[test]
     fn test_vote_tracker_references() {
-        // The number of references that get stored for a pubkey every time
-        // a vote is added to the tracking set via a transaction. One stored in the
-        // SlotVoteTracker.voted, one in SlotVoteTracker.updates, one in
-        // SlotVoteTracker.optimistic_votes_tracker
-        let ref_count_per_vote = 3;
-        let ref_count_per_new_key = 1;
-
         // Create some voters at genesis
         let validator_keypairs: Vec<_> =
             (0..2).map(|_| ValidatorVoteKeypairs::new_rand()).collect();
@@ -1491,22 +1480,6 @@ mod tests {
             &verified_vote_sender,
             &None,
         );
-        let ref_count = Arc::strong_count(
-            &vote_tracker
-                .keys
-                .0
-                .read()
-                .unwrap()
-                .get(&validator0_keypairs.vote_keypair.pubkey())
-                .unwrap(),
-        );
-
-        // This new pubkey submitted a vote for a slot, so ref count is
-        // `ref_count_per_vote + ref_count_per_new_key`.
-        // +ref_count_per_new_key for the new pubkey  in `vote_tracker.keys` and
-        // +ref_count_per_vote for the one new vote
-        let mut current_ref_count = ref_count_per_vote + ref_count_per_new_key;
-        assert_eq!(ref_count, current_ref_count);
 
         // Setup next epoch
         let old_epoch = bank.get_leader_schedule_epoch(bank.slot());
@@ -1561,35 +1534,6 @@ mod tests {
             &verified_vote_sender,
             &None,
         );
-
-        // Check new replay vote pubkey first
-        let ref_count = Arc::strong_count(
-            &vote_tracker
-                .keys
-                .0
-                .read()
-                .unwrap()
-                .get(&validator_keypairs[1].vote_keypair.pubkey())
-                .unwrap(),
-        );
-        // This new pubkey submitted a replay vote for a slot, so ref count is
-        // `ref_count_per_optimistic_vote + ref_count_per_new_key`.
-        // +ref_count_per_new_key for the new pubkey  in `vote_tracker.keys` and
-        // +ref_count_per_optimistic_vote for the one new vote
-        assert_eq!(ref_count, ref_count_per_vote + ref_count_per_new_key);
-
-        // Check the existing pubkey
-        let ref_count = Arc::strong_count(
-            &vote_tracker
-                .keys
-                .0
-                .read()
-                .unwrap()
-                .get(&validator0_keypairs.vote_keypair.pubkey())
-                .unwrap(),
-        );
-        current_ref_count += 2 * ref_count_per_vote;
-        assert_eq!(ref_count, current_ref_count);
     }
 
     fn setup() -> (
@@ -1661,8 +1605,8 @@ mod tests {
         assert!(packets.is_empty());
     }
 
-    fn verify_packets_len(packets: &[(CrdsValueLabel, Packets)], ref_value: usize) {
-        let num_packets: usize = packets.iter().map(|p| p.1.packets.len()).sum();
+    fn verify_packets_len(packets: &[(CrdsValueLabel, Slot, Packets)], ref_value: usize) {
+        let num_packets: usize = packets.iter().map(|(_, _, p)| p.packets.len()).sum();
         assert_eq!(num_packets, ref_value);
     }
 

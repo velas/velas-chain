@@ -4,7 +4,9 @@ use futures::{
     future,
     prelude::stream::{self, StreamExt},
 };
-use solana_banks_interface::{Banks, BanksRequest, BanksResponse, TransactionStatus};
+use solana_banks_interface::{
+    Banks, BanksRequest, BanksResponse, TransactionConfirmationStatus, TransactionStatus,
+};
 use solana_runtime::{bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache};
 use solana_sdk::{
     account::Account,
@@ -60,7 +62,7 @@ impl BanksServer {
         }
     }
 
-    fn run(bank: &Bank, transaction_receiver: Receiver<TransactionInfo>) {
+    fn run(bank_forks: Arc<RwLock<BankForks>>, transaction_receiver: Receiver<TransactionInfo>) {
         while let Ok(info) = transaction_receiver.recv() {
             let mut transaction_infos = vec![info];
             while let Ok(info) = transaction_receiver.try_recv() {
@@ -70,21 +72,28 @@ impl BanksServer {
                 .into_iter()
                 .map(|info| deserialize(&info.wire_transaction).unwrap())
                 .collect();
+            let bank = bank_forks.read().unwrap().working_bank();
             let _ = bank.process_transactions(&transactions);
         }
     }
 
     /// Useful for unit-testing
-    fn new_loopback(bank_forks: Arc<RwLock<BankForks>>) -> Self {
+    fn new_loopback(
+        bank_forks: Arc<RwLock<BankForks>>,
+        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+    ) -> Self {
         let (transaction_sender, transaction_receiver) = channel();
         let bank = bank_forks.read().unwrap().working_bank();
         let slot = bank.slot();
-        let block_commitment_cache = Arc::new(RwLock::new(
-            BlockCommitmentCache::new_for_tests_with_slots(slot, slot),
-        ));
+        {
+            // ensure that the commitment cache and bank are synced
+            let mut w_block_commitment_cache = block_commitment_cache.write().unwrap();
+            w_block_commitment_cache.set_all_slots(slot, slot);
+        }
+        let server_bank_forks = bank_forks.clone();
         Builder::new()
             .name("solana-bank-forks-client".to_string())
-            .spawn(move || Self::run(&bank, transaction_receiver))
+            .spawn(move || Self::run(server_bank_forks, transaction_receiver))
             .unwrap();
         Self::new(bank_forks, block_commitment_cache, transaction_sender)
     }
@@ -165,11 +174,17 @@ impl Banks for BanksServer {
         _: Context,
         signature: Signature,
     ) -> Option<TransactionStatus> {
-        let bank = self.bank(CommitmentLevel::Recent);
+        let bank = self.bank(CommitmentLevel::Processed);
         let (slot, status) = bank.get_signature_status_slot(&signature)?;
         let r_block_commitment_cache = self.block_commitment_cache.read().unwrap();
 
-        let confirmations = if r_block_commitment_cache.root() >= slot {
+        let optimistically_confirmed_bank = self.bank(CommitmentLevel::Confirmed);
+        let optimistically_confirmed =
+            optimistically_confirmed_bank.get_signature_status_slot(&signature);
+
+        let confirmations = if r_block_commitment_cache.root() >= slot
+            && r_block_commitment_cache.highest_confirmed_root() >= slot
+        {
             None
         } else {
             r_block_commitment_cache
@@ -180,6 +195,13 @@ impl Banks for BanksServer {
             slot,
             confirmations,
             err: status.err(),
+            confirmation_status: if confirmations.is_none() {
+                Some(TransactionConfirmationStatus::Finalized)
+            } else if optimistically_confirmed.is_some() {
+                Some(TransactionConfirmationStatus::Confirmed)
+            } else {
+                Some(TransactionConfirmationStatus::Processed)
+            },
         })
     }
 
@@ -225,9 +247,10 @@ impl Banks for BanksServer {
 }
 
 pub async fn start_local_server(
-    bank_forks: &Arc<RwLock<BankForks>>,
+    bank_forks: Arc<RwLock<BankForks>>,
+    block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
 ) -> UnboundedChannel<Response<BanksResponse>, ClientMessage<BanksRequest>> {
-    let banks_server = BanksServer::new_loopback(bank_forks.clone());
+    let banks_server = BanksServer::new_loopback(bank_forks, block_commitment_cache);
     let (client_transport, server_transport) = transport::channel::unbounded();
     let server = server::new(server::Config::default())
         .incoming(stream::once(future::ready(server_transport)))

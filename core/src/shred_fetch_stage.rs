@@ -149,6 +149,7 @@ impl ShredFetchStage {
                     packet_sender.clone(),
                     recycler.clone(),
                     "packet_modifier",
+                    1,
                 )
             })
             .collect();
@@ -167,8 +168,10 @@ impl ShredFetchStage {
         sender: &PacketSender,
         bank_forks: Option<Arc<RwLock<BankForks>>>,
         exit: &Arc<AtomicBool>,
+        limit: Option<u32>,
     ) -> Self {
-        let recycler: PacketsRecycler = Recycler::warmed(100, 1024);
+        let recycler: PacketsRecycler =
+            Recycler::warmed(100, 1024, limit, "shred_fetch_stage_recycler_shrink");
 
         let (mut tvu_threads, tvu_filter) = Self::packet_modifier(
             sockets,

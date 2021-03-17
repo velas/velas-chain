@@ -3,11 +3,8 @@ use clap::{
     SubCommand,
 };
 use console::style;
-
 use solana_clap_utils::{
-    commitment::COMMITMENT_ARG,
-    input_parsers::commitment_of,
-    input_validators::{is_url, is_url_or_moniker},
+    input_validators::{is_url, is_url_or_moniker, normalize_to_url_if_moniker},
     keypair::{CliSigners, DefaultSigner, SKIP_SEED_PHRASE_VALIDATION_ARG},
     DisplayError,
 };
@@ -63,12 +60,19 @@ fn parse_settings(matches: &ArgMatches<'_>) -> Result<bool, Box<dyn error::Error
                     );
                     let (keypair_setting_type, keypair_path) =
                         CliConfig::compute_keypair_path_setting("", &config.keypair_path);
+                    let (commitment_setting_type, commitment) =
+                        CliConfig::compute_commitment_config("", &config.commitment);
 
                     if let Some(field) = subcommand_matches.value_of("specific_setting") {
                         let (field_name, value, setting_type) = match field {
                             "json_rpc_url" => ("RPC URL", json_rpc_url, url_setting_type),
                             "websocket_url" => ("WebSocket URL", websocket_url, ws_setting_type),
                             "keypair" => ("Key Path", keypair_path, keypair_setting_type),
+                            "commitment" => (
+                                "Commitment",
+                                commitment.commitment.to_string(),
+                                commitment_setting_type,
+                            ),
                             _ => unreachable!(),
                         };
                         println_name_value_or(&format!("{}:", field_name), &value, setting_type);
@@ -77,11 +81,16 @@ fn parse_settings(matches: &ArgMatches<'_>) -> Result<bool, Box<dyn error::Error
                         println_name_value_or("RPC URL:", &json_rpc_url, url_setting_type);
                         println_name_value_or("WebSocket URL:", &websocket_url, ws_setting_type);
                         println_name_value_or("Keypair Path:", &keypair_path, keypair_setting_type);
+                        println_name_value_or(
+                            "Commitment:",
+                            &commitment.commitment.to_string(),
+                            commitment_setting_type,
+                        );
                     }
                 }
                 ("set", Some(subcommand_matches)) => {
                     if let Some(url) = subcommand_matches.value_of("json_rpc_url") {
-                        config.json_rpc_url = url.to_string();
+                        config.json_rpc_url = normalize_to_url_if_moniker(url);
                         // Revert to a computed `websocket_url` value when `json_rpc_url` is
                         // changed
                         config.websocket_url = "".to_string();
@@ -91,6 +100,9 @@ fn parse_settings(matches: &ArgMatches<'_>) -> Result<bool, Box<dyn error::Error
                     }
                     if let Some(keypair) = subcommand_matches.value_of("keypair") {
                         config.keypair_path = keypair.to_string();
+                    }
+                    if let Some(commitment) = subcommand_matches.value_of("commitment") {
+                        config.commitment = commitment.to_string();
                     }
 
                     config.save(config_file)?;
@@ -105,11 +117,18 @@ fn parse_settings(matches: &ArgMatches<'_>) -> Result<bool, Box<dyn error::Error
                     );
                     let (keypair_setting_type, keypair_path) =
                         CliConfig::compute_keypair_path_setting("", &config.keypair_path);
+                    let (commitment_setting_type, commitment) =
+                        CliConfig::compute_commitment_config("", &config.commitment);
 
                     println_name_value("Config File:", config_file);
                     println_name_value_or("RPC URL:", &json_rpc_url, url_setting_type);
                     println_name_value_or("WebSocket URL:", &websocket_url, ws_setting_type);
                     println_name_value_or("Keypair Path:", &keypair_path, keypair_setting_type);
+                    println_name_value_or(
+                        "Commitment:",
+                        &commitment.commitment.to_string(),
+                        commitment_setting_type,
+                    );
                 }
                 ("import-address-labels", Some(subcommand_matches)) => {
                     let filename = value_t_or_exit!(subcommand_matches, "filename", PathBuf);
@@ -165,8 +184,18 @@ pub fn parse_args<'a>(
         path: default_signer_path.clone(),
     };
 
-    let CliCommandInfo { command, signers } =
-        parse_command(&matches, &default_signer, &mut wallet_manager)?;
+    let CliCommandInfo {
+        command,
+        mut signers,
+    } = parse_command(&matches, &default_signer, &mut wallet_manager)?;
+
+    if signers.is_empty() {
+        if let Ok(signer_info) =
+            default_signer.generate_unique_signers(vec![None], matches, &mut wallet_manager)
+        {
+            signers.extend(signer_info.signers);
+        }
+    }
 
     let verbose = matches.is_present("verbose");
     let output_format = matches
@@ -182,16 +211,10 @@ pub fn parse_args<'a>(
             OutputFormat::Display
         });
 
-    let commitment = {
-        let mut sub_matches = matches;
-        while let Some(subcommand_name) = sub_matches.subcommand_name() {
-            sub_matches = sub_matches
-                .subcommand_matches(subcommand_name)
-                .expect("subcommand_matches");
-        }
-        commitment_of(sub_matches, COMMITMENT_ARG.long)
-    }
-    .unwrap_or_default();
+    let (_, commitment) = CliConfig::compute_commitment_config(
+        matches.value_of("commitment").unwrap_or(""),
+        &config.commitment,
+    );
 
     let address_labels = if matches.is_present("no_address_labels") {
         HashMap::new()
@@ -222,7 +245,7 @@ pub fn parse_args<'a>(
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    solana_logger::setup();
+    solana_logger::setup_with_default("off");
     let matches = app(
         crate_name!(),
         crate_description!(),
@@ -272,6 +295,25 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             .global(true)
             .takes_value(true)
             .help("Filepath or URL to a keypair"),
+    )
+    .arg(
+        Arg::with_name("commitment")
+            .long("commitment")
+            .takes_value(true)
+            .possible_values(&[
+                "processed",
+                "confirmed",
+                "finalized",
+                "recent", // Deprecated as of v1.5.5
+                "single", // Deprecated as of v1.5.5
+                "singleGossip", // Deprecated as of v1.5.5
+                "root", // Deprecated as of v1.5.5
+                "max", // Deprecated as of v1.5.5
+            ])
+            .value_name("COMMITMENT_LEVEL")
+            .hide_possible_values(true)
+            .global(true)
+            .help("Return information at the selected commitment level [possible values: processed, confirmed, finalized]"),
     )
     .arg(
         Arg::with_name("verbose")
@@ -324,7 +366,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                             .index(1)
                             .value_name("CONFIG_FIELD")
                             .takes_value(true)
-                            .possible_values(&["json_rpc_url", "websocket_url", "keypair"])
+                            .possible_values(&[
+                                "json_rpc_url",
+                                "websocket_url",
+                                "keypair",
+                                "commitment",
+                            ])
                             .help("Return a specific config setting"),
                     ),
             )
@@ -333,7 +380,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     .about("Set a config setting")
                     .group(
                         ArgGroup::with_name("config_settings")
-                            .args(&["json_rpc_url", "websocket_url", "keypair"])
+                            .args(&["json_rpc_url", "websocket_url", "keypair", "commitment"])
                             .multiple(true)
                             .required(true),
                     ),

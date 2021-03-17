@@ -19,10 +19,22 @@ use solana_sdk::{
 };
 use std::{collections::HashMap, fmt, sync::Arc};
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ForceActivation {
+    No,
+    Almost,
+    Yes,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum FeatureCliCommand {
-    Status { features: Vec<Pubkey> },
-    Activate { feature: Pubkey },
+    Status {
+        features: Vec<Pubkey>,
+    },
+    Activate {
+        feature: Pubkey,
+        force: ForceActivation,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -58,8 +70,8 @@ impl fmt::Display for CliFeatures {
                 f,
                 "{}",
                 style(format!(
-                    "{:<44} {:<40} {}",
-                    "Feature", "Description", "Status"
+                    "{:<44} | {:<27} | {}",
+                    "Feature", "Status", "Description"
                 ))
                 .bold()
             )?;
@@ -67,15 +79,15 @@ impl fmt::Display for CliFeatures {
         for feature in &self.features {
             writeln!(
                 f,
-                "{:<44} {:<40} {}",
+                "{:<44} | {:<27} | {}",
                 feature.id,
-                feature.description,
                 match feature.status {
                     CliFeatureStatus::Inactive => style("inactive".to_string()).red(),
                     CliFeatureStatus::Pending => style("activation pending".to_string()).yellow(),
                     CliFeatureStatus::Active(activation_slot) =>
                         style(format!("active since slot {}", activation_slot)).green(),
-                }
+                },
+                feature.description,
             )?;
         }
         if self.inactive && !self.feature_activation_allowed {
@@ -126,6 +138,13 @@ impl FeatureSubCommands for App<'_, '_> {
                                 .index(1)
                                 .required(true)
                                 .help("The signer for the feature to activate"),
+                        )
+                        .arg(
+                            Arg::with_name("force")
+                                .long("yolo")
+                                .hidden(true)
+                                .multiple(true)
+                                .help("Override activation sanity checks. Don't use this flag"),
                         ),
                 ),
         )
@@ -152,13 +171,20 @@ pub fn parse_feature_subcommand(
         ("activate", Some(matches)) => {
             let (feature_signer, feature) = signer_of(matches, "feature", wallet_manager)?;
             let mut signers = vec![default_signer.signer_from_path(matches, wallet_manager)?];
+
+            let force = match matches.occurrences_of("force") {
+                2 => ForceActivation::Yes,
+                1 => ForceActivation::Almost,
+                _ => ForceActivation::No,
+            };
+
             signers.push(feature_signer.unwrap());
             let feature = feature.unwrap();
 
             known_feature(&feature)?;
 
             CliCommandInfo {
-                command: CliCommand::Feature(FeatureCliCommand::Activate { feature }),
+                command: CliCommand::Feature(FeatureCliCommand::Activate { feature, force }),
                 signers,
             }
         }
@@ -189,11 +215,13 @@ pub fn process_feature_subcommand(
 ) -> ProcessResult {
     match feature_subcommand {
         FeatureCliCommand::Status { features } => process_status(rpc_client, config, features),
-        FeatureCliCommand::Activate { feature } => process_activate(rpc_client, config, *feature),
+        FeatureCliCommand::Activate { feature, force } => {
+            process_activate(rpc_client, config, *feature, *force)
+        }
     }
 }
 
-fn active_stake_by_feature_set(rpc_client: &RpcClient) -> Result<HashMap<u32, u64>, ClientError> {
+fn active_stake_by_feature_set(rpc_client: &RpcClient) -> Result<HashMap<u32, f64>, ClientError> {
     // Validator identity -> feature set
     let feature_set_map = rpc_client
         .get_cluster_nodes()?
@@ -211,7 +239,7 @@ fn active_stake_by_feature_set(rpc_client: &RpcClient) -> Result<HashMap<u32, u6
         .sum();
 
     // Sum all active stake by feature set
-    let mut active_stake_by_feature_set = HashMap::new();
+    let mut active_stake_by_feature_set: HashMap<u32, u64> = HashMap::new();
     for vote_account in vote_accounts.current {
         if let Some(Some(feature_set)) = feature_set_map.get(&vote_account.node_pubkey) {
             *active_stake_by_feature_set.entry(*feature_set).or_default() +=
@@ -223,11 +251,15 @@ fn active_stake_by_feature_set(rpc_client: &RpcClient) -> Result<HashMap<u32, u6
         }
     }
 
-    // Convert active stake to a percentage so the caller doesn't need `total_active_stake`
-    for (_, val) in active_stake_by_feature_set.iter_mut() {
-        *val = *val * 100 / total_active_stake;
-    }
-    Ok(active_stake_by_feature_set)
+    Ok(active_stake_by_feature_set
+        .into_iter()
+        .map(|(feature_set, active_stake)| {
+            (
+                feature_set,
+                active_stake as f64 * 100. / total_active_stake as f64,
+            )
+        })
+        .collect())
 }
 
 // Feature activation is only allowed when 95% of the active stake is on the current feature set
@@ -238,7 +270,7 @@ fn feature_activation_allowed(rpc_client: &RpcClient, quiet: bool) -> Result<boo
 
     let feature_activation_allowed = active_stake_by_feature_set
         .get(&my_feature_set)
-        .map(|percentage| *percentage >= 95)
+        .map(|percentage| *percentage >= 95.)
         .unwrap_or(false);
 
     if !feature_activation_allowed && !quiet {
@@ -255,15 +287,15 @@ fn feature_activation_allowed(rpc_client: &RpcClient, quiet: bool) -> Result<boo
         }
         println!(
             "{}",
-            style(format!("Tool Feture Set: {}", my_feature_set)).bold()
+            style(format!("Tool Feature Set: {}", my_feature_set)).bold()
         );
         println!("{}", style("Cluster Feature Sets and Stakes:").bold());
         for (feature_set, percentage) in active_stake_by_feature_set.iter() {
             if *feature_set == 0 {
-                println!("unknown - {}%", percentage);
+                println!("  unknown    - {:.2}%", percentage);
             } else {
                 println!(
-                    "{} - {}% {}",
+                    "  {:<10} - {:.2}% {}",
                     feature_set,
                     percentage,
                     if *feature_set == my_feature_set {
@@ -329,12 +361,14 @@ fn process_activate(
     rpc_client: &RpcClient,
     config: &CliConfig,
     feature_id: Pubkey,
+    force: ForceActivation,
 ) -> ProcessResult {
     let account = rpc_client
         .get_multiple_accounts(&[feature_id])?
         .into_iter()
         .next()
         .unwrap();
+
     if let Some(account) = account {
         if feature::from_account(&account).is_some() {
             return Err(format!("{} has already been activated", feature_id).into());
@@ -342,7 +376,13 @@ fn process_activate(
     }
 
     if !feature_activation_allowed(rpc_client, false)? {
-        return Err("Feature activation is not allowed at this time".into());
+        match force {
+        ForceActivation::Almost =>
+            return Err("Add force argument once more to override the sanity check to force feature activation ".into()),
+        ForceActivation::Yes => println!("FEATURE ACTIVATION FORCED"),
+        ForceActivation::No =>
+            return Err("Feature activation is not allowed at this time".into()),
+        }
     }
 
     let rent = rpc_client.get_minimum_balance_for_rent_exemption(Feature::size_of())?;

@@ -1,3 +1,4 @@
+#![allow(clippy::integer_arithmetic)]
 use console::Emoji;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::*;
@@ -180,9 +181,9 @@ pub fn download_snapshot(
         ArchiveFormat::TarBzip2,
     ] {
         let desired_snapshot_package = snapshot_utils::get_snapshot_archive_path(
-            ledger_path,
+            ledger_path.to_path_buf(),
             &desired_snapshot_hash,
-            compression,
+            *compression,
         );
 
         if desired_snapshot_package.is_file() {

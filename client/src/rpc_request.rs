@@ -1,6 +1,6 @@
 use crate::rpc_response::RpcSimulateTransactionResult;
 use serde_json::{json, Value};
-use solana_sdk::pubkey::Pubkey;
+use solana_sdk::{clock::Slot, pubkey::Pubkey};
 use std::fmt;
 use thiserror::Error;
 
@@ -26,6 +26,7 @@ pub enum RpcRequest {
     GetFees,
     GetFirstAvailableBlock,
     GetGenesisHash,
+    GetHealth,
     GetIdentity,
     GetInflationGovernor,
     GetInflationRate,
@@ -36,9 +37,12 @@ pub enum RpcRequest {
     GetProgramAccounts,
     GetRecentBlockhash,
     GetSignatureConfirmation,
+    GetSnapshotSlot,
     GetSignatureStatuses,
     GetSignatureStatus,
     GetSlot,
+    GetMaxRetransmitSlot,
+    GetMaxShredInsertSlot,
     GetSlotLeader,
     GetStakeActivation,
     GetStorageTurn,
@@ -63,6 +67,7 @@ pub enum RpcRequest {
     SimulateTransaction,
     SignVote,
     SetLogFilter,
+
     /// EVM scope
     EthGetTransactionCount,
     EthGetBalance,
@@ -101,6 +106,7 @@ impl fmt::Display for RpcRequest {
             RpcRequest::GetFees => "getFees",
             RpcRequest::GetFirstAvailableBlock => "getFirstAvailableBlock",
             RpcRequest::GetGenesisHash => "getGenesisHash",
+            RpcRequest::GetHealth => "getHealth",
             RpcRequest::GetIdentity => "getIdentity",
             RpcRequest::GetInflationGovernor => "getInflationGovernor",
             RpcRequest::GetInflationRate => "getInflationRate",
@@ -110,10 +116,13 @@ impl fmt::Display for RpcRequest {
             RpcRequest::GetMultipleAccounts => "getMultipleAccounts",
             RpcRequest::GetProgramAccounts => "getProgramAccounts",
             RpcRequest::GetRecentBlockhash => "getRecentBlockhash",
-            RpcRequest::GetSignatureConfirmation => "GetSignatureConfirmation",
+            RpcRequest::GetSignatureConfirmation => "getSignatureConfirmation",
+            RpcRequest::GetSnapshotSlot => "getSnapshotSlot",
             RpcRequest::GetSignatureStatuses => "getSignatureStatuses",
             RpcRequest::GetSignatureStatus => "getSignatureStatus",
             RpcRequest::GetSlot => "getSlot",
+            RpcRequest::GetMaxRetransmitSlot => "getMaxRetransmitSlot",
+            RpcRequest::GetMaxShredInsertSlot => "getMaxShredInsertSlot",
             RpcRequest::GetSlotLeader => "getSlotLeader",
             RpcRequest::GetStakeActivation => "getStakeActivation",
             RpcRequest::GetStorageTurn => "getStorageTurn",
@@ -161,6 +170,7 @@ pub const MAX_GET_CONFIRMED_BLOCKS_RANGE: u64 = 500_000;
 pub const MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT: usize = 1_000;
 pub const MAX_MULTIPLE_ACCOUNTS: usize = 100;
 pub const NUM_LARGEST_ACCOUNTS: usize = 20;
+pub const MAX_GET_PROGRAM_ACCOUNT_FILTERS: usize = 4;
 
 // Validators that are this number of slots behind are considered delinquent
 pub const DELINQUENT_VALIDATOR_SLOT_DISTANCE: u64 = 128;
@@ -181,6 +191,7 @@ impl RpcRequest {
 pub enum RpcResponseErrorData {
     Empty,
     SendTransactionPreflightFailure(RpcSimulateTransactionResult),
+    NodeUnhealthy { num_slots_behind: Option<Slot> },
 }
 
 impl fmt::Display for RpcResponseErrorData {
@@ -281,7 +292,7 @@ mod tests {
     #[test]
     fn test_build_request_json_config_options() {
         let commitment_config = CommitmentConfig {
-            commitment: CommitmentLevel::Max,
+            commitment: CommitmentLevel::Finalized,
         };
         let addr = json!("deadbeefXjn8o3yroDHxUtKsZZgoy4GPkPPXfouKNHhx");
 

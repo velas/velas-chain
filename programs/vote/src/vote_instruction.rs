@@ -11,6 +11,7 @@ use serde_derive::{Deserialize, Serialize};
 use solana_metrics::inc_new_counter_info;
 use solana_sdk::{
     decode_error::DecodeError,
+    feature_set,
     hash::Hash,
     instruction::{AccountMeta, Instruction, InstructionError},
     keyed_account::{from_keyed_account, get_signers, next_keyed_account, KeyedAccount},
@@ -278,7 +279,7 @@ pub fn process_instruction(
     _program_id: &Pubkey,
     keyed_accounts: &[KeyedAccount],
     data: &[u8],
-    _invoke_context: &mut dyn InvokeContext,
+    invoke_context: &mut dyn InvokeContext,
 ) -> Result<(), InstructionError> {
     trace!("process_instruction: {:?}", data);
     trace!("keyed_accounts: {:?}", keyed_accounts);
@@ -288,6 +289,12 @@ pub fn process_instruction(
     let keyed_accounts = &mut keyed_accounts.iter();
     let me = &mut next_keyed_account(keyed_accounts)?;
 
+    if invoke_context.is_feature_active(&feature_set::check_program_owner::id())
+        && me.owner()? != id()
+    {
+        return Err(InstructionError::InvalidAccountOwner);
+    }
+
     match limited_deserialize(data)? {
         VoteInstruction::InitializeAccount(vote_init) => {
             verify_rent_exemption(me, next_keyed_account(keyed_accounts)?)?;
@@ -296,6 +303,7 @@ pub fn process_instruction(
                 &vote_init,
                 &signers,
                 &from_keyed_account::<Clock>(next_keyed_account(keyed_accounts)?)?,
+                invoke_context.is_feature_active(&feature_set::check_init_vote_data::id()),
             )
         }
         VoteInstruction::Authorize(voter_pubkey, vote_authorize) => vote_state::authorize(
@@ -339,6 +347,7 @@ mod tests {
         rent::Rent,
     };
     use std::cell::RefCell;
+    use std::str::FromStr;
 
     // these are for 100% coverage in this file
     #[test]
@@ -366,8 +375,16 @@ mod tests {
                     account::create_account(&SlotHashes::default(), 1)
                 } else if sysvar::rent::check_id(&meta.pubkey) {
                     account::create_account(&Rent::free(), 1)
+                } else if meta.pubkey == invalid_vote_state_pubkey() {
+                    Account {
+                        owner: invalid_vote_state_pubkey(),
+                        ..Account::default()
+                    }
                 } else {
-                    Account::default()
+                    Account {
+                        owner: id(),
+                        ..Account::default()
+                    }
                 })
             })
             .collect();
@@ -391,8 +408,25 @@ mod tests {
         }
     }
 
+    fn invalid_vote_state_pubkey() -> Pubkey {
+        Pubkey::from_str("BadVote111111111111111111111111111111111111").unwrap()
+    }
+
+    #[test]
+    fn test_spoofed_vote() {
+        assert_eq!(
+            process_instruction(&vote(
+                &invalid_vote_state_pubkey(),
+                &Pubkey::default(),
+                Vote::default(),
+            )),
+            Err(InstructionError::InvalidAccountOwner),
+        );
+    }
+
     #[test]
     fn test_vote_process_instruction() {
+        solana_logger::setup();
         let instructions = create_account(
             &Pubkey::default(),
             &Pubkey::default(),

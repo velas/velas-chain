@@ -58,6 +58,11 @@ impl Keypair {
     }
 }
 
+/// Number of bytes in a signature
+pub const SIGNATURE_BYTES: usize = 64;
+/// Maximum string length of a base58 encoded signature
+const MAX_BASE58_SIGNATURE_LEN: usize = 88;
+
 #[repr(transparent)]
 #[derive(
     Serialize, Deserialize, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Hash, AbiExample,
@@ -120,9 +125,9 @@ impl fmt::Display for Signature {
     }
 }
 
-impl Into<[u8; 64]> for Signature {
-    fn into(self) -> [u8; 64] {
-        <GenericArray<u8, U64> as Into<[u8; 64]>>::into(self.0)
+impl From<Signature> for [u8; 64] {
+    fn from(signature: Signature) -> Self {
+        signature.0.into()
     }
 }
 
@@ -138,6 +143,9 @@ impl FromStr for Signature {
     type Err = ParseSignatureError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() > MAX_BASE58_SIGNATURE_LEN {
+            return Err(ParseSignatureError::WrongSize);
+        }
         let bytes = bs58::decode(s)
             .into_vec()
             .map_err(|_| ParseSignatureError::Invalid)?;
@@ -392,7 +400,7 @@ pub fn keypair_from_seed_phrase_and_passphrase(
     seed_phrase: &str,
     passphrase: &str,
 ) -> Result<Keypair, Box<dyn error::Error>> {
-    const PBKDF2_ROUNDS: usize = 2048;
+    const PBKDF2_ROUNDS: u32 = 2048;
     const PBKDF2_BYTES: usize = 64;
 
     let salt = format!("mnemonic{}", passphrase);
@@ -520,6 +528,21 @@ mod tests {
         assert_eq!(
             signature_base58_str.parse::<Signature>(),
             Err(ParseSignatureError::Invalid)
+        );
+
+        // too long input string
+        // longest valid encoding
+        let mut too_long: GenericArray<u8, U64> = GenericArray::default();
+        // *sigh*
+        for i in &mut too_long {
+            *i = 255u8;
+        }
+        let mut too_long = bs58::encode(too_long).into_string();
+        // and one to grow on
+        too_long.push('1');
+        assert_eq!(
+            too_long.parse::<Signature>(),
+            Err(ParseSignatureError::WrongSize)
         );
     }
 

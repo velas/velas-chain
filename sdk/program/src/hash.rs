@@ -1,13 +1,29 @@
 //! The `hash` module provides functions for creating SHA-256 hashes.
 
 use crate::sanitize::Sanitize;
+use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
 use sha2::{Digest, Sha256};
 use std::{convert::TryFrom, fmt, mem, str::FromStr};
 use thiserror::Error;
 
 pub const HASH_BYTES: usize = 32;
+/// Maximum string length of a base58 encoded hash
+const MAX_BASE58_LEN: usize = 44;
 #[derive(
-    Serialize, Deserialize, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Hash, AbiExample,
+    Serialize,
+    Deserialize,
+    BorshSerialize,
+    BorshDeserialize,
+    BorshSchema,
+    Clone,
+    Copy,
+    Default,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    AbiExample,
 )]
 #[repr(transparent)]
 pub struct Hash(pub [u8; HASH_BYTES]);
@@ -19,7 +35,7 @@ pub struct Hasher {
 
 impl Hasher {
     pub fn hash(&mut self, val: &[u8]) {
-        self.hasher.input(val);
+        self.hasher.update(val);
     }
     pub fn hashv(&mut self, vals: &[&[u8]]) {
         for val in vals {
@@ -29,7 +45,7 @@ impl Hasher {
     pub fn result(self) -> Hash {
         // At the time of this writing, the sha2 library is stuck on an old version
         // of generic_array (0.9.0). Decouple ourselves with a clone to our version.
-        Hash(<[u8; HASH_BYTES]>::try_from(self.hasher.result().as_slice()).unwrap())
+        Hash(<[u8; HASH_BYTES]>::try_from(self.hasher.finalize().as_slice()).unwrap())
     }
 }
 
@@ -65,6 +81,9 @@ impl FromStr for Hash {
     type Err = ParseHashError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() > MAX_BASE58_LEN {
+            return Err(ParseHashError::WrongSize);
+        }
         let bytes = bs58::decode(s)
             .into_vec()
             .map_err(|_| ParseHashError::Invalid)?;
@@ -170,6 +189,13 @@ mod tests {
         hash_base58_str.truncate(hash_base58_str.len() / 2);
         assert_eq!(
             hash_base58_str.parse::<Hash>(),
+            Err(ParseHashError::WrongSize)
+        );
+
+        let input_too_big = bs58::encode(&[0xffu8; HASH_BYTES + 1]).into_string();
+        assert!(input_too_big.len() > MAX_BASE58_LEN);
+        assert_eq!(
+            input_too_big.parse::<Hash>(),
             Err(ParseHashError::WrongSize)
         );
 

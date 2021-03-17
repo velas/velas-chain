@@ -1,6 +1,7 @@
+#![allow(clippy::integer_arithmetic)]
 use clap::{
-    crate_description, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, App, Arg,
-    ArgMatches,
+    crate_description, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, App,
+    AppSettings, Arg, ArgMatches, SubCommand,
 };
 use log::*;
 use rand::{seq::SliceRandom, thread_rng, Rng};
@@ -22,6 +23,7 @@ use solana_core::{
     poh_service,
     rpc::JsonRpcConfig,
     rpc_pubsub_service::PubSubConfig,
+    tpu::DEFAULT_TPU_COALESCE_MS,
     validator::{is_snapshot_config_invalid, Validator, ValidatorConfig},
 };
 use solana_download_utils::{download_genesis_if_missing, download_snapshot};
@@ -41,7 +43,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signer},
 };
-use solana_validator::start_logger;
+use solana_validator::redirect_stderr_to_file;
 use std::{
     collections::HashSet,
     env,
@@ -57,6 +59,12 @@ use std::{
     thread::sleep,
     time::{Duration, Instant},
 };
+
+#[derive(Debug, PartialEq)]
+enum Operation {
+    Initialize,
+    Run,
+}
 
 fn port_range_validator(port_range: String) -> Result<(), String> {
     if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
@@ -115,6 +123,7 @@ fn start_gossip_node(
     gossip_socket: UdpSocket,
     expected_shred_version: Option<u16>,
     gossip_validators: Option<HashSet<Pubkey>>,
+    should_check_duplicate_instance: bool,
 ) -> (Arc<ClusterInfo>, Arc<AtomicBool>, GossipService) {
     let mut cluster_info = ClusterInfo::new(
         ClusterInfo::gossip_contact_info(
@@ -134,6 +143,7 @@ fn start_gossip_node(
         None,
         gossip_socket,
         gossip_validators,
+        should_check_duplicate_instance,
         &gossip_exit_flag,
     );
     (cluster_info, gossip_exit_flag, gossip_service)
@@ -323,7 +333,7 @@ fn check_vote_account(
     authorized_voter_pubkeys: &[Pubkey],
 ) -> Result<(), String> {
     let vote_account = rpc_client
-        .get_account_with_commitment(vote_account_address, CommitmentConfig::root())
+        .get_account_with_commitment(vote_account_address, CommitmentConfig::confirmed())
         .map_err(|err| format!("failed to fetch vote account: {}", err.to_string()))?
         .value
         .ok_or_else(|| format!("vote account does not exist: {}", vote_account_address))?;
@@ -336,7 +346,7 @@ fn check_vote_account(
     }
 
     let identity_account = rpc_client
-        .get_account_with_commitment(identity_pubkey, CommitmentConfig::root())
+        .get_account_with_commitment(identity_pubkey, CommitmentConfig::confirmed())
         .map_err(|err| format!("failed to fetch identity account: {}", err.to_string()))?
         .value
         .ok_or_else(|| format!("identity account does not exist: {}", identity_pubkey))?;
@@ -571,6 +581,7 @@ fn rpc_bootstrap(
     no_port_check: bool,
     use_progress_bar: bool,
     maximum_local_snapshot_age: Slot,
+    should_check_duplicate_instance: bool,
 ) {
     if !no_port_check {
         let mut order: Vec<_> = (0..cluster_entrypoints.len()).collect();
@@ -599,6 +610,7 @@ fn rpc_bootstrap(
                 node.sockets.gossip.try_clone().unwrap(),
                 validator_config.expected_shred_version,
                 validator_config.gossip_validators.clone(),
+                should_check_duplicate_instance,
             ));
         }
 
@@ -690,7 +702,7 @@ fn rpc_bootstrap(
                     Ok(())
                 } else {
                     rpc_client
-                        .get_slot_with_commitment(CommitmentConfig::root())
+                        .get_slot_with_commitment(CommitmentConfig::finalized())
                         .map_err(|err| format!("Failed to get RPC node slot: {}", err))
                         .and_then(|slot| {
                             info!("RPC node root slot: {}", slot);
@@ -760,54 +772,6 @@ fn rpc_bootstrap(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn create_validator(
-    node: Node,
-    identity_keypair: &Arc<Keypair>,
-    ledger_path: &Path,
-    vote_account: &Pubkey,
-    authorized_voter_keypairs: Vec<Arc<Keypair>>,
-    cluster_entrypoints: Vec<ContactInfo>,
-    mut validator_config: ValidatorConfig,
-    rpc_bootstrap_config: RpcBootstrapConfig,
-    no_port_check: bool,
-    use_progress_bar: bool,
-    maximum_local_snapshot_age: Slot,
-) -> Validator {
-    if validator_config.cuda {
-        solana_perf::perf_libs::init_cuda();
-        enable_recycler_warming();
-    }
-    solana_ledger::entry::init_poh();
-    solana_runtime::snapshot_utils::remove_tmp_snapshot_archives(ledger_path);
-
-    if !cluster_entrypoints.is_empty() {
-        rpc_bootstrap(
-            &node,
-            &identity_keypair,
-            &ledger_path,
-            &vote_account,
-            &authorized_voter_keypairs,
-            &cluster_entrypoints,
-            &mut validator_config,
-            rpc_bootstrap_config,
-            no_port_check,
-            use_progress_bar,
-            maximum_local_snapshot_age,
-        );
-    }
-
-    Validator::new(
-        node,
-        &identity_keypair,
-        &ledger_path,
-        &vote_account,
-        authorized_voter_keypairs,
-        cluster_entrypoints,
-        &validator_config,
-    )
-}
-
 pub fn main() {
     let default_dynamic_port_range =
         &format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1);
@@ -830,6 +794,7 @@ pub fn main() {
 
     let matches = App::new(crate_name!()).about(crate_description!())
         .version(solana_version::version!())
+        .setting(AppSettings::VersionlessSubcommands)
         .arg(
             Arg::with_name(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
                 .long(SKIP_SEED_PHRASE_VALIDATION_ARG.long)
@@ -997,6 +962,14 @@ pub fn main() {
                 .requires("enable_rpc_transaction_history")
                 .takes_value(false)
                 .help("Upload new confirmed blocks into a BigTable instance"),
+        )
+        .arg(
+            Arg::with_name("enable_cpi_and_log_storage")
+                .long("enable-cpi-and-log-storage")
+                .requires("enable_rpc_transaction_history")
+                .takes_value(false)
+                .help("Include CPI inner instructions and logs in the \
+                        historical transaction info stored"),
         )
         .arg(
             Arg::with_name("rpc_max_multiple_accounts")
@@ -1262,6 +1235,28 @@ pub fn main() {
                 .help("Disable manual compaction of the ledger database. May increase storage requirements.")
         )
         .arg(
+            Arg::with_name("rocksdb_compaction_interval")
+                .long("rocksdb-compaction-interval-slots")
+                .value_name("ROCKSDB_COMPACTION_INTERVAL_SLOTS")
+                .takes_value(true)
+                .help("Number of slots between compacting ledger"),
+        )
+        .arg(
+            Arg::with_name("tpu_coalesce_ms")
+                .long("tpu-coalesce-ms")
+                .value_name("MILLISECS")
+                .takes_value(true)
+                .validator(is_parsable::<u64>)
+                .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
+        )
+        .arg(
+            Arg::with_name("rocksdb_max_compaction_jitter")
+                .long("rocksdb-max-compaction-jitter-slots")
+                .value_name("ROCKSDB_MAX_COMPACTION_JITTER_SLOTS")
+                .takes_value(true)
+                .help("Introduce jitter into the compaction to offset compaction operation"),
+        )
+        .arg(
             Arg::with_name("bind_address")
                 .long("bind-address")
                 .value_name("HOST")
@@ -1286,6 +1281,15 @@ pub fn main() {
                 .takes_value(true)
                 .default_value(&default_rpc_threads)
                 .help("Number of threads to use for servicing RPC requests"),
+        )
+        .arg(
+            Arg::with_name("rpc_bigtable_timeout")
+                .long("rpc-bigtable-timeout")
+                .value_name("SECONDS")
+                .validator(is_parsable::<u64>)
+                .takes_value(true)
+                .default_value("30")
+                .help("Number of seconds before timing out RPC requests backed by BigTable"),
         )
         .arg(
             Arg::with_name("rpc_pubsub_enable_vote_subscription")
@@ -1425,6 +1429,14 @@ pub fn main() {
                 .help("EXPERIMENTAL: Specify which CPU core PoH is pinned to"),
         )
         .arg(
+            Arg::with_name("poh_hashes_per_batch")
+                .hidden(true)
+                .long("poh-hashes-per-batch")
+                .takes_value(true)
+                .value_name("NUM")
+                .help("Specify hashes per batch in PoH service"),
+        )
+        .arg(
             Arg::with_name("account_indexes")
                 .long("account-index")
                 .takes_value(true)
@@ -1434,11 +1446,50 @@ pub fn main() {
                 .help("Enable an accounts index, indexed by the selected account field"),
         )
         .arg(
+            Arg::with_name("no_accounts_db_caching")
+                .long("no-accounts-db-caching")
+                .help("Disables accounts caching"),
+        )
+        .arg(
+            Arg::with_name("accounts_db_test_hash_calculation")
+                .long("accounts-db-test-hash-calculation")
+                .help("Enables testing of hash calculation using stores in AccountsHashVerifier. This has a computational cost."),
+        )
+        .arg(
+            Arg::with_name("no_accounts_db_index_hashing")
+                .long("no-accounts-db-index-hashing")
+                .help("Disables the use of the index in hash calculation in AccountsHashVerifier/Accounts Background Service."),
+        )
+        .arg(
+            // legacy nop argument
             Arg::with_name("accounts_db_caching_enabled")
                 .long("accounts-db-caching-enabled")
-                .help("Enable accounts caching"),
+                .conflicts_with("no_accounts_db_caching")
+                .hidden(true)
         )
+        .arg(
+            Arg::with_name("no_duplicate_instance_check")
+                .long("no-duplicate-instance-check")
+                .takes_value(false)
+                .help("Disables duplicate instance check")
+                .hidden(true),
+        )
+        .after_help("The default subcommand is run")
+        .subcommand(
+             SubCommand::with_name("init")
+             .about("Initialize the ledger directory then exit")
+         )
+        .subcommand(
+             SubCommand::with_name("run")
+             .about("Run the validator")
+         )
         .get_matches();
+
+    let operation = match matches.subcommand().0 {
+        "" | "run" => Operation::Run,
+        "init" => Operation::Initialize,
+        _ => unreachable!(),
+    };
 
     let identity_keypair = Arc::new(keypair_of(&matches, "identity").unwrap_or_else(Keypair::new));
 
@@ -1464,6 +1515,11 @@ pub fn main() {
     let private_rpc = matches.is_present("private_rpc");
     let no_port_check = matches.is_present("no_port_check");
     let no_rocksdb_compaction = matches.is_present("no_rocksdb_compaction");
+    let rocksdb_compaction_interval = value_t!(matches, "rocksdb_compaction_interval", u64).ok();
+    let rocksdb_max_compaction_jitter =
+        value_t!(matches, "rocksdb_max_compaction_jitter", u64).ok();
+    let tpu_coalesce_ms =
+        value_t!(matches, "tpu_coalesce_ms", u64).unwrap_or(DEFAULT_TPU_COALESCE_MS);
     let wal_recovery_mode = matches
         .value_of("wal_recovery_mode")
         .map(BlockstoreRecoveryMode::from);
@@ -1543,6 +1599,7 @@ pub fn main() {
             enable_validator_exit: matches.is_present("enable_rpc_exit"),
             enable_set_log_filter: matches.is_present("enable_rpc_set_log_filter"),
             enable_rpc_transaction_history: matches.is_present("enable_rpc_transaction_history"),
+            enable_cpi_and_log_storage: matches.is_present("enable_cpi_and_log_storage"),
             enable_bigtable_ledger_storage: matches
                 .is_present("enable_rpc_bigtable_ledger_storage"),
             enable_bigtable_ledger_upload: matches.is_present("enable_bigtable_ledger_upload"),
@@ -1561,6 +1618,9 @@ pub fn main() {
                 u64
             ),
             rpc_threads: value_t_or_exit!(matches, "rpc_threads", usize),
+            rpc_bigtable_timeout: value_t!(matches, "rpc_bigtable_timeout", u64)
+                .ok()
+                .map(Duration::from_secs),
             account_indexes: account_indexes.clone(),
         },
         rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
@@ -1594,6 +1654,8 @@ pub fn main() {
         gossip_validators,
         frozen_accounts: values_t!(matches, "frozen_accounts", Pubkey).unwrap_or_default(),
         no_rocksdb_compaction,
+        rocksdb_compaction_interval,
+        rocksdb_max_compaction_jitter,
         wal_recovery_mode,
         poh_verify: !matches.is_present("skip_poh_verify"),
         debug_keys,
@@ -1608,8 +1670,13 @@ pub fn main() {
         no_poh_speed_test: matches.is_present("no_poh_speed_test"),
         poh_pinned_cpu_core: value_of(&matches, "poh_pinned_cpu_core")
             .unwrap_or(poh_service::DEFAULT_PINNED_CPU_CORE),
+        poh_hashes_per_batch: value_of(&matches, "poh_hashes_per_batch")
+            .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         account_indexes,
-        accounts_db_caching_enabled: matches.is_present("accounts_db_caching_enabled"),
+        accounts_db_caching_enabled: !matches.is_present("no_accounts_db_caching"),
+        accounts_db_test_hash_calculation: matches.is_present("accounts_db_test_hash_calculation"),
+        accounts_db_use_index_hash_calculation: !matches.is_present("no_accounts_db_index_hashing"),
+        tpu_coalesce_ms,
         ..ValidatorConfig::default()
     };
 
@@ -1790,7 +1857,7 @@ pub fn main() {
         }
     };
     let use_progress_bar = logfile.is_none();
-    let _logger_thread = start_logger(logfile);
+    let _logger_thread = redirect_stderr_to_file(logfile);
 
     info!("{} {}", crate_name!(), solana_version::version!());
     info!("Starting validator with: {:#?}", std::env::args_os());
@@ -1887,18 +1954,44 @@ pub fn main() {
     solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
     solana_metrics::set_panic_hook("validator");
 
-    let validator = create_validator(
+    if validator_config.cuda {
+        solana_perf::perf_libs::init_cuda();
+        enable_recycler_warming();
+    }
+    solana_ledger::entry::init_poh();
+    solana_runtime::snapshot_utils::remove_tmp_snapshot_archives(&ledger_path);
+
+    let should_check_duplicate_instance = !matches.is_present("no_duplicate_instance_check");
+    if !cluster_entrypoints.is_empty() {
+        rpc_bootstrap(
+            &node,
+            &identity_keypair,
+            &ledger_path,
+            &vote_account,
+            &authorized_voter_keypairs,
+            &cluster_entrypoints,
+            &mut validator_config,
+            rpc_bootstrap_config,
+            no_port_check,
+            use_progress_bar,
+            maximum_local_snapshot_age,
+            should_check_duplicate_instance,
+        );
+    }
+
+    if operation == Operation::Initialize {
+        info!("Validator ledger initialization complete");
+        return;
+    }
+    let validator = Validator::new(
         node,
         &identity_keypair,
         &ledger_path,
         &vote_account,
         authorized_voter_keypairs,
         cluster_entrypoints,
-        validator_config,
-        rpc_bootstrap_config,
-        no_port_check,
-        use_progress_bar,
-        maximum_local_snapshot_age,
+        &validator_config,
+        should_check_duplicate_instance,
     );
 
     if let Some(filename) = init_complete_file {

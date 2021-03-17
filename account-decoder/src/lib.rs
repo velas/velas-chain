@@ -1,9 +1,11 @@
+#![allow(clippy::integer_arithmetic)]
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate serde_derive;
 
 pub mod parse_account_data;
+pub mod parse_bpf_loader;
 pub mod parse_config;
 pub mod parse_nonce;
 pub mod parse_stake;
@@ -22,6 +24,7 @@ use {
 };
 
 pub type StringAmount = String;
+pub type StringDecimals = String;
 
 /// A duplicate representation of an Account for pretty JSON serialization
 #[derive(Serialize, Deserialize, Clone, Debug)]

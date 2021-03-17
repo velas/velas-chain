@@ -162,13 +162,6 @@ if [[ ! -e rust-bpf-$machine-$version.md || ! -e rust-bpf-$machine ]]; then
            solana-rust-bpf-$machine.tar.bz2 \
            rust-bpf-$machine"
     get $version rust-bpf-$machine "$job"
-
-    set -ex
-    ./rust-bpf-$machine/bin/rustc --print sysroot
-    set +e
-    rustup toolchain uninstall bpf
-    set -e
-    rustup toolchain link bpf rust-bpf-$machine
   )
   exitcode=$?
   if [[ $exitcode -ne 0 ]]; then
@@ -176,9 +169,15 @@ if [[ ! -e rust-bpf-$machine-$version.md || ! -e rust-bpf-$machine ]]; then
   fi
   touch rust-bpf-$machine-$version.md
 fi
+set -ex
+./rust-bpf-$machine/bin/rustc --print sysroot
+set +e
+rustup toolchain uninstall bpf
+set -e
+rustup toolchain link bpf rust-bpf-$machine
 
 # Install Rust-BPF Sysroot sources
-version=v0.13
+version=v0.14
 if [[ ! -e rust-bpf-sysroot-$version.md || ! -e rust-bpf-sysroot ]]; then
   (
     set -e

@@ -15,17 +15,15 @@ use solana_sdk::{
     signature::{Keypair, Signer},
 };
 use solana_vote_program::vote_state::{VoteAuthorize, VoteState, VoteStateVersions};
-use std::sync::mpsc::channel;
 
 #[test]
 fn test_vote_authorize_and_withdraw() {
     let mint_keypair = Keypair::new();
     let test_validator = TestValidator::with_no_fees(mint_keypair.pubkey());
-    let (sender, receiver) = channel();
-    run_local_faucet(mint_keypair, sender, None);
-    let faucet_addr = receiver.recv().unwrap();
+    let faucet_addr = run_local_faucet(mint_keypair, None);
 
-    let rpc_client = RpcClient::new(test_validator.rpc_url());
+    let rpc_client =
+        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
     let default_signer = Keypair::new();
 
     let mut config = CliConfig::recent_for_tests();
@@ -55,9 +53,7 @@ fn test_vote_authorize_and_withdraw() {
     };
     process_command(&config).unwrap();
     let vote_account = rpc_client
-        .get_account_with_commitment(&vote_account_keypair.pubkey(), CommitmentConfig::recent())
-        .unwrap()
-        .value
+        .get_account(&vote_account_keypair.pubkey())
         .unwrap();
     let vote_state: VoteStateVersions = vote_account.state().unwrap();
     let authorized_withdrawer = vote_state.convert_to_current().authorized_withdrawer;
@@ -80,6 +76,8 @@ fn test_vote_authorize_and_withdraw() {
         nonce_account: None,
         nonce_authority: 0,
         fee_payer: 0,
+        derived_address_seed: None,
+        derived_address_program_id: None,
     };
     process_command(&config).unwrap();
     let expected_balance = expected_balance + 1_000;
@@ -95,9 +93,7 @@ fn test_vote_authorize_and_withdraw() {
     };
     process_command(&config).unwrap();
     let vote_account = rpc_client
-        .get_account_with_commitment(&vote_account_keypair.pubkey(), CommitmentConfig::recent())
-        .unwrap()
-        .value
+        .get_account(&vote_account_keypair.pubkey())
         .unwrap();
     let vote_state: VoteStateVersions = vote_account.state().unwrap();
     let authorized_withdrawer = vote_state.convert_to_current().authorized_withdrawer;

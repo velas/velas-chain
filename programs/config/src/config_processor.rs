@@ -2,8 +2,8 @@
 
 use crate::ConfigKeys;
 use bincode::deserialize;
-use log::*;
 use solana_sdk::{
+    feature_set, ic_msg,
     instruction::InstructionError,
     keyed_account::{next_keyed_account, KeyedAccount},
     process_instruction::InvokeContext,
@@ -15,18 +15,24 @@ pub fn process_instruction(
     _program_id: &Pubkey,
     keyed_accounts: &[KeyedAccount],
     data: &[u8],
-    _invoke_context: &mut dyn InvokeContext,
+    invoke_context: &mut dyn InvokeContext,
 ) -> Result<(), InstructionError> {
     let key_list: ConfigKeys = limited_deserialize(data)?;
     let keyed_accounts_iter = &mut keyed_accounts.iter();
     let config_keyed_account = &mut next_keyed_account(keyed_accounts_iter)?;
+
     let current_data: ConfigKeys = {
         let config_account = config_keyed_account.try_account_ref_mut()?;
+        if invoke_context.is_feature_active(&feature_set::check_program_owner::id())
+            && config_account.owner != crate::id()
+        {
+            return Err(InstructionError::InvalidAccountOwner);
+        }
+
         deserialize(&config_account.data).map_err(|err| {
-            error!(
-                "Unable to deserialize account[0]: {:?} (len={}): {:?}",
-                config_account.data,
-                config_account.data.len(),
+            ic_msg!(
+                invoke_context,
+                "Unable to deserialize config account: {}",
                 err
             );
             InstructionError::InvalidAccountData
@@ -43,7 +49,6 @@ pub fn process_instruction(
         // Config account keypair must be a signer on account initialization,
         // or when no signers specified in Config data
         if config_keyed_account.signer_key().is_none() {
-            error!("account[0].signer_key().is_none()");
             return Err(InstructionError::MissingRequiredSignature);
         }
     }
@@ -54,16 +59,25 @@ pub fn process_instruction(
         if signer != config_keyed_account.unsigned_key() {
             let signer_account = keyed_accounts_iter.next();
             if signer_account.is_none() {
-                error!("account {:?} is not in account list", signer);
+                ic_msg!(
+                    invoke_context,
+                    "account {:?} is not in account list",
+                    signer
+                );
                 return Err(InstructionError::MissingRequiredSignature);
             }
             let signer_key = signer_account.unwrap().signer_key();
             if signer_key.is_none() {
-                error!("account {:?} signer_key().is_none()", signer);
+                ic_msg!(
+                    invoke_context,
+                    "account {:?} signer_key().is_none()",
+                    signer
+                );
                 return Err(InstructionError::MissingRequiredSignature);
             }
             if signer_key.unwrap() != signer {
-                error!(
+                ic_msg!(
+                    invoke_context,
                     "account[{:?}].signer_key() does not match Config data)",
                     counter + 1
                 );
@@ -76,18 +90,23 @@ pub fn process_instruction(
                     .find(|&pubkey| pubkey == signer)
                     .is_none()
             {
-                error!("account {:?} is not in stored signer list", signer);
+                ic_msg!(
+                    invoke_context,
+                    "account {:?} is not in stored signer list",
+                    signer
+                );
                 return Err(InstructionError::MissingRequiredSignature);
             }
         } else if config_keyed_account.signer_key().is_none() {
-            error!("account[0].signer_key().is_none()");
+            ic_msg!(invoke_context, "account[0].signer_key().is_none()");
             return Err(InstructionError::MissingRequiredSignature);
         }
     }
 
     // Check for Config data signers not present in incoming account update
     if current_signer_keys.len() > counter {
-        error!(
+        ic_msg!(
+            invoke_context,
             "too few signers: {:?}; expected: {:?}",
             counter,
             current_signer_keys.len()
@@ -96,7 +115,7 @@ pub fn process_instruction(
     }
 
     if config_keyed_account.data_len()? < data.len() {
-        error!("instruction data too large");
+        ic_msg!(invoke_context, "instruction data too large");
         return Err(InstructionError::InvalidInstructionData);
     }
 
@@ -162,6 +181,7 @@ mod tests {
         };
         let config_account = RefCell::new(Account {
             data: vec![0; space as usize],
+            owner: id(),
             ..Account::default()
         });
         let accounts = vec![(&config_pubkey, true, &config_account)];
@@ -314,7 +334,10 @@ mod tests {
         let my_config = MyConfig::new(42);
 
         let instruction = config_instruction::store(&config_pubkey, false, keys, &my_config);
-        let signer0_account = RefCell::new(Account::default());
+        let signer0_account = RefCell::new(Account {
+            owner: id(),
+            ..Account::default()
+        });
         let accounts = vec![(&signer0_pubkey, true, &signer0_account)];
         let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
         assert_eq!(
@@ -574,6 +597,37 @@ mod tests {
                 &mut MockInvokeContext::default()
             ),
             Err(InstructionError::NotEnoughAccountKeys)
+        );
+    }
+
+    #[test]
+    fn test_config_bad_owner() {
+        let from_pubkey = solana_sdk::pubkey::new_rand();
+        let config_pubkey = solana_sdk::pubkey::new_rand();
+        let new_config = MyConfig::new(84);
+        let signer0_pubkey = solana_sdk::pubkey::new_rand();
+        let signer0_account = RefCell::new(Account::default());
+        let config_account = RefCell::new(Account::default());
+        let keys = vec![
+            (from_pubkey, false),
+            (signer0_pubkey, true),
+            (config_pubkey, true),
+        ];
+
+        let instruction = config_instruction::store(&config_pubkey, true, keys, &new_config);
+        let accounts = vec![
+            (&config_pubkey, true, &config_account),
+            (&signer0_pubkey, true, &signer0_account),
+        ];
+        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
+        assert_eq!(
+            process_instruction(
+                &id(),
+                &keyed_accounts,
+                &instruction.data,
+                &mut MockInvokeContext::default()
+            ),
+            Err(InstructionError::InvalidAccountOwner)
         );
     }
 }

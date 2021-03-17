@@ -3,7 +3,7 @@ use chrono::DateTime;
 use solana_sdk::{
     clock::{Epoch, Slot},
     hash::Hash,
-    pubkey::Pubkey,
+    pubkey::{Pubkey, MAX_SEED_LEN},
     signature::{read_keypair_file, Signature},
 };
 use std::fmt::Display;
@@ -164,8 +164,8 @@ where
     }
 }
 
-pub fn normalize_to_url_if_moniker(url_or_moniker: &str) -> String {
-    match url_or_moniker {
+pub fn normalize_to_url_if_moniker<T: AsRef<str>>(url_or_moniker: T) -> String {
+    match url_or_moniker.as_ref() {
         "m" | "mainnet-beta" => "https://api.mainnet-beta.solana.com",
         "t" | "testnet" => "https://testnet.solana.com",
         "d" | "devnet" => "https://devnet.solana.com",
@@ -289,6 +289,21 @@ where
             }
         })
         .map(|_| ())
+}
+
+pub fn is_derived_address_seed<T>(value: T) -> Result<(), String>
+where
+    T: AsRef<str> + Display,
+{
+    let value = value.as_ref();
+    if value.len() > MAX_SEED_LEN {
+        Err(format!(
+            "Address seed must not be longer than {} bytes",
+            MAX_SEED_LEN
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
