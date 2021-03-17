@@ -1177,7 +1177,7 @@ fn deploy_big_tx(
         .as_proxy_error()?;
 
     let (blockhash, _, _) = rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::max())
+        .get_recent_blockhash_with_commitment(CommitmentConfig::finalized())
         .as_proxy_error()?
         .value;
 
@@ -1252,7 +1252,7 @@ fn deploy_big_tx(
         .as_proxy_error()?;
 
     let (blockhash, _, _) = rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::recent())
+        .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
         .as_proxy_error()?
         .value;
 
@@ -1267,7 +1267,7 @@ fn deploy_big_tx(
 
     let rpc_send_cfg = RpcSendTransactionConfig {
         skip_preflight: false,
-        preflight_commitment: Some(CommitmentLevel::Recent),
+        preflight_commitment: Some(CommitmentLevel::Processed),
         ..Default::default()
     };
 

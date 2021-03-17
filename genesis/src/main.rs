@@ -640,7 +640,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let max_genesis_archive_unpacked_size =
         value_t_or_exit!(matches, "max_genesis_archive_unpacked_size", u64);
 
-    let issued_lamports = genesis_config
+    let _issued_lamports = genesis_config
         .accounts
         .iter()
         .map(|(_key, account)| account.lamports)

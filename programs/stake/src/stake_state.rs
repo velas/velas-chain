@@ -4800,7 +4800,7 @@ mod tests {
         );
 
         let split_lamport_balances = vec![
-            MIN_DELEGATE_STAKE_AMOUNT + 0,
+            MIN_DELEGATE_STAKE_AMOUNT,
             MIN_DELEGATE_STAKE_AMOUNT + 1,
             MIN_DELEGATE_STAKE_AMOUNT + expected_rent_exempt_reserve,
             MIN_DELEGATE_STAKE_AMOUNT + expected_rent_exempt_reserve + 1,
@@ -4829,46 +4829,13 @@ mod tests {
             // should always return error when splitting to larger account
             let split_result =
                 stake_keyed_account.split(split_amount, &split_stake_keyed_account, &signers);
+
             if initial_balance < MIN_DELEGATE_STAKE_AMOUNT + expected_rent_exempt_reserve {
-                assert_eq!(split_attempt, Err(InstructionError::InsufficientFunds));
+                assert_eq!(split_result, Err(InstructionError::InsufficientFunds));
             } else {
-                assert_eq!(split_attempt, Ok(()));
+                assert_eq!(split_result, Ok(()));
             }
         }
-    }
-
-    #[test]
-    fn test_split_100_percent_of_source_to_larger_account_edge_case() {
-        let stake_pubkey = solana_sdk::pubkey::new_rand();
-        let rent = Rent::default();
-        let rent_exempt_reserve = rent.minimum_balance(std::mem::size_of::<StakeState>());
-        let stake_lamports = rent_exempt_reserve + 1;
-
-        let split_stake_pubkey = solana_sdk::pubkey::new_rand();
-        let signers = vec![stake_pubkey].into_iter().collect();
-
-        let meta = Meta {
-            authorized: Authorized::auto(&stake_pubkey),
-            rent_exempt_reserve,
-            ..Meta::default()
-        };
-
-        let state = StakeState::Stake(
-            meta,
-            Stake::just_stake(stake_lamports - rent_exempt_reserve),
-        );
-
-        let expected_rent_exempt_reserve = calculate_split_rent_exempt_reserve(
-            meta.rent_exempt_reserve,
-            std::mem::size_of::<StakeState>() as u64,
-            std::mem::size_of::<StakeState>() as u64 + 100,
-        );
-        assert!(expected_rent_exempt_reserve > stake_lamports);
-
-        // Splitting 100% of source should not make a difference
-        let split_result =
-            stake_keyed_account.split(stake_lamports, &split_stake_keyed_account, &signers);
-        assert_eq!(split_result, Err(InstructionError::InvalidAccountData));
     }
 
     #[test]

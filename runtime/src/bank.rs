@@ -7849,6 +7849,7 @@ pub(crate) mod tests {
                 false,
                 false,
                 false,
+                &mut ExecuteTimings::default(),
             )
             .0
             .fee_collection_results;
@@ -11370,7 +11371,9 @@ pub(crate) mod tests {
         let evm_genesis_path = ledger_path
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(ledger_path.path(), None);
+        genesis_config
+            .generate_evm_state(ledger_path.path(), None)
+            .unwrap();
 
         let bank0 = Arc::new(Bank::new_with_paths(
             &genesis_config,

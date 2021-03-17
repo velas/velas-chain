@@ -230,7 +230,7 @@ impl GenesisConfig {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
 
         if let Some(evm_state_json) = evm_state_json {
-            let accounts = evm_genesis::read_accounts(evm_state_json.as_ref())?;
+            let accounts = evm_genesis::read_accounts(evm_state_json)?;
 
             for chunk in &accounts.chunks(IN_MEMORY_EVM_ACCOUNTS_MAX) {
                 let chunk: Result<Vec<_>, _> = chunk.collect();
@@ -456,7 +456,7 @@ pub mod evm_genesis {
 
     impl From<ExtendedMemoryAccount> for MemoryAccount {
         fn from(extended: ExtendedMemoryAccount) -> MemoryAccount {
-            let result = MemoryAccount {
+            MemoryAccount {
                 nonce: extended.nonce,
                 balance: extended.balance,
                 storage: extended
@@ -466,8 +466,7 @@ pub mod evm_genesis {
                     .map(|(k, v)| (k.0, v.0))
                     .collect(),
                 code: extended.code.unwrap_or_else(|| Bytes(Vec::new())).0,
-            };
-            result
+            }
         }
     }
 
@@ -521,13 +520,13 @@ pub mod evm_genesis {
                     if end_bracket.is_none() {
                         return Err(Error::new(
                             ErrorKind::Other,
-                            format!("No enough end brackets at end of file found."),
+                            "No enough end brackets at end of file found.".to_string(),
                         ));
                     }
                 }
                 return Ok(true);
             }
-            return Ok(false);
+            Ok(false)
         }
 
         fn skip_trailing_comma(&mut self) -> Result<(), Error> {
@@ -565,7 +564,7 @@ pub mod evm_genesis {
             match stream.next() {
                 None => Err(Error::new(
                     ErrorKind::Other,
-                    format!("Buffer ended unexpected"),
+                    "Buffer ended unexpected".to_string(),
                 )),
                 Some(Err(e)) => Err(Error::new(
                     ErrorKind::Other,

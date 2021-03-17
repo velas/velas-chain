@@ -671,30 +671,33 @@ impl RpcClient {
         &self,
         transaction: &Transaction,
     ) -> ClientResult<Signature> {
-        let signature = self.send_transaction(transaction)?;
-        let recent_blockhash = if uses_durable_nonce(transaction).is_some() {
-            self.get_recent_blockhash_with_commitment(CommitmentConfig::processed())?
-                .value
-                .0
-        } else {
-            transaction.message.recent_blockhash
-        };
-        let status = loop {
-            let status = self.get_signature_status(&signature)?;
-            if status.is_none() {
-                if self
-                    .get_fee_calculator_for_blockhash_with_commitment(
-                        &recent_blockhash,
-                        CommitmentConfig::processed(),
-                    )?
+        const SEND_RETRIES: usize = 20;
+        const STATUS_RETRIES: usize = 20;
+
+        for _ in 0..SEND_RETRIES {
+            let signature = self.send_transaction(transaction)?;
+            // TODO(velas): sync with solana codebase or rewrite this function into new one
+            let _recent_blockhash = if uses_durable_nonce(transaction).is_some() {
+                self.get_recent_blockhash_with_commitment(CommitmentConfig::processed())?
                     .value
-                    .is_none()
+                    .0
+            } else {
+                transaction.message.recent_blockhash
+            };
+
+            for status_retry in 0..STATUS_RETRIES {
+                if let Some(v) = self.get_signature_status(&signature)? {
+                    return Ok(v.map(|_| signature)?);
+                }
+
+                if cfg!(not(test)) && status_retry < STATUS_RETRIES
+                // Ignore sleep at last step.
                 {
                     // Retry twice a second
                     sleep(Duration::from_millis(500));
                 }
             }
-        };
+        }
 
         Err(RpcError::ForUser(
             "unable to confirm transaction. \

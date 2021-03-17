@@ -17,14 +17,14 @@ use evm_state::{Address, Config, Gas, LogFilter, H256, U256};
 use crate::rpc::JsonRpcRequestProcessor;
 
 const DEFAULT_COMITTMENT: Option<CommitmentConfig> = Some(CommitmentConfig {
-    commitment: CommitmentLevel::Recent,
+    commitment: CommitmentLevel::Processed,
 });
 
 fn block_to_commitment(block: Option<String>) -> Option<CommitmentConfig> {
     let commitment = match block?.as_ref() {
-        "earliest" => CommitmentLevel::Root,
-        "latest" => CommitmentLevel::Single,
-        "pending" => CommitmentLevel::Single,
+        "earliest" => CommitmentLevel::Finalized,
+        "latest" => CommitmentLevel::Confirmed,
+        "pending" => CommitmentLevel::Confirmed,
         v => {
             // Try to parse newest version of block commitment.
             if let Ok(c) = serde_json::from_str::<CommitmentLevel>(v) {
@@ -336,7 +336,7 @@ impl BasicERPC for BasicERPCImpl {
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
     ) -> Result<Option<RPCTransaction>, Error> {
-        let bank = meta.bank(CommitmentConfig::recent().into());
+        let bank = meta.bank(CommitmentConfig::processed().into());
         let evm_state = bank.evm_state.read().unwrap();
         let receipt = evm_state.get_transaction_receipt(tx_hash.0);
 
@@ -362,7 +362,7 @@ impl BasicERPC for BasicERPCImpl {
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
     ) -> Result<Option<RPCReceipt>, Error> {
-        let bank = meta.bank(CommitmentConfig::recent().into());
+        let bank = meta.bank(CommitmentConfig::processed().into());
         let evm_state = bank.evm_state.read().unwrap();
         let receipt = evm_state.get_transaction_receipt(tx_hash.0);
 

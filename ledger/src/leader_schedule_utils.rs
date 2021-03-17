@@ -63,7 +63,7 @@ fn sort_stakes(stakes: &mut Vec<(Pubkey, u64)>) {
     stakes.dedup();
 }
 
-fn num_major_stakers(stakes: &Vec<(Pubkey, u64)>) -> usize {
+fn num_major_stakers(stakes: &[(Pubkey, u64)]) -> usize {
     stakes
         .iter()
         .filter(|s| s.1 >= MIN_STAKERS_TO_BE_MAJORITY)

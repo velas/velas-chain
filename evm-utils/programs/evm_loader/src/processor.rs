@@ -397,7 +397,7 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_0_shadow_sign.clone()
+                    evm_tx: tx_0_shadow_sign,
                 })
                 .unwrap(),
                 executor.as_deref_mut()
@@ -409,10 +409,7 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_1_sign.clone()
-                })
-                .unwrap(),
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_1_sign }).unwrap(),
                 executor.as_deref_mut()
             )
             .is_ok());

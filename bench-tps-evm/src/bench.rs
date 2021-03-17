@@ -48,7 +48,7 @@ pub type SharedTransactions = Arc<RwLock<VecDeque<Vec<(Transaction, u64)>>>>;
 
 pub fn get_recent_blockhash<T: Client>(client: &T) -> (Hash, FeeCalculator) {
     loop {
-        match client.get_recent_blockhash_with_commitment(CommitmentConfig::recent()) {
+        match client.get_recent_blockhash_with_commitment(CommitmentConfig::processed()) {
             Ok((blockhash, fee_calculator, _last_valid_slot)) => {
                 return (blockhash, fee_calculator)
             }
@@ -160,7 +160,7 @@ pub fn poll_blockhash<T: Client>(
 
 fn verify_funding_transfer<T: Client>(client: &Arc<T>, tx: &Transaction, amount: u64) -> bool {
     for a in &tx.message().account_keys[1..] {
-        match client.get_balance_with_commitment(a, CommitmentConfig::recent()) {
+        match client.get_balance_with_commitment(a, CommitmentConfig::processed()) {
             Ok(balance) => return balance >= amount,
             Err(err) => error!("failed to get balance {:?}", err),
         }
@@ -425,7 +425,7 @@ pub fn airdrop_lamports<T: Client>(
         };
 
         let current_balance = client
-            .get_balance_with_commitment(&id.pubkey(), CommitmentConfig::recent())
+            .get_balance_with_commitment(&id.pubkey(), CommitmentConfig::processed())
             .unwrap_or_else(|e| {
                 info!("airdrop error {}", e);
                 starting_balance

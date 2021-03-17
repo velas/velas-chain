@@ -549,10 +549,10 @@ impl RPCReceipt {
             .map(|(id, log)| RPCLog {
                 removed: false,
                 log_index: Hex(id),
-                transaction_hash: tx_hash.clone(),
-                transaction_index: tx_index.clone(),
+                transaction_hash: tx_hash,
+                transaction_index: tx_index,
                 block_hash: block_hash.into(),
-                block_number: block_number.clone(),
+                block_number,
                 data: log.data.into(),
                 topics: log.topics.into_iter().map(Hex).collect(),
                 address: Hex(log.address),

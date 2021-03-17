@@ -259,7 +259,6 @@ impl<T: FormatHex + FromStr> From<T> for Hex<T> {
 mod tests {
     use super::*;
     use primitive_types::U256;
-    use serde_json;
 
     //TODO: WTF? Is Ethereum hex remove in-byte zero? Why it expect 0x1 not 0x01?
     #[test]
@@ -288,7 +287,7 @@ mod tests {
     #[test]
     fn hex_deserialize_pritmitive_types() {
         assert_eq!(
-            U256::from(0x7bb9369dcbaec019 as u64),
+            U256::from(0x7bb9369dcbaec019_u64),
             serde_json::from_str::<Hex<U256>>("\"0x7bb9369dcbaec019\"")
                 .unwrap()
                 .0
