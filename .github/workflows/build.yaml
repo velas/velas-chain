@@ -28,7 +28,7 @@ jobs:
         id: build
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: velas-wallet
+          ECR_REPOSITORY: velas-solana
           IMAGE_TAG: ${{github.sha}}
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG --no-cache .
