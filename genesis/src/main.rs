@@ -525,7 +525,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     let evm_chain_id = if matches.value_of("evm_chain_id").is_some() {
-        value_t_or_exit!(matches, "evm_chain_id", U256)
+        value_t_or_exit!(matches, "evm_chain_id", u64)
     } else {
         match cluster_type {
             ClusterType::MainnetBeta => *genesis_config::EVM_MAINNET_CHAIN_ID,

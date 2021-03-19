@@ -1251,7 +1251,9 @@ pub mod tests {
 
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
 
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
@@ -1300,7 +1302,9 @@ pub mod tests {
 
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
 
         // Should return slot 0, the last slot on the fork that is valid
         let (bank_forks, _leader_schedule) = process_blockstore(
@@ -1323,7 +1327,9 @@ pub mod tests {
 
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
 
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
@@ -1391,7 +1397,9 @@ pub mod tests {
         };
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -1466,7 +1474,9 @@ pub mod tests {
         };
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -1497,7 +1507,9 @@ pub mod tests {
         let evm_state_dir = TempDir::new().unwrap();
 
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
 
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
@@ -1575,7 +1587,9 @@ pub mod tests {
         };
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -1664,7 +1678,9 @@ pub mod tests {
         };
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -1730,7 +1746,9 @@ pub mod tests {
 
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -1784,7 +1802,9 @@ pub mod tests {
 
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -1842,7 +1862,9 @@ pub mod tests {
 
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -1901,7 +1923,9 @@ pub mod tests {
         };
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -2054,7 +2078,9 @@ pub mod tests {
         };
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -2093,7 +2119,9 @@ pub mod tests {
         };
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -2121,7 +2149,9 @@ pub mod tests {
         };
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         process_blockstore(
             &genesis_config,
             &blockstore,
@@ -2148,7 +2178,9 @@ pub mod tests {
         };
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (_bank_forks, leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -2219,7 +2251,9 @@ pub mod tests {
         };
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         process_blockstore(
             &genesis_config,
             &blockstore,
@@ -2868,7 +2902,9 @@ pub mod tests {
         };
         let evm_state_path = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
 
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
@@ -3386,7 +3422,9 @@ pub mod tests {
         };
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -3428,7 +3466,9 @@ pub mod tests {
 
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -3494,7 +3534,9 @@ pub mod tests {
         let evm_state_dir = TempDir::new().unwrap();
 
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
-        genesis_config.generate_evm_state(&ledger_path, None);
+        genesis_config
+            .generate_evm_state(&ledger_path, None)
+            .unwrap();
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,

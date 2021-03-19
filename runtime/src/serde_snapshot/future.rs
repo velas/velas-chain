@@ -77,8 +77,9 @@ pub(crate) struct DeserializableVersionedBank {
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) message_processor: MessageProcessor,
+
+    pub(crate) evm_chain_id: u64,
     // TODO: remove Hex wrapper and ser/de as plain H256
-    pub(crate) evm_chain_id: evm_state::U256,
     pub(crate) evm_state_root: evm_rpc::Hex<evm_state::H256>,
 }
 
@@ -159,6 +160,7 @@ pub(crate) struct SerializableVersionedBank<'a> {
     pub(crate) epoch_stakes: &'a HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) message_processor: MessageProcessor,
+    pub(crate) evm_chain_id: u64,
     pub(crate) evm_state_root: evm_rpc::Hex<evm_state::H256>,
 }
 
@@ -201,6 +203,7 @@ impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedB
             epoch_stakes: rhs.epoch_stakes,
             is_delta: rhs.is_delta,
             message_processor: new(),
+            evm_chain_id: rhs.evm_chain_id,
             evm_state_root: evm_rpc::Hex(rhs.evm_state_root),
         }
     }

@@ -206,6 +206,7 @@ impl EvmProcessor {
 
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
+const TEST_CHAIN_ID: u64 = 0xdead;
 #[doc(hidden)]
 pub fn dummy_call(nonce: usize) -> evm::Transaction {
     let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
@@ -223,7 +224,7 @@ pub fn dummy_call(nonce: usize) -> evm::Transaction {
         input: vec![],
     };
 
-    tx_call.sign(&secret_key, None)
+    tx_call.sign(&secret_key, Some(TEST_CHAIN_ID))
 }
 
 #[cfg(test)]
@@ -240,9 +241,8 @@ mod test {
     use solana_sdk::program_utils::limited_deserialize;
     use solana_sdk::sysvar::rent::Rent;
 
+    use super::TEST_CHAIN_ID as CHAIN_ID;
     use std::{cell::RefCell, collections::BTreeMap};
-
-    const CHAIN_ID: u64 = 0xdead;
 
     fn dummy_eth_tx() -> evm_state::transactions::Transaction {
         evm_state::transactions::Transaction {
@@ -270,6 +270,7 @@ mod test {
 
     #[test]
     fn execute_tx() {
+        let _logger = simple_logger::SimpleLogger::new().init();
         let mut executor = evm_state::Executor::with_config(
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
@@ -315,7 +316,7 @@ mod test {
             input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
         };
 
-        let tx_hash = tx_call.signing_hash(None);
+        let tx_hash = tx_call.signing_hash(Some(CHAIN_ID));
         let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
 
         assert!(processor
@@ -498,7 +499,7 @@ mod test {
             input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
         };
 
-        let tx_hash = tx_call.signing_hash(None);
+        let tx_hash = tx_call.signing_hash(Some(CHAIN_ID));
         let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
         {
             let mut executor_orig = evm_state::Executor::with_config(

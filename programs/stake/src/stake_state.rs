@@ -1067,9 +1067,6 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
         if split.owner()? != id() {
             return Err(InstructionError::IncorrectProgramId);
         }
-        if split.data_len()? != std::mem::size_of::<StakeState>() {
-            return Err(InstructionError::InvalidAccountData);
-        }
 
         if let StakeState::Uninitialized = split.state()? {
             // verify enough account lamports
@@ -1118,7 +1115,11 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
                         // different sizes.
                         let remaining_stake_delta =
                             lamports.saturating_sub(meta.rent_exempt_reserve);
-                        (remaining_stake_delta, remaining_stake_delta)
+                        let split_stake_amount = std::cmp::min(
+                            lamports.saturating_sub(split_rent_exempt_reserve),
+                            remaining_stake_delta,
+                        );
+                        (remaining_stake_delta, split_stake_amount)
                     } else {
                         // Otherwise, the new split stake should reflect the entire split
                         // requested, less any lamports needed to cover the split_rent_exempt_reserve
@@ -5024,7 +5025,7 @@ mod tests {
                 Stake::just_stake(stake_lamports - rent_exempt_reserve),
             ),
         ] {
-            // Test that splitting to a larger account fails
+            // Test that splitting to a larger account fails, because of rent exempt
             let split_stake_account = Account::new_ref_data_with_space(
                 0,
                 &StakeState::Uninitialized,
@@ -5046,7 +5047,7 @@ mod tests {
 
             assert_eq!(
                 stake_keyed_account.split(stake_lamports, &split_stake_keyed_account, &signers),
-                Err(InstructionError::InvalidAccountData)
+                Err(InstructionError::InsufficientFunds)
             );
 
             // Test that splitting from a larger account to a smaller one works.

@@ -71,11 +71,11 @@ impl Executor {
         state: EvmState,
         config: Config,
         gas_limit: u64,
-        chain_id: U256,
+        chain_id: u64,
         block_number: u64,
     ) -> Self {
         let vicinity = MemoryVicinity {
-            chain_id,
+            chain_id: chain_id.into(),
             block_gas_limit: gas_limit.into(),
             block_number: block_number.into(),
             ..default_vicinity()
@@ -112,8 +112,8 @@ impl Executor {
             }
         );
 
-        let tx_chain_id = evm_tx.signature.chain_id().map(U256::from);
-        let chain_id = self.evm.chain_id();
+        let tx_chain_id = evm_tx.signature.chain_id();
+        let chain_id = self.evm.chain_id().as_u64();
 
         ensure!(
             tx_chain_id == Some(chain_id),

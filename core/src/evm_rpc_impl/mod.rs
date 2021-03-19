@@ -62,7 +62,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
 
     fn chain_id(&self, meta: Self::Metadata) -> Result<Hex<u64>, Error> {
         let bank = meta.bank(None);
-        Ok(Hex(bank.evm_chain_id.as_u64()))
+        Ok(Hex(bank.evm_chain_id))
     }
 
     // TODO: Add network info
@@ -445,7 +445,7 @@ fn call(
     let bank = meta.bank(DEFAULT_COMITTMENT);
 
     let chain_id = bank.evm_chain_id;
-    let tx_chain_id = tx.chain_id.map(|v| *v);
+    let tx_chain_id = tx.chain_id.map(|v| v.as_u64());
 
     if tx_chain_id != Some(chain_id) {
         return Err(Error::WrongChainId {

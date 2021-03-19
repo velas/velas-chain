@@ -583,7 +583,7 @@ pub(crate) struct BankFieldsToDeserialize {
     pub(crate) stakes: Stakes,
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
-    pub(crate) evm_chain_id: evm_state::U256,
+    pub(crate) evm_chain_id: u64,
     pub(crate) evm_state_root: evm_state::H256,
 }
 
@@ -624,7 +624,7 @@ pub(crate) struct BankFieldsToSerialize<'a> {
     pub(crate) stakes: &'a RwLock<Stakes>,
     pub(crate) epoch_stakes: &'a HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
-    pub(crate) evm_chain_id: evm_state::U256,
+    pub(crate) evm_chain_id: u64,
     pub(crate) evm_state_root: evm_state::H256,
 }
 
@@ -738,7 +738,7 @@ pub struct Bank {
     /// The set of parents including this bank
     pub ancestors: Ancestors,
 
-    pub evm_chain_id: evm_state::U256,
+    pub evm_chain_id: u64,
     pub evm_state: RwLock<evm_state::EvmState>,
 
     /// Hash of this Bank's state. Only meaningful after freezing.
@@ -12295,14 +12295,15 @@ pub(crate) mod tests {
 
     #[test]
     fn test_vote_epoch_panic() {
+        let min_stake = bootstrap_validator_stake_lamports();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config_with_leader(
-            1_000_000_000_000_000,
+            1_000_000_000_000_000 + 2 * min_stake,
             &Pubkey::new_unique(),
-            bootstrap_validator_stake_lamports(),
+            min_stake,
         );
         let bank = Arc::new(Bank::new(&genesis_config));
 
@@ -12331,7 +12332,7 @@ pub(crate) mod tests {
                 &vote_keypair.pubkey(),
                 &Authorized::auto(&mint_keypair.pubkey()),
                 &Lockup::default(),
-                1_000_000_000_000,
+                min_stake,
             )
             .into_iter(),
         );

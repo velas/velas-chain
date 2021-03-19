@@ -51,14 +51,14 @@ type EvmResult<T> = StdResult<T, evm_rpc::Error>;
 type FutureEvmResult<T> = EvmResult<T>;
 
 pub struct EvmBridge {
-    evm_chain_id: U256,
+    evm_chain_id: u64,
     key: solana_sdk::signature::Keypair,
     accounts: HashMap<evm_state::Address, evm_state::SecretKey>,
     rpc_client: RpcClient,
 }
 
 impl EvmBridge {
-    fn new(evm_chain_id: U256, keypath: &str, evm_keys: Vec<SecretKey>, addr: String) -> Self {
+    fn new(evm_chain_id: u64, keypath: &str, evm_keys: Vec<SecretKey>, addr: String) -> Self {
         info!("EVM chain id {}", evm_chain_id);
 
         let accounts = evm_keys
@@ -214,7 +214,7 @@ impl BridgeERPC for BridgeERPCImpl {
             input: tx.data.map(|a| a.0).unwrap_or_default(),
         };
 
-        let tx = tx_create.sign(&secret_key, Some(meta.evm_chain_id.as_u64()));
+        let tx = tx_create.sign(&secret_key, Some(meta.evm_chain_id));
 
         meta.send_tx(tx)
     }
@@ -228,7 +228,7 @@ impl BridgeERPC for BridgeERPCImpl {
 
         let tx: evm::Transaction = rlp::decode(&bytes.0).unwrap();
         let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
-        let hash = unsigned_tx.signing_hash(Some(meta.evm_chain_id.as_u64()));
+        let hash = unsigned_tx.signing_hash(Some(meta.evm_chain_id));
         debug!("loaded tx_hash = {}", hash);
         meta.send_tx(tx)
     }
@@ -996,7 +996,7 @@ struct Args {
     #[structopt(default_value = "127.0.0.1:8545")]
     binding_address: SocketAddr,
     #[structopt(default_value = "0xdead")]
-    evm_chain_id: U256,
+    evm_chain_id: u64,
 }
 
 use jsonrpc_http_server::jsonrpc_core::*;

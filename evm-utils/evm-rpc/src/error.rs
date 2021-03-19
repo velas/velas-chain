@@ -57,8 +57,8 @@ pub enum Error {
 
     #[snafu(display("Wrong EVM chain id, expected={}, but tx={:?}", chain_id, tx_chain_id))]
     WrongChainId {
-        chain_id: U256,
-        tx_chain_id: Option<U256>,
+        chain_id: u64,
+        tx_chain_id: Option<u64>,
     },
     // InvalidParams {},
     // UnsupportedTrieQuery,
