@@ -15,7 +15,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Evm");
     group.throughput(Throughput::Elements(1));
 
-    let chain_id = U256::from(42);
+    let chain_id = 42;
     let code = hex::decode(HELLO_WORLD_CODE).unwrap();
     let data = hex::decode(HELLO_WORLD_ABI).unwrap();
     let expected_result = hex::decode(HELLO_WORLD_RESULT).unwrap();
@@ -122,7 +122,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
             let exit_reason = black_box(executor.transaction_execute_unsinged(
                 caller,
-                tx,
+                tx.clone(),
                 |_,_,_,_| None
             )).unwrap();
 
@@ -139,6 +139,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             EvmState::default(),
             evm::Config::istanbul(),
             u64::max_value(),
+            chain_id,
             0,
         );
 
@@ -167,7 +168,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), state.slot);
+                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), chain_id,state.slot);
 
             let exit_reason = black_box(executor.transaction_execute(
                 tx.clone(),

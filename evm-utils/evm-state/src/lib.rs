@@ -353,10 +353,8 @@ mod tests {
     use super::Executor;
     use super::*;
 
-    use once_cell::sync::Lazy;
-
     // NOTE: value must not overflow i32::MAX at least
-    static TEST_CHAIN_ID: Lazy<U256> = Lazy::new(|| U256::from(0x42));
+    static TEST_CHAIN_ID: u64 = 0x42;
 
     #[allow(clippy::type_complexity)]
     fn noop_precompile(
@@ -412,13 +410,13 @@ mod tests {
         // tx_create
         fn create(&self, bytes: impl AsRef<[u8]>) -> Transaction {
             self.unsigned(TransactionAction::Create, bytes)
-                .sign(&self.secret, Some(TEST_CHAIN_ID.as_u64()))
+                .sign(&self.secret, Some(TEST_CHAIN_ID))
         }
 
         // tx_call
         fn call(&self, address: Address, bytes: impl AsRef<[u8]>) -> Transaction {
             self.unsigned(TransactionAction::Call(address), bytes)
-                .sign(&self.secret, Some(TEST_CHAIN_ID.as_u64()))
+                .sign(&self.secret, Some(TEST_CHAIN_ID))
         }
     }
 
@@ -463,8 +461,8 @@ mod tests {
     fn it_execute_only_txs_with_correct_chain_id() {
         let _logger = simple_logger::SimpleLogger::new().init();
 
-        let chain_id = U256::from(0xeba);
-        let another_chain_id = U256::from(0xb0ba);
+        let chain_id = 0xeba;
+        let another_chain_id = 0xb0ba;
 
         let mut executor = Executor::with_config(
             EvmState::default(),
@@ -492,7 +490,7 @@ mod tests {
 
         let wrong_tx = create_tx
             .clone()
-            .sign(&alice.secret, Some(another_chain_id.as_u64()));
+            .sign(&alice.secret, Some(another_chain_id));
         assert!(matches!(
             executor
                 .transaction_execute(wrong_tx, noop_precompile)
@@ -503,7 +501,7 @@ mod tests {
             } if (err_chain_id, tx_chain_id) == (chain_id, Some(another_chain_id))
         ));
 
-        let create_tx = create_tx.sign(&alice.secret, Some(chain_id.as_u64()));
+        let create_tx = create_tx.sign(&alice.secret, Some(chain_id));
         assert!(matches!(
             executor
                 .transaction_execute(create_tx, noop_precompile)
@@ -524,7 +522,7 @@ mod tests {
             EvmState::default(),
             evm::Config::istanbul(),
             u64::MAX,
-            *TEST_CHAIN_ID,
+            TEST_CHAIN_ID,
             0,
         );
 
@@ -639,7 +637,7 @@ mod tests {
                 state,
                 evm::Config::istanbul(),
                 u64::MAX,
-                *TEST_CHAIN_ID,
+                TEST_CHAIN_ID,
                 new_slot,
             );
 
@@ -712,7 +710,7 @@ mod tests {
                 state,
                 evm::Config::istanbul(),
                 u64::MAX,
-                *TEST_CHAIN_ID,
+                TEST_CHAIN_ID,
                 new_slot,
             );
 
@@ -788,7 +786,7 @@ mod tests {
             EvmState::default(),
             evm::Config::istanbul(),
             u64::MAX,
-            *TEST_CHAIN_ID,
+            TEST_CHAIN_ID,
             0,
         );
 
