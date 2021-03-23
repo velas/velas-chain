@@ -1,4 +1,4 @@
-//! Ramp up TPS for Tour de SOL until all validators drop out
+//! Ramp up TPS for Tour de VLX until all validators drop out
 #![allow(clippy::integer_arithmetic)]
 
 mod results;
@@ -34,7 +34,7 @@ const DEFAULT_TX_COUNT_BASELINE: &str = "5000";
 const DEFAULT_TX_COUNT_INCREMENT: &str = "5000";
 const DEFAULT_TPS_ROUND_MINUTES: &str = "60";
 const THREAD_BATCH_SLEEP_MS: &str = "1000";
-const DEFAULT_INITIAL_SOL_BALANCE: &str = "1";
+const DEFAULT_INITIAL_VLX_BALANCE: &str = "1";
 
 // Transaction count increments linearly each round
 fn tx_count_for_round(tps_round: u32, base: u64, incr: u64) -> u64 {
@@ -126,10 +126,10 @@ fn main() {
         .arg(
             Arg::with_name("initial_balance")
                 .long("initial-balance")
-                .value_name("SOL")
+                .value_name("VLX")
                 .takes_value(true)
-                .default_value(DEFAULT_INITIAL_SOL_BALANCE)
-                .help("The number of SOL that each partipant started with"),
+                .default_value(DEFAULT_INITIAL_VLX_BALANCE)
+                .help("The number of VLX that each partipant started with"),
         )
         .arg(
             Arg::with_name("entrypoint")

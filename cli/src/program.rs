@@ -158,7 +158,7 @@ impl ProgramSubCommands for App<'_, '_> {
                             Arg::with_name("allow_excessive_balance")
                                 .long("allow-excessive-deploy-account-balance")
                                 .takes_value(false)
-                                .help("Use the designated program id even if the account already holds a large balance of SOL")
+                                .help("Use the designated program id even if the account already holds a large balance of VLX")
                         ),
                 )
                 .subcommand(

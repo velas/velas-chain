@@ -7,15 +7,15 @@ import {
   Lockup,
   PublicKey,
   sendAndConfirmTransaction,
-  LAMPORTS_PER_SOL,
+  LAMPORTS_PER_VLX,
   StakeAuthorizationLayout,
   StakeInstruction,
   StakeProgram,
   SystemInstruction,
   Transaction,
 } from '../src';
-import {mockRpcEnabled} from './__mocks__/node-fetch';
-import {url} from './url';
+import { mockRpcEnabled } from './__mocks__/node-fetch';
+import { url } from './url';
 
 if (!mockRpcEnabled) {
   // Testing max commitment level takes around 20s to complete
@@ -57,7 +57,7 @@ test('createAccountWithSeed', async () => {
   expect(systemParams).toEqual(
     SystemInstruction.decodeCreateWithSeed(systemInstruction),
   );
-  const initParams = {stakePubkey: newAccountPubkey, authorized, lockup};
+  const initParams = { stakePubkey: newAccountPubkey, authorized, lockup };
   expect(initParams).toEqual(
     StakeInstruction.decodeInitialize(stakeInstruction),
   );
@@ -90,7 +90,7 @@ test('createAccount', () => {
     SystemInstruction.decodeCreateAccount(systemInstruction),
   );
 
-  const initParams = {stakePubkey: newAccountPubkey, authorized, lockup};
+  const initParams = { stakePubkey: newAccountPubkey, authorized, lockup };
   expect(initParams).toEqual(
     StakeInstruction.decodeInitialize(stakeInstruction),
   );
@@ -196,7 +196,7 @@ test('withdraw', () => {
 test('deactivate', () => {
   const stakePubkey = new Account().publicKey;
   const authorizedPubkey = new Account().publicKey;
-  const params = {stakePubkey, authorizedPubkey};
+  const params = { stakePubkey, authorizedPubkey };
   const transaction = StakeProgram.deactivate(params);
   expect(transaction.instructions).toHaveLength(1);
   const [stakeInstruction] = transaction.instructions;
@@ -223,7 +223,7 @@ test('StakeInstructions', async () => {
     lockup: new Lockup(0, 0, from.publicKey),
     lamports: amount,
   });
-  const createWithSeedTransaction = new Transaction({recentBlockhash}).add(
+  const createWithSeedTransaction = new Transaction({ recentBlockhash }).add(
     createWithSeed,
   );
 
@@ -252,7 +252,7 @@ test('StakeInstructions', async () => {
     votePubkey: vote.publicKey,
   });
 
-  const delegateTransaction = new Transaction({recentBlockhash}).add(delegate);
+  const delegateTransaction = new Transaction({ recentBlockhash }).add(delegate);
   const anotherStakeInstructionType = StakeInstruction.decodeInstructionType(
     delegateTransaction.instructions[0],
   );
@@ -272,8 +272,8 @@ test('live staking actions', async () => {
 
   const from = new Account();
   const authorized = new Account();
-  await connection.requestAirdrop(from.publicKey, 2 * LAMPORTS_PER_SOL);
-  await connection.requestAirdrop(authorized.publicKey, 2 * LAMPORTS_PER_SOL);
+  await connection.requestAirdrop(from.publicKey, 2 * LAMPORTS_PER_VLX);
+  await connection.requestAirdrop(authorized.publicKey, 2 * LAMPORTS_PER_VLX);
 
   const minimumAmount = await connection.getMinimumBalanceForRentExemption(
     StakeProgram.space,
@@ -295,7 +295,7 @@ test('live staking actions', async () => {
       connection,
       createAndInitialize,
       [from, newStakeAccount],
-      {commitment: 'single', skipPreflight: true},
+      { commitment: 'single', skipPreflight: true },
     );
     expect(await connection.getBalance(newStakeAccount.publicKey)).toEqual(
       minimumAmount + 42,
@@ -334,7 +334,7 @@ test('live staking actions', async () => {
     connection,
     createAndInitializeWithSeed,
     [from],
-    {commitment: 'single', skipPreflight: true},
+    { commitment: 'single', skipPreflight: true },
   );
   let originalStakeBalance = await connection.getBalance(newAccountPubkey);
   expect(originalStakeBalance).toEqual(3 * minimumAmount + 42);
@@ -379,7 +379,7 @@ test('live staking actions', async () => {
 
   // Authorize to new account
   const newAuthorized = new Account();
-  await connection.requestAirdrop(newAuthorized.publicKey, LAMPORTS_PER_SOL);
+  await connection.requestAirdrop(newAuthorized.publicKey, LAMPORTS_PER_VLX);
 
   let authorize = StakeProgram.authorize({
     stakePubkey: newAccountPubkey,
@@ -412,7 +412,7 @@ test('live staking actions', async () => {
       connection,
       deactivateNotAuthorized,
       [authorized],
-      {commitment: 'single', skipPreflight: true},
+      { commitment: 'single', skipPreflight: true },
     ),
   ).rejects.toThrow();
 

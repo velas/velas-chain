@@ -57,7 +57,7 @@ export function SplitDetailsCard(props: {
       </tr>
 
       <tr>
-        <td>Split Amount (SOL)</td>
+        <td>Split Amount (VLX)</td>
         <td className="text-lg-right">{lamportsToSolString(info.lamports)}</td>
       </tr>
     </InstructionCard>

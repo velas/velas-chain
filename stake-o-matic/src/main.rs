@@ -149,7 +149,7 @@ fn get_config() -> Config {
         .arg(
             Arg::with_name("baseline_stake_amount")
                 .long("baseline-stake-amount")
-                .value_name("SOL")
+                .value_name("VLX")
                 .takes_value(true)
                 .default_value("5000")
                 .validator(is_amount)
@@ -157,7 +157,7 @@ fn get_config() -> Config {
         .arg(
             Arg::with_name("bonus_stake_amount")
                 .long("bonus-stake-amount")
-                .value_name("SOL")
+                .value_name("VLX")
                 .takes_value(true)
                 .default_value("50000")
                 .validator(is_amount)
@@ -347,7 +347,7 @@ fn validate_source_stake_account(
         get_stake_account(&rpc_client, &config.source_stake_address)?;
 
     info!(
-        "stake account balance: {} SOL",
+        "stake account balance: {} VLX",
         lamports_to_sol(source_stake_balance)
     );
     match &source_stake_state {
@@ -426,7 +426,7 @@ fn transact(
 ) -> Result<Vec<ConfirmedTransaction>, Box<dyn error::Error>> {
     let authorized_staker_balance = rpc_client.get_balance(&authorized_staker.pubkey())?;
     info!(
-        "Authorized staker balance: {} SOL",
+        "Authorized staker balance: {} VLX",
         lamports_to_sol(authorized_staker_balance)
     );
 
@@ -438,7 +438,7 @@ fn transact(
     let required_fee = transactions.iter().fold(0, |fee, (transaction, _)| {
         fee + fee_calculator.calculate_fee(&transaction.message)
     });
-    info!("Required fee: {} SOL", lamports_to_sol(required_fee));
+    info!("Required fee: {} VLX", lamports_to_sol(required_fee));
     if required_fee > authorized_staker_balance {
         return Err("Authorized staker has insufficient funds".into());
     }
@@ -837,13 +837,13 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         info!("All stake accounts exist");
     } else {
         info!(
-            "{} SOL is required to create {} stake accounts",
+            "{} VLX is required to create {} stake accounts",
             lamports_to_sol(source_stake_lamports_required),
             create_stake_transactions.len()
         );
         if source_stake_balance < source_stake_lamports_required {
             error!(
-                "Source stake account has insufficient balance: {} SOL, but {} SOL is required",
+                "Source stake account has insufficient balance: {} VLX, but {} VLX is required",
                 lamports_to_sol(source_stake_balance),
                 lamports_to_sol(source_stake_lamports_required)
             );

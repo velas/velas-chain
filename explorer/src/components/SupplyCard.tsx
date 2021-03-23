@@ -31,21 +31,21 @@ export function SupplyCard() {
 
       <TableCardBody>
         <tr>
-          <td className="w-100">Total Supply (SOL)</td>
+          <td className="w-100">Total Supply (VLX)</td>
           <td className="text-lg-right">
             {lamportsToSolString(supply.total, 0)}
           </td>
         </tr>
 
         <tr>
-          <td className="w-100">Circulating Supply (SOL)</td>
+          <td className="w-100">Circulating Supply (VLX)</td>
           <td className="text-lg-right">
             {lamportsToSolString(supply.circulating, 0)}
           </td>
         </tr>
 
         <tr>
-          <td className="w-100">Non-Circulating Supply (SOL)</td>
+          <td className="w-100">Non-Circulating Supply (VLX)</td>
           <td className="text-lg-right">
             {lamportsToSolString(supply.nonCirculating, 0)}
           </td>
