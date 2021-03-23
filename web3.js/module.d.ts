@@ -64,11 +64,11 @@ declare module '@solana/web3.js' {
 
   export type TokenAccountsFilter =
     | {
-        mint: PublicKey;
-      }
+      mint: PublicKey;
+    }
     | {
-        programId: PublicKey;
-      };
+      programId: PublicKey;
+    };
 
   export type RpcResponseAndContext<T> = {
     context: Context;
@@ -387,7 +387,7 @@ declare module '@solana/web3.js' {
       commitment?: Commitment,
     ): Promise<
       RpcResponseAndContext<
-        Array<{pubkey: PublicKey; account: AccountInfo<Buffer>}>
+        Array<{ pubkey: PublicKey; account: AccountInfo<Buffer> }>
       >
     >;
     getParsedTokenAccountsByOwner(
@@ -396,7 +396,7 @@ declare module '@solana/web3.js' {
       commitment?: Commitment,
     ): Promise<
       RpcResponseAndContext<
-        Array<{pubkey: PublicKey; account: AccountInfo<ParsedAccountData>}>
+        Array<{ pubkey: PublicKey; account: AccountInfo<ParsedAccountData> }>
       >
     >;
     getLargestAccounts(
@@ -1066,5 +1066,5 @@ declare module '@solana/web3.js' {
   export function clusterApiUrl(cluster?: Cluster, tls?: boolean): string;
 
   // === src/index.js ===
-  export const LAMPORTS_PER_SOL: number;
+  export const LAMPORTS_PER_VLX: number;
 }

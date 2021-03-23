@@ -90,7 +90,7 @@ export function TopAccountsCard() {
               <tr>
                 <th className="text-muted">Rank</th>
                 <th className="text-muted">Address</th>
-                <th className="text-muted text-right">Balance (SOL)</th>
+                <th className="text-muted text-right">Balance (VLX)</th>
                 <th className="text-muted text-right">% of {header} Supply</th>
               </tr>
             </thead>
@@ -195,9 +195,8 @@ const FilterDropdown = ({ filter, toggle, show }: DropdownProps) => {
             <Link
               key={filterOption || "null"}
               to={(location) => buildLocation(location, filterOption)}
-              className={`dropdown-item${
-                filterOption === filter ? " active" : ""
-              }`}
+              className={`dropdown-item${filterOption === filter ? " active" : ""
+                }`}
               onClick={toggle}
             >
               {filterTitle(filterOption)}

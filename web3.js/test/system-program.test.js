@@ -9,12 +9,12 @@ import {
   Transaction,
   TransactionInstruction,
   sendAndConfirmTransaction,
-  LAMPORTS_PER_SOL,
+  LAMPORTS_PER_VLX,
 } from '../src';
-import {NONCE_ACCOUNT_LENGTH} from '../src/nonce-account';
-import {mockRpcEnabled} from './__mocks__/node-fetch';
-import {sleep} from '../src/util/sleep';
-import {url} from './url';
+import { NONCE_ACCOUNT_LENGTH } from '../src/nonce-account';
+import { mockRpcEnabled } from './__mocks__/node-fetch';
+import { sleep } from '../src/util/sleep';
+import { url } from './url';
 
 if (!mockRpcEnabled) {
   // Testing max commitment level takes around 20s to complete
@@ -244,8 +244,8 @@ test('non-SystemInstruction error', () => {
 
   const badProgramId = {
     keys: [
-      {pubkey: from.publicKey, isSigner: true, isWritable: true},
-      {pubkey: to.publicKey, isSigner: false, isWritable: true},
+      { pubkey: from.publicKey, isSigner: true, isWritable: true },
+      { pubkey: to.publicKey, isSigner: false, isWritable: true },
     ],
     programId: StakeProgram.programId,
     data: Buffer.from([2, 0, 0, 0]),
@@ -258,7 +258,7 @@ test('non-SystemInstruction error', () => {
 
   const stakePubkey = new Account().publicKey;
   const authorizedPubkey = new Account().publicKey;
-  const params = {stakePubkey, authorizedPubkey};
+  const params = { stakePubkey, authorizedPubkey };
   const transaction = StakeProgram.deactivate(params);
 
   expect(() => {
@@ -283,9 +283,9 @@ test('live Nonce actions', async () => {
   const to = new Account();
   const authority = new Account();
   const newAuthority = new Account();
-  await connection.requestAirdrop(from.publicKey, 2 * LAMPORTS_PER_SOL);
-  await connection.requestAirdrop(authority.publicKey, LAMPORTS_PER_SOL);
-  await connection.requestAirdrop(newAuthority.publicKey, LAMPORTS_PER_SOL);
+  await connection.requestAirdrop(from.publicKey, 2 * LAMPORTS_PER_VLX);
+  await connection.requestAirdrop(authority.publicKey, LAMPORTS_PER_VLX);
+  await connection.requestAirdrop(newAuthority.publicKey, LAMPORTS_PER_VLX);
 
   const minimumAmount = await connection.getMinimumBalanceForRentExemption(
     NONCE_ACCOUNT_LENGTH,
@@ -304,7 +304,7 @@ test('live Nonce actions', async () => {
     connection,
     createNonceAccount,
     [from, nonceAccount],
-    {commitment: 'single', skipPreflight: true},
+    { commitment: 'single', skipPreflight: true },
   );
   const nonceBalance = await connection.getBalance(nonceAccount.publicKey);
   expect(nonceBalance).toEqual(minimumAmount);

@@ -78,7 +78,7 @@ fn output_slot_rewards(blockstore: &Blockstore, slot: Slot, method: &LedgerOutpu
                 println!("  Rewards:");
                 for reward in rewards {
                     println!(
-                        "    Account {}: {}{} SOL",
+                        "    Account {}: {}{} VLX",
                         reward.pubkey,
                         if reward.lamports < 0 { '-' } else { ' ' },
                         lamports_to_sol(reward.lamports.abs().try_into().unwrap())
@@ -381,7 +381,7 @@ fn graph_forks(bank_forks: &BankForks, include_all_votes: bool) -> String {
                         slot_stake_and_vote_count.get(&bank.slot())
                     {
                         format!(
-                            "\nvotes: {}, stake: {:.1} SOL ({:.1}%)",
+                            "\nvotes: {}, stake: {:.1} VLX ({:.1}%)",
                             votes,
                             lamports_to_sol(*stake),
                             *stake as f64 / *total_stake as f64 * 100.,
@@ -476,7 +476,7 @@ fn graph_forks(bank_forks: &BankForks, include_all_votes: bool) -> String {
     // Annotate the final "..." node with absent vote and stake information
     if absent_votes > 0 {
         dot.push(format!(
-            r#"    "..."[label="...\nvotes: {}, stake: {:.1} SOL {:.1}%"];"#,
+            r#"    "..."[label="...\nvotes: {}, stake: {:.1} VLX {:.1}%"];"#,
             absent_votes,
             lamports_to_sol(absent_stake),
             absent_stake as f64 / lowest_total_stake as f64 * 100.,
@@ -2101,7 +2101,7 @@ fn main() {
                     for (pubkey, (account, slot)) in accounts.into_iter() {
                         let data_len = account.data.len();
                         println!("{}:", pubkey);
-                        println!("  - balance: {} SOL", lamports_to_sol(account.lamports));
+                        println!("  - balance: {} VLX", lamports_to_sol(account.lamports));
                         println!("  - owner: '{}'", account.owner);
                         println!("  - executable: {}", account.executable);
                         println!("  - slot: {}", slot);

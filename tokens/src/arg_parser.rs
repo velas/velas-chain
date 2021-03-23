@@ -41,7 +41,7 @@ where
         )
         .subcommand(
             SubCommand::with_name("distribute-tokens")
-                .about("Distribute SOL")
+                .about("Distribute VLX")
                 .arg(
                     Arg::with_name("db_path")
                         .long("db-path")
@@ -68,7 +68,7 @@ where
                         .takes_value(true)
                         .value_name("AMOUNT")
                         .validator(is_amount)
-                        .help("The amount to send to each recipient, in SOL"),
+                        .help("The amount to send to each recipient, in VLX"),
                 )
                 .arg(
                     Arg::with_name("dry_run")
@@ -157,12 +157,12 @@ where
                         .help("Stake Account Address"),
                 )
                 .arg(
-                    Arg::with_name("unlocked_sol")
+                    Arg::with_name("unlocked_vlx")
                         .default_value("1.0")
-                        .long("unlocked-sol")
+                        .long("unlocked-vlx")
                         .takes_value(true)
-                        .value_name("SOL_AMOUNT")
-                        .help("Amount of SOL to put in system account to pay for fees"),
+                        .value_name("VLX_AMOUNT")
+                        .help("Amount of VLX to put in system account to pay for fees"),
                 )
                 .arg(
                     Arg::with_name("stake_authority")

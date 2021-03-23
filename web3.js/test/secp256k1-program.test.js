@@ -2,20 +2,20 @@
 
 import createKeccakHash from 'keccak';
 import secp256k1 from 'secp256k1';
-import {randomBytes} from 'crypto';
+import { randomBytes } from 'crypto';
 
-import {Secp256k1Program} from '../src/secp256k1-program';
-import {mockRpcEnabled} from './__mocks__/node-fetch';
-import {url} from './url';
+import { Secp256k1Program } from '../src/secp256k1-program';
+import { mockRpcEnabled } from './__mocks__/node-fetch';
+import { url } from './url';
 import {
   Connection,
   Account,
   sendAndConfirmTransaction,
-  LAMPORTS_PER_SOL,
+  LAMPORTS_PER_VLX,
   Transaction,
 } from '../src';
 
-const {privateKeyVerify, ecdsaSign, publicKeyCreate} = secp256k1;
+const { privateKeyVerify, ecdsaSign, publicKeyCreate } = secp256k1;
 
 if (!mockRpcEnabled) {
   jest.setTimeout(20000);
@@ -36,7 +36,7 @@ test('live create secp256k1 instruction with public key', async () => {
 
   const publicKey = publicKeyCreate(privateKey, false);
   const messageHash = createKeccakHash('keccak256').update(message).digest();
-  const {signature, recid: recoveryId} = ecdsaSign(messageHash, privateKey);
+  const { signature, recid: recoveryId } = ecdsaSign(messageHash, privateKey);
 
   const instruction = Secp256k1Program.createInstructionWithPublicKey({
     publicKey,
@@ -50,7 +50,7 @@ test('live create secp256k1 instruction with public key', async () => {
 
   const connection = new Connection(url, 'recent');
   const from = new Account();
-  await connection.requestAirdrop(from.publicKey, 2 * LAMPORTS_PER_SOL);
+  await connection.requestAirdrop(from.publicKey, 2 * LAMPORTS_PER_VLX);
 
   await sendAndConfirmTransaction(connection, transaction, [from], {
     commitment: 'single',
@@ -79,7 +79,7 @@ test('live create secp256k1 instruction with private key', async () => {
 
   const connection = new Connection(url, 'recent');
   const from = new Account();
-  await connection.requestAirdrop(from.publicKey, 2 * LAMPORTS_PER_SOL);
+  await connection.requestAirdrop(from.publicKey, 2 * LAMPORTS_PER_VLX);
 
   await sendAndConfirmTransaction(connection, transaction, [from], {
     commitment: 'single',

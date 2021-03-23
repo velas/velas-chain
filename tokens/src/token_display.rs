@@ -5,7 +5,7 @@ use std::{
     ops::Add,
 };
 
-const SOL_SYMBOL: &str = "◎";
+const VLX_SYMBOL: &str = "◎";
 
 #[derive(PartialEq)]
 pub enum TokenType {
@@ -24,7 +24,7 @@ impl Token {
         match &self.token_type {
             TokenType::Sol => {
                 let amount = lamports_to_sol(self.amount);
-                write!(f, "{}{}", SOL_SYMBOL, amount)
+                write!(f, "{}{}", VLX_SYMBOL, amount)
             }
             TokenType::SplToken => {
                 let amount = real_number_string_trimmed(self.amount, self.decimals);

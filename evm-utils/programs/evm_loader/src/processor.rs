@@ -726,9 +726,9 @@ mod test {
             nonce: 1.into(),
             gas_price: 1.into(),
             gas_limit: 300000.into(),
-            action: TransactionAction::Call(*precompiles::ETH_TO_SOL_ADDR),
+            action: TransactionAction::Call(*precompiles::ETH_TO_VLX_ADDR),
             value: crate::scope::evm::lamports_to_gwei(lamports_to_send_back),
-            input: precompiles::ETH_TO_SOL_CODE
+            input: precompiles::ETH_TO_VLX_CODE
                 .abi
                 .encode_input(&[ethabi::Token::FixedBytes(fake_user_id.to_bytes().to_vec())])
                 .unwrap(),
@@ -862,9 +862,9 @@ mod test {
             nonce: 0.into(),
             gas_price: 1.into(),
             gas_limit: 300000.into(),
-            action: TransactionAction::Call(*precompiles::ETH_TO_SOL_ADDR),
+            action: TransactionAction::Call(*precompiles::ETH_TO_VLX_ADDR),
             value: crate::scope::evm::lamports_to_gwei(lamports_to_send_back),
-            input: precompiles::ETH_TO_SOL_CODE
+            input: precompiles::ETH_TO_VLX_CODE
                 .abi
                 .encode_input(&[ethabi::Token::FixedBytes(user_id.to_bytes().to_vec())])
                 .unwrap(),

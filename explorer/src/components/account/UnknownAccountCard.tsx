@@ -32,7 +32,7 @@ export function UnknownAccountCard({ account }: { account: Account }) {
           </tr>
         )}
         <tr>
-          <td>Balance (SOL)</td>
+          <td>Balance (VLX)</td>
           <td className="text-lg-right text-uppercase">
             {lamportsToSolString(lamports)}
           </td>

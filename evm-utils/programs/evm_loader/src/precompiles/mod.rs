@@ -6,7 +6,7 @@ mod builtins;
 mod errors;
 pub use abi_parse::*;
 use builtins::BUILTINS_MAP;
-pub use builtins::{ETH_TO_SOL_ADDR, ETH_TO_SOL_CODE};
+pub use builtins::{ETH_TO_VLX_ADDR, ETH_TO_VLX_CODE};
 pub use errors::PrecompileErrors;
 
 use crate::account_structure::AccountStructure;

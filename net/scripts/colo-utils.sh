@@ -127,12 +127,12 @@ colo_whoami() {
   echo "${ME}"
 }
 
-COLO_SOLANA_USER=""
+COLO_VLXANA_USER=""
 colo_get_solana_user() {
-  if [ -z "${COLO_SOLANA_USER}" ]; then
-    COLO_SOLANA_USER=$(colo_whoami)
+  if [ -z "${COLO_VLXANA_USER}" ]; then
+    COLO_VLXANA_USER=$(colo_whoami)
   fi
-  echo "${COLO_SOLANA_USER}"
+  echo "${COLO_VLXANA_USER}"
 }
 
 __colo_node_status_script() {

@@ -103,8 +103,8 @@ pub static BUILTINS_MAP: Lazy<HashMap<H160, BuiltinEval>> = Lazy::new(|| {
     let mut builtins = HashMap::new();
 
     let eth_to_sol: BuiltinEval =
-        &|function_abi_input, cx| (*ETH_TO_SOL_CODE).eval(function_abi_input, cx);
-    assert!(builtins.insert(*ETH_TO_SOL_ADDR, eth_to_sol).is_none());
+        &|function_abi_input, cx| (*ETH_TO_VLX_CODE).eval(function_abi_input, cx);
+    assert!(builtins.insert(*ETH_TO_VLX_ADDR, eth_to_sol).is_none());
     builtins
 });
 
@@ -113,7 +113,7 @@ pub static BUILTINS_MAP: Lazy<HashMap<H160, BuiltinEval>> = Lazy::new(|| {
 //
 
 // TODO: Implement some procedural macro to render this in more
-pub static ETH_TO_SOL_ADDR: Lazy<H160> = Lazy::new(|| {
+pub static ETH_TO_VLX_ADDR: Lazy<H160> = Lazy::new(|| {
     H160::from_str(concat!(
         "56454c41532d434841494e", // 'VELAS-CHAIN'
         "0000000000",             // just spaces
@@ -122,9 +122,9 @@ pub static ETH_TO_SOL_ADDR: Lazy<H160> = Lazy::new(|| {
     .expect("Serialization of static data should be determenistic and never fail.")
 });
 
-type EthToSolImp = fn(Pubkey, PrecompileContext) -> Result<PrecompileOk>;
+type EthToVlxImp = fn(Pubkey, PrecompileContext) -> Result<PrecompileOk>;
 
-pub static ETH_TO_SOL_CODE: Lazy<Builtin<EthToSolImp, Pubkey>> = Lazy::new(|| {
+pub static ETH_TO_VLX_CODE: Lazy<Builtin<EthToVlxImp, Pubkey>> = Lazy::new(|| {
     let abi = Function {
         name: String::from("transferToNative"),
         inputs: vec![Param {

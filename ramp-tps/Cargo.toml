@@ -2,7 +2,7 @@
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
 edition = "2018"
 name = "solana-ramp-tps"
-description = "Solana Tour de SOL - TPS ramp up"
+description = "Solana Tour de VLX - TPS ramp up"
 version = "1.5.14"
 repository = "https://github.com/solana-labs/tour-de-sol"
 license = "Apache-2.0"

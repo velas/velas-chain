@@ -4,12 +4,12 @@ import {
   Connection,
   Transaction,
   SystemProgram,
-  LAMPORTS_PER_SOL,
+  LAMPORTS_PER_VLX,
 } from '../src';
-import {mockRpc, mockRpcEnabled} from './__mocks__/node-fetch';
-import {mockGetRecentBlockhash} from './mockrpc/get-recent-blockhash';
-import {url} from './url';
-import {mockConfirmTransaction} from './mockrpc/confirm-transaction';
+import { mockRpc, mockRpcEnabled } from './__mocks__/node-fetch';
+import { mockGetRecentBlockhash } from './mockrpc/get-recent-blockhash';
+import { url } from './url';
+import { mockConfirmTransaction } from './mockrpc/confirm-transaction';
 
 if (!mockRpcEnabled) {
   // The default of 5 seconds is too slow for live testing sometimes
@@ -26,7 +26,7 @@ test('transaction-payer', async () => {
     url,
     {
       method: 'getMinimumBalanceForRentExemption',
-      params: [0, {commitment: 'recent'}],
+      params: [0, { commitment: 'recent' }],
     },
     {
       error: null,
@@ -43,7 +43,7 @@ test('transaction-payer', async () => {
     url,
     {
       method: 'requestAirdrop',
-      params: [accountPayer.publicKey.toBase58(), LAMPORTS_PER_SOL],
+      params: [accountPayer.publicKey.toBase58(), LAMPORTS_PER_VLX],
     },
     {
       error: null,
@@ -51,7 +51,7 @@ test('transaction-payer', async () => {
         '0WE5w4B7v59x6qjyC4FbG2FEKYKQfvsJwqSxNVmtMjT8TQ31hsZieDHcSgqzxiAoTL56n2w5TncjqEKjLhtF4Vk',
     },
   ]);
-  await connection.requestAirdrop(accountPayer.publicKey, LAMPORTS_PER_SOL);
+  await connection.requestAirdrop(accountPayer.publicKey, LAMPORTS_PER_VLX);
 
   mockRpc.push([
     url,
@@ -105,7 +105,7 @@ test('transaction-payer', async () => {
   const signature = await connection.sendTransaction(
     transaction,
     [accountPayer, accountFrom],
-    {skipPreflight: true},
+    { skipPreflight: true },
   );
 
   mockConfirmTransaction(signature);
@@ -131,14 +131,14 @@ test('transaction-payer', async () => {
           {
             slot: 0,
             confirmations: 11,
-            status: {Ok: null},
+            status: { Ok: null },
             err: null,
           },
         ],
       },
     },
   ]);
-  const {value} = await connection.getSignatureStatus(signature);
+  const { value } = await connection.getSignatureStatus(signature);
   if (value !== null) {
     expect(typeof value.slot).toEqual('number');
     expect(value.err).toBeNull();
@@ -150,7 +150,7 @@ test('transaction-payer', async () => {
     url,
     {
       method: 'getBalance',
-      params: [accountPayer.publicKey.toBase58(), {commitment: 'recent'}],
+      params: [accountPayer.publicKey.toBase58(), { commitment: 'recent' }],
     },
     {
       error: null,
@@ -158,23 +158,23 @@ test('transaction-payer', async () => {
         context: {
           slot: 11,
         },
-        value: LAMPORTS_PER_SOL - 1,
+        value: LAMPORTS_PER_VLX - 1,
       },
     },
   ]);
 
-  // accountPayer should be less than LAMPORTS_PER_SOL as it paid for the transaction
+  // accountPayer should be less than LAMPORTS_PER_VLX as it paid for the transaction
   // (exact amount less depends on the current cluster fees)
   const balance = await connection.getBalance(accountPayer.publicKey);
   expect(balance).toBeGreaterThan(0);
-  expect(balance).toBeLessThanOrEqual(LAMPORTS_PER_SOL);
+  expect(balance).toBeLessThanOrEqual(LAMPORTS_PER_VLX);
 
   // accountFrom should have exactly 2, since it didn't pay for the transaction
   mockRpc.push([
     url,
     {
       method: 'getBalance',
-      params: [accountFrom.publicKey.toBase58(), {commitment: 'recent'}],
+      params: [accountFrom.publicKey.toBase58(), { commitment: 'recent' }],
     },
     {
       error: null,
