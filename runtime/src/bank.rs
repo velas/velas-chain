@@ -2205,18 +2205,12 @@ impl Bank {
         // Add account for evm.
         let evm_executor_account = native_loader::create_loadable_account("Evm Processor", 1);
 
-        let evm_state_account = solana_evm_loader_program::create_state_account();
         if !self.simple_capitalization_enabled() {
             self.store_account(&solana_sdk::evm_loader::id(), &evm_executor_account);
-            self.store_account(&solana_sdk::evm_state::id(), &evm_state_account);
         } else {
             self.store_account_and_update_capitalization(
                 &solana_sdk::evm_loader::id(),
                 &evm_executor_account,
-            );
-            self.store_account_and_update_capitalization(
-                &solana_sdk::evm_state::id(),
-                &evm_state_account,
             );
         }
     }
@@ -12035,10 +12029,10 @@ pub(crate) mod tests {
         bank = new_from_parent(&Arc::new(bank));
         assert_eq!(bank.slot(), 3);
 
-        // Request `full_inflation::devnet_and_testnet` activation,
+        // Request `full_inflation::devnet_and_testnet_velas_mainnet` activation,
         // which takes priority over pico_inflation
         bank.store_account(
-            &feature_set::full_inflation::devnet_and_testnet::id(),
+            &feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id(),
             &feature::create_account(
                 &Feature {
                     activated_at: Some(2),
@@ -12143,10 +12137,10 @@ pub(crate) mod tests {
         bank = new_from_parent(&Arc::new(bank));
         assert_eq!(bank.slot(), 4);
 
-        // Request `full_inflation::devnet_and_testnet` activation,
+        // Request `full_inflation::devnet_and_testnet_velas_mainnet` activation,
         // which should have no effect on `get_inflation_start_slot`
         bank.store_account(
-            &feature_set::full_inflation::devnet_and_testnet::id(),
+            &feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id(),
             &feature::create_account(
                 &Feature {
                     activated_at: Some(bank.slot()),
@@ -12171,7 +12165,7 @@ pub(crate) mod tests {
             .unwrap();
         genesis_config
             .accounts
-            .remove(&feature_set::full_inflation::devnet_and_testnet::id())
+            .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
             .unwrap();
         for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
             genesis_config.accounts.remove(&pair.vote_id).unwrap();
@@ -12203,10 +12197,10 @@ pub(crate) mod tests {
         }
         assert_eq!(bank.get_inflation_num_slots(), 2 * slots_per_epoch);
 
-        // Activate full_inflation::devnet_and_testnet
+        // Activate full_inflation::devnet_and_testnet_velas_mainnet
         let full_inflation_activation_slot = bank.slot();
         bank.store_account(
-            &feature_set::full_inflation::devnet_and_testnet::id(),
+            &feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id(),
             &feature::create_account(
                 &Feature {
                     activated_at: Some(full_inflation_activation_slot),

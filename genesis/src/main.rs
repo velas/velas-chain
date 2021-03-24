@@ -9,6 +9,8 @@ extern crate solana_exchange_program;
 extern crate solana_vest_program;
 
 use clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches};
+use evm_state::U256;
+use log::{error, info};
 use solana_clap_utils::{
     input_parsers::{cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime},
     input_validators::{is_pubkey_or_keypair, is_rfc3339_datetime, is_valid_percentage},
@@ -395,7 +397,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .takes_value(true)
                 .help("Path to EVM state json file, can be retrived from `parity export state` command."),
         ).arg(
-            Arg::with_name("evm_chain_id")
+            Arg::with_name("evm-chain-id")
                 .required(false)
                 .long("evm-chain-id")
                 .takes_value(true)
@@ -406,6 +408,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         app
     }
     .get_matches();
+
+    solana_logger::setup_with("info");
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
@@ -440,7 +444,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         v.sort();
         v.dedup();
         if v.len() != bootstrap_validator_pubkeys.len() {
-            eprintln!("Error: --bootstrap-validator pubkeys cannot be duplicated");
+            error!("Error: --bootstrap-validator pubkeys cannot be duplicated");
             process::exit(1);
         }
     }
@@ -448,10 +452,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let bootstrap_validator_lamports =
         value_t_or_exit!(matches, "bootstrap_validator_lamports", u64);
 
-    let bootstrap_validator_stake_lamports = rent_exempt_check(
+    let bootstrap_validator_stake_lamports =
+        value_t_or_exit!(matches, "bootstrap_validator_stake_lamports", u64);
+    rent_exempt_check(
         &matches,
         "bootstrap_validator_stake_lamports",
-        StakeState::get_rent_exempt_reserve(&rent) + stake_state::MIN_DELEGATE_STAKE_AMOUNT,
+        bootstrap_validator_stake_lamports,
     )?;
 
     let bootstrap_stake_authorized_pubkey =
@@ -523,8 +529,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         vec![]
     };
 
-    let evm_chain_id = if matches.value_of("evm_chain_id").is_some() {
-        value_t_or_exit!(matches, "evm_chain_id", u64)
+    let evm_chain_id = if matches.value_of("evm-chain-id").is_some() {
+        value_t_or_exit!(matches, "evm-chain-id", u64)
     } else {
         match cluster_type {
             ClusterType::MainnetBeta => genesis_config::EVM_MAINNET_CHAIN_ID,
@@ -553,7 +559,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 genesis_config.set_evm_root_hash(root_hash.0)
             }
             Err(e) => {
-                eprintln!(
+                error!(
                     "EVM root was not found but genesis was compiled with `with_evm` feature {}",
                     e
                 );
@@ -628,6 +634,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     if genesis_config.cluster_type == ClusterType::Development {
         solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
+    } else {
+        solana_runtime::genesis_utils::activate_velas_features_on_prod(&mut genesis_config);
     }
 
     if let Some(files) = matches.values_of("primordial_accounts_file") {
@@ -639,11 +647,36 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let max_genesis_archive_unpacked_size =
         value_t_or_exit!(matches, "max_genesis_archive_unpacked_size", u64);
 
-    let _issued_lamports = genesis_config
+    let mut evm_state_balance = U256::zero();
+
+    if let Some(evm_state_json) = &evm_state_json {
+        info!("Calculating evm state lamports");
+        for account in genesis_config::evm_genesis::read_accounts(&evm_state_json).unwrap() {
+            evm_state_balance += account.unwrap().1.balance;
+        }
+    }
+
+    let (mut evm_state_lamports, change) =
+        solana_evm_loader_program::scope::evm::gweis_to_lamports(evm_state_balance);
+    if change != U256::zero() {
+        evm_state_lamports += 1;
+    }
+
+    genesis_config.add_account(
+        solana_sdk::evm_state::ID,
+        solana_evm_loader_program::create_state_account(evm_state_lamports),
+    );
+
+    let issued_lamports = genesis_config
         .accounts
         .iter()
         .map(|(_key, account)| account.lamports)
         .sum::<u64>();
+
+    info!(
+        "Total issued lamports = {}, for faucet/bridge = {}, for evm = {}",
+        issued_lamports, faucet_lamports, evm_state_lamports
+    );
 
     // TODO: add_genesis_accounts for evm.
     // add_genesis_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
@@ -686,7 +719,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
     }
 
-    solana_logger::setup();
     create_new_ledger(
         &ledger_path,
         evm_state_json.as_ref().map(AsRef::as_ref),

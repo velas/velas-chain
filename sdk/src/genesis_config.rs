@@ -240,7 +240,7 @@ impl GenesisConfig {
         } else {
             warn!("Generating genesis with empty evm state");
             match self.cluster_type {
-                ClusterType::Development => (),
+                ClusterType::Development | ClusterType::Devnet => (),
                 cluster_type => {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Other,

@@ -27,7 +27,7 @@ pub mod pico_inflation {
 }
 
 pub mod full_inflation {
-    pub mod devnet_and_testnet {
+    pub mod devnet_and_testnet_velas_mainnet {
         solana_sdk::declare_id!("DT4n6ABDqs6w4bnfwrXT9rsprcPf6cdDga1egctaPkLC");
     }
 
@@ -175,15 +175,19 @@ pub mod check_program_owner {
     solana_sdk::declare_id!("5XnbR5Es9YXEARRuP6mdvoxiW3hx5atNNeBmwVd8P3QD");
 }
 
+pub mod test_features {
+    solana_sdk::declare_id!("11111111111111111111111111111111");
+}
+
 lazy_static! {
-    /// Map of feature identifiers to user-visible description
-    pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
+
+    pub static ref FEATURE_NAMES_BEFORE_MAINNET: HashMap<Pubkey, &'static str> = [
         (instructions_sysvar_enabled::id(), "instructions sysvar"),
         (secp256k1_program_enabled::id(), "secp256k1 program"),
         (consistent_recent_blockhashes_sysvar::id(), "consistent recentblockhashes sysvar"),
         (deprecate_rewards_sysvar::id(), "deprecate unused rewards sysvar"),
         (pico_inflation::id(), "pico inflation"),
-        (full_inflation::devnet_and_testnet::id(), "full inflation on devnet and testnet"),
+        (full_inflation::devnet_and_testnet_velas_mainnet::id(), "full inflation on devnet and testnet"),
         (spl_token_v2_multisig_fix::id(), "spl-token multisig fix"),
         (bpf_loader2_program::id(), "bpf_loader2 program"),
         (bpf_compute_budget_balancing::id(), "compute budget balancing"),
@@ -213,8 +217,6 @@ lazy_static! {
         (require_custodian_for_locked_stake_authorize::id(), "require custodian to authorize withdrawer change for locked stake"),
         (spl_token_v2_self_transfer_fix::id(), "spl-token self-transfer fix"),
         (matching_buffer_upgrade_authorities::id(), "Upgradeable buffer and program authorities must match"),
-        (full_inflation::mainnet::certusone::enable::id(), "Full inflation enabled by Certus One"),
-        (full_inflation::mainnet::certusone::vote::id(), "Community vote allowing Certus One to enable full inflation"),
         (warp_timestamp_again::id(), "warp timestamp again, adjust bounding to 25% fast 80% slow #15204"),
         (per_byte_logging_cost::id(), "charge the compute budget per byte for logging"),
         (check_init_vote_data::id(), "check initialized Vote data"),
@@ -224,6 +226,19 @@ lazy_static! {
     .iter()
     .cloned()
     .collect();
+
+    /// Map of feature identifiers to user-visible description
+    pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = FEATURE_NAMES_BEFORE_MAINNET.iter().map(|(k,v)| (k.clone(), v.clone()))
+    .chain(
+        [
+            (test_features::id(), "Test feature used as example how to implement features.")
+            /*************** ADD NEW FEATURES HERE ***************/
+        ]
+        .iter()
+        .cloned())
+    .collect();
+
+
 
     /// Unique identifier of the current software's feature set
     pub static ref ID: Hash = {
@@ -293,8 +308,8 @@ impl FeatureSet {
             })
             .collect::<HashSet<_>>();
 
-        if self.is_active(&full_inflation::devnet_and_testnet::id()) {
-            hash_set.insert(full_inflation::devnet_and_testnet::id());
+        if self.is_active(&full_inflation::devnet_and_testnet_velas_mainnet::id()) {
+            hash_set.insert(full_inflation::devnet_and_testnet_velas_mainnet::id());
         }
         hash_set
     }
@@ -313,15 +328,15 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_full_inflation_features_enabled_devnet_and_testnet() {
+    fn test_full_inflation_features_enabled_devnet_and_testnet_velas_mainnet() {
         let mut feature_set = FeatureSet::default();
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
             .active
-            .insert(full_inflation::devnet_and_testnet::id(), 42);
+            .insert(full_inflation::devnet_and_testnet_velas_mainnet::id(), 42);
         assert_eq!(
             feature_set.full_inflation_features_enabled(),
-            [full_inflation::devnet_and_testnet::id()]
+            [full_inflation::devnet_and_testnet_velas_mainnet::id()]
                 .iter()
                 .cloned()
                 .collect()
