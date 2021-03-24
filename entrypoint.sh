@@ -39,13 +39,14 @@ run_solana_validator() {
     case "$NETWORK" in
         # airdrop on devnet only
         "devnet" | "development")
+            if ! vote_account_exist; then
+                velas-keygen new --no-passphrase -so $datadir/identity.json #try to generate identity
+                velas-keygen new --no-passphrase -so $datadir/vote-account.json #try to generate vote account
+                velas --keypair /config/faucet.json --url $rpc_url transfer $datadir/identity.json $(($MIN_VALIDATOR_STAKE + $MIN_RENT_FEE))
+                velas --keypair $datadir/identity.json --url $rpc_url create-vote-account $datadir/vote-account.json $datadir/identity.json
+            fi
+            
             if ! stake_account_exist; then
-                if ! vote_account_exist; then
-                    velas-keygen new --no-passphrase -so $datadir/identity.json #try to generate identity
-                    velas-keygen new --no-passphrase -so $datadir/vote-account.json #try to generate vote account
-                    velas --keypair /config/faucet.json --url $rpc_url transfer $datadir/identity.json $(($MIN_VALIDATOR_STAKE + $MIN_RENT_FEE))
-                    velas --keypair $datadir/identity.json --url $rpc_url create-vote-account $datadir/vote-account.json $datadir/identity.json
-                fi
                 # TODO: Airdrop tokens if not enough
                 vote_account=$(velas address --keypair $datadir/vote-account.json)
                 velas-keygen new --no-passphrase -so $datadir/stake-account.json

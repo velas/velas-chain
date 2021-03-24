@@ -39,7 +39,7 @@ impl<'a> AccountStructure<'a> {
         use std::cell::RefCell;
 
         let evm_key = Pubkey::new_unique();
-        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_state = KeyedAccount::new(&evm_key, false, &evm_account);
 
         let keys: Vec<_> = std::iter::repeat_with(|| {

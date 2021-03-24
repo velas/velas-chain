@@ -86,7 +86,7 @@ mod tests {
 
     struct SnapshotTestConfig {
         evm_state_dir: TempDir,
-        evm_ledger_path: TempDir,
+        _evm_ledger_path: TempDir,
         accounts_dir: TempDir,
         snapshot_dir: TempDir,
         _snapshot_output_path: TempDir,
@@ -151,7 +151,7 @@ mod tests {
             bank_forks.set_snapshot_config(Some(snapshot_config.clone()));
             SnapshotTestConfig {
                 evm_state_dir,
-                evm_ledger_path,
+                _evm_ledger_path: evm_ledger_path,
                 accounts_dir,
                 snapshot_dir,
                 _snapshot_output_path: snapshot_output_path,

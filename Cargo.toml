@@ -62,6 +62,7 @@ members = [
     "runtime",
     "runtime/store-tool",
     "sdk",
+    "sdk/program",
     "sdk/cargo-build-bpf",
     "sdk/cargo-test-bpf",
     "scripts",
@@ -79,6 +80,4 @@ members = [
     "watchtower",
 ]
 
-exclude = [
-    "programs/bpf",
-]
+exclude = ["programs/bpf"]

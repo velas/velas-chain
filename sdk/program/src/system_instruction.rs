@@ -85,7 +85,9 @@ pub enum SystemInstruction {
     /// # Account references
     ///   0. [WRITE, SIGNER] Funding account
     ///   1. [WRITE] Recipient account
-    Transfer { lamports: u64 },
+    Transfer {
+        lamports: u64,
+    },
 
     /// Create a new account at an address derived from a base pubkey and a seed
     ///
@@ -217,6 +219,56 @@ pub enum SystemInstruction {
         /// Owner to use to derive the funding account address
         from_owner: Pubkey,
     },
+
+    // Save reserved fields, this allow us to add instruction, without bracking forward compatibility with solana, and allowssolana extend instructions in future.
+    Reserved1 {
+        _field: u64,
+    },
+
+    Reserved2 {
+        _field: u64,
+    },
+
+    Reserved3 {
+        _field: u64,
+    },
+
+    Reserved4 {
+        _field: u64,
+    },
+
+    Reserved5 {
+        _field: u64,
+    },
+
+    Reserved6 {
+        _field: u64,
+    },
+
+    Reserved7 {
+        _field: u64,
+    },
+
+    Reserved8 {
+        _field: u64,
+    },
+
+    Reserved9 {
+        _field: u64,
+    },
+
+    Reserved10 {
+        _field: u64,
+    },
+    /// Reallocate space in a account without funding.
+    /// Reallocate check that account is zero initialized, and don't force account to be empty.
+    ///
+    /// # Account references
+    ///   0. [WRITE, SIGNER] New account
+    Reallocate {
+        /// Number of bytes of memory to allocate
+        space: u64,
+    },
 }
 
 pub fn create_account(
@@ -342,6 +394,15 @@ pub fn allocate(pubkey: &Pubkey, space: u64) -> Instruction {
     Instruction::new(
         system_program::id(),
         &SystemInstruction::Allocate { space },
+        account_metas,
+    )
+}
+
+pub fn reallocate(pubkey: &Pubkey, space: u64) -> Instruction {
+    let account_metas = vec![AccountMeta::new(*pubkey, true)];
+    Instruction::new(
+        system_program::id(),
+        &SystemInstruction::Reallocate { space },
         account_metas,
     )
 }

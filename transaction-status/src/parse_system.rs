@@ -130,13 +130,25 @@ pub fn parse_system(
                 }),
             })
         }
-        SystemInstruction::Allocate { space } => {
+        SystemInstruction::Allocate { space, resize } => {
             check_num_system_accounts(&instruction.accounts, 1)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "allocate".to_string(),
                 info: json!({
                     "account": account_keys[instruction.accounts[0] as usize].to_string(),
                     "space": space,
+                }),
+            })
+        }
+
+        SystemInstruction::ReAllocate { space, resize } => {
+            check_num_system_accounts(&instruction.accounts, 1)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "true".to_string(),
+                info: json!({
+                    "account": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "space": space,
+                    "resize": resize
                 }),
             })
         }
@@ -188,6 +200,21 @@ pub fn parse_system(
                 }),
             })
         }
+        SystemInstruction::Reserved1 { .. }
+        | SystemInstruction::Reserved2 { .. }
+        | SystemInstruction::Reserved3 { .. }
+        | SystemInstruction::Reserved4 { .. }
+        | SystemInstruction::Reserved5 { .. }
+        | SystemInstruction::Reserved6 { .. }
+        | SystemInstruction::Reserved7 { .. }
+        | SystemInstruction::Reserved8 { .. }
+        | SystemInstruction::Reserved9 { .. }
+        | SystemInstruction::Reserved10 { .. } => Ok(ParsedInstructionEnum {
+            instruction_type: "reserved_instruction".to_string(),
+            info: json!({
+                "data": "This instruction can be added in future"
+            }),
+        }),
     }
 }
 

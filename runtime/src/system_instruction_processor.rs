@@ -66,6 +66,7 @@ fn allocate(
     address: &Address,
     space: u64,
     signers: &HashSet<Pubkey>,
+    resize: bool,
     invoke_context: &mut dyn InvokeContext,
 ) -> Result<(), InstructionError> {
     if !address.is_signer(signers) {
@@ -77,9 +78,21 @@ fn allocate(
         return Err(InstructionError::MissingRequiredSignature);
     }
 
+    let is_empty = if resize {
+        // if instriction forcibly tell that account should be resizeable, check that data is empty.
+        const ZEROS_LEN: usize = 1024;
+        static ZEROS: [u8; ZEROS_LEN] = [0; ZEROS_LEN];
+        let mut chunks = account.data.chunks_exact(ZEROS_LEN);
+
+        chunks.all(|chunk| chunk == &ZEROS[..])
+            && chunks.remainder() == &ZEROS[..chunks.remainder().len()]
+    } else {
+        account.data.is_empty()
+    };
+
     // if it looks like the `to` account is already in use, bail
     //   (note that the id check is also enforced by message_processor)
-    if !account.data.is_empty() || !system_program::check_id(&account.owner) {
+    if !is_empty || !system_program::check_id(&account.owner) {
         ic_msg!(
             invoke_context,
             "Allocate: account {:?} already in use",
@@ -138,7 +151,7 @@ fn allocate_and_assign(
     signers: &HashSet<Pubkey>,
     invoke_context: &mut dyn InvokeContext,
 ) -> Result<(), InstructionError> {
-    allocate(to, to_address, space, signers, invoke_context)?;
+    allocate(to, to_address, space, signers, false, invoke_context)?;
     assign(to, to_address, owner, signers, invoke_context)
 }
 
@@ -378,7 +391,27 @@ pub fn process_instruction(
             let keyed_account = next_keyed_account(keyed_accounts_iter)?;
             let mut account = keyed_account.try_account_ref_mut()?;
             let address = Address::create(keyed_account.unsigned_key(), None, invoke_context)?;
-            allocate(&mut account, &address, space, &signers, invoke_context)
+            allocate(
+                &mut account,
+                &address,
+                space,
+                &signers,
+                false,
+                invoke_context,
+            )
+        }
+        SystemInstruction::Reallocate { space } => {
+            let keyed_account = next_keyed_account(keyed_accounts_iter)?;
+            let mut account = keyed_account.try_account_ref_mut()?;
+            let address = Address::create(keyed_account.unsigned_key(), None, invoke_context)?;
+            allocate(
+                &mut account,
+                &address,
+                space,
+                &signers,
+                true,
+                invoke_context,
+            )
         }
         SystemInstruction::AllocateWithSeed {
             base,
@@ -412,6 +445,16 @@ pub fn process_instruction(
             )?;
             assign(&mut account, &address, &owner, &signers, invoke_context)
         }
+        SystemInstruction::Reserved1 { .. }
+        | SystemInstruction::Reserved2 { .. }
+        | SystemInstruction::Reserved3 { .. }
+        | SystemInstruction::Reserved4 { .. }
+        | SystemInstruction::Reserved5 { .. }
+        | SystemInstruction::Reserved6 { .. }
+        | SystemInstruction::Reserved7 { .. }
+        | SystemInstruction::Reserved8 { .. }
+        | SystemInstruction::Reserved9 { .. }
+        | SystemInstruction::Reserved10 { .. } => Err(InstructionError::InvalidInstructionData),
     }
 }
 
@@ -1223,9 +1266,23 @@ mod tests {
 
         let allocate = system_instruction::allocate(&alice_pubkey, 2);
 
-        assert!(bank_client
+        bank_client
             .send_and_confirm_instruction(&alice_keypair, allocate)
-            .is_ok());
+            .unwrap();
+
+        let new_fee_keypair = Keypair::new();
+
+        bank_client
+            .transfer_and_confirm(50, &mint_keypair, &new_fee_keypair.pubkey())
+            .unwrap();
+
+        let reallocate = Message::new(
+            &[system_instruction::reallocate(&alice_pubkey, 3)],
+            Some(&new_fee_keypair.pubkey()),
+        );
+        bank_client
+            .send_and_confirm_message(&[&new_fee_keypair, &alice_keypair], reallocate)
+            .unwrap();
     }
 
     fn with_create_zero_lamport<F>(callback: F)
