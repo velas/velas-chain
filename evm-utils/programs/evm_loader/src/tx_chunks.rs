@@ -40,7 +40,9 @@ impl<T: BorrowMut<[u8]>> TxChunks<T> {
             }
         );
 
-        bytes.fill(0);
+        for elem in bytes.iter_mut() {
+            *elem = 0;
+        }
 
         Ok(())
     }

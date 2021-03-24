@@ -5,7 +5,11 @@ MIN_VALIDATOR_STAKE=10001 # 10k min stake + rent exempt
 MIN_RENT_FEE=100 # Some value that should be enough for fee
 DATADIR=/data/solana
 NODE_TYPE=$1  #validator/bootstrap
-NETWORK="devnet" #devnet/testnet/mainnet
+NETWORK=${NETWORK:-"devnet"} #devnet/testnet/mainnet-beta
+
+echo "Starting entrypoint for network: $NETWORK"
+
+
 mkdir -p $DATADIR
 get_my_ip() {
     curl ifconfig.me
@@ -23,6 +27,7 @@ run_solana_validator() {
     declare datadir=$1
     declare entrypoint=$2
     declare port_range=$3
+    declare rpc_port=$4
     
     set +e # FALL BACK to entrypoint RPC, DONT FAIL.
     rpc_url=$(velas-gossip rpc-url --timeout 180 --entrypoint $entrypoint) # get rpc url
@@ -31,17 +36,16 @@ run_solana_validator() {
     fi
     set -e
     
-    if ! vote_account_exist; then
-        velas-keygen new --no-passphrase -so $datadir/identity.json #try to generate identity
-        velas-keygen new --no-passphrase -so $datadir/vote-account.json #try to generate vote account
-        velas --keypair /config/faucet.json --url $rpc_url transfer $datadir/identity.json $(($MIN_VALIDATOR_STAKE + $MIN_RENT_FEE))
-        velas --keypair $datadir/identity.json --url $rpc_url create-vote-account $datadir/vote-account.json $datadir/identity.json
-    fi
-    
     case "$NETWORK" in
-        # airdrop on testnet devnet
-        "testnet"|"devnet")
+        # airdrop on devnet only
+        "devnet" | "development")
             if ! stake_account_exist; then
+                if ! vote_account_exist; then
+                    velas-keygen new --no-passphrase -so $datadir/identity.json #try to generate identity
+                    velas-keygen new --no-passphrase -so $datadir/vote-account.json #try to generate vote account
+                    velas --keypair /config/faucet.json --url $rpc_url transfer $datadir/identity.json $(($MIN_VALIDATOR_STAKE + $MIN_RENT_FEE))
+                    velas --keypair $datadir/identity.json --url $rpc_url create-vote-account $datadir/vote-account.json $datadir/identity.json
+                fi
                 # TODO: Airdrop tokens if not enough
                 vote_account=$(velas address --keypair $datadir/vote-account.json)
                 velas-keygen new --no-passphrase -so $datadir/stake-account.json
@@ -53,7 +57,7 @@ run_solana_validator() {
     esac
     
     
-    RUST_LOG=debug velas-validator \
+    RUST_LOG="debug,solana_vote_program::vote_state=error,solana_metrics::metrics=info,solana_ledger::blockstore=info" velas-validator \
     --max-genesis-archive-unpacked-size 1073741824 \
     --entrypoint $entrypoint  \
     --identity $datadir/identity.json \
@@ -61,8 +65,8 @@ run_solana_validator() {
     --ledger $datadir \
     --log - \
     --no-poh-speed-test \
-    --enable-rpc-exit \
-    --enable-rpc-set-log-filter \
+    --enable-rpc-transaction-history \
+    --rpc-port $rpc_port \
     --dynamic-port-range $port_range \
     --snapshot-interval-slots 200
 }
@@ -72,9 +76,7 @@ run_solana_bootstrap() {
     declare host=$2
     declare port_range=$3
     declare rpc_port=$4
-    RUST_LOG=debug velas-validator \
-    --enable-rpc-exit \
-    --enable-rpc-set-log-filter \
+    RUST_LOG="debug,solana_vote_program::vote_state=error,solana_metrics::metrics=info,solana_ledger::blockstore=info" velas-validator \
     --enable-rpc-transaction-history \
     --gossip-host $host \
     --ledger $datadir \
@@ -139,7 +141,7 @@ generate_first_node() {
     fetch_program associated-token-account 1.0.1 ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL BPFLoader2111111111111111111111111111111111
     fetch_program feature-proposal 1.0.0 Feat1YXHhH6t1juaWF74WLcfv4XoNocjXA6sPWHNgAse BPFLoader2111111111111111111111111111111111
     
-    velas-genesis --max-genesis-archive-unpacked-size 1073741824 --enable-warmup-epochs --bootstrap-validator $DATADIR/identity.json $DATADIR/vote-account.json $DATADIR/stake-account.json --bpf-program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA BPFLoader2111111111111111111111111111111111 spl_token-2.0.6.so --bpf-program Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo BPFLoader1111111111111111111111111111111111 spl_memo-1.0.0.so --bpf-program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL BPFLoader2111111111111111111111111111111111 spl_associated-token-account-1.0.1.so --bpf-program Feat1YXHhH6t1juaWF74WLcfv4XoNocjXA6sPWHNgAse BPFLoader2111111111111111111111111111111111 spl_feature-proposal-1.0.0.so --ledger $DATADIR --faucet-pubkey $DATADIR/faucet.json --faucet-lamports 500000000000000000 --hashes-per-tick auto --cluster-type development
+    velas-genesis --max-genesis-archive-unpacked-size 1073741824 --enable-warmup-epochs --bootstrap-validator $DATADIR/identity.json $DATADIR/vote-account.json $DATADIR/stake-account.json --bpf-program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA BPFLoader2111111111111111111111111111111111 spl_token-3.1.0.so --bpf-program Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo BPFLoader1111111111111111111111111111111111 spl_memo-1.0.0.so --bpf-program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr BPFLoader2111111111111111111111111111111111 spl_memo-3.0.0.so --bpf-program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL BPFLoader2111111111111111111111111111111111 spl_associated-token-account-1.0.1.so --bpf-program Feat1YXHhH6t1juaWF74WLcfv4XoNocjXA6sPWHNgAse BPFLoader2111111111111111111111111111111111 spl_feature-proposal-1.0.0.so --ledger $DATADIR --faucet-pubkey $DATADIR/faucet.json --faucet-lamports 500000000000000000 --hashes-per-tick auto --cluster-type $NETWORK
 }
 
 case "${NODE_TYPE}" in
@@ -155,10 +157,11 @@ case "${NODE_TYPE}" in
     "validator")
         ENTRYPOINT=$2
         PORT_RANGE=$3
+        RPC_PORT=$4
         mkdir -p $DATADIR/v
         # cp /config/genesis.bin $DATADIR/v/genesis.bin
         DATADIR=$DATADIR/v
-        run_solana_validator $DATADIR $ENTRYPOINT $PORT_RANGE
+        run_solana_validator $DATADIR $ENTRYPOINT $PORT_RANGE $RPC_PORT
     ;;
     "bridge")
         ENTRYPOINT=$2

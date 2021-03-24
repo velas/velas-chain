@@ -159,6 +159,20 @@ pub fn create_genesis_config_with_leader(
     }
 }
 
+pub fn activate_velas_features_on_prod(genesis_config: &mut GenesisConfig) {
+    for (feature_id, _) in &*solana_sdk::feature_set::FEATURE_NAMES_BEFORE_MAINNET {
+        genesis_config.accounts.insert(
+            *feature_id,
+            feature::create_account(
+                &Feature {
+                    activated_at: Some(0),
+                },
+                std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1),
+            ),
+        );
+    }
+}
+
 pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive {
