@@ -28,7 +28,7 @@ crate-type = ["lib"]
 name = "solana_faucet"
 
 [[bin]]
-name = "solana-faucet"
+name = "velas-faucet"
 path = "src/bin/faucet.rs"
 
 [package.metadata.docs.rs]

@@ -1847,7 +1847,7 @@ impl ClusterInfo {
             .build()
             .unwrap();
         Builder::new()
-            .name("solana-gossip".to_string())
+            .name("velas-gossip".to_string())
             .spawn(move || {
                 let mut last_push = timestamp();
                 let mut last_contact_info_trace = timestamp();
@@ -1865,7 +1865,7 @@ impl ClusterInfo {
                 let mut generate_pull_requests = true;
                 loop {
                     let start = timestamp();
-                    thread_mem_usage::datapoint("solana-gossip");
+                    thread_mem_usage::datapoint("velas-gossip");
                     if self.contact_debug_interval != 0
                         && start - last_contact_info_trace > self.contact_debug_interval
                     {
