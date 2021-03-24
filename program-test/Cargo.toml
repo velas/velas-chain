@@ -27,3 +27,7 @@ tokio = { version = "0.3.5", features = ["full"] }
 
 [dev-dependencies]
 solana-stake-program = { path = "../programs/stake", version = "1.5.14" }
+
+[features]
+default = []
+multiple-db-in-thread = []

@@ -42,6 +42,7 @@ fn invoked_process_instruction(
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 async fn cpi() {
     let invoker_program_id = Pubkey::new_unique();
     // Initialize and start the test network
