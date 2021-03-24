@@ -24,7 +24,7 @@ use {
         signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
         system_program,
     },
-    solana_validator::{redirect_stderr_to_file, test_validator::*},
+    velas_validator::{redirect_stderr_to_file, test_validator::*},
     std::{
         collections::HashSet,
         fs, io,
@@ -62,7 +62,7 @@ fn println_name_value(name: &str, value: &str) {
 fn main() {
     let default_rpc_port = rpc_port::DEFAULT_RPC_PORT.to_string();
 
-    let matches = App::new("solana-test-validator")
+    let matches = App::new("velas-test-validator")
         .about("Test Validator")
         .version(solana_version::version!())
         .arg({
@@ -143,7 +143,7 @@ fn main() {
                 .value_name("PORT")
                 .takes_value(true)
                 .default_value(&default_rpc_port)
-                .validator(solana_validator::port_validator)
+                .validator(velas_validator::port_validator)
                 .help("Use this port for JSON RPC and the next port for the RPC websocket"),
         )
         .arg(
@@ -297,7 +297,7 @@ fn main() {
     let mut ledger_fd_lock = FdLock::new(fs::File::open(&ledger_path).unwrap());
     let _ledger_lock = ledger_fd_lock.try_lock().unwrap_or_else(|_| {
         println!(
-            "Error: Unable to lock {} directory. Check if another solana-test-validator is running",
+            "Error: Unable to lock {} directory. Check if another velas-test-validator is running",
             ledger_path.display()
         );
         exit(1);

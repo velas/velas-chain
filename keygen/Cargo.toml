@@ -1,5 +1,5 @@
 [package]
-name = "solana-keygen"
+name = "velas-keygen"
 version = "1.5.14"
 description = "Solana key generation utility"
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
@@ -21,7 +21,7 @@ solana-version = { path = "../version", version = "1.5.14" }
 tiny-bip39 = "0.7.0"
 
 [[bin]]
-name = "solana-keygen"
+name = "velas-keygen"
 path = "src/keygen.rs"
 
 [package.metadata.docs.rs]

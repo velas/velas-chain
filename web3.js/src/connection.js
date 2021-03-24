@@ -2,26 +2,26 @@
 
 import assert from 'assert';
 import bs58 from 'bs58';
-import {parse as urlParse, format as urlFormat} from 'url';
+import { parse as urlParse, format as urlFormat } from 'url';
 import fetch from 'node-fetch';
 import jayson from 'jayson/lib/client/browser';
-import {struct} from 'superstruct';
-import {Client as RpcWebSocketClient} from 'rpc-websockets';
+import { struct } from 'superstruct';
+import { Client as RpcWebSocketClient } from 'rpc-websockets';
 
-import {NonceAccount} from './nonce-account';
-import {PublicKey} from './publickey';
-import {MS_PER_SLOT} from './timing';
-import {Transaction} from './transaction';
-import {Message} from './message';
-import {sleep} from './util/sleep';
-import {promiseTimeout} from './util/promise-timeout';
-import {toBuffer} from './util/to-buffer';
-import type {Blockhash} from './blockhash';
-import type {FeeCalculator} from './fee-calculator';
-import type {Account} from './account';
-import type {TransactionSignature} from './transaction';
-import type {CompiledInstruction} from './message';
-import {AgentManager} from './agent-manager';
+import { NonceAccount } from './nonce-account';
+import { PublicKey } from './publickey';
+import { MS_PER_SLOT } from './timing';
+import { Transaction } from './transaction';
+import { Message } from './message';
+import { sleep } from './util/sleep';
+import { promiseTimeout } from './util/promise-timeout';
+import { toBuffer } from './util/to-buffer';
+import type { Blockhash } from './blockhash';
+import type { FeeCalculator } from './fee-calculator';
+import type { Account } from './account';
+import type { TransactionSignature } from './transaction';
+import type { CompiledInstruction } from './message';
+import { AgentManager } from './agent-manager';
 
 export const BLOCKHASH_CACHE_TIMEOUT_MS = 30 * 1000;
 
@@ -29,10 +29,10 @@ type RpcRequest = (methodName: string, args: Array<any>) => any;
 
 type TokenAccountsFilter =
   | {|
-      mint: PublicKey,
+  mint: PublicKey,
     |}
   | {|
-      programId: PublicKey,
+  programId: PublicKey,
     |};
 
 /**
@@ -346,7 +346,7 @@ const TransactionErrorResult = struct.union(['null', 'object']);
 /**
  * Signature status for a transaction
  */
-const SignatureStatusResult = struct({err: TransactionErrorResult});
+const SignatureStatusResult = struct({ err: TransactionErrorResult });
 
 /**
  * Version info for a node
@@ -445,8 +445,8 @@ type ConfirmedTransaction = {
  */
 type PartiallyDecodedInstruction = {|
   programId: PublicKey,
-  accounts: Array<PublicKey>,
-  data: string,
+    accounts: Array < PublicKey >,
+      data: string,
 |};
 
 /**
@@ -473,8 +473,8 @@ type ParsedMessageAccount = {
  */
 type ParsedInstruction = {|
   program: string,
-  programId: PublicKey,
-  parsed: any,
+    programId: PublicKey,
+      parsed: any,
 |};
 
 /**
@@ -577,7 +577,7 @@ function createRpcRequest(url: string, useHttps: boolean): RpcRequest {
       let too_many_requests_retries = 5;
       let res = {};
       let waitTime = 500;
-      for (;;) {
+      for (; ;) {
         res = await fetch(url, options);
         if (res.status !== 429 /* Too many requests */) {
           break;
@@ -1550,7 +1550,7 @@ export class Connection {
   };
   _disableBlockhashCaching: boolean = false;
   _pollingBlockhash: boolean = false;
-  _accountChangeSubscriptions: {[number]: AccountSubscriptionInfo} = {};
+  _accountChangeSubscriptions: { [number]: AccountSubscriptionInfo } = {};
   _accountChangeSubscriptionCounter: number = 0;
   _programAccountChangeSubscriptions: {
     [number]: ProgramAccountSubscriptionInfo,
@@ -1594,7 +1594,7 @@ export class Connection {
     url.host = '';
     // Only shift the port by +1 as a convention for ws(s) only if given endpoint
     // is explictly specifying the endpoint port (HTTP-based RPC), assuming
-    // we're directly trying to connect to solana-validator's ws listening port.
+    // we're directly trying to connect to velas-validator's ws listening port.
     // When the endpoint omits the port, we're connecting to the protocol
     // default ports: http(80) or https(443) and it's assumed we're behind a reverse
     // proxy which manages WebSocket upgrade and backend port redirection.
@@ -1650,9 +1650,9 @@ export class Connection {
     if (res.error) {
       throw new Error(
         'failed to get balance for ' +
-          publicKey.toBase58() +
-          ': ' +
-          res.error.message,
+        publicKey.toBase58() +
+        ': ' +
+        res.error.message,
       );
     }
     assert(typeof res.result !== 'undefined');
@@ -1787,14 +1787,14 @@ export class Connection {
     commitment: ?Commitment,
   ): Promise<
     RpcResponseAndContext<
-      Array<{pubkey: PublicKey, account: AccountInfo<Buffer>}>,
+      Array<{ pubkey: PublicKey, account: AccountInfo<Buffer> }>,
     >,
-  > {
+    > {
     let _args = [ownerAddress.toBase58()];
     if (filter.mint) {
-      _args.push({mint: filter.mint.toBase58()});
+      _args.push({ mint: filter.mint.toBase58() });
     } else {
-      _args.push({programId: filter.programId.toBase58()});
+      _args.push({ programId: filter.programId.toBase58() });
     }
 
     const args = this._buildArgs(_args, commitment, 'base64');
@@ -1803,14 +1803,14 @@ export class Connection {
     if (res.error) {
       throw new Error(
         'failed to get token accounts owned by account ' +
-          ownerAddress.toBase58() +
-          ': ' +
-          res.error.message,
+        ownerAddress.toBase58() +
+        ': ' +
+        res.error.message,
       );
     }
 
-    const {result} = res;
-    const {context, value} = result;
+    const { result } = res;
+    const { context, value } = result;
     assert(typeof result !== 'undefined');
 
     return {
@@ -1841,14 +1841,14 @@ export class Connection {
     commitment: ?Commitment,
   ): Promise<
     RpcResponseAndContext<
-      Array<{pubkey: PublicKey, account: AccountInfo<ParsedAccountData>}>,
+      Array<{ pubkey: PublicKey, account: AccountInfo<ParsedAccountData> }>,
     >,
-  > {
+    > {
     let _args = [ownerAddress.toBase58()];
     if (filter.mint) {
-      _args.push({mint: filter.mint.toBase58()});
+      _args.push({ mint: filter.mint.toBase58() });
     } else {
-      _args.push({programId: filter.programId.toBase58()});
+      _args.push({ programId: filter.programId.toBase58() });
     }
 
     const args = this._buildArgs(_args, commitment, 'jsonParsed');
@@ -1857,14 +1857,14 @@ export class Connection {
     if (res.error) {
       throw new Error(
         'failed to get token accounts owned by account ' +
-          ownerAddress.toBase58() +
-          ': ' +
-          res.error.message,
+        ownerAddress.toBase58() +
+        ': ' +
+        res.error.message,
       );
     }
 
-    const {result} = res;
-    const {context, value} = result;
+    const { result } = res;
+    const { context, value } = result;
     assert(typeof result !== 'undefined');
 
     return {
@@ -1898,7 +1898,7 @@ export class Connection {
       throw new Error('failed to get largest accounts: ' + res.error.message);
     }
     assert(typeof res.result !== 'undefined');
-    res.result.value = res.result.value.map(({address, lamports}) => ({
+    res.result.value = res.result.value.map(({ address, lamports }) => ({
       address: new PublicKey(address),
       lamports,
     }));
@@ -1942,16 +1942,16 @@ export class Connection {
     if (res.error) {
       throw new Error(
         'failed to get info about account ' +
-          publicKey.toBase58() +
-          ': ' +
-          res.error.message,
+        publicKey.toBase58() +
+        ': ' +
+        res.error.message,
       );
     }
     assert(typeof res.result !== 'undefined');
 
     let value = null;
     if (res.result.value) {
-      const {executable, owner, lamports, data} = res.result.value;
+      const { executable, owner, lamports, data } = res.result.value;
       assert(data[1] === 'base64');
       value = {
         executable,
@@ -1977,7 +1977,7 @@ export class Connection {
     commitment: ?Commitment,
   ): Promise<
     RpcResponseAndContext<AccountInfo<Buffer | ParsedAccountData> | null>,
-  > {
+    > {
     const args = this._buildArgs(
       [publicKey.toBase58()],
       commitment,
@@ -1988,16 +1988,16 @@ export class Connection {
     if (res.error) {
       throw new Error(
         'failed to get info about account ' +
-          publicKey.toBase58() +
-          ': ' +
-          res.error.message,
+        publicKey.toBase58() +
+        ': ' +
+        res.error.message,
       );
     }
     assert(typeof res.result !== 'undefined');
 
     let value = null;
     if (res.result.value) {
-      const {executable, owner, lamports, data: resultData} = res.result.value;
+      const { executable, owner, lamports, data: resultData } = res.result.value;
 
       let data = resultData;
       if (!data.program) {
@@ -2049,22 +2049,21 @@ export class Connection {
       [publicKey.toBase58()],
       commitment,
       undefined,
-      epoch !== undefined ? {epoch} : undefined,
+      epoch !== undefined ? { epoch } : undefined,
     );
 
     const unsafeRes = await this._rpcRequest('getStakeActivation', args);
     const res = GetStakeActivationResult(unsafeRes);
     if (res.error) {
       throw new Error(
-        `failed to get Stake Activation ${publicKey.toBase58()}: ${
-          res.error.message
+        `failed to get Stake Activation ${publicKey.toBase58()}: ${res.error.message
         }`,
       );
     }
     assert(typeof res.result !== 'undefined');
 
-    const {state, active, inactive} = res.result;
-    return {state, active, inactive};
+    const { state, active, inactive } = res.result;
+    return { state, active, inactive };
   }
 
   /**
@@ -2075,20 +2074,20 @@ export class Connection {
   async getProgramAccounts(
     programId: PublicKey,
     commitment: ?Commitment,
-  ): Promise<Array<{pubkey: PublicKey, account: AccountInfo<Buffer>}>> {
+  ): Promise<Array<{ pubkey: PublicKey, account: AccountInfo<Buffer> }>> {
     const args = this._buildArgs([programId.toBase58()], commitment, 'base64');
     const unsafeRes = await this._rpcRequest('getProgramAccounts', args);
     const res = GetProgramAccountsRpcResult(unsafeRes);
     if (res.error) {
       throw new Error(
         'failed to get accounts owned by program ' +
-          programId.toBase58() +
-          ': ' +
-          res.error.message,
+        programId.toBase58() +
+        ': ' +
+        res.error.message,
       );
     }
 
-    const {result} = res;
+    const { result } = res;
     assert(typeof result !== 'undefined');
 
     return result.map(result => {
@@ -2118,7 +2117,7 @@ export class Connection {
       pubkey: PublicKey,
       account: AccountInfo<Buffer | ParsedAccountData>,
     }>,
-  > {
+    > {
     const args = this._buildArgs(
       [programId.toBase58()],
       commitment,
@@ -2129,13 +2128,13 @@ export class Connection {
     if (res.error) {
       throw new Error(
         'failed to get accounts owned by program ' +
-          programId.toBase58() +
-          ': ' +
-          res.error.message,
+        programId.toBase58() +
+        ': ' +
+        res.error.message,
       );
     }
 
-    const {result} = res;
+    const { result } = res;
     assert(typeof result !== 'undefined');
 
     return result.map(result => {
@@ -2296,12 +2295,12 @@ export class Connection {
     signature: TransactionSignature,
     config: ?SignatureStatusConfig,
   ): Promise<RpcResponseAndContext<SignatureStatus | null>> {
-    const {context, value} = await this.getSignatureStatuses(
+    const { context, value } = await this.getSignatureStatuses(
       [signature],
       config,
     );
     assert(value.length === 1);
-    return {context, value: value[0]};
+    return { context, value: value[0] };
   }
 
   /**
@@ -2438,8 +2437,8 @@ export class Connection {
   async getRecentBlockhashAndContext(
     commitment: ?Commitment,
   ): Promise<
-    RpcResponseAndContext<{blockhash: Blockhash, feeCalculator: FeeCalculator}>,
-  > {
+    RpcResponseAndContext<{ blockhash: Blockhash, feeCalculator: FeeCalculator }>,
+    > {
     const args = this._buildArgs([], commitment);
     const unsafeRes = await this._rpcRequest('getRecentBlockhash', args);
 
@@ -2493,7 +2492,7 @@ export class Connection {
       throw new Error('failed to get fee calculator: ' + res.error.message);
     }
     assert(typeof res.result !== 'undefined');
-    const {context, value} = res.result;
+    const { context, value } = res.result;
     return {
       context,
       value: value && value.feeCalculator,
@@ -2506,7 +2505,7 @@ export class Connection {
    */
   async getRecentBlockhash(
     commitment: ?Commitment,
-  ): Promise<{blockhash: Blockhash, feeCalculator: FeeCalculator}> {
+  ): Promise<{ blockhash: Blockhash, feeCalculator: FeeCalculator }> {
     return await this.getRecentBlockhashAndContext(commitment)
       .then(x => x.value)
       .catch(e => {
@@ -2547,7 +2546,7 @@ export class Connection {
       previousBlockhash: new PublicKey(result.previousBlockhash).toString(),
       parentSlot: result.parentSlot,
       transactions: result.transactions.map(result => {
-        const {message, signatures} = result.transaction;
+        const { message, signatures } = result.transaction;
         return {
           transaction: Transaction.populate(new Message(message), signatures),
           meta: result.meta,
@@ -2566,7 +2565,7 @@ export class Connection {
     const unsafeRes = await this._rpcRequest('getConfirmedTransaction', [
       signature,
     ]);
-    const {result, error} = GetConfirmedTransactionRpcResult(unsafeRes);
+    const { result, error } = GetConfirmedTransactionRpcResult(unsafeRes);
     if (error) {
       throw new Error('failed to get confirmed transaction: ' + error.message);
     }
@@ -2575,7 +2574,7 @@ export class Connection {
       return result;
     }
 
-    const {message, signatures} = result.transaction;
+    const { message, signatures } = result.transaction;
     return {
       slot: result.slot,
       transaction: Transaction.populate(new Message(message), signatures),
@@ -2593,7 +2592,7 @@ export class Connection {
       signature,
       'jsonParsed',
     ]);
-    const {result, error} = GetParsedConfirmedTransactionRpcResult(unsafeRes);
+    const { result, error } = GetParsedConfirmedTransactionRpcResult(unsafeRes);
     if (error) {
       throw new Error('failed to get confirmed transaction: ' + error.message);
     }
@@ -2629,7 +2628,7 @@ export class Connection {
             writable: accountKey.writable,
           })),
           instructions: instructions.map(ix => {
-            let mapped: any = {programId: new PublicKey(ix.programId)};
+            let mapped: any = { programId: new PublicKey(ix.programId) };
             if ('accounts' in ix) {
               mapped.accounts = ix.accounts.map(key => new PublicKey(key));
             }
@@ -2666,7 +2665,7 @@ export class Connection {
     if (result.error) {
       throw new Error(
         'failed to get confirmed signatures for address: ' +
-          result.error.message,
+        result.error.message,
       );
     }
     assert(typeof result.result !== 'undefined');
@@ -2693,7 +2692,7 @@ export class Connection {
     if (result.error) {
       throw new Error(
         'failed to get confirmed signatures for address: ' +
-          result.error.message,
+        result.error.message,
       );
     }
     assert(typeof result.result !== 'undefined');
@@ -2707,7 +2706,7 @@ export class Connection {
     nonceAccount: PublicKey,
     commitment: ?Commitment,
   ): Promise<RpcResponseAndContext<NonceAccount | null>> {
-    const {context, value: accountInfo} = await this.getAccountInfoAndContext(
+    const { context, value: accountInfo } = await this.getAccountInfoAndContext(
       nonceAccount,
       commitment,
     );
@@ -2735,9 +2734,9 @@ export class Connection {
       .catch(e => {
         throw new Error(
           'failed to get nonce for account ' +
-            nonceAccount.toBase58() +
-            ': ' +
-            e,
+          nonceAccount.toBase58() +
+          ': ' +
+          e,
         );
       });
   }
@@ -2786,7 +2785,7 @@ export class Connection {
     try {
       const startTime = Date.now();
       for (let i = 0; i < 50; i++) {
-        const {blockhash} = await this.getRecentBlockhash('max');
+        const { blockhash } = await this.getRecentBlockhash('max');
 
         if (this._blockhashInfo.recentBlockhash != blockhash) {
           this._blockhashInfo = {
@@ -2821,7 +2820,7 @@ export class Connection {
       transaction.sign(...signers);
     } else {
       let disableCache = this._disableBlockhashCaching;
-      for (;;) {
+      for (; ;) {
         transaction.recentBlockhash = await this._recentBlockhash(disableCache);
 
         if (!signers) break;
@@ -2849,7 +2848,7 @@ export class Connection {
     const signData = transaction.serializeMessage();
     const wireTransaction = transaction._serialize(signData);
     const encodedTransaction = wireTransaction.toString('base64');
-    const config: any = {encoding: 'base64'};
+    const config: any = { encoding: 'base64' };
     const args = [encodedTransaction, config];
 
     if (signers) {
@@ -2878,7 +2877,7 @@ export class Connection {
       transaction.sign(...signers);
     } else {
       let disableCache = this._disableBlockhashCaching;
-      for (;;) {
+      for (; ;) {
         transaction.recentBlockhash = await this._recentBlockhash(disableCache);
         transaction.sign(...signers);
         if (!transaction.signature) {
@@ -2938,7 +2937,7 @@ export class Connection {
     encodedTransaction: string,
     options: ?SendOptions,
   ): Promise<TransactionSignature> {
-    const config: any = {encoding: 'base64'};
+    const config: any = { encoding: 'base64' };
     const args = [encodedTransaction, config];
     const skipPreflight = options && options.skipPreflight;
     const preflightCommitment = options && options.preflightCommitment;
@@ -2975,7 +2974,7 @@ export class Connection {
     this._rpcWebSocketConnected = true;
     this._rpcWebSocketHeartbeat = setInterval(() => {
       // Ping server every 5s to prevent idle timeouts
-      this._rpcWebSocket.notify('ping').catch(() => {});
+      this._rpcWebSocket.notify('ping').catch(() => { });
     }, 5000);
     this._updateSubscriptions();
   }
@@ -3007,488 +3006,488 @@ export class Connection {
   /**
    * @private
    */
-  async _subscribe<SubInfo: {subscriptionId: ?SubscriptionId}, RpcArgs>(
+  async _subscribe<SubInfo: { subscriptionId: ? SubscriptionId}, RpcArgs> (
     sub: SubInfo,
-    rpcMethod: string,
-    rpcArgs: RpcArgs,
+      rpcMethod: string,
+        rpcArgs: RpcArgs,
   ) {
-    if (sub.subscriptionId == null) {
-      sub.subscriptionId = 'subscribing';
-      try {
-        const id = await this._rpcWebSocket.call(rpcMethod, rpcArgs);
-        if (sub.subscriptionId === 'subscribing') {
-          // eslint-disable-next-line require-atomic-updates
-          sub.subscriptionId = id;
-        }
-      } catch (err) {
-        if (sub.subscriptionId === 'subscribing') {
-          // eslint-disable-next-line require-atomic-updates
-          sub.subscriptionId = null;
-        }
-        console.error(`${rpcMethod} error for argument`, rpcArgs, err.message);
+  if (sub.subscriptionId == null) {
+    sub.subscriptionId = 'subscribing';
+    try {
+      const id = await this._rpcWebSocket.call(rpcMethod, rpcArgs);
+      if (sub.subscriptionId === 'subscribing') {
+        // eslint-disable-next-line require-atomic-updates
+        sub.subscriptionId = id;
       }
+    } catch (err) {
+      if (sub.subscriptionId === 'subscribing') {
+        // eslint-disable-next-line require-atomic-updates
+        sub.subscriptionId = null;
+      }
+      console.error(`${rpcMethod} error for argument`, rpcArgs, err.message);
     }
   }
+}
 
-  /**
-   * @private
-   */
-  async _unsubscribe<SubInfo: {subscriptionId: ?SubscriptionId}>(
-    sub: SubInfo,
+/**
+ * @private
+ */
+async _unsubscribe < SubInfo: { subscriptionId: ? SubscriptionId}> (
+  sub: SubInfo,
     rpcMethod: string,
   ) {
-    const subscriptionId = sub.subscriptionId;
-    if (subscriptionId != null && typeof subscriptionId != 'string') {
-      const unsubscribeId: number = subscriptionId;
-      try {
-        await this._rpcWebSocket.call(rpcMethod, [unsubscribeId]);
-      } catch (err) {
-        console.error(`${rpcMethod} error:`, err.message);
-      }
+  const subscriptionId = sub.subscriptionId;
+  if (subscriptionId != null && typeof subscriptionId != 'string') {
+    const unsubscribeId: number = subscriptionId;
+    try {
+      await this._rpcWebSocket.call(rpcMethod, [unsubscribeId]);
+    } catch (err) {
+      console.error(`${rpcMethod} error:`, err.message);
     }
   }
+}
 
-  /**
-   * @private
-   */
-  _resetSubscriptions() {
-    (Object.values(this._accountChangeSubscriptions): any).forEach(
-      s => (s.subscriptionId = null),
-    );
-    (Object.values(this._programAccountChangeSubscriptions): any).forEach(
-      s => (s.subscriptionId = null),
-    );
-    (Object.values(this._signatureSubscriptions): any).forEach(
-      s => (s.subscriptionId = null),
-    );
-    (Object.values(this._slotSubscriptions): any).forEach(
-      s => (s.subscriptionId = null),
-    );
-    (Object.values(this._rootSubscriptions): any).forEach(
-      s => (s.subscriptionId = null),
+/**
+ * @private
+ */
+_resetSubscriptions() {
+  (Object.values(this._accountChangeSubscriptions): any).forEach(
+    s => (s.subscriptionId = null),
+  );
+  (Object.values(this._programAccountChangeSubscriptions): any).forEach(
+    s => (s.subscriptionId = null),
+  );
+  (Object.values(this._signatureSubscriptions): any).forEach(
+    s => (s.subscriptionId = null),
+  );
+  (Object.values(this._slotSubscriptions): any).forEach(
+    s => (s.subscriptionId = null),
+  );
+  (Object.values(this._rootSubscriptions): any).forEach(
+    s => (s.subscriptionId = null),
+  );
+}
+
+/**
+ * @private
+ */
+_updateSubscriptions() {
+  const accountKeys = Object.keys(this._accountChangeSubscriptions).map(
+    Number,
+  );
+  const programKeys = Object.keys(
+    this._programAccountChangeSubscriptions,
+  ).map(Number);
+  const slotKeys = Object.keys(this._slotSubscriptions).map(Number);
+  const signatureKeys = Object.keys(this._signatureSubscriptions).map(Number);
+  const rootKeys = Object.keys(this._rootSubscriptions).map(Number);
+  if (
+    accountKeys.length === 0 &&
+    programKeys.length === 0 &&
+    slotKeys.length === 0 &&
+    signatureKeys.length === 0 &&
+    rootKeys.length === 0
+  ) {
+    if (this._rpcWebSocketConnected) {
+      this._rpcWebSocketConnected = false;
+      this._rpcWebSocketIdleTimeout = setTimeout(() => {
+        this._rpcWebSocketIdleTimeout = null;
+        this._rpcWebSocket.close();
+      }, 500);
+    }
+    return;
+  }
+
+  if (this._rpcWebSocketIdleTimeout !== null) {
+    clearTimeout(this._rpcWebSocketIdleTimeout);
+    this._rpcWebSocketIdleTimeout = null;
+    this._rpcWebSocketConnected = true;
+  }
+
+  if (!this._rpcWebSocketConnected) {
+    this._rpcWebSocket.connect();
+    return;
+  }
+
+  for (let id of accountKeys) {
+    const sub = this._accountChangeSubscriptions[id];
+    this._subscribe(
+      sub,
+      'accountSubscribe',
+      this._buildArgs([sub.publicKey], sub.commitment, 'base64'),
     );
   }
 
-  /**
-   * @private
-   */
-  _updateSubscriptions() {
-    const accountKeys = Object.keys(this._accountChangeSubscriptions).map(
-      Number,
+  for (let id of programKeys) {
+    const sub = this._programAccountChangeSubscriptions[id];
+    this._subscribe(
+      sub,
+      'programSubscribe',
+      this._buildArgs([sub.programId], sub.commitment, 'base64'),
     );
-    const programKeys = Object.keys(
-      this._programAccountChangeSubscriptions,
-    ).map(Number);
-    const slotKeys = Object.keys(this._slotSubscriptions).map(Number);
-    const signatureKeys = Object.keys(this._signatureSubscriptions).map(Number);
-    const rootKeys = Object.keys(this._rootSubscriptions).map(Number);
-    if (
-      accountKeys.length === 0 &&
-      programKeys.length === 0 &&
-      slotKeys.length === 0 &&
-      signatureKeys.length === 0 &&
-      rootKeys.length === 0
-    ) {
-      if (this._rpcWebSocketConnected) {
-        this._rpcWebSocketConnected = false;
-        this._rpcWebSocketIdleTimeout = setTimeout(() => {
-          this._rpcWebSocketIdleTimeout = null;
-          this._rpcWebSocket.close();
-        }, 500);
-      }
-      return;
-    }
-
-    if (this._rpcWebSocketIdleTimeout !== null) {
-      clearTimeout(this._rpcWebSocketIdleTimeout);
-      this._rpcWebSocketIdleTimeout = null;
-      this._rpcWebSocketConnected = true;
-    }
-
-    if (!this._rpcWebSocketConnected) {
-      this._rpcWebSocket.connect();
-      return;
-    }
-
-    for (let id of accountKeys) {
-      const sub = this._accountChangeSubscriptions[id];
-      this._subscribe(
-        sub,
-        'accountSubscribe',
-        this._buildArgs([sub.publicKey], sub.commitment, 'base64'),
-      );
-    }
-
-    for (let id of programKeys) {
-      const sub = this._programAccountChangeSubscriptions[id];
-      this._subscribe(
-        sub,
-        'programSubscribe',
-        this._buildArgs([sub.programId], sub.commitment, 'base64'),
-      );
-    }
-
-    for (let id of slotKeys) {
-      const sub = this._slotSubscriptions[id];
-      this._subscribe(sub, 'slotSubscribe', []);
-    }
-
-    for (let id of signatureKeys) {
-      const sub = this._signatureSubscriptions[id];
-      this._subscribe(
-        sub,
-        'signatureSubscribe',
-        this._buildArgs([sub.signature], sub.commitment),
-      );
-    }
-
-    for (let id of rootKeys) {
-      const sub = this._rootSubscriptions[id];
-      this._subscribe(sub, 'rootSubscribe', []);
-    }
   }
 
-  /**
-   * @private
-   */
-  _wsOnAccountNotification(notification: Object) {
-    const res = AccountNotificationResult(notification);
-    if (res.error) {
-      throw new Error('account notification failed: ' + res.error.message);
-    }
-    assert(typeof res.result !== 'undefined');
-    const keys = Object.keys(this._accountChangeSubscriptions).map(Number);
-    for (let id of keys) {
-      const sub = this._accountChangeSubscriptions[id];
-      if (sub.subscriptionId === res.subscription) {
-        const {result} = res;
-        const {value, context} = result;
+  for (let id of slotKeys) {
+    const sub = this._slotSubscriptions[id];
+    this._subscribe(sub, 'slotSubscribe', []);
+  }
 
-        assert(value.data[1] === 'base64');
-        sub.callback(
-          {
-            executable: value.executable,
-            owner: new PublicKey(value.owner),
-            lamports: value.lamports,
-            data: Buffer.from(value.data[0], 'base64'),
+  for (let id of signatureKeys) {
+    const sub = this._signatureSubscriptions[id];
+    this._subscribe(
+      sub,
+      'signatureSubscribe',
+      this._buildArgs([sub.signature], sub.commitment),
+    );
+  }
+
+  for (let id of rootKeys) {
+    const sub = this._rootSubscriptions[id];
+    this._subscribe(sub, 'rootSubscribe', []);
+  }
+}
+
+/**
+ * @private
+ */
+_wsOnAccountNotification(notification: Object) {
+  const res = AccountNotificationResult(notification);
+  if (res.error) {
+    throw new Error('account notification failed: ' + res.error.message);
+  }
+  assert(typeof res.result !== 'undefined');
+  const keys = Object.keys(this._accountChangeSubscriptions).map(Number);
+  for (let id of keys) {
+    const sub = this._accountChangeSubscriptions[id];
+    if (sub.subscriptionId === res.subscription) {
+      const { result } = res;
+      const { value, context } = result;
+
+      assert(value.data[1] === 'base64');
+      sub.callback(
+        {
+          executable: value.executable,
+          owner: new PublicKey(value.owner),
+          lamports: value.lamports,
+          data: Buffer.from(value.data[0], 'base64'),
+        },
+        context,
+      );
+      return true;
+    }
+  }
+}
+
+/**
+ * Register a callback to be invoked whenever the specified account changes
+ *
+ * @param publicKey Public key of the account to monitor
+ * @param callback Function to invoke whenever the account is changed
+ * @param commitment Specify the commitment level account changes must reach before notification
+ * @return subscription id
+ */
+onAccountChange(
+  publicKey: PublicKey,
+  callback: AccountChangeCallback,
+  commitment: ?Commitment,
+): number {
+  const id = ++this._accountChangeSubscriptionCounter;
+  this._accountChangeSubscriptions[id] = {
+    publicKey: publicKey.toBase58(),
+    callback,
+    commitment,
+    subscriptionId: null,
+  };
+  this._updateSubscriptions();
+  return id;
+}
+
+/**
+ * Deregister an account notification callback
+ *
+ * @param id subscription id to deregister
+ */
+async removeAccountChangeListener(id: number): Promise < void> {
+  if(this._accountChangeSubscriptions[id]) {
+  const subInfo = this._accountChangeSubscriptions[id];
+  delete this._accountChangeSubscriptions[id];
+  await this._unsubscribe(subInfo, 'accountUnsubscribe');
+  this._updateSubscriptions();
+} else {
+  throw new Error(`Unknown account change id: ${id}`);
+}
+  }
+
+/**
+ * @private
+ */
+_wsOnProgramAccountNotification(notification: Object) {
+  const res = ProgramAccountNotificationResult(notification);
+  if (res.error) {
+    throw new Error(
+      'program account notification failed: ' + res.error.message,
+    );
+  }
+  assert(typeof res.result !== 'undefined');
+  const keys = Object.keys(this._programAccountChangeSubscriptions).map(
+    Number,
+  );
+  for (let id of keys) {
+    const sub = this._programAccountChangeSubscriptions[id];
+    if (sub.subscriptionId === res.subscription) {
+      const { result } = res;
+      const { value, context } = result;
+
+      assert(value.account.data[1] === 'base64');
+      sub.callback(
+        {
+          accountId: value.pubkey,
+          accountInfo: {
+            executable: value.account.executable,
+            owner: new PublicKey(value.account.owner),
+            lamports: value.account.lamports,
+            data: Buffer.from(value.account.data[0], 'base64'),
           },
-          context,
-        );
-        return true;
-      }
-    }
-  }
-
-  /**
-   * Register a callback to be invoked whenever the specified account changes
-   *
-   * @param publicKey Public key of the account to monitor
-   * @param callback Function to invoke whenever the account is changed
-   * @param commitment Specify the commitment level account changes must reach before notification
-   * @return subscription id
-   */
-  onAccountChange(
-    publicKey: PublicKey,
-    callback: AccountChangeCallback,
-    commitment: ?Commitment,
-  ): number {
-    const id = ++this._accountChangeSubscriptionCounter;
-    this._accountChangeSubscriptions[id] = {
-      publicKey: publicKey.toBase58(),
-      callback,
-      commitment,
-      subscriptionId: null,
-    };
-    this._updateSubscriptions();
-    return id;
-  }
-
-  /**
-   * Deregister an account notification callback
-   *
-   * @param id subscription id to deregister
-   */
-  async removeAccountChangeListener(id: number): Promise<void> {
-    if (this._accountChangeSubscriptions[id]) {
-      const subInfo = this._accountChangeSubscriptions[id];
-      delete this._accountChangeSubscriptions[id];
-      await this._unsubscribe(subInfo, 'accountUnsubscribe');
-      this._updateSubscriptions();
-    } else {
-      throw new Error(`Unknown account change id: ${id}`);
-    }
-  }
-
-  /**
-   * @private
-   */
-  _wsOnProgramAccountNotification(notification: Object) {
-    const res = ProgramAccountNotificationResult(notification);
-    if (res.error) {
-      throw new Error(
-        'program account notification failed: ' + res.error.message,
+        },
+        context,
       );
-    }
-    assert(typeof res.result !== 'undefined');
-    const keys = Object.keys(this._programAccountChangeSubscriptions).map(
-      Number,
-    );
-    for (let id of keys) {
-      const sub = this._programAccountChangeSubscriptions[id];
-      if (sub.subscriptionId === res.subscription) {
-        const {result} = res;
-        const {value, context} = result;
-
-        assert(value.account.data[1] === 'base64');
-        sub.callback(
-          {
-            accountId: value.pubkey,
-            accountInfo: {
-              executable: value.account.executable,
-              owner: new PublicKey(value.account.owner),
-              lamports: value.account.lamports,
-              data: Buffer.from(value.account.data[0], 'base64'),
-            },
-          },
-          context,
-        );
-        return true;
-      }
+      return true;
     }
   }
+}
 
-  /**
-   * Register a callback to be invoked whenever accounts owned by the
-   * specified program change
-   *
-   * @param programId Public key of the program to monitor
-   * @param callback Function to invoke whenever the account is changed
-   * @param commitment Specify the commitment level account changes must reach before notification
-   * @return subscription id
-   */
-  onProgramAccountChange(
-    programId: PublicKey,
-    callback: ProgramAccountChangeCallback,
-    commitment: ?Commitment,
-  ): number {
-    const id = ++this._programAccountChangeSubscriptionCounter;
-    this._programAccountChangeSubscriptions[id] = {
-      programId: programId.toBase58(),
-      callback,
-      commitment,
-      subscriptionId: null,
-    };
-    this._updateSubscriptions();
-    return id;
+/**
+ * Register a callback to be invoked whenever accounts owned by the
+ * specified program change
+ *
+ * @param programId Public key of the program to monitor
+ * @param callback Function to invoke whenever the account is changed
+ * @param commitment Specify the commitment level account changes must reach before notification
+ * @return subscription id
+ */
+onProgramAccountChange(
+  programId: PublicKey,
+  callback: ProgramAccountChangeCallback,
+  commitment: ?Commitment,
+): number {
+  const id = ++this._programAccountChangeSubscriptionCounter;
+  this._programAccountChangeSubscriptions[id] = {
+    programId: programId.toBase58(),
+    callback,
+    commitment,
+    subscriptionId: null,
+  };
+  this._updateSubscriptions();
+  return id;
+}
+
+/**
+ * Deregister an account notification callback
+ *
+ * @param id subscription id to deregister
+ */
+async removeProgramAccountChangeListener(id: number): Promise < void> {
+  if(this._programAccountChangeSubscriptions[id]) {
+  const subInfo = this._programAccountChangeSubscriptions[id];
+  delete this._programAccountChangeSubscriptions[id];
+  await this._unsubscribe(subInfo, 'programUnsubscribe');
+  this._updateSubscriptions();
+} else {
+  throw new Error(`Unknown program account change id: ${id}`);
+}
   }
 
-  /**
-   * Deregister an account notification callback
-   *
-   * @param id subscription id to deregister
-   */
-  async removeProgramAccountChangeListener(id: number): Promise<void> {
-    if (this._programAccountChangeSubscriptions[id]) {
-      const subInfo = this._programAccountChangeSubscriptions[id];
-      delete this._programAccountChangeSubscriptions[id];
-      await this._unsubscribe(subInfo, 'programUnsubscribe');
-      this._updateSubscriptions();
-    } else {
-      throw new Error(`Unknown program account change id: ${id}`);
+/**
+ * @private
+ */
+_wsOnSlotNotification(notification: Object) {
+  const res = SlotNotificationResult(notification);
+  if (res.error) {
+    throw new Error('slot notification failed: ' + res.error.message);
+  }
+  assert(typeof res.result !== 'undefined');
+  const { parent, slot, root } = res.result;
+  const keys = Object.keys(this._slotSubscriptions).map(Number);
+  for (let id of keys) {
+    const sub = this._slotSubscriptions[id];
+    if (sub.subscriptionId === res.subscription) {
+      sub.callback({
+        parent,
+        slot,
+        root,
+      });
+      return true;
     }
   }
+}
 
-  /**
-   * @private
-   */
-  _wsOnSlotNotification(notification: Object) {
-    const res = SlotNotificationResult(notification);
-    if (res.error) {
-      throw new Error('slot notification failed: ' + res.error.message);
-    }
-    assert(typeof res.result !== 'undefined');
-    const {parent, slot, root} = res.result;
-    const keys = Object.keys(this._slotSubscriptions).map(Number);
-    for (let id of keys) {
-      const sub = this._slotSubscriptions[id];
-      if (sub.subscriptionId === res.subscription) {
-        sub.callback({
-          parent,
-          slot,
-          root,
-        });
-        return true;
-      }
-    }
+/**
+ * Register a callback to be invoked upon slot changes
+ *
+ * @param callback Function to invoke whenever the slot changes
+ * @return subscription id
+ */
+onSlotChange(callback: SlotChangeCallback): number {
+  const id = ++this._slotSubscriptionCounter;
+  this._slotSubscriptions[id] = {
+    callback,
+    subscriptionId: null,
+  };
+  this._updateSubscriptions();
+  return id;
+}
+
+/**
+ * Deregister a slot notification callback
+ *
+ * @param id subscription id to deregister
+ */
+async removeSlotChangeListener(id: number): Promise < void> {
+  if(this._slotSubscriptions[id]) {
+  const subInfo = this._slotSubscriptions[id];
+  delete this._slotSubscriptions[id];
+  await this._unsubscribe(subInfo, 'slotUnsubscribe');
+  this._updateSubscriptions();
+} else {
+  throw new Error(`Unknown slot change id: ${id}`);
+}
   }
 
-  /**
-   * Register a callback to be invoked upon slot changes
-   *
-   * @param callback Function to invoke whenever the slot changes
-   * @return subscription id
-   */
-  onSlotChange(callback: SlotChangeCallback): number {
-    const id = ++this._slotSubscriptionCounter;
-    this._slotSubscriptions[id] = {
-      callback,
-      subscriptionId: null,
-    };
-    this._updateSubscriptions();
-    return id;
+_buildArgs(
+  args: Array < any >,
+  override: ?Commitment,
+  encoding ?: 'jsonParsed' | 'base64',
+  extra ?: any,
+): Array < any > {
+  const commitment = override || this._commitment;
+  if(commitment || encoding || extra) {
+  let options: any = {};
+  if (encoding) {
+    options.encoding = encoding;
+  }
+  if (commitment) {
+    options.commitment = commitment;
+  }
+  if (extra) {
+    options = Object.assign(options, extra);
+  }
+  args.push(options);
+}
+return args;
   }
 
-  /**
-   * Deregister a slot notification callback
-   *
-   * @param id subscription id to deregister
-   */
-  async removeSlotChangeListener(id: number): Promise<void> {
-    if (this._slotSubscriptions[id]) {
-      const subInfo = this._slotSubscriptions[id];
-      delete this._slotSubscriptions[id];
-      await this._unsubscribe(subInfo, 'slotUnsubscribe');
-      this._updateSubscriptions();
-    } else {
-      throw new Error(`Unknown slot change id: ${id}`);
-    }
+/**
+ * @private
+ */
+_wsOnSignatureNotification(notification: Object) {
+  const res = SignatureNotificationResult(notification);
+  if (res.error) {
+    throw new Error('signature notification failed: ' + res.error.message);
   }
-
-  _buildArgs(
-    args: Array<any>,
-    override: ?Commitment,
-    encoding?: 'jsonParsed' | 'base64',
-    extra?: any,
-  ): Array<any> {
-    const commitment = override || this._commitment;
-    if (commitment || encoding || extra) {
-      let options: any = {};
-      if (encoding) {
-        options.encoding = encoding;
-      }
-      if (commitment) {
-        options.commitment = commitment;
-      }
-      if (extra) {
-        options = Object.assign(options, extra);
-      }
-      args.push(options);
-    }
-    return args;
-  }
-
-  /**
-   * @private
-   */
-  _wsOnSignatureNotification(notification: Object) {
-    const res = SignatureNotificationResult(notification);
-    if (res.error) {
-      throw new Error('signature notification failed: ' + res.error.message);
-    }
-    assert(typeof res.result !== 'undefined');
-    const keys = Object.keys(this._signatureSubscriptions).map(Number);
-    for (let id of keys) {
-      const sub = this._signatureSubscriptions[id];
-      if (sub.subscriptionId === res.subscription) {
-        // Signatures subscriptions are auto-removed by the RPC service so
-        // no need to explicitly send an unsubscribe message
-        delete this._signatureSubscriptions[id];
-        this._updateSubscriptions();
-        sub.callback(res.result.value, res.result.context);
-        return;
-      }
-    }
-  }
-
-  /**
-   * Register a callback to be invoked upon signature updates
-   *
-   * @param signature Transaction signature string in base 58
-   * @param callback Function to invoke on signature notifications
-   * @param commitment Specify the commitment level signature must reach before notification
-   * @return subscription id
-   */
-  onSignature(
-    signature: TransactionSignature,
-    callback: SignatureResultCallback,
-    commitment: ?Commitment,
-  ): number {
-    const id = ++this._signatureSubscriptionCounter;
-    this._signatureSubscriptions[id] = {
-      signature,
-      callback,
-      commitment,
-      subscriptionId: null,
-    };
-    this._updateSubscriptions();
-    return id;
-  }
-
-  /**
-   * Deregister a signature notification callback
-   *
-   * @param id subscription id to deregister
-   */
-  async removeSignatureListener(id: number): Promise<void> {
-    if (this._signatureSubscriptions[id]) {
-      const subInfo = this._signatureSubscriptions[id];
+  assert(typeof res.result !== 'undefined');
+  const keys = Object.keys(this._signatureSubscriptions).map(Number);
+  for (let id of keys) {
+    const sub = this._signatureSubscriptions[id];
+    if (sub.subscriptionId === res.subscription) {
+      // Signatures subscriptions are auto-removed by the RPC service so
+      // no need to explicitly send an unsubscribe message
       delete this._signatureSubscriptions[id];
-      await this._unsubscribe(subInfo, 'signatureUnsubscribe');
       this._updateSubscriptions();
-    } else {
-      throw new Error(`Unknown signature result id: ${id}`);
+      sub.callback(res.result.value, res.result.context);
+      return;
     }
   }
+}
 
-  /**
-   * @private
-   */
-  _wsOnRootNotification(notification: Object) {
-    const res = RootNotificationResult(notification);
-    if (res.error) {
-      throw new Error('root notification failed: ' + res.error.message);
-    }
-    assert(typeof res.result !== 'undefined');
-    const root = res.result;
-    const keys = Object.keys(this._rootSubscriptions).map(Number);
-    for (let id of keys) {
-      const sub = this._rootSubscriptions[id];
-      if (sub.subscriptionId === res.subscription) {
-        sub.callback(root);
-        return true;
-      }
-    }
+/**
+ * Register a callback to be invoked upon signature updates
+ *
+ * @param signature Transaction signature string in base 58
+ * @param callback Function to invoke on signature notifications
+ * @param commitment Specify the commitment level signature must reach before notification
+ * @return subscription id
+ */
+onSignature(
+  signature: TransactionSignature,
+  callback: SignatureResultCallback,
+  commitment: ?Commitment,
+): number {
+  const id = ++this._signatureSubscriptionCounter;
+  this._signatureSubscriptions[id] = {
+    signature,
+    callback,
+    commitment,
+    subscriptionId: null,
+  };
+  this._updateSubscriptions();
+  return id;
+}
+
+/**
+ * Deregister a signature notification callback
+ *
+ * @param id subscription id to deregister
+ */
+async removeSignatureListener(id: number): Promise < void> {
+  if(this._signatureSubscriptions[id]) {
+  const subInfo = this._signatureSubscriptions[id];
+  delete this._signatureSubscriptions[id];
+  await this._unsubscribe(subInfo, 'signatureUnsubscribe');
+  this._updateSubscriptions();
+} else {
+  throw new Error(`Unknown signature result id: ${id}`);
+}
   }
 
-  /**
-   * Register a callback to be invoked upon root changes
-   *
-   * @param callback Function to invoke whenever the root changes
-   * @return subscription id
-   */
-  onRootChange(callback: RootChangeCallback): number {
-    const id = ++this._rootSubscriptionCounter;
-    this._rootSubscriptions[id] = {
-      callback,
-      subscriptionId: null,
-    };
-    this._updateSubscriptions();
-    return id;
+/**
+ * @private
+ */
+_wsOnRootNotification(notification: Object) {
+  const res = RootNotificationResult(notification);
+  if (res.error) {
+    throw new Error('root notification failed: ' + res.error.message);
   }
-
-  /**
-   * Deregister a root notification callback
-   *
-   * @param id subscription id to deregister
-   */
-  async removeRootChangeListener(id: number): Promise<void> {
-    if (this._rootSubscriptions[id]) {
-      const subInfo = this._rootSubscriptions[id];
-      delete this._rootSubscriptions[id];
-      await this._unsubscribe(subInfo, 'rootUnsubscribe');
-      this._updateSubscriptions();
-    } else {
-      throw new Error(`Unknown root change id: ${id}`);
+  assert(typeof res.result !== 'undefined');
+  const root = res.result;
+  const keys = Object.keys(this._rootSubscriptions).map(Number);
+  for (let id of keys) {
+    const sub = this._rootSubscriptions[id];
+    if (sub.subscriptionId === res.subscription) {
+      sub.callback(root);
+      return true;
     }
+  }
+}
+
+/**
+ * Register a callback to be invoked upon root changes
+ *
+ * @param callback Function to invoke whenever the root changes
+ * @return subscription id
+ */
+onRootChange(callback: RootChangeCallback): number {
+  const id = ++this._rootSubscriptionCounter;
+  this._rootSubscriptions[id] = {
+    callback,
+    subscriptionId: null,
+  };
+  this._updateSubscriptions();
+  return id;
+}
+
+/**
+ * Deregister a root notification callback
+ *
+ * @param id subscription id to deregister
+ */
+async removeRootChangeListener(id: number): Promise < void> {
+  if(this._rootSubscriptions[id]) {
+  const subInfo = this._rootSubscriptions[id];
+  delete this._rootSubscriptions[id];
+  await this._unsubscribe(subInfo, 'rootUnsubscribe');
+  this._updateSubscriptions();
+} else {
+  throw new Error(`Unknown root change id: ${id}`);
+}
   }
 }

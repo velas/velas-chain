@@ -17,7 +17,7 @@ fi
 PATH=$PWD/target/$profile:$PATH
 
 ok=true
-for program in solana-{faucet,genesis,keygen,validator}; do
+for program in velas-{faucet,genesis,keygen,validator}; do
     $program -V || ok=false
 done
 $ok || {
@@ -37,27 +37,27 @@ ledgerDir=$PWD/config/ledger
 SOLANA_RUN_SH_CLUSTER_TYPE=${SOLANA_RUN_SH_CLUSTER_TYPE:-development}
 
 set -x
-if ! solana address; then
+if ! velas address; then
     echo Generating default keypair
-    solana-keygen new --no-passphrase
+    velas-keygen new --no-passphrase
 fi
 validator_identity="$dataDir/validator-identity.json"
 if [[ -e $validator_identity ]]; then
     echo "Use existing validator keypair"
 else
-    solana-keygen new --no-passphrase -so "$validator_identity"
+    velas-keygen new --no-passphrase -so "$validator_identity"
 fi
 validator_vote_account="$dataDir/validator-vote-account.json"
 if [[ -e $validator_vote_account ]]; then
     echo "Use existing validator vote account keypair"
 else
-    solana-keygen new --no-passphrase -so "$validator_vote_account"
+    velas-keygen new --no-passphrase -so "$validator_vote_account"
 fi
 validator_stake_account="$dataDir/validator-stake-account.json"
 if [[ -e $validator_stake_account ]]; then
     echo "Use existing validator stake account keypair"
 else
-    solana-keygen new --no-passphrase -so "$validator_stake_account"
+    velas-keygen new --no-passphrase -so "$validator_stake_account"
 fi
 
 if [[ -e "$ledgerDir"/genesis.bin || -e "$ledgerDir"/genesis.tar.bz2 ]]; then
@@ -69,7 +69,7 @@ else
     fi
     
     # shellcheck disable=SC2086
-    solana-genesis \
+    velas-genesis \
     --hashes-per-tick sleep \
     --faucet-lamports 500000000000000000 \
     --bootstrap-validator \
@@ -92,7 +92,7 @@ abort() {
 }
 trap abort INT TERM EXIT
 
-solana-faucet &
+velas-faucet &
 faucet=$!
 
 args=(
@@ -113,7 +113,7 @@ args=(
     --require-tower
 )
 # shellcheck disable=SC2086
-solana-validator "${args[@]}" $SOLANA_RUN_SH_VALIDATOR_ARGS &
+velas-validator "${args[@]}" $SOLANA_RUN_SH_VALIDATOR_ARGS &
 validator=$!
 
 wait "$validator"
