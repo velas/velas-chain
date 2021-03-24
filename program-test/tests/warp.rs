@@ -47,6 +47,7 @@ fn process_instruction(
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 async fn clock_sysvar_updated_from_warp() {
     let program_id = Pubkey::new_unique();
     // Initialize and start the test network
@@ -108,6 +109,7 @@ async fn clock_sysvar_updated_from_warp() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 async fn rent_collected_from_warp() {
     let program_id = Pubkey::new_unique();
     // Initialize and start the test network
@@ -159,6 +161,7 @@ async fn rent_collected_from_warp() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 async fn stake_rewards_from_warp() {
     // Initialize and start the test network
     let program_test = ProgramTest::default();

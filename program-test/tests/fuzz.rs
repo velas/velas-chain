@@ -19,6 +19,7 @@ fn process_instruction(
 }
 
 #[test]
+#[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn simulate_fuzz() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let program_id = Pubkey::new_unique();
@@ -47,6 +48,7 @@ fn simulate_fuzz() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn simulate_fuzz_with_context() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let program_id = Pubkey::new_unique();
