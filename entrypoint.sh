@@ -67,6 +67,7 @@ run_solana_validator() {
     --log - \
     --no-poh-speed-test \
     --enable-rpc-transaction-history \
+    --enable-cpi-and-log-storage \
     --rpc-port $rpc_port \
     --dynamic-port-range $port_range \
     --snapshot-interval-slots 200
@@ -79,6 +80,7 @@ run_solana_bootstrap() {
     declare rpc_port=$4
     RUST_LOG="debug,solana_vote_program::vote_state=error,solana_metrics::metrics=info,solana_ledger::blockstore=info" velas-validator \
     --enable-rpc-transaction-history \
+    --enable-cpi-and-log-storage \
     --gossip-host $host \
     --ledger $datadir \
     --dynamic-port-range $port_range \

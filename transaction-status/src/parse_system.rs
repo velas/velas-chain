@@ -130,7 +130,7 @@ pub fn parse_system(
                 }),
             })
         }
-        SystemInstruction::Allocate { space, resize } => {
+        SystemInstruction::Allocate { space } => {
             check_num_system_accounts(&instruction.accounts, 1)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "allocate".to_string(),
@@ -141,14 +141,13 @@ pub fn parse_system(
             })
         }
 
-        SystemInstruction::ReAllocate { space, resize } => {
+        SystemInstruction::Reallocate { space } => {
             check_num_system_accounts(&instruction.accounts, 1)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "true".to_string(),
                 info: json!({
                     "account": account_keys[instruction.accounts[0] as usize].to_string(),
                     "space": space,
-                    "resize": resize
                 }),
             })
         }
