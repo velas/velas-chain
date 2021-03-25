@@ -93,8 +93,21 @@ run_evm_bridge() {
     declare keyfile=$1
     declare entrypoint=$2
     declare listen_addr=$3
+    CHAIN_ID=""
+    case "$NETWORK" in
+        # airdrop on devnet only
+        "devnet" | "development")
+            CHAIN_ID=57005
+        ;;
+        "mainnet")
+            CHAIN_ID=105
+        ;;
+        "testnet")
+            CHAIN_ID=111
+        ;;
+    esac
     # RUN evm bridge with specific logs configuration
-    RUST_LOG="debug,hyper=info,tokio_reactor=info,reqwest=info" evm-bridge $keyfile $entrypoint $listen_addr
+    RUST_LOG="debug,hyper=info,tokio_reactor=info,reqwest=info" evm-bridge $keyfile $entrypoint $listen_addr $CHAIN_ID
 }
 
 
@@ -140,8 +153,17 @@ generate_first_node() {
     fetch_program memo  3.0.0 MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr BPFLoader2111111111111111111111111111111111
     fetch_program associated-token-account 1.0.1 ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL BPFLoader2111111111111111111111111111111111
     fetch_program feature-proposal 1.0.0 Feat1YXHhH6t1juaWF74WLcfv4XoNocjXA6sPWHNgAse BPFLoader2111111111111111111111111111111111
-    
-    velas-genesis --max-genesis-archive-unpacked-size 1073741824 --enable-warmup-epochs --bootstrap-validator $DATADIR/identity.json $DATADIR/vote-account.json $DATADIR/stake-account.json --bpf-program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA BPFLoader2111111111111111111111111111111111 spl_token-3.1.0.so --bpf-program Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo BPFLoader1111111111111111111111111111111111 spl_memo-1.0.0.so --bpf-program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr BPFLoader2111111111111111111111111111111111 spl_memo-3.0.0.so --bpf-program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL BPFLoader2111111111111111111111111111111111 spl_associated-token-account-1.0.1.so --bpf-program Feat1YXHhH6t1juaWF74WLcfv4XoNocjXA6sPWHNgAse BPFLoader2111111111111111111111111111111111 spl_feature-proposal-1.0.0.so --ledger $DATADIR --faucet-pubkey $DATADIR/faucet.json --faucet-lamports 500000000000000000 --hashes-per-tick auto --cluster-type $NETWORK
+    FAUCET_LAMPORTS=0
+    case "$NETWORK" in
+        # airdrop on devnet only
+        "devnet" | "development")
+            FAUCET_LAMPORTS=500000000000000000
+        ;;
+        "mainnet" | "testnet")
+            FAUCET_LAMPORTS=100000000000 # num for 1m tx
+        ;;
+    esac
+    velas-genesis --max-genesis-archive-unpacked-size 1073741824 --enable-warmup-epochs --bootstrap-validator $DATADIR/identity.json $DATADIR/vote-account.json $DATADIR/stake-account.json --bpf-program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA BPFLoader2111111111111111111111111111111111 spl_token-3.1.0.so --bpf-program Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo BPFLoader1111111111111111111111111111111111 spl_memo-1.0.0.so --bpf-program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr BPFLoader2111111111111111111111111111111111 spl_memo-3.0.0.so --bpf-program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL BPFLoader2111111111111111111111111111111111 spl_associated-token-account-1.0.1.so --bpf-program Feat1YXHhH6t1juaWF74WLcfv4XoNocjXA6sPWHNgAse BPFLoader2111111111111111111111111111111111 spl_feature-proposal-1.0.0.so --ledger $DATADIR --faucet-pubkey $DATADIR/faucet.json --faucet-lamports $FAUCET_LAMPORTS --hashes-per-tick auto --cluster-type $NETWORK
 }
 
 case "${NODE_TYPE}" in
