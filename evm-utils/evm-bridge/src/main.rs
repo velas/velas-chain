@@ -621,11 +621,7 @@ impl RpcSol for RpcSolProxy {
         meta: Self::Metadata,
         commitment: Option<CommitmentConfig>,
     ) -> Result<RpcResponse<RpcBlockhashFeeCalculator>> {
-        proxy_sol_rpc!(
-            meta.rpc_client,
-            GetMinimumBalanceForRentExemption,
-            commitment
-        )
+        proxy_sol_rpc!(meta.rpc_client, GetRecentBlockhash, commitment)
     }
 
     fn get_fees(
