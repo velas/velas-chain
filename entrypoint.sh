@@ -57,7 +57,7 @@ run_solana_validator() {
     esac
     
     
-    RUST_LOG="debug,solana_vote_program::vote_state=error,solana_metrics::metrics=info,solana_ledger::blockstore=info" velas-validator \
+    velas-validator \
     --max-genesis-archive-unpacked-size 1073741824 \
     --entrypoint $entrypoint  \
     --identity $datadir/identity.json \
@@ -76,7 +76,7 @@ run_solana_bootstrap() {
     declare host=$2
     declare port_range=$3
     declare rpc_port=$4
-    RUST_LOG="debug,solana_vote_program::vote_state=error,solana_metrics::metrics=info,solana_ledger::blockstore=info" velas-validator \
+    velas-validator \
     --enable-rpc-transaction-history \
     --gossip-host $host \
     --ledger $datadir \
