@@ -68,7 +68,8 @@ run_solana_validator() {
     --enable-rpc-transaction-history \
     --rpc-port $rpc_port \
     --dynamic-port-range $port_range \
-    --snapshot-interval-slots 200
+    --snapshot-interval-slots 200 \
+    --trusted-validator ECjgqN7epNqzLAwfr97RToMLveKfSRxDeQ5B2dBKB3qR --halt-on-trusted-validators-accounts-hash-mismatch
 }
 
 run_solana_bootstrap() {
