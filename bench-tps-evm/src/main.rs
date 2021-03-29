@@ -26,7 +26,6 @@ fn main() {
         multi_client,
         num_lamports_per_account,
         target_node,
-        chain_id,
         ..
     } = &cli_config;
 
@@ -88,5 +87,5 @@ fn main() {
     });
     // };
 
-    bench_evm::do_bench_tps(client, cli_config, keypairs, *chain_id);
+    bench_evm::do_bench_tps(client, cli_config, keypairs);
 }

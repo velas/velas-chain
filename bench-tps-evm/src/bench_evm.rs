@@ -378,7 +378,6 @@ pub fn do_bench_tps<T>(
     client: Arc<T>,
     config: Config,
     gen_keypairs: Vec<(Keypair, evm::SecretKey)>,
-    chain_id: Option<u64>,
 ) -> u64
 where
     T: 'static + Client + Send + Sync,
@@ -391,6 +390,7 @@ where
         tx_count,
         sustained,
         target_slots_per_epoch,
+        chain_id,
         ..
     } = config;
 

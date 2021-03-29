@@ -1,6 +1,6 @@
 [package]
 name = "solana-version"
-version = "1.5.14"
+version = "0.2.0"
 description = "Solana Version"
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
 repository = "https://github.com/solana-labs/solana"
