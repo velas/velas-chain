@@ -1,6 +1,6 @@
 use evm::executor::{MemoryStackState, StackSubstateMetadata};
 pub use evm::{
-    backend::{Apply, ApplyBackend, Backend, Log, MemoryVicinity},
+    backend::{Apply, ApplyBackend, Backend, Log, MemoryAccount, MemoryVicinity},
     executor::StackExecutor,
     Config, Context, Handler, Transfer,
     {ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed},

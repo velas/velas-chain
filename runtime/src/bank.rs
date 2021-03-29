@@ -25,6 +25,7 @@ use crate::{
     vote_account::ArcVoteAccount,
 };
 use byteorder::{ByteOrder, LittleEndian};
+use evm_state::FromKey;
 use itertools::Itertools;
 use log::*;
 use rayon::ThreadPool;
@@ -57,7 +58,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     recent_blockhashes_account,
     sanitize::Sanitize,
-    signature::{Keypair, Signature},
+    signature::{Keypair, Signature, Signer},
     slot_hashes::SlotHashes,
     slot_history::SlotHistory,
     stake_weighted_timestamp::{
@@ -2054,6 +2055,12 @@ impl Bank {
             apply_start.elapsed().as_micros()
         );
 
+        info!(
+            "Set evm state root to {:?} at block {}",
+            self.evm_state.read().unwrap().root,
+            self.slot()
+        );
+
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
@@ -3901,6 +3908,39 @@ impl Bank {
         self.process_transaction(&tx).map(|_| signature)
     }
 
+    pub fn transfer_evm(
+        &self,
+        n: u64,
+        fee_payer: &Keypair,
+        keypair: &evm_state::SecretKey,
+        to: &evm_state::Address,
+    ) -> Result<Signature> {
+        let blockhash = self.last_blockhash();
+        let nonce = self
+            .evm_state
+            .read()
+            .unwrap()
+            .get_account_state(keypair.to_address())
+            .map(|s| s.nonce)
+            .unwrap_or_else(|| 0.into());
+        let evm_tx = solana_evm_loader_program::evm_transfer(
+            *keypair,
+            *to,
+            nonce,
+            n.into(),
+            Some(self.evm_chain_id),
+        );
+        let ix = solana_evm_loader_program::send_raw_tx(fee_payer.pubkey(), evm_tx);
+        let tx = Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&fee_payer.pubkey()),
+            &[fee_payer],
+            blockhash,
+        );
+        let signature = tx.signatures[0];
+        self.process_transaction(&tx).map(|_| signature)
+    }
+
     pub fn read_balance(account: &Account) -> u64 {
         account.lamports
     }
@@ -5048,6 +5088,7 @@ pub(crate) mod tests {
         status_cache::MAX_CACHE_ENTRIES,
     };
     use crossbeam_channel::bounded;
+    use evm_state::H256;
     use solana_sdk::{
         account_utils::StateMut,
         clock::{DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
@@ -8090,6 +8131,60 @@ pub(crate) mod tests {
         let pubkey2 = solana_sdk::pubkey::new_rand();
         info!("transfer 2 {}", pubkey2);
         bank2.transfer(10, &mint_keypair, &pubkey2).unwrap();
+        bank2.update_accounts_hash();
+        assert!(bank2.verify_bank_hash());
+        assert!(bank3.verify_bank_hash());
+    }
+
+    #[test]
+    fn test_bank_hash_internal_state_verify_transfer_evm() {
+        solana_logger::setup();
+        let (genesis_config, mint_keypair) = create_genesis_config(2_000);
+        let bank0 = Bank::new(&genesis_config);
+
+        let mut rng = evm_state::rand::thread_rng();
+        let sender = evm_state::SecretKey::new(&mut rng);
+        {
+            // force changing evm_state account
+            let mut evm_state = bank0.evm_state.write().unwrap();
+            evm_state.set_initial(vec![(
+                sender.to_address(),
+                evm_state::MemoryAccount {
+                    balance: 10000000.into(),
+                    ..Default::default()
+                },
+            )]);
+            evm_state.commit();
+        }
+        let pubkey: evm_state::H160 = H256::random().into();
+        info!("transfer 1 {} mint: {}", pubkey, mint_keypair.pubkey());
+        bank0
+            .transfer_evm(1_000, &mint_keypair, &sender, &pubkey)
+            .unwrap();
+
+        let bank0_state = bank0.hash_internal_state();
+        let bank0 = Arc::new(bank0);
+        // Checkpointing should result in a new state while freezing the parent
+        let bank2 = Bank::new_from_parent(&bank0, &solana_sdk::pubkey::new_rand(), 1);
+        assert_ne!(bank0_state, bank2.hash_internal_state());
+        // Checkpointing should modify the checkpoint's state when freezed
+        assert_ne!(bank0_state, bank0.hash_internal_state());
+
+        // Checkpointing should never modify the checkpoint's state once frozen
+        let bank0_state = bank0.hash_internal_state();
+        bank2.update_accounts_hash();
+        assert!(bank2.verify_bank_hash());
+        let bank3 = Bank::new_from_parent(&bank0, &solana_sdk::pubkey::new_rand(), 2);
+        assert_eq!(bank0_state, bank0.hash_internal_state());
+        assert!(bank2.verify_bank_hash());
+        bank3.update_accounts_hash();
+        assert!(bank3.verify_bank_hash());
+
+        let pubkey2: evm_state::H160 = H256::random().into();
+        info!("failed transfer 2(insufficient funds) {}", pubkey2);
+        bank2
+            .transfer_evm(10000000, &mint_keypair, &sender, &pubkey2)
+            .unwrap_err();
         bank2.update_accounts_hash();
         assert!(bank2.verify_bank_hash());
         assert!(bank3.verify_bank_hash());
@@ -11997,7 +12092,7 @@ pub(crate) mod tests {
             .unwrap();
         genesis_config
             .accounts
-            .remove(&feature_set::full_inflation::devnet_and_testnet::id())
+            .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
             .unwrap();
         for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
             genesis_config.accounts.remove(&pair.vote_id).unwrap();
@@ -12078,7 +12173,7 @@ pub(crate) mod tests {
             .unwrap();
         genesis_config
             .accounts
-            .remove(&feature_set::full_inflation::devnet_and_testnet::id())
+            .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
             .unwrap();
         for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
             genesis_config.accounts.remove(&pair.vote_id).unwrap();
