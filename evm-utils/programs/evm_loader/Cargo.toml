@@ -29,5 +29,6 @@ crate-type = ["lib", "cdylib"]
 name = "solana_evm_loader_program"
 
 [dev-dependencies]
+byteorder = "1.4"
 quickcheck = "1.0.3"
 quickcheck_macros = "1.0.0"

@@ -1,3 +1,4 @@
+use evm_rpc::serialize::Hex;
 use log::*;
 use solana_client::rpc_client::RpcClient;
 use solana_evm_loader_program::scope::*;
@@ -22,7 +23,7 @@ enum SubCommands {
         /// Amount in plancks
         amount: u64,
         /// Address in evm, that will receive tokens
-        ether_address: evm::Address,
+        ether_address: Hex<evm::Address>,
     },
 
     /// DEBUG: Create dummy "CREATE" transaction.
@@ -38,6 +39,7 @@ enum SubCommands {
         #[structopt(short = "a", long = "abi")]
         abi: Option<String>,
     },
+
     /// DEBUG: Parse binary array as hex/utf8.
     ParseArray { array: String },
 }
@@ -103,7 +105,7 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             let ixs = solana_evm_loader_program::transfer_native_to_eth_ixs(
                 signer.pubkey(),
                 amount,
-                ether_address,
+                ether_address.0,
             );
             let message = Message::new(&ixs, Some(&signer.pubkey()));
             let mut create_account_tx = solana::Transaction::new_unsigned(message);

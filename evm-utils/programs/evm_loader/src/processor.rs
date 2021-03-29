@@ -318,7 +318,7 @@ mod test {
         );
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
-        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account];
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
@@ -384,7 +384,7 @@ mod test {
         );
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
-        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account];
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
@@ -460,7 +460,7 @@ mod test {
     fn execute_tx_with_state_apply() {
         let mut state = evm_state::EvmState::default();
         let processor = EvmProcessor::default();
-        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account];
 
@@ -594,7 +594,7 @@ mod test {
         let user_id = Pubkey::new_unique();
         let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
 
-        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account, user_keyed_account];
         let ether_dummy_address = H160::repeat_byte(0x11);
@@ -665,7 +665,7 @@ mod test {
         let user_id = Pubkey::new_unique();
         let user_keyed_account = KeyedAccount::new(&user_id, true, &first_user_account);
 
-        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account, user_keyed_account];
         let mut rand = evm_state::rand::thread_rng();
@@ -800,7 +800,7 @@ mod test {
         let user_id = Pubkey::new_unique();
         let user_keyed_account = KeyedAccount::new(&user_id, true, &first_user_account);
 
-        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account, user_keyed_account];
         let mut rand = evm_state::rand::thread_rng();
@@ -1050,7 +1050,7 @@ mod test {
         let user_id = Pubkey::new_unique();
         let user_keyed_account = KeyedAccount::new(&user_id, false, &first_user_account);
 
-        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account, user_keyed_account];
 
@@ -1118,7 +1118,7 @@ mod test {
         );
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
-        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
 
         let user_account = RefCell::new(solana_sdk::account::Account {
@@ -1174,7 +1174,7 @@ mod test {
         );
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
-        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
 
         let batch_size: u64 = 500;
@@ -1280,7 +1280,7 @@ mod test {
         );
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
-        let evm_account = RefCell::new(crate::create_state_account());
+        let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
 
         let user_account = RefCell::new(solana_sdk::account::Account {
