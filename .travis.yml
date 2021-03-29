@@ -1,6 +1,7 @@
 branches:
   only:
     - master
+    - test
     - /^v\d+\.\d+/
 
 notifications:
