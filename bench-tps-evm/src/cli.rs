@@ -27,6 +27,7 @@ pub struct Config {
     pub num_lamports_per_account: u64,
     pub target_slots_per_epoch: u64,
     pub target_node: Option<Pubkey>,
+    pub chain_id: Option<u64>,
 }
 
 impl Default for Config {
@@ -48,6 +49,7 @@ impl Default for Config {
             num_lamports_per_account: NUM_LAMPORTS_PER_ACCOUNT_DEFAULT,
             target_slots_per_epoch: 0,
             target_node: None,
+            chain_id: None,
         }
     }
 }
@@ -102,6 +104,13 @@ pub fn build_args<'a, 'b>(version: &'b str) -> App<'a, 'b> {
                 .value_name("SECS")
                 .takes_value(true)
                 .help("Seconds to run benchmark, then exit; default is forever"),
+        )
+        .arg(
+            Arg::with_name("chain_id")
+                .long("chain-id")
+                .takes_value(true)
+                .required(true)
+                .help("Evm chain id"),
         )
         .arg(
             Arg::with_name("sustained")
@@ -213,6 +222,9 @@ pub fn extract_args<'a>(matches: &ArgMatches<'a>) -> Config {
             duration.to_string().parse().expect("can't parse duration"),
             0,
         );
+    }
+    if let Some(chain_id) = matches.value_of("chain_id") {
+        args.chain_id = Some(chain_id.parse().expect("can't parse chain-id"));
     }
 
     if let Some(s) = matches.value_of("tx_count") {

@@ -293,6 +293,7 @@ fn generate_system_txs(
     dest: &VecDeque<&(Keypair, evm::SecretKey)>,
     reclaim: bool,
     blockhash: &Hash,
+    chain_id: Option<u64>,
 ) -> Vec<(Transaction, u64)> {
     let pairs: Vec<_> = if !reclaim {
         source.iter().zip(dest.iter()).collect()
@@ -314,7 +315,7 @@ fn generate_system_txs(
                 input: vec![],
             };
 
-            let tx_call = tx_call.sign(&from.1, None);
+            let tx_call = tx_call.sign(&from.1, chain_id);
 
             let ix = solana_evm_loader_program::send_raw_tx(from.0.pubkey(), tx_call);
 
@@ -335,6 +336,7 @@ fn generate_txs(
     dest: &VecDeque<&(Keypair, evm::SecretKey)>,
     threads: usize,
     reclaim: bool,
+    chain_id: Option<u64>,
 ) {
     let blockhash = *blockhash.read().unwrap();
     let tx_count = source.len();
@@ -344,7 +346,7 @@ fn generate_txs(
     );
     let signing_start = Instant::now();
 
-    let transactions = generate_system_txs(source, dest, reclaim, &blockhash);
+    let transactions = generate_system_txs(source, dest, reclaim, &blockhash, chain_id);
 
     let duration = signing_start.elapsed();
     let ns = duration.as_secs() * 1_000_000_000 + u64::from(duration.subsec_nanos());
@@ -376,6 +378,7 @@ pub fn do_bench_tps<T>(
     client: Arc<T>,
     config: Config,
     gen_keypairs: Vec<(Keypair, evm::SecretKey)>,
+    chain_id: Option<u64>,
 ) -> u64
 where
     T: 'static + Client + Send + Sync,
@@ -463,6 +466,7 @@ where
         threads,
         duration,
         sustained,
+        chain_id,
     );
 
     // Stop the sampling threads so it will collect the stats
@@ -509,6 +513,7 @@ fn generate_chunked_transfers(
     threads: usize,
     duration: Duration,
     sustained: bool,
+    chain_id: Option<u64>,
 ) {
     // generate and send transactions for the specified duration
     let start = Instant::now();
@@ -523,6 +528,7 @@ fn generate_chunked_transfers(
             &dest_keypair_chunks[chunk_index],
             threads,
             reclaim_lamports_back_to_source_account,
+            chain_id,
         );
 
         // In sustained mode, overlap the transfers with generation. This has higher average
