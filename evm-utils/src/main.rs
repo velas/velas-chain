@@ -1,4 +1,4 @@
-use evm_rpc::serialize::Hex;
+use evm_rpc::Hex;
 use log::*;
 use solana_client::rpc_client::RpcClient;
 use solana_evm_loader_program::scope::*;
