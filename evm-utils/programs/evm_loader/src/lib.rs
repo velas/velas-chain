@@ -188,3 +188,21 @@ pub fn evm_address_for_program(program_account: solana::Address) -> evm::Address
 
     short_hash
 }
+
+pub fn evm_transfer(
+    from: evm::SecretKey,
+    to: evm::Address,
+    nonce: evm::U256,
+    value: evm::U256,
+    chain_id: Option<u64>,
+) -> evm::Transaction {
+    let tx = evm::UnsignedTransaction {
+        nonce,
+        gas_price: 1.into(),
+        gas_limit: 30000.into(),
+        action: evm::TransactionAction::Call(to),
+        value,
+        input: vec![],
+    };
+    tx.sign(&from, chain_id)
+}
