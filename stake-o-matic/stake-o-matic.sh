@@ -4,7 +4,7 @@
 #
 
 solana_version=edge
-curl -sSf https://raw.githubusercontent.com/solana-labs/solana/v1.0.0/install/solana-install-init.sh \
+curl -sSf https://raw.githubusercontent.com/solana-labs/solana/v1.0.0/install/velas-install-init.sh \
     | sh -s - $solana_version \
         --no-modify-path \
         --data-dir ./solana-install \

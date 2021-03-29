@@ -80,8 +80,6 @@ else
         cargo-build-bpf
         cargo-test-bpf
         velas
-        velas-bench-exchange
-        velas-bench-tps
         velas-faucet
         velas-gossip
         velas-install
@@ -95,7 +93,7 @@ else
     
     #XXX: Ensure `solana-genesis` is built LAST!
     # See https://github.com/solana-labs/solana/issues/5826
-    BINS+=(solana-genesis)
+    BINS+=(velas-genesis)
 fi
 
 binArgs=()

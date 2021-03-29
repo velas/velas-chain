@@ -24,11 +24,11 @@ set -e
 
 usage() {
     cat 1>&2 <<EOF
-solana-install-init
+velas-install-init
 initializes a new installation
 
 USAGE:
-    solana-install-init [FLAGS] [OPTIONS] --data_dir <PATH> --pubkey <PUBKEY>
+    velas-install-init [FLAGS] [OPTIONS] --data_dir <PATH> --pubkey <PUBKEY>
 
 FLAGS:
     -h, --help              Prints help information
@@ -74,7 +74,7 @@ main() {
       ;;
     esac
 
-    temp_dir="$(mktemp -d 2>/dev/null || ensure mktemp -d -t solana-install-init)"
+    temp_dir="$(mktemp -d 2>/dev/null || ensure mktemp -d -t velas-install-init)"
     ensure mkdir -p "$temp_dir"
 
     # Check for SOLANA_RELEASE environment variable override.  Otherwise fetch
@@ -94,8 +94,8 @@ main() {
       fi
     fi
 
-    download_url="$SOLANA_DOWNLOAD_ROOT/$release/solana-install-init-$TARGET"
-    solana_install_init="$temp_dir/solana-install-init"
+    download_url="$SOLANA_DOWNLOAD_ROOT/$release/velas-install-init-$TARGET"
+    solana_install_init="$temp_dir/velas-install-init"
 
     printf 'downloading %s installer\n' "$release" 1>&2
 
@@ -104,7 +104,7 @@ main() {
     ensure chmod u+x "$solana_install_init"
     if [ ! -x "$solana_install_init" ]; then
         printf '%s\n' "Cannot execute $solana_install_init (likely because of mounting /tmp as noexec)." 1>&2
-        printf '%s\n' "Please copy the file to a location where you can execute binaries and run ./solana-install-init." 1>&2
+        printf '%s\n' "Please copy the file to a location where you can execute binaries and run ./velas-install-init." 1>&2
         exit 1
     fi
 
@@ -123,7 +123,7 @@ main() {
 }
 
 err() {
-    printf 'solana-install-init: %s\n' "$1" >&2
+    printf 'velas-install-init: %s\n' "$1" >&2
     exit 1
 }
 
