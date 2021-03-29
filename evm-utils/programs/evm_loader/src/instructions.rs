@@ -71,3 +71,128 @@ pub enum EvmInstruction {
         unsigned_tx: evm::UnsignedTransaction,
     },
 }
+
+#[cfg(test)]
+mod test {
+
+    use super::*;
+
+    use evm_state::H256;
+    use quickcheck::{Arbitrary, Gen};
+    use quickcheck_macros::quickcheck;
+
+    #[derive(Clone, Debug)]
+    struct Generator<T>(T);
+
+    impl Arbitrary for Generator<evm::Address> {
+        fn arbitrary(g: &mut Gen) -> Self {
+            Generator(evm::Address::from_low_u64_ne(u64::arbitrary(g)))
+        }
+    }
+
+    impl Arbitrary for Generator<evm::UnsignedTransaction> {
+        fn arbitrary(g: &mut Gen) -> Self {
+            let action = if bool::arbitrary(g) {
+                evm::TransactionAction::Create
+            } else {
+                evm::TransactionAction::Call(evm::Address::from_low_u64_ne(u64::arbitrary(g)))
+            };
+            let tx = evm::UnsignedTransaction {
+                nonce: evm::U256::from(u64::arbitrary(g)),
+                gas_limit: evm::U256::from(u64::arbitrary(g)),
+                gas_price: evm::U256::from(u64::arbitrary(g)),
+                value: evm::U256::from(u64::arbitrary(g)),
+                input: Vec::<u8>::arbitrary(g),
+                action,
+            };
+            Generator(tx)
+        }
+    }
+
+    impl Arbitrary for Generator<evm::Transaction> {
+        fn arbitrary(g: &mut Gen) -> Self {
+            let action = if bool::arbitrary(g) {
+                evm::TransactionAction::Create
+            } else {
+                evm::TransactionAction::Call(evm::Address::from_low_u64_ne(u64::arbitrary(g)))
+            };
+            let tx = evm::Transaction {
+                nonce: evm::U256::from(u64::arbitrary(g)),
+                gas_limit: evm::U256::from(u64::arbitrary(g)),
+                gas_price: evm::U256::from(u64::arbitrary(g)),
+                value: evm::U256::from(u64::arbitrary(g)),
+                input: Vec::<u8>::arbitrary(g),
+                signature: evm::TransactionSignature {
+                    v: 0,
+                    r: H256::from_low_u64_ne(0),
+                    s: H256::from_low_u64_ne(0),
+                }, // signature is always invalid
+                action,
+            };
+            Generator(tx)
+        }
+    }
+
+    #[quickcheck]
+    fn test_serialize_swap_native_to_ether_layout(lamports: u64, addr: Generator<evm::Address>) {
+        fn custom_serialize(lamports: u64, addr: evm::Address) -> Vec<u8> {
+            use byteorder::{LittleEndian, WriteBytesExt};
+
+            let tag: [u8; 4] = [1, 0, 0, 0];
+            let mut lamports_in_bytes: [u8; 8] = [0xff; 8];
+            let array_len: [u8; 8] = [42, 0, 0, 0, 0, 0, 0, 0];
+            let mut addr_in_hex_bytes: [u8; 42] = [0; 42];
+
+            lamports_in_bytes
+                .as_mut()
+                .write_u64::<LittleEndian>(lamports)
+                .unwrap();
+
+            let addr_in_hex = format!("0x{:x}", addr);
+
+            assert_eq!(addr_in_hex.len(), 42);
+
+            addr_in_hex_bytes.copy_from_slice(addr_in_hex.as_bytes());
+
+            let mut buffer = vec![];
+            buffer.extend_from_slice(&tag);
+            buffer.extend_from_slice(&lamports_in_bytes);
+            buffer.extend_from_slice(&array_len);
+            buffer.extend_from_slice(&addr_in_hex_bytes);
+            buffer
+        }
+
+        let addr = addr.0;
+        let data = EvmInstruction::SwapNativeToEther {
+            lamports: lamports,
+            ether_address: addr,
+        };
+        let data = bincode::serialize(&data).unwrap();
+
+        let custom_data = custom_serialize(lamports, addr);
+        assert_eq!(&*data, &*custom_data)
+    }
+
+    #[quickcheck]
+    #[ignore]
+    fn test_serialize_unsigned_transaction(
+        addr: Generator<evm::Address>,
+        tx: Generator<evm::UnsignedTransaction>,
+    ) {
+        let data = EvmInstruction::EvmAuthorizedTransaction {
+            from: addr.0,
+            unsigned_tx: tx.0,
+        };
+
+        let data = bincode::serialize(&data).unwrap();
+        assert_eq!(&*data, &[0, 1, 2, 3])
+    }
+
+    #[quickcheck]
+    #[ignore]
+    fn test_serialize_transaction(tx: Generator<evm::Transaction>) {
+        let data = EvmInstruction::EvmTransaction { evm_tx: tx.0 };
+        let data = bincode::serialize(&data).unwrap();
+        assert_eq!(&*data, &[0, 1, 2, 3])
+    }
+}

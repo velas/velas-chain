@@ -32,6 +32,19 @@ impl<T: FormatHex> Hex<T> {
     }
 }
 
+impl<T: FormatHex> std::str::FromStr for Hex<T> {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Error> {
+        Self::from_hex(s)
+    }
+}
+
+impl<T: FormatHex> std::fmt::Display for Hex<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.format_hex())
+    }
+}
+
 pub trait FormatHex {
     fn format_hex(&self) -> String;
     fn from_hex(data: &str) -> Result<Self, Error>
