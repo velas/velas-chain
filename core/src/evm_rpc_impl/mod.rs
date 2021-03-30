@@ -460,6 +460,10 @@ fn call(
 
     let result = if let Some(address) = tx.to {
         let address = address.0;
+        debug!(
+            "Trying to execute tx = {:?}",
+            (caller, address, value, &input, gas_limit)
+        );
         executor.with_executor(|e| e.transact_call(caller, address, value, input, gas_limit))
     } else {
         executor.with_executor(|e| (e.transact_create(caller, value, input, gas_limit), vec![]))
