@@ -263,8 +263,9 @@ impl Executor {
             let state = MemoryStackState::new(metadata, &self.evm);
             let mut executor = StackExecutor::new(state, &self.config);
             let result = func(&mut executor);
-            // let used_gas = executor.used_gas();
+            let used_gas = executor.used_gas();
             let state = executor.into_state();
+            self.used_gas += used_gas;
             (state.deconstruct(), result)
         };
         self.evm.apply(updates, false);
