@@ -8,12 +8,12 @@ here=$(dirname "$0")
 source "$here"/common.sh
 
 [[ -f "$SOLANA_CONFIG_DIR"/faucet.json ]] || {
-  echo "$SOLANA_CONFIG_DIR/faucet.json not found, create it by running:"
-  echo
-  echo "  ${here}/setup.sh"
-  exit 1
+    echo "$SOLANA_CONFIG_DIR/faucet.json not found, create it by running:"
+    echo
+    echo "  ${here}/setup.sh"
+    exit 1
 }
 
 set -x
 # shellcheck disable=SC2086 # Don't want to double quote $solana_faucet
-exec $solana_faucet --keypair "$SOLANA_CONFIG_DIR"/faucet.json "$@"
+exec $velas_faucet --keypair "$SOLANA_CONFIG_DIR"/faucet.json "$@"

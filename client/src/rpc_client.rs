@@ -131,6 +131,7 @@ impl RpcClient {
         Self::new_with_timeout(url, timeout)
     }
 
+    #[allow(dead_code)]
     fn get_node_version(&self) -> Result<semver::Version, RpcError> {
         let r_node_version = self.node_version.read().unwrap();
         if let Some(version) = &*r_node_version {
@@ -154,7 +155,7 @@ impl RpcClient {
     }
 
     fn use_deprecated_commitment(&self) -> Result<bool, RpcError> {
-        Ok(self.get_node_version()? < semver::Version::new(1, 5, 5))
+        Ok(false)
     }
 
     fn maybe_map_commitment(
@@ -210,11 +211,7 @@ impl RpcClient {
     }
 
     fn default_cluster_transaction_encoding(&self) -> Result<UiTransactionEncoding, RpcError> {
-        if self.get_node_version()? < semver::Version::new(1, 3, 16) {
-            Ok(UiTransactionEncoding::Base58)
-        } else {
-            Ok(UiTransactionEncoding::Base64)
-        }
+        Ok(UiTransactionEncoding::Base64)
     }
 
     pub fn send_transaction_with_config(

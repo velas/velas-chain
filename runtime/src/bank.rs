@@ -2055,7 +2055,7 @@ impl Bank {
             apply_start.elapsed().as_micros()
         );
 
-        info!(
+        debug!(
             "Set evm state root to {:?} at block {}",
             self.evm_state.read().unwrap().root,
             self.slot()
@@ -2920,7 +2920,7 @@ impl Bank {
         Vec<usize>,
         u64,
         u64,
-        evm_state::EvmState,
+        Option<evm_state::EvmState>,
     ) {
         let txs = batch.transactions();
         debug!("processing transactions: {}", txs.len());
@@ -2958,19 +2958,7 @@ impl Bank {
 
         let mut execution_time = Measure::start("execution_time");
 
-        let evm_state = self
-            .evm_state
-            .read()
-            .expect("bank evm state was poisoned")
-            .clone();
-
-        let mut evm_executor = evm_state::Executor::with_config(
-            evm_state,
-            evm_state::Config::istanbul(),
-            u64::max_value(),
-            self.evm_chain_id,
-            self.slot(),
-        );
+        let mut evm_patch = None;
 
         let mut signature_count: u64 = 0;
         let mut inner_instructions: Vec<Option<InnerInstructionsList>> =
@@ -3008,6 +2996,28 @@ impl Bank {
                         None
                     };
 
+                    // Create evm_executor only if evm_state account is locked.
+                    let mut evm_executor = if tx.message.is_modify_evm_state() {
+                        // append to old patch if exist, or create new, from existing evm state
+                        let state = evm_patch.take().unwrap_or_else(|| {
+                            self.evm_state
+                                .read()
+                                .expect("bank evm state was poisoned")
+                                .clone()
+                        });
+
+                        let evm_executor = evm_state::Executor::with_config(
+                            state,
+                            evm_state::Config::istanbul(),
+                            u64::max_value(),
+                            self.evm_chain_id,
+                            self.slot(),
+                        );
+                        Some(evm_executor)
+                    } else {
+                        None
+                    };
+
                     let process_result = self.message_processor.process_message(
                         tx.message(),
                         &loader_refcells,
@@ -3019,8 +3029,12 @@ impl Bank {
                         instruction_recorders.as_deref(),
                         self.feature_set.clone(),
                         bpf_compute_budget,
-                        Some(&mut evm_executor),
+                        evm_executor.as_mut(),
                     );
+
+                    if let Some(evm_executor) = evm_executor {
+                        evm_patch = Some(evm_executor.deconstruct());
+                    }
 
                     if enable_log_recording {
                         let log_messages: TransactionLogMessages =
@@ -3158,7 +3172,7 @@ impl Bank {
             retryable_txs,
             tx_count,
             signature_count,
-            evm_executor.deconstruct(),
+            evm_patch,
         )
     }
 
@@ -3231,7 +3245,7 @@ impl Bank {
         tx_count: u64,
         signature_count: u64,
         timings: &mut ExecuteTimings,
-        patch: evm_state::EvmState,
+        patch: Option<evm_state::EvmState>,
     ) -> TransactionResults {
         assert!(
             !self.freeze_started(),
@@ -3266,9 +3280,12 @@ impl Bank {
 
         let overwritten_vote_accounts =
             self.update_cached_accounts(txs, iteration_order, executed, loaded_accounts);
-
-        *self.evm_state.write().expect("bank evm state was poisoned") = patch;
-
+        if let Some(patch) = patch {
+            let mut evm_state = self.evm_state.write().expect("bank evm state was poisoned");
+            trace!("Updating evm state, before = {:?}", *evm_state);
+            trace!("Updating evm state, after = {:?}", patch);
+            *evm_state = patch
+        }
         // once committed there is no way to unroll
         write_time.stop();
         debug!("store: {}us txs_len={}", write_time.as_us(), txs.len(),);
@@ -7919,6 +7936,94 @@ pub(crate) mod tests {
         let tx = create_tx(&bob, blockhash, 1);
 
         bank.process_transaction(&tx).unwrap();
+    }
+
+    /// Process two batches, one with some slow routine, and second with evm state modification.
+    /// Both batches are without conflicts, expect that with any size of sleep, evm batch will modify state root.
+    #[test]
+    fn test_evm_really_change_state_in_parallel() {
+        solana_logger::setup();
+        fn create_evm_tx(from_keypair: &Keypair, hash: Hash, nonce: usize) -> Transaction {
+            let from_pubkey = from_keypair.pubkey();
+            let instruction = solana_evm_loader_program::send_raw_tx(
+                from_pubkey,
+                solana_evm_loader_program::processor::dummy_call(nonce).0,
+            );
+            let message = Message::new(&[instruction], Some(&from_pubkey));
+            Transaction::new(&[from_keypair], message, hash)
+        }
+
+        fn create_sleep_tx(
+            sleep_program_id: &Pubkey,
+            user: &Keypair,
+            recent_hash: Hash,
+            sleep: u32,
+        ) -> Transaction {
+            let instruction = crate::loader_utils::create_invoke_instruction(
+                user.pubkey(),
+                *sleep_program_id,
+                &sleep,
+            );
+            let message = Message::new(&[instruction], Some(&user.pubkey()));
+            Transaction::new(&[user], message, recent_hash)
+        }
+        // returns evm hash before and after apply
+        fn test_with_users(num_sleeps: u64) -> (evm_state::H256, evm_state::H256) {
+            let (genesis_config, mint_keypair) = create_genesis_config(20000 * (num_sleeps + 3));
+            let bank = Bank::new(&genesis_config);
+            let sleep_program_id = solana_sdk::pubkey::new_rand();
+            bank.add_native_program("solana_sleep_program", &sleep_program_id, false);
+
+            let recent_hash = genesis_config.hash();
+
+            let alice = Keypair::new();
+            assert!(bank.transfer(20000, &mint_keypair, &alice.pubkey()).is_ok());
+
+            let bob = Keypair::new();
+            assert!(bank.transfer(20000, &mint_keypair, &bob.pubkey()).is_ok());
+
+            let mut users = Vec::new();
+            users.resize_with(num_sleeps as usize, || Keypair::new());
+            for user in &users {
+                assert!(bank.transfer(20000, &mint_keypair, &user.pubkey()).is_ok());
+            }
+
+            let tx1 = create_evm_tx(&alice, recent_hash, 0);
+            let fast_batch = vec![tx1];
+
+            let mut slow_batch = vec![];
+            for user in &users {
+                // Call user program
+                slow_batch.push(create_sleep_tx(&sleep_program_id, user, recent_hash, 10))
+            }
+
+            // execute two batches parallel, with replacement
+            rayon::scope(|s| {
+                s.spawn(|_| {
+                    bank.process_transactions(&slow_batch)
+                        .into_iter()
+                        .map(|i| i.unwrap())
+                        .collect()
+                });
+                s.spawn(|_| {
+                    bank.process_transactions(&fast_batch)
+                        .into_iter()
+                        .map(|i| i.unwrap())
+                        .collect()
+                });
+            });
+
+            let hash_before = bank.evm_state.read().unwrap().root;
+            bank.freeze();
+            let hash_after = bank.evm_state.read().unwrap().root;
+            (hash_before, hash_after)
+        }
+
+        for i in &[0, 1, 2, 5, 10, 20, 100] {
+            info!("Testing evm consistency with {} sleep txs after evm", i);
+            let (before, after) = test_with_users(*i);
+            assert_ne!(before, after);
+        }
     }
 
     #[test]

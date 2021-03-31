@@ -590,7 +590,7 @@ pub fn generate_and_fund_keypairs<T: 'static + Client + Send + Sync>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bench_evm::do_bench_tps;
+    use crate::bench_evm::{do_bench_tps, Peer};
     use crate::cli::Config;
     use solana_evm_loader_program::scope::evm::FromKey;
     use solana_runtime::bank::Bank;
@@ -618,6 +618,10 @@ mod tests {
         let keypairs =
             crate::bench_evm::generate_and_fund_evm_keypairs(client.clone(), None, keypairs, 20)
                 .unwrap();
+        let keypairs = keypairs
+            .into_iter()
+            .map(|(k, s)| Peer(std::sync::Arc::new(k), s, 0))
+            .collect();
         do_bench_tps(client, config, keypairs);
     }
     #[test]

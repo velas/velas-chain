@@ -18,7 +18,6 @@ pub mod entrypoint_deprecated;
 pub mod entrypoint_native;
 pub mod epoch_info;
 pub mod evm_loader;
-pub mod evm_state;
 pub mod feature;
 pub mod feature_set;
 pub mod genesis_config;

@@ -297,6 +297,14 @@ impl Message {
             .collect()
     }
 
+    /// Return true if message borrow mutably evm_state account.
+    pub fn is_modify_evm_state(&self) -> bool {
+        self.account_keys
+            .iter()
+            .enumerate()
+            .any(|(num, key)| *key == crate::evm_state::id() && self.is_writable(num))
+    }
+
     pub fn is_key_passed_to_program(&self, index: usize) -> bool {
         if let Ok(index) = u8::try_from(index) {
             for ix in self.instructions.iter() {
