@@ -165,7 +165,7 @@ pub static ETH_TO_VLX_CODE: Lazy<Builtin<EthToVlxImp, Pubkey>> = Lazy::new(|| {
         evm_account.lamports -= lamports;
         user_account.lamports += lamports;
         Ok(PrecompileOk::new(ExitSucceed::Returned, vec![], 0))
-    };
+    }
 
     Builtin::new([0xb1, 0xd6, 0x92, 0x7a], abi, implementation)
 });

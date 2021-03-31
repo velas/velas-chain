@@ -15,6 +15,7 @@ pub mod decode_error;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
 pub mod epoch_schedule;
+pub mod evm_state;
 pub mod feature;
 pub mod fee_calculator;
 pub mod hash;

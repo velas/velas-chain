@@ -2,7 +2,7 @@ use log::*;
 use std::{process::exit, sync::Arc};
 
 use solana_bench_tps_evm::bench::generate_and_fund_keypairs;
-use solana_bench_tps_evm::bench_evm;
+use solana_bench_tps_evm::bench_evm::{self, Peer};
 use solana_bench_tps_evm::cli;
 use solana_core::gossip_service::{discover_cluster, get_client, get_multi_client};
 
@@ -85,7 +85,11 @@ fn main() {
         eprintln!("Error could not fund evm keys: {:?}", e);
         exit(1);
     });
-    // };
 
+    // Init nonce = 0
+    let keypairs = keypairs
+        .into_iter()
+        .map(|(k, s)| Peer(std::sync::Arc::new(k), s, 0))
+        .collect();
     bench_evm::do_bench_tps(client, cli_config, keypairs);
 }

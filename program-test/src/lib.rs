@@ -382,7 +382,7 @@ fn setup_fee_calculator(bank: Bank) -> Bank {
         0,
         1,
         &mut ExecuteTimings::default(),
-        bank.evm_state.read().unwrap().clone(),
+        None,
     );
     assert_eq!(bank.signature_count(), 1);
 

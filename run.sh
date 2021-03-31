@@ -80,10 +80,10 @@ else
     --cluster-type "$SOLANA_RUN_SH_CLUSTER_TYPE" \
     $SPL_GENESIS_ARGS \
     --max-genesis-archive-unpacked-size=300000000 \
-    --evm-root="0x7b343e0165c8f354ac7b1e7e7889389f42927ccb9d0330b3036fb749e12795ba" \
-    --evm-state-file="../state.json" \
-    --evm-chain-id 111\
     $SOLANA_RUN_SH_GENESIS_ARGS
+    # --evm-root="0x7b343e0165c8f354ac7b1e7e7889389f42927ccb9d0330b3036fb749e12795ba" \
+    # --evm-state-file="../state.json" \
+    # --evm-chain-id 111\
 fi
 
 abort() {
