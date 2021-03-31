@@ -505,6 +505,7 @@ impl MessageProcessor {
                         &keyed_accounts[1..], // skip evm program_id
                         instruction_data,
                         evm_executor,
+                        invoke_context,
                     );
                 }
                 for (id, process_instruction) in &self.programs {

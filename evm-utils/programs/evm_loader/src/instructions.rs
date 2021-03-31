@@ -38,7 +38,7 @@ pub enum EvmInstruction {
     ///
     SwapNativeToEther {
         lamports: u64,
-        ether_address: evm::Address,
+        evm_address: evm::Address,
     },
 
     /// Transfer user account ownership back to system program.
@@ -165,7 +165,7 @@ mod test {
         let addr = addr.0;
         let data = EvmInstruction::SwapNativeToEther {
             lamports: lamports,
-            ether_address: addr,
+            evm_address: addr,
         };
         let data = bincode::serialize(&data).unwrap();
 
