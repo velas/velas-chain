@@ -448,11 +448,13 @@ fn call(
         .read()
         .expect("meta bank EVM state was poisoned");
 
-    let evm_state = evm_state.clone(); // TODO: revise
+    let evm_state = evm_state.clone();
+    let mut estimate_config = Config::istanbul();
+    estimate_config.estimate = true;
 
     let mut executor = evm_state::Executor::with_config(
         evm_state,
-        Config::istanbul(),
+        estimate_config,
         gas_limit,
         bank.evm_chain_id,
         bank.slot(),

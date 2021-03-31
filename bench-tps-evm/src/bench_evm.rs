@@ -33,6 +33,9 @@ use solana_evm_loader_program::scope::*;
 
 pub const BENCH_SEED: &str = "authority";
 
+#[derive(Clone, Debug)]
+pub struct Peer(pub std::sync::Arc<Keypair>, pub evm::SecretKey, pub u64);
+
 pub fn generate_evm_key(seed_keypair: &Keypair) -> evm::SecretKey {
     use solana_evm_loader_program::scope::evm::rand::SeedableRng;
 
@@ -289,25 +292,25 @@ pub fn fund_evm_keys<T: 'static + Client + Send + Sync>(
 }
 
 fn generate_system_txs(
-    source: &[&(Keypair, evm::SecretKey)],
-    dest: &VecDeque<&(Keypair, evm::SecretKey)>,
+    source: &mut [Peer],
+    dest: &mut VecDeque<Peer>,
     reclaim: bool,
     blockhash: &Hash,
     chain_id: Option<u64>,
 ) -> Vec<(Transaction, u64)> {
-    let pairs: Vec<_> = if !reclaim {
-        source.iter().zip(dest.iter()).collect()
+    let mut pairs: Vec<_> = if !reclaim {
+        source.iter_mut().zip(dest.iter_mut()).collect()
     } else {
-        dest.iter().zip(source.iter()).collect()
+        dest.iter_mut().zip(source.iter_mut()).collect()
     };
 
     pairs
-        .par_iter()
+        .par_iter_mut()
         .map(|(from, to)| {
             let tx_address = to.1.to_address();
 
             let tx_call = evm::UnsignedTransaction {
-                nonce: 0.into(),
+                nonce: from.2.into(),
                 gas_price: 0.into(),
                 gas_limit: 300000.into(),
                 action: evm::TransactionAction::Call(tx_address),
@@ -317,12 +320,13 @@ fn generate_system_txs(
 
             let tx_call = tx_call.sign(&from.1, chain_id);
 
+            from.2 += 1;
             let ix = solana_evm_loader_program::send_raw_tx(from.0.pubkey(), tx_call);
 
             let message = Message::new(&[ix], Some(&from.0.pubkey()));
 
             (
-                Transaction::new(&[&from.0], message, *blockhash),
+                Transaction::new(&[&*from.0], message, *blockhash),
                 timestamp(),
             )
         })
@@ -332,8 +336,8 @@ fn generate_system_txs(
 fn generate_txs(
     shared_txs: &SharedTransactions,
     blockhash: &Arc<RwLock<Hash>>,
-    source: &[&(Keypair, evm::SecretKey)],
-    dest: &VecDeque<&(Keypair, evm::SecretKey)>,
+    source: &mut [Peer],
+    dest: &mut VecDeque<Peer>,
     threads: usize,
     reclaim: bool,
     chain_id: Option<u64>,
@@ -374,11 +378,7 @@ fn generate_txs(
     }
 }
 
-pub fn do_bench_tps<T>(
-    client: Arc<T>,
-    config: Config,
-    gen_keypairs: Vec<(Keypair, evm::SecretKey)>,
-) -> u64
+pub fn do_bench_tps<T>(client: Arc<T>, config: Config, gen_keypairs: Vec<Peer>) -> u64
 where
     T: 'static + Client + Send + Sync,
 {
@@ -398,8 +398,8 @@ where
     let mut dest_keypair_chunks: Vec<VecDeque<_>> = Vec::new();
     assert!(gen_keypairs.len() >= 2 * tx_count);
     for chunk in gen_keypairs.chunks_exact(2 * tx_count) {
-        source_keypair_chunks.push(chunk[..tx_count].iter().collect());
-        dest_keypair_chunks.push(chunk[tx_count..].iter().collect());
+        source_keypair_chunks.push(chunk[..tx_count].iter().cloned().collect());
+        dest_keypair_chunks.push(chunk[tx_count..].iter().cloned().collect());
     }
 
     let first_tx_count = loop {
@@ -462,7 +462,7 @@ where
         &shared_txs,
         shared_tx_active_thread_count,
         source_keypair_chunks,
-        &mut dest_keypair_chunks,
+        dest_keypair_chunks,
         threads,
         duration,
         sustained,
@@ -508,8 +508,8 @@ fn generate_chunked_transfers(
     recent_blockhash: Arc<RwLock<Hash>>,
     shared_txs: &SharedTransactions,
     shared_tx_active_thread_count: Arc<AtomicIsize>,
-    source_keypair_chunks: Vec<Vec<&(Keypair, evm::SecretKey)>>,
-    dest_keypair_chunks: &mut Vec<VecDeque<&(Keypair, evm::SecretKey)>>,
+    mut source_keypair_chunks: Vec<Vec<Peer>>,
+    mut dest_keypair_chunks: Vec<VecDeque<Peer>>,
     threads: usize,
     duration: Duration,
     sustained: bool,
@@ -524,8 +524,8 @@ fn generate_chunked_transfers(
         generate_txs(
             shared_txs,
             &recent_blockhash,
-            &source_keypair_chunks[chunk_index],
-            &dest_keypair_chunks[chunk_index],
+            &mut source_keypair_chunks[chunk_index],
+            &mut dest_keypair_chunks[chunk_index],
             threads,
             reclaim_lamports_back_to_source_account,
             chain_id,
@@ -618,6 +618,8 @@ fn do_tx_transfers<T: Client>(
         if exit_signal.load(Ordering::Relaxed) {
             break;
         }
+        println!("Sleeping 1 sec");
+        sleep(Duration::from_secs(1));
     }
 }
 

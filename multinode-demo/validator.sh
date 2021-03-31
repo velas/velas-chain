@@ -231,9 +231,9 @@ default_arg --enable-rpc-set-log-filter
 default_arg --require-tower
 
 if [[ -n $SOLANA_CUDA ]]; then
-    program=$solana_validator_cuda
+    program=$velas_validator_cuda
 else
-    program=$solana_validator
+    program=$velas_validator
 fi
 
 set -e
@@ -262,7 +262,7 @@ trap 'kill_node_and_exit' INT TERM ERR
 wallet() {
     (
         set -x
-        $solana_cli --keypair "$identity" --url "$rpc_url" "$@"
+        $velas_cli --keypair "$identity" --url "$rpc_url" "$@"
     )
 }
 
@@ -278,7 +278,7 @@ setup_validator_accounts() {
             echo "Adding $node_sol to validator identity account:"
             (
                 set -x
-                $solana_cli --keypair "$SOLANA_CONFIG_DIR/faucet.json" --url "$rpc_url" transfer "$identity" "$node_sol"
+                $velas_cli --keypair "$SOLANA_CONFIG_DIR/faucet.json" --url "$rpc_url" transfer "$identity" "$node_sol"
             ) || return $?
         fi
         
@@ -293,10 +293,10 @@ setup_validator_accounts() {
     return 0
 }
 
-rpc_url=$($solana_gossip rpc-url --timeout 180 --entrypoint "$gossip_entrypoint")
+rpc_url=$($velas_gossip rpc-url --timeout 180 --entrypoint "$gossip_entrypoint")
 
-[[ -r "$identity" ]] || $solana_keygen new --no-passphrase -so "$identity"
-[[ -r "$vote_account" ]] || $solana_keygen new --no-passphrase -so "$vote_account"
+[[ -r "$identity" ]] || $velas_keygen new --no-passphrase -so "$identity"
+[[ -r "$vote_account" ]] || $velas_keygen new --no-passphrase -so "$vote_account"
 
 setup_validator_accounts "$node_sol"
 
@@ -421,9 +421,9 @@ default_arg --enable-rpc-set-log-filter
 default_arg --require-tower
 
 if [[ -n $SOLANA_CUDA ]]; then
-  program=$solana_validator_cuda
+  program=$velas_validator_cuda
 else
-  program=$solana_validator
+  program=$velas_validator
 fi
 
 set -e
@@ -452,7 +452,7 @@ trap 'kill_node_and_exit' INT TERM ERR
 wallet() {
   (
     set -x
-    $solana_cli --keypair "$identity" --url "$rpc_url" "$@"
+    $velas_cli --keypair "$identity" --url "$rpc_url" "$@"
   )
 }
 
@@ -468,7 +468,7 @@ setup_validator_accounts() {
       echo "Adding $node_sol to validator identity account:"
       (
         set -x
-        $solana_cli --keypair "$SOLANA_CONFIG_DIR/faucet.json" --url "$rpc_url" transfer "$identity" "$node_sol"
+        $velas_cli --keypair "$SOLANA_CONFIG_DIR/faucet.json" --url "$rpc_url" transfer "$identity" "$node_sol"
       ) || return $?
     fi
 
@@ -483,10 +483,10 @@ setup_validator_accounts() {
   return 0
 }
 
-rpc_url=$($solana_gossip rpc-url --timeout 180 --entrypoint "$gossip_entrypoint")
+rpc_url=$($velas_gossip rpc-url --timeout 180 --entrypoint "$gossip_entrypoint")
 
-[[ -r "$identity" ]] || $solana_keygen new --no-passphrase -so "$identity"
-[[ -r "$vote_account" ]] || $solana_keygen new --no-passphrase -so "$vote_account"
+[[ -r "$identity" ]] || $velas_keygen new --no-passphrase -so "$identity"
+[[ -r "$vote_account" ]] || $velas_keygen new --no-passphrase -so "$vote_account"
 
 setup_validator_accounts "$node_sol"
 

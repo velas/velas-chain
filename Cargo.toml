@@ -53,6 +53,7 @@ members = [
     "programs/exchange",
     "programs/failure",
     "programs/noop",
+    "programs/sleep",
     "programs/ownable",
     "programs/stake",
     "programs/vest",
@@ -79,6 +80,4 @@ members = [
     "watchtower",
 ]
 
-exclude = [
-    "programs/bpf",
-]
+exclude = ["programs/bpf"]

@@ -5647,6 +5647,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-sdk",
  "solana-secp256k1-program",
+ "solana-sleep-program",
  "solana-stake-program",
  "solana-vote-program",
  "symlink",
@@ -5747,6 +5748,16 @@ dependencies = [
  "libsecp256k1",
  "rand 0.7.3",
  "sha3 0.9.1",
+ "solana-logger 1.5.14",
+ "solana-sdk",
+]
+
+[[package]]
+name = "solana-sleep-program"
+version = "1.5.14"
+dependencies = [
+ "byteorder",
+ "log 0.4.14",
  "solana-logger 1.5.14",
  "solana-sdk",
 ]
