@@ -2,7 +2,7 @@ name: Build
 on:
   workflow_dispatch:
   push:
-    branches: [develop]
+    branches: [develop, fix-root-hash-bug]
 
 jobs:
   docker-build-push:
