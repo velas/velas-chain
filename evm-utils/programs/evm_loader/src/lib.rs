@@ -74,7 +74,7 @@ pub fn authorized_tx(
 pub(crate) fn transfer_native_to_eth(
     owner: solana::Address,
     lamports: u64,
-    ether_address: evm::Address,
+    evm_address: evm::Address,
 ) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
@@ -85,7 +85,7 @@ pub(crate) fn transfer_native_to_eth(
         crate::ID,
         &EvmInstruction::SwapNativeToEther {
             lamports,
-            ether_address,
+            evm_address,
         },
         account_metas,
     )

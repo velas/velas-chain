@@ -5,7 +5,9 @@ use super::scope::*;
 use log::*;
 
 use evm::{Executor, ExitReason};
+use solana_sdk::ic_msg;
 use solana_sdk::instruction::InstructionError;
+use solana_sdk::process_instruction::InvokeContext;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{keyed_account::KeyedAccount, program_utils::limited_deserialize};
 
@@ -28,6 +30,7 @@ impl EvmProcessor {
         keyed_accounts: &[KeyedAccount],
         data: &[u8],
         executor: Option<&mut Executor>,
+        invoke_context: &mut dyn InvokeContext,
     ) -> Result<(), InstructionError> {
         let executor = executor.expect("Evm execution from crossprogram is not allowed.");
 
@@ -39,92 +42,178 @@ impl EvmProcessor {
         trace!("Run evm exec with ix = {:?}.", ix);
         match ix {
             EvmInstruction::EvmTransaction { evm_tx } => {
-                // TODO: Handle gas price in EVM Bridge
-                let result = executor
-                    .transaction_execute(evm_tx, precompiles::entrypoint(accounts))
-                    .map_err(|e| {
-                        error!("Exec tx error: {:?}", e);
-                        InstructionError::InvalidArgument
-                    })?;
-                trace!("Exit status = {:?}", result);
-                if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
-                    return Err(InstructionError::InvalidError);
-                }
+                self.process_raw_tx(executor, invoke_context, accounts, evm_tx)
             }
             EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => {
-                // TODO: Check that it is from program?
-                // TODO: Gas limit?
-                let program_account = accounts.first().ok_or_else(|| {
-                    error!("Not enough accounts");
-                    InstructionError::NotEnoughAccountKeys
-                })?;
-                let key = if let Some(key) = program_account.signer_key() {
-                    key
-                } else {
-                    error!("Account not a signer");
-                    return Err(InstructionError::MissingRequiredSignature);
-                };
-                let from_expected = crate::evm_address_for_program(*key);
-
-                if from_expected != from {
-                    error!("From is not calculated with evm_address_for_program");
-                    return Err(InstructionError::InvalidArgument);
-                }
-
-                let result = executor
-                    .transaction_execute_unsinged(
-                        from,
-                        unsigned_tx,
-                        precompiles::entrypoint(accounts),
-                    )
-                    .map_err(|e| {
-                        error!("Exec unsigned tx error: {:?}", e);
-                        InstructionError::InvalidArgument
-                    })?;
-                trace!("Exit status = {:?}", result);
-                if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
-                    return Err(InstructionError::InvalidError);
-                }
+                self.process_authorized_tx(executor, invoke_context, accounts, from, unsigned_tx)
             }
             EvmInstruction::FreeOwnership {} => {
-                let mut user = accounts
-                    .first()
-                    .ok_or_else(|| {
-                        error!("Not enough accounts");
-                        InstructionError::NotEnoughAccountKeys
-                    })?
-                    .try_account_ref_mut()?;
-
-                if user.owner != crate::ID {
-                    return Err(InstructionError::InvalidError);
-                }
-                user.owner = solana_sdk::system_program::id();
+                self.process_free_ownership(executor, invoke_context, accounts)
             }
             EvmInstruction::SwapNativeToEther {
                 lamports,
-                ether_address,
-            } => self.process_swap_to_native(executor, accounts, lamports, ether_address)?,
-            EvmInstruction::EvmBigTransaction(big_tx) => {
-                self.process_big_tx(executor, accounts, big_tx)?;
+                evm_address,
+            } => {
+                self.process_swap_to_evm(executor, invoke_context, accounts, lamports, evm_address)
             }
+            EvmInstruction::EvmBigTransaction(big_tx) => {
+                self.process_big_tx(executor, invoke_context, accounts, big_tx)
+            }
+        }
+    }
+
+    fn process_raw_tx(
+        &self,
+        executor: &mut Executor,
+        invoke_context: &mut dyn InvokeContext,
+        accounts: AccountStructure,
+        evm_tx: evm::Transaction,
+    ) -> Result<(), InstructionError> {
+        // TODO: Handle gas price in EVM Bridge
+
+        ic_msg!(
+            invoke_context,
+            "EvmTransaction: Executing transaction: gas_limit:{}, gas_price:{}, value:{}, action:{:?},",
+            evm_tx.gas_limit,
+            evm_tx.gas_price,
+            evm_tx.value,
+            evm_tx.action
+        );
+        let result = executor
+            .transaction_execute(evm_tx, precompiles::entrypoint(accounts))
+            .map_err(|e| {
+                ic_msg!(
+                    invoke_context,
+                    "EvmTransaction: Error processing evm tx: {:?}",
+                    e
+                );
+                InstructionError::InvalidArgument
+            })?;
+
+        ic_msg!(
+            invoke_context,
+            "EvmTransaction: Executed transaction result: {:?}",
+            result
+        );
+        if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
+            return Err(InstructionError::InvalidError);
         }
         Ok(())
     }
 
-    fn process_swap_to_native(
+    fn process_authorized_tx(
         &self,
         executor: &mut Executor,
+        invoke_context: &mut dyn InvokeContext,
+        accounts: AccountStructure,
+        from: evm::Address,
+        unsigned_tx: evm::UnsignedTransaction,
+    ) -> Result<(), InstructionError> {
+        // TODO: Check that it is from program?
+        // TODO: Gas limit?
+        let program_account = accounts.first().ok_or_else(|| {
+            ic_msg!(
+                invoke_context,
+                "EvmAuthorizedTransaction: Not enough accounts, expected signer address as second account."
+            );
+            InstructionError::NotEnoughAccountKeys
+        })?;
+        let key = if let Some(key) = program_account.signer_key() {
+            key
+        } else {
+            ic_msg!(
+                invoke_context,
+                "EvmAuthorizedTransaction: Second account is not a signer, cannot execute transaction."
+            );
+            return Err(InstructionError::MissingRequiredSignature);
+        };
+        let from_expected = crate::evm_address_for_program(*key);
+
+        if from_expected != from {
+            ic_msg!(
+                invoke_context,
+                "EvmAuthorizedTransaction: From is not calculated with evm_address_for_program."
+            );
+            return Err(InstructionError::InvalidArgument);
+        }
+
+        ic_msg!(
+            invoke_context,
+            "EvmAuthorizedTransaction: Executing authorized transaction: gas_limit:{}, gas_price:{}, value:{}, action:{:?},",
+            unsigned_tx.gas_limit,
+            unsigned_tx.gas_price,
+            unsigned_tx.value,
+            unsigned_tx.action
+        );
+
+        let result = executor
+            .transaction_execute_unsinged(from, unsigned_tx, precompiles::entrypoint(accounts))
+            .map_err(|e| {
+                ic_msg!(
+                    invoke_context,
+                    "EvmAuthorizedTransaction: Error processing evm tx: {:?}",
+                    e
+                );
+                InstructionError::InvalidArgument
+            })?;
+        ic_msg!(
+            invoke_context,
+            "EvmAuthorizedTransaction: Executed transaction result: {:?}",
+            result
+        );
+        if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
+            return Err(InstructionError::InvalidError);
+        }
+        Ok(())
+    }
+
+    fn process_free_ownership(
+        &self,
+        _executor: &mut Executor,
+        invoke_context: &mut dyn InvokeContext,
+        accounts: AccountStructure,
+    ) -> Result<(), InstructionError> {
+        let user = accounts.first().ok_or_else(|| {
+            ic_msg!(
+                invoke_context,
+                "FreeOwnership: expected account as argument."
+            );
+            InstructionError::NotEnoughAccountKeys
+        })?;
+        let user_pk = user.unsigned_key();
+        let mut user = user.try_account_ref_mut()?;
+
+        if user.owner != crate::ID || *user_pk == solana::evm_state::ID {
+            ic_msg!(
+                invoke_context,
+                "FreeOwnership: Incorrect account provided, maybe this account is not owned by evm."
+            );
+            return Err(InstructionError::InvalidError);
+        }
+        user.owner = solana_sdk::system_program::id();
+        Ok(())
+    }
+
+    fn process_swap_to_evm(
+        &self,
+        executor: &mut Executor,
+        invoke_context: &mut dyn InvokeContext,
         accounts: AccountStructure,
         lamports: u64,
         evm_address: evm::Address,
     ) -> Result<(), InstructionError> {
         let gweis = evm::lamports_to_gwei(lamports);
         let user = accounts.first().ok_or_else(|| {
-            error!("Not enough accounts");
+            ic_msg!(
+                invoke_context,
+                "SwapNativeToEther: No sender account found in swap to evm."
+            );
             InstructionError::NotEnoughAccountKeys
         })?;
-        debug!(
-            "Sending lamports to Gwei tokens from={},to={}",
+
+        ic_msg!(
+            invoke_context,
+            "SwapNativeToEther: Sending tokens from native to evm chain from={},to={}",
             user.unsigned_key(),
             evm_address
         );
@@ -134,15 +223,17 @@ impl EvmProcessor {
         }
 
         if user.signer_key().is_none() {
-            debug!("SwapNativeToEther: from must sign");
+            ic_msg!(invoke_context, "SwapNativeToEther: from must sign");
             return Err(InstructionError::MissingRequiredSignature);
         }
 
         let mut user_account = user.try_account_ref_mut()?;
         if lamports > user_account.lamports {
-            debug!(
+            ic_msg!(
+                invoke_context,
                 "SwapNativeToEther: insufficient lamports ({}, need {})",
-                user_account.lamports, lamports
+                user_account.lamports,
+                lamports
             );
             return Err(InstructionError::InsufficientFunds);
         }
@@ -156,27 +247,36 @@ impl EvmProcessor {
     fn process_big_tx(
         &self,
         executor: &mut Executor,
+        invoke_context: &mut dyn InvokeContext,
         accounts: AccountStructure,
         big_tx: EvmBigTransaction,
     ) -> Result<(), InstructionError> {
         debug!("executing big_tx = {:?}", big_tx);
 
-        let mut storage = accounts
-            .first()
-            .ok_or_else(|| {
-                error!("Not enough accounts");
-                InstructionError::InvalidArgument
-            })?
-            .try_account_ref_mut()?;
+        let storage = accounts.first().ok_or_else(|| {
+            ic_msg!(
+                invoke_context,
+                "EvmBigTransaction: No storage account found."
+            );
+            InstructionError::InvalidArgument
+        })?;
 
-        // TODO: storage.owner == crate::ID;
+        if storage.signer_key().is_none() {
+            ic_msg!(invoke_context, "EvmBigTransaction: from must sign");
+            return Err(InstructionError::MissingRequiredSignature);
+        }
+        let mut storage = storage.try_account_ref_mut()?;
 
         let mut tx_chunks = TxChunks::new(storage.data.as_mut_slice());
 
         match big_tx {
             EvmBigTransaction::EvmTransactionAllocate { size } => {
                 tx_chunks.init(size as usize).map_err(|e| {
-                    error!("Tx allocate error: {:?}", e);
+                    ic_msg!(
+                        invoke_context,
+                        "EvmTransactionAllocate: allocate error: {:?}",
+                        e
+                    );
                     InstructionError::InvalidArgument
                 })?;
 
@@ -184,9 +284,18 @@ impl EvmProcessor {
             }
 
             EvmBigTransaction::EvmTransactionWrite { offset, data } => {
-                debug!("Tx chunks: Write offset = {}, data = {:?}", offset, data);
+                ic_msg!(
+                    invoke_context,
+                    "EvmTransactionWrite: Writing at offset = {}, data = {:?}",
+                    offset,
+                    data
+                );
                 tx_chunks.push(offset as usize, data).map_err(|e| {
-                    error!("Tx write error: {:?}", e);
+                    ic_msg!(
+                        invoke_context,
+                        "EvmTransactionWrite: Tx write error: {:?}",
+                        e
+                    );
                     InstructionError::InvalidArgument
                 })?;
 
@@ -199,17 +308,40 @@ impl EvmProcessor {
                 let bytes = tx_chunks.take();
 
                 debug!("Trying to deserialize tx chunks byte = {:?}", bytes);
-                let tx = bincode::deserialize(&bytes).map_err(|e| {
-                    debug!("Tx chunks deserialize error: {:?}", e);
+                let tx: evm::Transaction = bincode::deserialize(&bytes).map_err(|e| {
+                    ic_msg!(
+                        invoke_context,
+                        "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
+                        e
+                    );
                     InstructionError::InvalidArgument
                 })?;
 
                 debug!("Executing EVM tx = {:?}", tx);
+                ic_msg!(
+                    invoke_context,
+                    "BigTransaction::EvmTransactionExecute: Executing transaction: gas_limit:{}, gas_price:{}, value:{}, action:{:?},",
+                    tx.gas_limit,
+                    tx.gas_price,
+                    tx.value,
+                    tx.action
+                );
                 let result = executor
                     .transaction_execute(tx, precompiles::entrypoint(accounts))
-                    .map_err(|_| InstructionError::InvalidArgument)?;
+                    .map_err(|e| {
+                        ic_msg!(
+                            invoke_context,
+                            "BigTransaction::EvmTransactionExecute: transaction execution error: {:?}",
+                            e
+                        );
+                        InstructionError::InvalidArgument
+                    })?;
 
-                debug!("Execute tx exit status = {:?}", result);
+                ic_msg!(
+                    invoke_context,
+                    "BigTransaction::EvmTransactionExecute: Execute tx exit status = {:?}",
+                    result
+                );
                 if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
                     Err(InstructionError::InvalidError)
                 } else {
@@ -230,7 +362,7 @@ impl EvmProcessor {
         trace!("first = {:?}", first);
         trace!("all = {:?}", keyed_accounts);
         if first.unsigned_key() != &solana::evm_state::id() || !first.is_writable() {
-            error!("First account is not evm, or not writable");
+            debug!("First account is not evm, or not writable");
             return Err(InstructionError::MissingAccount);
         }
 
@@ -276,6 +408,7 @@ mod test {
     use primitive_types::{H160, H256, U256};
     use solana_sdk::keyed_account::KeyedAccount;
     use solana_sdk::native_loader;
+    use solana_sdk::process_instruction::MockInvokeContext;
     use solana_sdk::program_utils::limited_deserialize;
     use solana_sdk::sysvar::rent::Rent;
 
@@ -340,7 +473,8 @@ mod test {
                     evm_tx: tx_create.clone()
                 })
                 .unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_ok());
         println!("cx = {:?}", executor);
@@ -362,7 +496,8 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_ok());
         println!("cx = {:?}", executor);
@@ -416,7 +551,8 @@ mod test {
                     evm_tx: tx_1_sign.clone()
                 })
                 .unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_err());
 
@@ -426,7 +562,8 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_0_sign }).unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_ok());
 
@@ -439,7 +576,8 @@ mod test {
                     evm_tx: tx_0_shadow_sign,
                 })
                 .unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_err());
 
@@ -449,7 +587,8 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_1_sign }).unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_ok());
 
@@ -506,7 +645,8 @@ mod test {
                     &keyed_accounts,
                     &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create })
                         .unwrap(),
-                    executor.as_deref_mut()
+                    executor.as_deref_mut(),
+                    &mut MockInvokeContext::default(),
                 )
                 .is_ok());
             println!("cx = {:?}", executor);
@@ -555,7 +695,8 @@ mod test {
                     &keyed_accounts,
                     &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
                         .unwrap(),
-                    executor.as_deref_mut()
+                    executor.as_deref_mut(),
+                    &mut MockInvokeContext::default(),
                 )
                 .is_ok());
             println!("cx = {:?}", executor);
@@ -607,10 +748,11 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::SwapNativeToEther {
                     lamports: 1000,
-                    ether_address: ether_dummy_address
+                    evm_address: ether_dummy_address
                 })
                 .unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_ok());
         println!("cx = {:?}", executor);
@@ -625,7 +767,8 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::FreeOwnership {}).unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_ok());
         println!("cx = {:?}", executor);
@@ -682,10 +825,11 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::SwapNativeToEther {
                     lamports: lamports_to_send,
-                    ether_address: ether_dummy_address
+                    evm_address: ether_dummy_address
                 })
                 .unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_ok());
         println!("cx = {:?}", executor);
@@ -752,7 +896,8 @@ mod test {
                     &keyed_accounts,
                     &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
                         .unwrap(),
-                    executor.as_deref_mut()
+                    executor.as_deref_mut(),
+                    &mut MockInvokeContext::default(),
                 )
                 .is_err());
             println!("cx = {:?}", executor);
@@ -818,10 +963,11 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::SwapNativeToEther {
                     lamports: lamports_to_send,
-                    ether_address: ether_dummy_address,
+                    evm_address: ether_dummy_address,
                 })
                 .unwrap(),
                 executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .unwrap();
 
@@ -888,6 +1034,7 @@ mod test {
                     &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
                         .unwrap(),
                     executor.as_deref_mut(),
+                    &mut MockInvokeContext::default(),
                 )
                 .unwrap();
             println!("cx = {:?}", executor);
@@ -993,6 +1140,7 @@ mod test {
                     &keyed_accounts[1..],
                     &bincode::serialize(&data).unwrap(),
                     executor.as_deref_mut(),
+                    &mut MockInvokeContext::default(),
                 )
                 .unwrap_err();
 
@@ -1008,6 +1156,7 @@ mod test {
                     &keyed_accounts,
                     &bincode::serialize(&data).unwrap(),
                     executor.as_deref_mut(),
+                    &mut MockInvokeContext::default(),
                 )
                 .unwrap();
         }
@@ -1062,6 +1211,7 @@ mod test {
                 &keyed_accounts,
                 &ix.data,
                 executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .unwrap();
 
@@ -1084,6 +1234,7 @@ mod test {
                 &keyed_accounts,
                 &ix.data,
                 executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .unwrap_err();
 
@@ -1103,6 +1254,7 @@ mod test {
                 &keyed_accounts,
                 &ix.data,
                 executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .unwrap();
     }
@@ -1141,7 +1293,8 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_err());
         println!("cx = {:?}", executor);
@@ -1156,6 +1309,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
                 executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .unwrap();
         println!("cx = {:?}", executor);
@@ -1198,6 +1352,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
                 executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .unwrap();
         println!("cx = {:?}", executor);
@@ -1213,7 +1368,8 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_err());
 
@@ -1229,7 +1385,8 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_err());
 
@@ -1247,6 +1404,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
                 executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .unwrap();
 
@@ -1263,6 +1421,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
                 executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .unwrap();
 
@@ -1305,7 +1464,8 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut()
+                executor.as_deref_mut(),
+                &mut MockInvokeContext::default(),
             )
             .is_err());
         println!("cx = {:?}", executor);
