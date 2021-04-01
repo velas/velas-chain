@@ -39,13 +39,14 @@ run_solana_validator() {
     case "$NETWORK" in
         # airdrop on devnet only
         "devnet" | "development")
+            if ! vote_account_exist; then
+                velas-keygen new --no-passphrase -so $datadir/identity.json #try to generate identity
+                velas-keygen new --no-passphrase -so $datadir/vote-account.json #try to generate vote account
+                velas --keypair /config/faucet.json --url $rpc_url transfer $datadir/identity.json $(($MIN_VALIDATOR_STAKE + $MIN_RENT_FEE))
+                velas --keypair $datadir/identity.json --url $rpc_url create-vote-account $datadir/vote-account.json $datadir/identity.json
+            fi
+            
             if ! stake_account_exist; then
-                if ! vote_account_exist; then
-                    velas-keygen new --no-passphrase -so $datadir/identity.json #try to generate identity
-                    velas-keygen new --no-passphrase -so $datadir/vote-account.json #try to generate vote account
-                    velas --keypair /config/faucet.json --url $rpc_url transfer $datadir/identity.json $(($MIN_VALIDATOR_STAKE + $MIN_RENT_FEE))
-                    velas --keypair $datadir/identity.json --url $rpc_url create-vote-account $datadir/vote-account.json $datadir/identity.json
-                fi
                 # TODO: Airdrop tokens if not enough
                 vote_account=$(velas address --keypair $datadir/vote-account.json)
                 velas-keygen new --no-passphrase -so $datadir/stake-account.json
@@ -68,7 +69,8 @@ run_solana_validator() {
     --enable-rpc-transaction-history \
     --rpc-port $rpc_port \
     --dynamic-port-range $port_range \
-    --snapshot-interval-slots 200
+    --snapshot-interval-slots 200 \
+    --enable-cpi-and-log-storage
 }
 
 run_solana_bootstrap() {
@@ -86,7 +88,8 @@ run_solana_bootstrap() {
     --vote-account $datadir/vote-account.json \
     --log - \
     --no-poh-speed-test \
-    --snapshot-interval-slots 200
+    --snapshot-interval-slots 200 \
+    --enable-cpi-and-log-storage
 }
 
 run_evm_bridge() {
@@ -168,9 +171,15 @@ generate_first_node() {
 
 case "${NODE_TYPE}" in
     "bootstrap")
-        if  [ ! -f $DATADIR/identity.json ] ; then
-            generate_first_node
-        fi
+        
+        # generate genesis and identity only on first node
+        case "$NETWORK" in
+            "devnet" | "development")
+                if  [ ! -f $DATADIR/identity.json ]; then
+                    generate_first_node
+                fi
+            ;;
+        esac
         PORT_RANGE=$2
         RPC_PORT=$3
         IP=`get_my_ip`

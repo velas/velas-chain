@@ -2020,7 +2020,7 @@ fn main() {
                         };
                         bank.store_account(
                             &feature_set::warp_timestamp_again::id(),
-                            &feature::create_account(&feature, 1),
+                            &feature::create_account(&feature, sol_to_lamports(1.)),
                         );
 
                         if let Some(warp_slot) = warp_slot {
