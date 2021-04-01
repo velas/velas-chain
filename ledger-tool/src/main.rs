@@ -1111,6 +1111,10 @@ fn main() {
                     .help("After loading the snapshot slot warp the ledger to WARP_SLOT, \
                            which could be a slot in a galaxy far far away"),
             )
+            .arg(Arg::with_name("warp_time")
+                .required(false)
+                .long("warp-time")
+            )
             .arg(
                 Arg::with_name("faucet_lamports")
                     .short("t")
@@ -1782,6 +1786,7 @@ fn main() {
                 .unwrap_or_else(|_| ledger_path.clone());
             let mut warp_slot = value_t!(arg_matches, "warp_slot", Slot).ok();
             let remove_stake_accounts = arg_matches.is_present("remove_stake_accounts");
+            let warp_time = arg_matches.is_present("warp_time");
             let new_hard_forks = hardforks_of(arg_matches, "hard_forks");
 
             let faucet_pubkey = pubkey_of(&arg_matches, "faucet_pubkey");
@@ -1867,7 +1872,8 @@ fn main() {
                         || remove_stake_accounts
                         || !accounts_to_remove.is_empty()
                         || faucet_pubkey.is_some()
-                        || bootstrap_validator_pubkeys.is_some();
+                        || bootstrap_validator_pubkeys.is_some()
+                        || warp_time;
 
                     if child_bank_required {
                         let mut child_bank =
@@ -1998,6 +2004,36 @@ fn main() {
                         } else {
                             warn!("Warping to slot {}", minimum_warp_slot);
                             warp_slot = Some(minimum_warp_slot);
+                        }
+                    }
+
+                    if warp_time {
+                        // warp to end of epoch, to ensure feature will be activated at next block
+                        let epoch_start_slot =
+                            genesis_config.epoch_schedule.get_first_slot_in_epoch(
+                                genesis_config.epoch_schedule.get_epoch(snapshot_slot) + 1,
+                            );
+
+                        info!("Warping time at slot = {}", epoch_start_slot);
+                        let feature = Feature {
+                            activated_at: Some(epoch_start_slot),
+                        };
+                        bank.store_account(
+                            &feature_set::warp_timestamp_again::id(),
+                            &feature::create_account(&feature, 1),
+                        );
+
+                        if let Some(warp_slot) = warp_slot {
+                            if warp_slot != epoch_start_slot - 1 {
+                                eprintln!(
+                                    "Error: --warp-slot should warp to epoch start.  Must be == {}",
+                                    epoch_start_slot - 1
+                                );
+                                exit(1);
+                            }
+                        } else {
+                            warn!("Warping to slot {}", epoch_start_slot - 1);
+                            warp_slot = Some(epoch_start_slot - 1);
                         }
                     }
 
