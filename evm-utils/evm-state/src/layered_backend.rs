@@ -67,7 +67,7 @@ impl<T> Into<Option<T>> for Maybe<T> {
 
 impl EvmState {
     pub fn commit(&mut self) {
-        trace!("commit before state = {:?}", self);
+        trace!("commit: before state = {:?}", self);
         let r = RocksHandle::new(RocksDatabaseHandle::new(self.kvs.db.as_ref()));
 
         let mut storage_tries = TrieCollection::new(r.clone(), StaticEntries::default());
@@ -137,7 +137,7 @@ impl EvmState {
         }
 
         self.root = new_root;
-        trace!("commit after state = {:?}", self);
+        trace!("commit: after state = {:?}", self);
     }
 
     /// Ignores all unapplied updates.

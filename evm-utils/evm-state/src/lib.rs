@@ -300,7 +300,8 @@ impl Executor {
             .get_transactions_in_block(block_num)
             .expect("The block must be the same as in state and contains some transactions");
 
-        assert!(!tx_hashes.contains(&tx_hash));
+        // Because tx_list can be inconsistent on nodes we should avoid such assertions.
+        // assert!(!tx_hashes.contains(&tx_hash));
 
         let receipt = TransactionReceipt::new(
             tx,
