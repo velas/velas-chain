@@ -54,6 +54,13 @@ windows)
     git config core.symlinks true
     find . -type l -delete
     git reset --hard
+    git clone https://github.com/microsoft/vcpkg vcpkg_tmp
+    pushd vcpkg_tmp 
+    vcpkgRootDir=$(cygpath -aw "$PWD")
+    cmd "/C $vcpkgRootDir\\bootstrap-vcpkg.bat $args" || exit 1
+    ./vcpkg.exe install openssl --triplet x64-windows-static-md
+    ./vcpkg.exe integrate install
+    popd
   )
   ;;
 *)

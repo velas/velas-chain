@@ -2464,12 +2464,12 @@ dependencies = [
 
 [[package]]
 name = "keccak-hasher"
-version = "0.1.1"
-source = "git+https://github.com/velas/evm-tests?branch=master#366e949448f022d054d51a461c3118007a23bb54"
+version = "0.15.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "711adba9940a039f4374fc5724c0a5eaca84a2d558cce62256bfe26f0dbef05e"
 dependencies = [
- "ethereum-types",
  "hash-db",
- "plain_hasher",
+ "hash256-std-hasher",
  "tiny-keccak",
 ]
 
@@ -3329,15 +3329,6 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
-
-[[package]]
-name = "plain_hasher"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e19e6491bdde87c2c43d70f4c194bc8a758f2eb732df00f61e43f7362e3b4cc"
-dependencies = [
- "crunchy",
-]
 
 [[package]]
 name = "plotters"
@@ -5684,6 +5675,7 @@ dependencies = [
  "hex",
  "hmac 0.10.1",
  "itertools 0.9.0",
+ "keccak-hasher",
  "lazy_static",
  "libsecp256k1",
  "log 0.4.14",
@@ -5712,7 +5704,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tiny-bip39",
- "triehash-ethereum",
+ "triehash",
 ]
 
 [[package]]
@@ -5992,7 +5984,7 @@ dependencies = [
 
 [[package]]
 name = "solana-version"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "log 0.4.14",
  "rustc_version",
@@ -7176,16 +7168,6 @@ checksum = "a1631b201eb031b563d2e85ca18ec8092508e262a3196ce9bd10a67ec87b9f5c"
 dependencies = [
  "hash-db",
  "rlp",
-]
-
-[[package]]
-name = "triehash-ethereum"
-version = "0.2.0"
-source = "git+https://github.com/velas/evm-tests?branch=master#366e949448f022d054d51a461c3118007a23bb54"
-dependencies = [
- "ethereum-types",
- "keccak-hasher",
- "triehash",
 ]
 
 [[package]]

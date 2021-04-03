@@ -1,7 +1,7 @@
 branches:
   only:
     - master
-    - test
+    - testbuild
     - /^v\d+\.\d+/
 
 notifications:
@@ -51,6 +51,8 @@ jobs:
     - <<: *release-artifacts
       name: "Linux release artifacts"
       os: linux
+      env:
+        - RUSTFLAGS="-C target-cpu=znver1" # Compile with optimisation for zen CPU to avoid AVX512 simd, that is not exist at any cpu.
       before_install:
         - sudo apt-get install libssl-dev libudev-dev
 
