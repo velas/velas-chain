@@ -588,11 +588,13 @@ pub mod evm_genesis {
 
             match (&value.storage_root, &value.storage) {
                 (Some(expected_storage), Some(storage)) => {
-                    let storage_root = triehash_ethereum::sec_trie_root(
-                        storage
-                            .iter()
-                            .map(|(k, v)| (&k.0, rlp::encode(&U256::from_big_endian(&v.0[..])))),
-                    );
+                    let storage_root =
+                        triehash::sec_trie_root::<keccak_hasher::KeccakHasher, _, _, _>(
+                            storage.iter().map(|(k, v)| {
+                                (&k.0, rlp::encode(&U256::from_big_endian(&v.0[..])))
+                            }),
+                        );
+                    let storage_root = H256::from_slice(&storage_root);
                     assert_eq!(storage_root, expected_storage.0, "Storage hash mismatched")
                 }
                 (None, None) => {}
