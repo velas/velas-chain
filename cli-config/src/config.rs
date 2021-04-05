@@ -6,7 +6,7 @@ use url::Url;
 lazy_static! {
     pub static ref CONFIG_FILE: Option<String> = {
         dirs_next::home_dir().map(|mut path| {
-            path.extend(&[".config", "solana", "cli", "config.yml"]);
+            path.extend(&[".config", "velas", "cli", "config.yml"]);
             path.to_str().unwrap().to_string()
         })
     };
@@ -27,7 +27,7 @@ impl Default for Config {
     fn default() -> Self {
         let keypair_path = {
             let mut keypair_path = dirs_next::home_dir().expect("home directory");
-            keypair_path.extend(&[".config", "solana", "id.json"]);
+            keypair_path.extend(&[".config", "velas", "id.json"]);
             keypair_path.to_str().unwrap().to_string()
         };
         let json_rpc_url = "https://testnet.velas.com".to_string();
