@@ -91,39 +91,39 @@ const PROXY_RPC_ERROR: i64 = 1003;
 
 const BLOCK_NOT_FOUND_RPC_ERROR: i64 = 2001;
 
-impl Into<JRpcError> for Error {
-    fn into(self) -> JRpcError {
-        match &self {
-            Self::HexError { source, .. } => {
-                JRpcError::invalid_params_with_details(self.to_string(), source)
+impl From<Error> for JRpcError {
+    fn from(err: Error) -> Self {
+        match &err {
+            Error::HexError { source, .. } => {
+                Self::invalid_params_with_details(err.to_string(), source)
             }
-            Self::InvalidHexPrefix { .. } => JRpcError::invalid_params(self.to_string()),
-            Self::RlpError { source, .. } => {
-                JRpcError::invalid_params_with_details(self.to_string(), source)
+            Error::InvalidHexPrefix { .. } => Self::invalid_params(err.to_string()),
+            Error::RlpError { source, .. } => {
+                Self::invalid_params_with_details(err.to_string(), source)
             }
-            Self::IntError { source, .. } => {
-                JRpcError::invalid_params_with_details(self.to_string(), source)
+            Error::IntError { source, .. } => {
+                Self::invalid_params_with_details(err.to_string(), source)
             }
-            Self::BigIntError { source, .. } => {
-                JRpcError::invalid_params_with_details(self.to_string(), source)
+            Error::BigIntError { source, .. } => {
+                Self::invalid_params_with_details(err.to_string(), source)
             }
-            Self::BigIntTrimFailed { error, .. } => {
-                JRpcError::invalid_params_with_details(self.to_string(), error)
+            Error::BigIntTrimFailed { error, .. } => {
+                Self::invalid_params_with_details(err.to_string(), error)
             }
-            Self::NativeRpcError { source } => {
-                internal_error_with_details(NATIVE_RPC_ERROR, &self, &source)
+            Error::NativeRpcError { source } => {
+                internal_error_with_details(NATIVE_RPC_ERROR, &err, &source)
             }
-            Self::WrongChainId { .. } => JRpcError::invalid_params(self.to_string()),
-            Self::EvmStateError { source } => {
-                internal_error_with_details(EVM_STATE_RPC_ERROR, &self, &source)
+            Error::WrongChainId { .. } => Self::invalid_params(err.to_string()),
+            Error::EvmStateError { source } => {
+                internal_error_with_details(EVM_STATE_RPC_ERROR, &err, &source)
             }
-            Self::ProxyRpcError { source } => {
-                internal_error_with_details(PROXY_RPC_ERROR, &self, &source)
+            Error::ProxyRpcError { source } => {
+                internal_error_with_details(PROXY_RPC_ERROR, &err, &source)
             }
-            Self::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &self),
-            Self::Unimplemented {} => {
-                let mut error = JRpcError::invalid_request();
-                error.message = self.to_string();
+            Error::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &err),
+            Error::Unimplemented {} => {
+                let mut error = Self::invalid_request();
+                error.message = err.to_string();
                 error
             }
         }
