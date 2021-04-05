@@ -127,7 +127,7 @@ pub struct JsonRpcConfig {
 pub struct JsonRpcRequestProcessor {
     bank_forks: Arc<RwLock<BankForks>>,
     block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-    blockstore: Arc<Blockstore>,
+    pub blockstore: Arc<Blockstore>,
     config: JsonRpcConfig,
     snapshot_config: Option<SnapshotConfig>,
     validator_exit: Arc<RwLock<Option<ValidatorExit>>>,

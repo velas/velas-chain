@@ -6,7 +6,7 @@ use tempfile::tempdir;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
-use evm_state::{types::Slot, EvmState};
+use evm_state::{types::BlockNum, EvmState};
 
 mod utils;
 
@@ -18,8 +18,8 @@ mod utils;
     accounts_per_100k
 )]
 struct Params {
-    n_slots: Slot,
-    squash_each: Slot,
+    n_slots: BlockNum,
+    squash_each: BlockNum,
     accounts_per_100k: usize,
 }
 
@@ -29,7 +29,7 @@ fn add_some_and_advance(state: &mut EvmState, params: &Params) {
     let mut rng = rand::thread_rng();
 
     for _ in 0..params.n_slots {
-        let slot = state.slot;
+        let slot = state.block_num;
         addresses.advance();
 
         if rng.gen_ratio(params.accounts_per_100k as u32, 100_000) {
@@ -47,11 +47,11 @@ fn add_some_and_advance(state: &mut EvmState, params: &Params) {
             // }
         }
 
-        state.commit();
+        state.commit_block(0);
         *state = state.fork(slot + 1);
     }
 
-    state.commit();
+    state.commit_block(0);
 }
 
 fn fill_new_db_then_backup(c: &mut Criterion) {
@@ -72,7 +72,7 @@ fn fill_new_db_then_backup(c: &mut Criterion) {
                 EvmState::new(&dir).expect("Unable to create new EVM state in temporary directory");
             add_some_and_advance(&mut state, &params);
 
-            let slot = state.slot;
+            let slot = state.block_num;
             let root = state.root;
             drop(state);
 
@@ -82,8 +82,14 @@ fn fill_new_db_then_backup(c: &mut Criterion) {
                 |b, _params| {
                     b.iter_batched(
                         || {
-                            let state = EvmState::load_from(&dir, slot, root)
-                                .expect("Unable to load EVM state from temporary directory");
+                            let state = EvmState::load_from(
+                                &dir,
+                                evm_state::types::EvmStatePersistFields::Empty {
+                                    block_number: slot,
+                                    state_root: root,
+                                },
+                            )
+                            .expect("Unable to load EVM state from temporary directory");
 
                             let empty_dir = tempdir().unwrap();
                             assert_eq!(0, fs::read_dir(&empty_dir).unwrap().count());
@@ -135,7 +141,7 @@ fn fill_new_db_then_backup_and_then_backup_again(c: &mut Criterion) {
             EvmState::new(&dir).expect("Unable to create new EVM state in temporary directory");
         add_some_and_advance(&mut state, &params1);
 
-        let slot = state.slot;
+        let slot = state.block_num;
         let root = state.root;
         drop(state);
 
@@ -145,8 +151,14 @@ fn fill_new_db_then_backup_and_then_backup_again(c: &mut Criterion) {
             |b, _params| {
                 b.iter_batched(
                     || {
-                        let mut state = EvmState::load_from(&dir, slot, root)
-                            .expect("Unable to load EVM state from temporary directory");
+                        let mut state = EvmState::load_from(
+                            &dir,
+                            evm_state::types::EvmStatePersistFields::Empty {
+                                block_number: slot,
+                                state_root: root,
+                            },
+                        )
+                        .expect("Unable to load EVM state from temporary directory");
 
                         let _ = state.kvs.backup().unwrap();
 

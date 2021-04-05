@@ -10,6 +10,7 @@ use crate::{
     cluster_slots::ClusterSlots,
     completed_data_sets_service::CompletedDataSetsSender,
     consensus::Tower,
+    evm_services::EvmRecorderSender,
     ledger_cleanup_service::LedgerCleanupService,
     max_slots::MaxSlots,
     optimistically_confirmed_bank_tracker::BankNotificationSender,
@@ -113,6 +114,7 @@ impl Tvu {
         transaction_status_sender: Option<TransactionStatusSender>,
         rewards_recorder_sender: Option<RewardsRecorderSender>,
         cache_block_time_sender: Option<CacheBlockTimeSender>,
+        evm_block_recorder_sender: Option<EvmRecorderSender>,
         snapshot_config_and_pending_package: Option<(SnapshotConfig, PendingSnapshotPackage)>,
         vote_tracker: Arc<VoteTracker>,
         retransmit_slots_sender: RetransmitSlotsSender,
@@ -253,6 +255,7 @@ impl Tvu {
             transaction_status_sender,
             rewards_recorder_sender,
             cache_block_time_sender,
+            evm_block_recorder_sender,
             bank_notification_sender,
         };
 

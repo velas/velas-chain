@@ -17,10 +17,11 @@ use crate::{
     transactions::TransactionReceipt,
     types::*,
 };
+const GAS_LIMIT: u64 = 300_000_000;
 
 #[derive(Clone, Debug)]
 pub struct EvmState {
-    pub slot: Slot,
+    pub block_num: BlockNum,
     pub root: H256,
 
     pub kvs: KVS,
@@ -29,23 +30,26 @@ pub struct EvmState {
     states: HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>,
 
     receipts: HashMap<H256, TransactionReceipt>,
+
+    pub block: Option<BlockHeader>,
 }
 
 /// NOTE: Only for testing purposes.
 impl Default for EvmState {
     fn default() -> Self {
-        let slot = Slot::default();
+        let block_num = BlockNum::default();
         let root = empty_trie_hash();
         let kvs = KVS::create_temporary().expect("Unable to create temporary storage");
 
         Self {
-            slot,
+            block_num,
             root,
             kvs,
 
             states: HashMap::new(),
 
             receipts: HashMap::new(),
+            block: None,
         }
     }
 }
@@ -66,7 +70,9 @@ impl<T> From<Maybe<T>> for Option<T> {
 }
 
 impl EvmState {
-    pub fn commit(&mut self) {
+    pub fn commit_block(&mut self, timestamp: u64) {
+        assert!(self.block.is_none());
+
         trace!("commit: before state = {:?}", self);
         let r = RocksHandle::new(RocksDatabaseHandle::new(self.kvs.db.as_ref()));
 
@@ -123,33 +129,55 @@ impl EvmState {
         // Extend existing hashes for current block
         let hashes = self
             .kvs
-            .get::<TransactionHashesPerBlock>(self.slot)
+            .get::<TransactionHashesPerBlock>(self.block_num)
             .into_iter()
             .flatten()
             .chain(self.receipts.keys().copied())
             .collect();
 
         // TODO: store only non-empty hashes
-        self.kvs.set::<TransactionHashesPerBlock>(self.slot, hashes);
+        self.kvs
+            .set::<TransactionHashesPerBlock>(self.block_num, hashes);
 
         for (hash, receipt) in std::mem::take(&mut self.receipts) {
             self.kvs.set::<Receipts>(hash, receipt);
         }
 
         self.root = new_root;
+        if let Some(txs) = self.get_transactions_in_block(self.block_num) {
+            if !txs.is_empty() {
+                let block = BlockHeader::new(
+                    H256::zero(),
+                    GAS_LIMIT,
+                    self.root,
+                    self.block_num,
+                    0,
+                    timestamp,
+                    vec![],
+                );
+                self.block = Some(block);
+            }
+        }
+
         trace!("commit: after state = {:?}", self);
     }
 
     /// Ignores all unapplied updates.
-    pub fn fork(&self, new_slot: Slot) -> Self {
+    pub fn fork(&self) -> Self {
+        let block_num = if self.block.is_some() {
+            self.block_num + 1
+        } else {
+            self.block_num
+        };
         Self {
-            slot: new_slot,
+            block_num: block_num,
             root: self.root,
             kvs: self.kvs.clone(),
 
             states: HashMap::new(),
 
             receipts: HashMap::new(),
+            block: None,
         }
     }
 
@@ -248,9 +276,9 @@ impl EvmState {
 
     // Transactions
 
-    pub fn get_transactions_in_block(&self, block: Slot) -> Option<Vec<H256>> {
+    pub fn get_transactions_in_block(&self, block: BlockNum) -> Option<Vec<H256>> {
         let applied = self.kvs.get::<TransactionHashesPerBlock>(block);
-        if self.slot == block {
+        if self.block_num == block {
             Some(
                 self.receipts
                     .keys()
@@ -287,7 +315,7 @@ impl EvmState {
             fs::create_dir(&evm_state)?;
         }
 
-        Self::load_from(evm_state, Slot::default(), empty_trie_hash())
+        Self::load_inner(evm_state, BlockNum::default(), empty_trie_hash(), None)
     }
 
     pub fn new_from_genesis(
@@ -303,26 +331,43 @@ impl EvmState {
         }
 
         KVS::restore_from(evm_genesis, &evm_state)?;
-        Self::load_from(evm_state, Slot::default(), root_hash)
+        Self::load_inner(evm_state, BlockNum::default(), root_hash, None)
     }
 
     pub fn load_from<P: AsRef<Path>>(
         path: P,
-        slot: Slot,
-        root: H256,
+        evm_persist_feilds: EvmStatePersistState,
+    ) -> Result<Self, anyhow::Error> {
+        Self::load_inner(
+            path,
+            evm_persist_feilds.block_number(),
+            evm_persist_feilds.state_root(),
+            evm_persist_feilds.to_block(),
+        )
+    }
+
+    fn load_inner(
+        path: impl AsRef<Path>,
+        block_num: BlockNum,
+        root_hash: H256,
+        latest_block: Option<BlockHeader>,
     ) -> Result<Self, anyhow::Error> {
         info!("Open EVM storage {}", path.as_ref().display());
 
         let kvs = KVS::open_persistent(path)?;
 
+        if let Some(block) = &latest_block {
+            assert_eq!(block.number, block_num);
+            assert_eq!(block.state_root, root_hash);
+        }
+
         Ok(Self {
-            slot,
-            root,
+            block_num,
+            root: root_hash,
             kvs,
-
             states: HashMap::new(),
-
             receipts: HashMap::new(),
+            block: latest_block,
         })
     }
 
@@ -596,11 +641,11 @@ mod tests {
         let mut evm_state = EvmState::default();
 
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
-        evm_state.commit();
+        evm_state.commit_block(0);
 
         assert_state(&evm_state, &accounts_state_diff, &storage_diff);
 
-        let mut new_evm_state = evm_state.fork(evm_state.slot + 1);
+        let mut new_evm_state = evm_state.fork();
         assert_state(&new_evm_state, &accounts_state_diff, &storage_diff);
 
         let new_accounts = generate_accounts_addresses(SEED + 1, 2);
@@ -653,8 +698,8 @@ mod tests {
                 evm_state.ext_storage(*account, storage);
             }
 
-            evm_state.commit();
-            evm_state = evm_state.fork(evm_state.slot + 1);
+            evm_state.commit_block(0);
+            evm_state = evm_state.fork();
         }
 
         let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
@@ -678,8 +723,8 @@ mod tests {
         state.set_account_state(account, account_state.clone());
 
         for _ in 0..42 {
-            state.commit();
-            state = state.fork(state.slot + 1);
+            state.commit_block(0);
+            state = state.fork();
         }
 
         let recv_state = state.get_account_state(account).unwrap();
@@ -703,7 +748,7 @@ mod tests {
         state.set_account_state(addr, new_state.clone());
         assert_eq!(state.get_account_state(addr), Some(new_state.clone()));
 
-        state.commit();
+        state.commit_block(0);
 
         assert_eq!(state.get_account_state(addr), Some(new_state.clone()));
 
@@ -737,7 +782,7 @@ mod tests {
             Some(U256::from(1))
         );
 
-        state.commit();
+        state.commit_block(0);
 
         assert_eq!(
             state.get_account_state(addr).map(|acc| acc.nonce),
@@ -766,7 +811,7 @@ mod tests {
         state.set_account_state(address, account_state);
         state.ext_storage(address, storage_mod);
 
-        state.commit();
+        state.commit_block(0);
         let account = state.get_account(address).unwrap();
 
         assert_eq!(
@@ -801,7 +846,7 @@ mod tests {
         state.set_account_state(address, account_state);
         state.ext_storage(address, storage_mod);
 
-        state.commit();
+        state.commit_block(0);
         let account = state.get_account(address).unwrap();
 
         assert_eq!(
@@ -829,19 +874,19 @@ mod tests {
             address,
             Some((H256::from_low_u64_be(0), H256::from_low_u64_be(0x1234))),
         );
-        state.commit();
+        state.commit_block(0);
 
         state.ext_storage(
             address,
             Some((H256::from_low_u64_be(1), H256::from_low_u64_be(0x1234))),
         );
-        state.commit();
+        state.commit_block(0);
 
         state.ext_storage(
             address,
             Some((H256::from_low_u64_be(1), H256::from_low_u64_be(0))),
         );
-        state.commit();
+        state.commit_block(0);
 
         let account = state.get_account(address).unwrap();
 

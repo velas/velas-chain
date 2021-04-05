@@ -11,6 +11,7 @@ use crate::{
     completed_data_sets_service::CompletedDataSetsService,
     consensus::{reconcile_blockstore_roots_with_tower, Tower},
     contact_info::ContactInfo,
+    evm_services::{EvmRecorderSender, EvmRecorderService},
     gossip_service::GossipService,
     max_slots::MaxSlots,
     optimistically_confirmed_bank_tracker::{
@@ -210,6 +211,14 @@ struct TransactionHistoryServices {
     rewards_recorder_service: Option<RewardsRecorderService>,
     cache_block_time_sender: Option<CacheBlockTimeSender>,
     cache_block_time_service: Option<CacheBlockTimeService>,
+    evm_block_recorder_sender: Option<EvmRecorderSender>,
+    evm_block_recorder_service: Option<EvmRecorderService>,
+    // TODO:
+    // 1. EvmBlock header
+    // 2. EvmTransaction Statuses (tx receip by hash)
+    // 3. EvmTransaction Trace api
+    // 4. Add link SolanaTx -> EvmTx
+    // 5. link from EvmTx back to SolanaTx?
 }
 
 struct RpcServices {
@@ -226,6 +235,7 @@ pub struct Validator {
     rewards_recorder_service: Option<RewardsRecorderService>,
     cache_block_time_service: Option<CacheBlockTimeService>,
     sample_performance_service: Option<SamplePerformanceService>,
+    evm_block_recorder_service: Option<EvmRecorderService>,
     gossip_service: GossipService,
     serve_repair_service: ServeRepairService,
     completed_data_sets_service: CompletedDataSetsService,
@@ -343,6 +353,8 @@ impl Validator {
                 rewards_recorder_service,
                 cache_block_time_sender,
                 cache_block_time_service,
+                evm_block_recorder_sender,
+                evm_block_recorder_service,
             },
             tower,
         ) = new_banks_from_ledger(
@@ -642,6 +654,7 @@ impl Validator {
             transaction_status_sender.clone(),
             rewards_recorder_sender,
             cache_block_time_sender,
+            evm_block_recorder_sender,
             snapshot_config_and_pending_package,
             vote_tracker.clone(),
             retransmit_slots_sender,
@@ -701,6 +714,7 @@ impl Validator {
             sample_performance_service,
             snapshot_packager_service,
             completed_data_sets_service,
+            evm_block_recorder_service,
             tpu,
             tvu,
             poh_service,
@@ -784,6 +798,12 @@ impl Validator {
             sample_performance_service
                 .join()
                 .expect("sample_performance_service");
+        }
+
+        if let Some(evm_block_recorder_service) = self.evm_block_recorder_service {
+            evm_block_recorder_service
+                .join()
+                .expect("evm_block_recorder_service");
         }
 
         if let Some(s) = self.snapshot_packager_service {
@@ -1214,9 +1234,18 @@ fn initialize_rpc_transaction_history_services(
     let cache_block_time_sender = Some(cache_block_time_sender);
     let cache_block_time_service = Some(CacheBlockTimeService::new(
         cache_block_time_receiver,
+        blockstore.clone(),
+        exit,
+    ));
+
+    let (evm_block_recorder_sender, evm_block_recorder_receiver) = unbounded();
+    let evm_block_recorder_sender = Some(evm_block_recorder_sender);
+    let evm_block_recorder_service = Some(EvmRecorderService::new(
+        evm_block_recorder_receiver,
         blockstore,
         exit,
     ));
+
     TransactionHistoryServices {
         transaction_status_sender,
         transaction_status_service,
@@ -1224,6 +1253,8 @@ fn initialize_rpc_transaction_history_services(
         rewards_recorder_service,
         cache_block_time_sender,
         cache_block_time_service,
+        evm_block_recorder_sender,
+        evm_block_recorder_service,
     }
 }
 

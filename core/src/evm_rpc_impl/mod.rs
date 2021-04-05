@@ -145,6 +145,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
         if block_num == 0 {
             return Ok(None);
         }
+        println!("{:?}", meta.blockstore.read_evm_block_header(block_num));
         let block = match meta
             .get_confirmed_block(block_num, UiTransactionEncoding::Binary.into())
             .with_context(|| error::ProxyRpcError {})?

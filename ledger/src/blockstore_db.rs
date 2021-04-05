@@ -1,6 +1,7 @@
 use crate::blockstore_meta;
 use bincode::{deserialize, serialize};
 use byteorder::{BigEndian, ByteOrder};
+use columns::EvmBlockHeader;
 use log::*;
 use prost::Message;
 pub use rocksdb::Direction as IteratorDirection;
@@ -55,6 +56,9 @@ const REWARDS_CF: &str = "rewards";
 const BLOCKTIME_CF: &str = "blocktime";
 /// Column family for Performance Samples
 const PERF_SAMPLES_CF: &str = "perf_samples";
+
+const EVM_HEADERS: &str = "evm_headers";
+const EVM_TRANSACTIONS: &str = "evm_transactions";
 
 #[derive(Error, Debug)]
 pub enum BlockstoreError {
@@ -150,6 +154,10 @@ pub mod columns {
     #[derive(Debug)]
     /// The performance samples column
     pub struct PerfSamples;
+
+    #[derive(Debug)]
+    /// The evm block header.
+    pub struct EvmBlockHeader;
 }
 
 pub enum AccessType {
@@ -258,6 +266,8 @@ impl Rocks {
             ColumnFamilyDescriptor::new(Blocktime::NAME, get_cf_options(&access_type));
         let perf_samples_cf_descriptor =
             ColumnFamilyDescriptor::new(PerfSamples::NAME, get_cf_options(&access_type));
+        let evm_headers_cf_descriptor =
+            ColumnFamilyDescriptor::new(EvmBlockHeader::NAME, get_cf_options(&access_type));
 
         let cfs = vec![
             (SlotMeta::NAME, meta_cf_descriptor),
@@ -278,6 +288,7 @@ impl Rocks {
             (Rewards::NAME, rewards_cf_descriptor),
             (Blocktime::NAME, blocktime_cf_descriptor),
             (PerfSamples::NAME, perf_samples_cf_descriptor),
+            (EvmBlockHeader::NAME, evm_headers_cf_descriptor),
         ];
 
         // Open the database
@@ -336,6 +347,7 @@ impl Rocks {
             Rewards::NAME,
             Blocktime::NAME,
             PerfSamples::NAME,
+            EvmBlockHeader::NAME,
         ]
     }
 
@@ -706,6 +718,42 @@ impl ColumnName for columns::ErasureMeta {
 impl TypedColumn for columns::ErasureMeta {
     type Type = blockstore_meta::ErasureMeta;
 }
+
+// EVM blockstore
+
+impl Column for columns::EvmBlockHeader {
+    type Index = u64;
+
+    fn key(index: u64) -> Vec<u8> {
+        let mut key = vec![0; 8];
+        BigEndian::write_u64(&mut key[..], index);
+        key
+    }
+
+    fn index(key: &[u8]) -> u64 {
+        BigEndian::read_u64(&key[..8])
+    }
+
+    fn primary_index(index: u64) -> u64 {
+        index
+    }
+
+    fn as_index(block: u64) -> u64 {
+        block
+    }
+}
+
+impl ColumnName for columns::EvmBlockHeader {
+    const NAME: &'static str = EVM_HEADERS;
+}
+
+impl TypedColumn for columns::EvmBlockHeader {
+    type Type = evm_state::BlockHeader;
+}
+
+// impl ProtobufColumn for columns::EvmBlockHeader {
+//     type Type = generated::TransactionStatusMeta;
+// }
 
 #[derive(Debug, Clone)]
 pub struct Database {

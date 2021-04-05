@@ -9,7 +9,9 @@ use triedb::empty_trie_hash;
 pub use evm::backend::MemoryAccount;
 pub use primitive_types::{H160, H256, U256};
 
-pub type Slot = u64; // TODO: re-use existing one from sdk package
+use crate::TransactionReceipt;
+
+pub type BlockNum = u64; // TODO: re-use existing one from sdk package
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountState {
@@ -143,6 +145,101 @@ pub struct LogFilter {
     pub to_block: u64,
     pub address: Option<H160>,
     pub topics: Vec<H256>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EvmStatePersistState {
+    Empty { state_root: H256, block_number: u64 },
+    WithBlock { block: BlockHeader },
+}
+
+impl EvmStatePersistState {
+    pub fn state_root(&self) -> H256 {
+        match self {
+            Self::Empty { state_root, .. } => *state_root,
+            Self::WithBlock { block, .. } => block.state_root,
+        }
+    }
+
+    pub fn block_number(&self) -> u64 {
+        match self {
+            Self::Empty { block_number, .. } => *block_number,
+            Self::WithBlock { block, .. } => block.number,
+        }
+    }
+    pub fn to_block(self) -> Option<BlockHeader> {
+        match self {
+            Self::Empty { .. } => None,
+            Self::WithBlock { block, .. } => Some(block),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockHeader {
+    pub parent_hash: H256,
+    pub state_root: H256,
+    pub transactions_root: H256,
+    pub receipts_root: H256,
+    // pub logs_bloom: LogsBloom,
+    pub number: u64,
+    pub gas_limit: u64,
+    pub gas_used: u64,
+    pub timestamp: u64,
+}
+
+impl BlockHeader {
+    pub fn new(
+        parent_hash: H256,
+        gas_limit: u64,
+        state_root: H256,
+        number: u64,
+        gas_used: u64,
+        timestamp: u64,
+        processed_transactions: Vec<TransactionReceipt>,
+    ) -> BlockHeader {
+        BlockHeader {
+            parent_hash,
+            gas_limit,
+            number,
+            gas_used,
+            state_root,
+            timestamp,
+            // TODO: Add real transaction receipts and transaction list
+            receipts_root: H256::zero(),
+            transactions_root: H256::zero(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Block {
+    pub header: BlockHeader,
+    pub transactions: Vec<crate::transactions::Transaction>,
+}
+
+impl Encodable for BlockHeader {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        const EMPTH_HASH: H256 = H256::zero();
+        const EXTRA_DATA: &[u8; 32] = b"Velas EVM compatibility layer...";
+        let extra_data = H256::from_slice(EXTRA_DATA);
+        s.begin_list(15);
+        s.append(&self.parent_hash);
+        s.append(&EMPTH_HASH); // ommers/unkles is impossible
+        s.append(&H160::from(EMPTH_HASH)); // Beneficiar address is empty, because reward received in native chain
+        s.append(&self.state_root);
+        s.append(&self.transactions_root);
+        s.append(&self.receipts_root);
+        s.append(&EMPTH_HASH); // TODO: add blooms
+        s.append(&EMPTH_HASH); // difficulty, is emtpy
+        s.append(&U256::from(self.number));
+        s.append(&U256::from(self.gas_limit));
+        s.append(&U256::from(self.gas_used));
+        s.append(&self.timestamp);
+        s.append(&extra_data);
+        s.append(&EMPTH_HASH); // mix hash is not available in PoS chains
+        s.append(&0u64); // nonce like mix hash is not available in PoS
+    }
 }
 
 #[cfg(test)]

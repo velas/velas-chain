@@ -56,6 +56,7 @@ tempfile = "3.1.0"
 thiserror = "1.0"
 tokio = { version = "0.2.22", features = ["full"] }
 trees = "0.2.1"
+evm-state = { path = "../evm-utils/evm-state" }
 
 
 [dev-dependencies]

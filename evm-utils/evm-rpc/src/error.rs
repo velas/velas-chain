@@ -40,7 +40,7 @@ pub enum Error {
     BigIntTrimFailed { input_data: String, error: String },
 
     #[snafu(display("Failed to find block {}", block))]
-    BlockNotFound { block: evm_state::Slot },
+    BlockNotFound { block: evm_state::BlockNum },
 
     #[snafu(display("Failed to process native chain request: {}", source))]
     ProxyRpcError { source: JRpcError },
