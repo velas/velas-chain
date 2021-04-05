@@ -56,11 +56,11 @@ enum Maybe<T> {
     Nothing,
 }
 
-impl<T> Into<Option<T>> for Maybe<T> {
-    fn into(self) -> Option<T> {
-        match self {
-            Self::Just(val) => Some(val),
-            Self::Nothing => None,
+impl<T> From<Maybe<T>> for Option<T> {
+    fn from(mb: Maybe<T>) -> Self {
+        match mb {
+            Maybe::Just(val) => Some(val),
+            Maybe::Nothing => None,
         }
     }
 }

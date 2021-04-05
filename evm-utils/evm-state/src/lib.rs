@@ -93,6 +93,8 @@ impl Executor {
             used_gas: 0,
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
     fn transaction_execute_raw<F>(
         &mut self,
         caller: H160,
@@ -201,7 +203,7 @@ impl Executor {
         let unsigned_tx = UnsignedTransactionWithCaller {
             unsigned_tx: tx,
             caller,
-            chain_id: chain_id,
+            chain_id,
         };
 
         self.register_tx_with_receipt(

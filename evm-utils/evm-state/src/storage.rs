@@ -64,7 +64,7 @@ impl AsRef<Path> for Location {
 
 #[derive(Clone, Debug)]
 pub struct Storage {
-    pub(crate) db: Arc<DBWithClose>,
+    pub(crate) db: Arc<DbWithClose>,
     location: Location,
 }
 
@@ -92,7 +92,7 @@ impl Storage {
         let db = DB::open_cf_descriptors(&db_opts, &location, descriptors)?;
 
         Ok(Self {
-            db: Arc::new(DBWithClose(db)),
+            db: Arc::new(DbWithClose(db)),
             location,
         })
     }
@@ -140,26 +140,26 @@ impl Storage {
 
 #[derive(Debug)]
 // Hack to close rocksdb background threads.
-pub struct DBWithClose(DB);
+pub struct DbWithClose(DB);
 
-impl Drop for DBWithClose {
+impl Drop for DbWithClose {
     fn drop(&mut self) {
         self.0.cancel_all_background_work(true);
     }
 }
-impl AsRef<DB> for DBWithClose {
+impl AsRef<DB> for DbWithClose {
     fn as_ref(&self) -> &DB {
         &self.0
     }
 }
 
-impl<'a> Borrow<DB> for &'a DBWithClose {
+impl<'a> Borrow<DB> for &'a DbWithClose {
     fn borrow(&self) -> &DB {
         &self.0
     }
 }
 
-impl std::ops::Deref for DBWithClose {
+impl std::ops::Deref for DbWithClose {
     type Target = DB;
     fn deref(&self) -> &DB {
         &self.0
