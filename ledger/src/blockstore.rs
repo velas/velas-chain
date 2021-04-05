@@ -40,6 +40,9 @@ use solana_transaction_status::{
     ConfirmedBlock, ConfirmedTransaction, ConfirmedTransactionStatusWithSignature, Rewards,
     TransactionStatusMeta, TransactionWithStatusMeta,
 };
+
+use evm_state as evm;
+
 use std::{
     cell::RefCell,
     cmp,
@@ -137,6 +140,10 @@ pub struct Blockstore {
     rewards_cf: LedgerColumn<cf::Rewards>,
     blocktime_cf: LedgerColumn<cf::Blocktime>,
     perf_samples_cf: LedgerColumn<cf::PerfSamples>,
+
+    // evm
+    evm_blocks_cf: LedgerColumn<cf::EvmBlockHeader>,
+
     last_root: Arc<RwLock<Slot>>,
     insert_shreds_lock: Arc<Mutex<()>>,
     pub new_shreds_signals: Vec<SyncSender<bool>>,
@@ -308,6 +315,8 @@ impl Blockstore {
         let blocktime_cf = db.column();
         let perf_samples_cf = db.column();
 
+        let evm_blocks_cf = db.column();
+
         let db = Arc::new(db);
 
         // Get max root or 0 if it doesn't exist
@@ -354,6 +363,7 @@ impl Blockstore {
             rewards_cf,
             blocktime_cf,
             perf_samples_cf,
+            evm_blocks_cf,
             new_shreds_signals: vec![],
             completed_slots_senders: vec![],
             insert_shreds_lock: Arc::new(Mutex::new(())),
@@ -2390,6 +2400,23 @@ impl Blockstore {
 
     pub fn write_perf_sample(&self, index: Slot, perf_sample: &PerfSample) -> Result<()> {
         self.perf_samples_cf.put(index, perf_sample)
+    }
+
+    // EVM scope
+
+    pub fn write_evm_block_header(
+        &self,
+        _block_slot: Slot,
+        block: &evm::BlockHeader,
+    ) -> Result<()> {
+        self.evm_blocks_cf.put(block.number, block)
+    }
+
+    pub fn read_evm_block_header(
+        &self,
+        block_index: evm::BlockNum,
+    ) -> Result<Option<evm::BlockHeader>> {
+        self.evm_blocks_cf.get(block_index)
     }
 
     /// Returns the entry vector for the slot starting with `shred_start_index`

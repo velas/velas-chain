@@ -235,7 +235,7 @@ impl GenesisConfig {
                 let chunk = chunk?;
                 log::info!("Adding {} accounts to evm state.", chunk.len());
                 evm_state.set_initial(chunk);
-                evm_state.commit();
+                evm_state.commit_block(0);
             }
         } else {
             warn!("Generating genesis with empty evm state");

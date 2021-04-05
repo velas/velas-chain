@@ -44,7 +44,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             state.set_account_state(address, AccountState::default());
         }
 
-        let slot = state.slot;
+        let slot = state.block_num;
         let mut executor =
             Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), chain_id, slot);
 
@@ -101,7 +101,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         ));
 
         let mut state = executor.deconstruct();
-        state.commit();
+        state.commit_block(0);
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
         let mut rng = secp256k1::rand::thread_rng();
@@ -118,7 +118,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         };
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), chain_id,state.slot);
+                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), chain_id,state.block_num);
 
             let exit_reason = black_box(executor.transaction_execute_unsinged(
                 caller,
@@ -152,7 +152,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         ));
 
         let mut state = executor.deconstruct();
-        state.commit();
+        state.commit_block(0);
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
         let mut rng = secp256k1::rand::thread_rng();
@@ -168,7 +168,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), chain_id,state.slot);
+                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), chain_id,state.block_num);
 
             let exit_reason = black_box(executor.transaction_execute(
                 tx.clone(),
@@ -194,7 +194,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     state.set_account_state(address, AccountState::default());
                 }
 
-                let slot = state.slot;
+                let slot = state.block_num;
                 let mut executor =
                     Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), chain_id, slot);
                 let create_transaction_result = executor.with_executor(|executor| {
@@ -206,7 +206,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 ));
 
                 let mut state = executor.deconstruct();
-                state.commit();
+                state.commit_block(0);
 
                 for new_slot in (slot + 1)..=*n_forks {
                     // state.freeze();
@@ -225,7 +225,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                         evm::Config::istanbul(),
                         u64::max_value(),
                         chain_id,
-                        state.slot,
+                        state.block_num,
                     );
 
                     let start = Instant::now();
@@ -261,9 +261,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             .chain(accounts.iter().copied())
             .for_each(|address| state.set_account_state(address, AccountState::default()));
 
-        state.commit();
+        state.commit_block(0);
 
-        let slot = state.slot;
+        let slot = state.block_num;
         let mut executor =
             Executor::with_config(state, evm::Config::istanbul(), u64::max_value(), chain_id, slot);
 
@@ -276,13 +276,13 @@ fn criterion_benchmark(c: &mut Criterion) {
         ));
 
         let mut state = executor.deconstruct();
-        state.commit();
+        state.commit_block(0);
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
         let mut idx = 0;
         b.iter(|| {
             let mut executor =
-                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), chain_id, state.slot);
+                Executor::with_config(state.clone(), evm::Config::istanbul(), u64::max_value(), chain_id, state.block_num);
 
             let exit_reason = executor.with_executor(|executor| {
                 executor.transact_call(

@@ -42,12 +42,14 @@ pub const MAX_SNAPSHOTS: usize = 8; // Save some snapshots but not too many
 const EVM_STATE_DIR: &str = "evm-state";
 const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const VERSION_STRING_V1_2_0: &str = "1.2.0";
-const DEFAULT_SNAPSHOT_VERSION: SnapshotVersion = SnapshotVersion::V1_2_0;
+const VERSION_STRING_V1_3_0: &str = "1.3.0";
+const DEFAULT_SNAPSHOT_VERSION: SnapshotVersion = SnapshotVersion::V1_3_0;
 const TMP_SNAPSHOT_PREFIX: &str = "tmp-snapshot-";
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SnapshotVersion {
     V1_2_0,
+    V1_3_0,
 }
 
 impl Default for SnapshotVersion {
@@ -66,6 +68,7 @@ impl From<SnapshotVersion> for &'static str {
     fn from(snapshot_version: SnapshotVersion) -> &'static str {
         match snapshot_version {
             SnapshotVersion::V1_2_0 => VERSION_STRING_V1_2_0,
+            SnapshotVersion::V1_3_0 => VERSION_STRING_V1_3_0,
         }
     }
 }
@@ -85,6 +88,7 @@ impl FromStr for SnapshotVersion {
         };
         match version_string {
             VERSION_STRING_V1_2_0 => Ok(SnapshotVersion::V1_2_0),
+            VERSION_STRING_V1_3_0 => Ok(SnapshotVersion::V1_3_0),
             _ => Err("unsupported snapshot version"),
         }
     }
@@ -528,7 +532,8 @@ pub fn add_snapshot<P: AsRef<Path>>(
     let mut bank_serialize = Measure::start("bank-serialize-ms");
     let bank_snapshot_serializer = move |stream: &mut BufWriter<File>| -> Result<()> {
         let serde_style = match snapshot_version {
-            SnapshotVersion::V1_2_0 => SerdeStyle::Newer,
+            SnapshotVersion::V1_2_0 => unimplemented!(),
+            SnapshotVersion::V1_3_0 => SerdeStyle::Newer,
         };
         bank_to_stream(serde_style, stream.by_ref(), bank, snapshot_storages)?;
         Ok(())
@@ -855,7 +860,8 @@ where
     );
     let bank = deserialize_snapshot_data_file(&root_paths.snapshot_file_path, |mut stream| {
         Ok(match snapshot_version_enum {
-            SnapshotVersion::V1_2_0 => bank_from_stream(
+            SnapshotVersion::V1_2_0 => unimplemented!(),
+            SnapshotVersion::V1_3_0 => bank_from_stream(
                 SerdeStyle::Newer,
                 &mut stream,
                 &append_vecs_path,

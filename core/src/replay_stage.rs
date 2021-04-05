@@ -8,6 +8,7 @@ use crate::{
     cluster_slots::ClusterSlots,
     commitment_service::{AggregateCommitmentService, CommitmentAggregationData},
     consensus::{ComputedBankState, Stake, SwitchForkDecision, Tower, VotedStakes},
+    evm_services::EvmRecorderSender,
     fork_choice::{ForkChoice, SelectVoteAndResetForkResult},
     heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
     optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSender},
@@ -103,6 +104,7 @@ pub struct ReplayStageConfig {
     pub transaction_status_sender: Option<TransactionStatusSender>,
     pub rewards_recorder_sender: Option<RewardsRecorderSender>,
     pub cache_block_time_sender: Option<CacheBlockTimeSender>,
+    pub evm_block_recorder_sender: Option<EvmRecorderSender>,
     pub bank_notification_sender: Option<BankNotificationSender>,
 }
 
@@ -263,6 +265,7 @@ impl ReplayStage {
             transaction_status_sender,
             rewards_recorder_sender,
             cache_block_time_sender,
+            evm_block_recorder_sender,
             bank_notification_sender,
         } = config;
 
@@ -331,6 +334,7 @@ impl ReplayStage {
                         &replay_vote_sender,
                         &bank_notification_sender,
                         &rewards_recorder_sender,
+                        &evm_block_recorder_sender,
                     );
                     replay_active_banks_time.stop();
                     Self::report_memory(&allocated, "replay_active_banks", start);
@@ -1313,6 +1317,7 @@ impl ReplayStage {
         replay_vote_sender: &ReplayVoteSender,
         bank_notification_sender: &Option<BankNotificationSender>,
         rewards_recorder_sender: &Option<RewardsRecorderSender>,
+        evm_block_recorder_sender: &Option<EvmRecorderSender>,
     ) -> bool {
         let mut did_complete_bank = false;
         let mut tx_count = 0;
@@ -1393,6 +1398,7 @@ impl ReplayStage {
                     }
 
                     Self::record_rewards(&bank, &rewards_recorder_sender);
+                    Self::record_evm_block(&bank, &evm_block_recorder_sender);
                 } else {
                     Self::mark_dead_slot(
                         blockstore,
@@ -1945,6 +1951,17 @@ impl ReplayStage {
                 rewards_recorder_sender
                     .send((bank.slot(), rewards.clone()))
                     .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
+            }
+        }
+    }
+
+    fn record_evm_block(bank: &Bank, evm_block_recorder_sender: &Option<EvmRecorderSender>) {
+        if let Some(evm_block_recorder_sender) = evm_block_recorder_sender {
+            let block = bank.evm_block();
+            if let Some(block) = block {
+                evm_block_recorder_sender
+                    .send((bank.slot(), block))
+                    .unwrap_or_else(|err| warn!("evm_block_recorder_sender failed: {:?}", err));
             }
         }
     }

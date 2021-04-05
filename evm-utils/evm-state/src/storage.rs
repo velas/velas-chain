@@ -197,7 +197,7 @@ impl SubStorage for Receipts {
 pub enum TransactionHashesPerBlock {}
 impl SubStorage for TransactionHashesPerBlock {
     const COLUMN_NAME: &'static str = "transactions_per_block";
-    type Key = Slot;
+    type Key = BlockNum;
     type Value = Vec<H256>;
 }
 

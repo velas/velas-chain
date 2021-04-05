@@ -73,19 +73,19 @@ impl Executor {
         config: Config,
         gas_limit: u64,
         chain_id: u64,
-        block_number: u64,
+        _block_number: u64,
     ) -> Self {
         let vicinity = MemoryVicinity {
             chain_id: chain_id.into(),
             block_gas_limit: gas_limit.into(),
-            block_number: block_number.into(),
+            block_number: state.block_num.into(),
             ..default_vicinity()
         };
 
-        assert_eq!(
-            state.slot as u64, block_number,
-            "Fork state before execute on them"
-        );
+        // assert_eq!(
+        //     state.block_num as u64, block_number,
+        //     "Fork state before execute on them"
+        // );
 
         Executor {
             evm: EvmBackend::new_from_state(state, vicinity),
@@ -292,7 +292,7 @@ impl Executor {
             TransactionInReceipt::Unsigned(tx) => tx.unsigned_tx.signing_hash(Some(CHAIN_ID)),
         };
 
-        assert_eq!(block_num, self.evm.evm_state.slot);
+        assert_eq!(block_num, self.evm.evm_state.block_num);
 
         debug!("Register tx = {} in EVM block = {}", tx_hash, block_num);
 
@@ -628,21 +628,21 @@ mod tests {
         bob.nonce += 1;
 
         let mut state = executor.deconstruct();
-        state.commit();
+        state.commit_block(0);
 
         // In this realm Bob returns coins to Alice
         {
             let mut alice = alice.clone();
             let mut bob = bob.clone();
 
-            let new_slot = state.slot + 1;
-            let state = state.fork(new_slot);
+            let new_block = state.block_num + 1;
+            let state = state.fork();
             let mut executor = Executor::with_config(
                 state,
                 evm::Config::istanbul(),
                 u64::MAX,
                 TEST_CHAIN_ID,
-                new_slot,
+                new_block,
             );
 
             let send_tx = bob.call(
@@ -707,15 +707,15 @@ mod tests {
 
         // In this realm Alice sends all coins to Bob
         {
-            // NOTE: ensure slots are different
-            let new_slot = state.slot + 2;
-            let state = state.fork(new_slot);
+            // NOTE: ensure blockss are different
+            let new_block = state.block_num + 2;
+            let state = state.fork();
             let mut executor = Executor::with_config(
                 state,
                 evm::Config::istanbul(),
                 u64::MAX,
                 TEST_CHAIN_ID,
-                new_slot,
+                new_block,
             );
 
             let send_tx = alice.call(
@@ -829,7 +829,7 @@ mod tests {
         }
 
         let mut state = executor.deconstruct();
-        state.commit();
+        state.commit_block(0);
 
         let contract = Vec::<u8>::from(
             state

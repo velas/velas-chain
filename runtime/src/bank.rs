@@ -1020,7 +1020,7 @@ impl Bank {
             .evm_state
             .read()
             .expect("parent evm state was poisoned")
-            .fork(slot);
+            .fork();
 
         let mut new = Bank {
             rc,
@@ -1309,6 +1309,10 @@ impl Bank {
             evm_chain_id: self.evm_chain_id,
             evm_state_root: self.evm_state.read().unwrap().root,
         }
+    }
+
+    pub fn evm_block(&self) -> Option<evm_state::BlockHeader> {
+        self.evm_state.read().unwrap().block.clone()
     }
 
     pub fn collector_id(&self) -> &Pubkey {
@@ -2021,6 +2025,25 @@ impl Bank {
         }
     }
 
+    pub fn commit_evm(&self) {
+        let apply_start = std::time::Instant::now();
+        self.evm_state
+            .write()
+            .expect("evm state was poisoned")
+            .commit_block(self.clock().unix_timestamp as u64);
+
+        debug!(
+            "EVM state commit takes {} us",
+            apply_start.elapsed().as_micros()
+        );
+
+        debug!(
+            "Set evm state root to {:?} at block {}",
+            self.evm_state.read().unwrap().root,
+            self.slot()
+        );
+    }
+
     pub fn rehash(&self) {
         let mut hash = self.hash.write().unwrap();
         let new = self.hash_internal_state();
@@ -2043,23 +2066,6 @@ impl Bank {
         // record and commit are finished, those transactions will be
         // committed before this write lock can be obtained here.
         let mut hash = self.hash.write().unwrap();
-        let apply_start = std::time::Instant::now();
-
-        self.evm_state
-            .write()
-            .expect("evm state was poisoned")
-            .commit();
-
-        debug!(
-            "EVM state apply takes {} us",
-            apply_start.elapsed().as_micros()
-        );
-
-        debug!(
-            "Set evm state root to {:?} at block {}",
-            self.evm_state.read().unwrap().root,
-            self.slot()
-        );
 
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
@@ -2068,6 +2074,7 @@ impl Bank {
             self.distribute_rent();
             self.update_slot_history();
             self.run_incinerator();
+            self.commit_evm();
 
             // freeze is a one-way trip, idempotent
             self.freeze_started.store(true, Relaxed);
