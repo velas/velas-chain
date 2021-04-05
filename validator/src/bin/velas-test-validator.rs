@@ -24,7 +24,6 @@ use {
         signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
         system_program,
     },
-    velas_validator::{redirect_stderr_to_file, test_validator::*},
     std::{
         collections::HashSet,
         fs, io,
@@ -35,6 +34,7 @@ use {
         thread,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
+    velas_validator::{redirect_stderr_to_file, test_validator::*},
 };
 
 #[derive(PartialEq)]
@@ -471,6 +471,7 @@ fn main() {
                                 rpc_request::RpcResponseErrorData::NodeUnhealthy {
                                     num_slots_behind: Some(num_slots_behind),
                                 },
+                            original_err: _,
                         },
                     ) = &err.kind
                     {

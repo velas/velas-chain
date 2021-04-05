@@ -147,7 +147,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
         }
         let block = match meta
             .get_confirmed_block(block_num, UiTransactionEncoding::Binary.into())
-            .with_context(|| error::NativeRpcError {})?
+            .with_context(|| error::ProxyRpcError {})?
         {
             Some(block) => block,
             None => return Ok(None),
@@ -344,7 +344,7 @@ impl BasicERPC for BasicERPCImpl {
             Some(receipt) => {
                 let block_hash = meta
                     .get_confirmed_block_hash(receipt.block_number)
-                    .with_context(|| error::NativeRpcError {})?;
+                    .with_context(|| error::ProxyRpcError {})?;
                 let block_hash = block_hash.ok_or(Error::BlockNotFound {
                     block: receipt.block_number,
                 })?;
@@ -370,7 +370,7 @@ impl BasicERPC for BasicERPCImpl {
             Some(receipt) => {
                 let block_hash = meta
                     .get_confirmed_block_hash(receipt.block_number)
-                    .with_context(|| error::NativeRpcError {})?;
+                    .with_context(|| error::ProxyRpcError {})?;
                 let block_hash = block_hash.ok_or(Error::BlockNotFound {
                     block: receipt.block_number,
                 })?;
