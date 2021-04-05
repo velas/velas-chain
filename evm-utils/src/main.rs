@@ -1,10 +1,12 @@
 use evm_rpc::Hex;
+use evm_state::FromKey;
 use log::*;
 use solana_client::rpc_client::RpcClient;
 use solana_evm_loader_program::scope::*;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     message::Message,
+    native_token::lamports_to_sol,
     signature::{read_keypair_file, Signer},
 };
 use std::fs::File;
@@ -18,12 +20,25 @@ enum SubCommands {
         /// A path to a file where raw transaction is stored in bincode encoding.
         raw_tx: String,
     },
-    /// Transfer solana token to EVM world.
-    TransferToEth {
+    /// Transfer native chain token to EVM world.
+    TransferToEvm {
         /// Amount in plancks
         amount: u64,
-        /// Address in evm, that will receive tokens
+        /// Address in EVM, that will receive tokens
         ether_address: Hex<evm::Address>,
+    },
+
+    /// Print EVM address.
+    PrintEvmAddress {
+        /// HEX representated private key.
+        secret_key: evm::SecretKey,
+    },
+    /// Print EVM address.
+    GetEvmBalance {
+        /// HEX representated private key.
+        secret_key: Option<evm::SecretKey>,
+        #[structopt(short = "a", long = "address")]
+        address: Option<Hex<evm::Address>>,
     },
 
     /// DEBUG: Create dummy "CREATE" transaction.
@@ -98,7 +113,7 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             );
             debug!("Result = {:?}", result);
         }
-        SubCommands::TransferToEth {
+        SubCommands::TransferToEvm {
             amount,
             ether_address,
         } => {
@@ -126,6 +141,30 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             debug!("Result = {:?}", result);
             let res = result.expect("Failed to send transaction using rpc");
             println!("Transaction signature = {}", res);
+        }
+        SubCommands::PrintEvmAddress { secret_key } => {
+            println!("EVM Address: {:?}", secret_key.to_address());
+        }
+        SubCommands::GetEvmBalance {
+            secret_key,
+            address,
+        } => {
+            let address = address.map(|a| a.0).unwrap_or_else(|| {
+                secret_key
+                    .expect("Expected secret_key, or address in arguments")
+                    .to_address()
+            });
+            let balance = rpc_client
+                .get_evm_balance(&address)
+                .expect("Cannot parse request");
+            let lamports = evm::gweis_to_lamports(balance).0; // ignore dust
+            let vlx = lamports_to_sol(lamports);
+            println!(
+                "EVM Address: {:?}, balance: {} ({} in hex)",
+                address,
+                vlx,
+                Hex(balance)
+            );
         }
         SubCommands::CreateDummy {
             tx_file,

@@ -42,11 +42,11 @@ pub enum Error {
     #[snafu(display("Failed to find block {}", block))]
     BlockNotFound { block: evm_state::Slot },
 
-    #[snafu(display("Failed to process native chain request"))]
-    NativeRpcError { source: JRpcError },
+    #[snafu(display("Failed to process native chain request: {}", source))]
+    ProxyRpcError { source: JRpcError },
 
-    #[snafu(display("Failed to execute request, rpc return error"))]
-    ProxyRpcError { source: anyhow::Error },
+    #[snafu(display("Failed to execute request, rpc return error: {}", source))]
+    NativeRpcError { source: anyhow::Error },
 
     #[snafu(display("Error in evm processing layer"))]
     EvmStateError { source: evm_state::error::Error },
@@ -85,9 +85,8 @@ pub fn internal_error<T: ToString>(code: i64, message: &T) -> JRpcError {
         data: None,
     }
 }
-const NATIVE_RPC_ERROR: i64 = 1001;
 const EVM_STATE_RPC_ERROR: i64 = 1002;
-const PROXY_RPC_ERROR: i64 = 1003;
+const NATIVE_RPC_ERROR: i64 = 1003;
 
 const BLOCK_NOT_FOUND_RPC_ERROR: i64 = 2001;
 
@@ -110,15 +109,13 @@ impl From<Error> for JRpcError {
             Error::BigIntTrimFailed { error, .. } => {
                 Self::invalid_params_with_details(err.to_string(), error)
             }
-            Error::NativeRpcError { source } => {
-                internal_error_with_details(NATIVE_RPC_ERROR, &err, &source)
-            }
+            Error::ProxyRpcError { source } => source.clone(),
             Error::WrongChainId { .. } => Self::invalid_params(err.to_string()),
             Error::EvmStateError { source } => {
                 internal_error_with_details(EVM_STATE_RPC_ERROR, &err, &source)
             }
-            Error::ProxyRpcError { source } => {
-                internal_error_with_details(PROXY_RPC_ERROR, &err, &source)
+            Error::NativeRpcError { source } => {
+                internal_error_with_details(NATIVE_RPC_ERROR, &err, &source)
             }
             Error::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &err),
             Error::Unimplemented {} => {

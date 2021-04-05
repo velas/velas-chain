@@ -85,7 +85,7 @@ mod tests {
     DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_2_0, MainnetBeta, V1_2_0_MainnetBeta);
 
     struct SnapshotTestConfig {
-        evm_state_dir: TempDir,
+        _evm_state_dir: TempDir,
         _evm_ledger_path: TempDir,
         accounts_dir: TempDir,
         snapshot_dir: TempDir,
@@ -150,7 +150,7 @@ mod tests {
             };
             bank_forks.set_snapshot_config(Some(snapshot_config.clone()));
             SnapshotTestConfig {
-                evm_state_dir,
+                _evm_state_dir: evm_state_dir,
                 _evm_ledger_path: evm_ledger_path,
                 accounts_dir,
                 snapshot_dir,
@@ -282,14 +282,14 @@ mod tests {
         snapshot_utils::archive_snapshot_package(&snapshot_package).unwrap();
 
         // Restore bank from snapshot
-        let evm_state_path = snapshot_test_config.evm_state_dir.path();
+        let evm_state_path = TempDir::new().unwrap();
         let account_paths = &[snapshot_test_config.accounts_dir.path().to_path_buf()];
         let genesis_config = &snapshot_test_config.genesis_config_info.genesis_config;
         restore_from_snapshot(
             bank_forks,
             last_slot,
             genesis_config,
-            evm_state_path,
+            evm_state_path.path(),
             account_paths,
         );
     }

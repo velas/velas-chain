@@ -244,6 +244,7 @@ impl RpcClient {
                     code,
                     message,
                     data,
+                    original_err: _original_err,
                 }) = &err.kind
                 {
                     debug!("{} {}", code, message);

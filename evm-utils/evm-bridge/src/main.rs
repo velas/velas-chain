@@ -39,8 +39,12 @@ use solana_transaction_status::{
 };
 
 use solana_client::{
-    rpc_client::RpcClient, rpc_config::*, rpc_request::RpcRequest,
-    rpc_response::Response as RpcResponse, rpc_response::*,
+    client_error::{ClientError, ClientErrorKind},
+    rpc_client::RpcClient,
+    rpc_config::*,
+    rpc_request::RpcRequest,
+    rpc_response::Response as RpcResponse,
+    rpc_response::*,
 };
 
 use solana_core::rpc::RpcSol;
@@ -150,21 +154,18 @@ impl EvmBridge {
         self.rpc_client
             .send_transaction_with_config(&send_raw_tx, RpcSendTransactionConfig::default())
             .map(|_| Hex(hash))
-            .as_proxy_error()
+            .as_native_error()
     }
 }
 
 macro_rules! proxy_evm_rpc {
     ($rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
         {
-        trace!("evm proxy received {}", stringify!($rpc_call));
-        RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*]))
-            .map_err(|e| {
-                error!("Json rpc error = {:?}", e);
-                evm_rpc::Error::ProxyRpcError{
-                    source: e.into()
-                }
-            })
+            debug!("evm proxy received {}", stringify!($rpc_call));
+            match RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*])) {
+                Err(e) => Err(from_client_error(e).into()),
+                Ok(o) => Ok(o)
+            }
         }
     )
 }
@@ -491,15 +492,35 @@ impl BasicERPC for BasicERPCProxy {
     }
 }
 
+fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
+    let client_error_kind = client_error.kind();
+    match client_error_kind {
+        ClientErrorKind::RpcError(solana_client::rpc_request::RpcError::RpcResponseError {
+            code,
+            message,
+            data: _data,
+            original_err,
+        }) => evm_rpc::Error::ProxyRpcError {
+            source: jsonrpc_core::Error {
+                code: (*code).into(),
+                message: message.clone(),
+                data: original_err.clone().into(),
+            },
+        },
+        _ => evm_rpc::Error::NativeRpcError {
+            source: client_error.into(),
+        },
+    }
+}
+
 macro_rules! proxy_sol_rpc {
     ($rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
         {
-        debug!("proxy received {}", stringify!($rpc_call));
-        RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*]))
-            .map_err(|e| {
-                error!("Json rpc error = {:?}", e);
-                jsonrpc_core::Error::internal_error()
-            })
+            debug!("proxy received {}", stringify!($rpc_call));
+            match RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*])) {
+                Err(e) => Err(from_client_error(e).into()),
+                Ok(o) => Ok(o)
+            }
         }
     )
 }
@@ -1164,7 +1185,7 @@ fn deploy_big_tx(
 
     debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
-    let tx_bytes = bincode::serialize(&tx).as_proxy_error()?;
+    let tx_bytes = bincode::serialize(&tx).as_native_error()?;
     debug!(
         "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
         storage_pubkey,
@@ -1174,11 +1195,11 @@ fn deploy_big_tx(
 
     let balance = rpc_client
         .get_minimum_balance_for_rent_exemption(tx_bytes.len())
-        .as_proxy_error()?;
+        .as_native_error()?;
 
     let (blockhash, _, _) = rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::finalized())
-        .as_proxy_error()?
+        .as_native_error()?
         .value;
 
     let create_storage_ix = system_instruction::create_account(
@@ -1216,9 +1237,9 @@ fn deploy_big_tx(
             error!("Error create and allocate {} tx: {:?}", storage_pubkey, e);
             e
         })
-        .as_proxy_error()?;
+        .as_native_error()?;
 
-    let (blockhash, _) = rpc_client.get_new_blockhash(&blockhash).as_proxy_error()?;
+    let (blockhash, _) = rpc_client.get_new_blockhash(&blockhash).as_native_error()?;
 
     let write_data_txs: Vec<solana::Transaction> = tx_bytes
         // TODO: encapsulate
@@ -1249,11 +1270,11 @@ fn deploy_big_tx(
             error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
             e
         })
-        .as_proxy_error()?;
+        .as_native_error()?;
 
     let (blockhash, _, _) = rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
-        .as_proxy_error()?
+        .as_native_error()?
         .value;
 
     let execute_tx = solana::Transaction::new_signed_with_payer(
@@ -1283,29 +1304,23 @@ fn deploy_big_tx(
             error!("Execute EVM tx at {} failed: {:?}", storage_pubkey, e);
             e
         })
-        .as_proxy_error()?;
+        .as_native_error()?;
 
     // TODO: here we can transfer back lamports and delete storage
 
     Ok(())
 }
 
-trait AsProxyRpcError<T> {
-    fn as_proxy_error(self) -> EvmResult<T>;
+trait AsNativeRpcError<T> {
+    fn as_native_error(self) -> EvmResult<T>;
 }
 
-impl<T, Err> AsProxyRpcError<T> for StdResult<T, Err>
+impl<T, Err> AsNativeRpcError<T> for StdResult<T, Err>
 where
     anyhow::Error: From<Err>,
 {
-    fn as_proxy_error(self) -> EvmResult<T> {
+    fn as_native_error(self) -> EvmResult<T> {
         self.map_err(anyhow::Error::from)
-            .with_context(|| ProxyRpcError {})
+            .with_context(|| NativeRpcError {})
     }
 }
-
-// impl<T> AsProxyRpcError<T> for StdResult<T, anyhow::Error> {
-//     fn as_proxy_error(self) -> EvmResult<T> {
-//         self.with_context(|| ProxyRpcError {})
-//     }
-// }

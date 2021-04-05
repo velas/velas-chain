@@ -223,6 +223,7 @@ pub enum RpcError {
         code: i64,
         message: String,
         data: RpcResponseErrorData,
+        original_err: serde_json::Value,
     },
     #[error("parse error: expected {0}")]
     ParseError(String), /* "expected" */

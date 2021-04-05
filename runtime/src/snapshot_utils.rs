@@ -920,6 +920,8 @@ pub fn verify_snapshot_archive<P, Q, R>(
 
     // Check snapshots are the same
     let unpacked_snapshots = unpack_dir.join(&TAR_SNAPSHOTS_DIR);
+    // TODO: Make evm-state snapshot more consistent, currently rocksdb incremental backup is
+    // not consistent (because it support more than one backup at a time)
     assert!(!dir_diff::is_different(&snapshots_to_verify, unpacked_snapshots).unwrap());
 
     // Check the account entries are the same

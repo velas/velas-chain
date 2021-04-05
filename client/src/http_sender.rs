@@ -100,6 +100,7 @@ impl RpcSender for HttpSender {
                                     code: rpc_error_object.code,
                                     message: rpc_error_object.message,
                                     data,
+                                    original_err: json["error"]["data"].clone(),
                                 }
                                 .into())
                             }
