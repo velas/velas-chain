@@ -158,6 +158,7 @@ impl std::ops::AddAssign for BlockMeta {
     }
 }
 
+#[derive(Debug)]
 pub struct LogWithLocation {
     pub transaction_hash: H256,
     pub transaction_id: u64,

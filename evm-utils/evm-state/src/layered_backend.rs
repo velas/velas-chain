@@ -287,6 +287,8 @@ impl EvmState {
     }
 
     pub fn set_transaction_receipt(&mut self, transaction: H256, receipt: TransactionReceipt) {
+        log::debug!("Transaction receipt {}: {:?}", transaction, receipt);
+
         receipt.logs.iter().for_each(|log| {
             self.bloom.accrue(Input::Raw(log.address.as_bytes()));
             log.topics

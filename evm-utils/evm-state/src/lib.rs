@@ -243,6 +243,7 @@ impl Executor {
             evm_tx.signature.chain_id(),
             precompiles,
         )?;
+
         self.register_tx_with_receipt(
             TransactionInReceipt::Signed(evm_tx),
             used_gas.into(),
@@ -840,5 +841,62 @@ mod tests {
         );
 
         assert_eq!(&contract, &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap());
+    }
+
+    #[test]
+    fn it_handles_logs_filtering() {
+        use ethabi::Token;
+
+        let _logger = simple_logger::SimpleLogger::new().init();
+
+        let code = hex::decode(METACOIN_CODE).unwrap();
+
+        let mut executor = Executor::with_config(
+            EvmState::default(),
+            evm::Config::istanbul(),
+            u64::MAX,
+            TEST_CHAIN_ID,
+            0,
+        );
+
+        let mut alice = Persona::new();
+        let create_tx = alice.create(&code);
+        let contract = create_tx.address().unwrap();
+
+        assert!(matches!(
+            executor
+                .transaction_execute(create_tx, noop_precompile)
+                .unwrap(),
+            (ExitReason::Succeed(ExitSucceed::Returned), _)
+        ));
+
+        alice.nonce += 1;
+
+        let call_tx = alice.call(
+            contract,
+            &metacoin::GET_BALANCE
+                .encode_input(&[Token::Address(alice.address())])
+                .unwrap(),
+        );
+
+        let (exit_reason, bytes) = executor
+            .transaction_execute(call_tx, noop_precompile)
+            .unwrap();
+
+        assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+        assert_eq!(
+            metacoin::GET_BALANCE.decode_output(&bytes).unwrap(),
+            vec![Token::Uint(U256::from(INITIAL_BALANCE))]
+        );
+
+        let logs = executor.evm.evm_state.get_logs(LogFilter {
+            from_block: 0,
+            to_block: 10,
+            address: None,
+            topics: vec![],
+        });
+
+        info!("logs {:?}", logs);
+        todo!();
     }
 }
