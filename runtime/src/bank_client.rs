@@ -27,7 +27,16 @@ use std::{
 
 pub struct BankClient {
     bank: Arc<Bank>,
-    transaction_sender: Mutex<Sender<Transaction>>,
+    transaction_sender: Option<Mutex<Sender<Transaction>>>,
+    join_bg_thread: Option<std::thread::JoinHandle<()>>,
+}
+
+// Implement handwritten drop, to force dropping all background threads before main.
+impl Drop for BankClient {
+    fn drop(&mut self) {
+        drop(self.transaction_sender.take()); // drop sender first
+        let _err = self.join_bg_thread.take().unwrap().join(); // then wait for background thread to stop.
+    }
 }
 
 impl Client for BankClient {
@@ -39,7 +48,7 @@ impl Client for BankClient {
 impl AsyncClient for BankClient {
     fn async_send_transaction(&self, transaction: Transaction) -> Result<Signature> {
         let signature = transaction.signatures.get(0).cloned().unwrap_or_default();
-        let transaction_sender = self.transaction_sender.lock().unwrap();
+        let transaction_sender = self.transaction_sender.as_ref().unwrap().lock().unwrap();
         transaction_sender.send(transaction).unwrap();
         Ok(signature)
     }
@@ -298,16 +307,19 @@ impl BankClient {
 
     pub fn new_shared(bank: &Arc<Bank>) -> Self {
         let (transaction_sender, transaction_receiver) = channel();
-        let transaction_sender = Mutex::new(transaction_sender);
+        let transaction_sender = Some(Mutex::new(transaction_sender));
         let thread_bank = bank.clone();
         let bank = bank.clone();
-        Builder::new()
-            .name("solana-bank-client".to_string())
-            .spawn(move || Self::run(&thread_bank, transaction_receiver))
-            .unwrap();
+        let join_bg_thread = Some(
+            Builder::new()
+                .name("solana-bank-client".to_string())
+                .spawn(move || Self::run(&thread_bank, transaction_receiver))
+                .unwrap(),
+        );
         Self {
             bank,
             transaction_sender,
+            join_bg_thread,
         }
     }
 
