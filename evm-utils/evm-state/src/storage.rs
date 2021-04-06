@@ -84,7 +84,7 @@ impl Storage {
             Codes::COLUMN_NAME,
             Transactions::COLUMN_NAME,
             Receipts::COLUMN_NAME,
-            TransactionHashesPerBlock::COLUMN_NAME,
+            BlockMetas::COLUMN_NAME,
         ]
         .iter()
         .map(|column| ColumnFamilyDescriptor::new(*column, Options::default()));
@@ -193,11 +193,11 @@ impl SubStorage for Receipts {
     type Value = TransactionReceipt;
 }
 
-pub enum TransactionHashesPerBlock {}
-impl SubStorage for TransactionHashesPerBlock {
-    const COLUMN_NAME: &'static str = "transactions_per_block";
+pub enum BlockMetas {}
+impl SubStorage for BlockMetas {
+    const COLUMN_NAME: &'static str = "block_meta_info";
     type Key = Slot;
-    type Value = Vec<H256>;
+    type Value = BlockMeta;
 }
 
 impl Storage {

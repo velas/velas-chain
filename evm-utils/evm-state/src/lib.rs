@@ -299,7 +299,8 @@ impl Executor {
         let tx_hashes = self
             .evm
             .evm_state
-            .get_transactions_in_block(block_num)
+            .get_block_meta(block_num)
+            .map(|BlockMeta { transactions, .. }| transactions)
             .expect("The block must be the same as in state and contains some transactions");
 
         // Because tx_list can be inconsistent on nodes we should avoid such assertions.

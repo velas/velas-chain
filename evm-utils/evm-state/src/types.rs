@@ -1,9 +1,9 @@
 use derive_more::{From, Into};
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 
+use ethbloom::{Bloom, Input};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-
 use triedb::empty_trie_hash;
 
 pub use evm::backend::MemoryAccount;
@@ -129,6 +129,35 @@ impl Decodable for Account {
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlockMeta {
+    pub bloom: Bloom,
+    pub transactions: Vec<H256>,
+}
+
+impl BlockMeta {
+    pub fn is_empty(&self) -> bool {
+        self.bloom.is_empty() && self.transactions.is_empty()
+    }
+}
+
+impl std::ops::Add for BlockMeta {
+    type Output = Self;
+
+    fn add(mut self, rhs: Self) -> Self {
+        self += rhs;
+        self
+    }
+}
+
+impl std::ops::AddAssign for BlockMeta {
+    #[allow(clippy::suspicious_op_assign_impl)]
+    fn add_assign(&mut self, rhs: Self) {
+        self.bloom |= rhs.bloom;
+        self.transactions.extend(rhs.transactions);
+    }
+}
+
 pub struct LogWithLocation {
     pub transaction_hash: H256,
     pub transaction_id: u64,
@@ -143,6 +172,26 @@ pub struct LogFilter {
     pub to_block: u64,
     pub address: Option<H160>,
     pub topics: Vec<H256>,
+}
+
+impl LogFilter {
+    pub fn bloom_possibilities(&self) -> Vec<Bloom> {
+        let bloom = if let Some(address) = self.address {
+            Bloom::from(Input::Raw(address.as_bytes()))
+        } else {
+            Bloom::default()
+        };
+
+        self.topics
+            .iter()
+            .copied()
+            .map(|topic| {
+                let mut b = bloom;
+                b.accrue(Input::Hash(topic.as_fixed_bytes()));
+                b
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -179,6 +228,28 @@ mod tests {
         }
     }
 
+    impl Arbitrary for BlockMeta {
+        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+            let zf: Vec<()> = Arbitrary::arbitrary(g);
+
+            let transactions: Vec<H256> = zf
+                .into_iter()
+                .map(|_| H256::from_low_u64_be(u64::arbitrary(g)))
+                .collect();
+
+            let mut bloom = Bloom::default();
+            // TODO: Actually logs topics, not transactions by itself
+            transactions
+                .iter()
+                .for_each(|tx| bloom.accrue(Input::Hash(tx.as_fixed_bytes())));
+
+            Self {
+                bloom,
+                transactions,
+            }
+        }
+    }
+
     #[quickcheck]
     fn qc_encode_decode_account_works(account: Account) {
         let bytes = rlp::encode(&account);
@@ -191,5 +262,10 @@ mod tests {
         let bytes = rlp::encode(&account_state);
         let decoded = rlp::decode::<AccountState>(bytes.as_ref()).unwrap();
         assert_eq!(account_state, decoded);
+    }
+
+    #[quickcheck]
+    fn qc_default_block_meta_works_as_identity_element(block_meta: BlockMeta) -> bool {
+        block_meta == block_meta.clone() + BlockMeta::default()
     }
 }

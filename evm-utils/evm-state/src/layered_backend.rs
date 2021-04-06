@@ -2,6 +2,7 @@ use std::{collections::HashMap, fmt::Debug, fs, path::Path};
 
 use log::*;
 
+use ethbloom::{Bloom, Input};
 use primitive_types::H256;
 use rlp::{Decodable, Encodable};
 use rocksdb::DB;
@@ -13,7 +14,7 @@ use triedb::{
 };
 
 use crate::{
-    storage::{Codes, Receipts, Storage as KVS, TransactionHashesPerBlock},
+    storage::{BlockMetas, Codes, Receipts, Storage as KVS},
     transactions::TransactionReceipt,
     types::*,
 };
@@ -27,7 +28,7 @@ pub struct EvmState {
 
     /// Maybe::Nothing indicates removed account
     states: HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>,
-
+    bloom: Bloom,
     receipts: HashMap<H256, TransactionReceipt>,
 }
 
@@ -44,7 +45,7 @@ impl Default for EvmState {
             kvs,
 
             states: HashMap::new(),
-
+            bloom: Bloom::default(),
             receipts: HashMap::new(),
         }
     }
@@ -120,23 +121,27 @@ impl EvmState {
         let accounts_patch = accounts.to_trie().into_patch();
         let new_root = account_tries.apply(accounts_patch);
 
-        // Extend existing hashes for current block
-        let hashes = self
-            .kvs
-            .get::<TransactionHashesPerBlock>(self.slot)
-            .into_iter()
-            .flatten()
-            .chain(self.receipts.keys().copied())
-            .collect();
-
         // TODO: store only non-empty hashes
-        self.kvs.set::<TransactionHashesPerBlock>(self.slot, hashes);
+
+        let block_meta = self.get_block_meta(self.slot);
+
+        match block_meta {
+            Some(block_meta) if !block_meta.is_empty() => {
+                self.kvs.set::<BlockMetas>(self.slot, block_meta);
+            }
+            Some(block_meta) => {
+                assert!(block_meta.transactions.is_empty());
+                assert!(block_meta.bloom.is_empty());
+            }
+            None => {}
+        }
 
         for (hash, receipt) in std::mem::take(&mut self.receipts) {
             self.kvs.set::<Receipts>(hash, receipt);
         }
 
         self.root = new_root;
+        self.bloom = Bloom::default();
         trace!("commit: after state = {:?}", self);
     }
 
@@ -148,7 +153,7 @@ impl EvmState {
             kvs: self.kvs.clone(),
 
             states: HashMap::new(),
-
+            bloom: Bloom::default(),
             receipts: HashMap::new(),
         }
     }
@@ -190,6 +195,7 @@ impl EvmState {
             })
     }
 
+    // TODO: hide this method and add some test only methods for set-up account state via transaction
     pub fn set_account_state(&mut self, address: H160, account_state: AccountState) {
         use std::collections::hash_map::Entry::*;
 
@@ -246,21 +252,29 @@ impl EvmState {
         storage.extend(indexed_values);
     }
 
-    // Transactions
+    pub fn get_block_meta(&self, block: Slot) -> Option<BlockMeta> {
+        let mut block_meta = self.kvs.get::<BlockMetas>(block);
 
-    pub fn get_transactions_in_block(&self, block: Slot) -> Option<Vec<H256>> {
-        let applied = self.kvs.get::<TransactionHashesPerBlock>(block);
-        if self.slot == block {
-            Some(
-                self.receipts
-                    .keys()
-                    .copied()
-                    .chain(applied.into_iter().flatten())
-                    .collect(),
-            )
-        } else {
-            applied
+        debug_assert!(self.receipts.values().all(|receipt| {
+            receipt.logs.iter().all(|log| {
+                self.bloom
+                    .contains_input(Input::Raw(log.address.as_bytes()))
+                    && log.topics.iter().all(|topic| {
+                        self.bloom
+                            .contains_input(Input::Hash(topic.as_fixed_bytes()))
+                    })
+            })
+        }));
+
+        if block == self.slot {
+            let meta_addition = BlockMeta {
+                bloom: self.bloom,
+                transactions: self.receipts.keys().copied().collect(),
+            };
+            block_meta = Some(block_meta.unwrap_or_default() + meta_addition);
         }
+
+        block_meta
     }
 
     // Transaction Receipts
@@ -273,6 +287,12 @@ impl EvmState {
     }
 
     pub fn set_transaction_receipt(&mut self, transaction: H256, receipt: TransactionReceipt) {
+        receipt.logs.iter().for_each(|log| {
+            self.bloom.accrue(Input::Raw(log.address.as_bytes()));
+            log.topics
+                .iter()
+                .for_each(|topic| self.bloom.accrue(Input::Hash(topic.as_fixed_bytes())));
+        });
         self.receipts.insert(transaction, receipt);
     }
 }
@@ -321,44 +341,47 @@ impl EvmState {
             kvs,
 
             states: HashMap::new(),
-
+            bloom: Bloom::default(),
             receipts: HashMap::new(),
         })
     }
 
-    // TODO: Optimize, using bloom filters.
     // TODO: Check topics query limits <= 4.
-    // TODO: Filter by address, topics
-    pub fn get_logs(&self, log_filter: LogFilter) -> Vec<LogWithLocation> {
-        let mut result = Vec::new();
+    pub fn get_logs(&self, filter: LogFilter) -> Vec<LogWithLocation> {
+        let masks = filter.bloom_possibilities();
 
-        for (block_id, txs) in (log_filter.from_block..=log_filter.to_block)
-            .filter_map(|b| self.get_transactions_in_block(b).map(|txs| (b, txs)))
-        {
-            txs.into_iter()
-                .map(|tx_hash| {
-                    (
-                        tx_hash,
-                        self.get_transaction_receipt(tx_hash)
-                            .expect("Transacton not found by hash, while exist by number"),
-                    )
-                })
-                .enumerate()
-                .for_each(|(tx_id, (tx_hash, receipt))| {
-                    for log in receipt.logs {
-                        let log_entry = LogWithLocation {
-                            transaction_hash: tx_hash,
-                            transaction_id: tx_id as u64,
-                            block_num: block_id,
+        (filter.from_block..=filter.to_block)
+            .flat_map(|block| {
+                self.get_block_meta(block)
+                    .map(|block_meta| (block, block_meta))
+            })
+            .filter(|(_, block_meta)| {
+                masks
+                    .iter()
+                    .any(|mask| block_meta.bloom.contains_bloom(mask))
+            })
+            .flat_map(|(block, BlockMeta { transactions, .. })| {
+                transactions
+                    .into_iter()
+                    .map(|tx| {
+                        let receipt = self
+                            .get_transaction_receipt(tx)
+                            .expect("Transacton not found by hash, while exist by number");
+                        (tx, receipt)
+                    })
+                    .enumerate()
+                    .flat_map(move |(id, (tx, receipt))| {
+                        receipt.logs.into_iter().map(move |log| LogWithLocation {
+                            transaction_hash: tx,
+                            transaction_id: id as u64,
+                            block_num: block,
                             data: log.data,
                             topics: log.topics,
                             address: log.address,
-                        };
-                        result.push(log_entry)
-                    }
-                });
-        }
-        result
+                        })
+                    })
+            })
+            .collect()
     }
 
     pub fn set_initial(

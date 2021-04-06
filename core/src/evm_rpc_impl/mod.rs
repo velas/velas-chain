@@ -14,7 +14,7 @@ use evm_rpc::{
     error::{self, Error},
     Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTransaction,
 };
-use evm_state::{Address, Config, Gas, LogFilter, H256, U256};
+use evm_state::{Address, BlockMeta, Config, Gas, LogFilter, H256, U256};
 
 use crate::rpc::JsonRpcRequestProcessor;
 
@@ -160,7 +160,9 @@ impl ChainMockERPC for ChainMockERPCImpl {
         let parent_hash = solana_sdk::hash::Hash::from_str(&block.previous_blockhash).unwrap();
         let bank = meta.bank(None);
         let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
-        let tx_hashes = evm_lock.get_transactions_in_block(block_num);
+        let tx_hashes = evm_lock
+            .get_block_meta(block_num)
+            .map(|BlockMeta { transactions, .. }| transactions);
         let transactions = if full {
             let txs = tx_hashes
                 .iter()
