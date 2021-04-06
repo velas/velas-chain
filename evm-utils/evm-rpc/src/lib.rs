@@ -9,7 +9,7 @@ use snafu::ResultExt;
 
 mod serialize;
 use self::error::EvmStateError;
-use evm_state::{Address, Gas, LogWithLocation, TransactionInReceipt};
+use evm_state::{Address, Gas, LogFilterTopicEntry, LogWithLocation, TransactionInReceipt};
 
 pub mod error;
 pub use self::error::Error;
@@ -27,6 +27,18 @@ pub enum Either<T, U> {
 pub enum RPCTopicFilter {
     Single(Hex<H256>),
     Or(Vec<Hex<H256>>),
+}
+
+impl RPCTopicFilter {
+    pub fn to_topics(value: Option<RPCTopicFilter>) -> LogFilterTopicEntry {
+        match value {
+            Some(RPCTopicFilter::Single(t)) => LogFilterTopicEntry::One(t.0),
+            Some(RPCTopicFilter::Or(t)) => {
+                LogFilterTopicEntry::Or(t.into_iter().map(|h| h.0).collect())
+            }
+            None => LogFilterTopicEntry::Any,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -71,7 +83,7 @@ pub struct RPCBlock {
     pub nonce: Hex<u64>,
 
     pub sha3_uncles: Hex<H256>,
-    pub logs_bloom: Hex<H256>, // H2048
+    pub logs_bloom: ethbloom::Bloom, // H2048
 
     pub miner: Hex<Address>,
     pub difficulty: Hex<U256>,
@@ -108,6 +120,7 @@ pub struct RPCReceipt {
     pub cumulative_gas_used: Hex<Gas>,
     pub gas_used: Hex<Gas>,
     pub contract_address: Option<Hex<Address>>,
+    pub logs_bloom: ethbloom::Bloom, // H2048
     pub to: Option<Hex<Address>>,
     pub logs: Vec<RPCLog>,
     pub status: Hex<usize>,
@@ -639,6 +652,7 @@ impl RPCReceipt {
             transaction_index: tx_index,
             block_hash: block_hash.into(),
             block_number,
+            logs_bloom: receipt.logs_bloom,
             logs,
             status: Hex(if let evm_state::ExitReason::Succeed(_) = receipt.status {
                 1

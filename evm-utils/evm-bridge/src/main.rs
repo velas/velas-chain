@@ -306,27 +306,7 @@ impl ChainMockERPC for ChainMockERPCProxy {
         _block_hash: Hex<H256>,
         _full: bool,
     ) -> EvmResult<Option<RPCBlock>> {
-        Ok(Some(RPCBlock {
-            number: U256::zero().into(),
-            hash: H256::zero().into(),
-            parent_hash: H256::zero().into(),
-            size: 0.into(),
-            gas_limit: Gas::zero().into(),
-            gas_used: Gas::zero().into(),
-            timestamp: 0.into(),
-            transactions: Either::Left(vec![]),
-            nonce: 0.into(),
-            sha3_uncles: H256::zero().into(),
-            logs_bloom: H256::zero().into(), // H2048
-            transactions_root: H256::zero().into(),
-            state_root: H256::zero().into(),
-            receipts_root: H256::zero().into(),
-            miner: Address::zero().into(),
-            difficulty: U256::zero().into(),
-            total_difficulty: U256::zero().into(),
-            extra_data: vec![].into(),
-            uncles: vec![],
-        }))
+        Err(evm_rpc::error::Error::Unimplemented {})
     }
 
     fn block_by_number(

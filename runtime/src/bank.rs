@@ -2486,6 +2486,25 @@ impl Bank {
         batch
     }
 
+    pub fn take_evm_state_cloned(&self) -> evm_state::EvmBackend<evm_state::Incomming> {
+        match &*self.evm_state.read().expect("bank evm state was poisoned") {
+            evm_state::EvmState::Incomming(i) => i.clone(),
+            evm_state::EvmState::Committed(_) => {
+                panic!("Bank state was committed",)
+            }
+        }
+    }
+
+    pub fn take_evm_state_form_simulation(&self) -> evm_state::EvmBackend<evm_state::Incomming> {
+        match &*self.evm_state.read().expect("bank evm state was poisoned") {
+            evm_state::EvmState::Incomming(i) => i.clone(),
+            evm_state::EvmState::Committed(c) => {
+                debug!("Creating cloned evm state for simulation");
+                c.next_incomming(self.clock().unix_timestamp as u64)
+            }
+        }
+    }
+
     /// Run transactions against a frozen bank without committing the results
     pub fn simulate_transaction(
         &self,
@@ -2514,6 +2533,7 @@ impl Bank {
             false,
             true,
             &mut ExecuteTimings::default(),
+            Self::take_evm_state_form_simulation,
         );
 
         let transaction_result = executed[0].0.clone().map(|_| ());
@@ -2925,6 +2945,7 @@ impl Bank {
         enable_cpi_recording: bool,
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
+        evm_state_getter: impl Fn(&Self) -> evm_state::EvmBackend<evm_state::Incomming>,
     ) -> (
         Vec<TransactionLoadResult>,
         Vec<TransactionExecutionResult>,
@@ -3012,14 +3033,7 @@ impl Bank {
                     // Create evm_executor only if evm_state account is locked.
                     let mut evm_executor = if tx.message.is_modify_evm_state() {
                         // append to old patch if exist, or create new, from existing evm state
-                        let state = evm_patch.take().unwrap_or_else(|| {
-                            match &*self.evm_state.read().expect("bank evm state was poisoned") {
-                                evm_state::EvmState::Incomming(i) => i.clone(),
-                                evm_state::EvmState::Committed(_) => {
-                                    panic!("Bank state was committed",)
-                                }
-                            }
-                        });
+                        let state = evm_patch.take().unwrap_or_else(|| evm_state_getter(self));
 
                         let evm_executor = evm_state::Executor::with_config(
                             state,
@@ -3889,6 +3903,7 @@ impl Bank {
             enable_cpi_recording,
             enable_log_recording,
             timings,
+            Self::take_evm_state_cloned,
         );
 
         let results = self.commit_transactions(
