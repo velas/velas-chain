@@ -4928,12 +4928,16 @@ impl Bank {
     }
 
     fn adjust_capitalization_for_existing_specially_retained_accounts(&self) {
-        use solana_sdk::{bpf_loader, bpf_loader_deprecated, secp256k1_program};
-        let mut existing_sysvar_account_count = 9;
-        let mut existing_native_program_account_count = 5;
+        use solana_sdk::{bpf_loader, bpf_loader_deprecated, evm_loader, secp256k1_program};
+        let mut existing_sysvar_account_count = 8;
+        let mut existing_native_program_account_count = 4;
 
         if self.get_account(&sysvar::rewards::id()).is_some() {
             existing_sysvar_account_count += 1;
+        }
+
+        if self.get_account(&evm_loader::id()).is_some() {
+            existing_native_program_account_count += 1;
         }
 
         if self.get_account(&bpf_loader::id()).is_some() {
@@ -10511,7 +10515,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_bank_hash_consistency() {
         solana_logger::setup();
 
@@ -10533,25 +10536,29 @@ pub(crate) mod tests {
             if bank.slot == 0 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "6oxxAqridoSSPQ1rnEh8qBhQpMmLUve3X4fsNNr2gExE"
+                    "BVQzGxPW2tFCdz3UZh3WcXJD8rFpf8383uAWYz6D3DMQ"
                 );
+                assert_eq!(
+                    bank.evm_state.read().unwrap().root,
+                    evm_state::empty_trie_hash()
+                )
             }
             if bank.slot == 32 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "7AkMgAb2v4tuoiSf3NnVgaBxSvp7XidbrSwsPEn4ENTp"
+                    "GnBex23MFXVXKc1A3rguPUEUSUD8wztot7fjqDUVeMgh"
                 );
             }
             if bank.slot == 64 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "2JzWWRBtQgdXboaACBRXNNKsHeBtn57uYmqH1AgGUkdG"
+                    "5mZTXogcLNXFbjVntWWpnjJv9Vt58zaFHQra35VnLZAy"
                 );
             }
             if bank.slot == 128 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "FQnVhDVjhCyfBxFb3bdm3CLiuCePvWuW5TGDsLBZnKAo"
+                    "3hB74cKir8tdFFJuGkVsVMjD4rWtfeNpbJFjPRCn4xrB"
                 );
                 break;
             }
@@ -10693,11 +10700,10 @@ pub(crate) mod tests {
         // No more slots should be shrunk
         assert_eq!(bank2.shrink_candidate_slots(), 0);
         // alive_counts represents the count of alive accounts in the three slots 0,1,2
-        assert_eq!(alive_counts, vec![11, 1, 7]);
+        assert_eq!(alive_counts, vec![10, 1, 7]);
     }
 
     #[test]
-    #[ignore]
     fn test_process_stale_slot_with_budget() {
         solana_logger::setup();
 
@@ -10742,7 +10748,7 @@ pub(crate) mod tests {
             .map(|_| bank.process_stale_slot_with_budget(0, force_to_return_alive_account))
             .sum();
         // consumed_budgets represents the count of alive accounts in the three slots 0,1,2
-        assert_eq!(consumed_budgets, 10);
+        assert_eq!(consumed_budgets, 11);
     }
 
     #[test]
@@ -11514,11 +11520,11 @@ pub(crate) mod tests {
             &feature::create_account(&Feature { activated_at: None }, feature_balance),
         );
 
-        // 12 is minimum adjusted cap increase in adjust_capitalization_for_existing_specially_retained_accounts
+        // 13 is minimum adjusted cap increase in adjust_capitalization_for_existing_specially_retained_accounts
         assert_capitalization_diff_with_new_bank(
             &bank1,
             || Bank::new_from_parent(&bank1, &Pubkey::default(), bank1.first_slot_in_next_epoch()),
-            |old, new| assert_eq!(old + 14, new),
+            |old, new| assert_eq!(old + 13, new),
         );
     }
 
@@ -11598,11 +11604,11 @@ pub(crate) mod tests {
             &feature::create_account(&Feature { activated_at: None }, feature_balance),
         );
 
-        // 16 is maximum adjusted cap increase in adjust_capitalization_for_existing_specially_retained_accounts
+        // 17 is maximum adjusted cap increase in adjust_capitalization_for_existing_specially_retained_accounts
         assert_capitalization_diff_with_new_bank(
             &bank1,
             || Bank::new_from_parent(&bank1, &Pubkey::default(), bank1.first_slot_in_next_epoch()),
-            |old, new| assert_eq!(old + 18, new),
+            |old, new| assert_eq!(old + 17, new),
         );
     }
 
@@ -12187,7 +12193,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_get_inflation_start_slot_devnet_testnet() {
+    fn test_get_inflation_start_slot() {
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_genesis_config_with_leader(42, &solana_sdk::pubkey::new_rand(), 42);
@@ -12200,8 +12206,8 @@ pub(crate) mod tests {
             .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
             .unwrap();
         for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
-            genesis_config.accounts.remove(&pair.vote_id).unwrap();
-            genesis_config.accounts.remove(&pair.enable_id).unwrap();
+            let _ = genesis_config.accounts.remove(&pair.vote_id);
+            let _ = genesis_config.accounts.remove(&pair.enable_id);
         }
 
         let bank = Bank::new(&genesis_config);
@@ -12259,91 +12265,6 @@ pub(crate) mod tests {
             &feature::create_account(
                 &Feature {
                     activated_at: Some(3),
-                },
-                42,
-            ),
-        );
-        bank.compute_active_feature_set(true);
-        assert_eq!(bank.get_inflation_start_slot(), 2);
-    }
-
-    #[test]
-    fn test_get_inflation_start_slot_mainnet() {
-        let GenesisConfigInfo {
-            mut genesis_config, ..
-        } = create_genesis_config_with_leader(42, &solana_sdk::pubkey::new_rand(), 42);
-        genesis_config
-            .accounts
-            .remove(&feature_set::pico_inflation::id())
-            .unwrap();
-        genesis_config
-            .accounts
-            .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
-            .unwrap();
-        for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
-            genesis_config.accounts.remove(&pair.vote_id).unwrap();
-            genesis_config.accounts.remove(&pair.enable_id).unwrap();
-        }
-
-        let bank = Bank::new(&genesis_config);
-
-        // Advance slot
-        let mut bank = new_from_parent(&Arc::new(bank));
-        bank = new_from_parent(&Arc::new(bank));
-        assert_eq!(bank.get_inflation_start_slot(), 0);
-        assert_eq!(bank.slot(), 2);
-
-        // Request `pico_inflation` activation
-        bank.store_account(
-            &feature_set::pico_inflation::id(),
-            &feature::create_account(
-                &Feature {
-                    activated_at: Some(1),
-                },
-                42,
-            ),
-        );
-        bank.compute_active_feature_set(true);
-        assert_eq!(bank.get_inflation_start_slot(), 1);
-
-        // Advance slot
-        bank = new_from_parent(&Arc::new(bank));
-        assert_eq!(bank.slot(), 3);
-
-        // Request `full_inflation::mainnet::certusone` activation,
-        // which takes priority over pico_inflation
-        bank.store_account(
-            &feature_set::full_inflation::mainnet::certusone::vote::id(),
-            &feature::create_account(
-                &Feature {
-                    activated_at: Some(2),
-                },
-                42,
-            ),
-        );
-        bank.store_account(
-            &feature_set::full_inflation::mainnet::certusone::enable::id(),
-            &feature::create_account(
-                &Feature {
-                    activated_at: Some(2),
-                },
-                42,
-            ),
-        );
-        bank.compute_active_feature_set(true);
-        assert_eq!(bank.get_inflation_start_slot(), 2);
-
-        // Advance slot
-        bank = new_from_parent(&Arc::new(bank));
-        assert_eq!(bank.slot(), 4);
-
-        // Request `full_inflation::devnet_and_testnet_velas_mainnet` activation,
-        // which should have no effect on `get_inflation_start_slot`
-        bank.store_account(
-            &feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id(),
-            &feature::create_account(
-                &Feature {
-                    activated_at: Some(bank.slot()),
                 },
                 42,
             ),
@@ -12368,8 +12289,8 @@ pub(crate) mod tests {
             .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
             .unwrap();
         for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
-            genesis_config.accounts.remove(&pair.vote_id).unwrap();
-            genesis_config.accounts.remove(&pair.enable_id).unwrap();
+            let _ = genesis_config.accounts.remove(&pair.vote_id);
+            let _ = genesis_config.accounts.remove(&pair.enable_id);
         }
 
         let mut bank = Bank::new(&genesis_config);

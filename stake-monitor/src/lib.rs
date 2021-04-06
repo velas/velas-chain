@@ -376,6 +376,7 @@ mod test {
 
     #[test]
     #[serial]
+    #[ignore]
     fn test_record() {
         solana_logger::setup();
         let mut accounts_info = AccountsInfo::default();

@@ -65,6 +65,7 @@ impl AsRef<Path> for Location {
 #[derive(Clone, Debug)]
 pub struct Storage {
     pub(crate) db: Arc<DbWithClose>,
+    // Location should be second field, because of drop order in Rust.
     location: Location,
 }
 
@@ -144,7 +145,7 @@ pub struct DbWithClose(DB);
 
 impl Drop for DbWithClose {
     fn drop(&mut self) {
-        self.0.cancel_all_background_work(true);
+        // self.0.cancel_all_background_work(true);
     }
 }
 impl AsRef<DB> for DbWithClose {
