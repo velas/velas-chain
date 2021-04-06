@@ -1,4 +1,4 @@
-use evm::backend::{Apply, Backend, Basic, Log};
+use evm::backend::{Apply, Backend, Basic};
 use primitive_types::{H160, H256, U256};
 use std::fmt;
 use std::{collections::HashMap, iter::FromIterator};
@@ -165,11 +165,10 @@ impl<'a> ExecutorContext<'a, Incomming> {
     }
 
     // TODO: implement logs append for blocks.
-    pub fn apply<A, I, L>(self, values: A, logs: L, used_gas: u64)
+    pub fn apply<A, I>(self, values: A, used_gas: u64)
     where
         A: IntoIterator<Item = Apply<I>>,
         I: IntoIterator<Item = (H256, H256)>,
-        L: IntoIterator<Item = Log>,
     {
         for apply in values {
             match apply {

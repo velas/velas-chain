@@ -706,6 +706,7 @@ impl BankingStage {
             transaction_status_sender.is_some(),
             transaction_status_sender.is_some(),
             &mut execute_timings,
+            Bank::take_evm_state_cloned,
         );
 
         load_execute_time.stop();

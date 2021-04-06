@@ -10,7 +10,7 @@ use evm_rpc::{
     basic::BasicERPC,
     chain_mock::ChainMockERPC,
     error::{self, Error},
-    Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTransaction,
+    Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{AccountProvider, Address, Config, Gas, LogFilter, H256, U256};
 
@@ -81,7 +81,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
     }
 
     fn client_version(&self, _meta: Self::Metadata) -> Result<String, Error> {
-        Ok(String::from("velas-chain/v0.1.0"))
+        Ok(String::from("velas-chain/v0.3.0"))
     }
 
     fn protocol_version(&self, _meta: Self::Metadata) -> Result<String, Error> {
@@ -89,7 +89,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
     }
 
     fn is_syncing(&self, _meta: Self::Metadata) -> Result<bool, Error> {
-        Ok(false)
+        Err(Error::Unimplemented {})
     }
 
     fn coinbase(&self, _meta: Self::Metadata) -> Result<Hex<Address>, Error> {
@@ -101,7 +101,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
     }
 
     fn hashrate(&self, _meta: Self::Metadata) -> Result<String, Error> {
-        Ok(String::from("0x00"))
+        Err(Error::Unimplemented {})
     }
 
     fn block_by_hash(
@@ -110,27 +110,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
         _block_hash: Hex<H256>,
         _full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
-        Ok(Some(RPCBlock {
-            number: U256::zero().into(),
-            hash: H256::zero().into(),
-            parent_hash: H256::zero().into(),
-            size: 0x100.into(),
-            gas_limit: Gas::zero().into(),
-            gas_used: Gas::zero().into(),
-            timestamp: 0.into(),
-            transactions: Either::Left(vec![]),
-            nonce: 0.into(),
-            sha3_uncles: H256::zero().into(),
-            logs_bloom: H256::zero().into(), // H2048
-            transactions_root: H256::zero().into(),
-            state_root: H256::zero().into(),
-            receipts_root: H256::zero().into(),
-            miner: Address::zero().into(),
-            difficulty: U256::zero().into(),
-            total_difficulty: U256::zero().into(),
-            extra_data: b"Native chain data ommitted...".to_vec().into(),
-            uncles: vec![],
-        }))
+        Err(Error::Unimplemented {})
     }
 
     fn block_by_number(
@@ -180,7 +160,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
             timestamp: Hex(block.header.timestamp.into()),
             transactions,
             nonce: 0x7bb9369dcbaec019.into(),
-            logs_bloom: H256::zero().into(), // H2048
+            logs_bloom: block.header.logs_bloom, // H2048
             transactions_root: Hex(block.header.transactions_root),
             state_root: Hex(block.header.state_root),
             receipts_root: Hex(block.header.receipts_root),
@@ -270,7 +250,8 @@ impl BasicERPC for BasicERPCImpl {
     // The same as get_slot
     fn block_number(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error> {
         let bank = meta.bank(None);
-        Ok(Hex(bank.slot() as usize))
+        let evm = bank.evm_state.read().unwrap();
+        Ok(Hex(evm.block_number() as usize))
     }
 
     fn balance(
@@ -336,15 +317,13 @@ impl BasicERPC for BasicERPCImpl {
 
         Ok(match receipt {
             Some(receipt) => {
-                let block_hash = meta
-                    .get_confirmed_block_hash(receipt.block_number)
-                    .with_context(|| error::ProxyRpcError {})?;
-                let block_hash = block_hash.ok_or(Error::BlockNotFound {
-                    block: receipt.block_number,
-                })?;
-                let block_hash = solana_sdk::hash::Hash::from_str(&block_hash).unwrap();
-                let block_hash = H256::from_slice(&block_hash.0);
-
+                let (block, _) = meta
+                    .blockstore
+                    .get_evm_block(receipt.block_number)
+                    .map_err(|_| Error::BlockNotFound {
+                        block: receipt.block_number,
+                    })?;
+                let block_hash = block.header.hash();
                 Some(RPCTransaction::new_from_receipt(receipt, block_hash)?)
             }
             None => None,
@@ -364,14 +343,13 @@ impl BasicERPC for BasicERPCImpl {
 
         Ok(match receipt {
             Some(receipt) => {
-                let block_hash = meta
-                    .get_confirmed_block_hash(receipt.block_number)
-                    .with_context(|| error::ProxyRpcError {})?;
-                let block_hash = block_hash.ok_or(Error::BlockNotFound {
-                    block: receipt.block_number,
-                })?;
-                let block_hash = solana_sdk::hash::Hash::from_str(&block_hash).unwrap();
-                let block_hash = H256::from_slice(&block_hash.0);
+                let (block, _) = meta
+                    .blockstore
+                    .get_evm_block(receipt.block_number)
+                    .map_err(|_| Error::BlockNotFound {
+                        block: receipt.block_number,
+                    })?;
+                let block_hash = block.header.hash();
                 Some(RPCReceipt::new_from_receipt(receipt, block_hash)?)
             }
             None => None,
@@ -400,25 +378,35 @@ impl BasicERPC for BasicERPCImpl {
 
     fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
         let bank = meta.bank(None);
-        let slot = bank.slot();
 
         let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
-        let to = block_to_confirmed_num(log_filter.to_block.as_ref(), &meta).unwrap_or(slot);
-        let from = block_to_confirmed_num(log_filter.from_block.as_ref(), &meta).unwrap_or(slot);
+        let block_num = evm_lock.block_number();
+        let to = block_to_confirmed_num(log_filter.to_block.as_ref(), &meta).unwrap_or(block_num);
+        let from =
+            block_to_confirmed_num(log_filter.from_block.as_ref(), &meta).unwrap_or(block_num);
 
         let filter = LogFilter {
             address: log_filter.address.map(|k| k.0),
-            topics: vec![],
+            topics: log_filter
+                .topics
+                .into_iter()
+                .flatten()
+                .map(RPCTopicFilter::to_topics)
+                .collect(),
             from_block: from,
             to_block: to,
         };
-
-        return Err(Error::Unimplemented {});
-        // Ok(evm_lock
-        //     .get_logs(filter)
-        //     .into_iter()
-        //     .map(|l| l.into())
-        //     .collect())
+        warn!("filter = {:?}", filter);
+        let logs = meta
+            .blockstore
+            .filter_logs(filter)
+            .map_err(|e| {
+                warn!("filter_logs = {:?}", e);
+                e
+            })
+            .map_err(anyhow::Error::from)
+            .with_context(|| error::NativeRpcError {})?;
+        Ok(logs.into_iter().map(|l| l.into()).collect())
     }
 }
 

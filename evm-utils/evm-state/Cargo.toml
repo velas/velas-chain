@@ -30,6 +30,8 @@ snafu = "0.6.8"
 derive_more = "0.99.11"
 tempfile = "3.1.0"
 itertools = "0.10"
+ethbloom = "0.11.0"
+auto_enums = "0.7"
 
 [dev-dependencies]
 criterion = "0.3.3"

@@ -172,7 +172,7 @@ impl Executor {
         let (updates, logs) = executor.into_state().deconstruct();
 
         let tx_logs: Vec<_> = logs.into_iter().collect();
-        execution_context.apply(updates, tx_logs.iter().cloned(), used_gas);
+        execution_context.apply(updates, used_gas);
 
         Ok(ExecutionResult {
             exit_reason,
@@ -281,9 +281,9 @@ impl Executor {
         let mut executor = StackExecutor::new(state, &config);
         let result = func(&mut executor);
         let used_gas = executor.used_gas();
-        let (updates, logs) = executor.into_state().deconstruct();
+        let (updates, _logs) = executor.into_state().deconstruct();
 
-        execution_context.apply(updates, logs, used_gas);
+        execution_context.apply(updates, used_gas);
 
         result
     }
@@ -312,7 +312,7 @@ impl Executor {
             result.used_gas,
             self.evm_backend.block_number(),
             tx_hashes.len() as u64 + 1,
-            result.tx_logs.into_iter().collect(),
+            result.tx_logs,
             (result.exit_reason, result.exit_data),
         );
 

@@ -313,7 +313,7 @@ pub struct TransactionReceipt {
     pub index: u64,
     // pub state_root: H256, // State root not needed in newer evm versions
     pub used_gas: u64,
-    // pub logs_bloom: LogsBloom,
+    pub logs_bloom: ethbloom::Bloom,
     pub logs: Vec<Log>,
 }
 
@@ -326,11 +326,19 @@ impl TransactionReceipt {
         logs: Vec<Log>,
         result: (evm::ExitReason, Vec<u8>),
     ) -> TransactionReceipt {
+        let mut logs_bloom = ethbloom::Bloom::default();
+        for log in &logs {
+            logs_bloom.accrue(ethbloom::Input::Raw(log.address.as_bytes()));
+            log.topics
+                .iter()
+                .for_each(|topic| logs_bloom.accrue(ethbloom::Input::Hash(topic.as_fixed_bytes())));
+        }
         TransactionReceipt {
             status: result.0,
             transaction,
             used_gas,
             block_number,
+            logs_bloom,
             index,
             logs,
         }
