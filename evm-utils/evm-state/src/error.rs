@@ -68,4 +68,30 @@ pub enum Error {
         chain_id: u64,
         tx_chain_id: Option<u64>,
     },
+
+    #[snafu(display(
+        "Gas limit should not exceed U64::MAX, provided_gas_limit={}",
+        gas_limit,
+    ))]
+    GasLimitOutOfBounds { gas_limit: U256 },
+    #[snafu(display(
+        "Gas price should not exceed U64::MAX, provided_gas_price={}",
+        gas_price,
+    ))]
+    GasPriceOutOfBounds { gas_price: U256 },
+
+    #[snafu(display("Duplicate transaction have found={:?}", tx_hash,))]
+    DuplicateTx { tx_hash: H256 },
+
+    #[snafu(display(
+        "User cant pay the bills state_balance={} transaction.value={}, transaction_max_fee={}",
+        state_balance,
+        value,
+        max_fee,
+    ))]
+    CantPayTheBills {
+        state_balance: U256,
+        value: U256,
+        max_fee: U256,
+    },
 }

@@ -148,63 +148,39 @@ pub struct LogFilter {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EvmStatePersistState {
-    Empty { state_root: H256, block_number: u64 },
-    WithBlock { block: BlockHeader },
-}
-
-impl EvmStatePersistState {
-    pub fn state_root(&self) -> H256 {
-        match self {
-            Self::Empty { state_root, .. } => *state_root,
-            Self::WithBlock { block, .. } => block.state_root,
-        }
-    }
-
-    pub fn block_number(&self) -> u64 {
-        match self {
-            Self::Empty { block_number, .. } => *block_number,
-            Self::WithBlock { block, .. } => block.number,
-        }
-    }
-    pub fn to_block(self) -> Option<BlockHeader> {
-        match self {
-            Self::Empty { .. } => None,
-            Self::WithBlock { block, .. } => Some(block),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockHeader {
     pub parent_hash: H256,
     pub state_root: H256,
     pub transactions_root: H256,
     pub receipts_root: H256,
     // pub logs_bloom: LogsBloom,
-    pub number: u64,
+    pub block_number: u64,
     pub gas_limit: u64,
     pub gas_used: u64,
     pub timestamp: u64,
+    pub native_chain_slot: u64,
 }
 
+// TODO: Add transactions in block
 impl BlockHeader {
-    pub fn new(
+    pub fn new<'a>(
         parent_hash: H256,
         gas_limit: u64,
         state_root: H256,
-        number: u64,
+        block_number: u64,
         gas_used: u64,
         timestamp: u64,
-        processed_transactions: Vec<TransactionReceipt>,
+        slot: u64,
+        processed_transactions: impl Iterator<Item = &'a TransactionReceipt>,
     ) -> BlockHeader {
         BlockHeader {
             parent_hash,
             gas_limit,
-            number,
+            block_number,
             gas_used,
             state_root,
             timestamp,
+            native_chain_slot: slot,
             // TODO: Add real transaction receipts and transaction list
             receipts_root: H256::zero(),
             transactions_root: H256::zero(),
@@ -232,13 +208,28 @@ impl Encodable for BlockHeader {
         s.append(&self.receipts_root);
         s.append(&EMPTH_HASH); // TODO: add blooms
         s.append(&EMPTH_HASH); // difficulty, is emtpy
-        s.append(&U256::from(self.number));
+        s.append(&U256::from(self.block_number));
         s.append(&U256::from(self.gas_limit));
         s.append(&U256::from(self.gas_used));
         s.append(&self.timestamp);
         s.append(&extra_data);
         s.append(&EMPTH_HASH); // mix hash is not available in PoS chains
         s.append(&0u64); // nonce like mix hash is not available in PoS
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Maybe<T> {
+    Just(T),
+    Nothing,
+}
+
+impl<T> Into<Option<T>> for Maybe<T> {
+    fn into(self) -> Option<T> {
+        match self {
+            Self::Just(val) => Some(val),
+            Self::Nothing => None,
+        }
     }
 }
 

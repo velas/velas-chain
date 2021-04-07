@@ -40,7 +40,7 @@ pub const UNUSED_DEFAULT: u64 = 1024;
 pub const EVM_GENESIS: &str = "evm-state-genesis";
 
 // Dont load to memory accounts, more specified count
-const IN_MEMORY_EVM_ACCOUNTS_MAX: usize = 1000;
+use evm_state::MAX_IN_MEMORY_EVM_ACCOUNTS;
 // The order can't align with release lifecycle only to remain ABI-compatible...
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, AbiEnumVisitor, AbiExample)]
 pub enum ClusterType {
@@ -224,18 +224,22 @@ impl GenesisConfig {
         evm_state_json: Option<&Path>,
     ) -> Result<(), std::io::Error> {
         let evm_state_path = tempfile::TempDir::new()?;
-        let mut evm_state = evm_state::EvmState::new(evm_state_path.path())
+        let evm_state = evm_state::EvmState::new(evm_state_path.path())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
+        let mut evm_state = if let evm_state::EvmState::Incomming(evm_state) = evm_state {
+            evm_state
+        } else {
+            unreachable!("Expected new evm-state to be writable.");
+        };
 
         if let Some(evm_state_json) = evm_state_json {
             let accounts = evm_genesis::read_accounts(evm_state_json)?;
 
-            for chunk in &accounts.chunks(IN_MEMORY_EVM_ACCOUNTS_MAX) {
+            for chunk in &accounts.chunks(MAX_IN_MEMORY_EVM_ACCOUNTS) {
                 let chunk: Result<Vec<_>, _> = chunk.collect();
                 let chunk = chunk?;
                 log::info!("Adding {} accounts to evm state.", chunk.len());
                 evm_state.set_initial(chunk);
-                evm_state.commit_block(0);
             }
         } else {
             warn!("Generating genesis with empty evm state");
@@ -249,14 +253,17 @@ impl GenesisConfig {
                 }
             }
         };
-
-        assert_eq!(evm_state.root, self.evm_root_hash);
+        // create zero block
+        let committed = evm_state.commit_block(0);
+        let genesis_evm_block = &committed.state.block;
+        assert_eq!(genesis_evm_block.state_root, self.evm_root_hash);
+        // TOOD: assert block number, and parent block_hash
         let mut evm_backup = ledger_path.to_path_buf();
         evm_backup.push(EVM_GENESIS);
 
+        let evm_state: evm_state::EvmState = committed.into();
         let tmp_backup = evm_state
-            .kvs
-            .backup()
+            .make_backup()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
         std::fs::create_dir_all(ledger_path)?;
         evm_genesis::copy_dir(tmp_backup, evm_backup).unwrap(); // use copy instead of move, to work with cross device-links (backup makes hardlink and is immovable between devices).

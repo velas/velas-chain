@@ -1,0 +1,1175 @@
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use log::*;
+
+use primitive_types::H256;
+use triedb::{
+    empty_trie_hash,
+    gc::{ItemCounter, TrieCollection},
+    rocksdb::{RocksDatabaseHandle, RocksHandle, RocksMemoryTrieMut},
+    FixedSecureTrieMut,
+};
+
+use crate::{
+    storage::{Codes, Receipts, Storage as KVS, TransactionHashesPerBlock},
+    transactions::TransactionReceipt,
+    types::*,
+};
+use serde::{Deserialize, Serialize};
+
+pub const DEFAULT_GAS_LIMIT: u64 = 300_000_000;
+/// Dont load to many account to memory, to avoid OOM.
+pub const MAX_IN_MEMORY_EVM_ACCOUNTS: usize = 10000;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Committed {
+    pub block: BlockHeader,
+    /// Transactions should be ordered somehow, because we
+    pub committed_transactions: Vec<(H256, TransactionReceipt)>,
+}
+
+impl Committed {
+    fn get_block(&self) -> &BlockHeader {
+        &self.block
+    }
+
+    // Returns next Icomming state.
+    fn next_incomming(&self, timestamp: u64) -> Incomming {
+        debug!("Creating new state = {}.", self.block.block_number + 1);
+        Incomming::new(
+            self.block.block_number + 1,
+            self.block.state_root,
+            timestamp,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Incomming {
+    pub block_number: BlockNum,
+    pub timestamp: u64,
+    pub used_gas: u64,
+    state_root: H256,
+    /// Maybe::Nothing indicates removed account
+    state_updates: HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>,
+
+    /// Transactions that was processed but wasn't committed.
+    /// Transactions should be ordered by execution order order on all validators.
+    executed_transactions: Vec<(H256, TransactionReceipt)>,
+}
+
+impl Incomming {
+    fn new(block_number: BlockNum, state_root: H256, timestamp: u64) -> Self {
+        Incomming {
+            block_number,
+            state_root,
+            timestamp,
+            ..Default::default()
+        }
+    }
+
+    fn new_update_time(&self, timestamp: u64) -> Self {
+        trace!("Updating time for state, timestamp={}", timestamp);
+        let mut new = self.clone();
+        new.timestamp = timestamp;
+        new
+    }
+
+    fn is_active_changes(&self) -> bool {
+        !(self.state_updates.is_empty()
+            && self.executed_transactions.is_empty()
+            && self.used_gas == 0)
+    }
+
+    fn to_committed(self, slot: u64) -> Committed {
+        let committed_transactions: Vec<_> = self.executed_transactions;
+        let block = BlockHeader::new(
+            H256::zero(),
+            DEFAULT_GAS_LIMIT,
+            self.state_root,
+            self.block_number,
+            self.used_gas,
+            self.timestamp,
+            slot,
+            committed_transactions.iter().map(|tx| &tx.1),
+        );
+        Committed {
+            block,
+            committed_transactions,
+        }
+    }
+
+    // Take current state, replace original with empty
+    fn take(&mut self) -> Incomming {
+        let empty = Incomming::new(self.block_number, self.state_root, self.timestamp);
+        std::mem::replace(self, empty)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct EvmBackend<State> {
+    pub state: State,
+    pub kvs: KVS,
+}
+
+<<<<<<< HEAD:evm-utils/evm-state/src/layered_backend.rs
+impl<T> From<Maybe<T>> for Option<T> {
+    fn from(mb: Maybe<T>) -> Self {
+        match mb {
+            Maybe::Just(val) => Some(val),
+            Maybe::Nothing => None,
+        }
+=======
+impl<State> EvmBackend<State> {
+    pub fn new(state: State, kvs: KVS) -> Self {
+        Self { state, kvs }
+>>>>>>> 9e99117fe (feat(evm) Split evm state into two types incomming and outgoing.):evm-utils/evm-state/src/state.rs
+    }
+}
+
+impl EvmBackend<Incomming> {
+    /// Apply state updates.
+    /// Be sure to commit_block manually after calling this method,
+    /// because it clear pending state, and is_active_changes cannot detect any state changes.
+    fn flush_changes(&mut self) {
+        let mut state = &mut self.state;
+        let r = RocksHandle::new(RocksDatabaseHandle::new(self.kvs.db.as_ref()));
+
+        let mut storage_tries = TrieCollection::new(r.clone(), StaticEntries::default());
+        let mut account_tries = TrieCollection::new(r, StaticEntries::default());
+
+        let mut accounts =
+            FixedSecureTrieMut::<_, H160, Account>::new(account_tries.trie_for(state.state_root));
+
+        for (address, (state, storages)) in state.state_updates.drain() {
+            if let Maybe::Just(AccountState {
+                nonce,
+                balance,
+                code,
+            }) = state
+            {
+                let mut account = accounts.get(&address).unwrap_or_default();
+
+                account.nonce = nonce;
+                account.balance = balance;
+
+                if !code.is_empty() {
+                    let code_hash = code.hash();
+                    self.kvs.set::<Codes>(code_hash, code);
+                    account.code_hash = code_hash;
+                }
+
+                let mut storage = FixedSecureTrieMut::<_, H256, U256>::new(
+                    storage_tries.trie_for(account.storage_root),
+                );
+
+                for (index, value) in storages {
+                    if value != H256::default() {
+                        let value = U256::from_big_endian(&value[..]);
+                        storage.insert(&index, &value);
+                    } else {
+                        storage.delete(&index);
+                    }
+                }
+
+                let storage_patch = storage.to_trie().into_patch();
+                let storage_root = storage_tries.apply(storage_patch);
+                account.storage_root = storage_root;
+
+                accounts.insert(&address, &account);
+            } else {
+                accounts.delete(&address);
+            }
+        }
+
+        let accounts_patch = accounts.to_trie().into_patch();
+        let new_root = account_tries.apply(accounts_patch);
+
+        // for (hash, receipt) in std::mem::take(&mut self.receipts) {
+        //     self.kvs.set::<Receipts>(hash, receipt);
+        // }
+
+        state.state_root = new_root;
+    }
+
+    pub fn commit_block(mut self, slot: u64) -> EvmBackend<Committed> {
+        debug!("commit: State before = {:?}", self.state);
+        self.flush_changes();
+        let state = self.state.to_committed(slot);
+        debug!("commit: State after = {:?}", state);
+        EvmBackend {
+            state,
+            kvs: self.kvs,
+        }
+    }
+
+    pub fn set_account_state(&mut self, address: H160, account_state: AccountState) {
+        use std::collections::hash_map::Entry::*;
+
+        match self.state.state_updates.entry(address) {
+            Occupied(mut e) => {
+                e.get_mut().0 = Maybe::Just(account_state);
+            }
+            Vacant(e) => {
+                e.insert((Maybe::Just(account_state), HashMap::new()));
+            }
+        };
+    }
+
+    pub fn remove_account(&mut self, address: H160) {
+        self.state
+            .state_updates
+            .entry(address)
+            .and_modify(|(state, _)| *state = Maybe::Nothing)
+            .or_insert_with(|| (Maybe::Nothing, HashMap::new()));
+    }
+
+    pub fn ext_storage(
+        &mut self,
+        address: H160,
+        indexed_values: impl IntoIterator<Item = (H256, H256)>,
+    ) {
+        let (_, storage) = self
+            .state
+            .state_updates
+            .entry(address)
+            .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()));
+
+        storage.extend(indexed_values);
+    }
+
+    //
+    // Transactions
+    //
+    pub fn find_transaction_receipt(&self, transaction: H256) -> Option<&TransactionReceipt> {
+        self.state
+            .executed_transactions
+            .iter()
+            .find(|(h, _)| *h == transaction)
+            .map(|(_, tx)| tx)
+    }
+
+    pub fn push_transaction_receipt(&mut self, transaction: H256, receipt: TransactionReceipt) {
+        debug_assert!(self.find_transaction_receipt(transaction).is_none());
+        self.state
+            .executed_transactions
+            .push((transaction, receipt));
+    }
+
+    pub fn get_executed_transactions(&self) -> Vec<H256> {
+        self.state
+            .executed_transactions
+            .iter()
+            .map(|(h, _)| *h)
+            .collect()
+    }
+
+    pub fn set_initial(
+        &mut self,
+        accounts: impl IntoIterator<Item = (H160, evm::backend::MemoryAccount)>,
+    ) {
+        for (
+            address,
+            evm::backend::MemoryAccount {
+                nonce,
+                balance,
+                storage,
+                code,
+            },
+        ) in accounts
+        {
+            let account_state = AccountState {
+                nonce,
+                balance,
+                code: code.into(),
+            };
+
+            self.set_account_state(address, account_state);
+            self.ext_storage(address, storage);
+        }
+        self.flush_changes()
+    }
+
+    fn take(&mut self) -> Self {
+        Self {
+            kvs: self.kvs.clone(),
+            state: self.state.take(),
+        }
+    }
+
+    fn kvs(&self) -> &KVS {
+        &self.kvs
+    }
+
+    fn state_updates(&self, address: &H160) -> Option<&(Maybe<AccountState>, HashMap<H256, H256>)> {
+        self.state.state_updates.get(&address)
+    }
+}
+
+pub trait AccountProvider {
+    fn last_root(&self) -> H256;
+    fn get_account_state(&self, address: H160) -> Option<AccountState>;
+    fn get_storage(&self, address: H160, index: H256) -> Option<H256>;
+    fn block_number(&self) -> u64;
+}
+
+impl AccountProvider for EvmBackend<Incomming> {
+    fn get_account_state(&self, address: H160) -> Option<AccountState> {
+        self.state_updates(&address)
+            .map(|(state, _)| state.clone().into())
+            .unwrap_or_else(|| self.get_account_state_from_kvs(self.last_root(), address))
+    }
+
+    fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
+        self.state_updates(&address)
+            .and_then(|(_, indices)| indices.get(&index))
+            .copied()
+            .or_else(|| self.get_storage_from_kvs(self.last_root(), address, index))
+    }
+
+    fn last_root(&self) -> H256 {
+        self.state.state_root
+    }
+
+    fn block_number(&self) -> u64 {
+        self.state.block_number
+    }
+}
+
+impl AccountProvider for EvmBackend<Committed> {
+    fn get_account_state(&self, address: H160) -> Option<AccountState> {
+        self.get_account_state_from_kvs(self.last_root(), address)
+    }
+
+    fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
+        self.get_storage_from_kvs(self.last_root(), address, index)
+    }
+
+    fn last_root(&self) -> H256 {
+        self.state.block.state_root
+    }
+
+    fn block_number(&self) -> u64 {
+        self.state.block.block_number
+    }
+}
+
+impl AccountProvider for EvmState {
+    fn get_account_state(&self, address: H160) -> Option<AccountState> {
+        match self {
+            Self::Incomming(i) => i.get_account_state_from_kvs(self.last_root(), address),
+            Self::Committed(c) => c.get_account_state_from_kvs(self.last_root(), address),
+        }
+    }
+
+    fn get_storage(&self, address: H160, index: H256) -> Option<H256> {
+        match self {
+            Self::Incomming(i) => i.get_storage_from_kvs(self.last_root(), address, index),
+            Self::Committed(c) => c.get_storage_from_kvs(self.last_root(), address, index),
+        }
+    }
+
+    fn last_root(&self) -> H256 {
+        match self {
+            Self::Incomming(i) => i.last_root(),
+            Self::Committed(c) => c.last_root(),
+        }
+    }
+
+    fn block_number(&self) -> u64 {
+        match self {
+            Self::Incomming(i) => i.block_number(),
+            Self::Committed(c) => c.block_number(),
+        }
+    }
+}
+
+impl<State> EvmBackend<State> {
+    pub fn get_account_state_from_kvs(&self, root: H256, address: H160) -> Option<AccountState> {
+        self.kvs.typed_for(root).get(&address).map(
+            |Account {
+                 nonce,
+                 balance,
+                 code_hash,
+                 ..
+             }| {
+                let code = self
+                    .kvs
+                    .get::<Codes>(code_hash)
+                    // TODO: default only when code_hash == Code::default().hash()
+                    .unwrap_or_default();
+
+                AccountState {
+                    nonce,
+                    balance,
+                    code,
+                }
+            },
+        )
+    }
+    pub fn get_storage_from_kvs(&self, root: H256, address: H160, index: H256) -> Option<H256> {
+        self.kvs
+            .typed_for(root)
+            .get(&address)
+            .and_then(|Account { storage_root, .. }| {
+                FixedSecureTrieMut::new(RocksMemoryTrieMut::new(self.kvs.db.as_ref(), storage_root))
+                    .get(&index)
+                    .map(|value: U256| {
+                        let mut encoded = H256::default();
+                        value.to_big_endian(encoded.as_bytes_mut());
+                        encoded
+                    })
+            })
+    }
+}
+
+impl EvmBackend<Committed> {
+    fn kvs(&self) -> &KVS {
+        &self.kvs
+    }
+    pub fn last_root(&self) -> H256 {
+        self.state.block.state_root
+    }
+
+    pub fn next_incomming(&self, block_start_time: u64) -> EvmBackend<Incomming> {
+        EvmBackend {
+            state: self.state.next_incomming(block_start_time),
+            kvs: self.kvs.clone(),
+        }
+    }
+    pub fn find_committed_transaction(&self, hash: H256) -> Option<&TransactionReceipt> {
+        self.state
+            .committed_transactions
+            .iter()
+            .find(|(h, _)| h == &hash)
+            .map(|(_, v)| v)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum EvmState {
+    Committed(EvmBackend<Committed>),
+    Incomming(EvmBackend<Incomming>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EvmPersistState {
+    Committed(Committed),
+    Incomming(Incomming),
+}
+impl Default for EvmPersistState {
+    fn default() -> Self {
+        Self::Incomming(Incomming::default())
+    }
+}
+
+impl EvmState {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
+        let evm_state = path.as_ref();
+        if evm_state.is_dir() && evm_state.exists() {
+            warn!("deleting existing state {}", evm_state.display());
+            fs::remove_dir_all(&evm_state)?;
+            fs::create_dir(&evm_state)?;
+        }
+
+        Self::load_from(evm_state, Incomming::default())
+    }
+
+    pub fn new_from_genesis(
+        evm_state: impl AsRef<Path>,
+        evm_genesis: impl AsRef<Path>,
+        root_hash: H256,
+        timestamp: u64,
+    ) -> Result<Self, anyhow::Error> {
+        let evm_state = evm_state.as_ref();
+        if evm_state.is_dir() && evm_state.exists() {
+            warn!("deleting existing state {}", evm_state.display());
+            fs::remove_dir_all(&evm_state)?;
+            fs::create_dir(&evm_state)?;
+        }
+
+        KVS::restore_from(evm_genesis, &evm_state)?;
+        Self::load_from(
+            evm_state,
+            Incomming::new(BlockNum::default(), root_hash, timestamp),
+        )
+    }
+
+    /// Ignores all unapplied updates.
+    pub fn new_from_parent(&self, block_start_time: i64) -> Self {
+        let b = match self {
+            EvmState::Committed(committed) => committed.next_incomming(block_start_time as u64),
+            EvmState::Incomming(incomming) => EvmBackend {
+                state: incomming.state.new_update_time(block_start_time as u64),
+                kvs: incomming.kvs.clone(),
+            },
+        };
+        EvmState::Incomming(b)
+    }
+
+    pub fn load_from<P: AsRef<Path>>(
+        path: P,
+        evm_persist_feilds: impl Into<EvmPersistState>,
+    ) -> Result<Self, anyhow::Error> {
+        info!("Open EVM storage {}", path.as_ref().display());
+
+        let kvs = KVS::open_persistent(path)?;
+
+        Ok(match evm_persist_feilds.into() {
+            EvmPersistState::Incomming(i) => EvmBackend::new(i, kvs).into(),
+            EvmPersistState::Committed(c) => EvmBackend::new(c, kvs).into(),
+        })
+    }
+
+    /// Make backup of current kvs storage.
+    pub fn make_backup(&self) -> Result<PathBuf, anyhow::Error> {
+        Ok(self.kvs().backup()?)
+    }
+
+    /// Convert current state into persist one.
+    /// With persist state and database, one can load evm state back to memory.
+    /// Consume self, so outer code should call `clone()`.
+    /// Cloning KVS is cheap, and most work is in cloning state itself.
+    pub fn save_state(self) -> EvmPersistState {
+        match self {
+            Self::Incomming(i) => i.state.into(),
+            Self::Committed(c) => c.state.into(),
+        }
+    }
+
+    pub fn kvs_references(&self) -> usize {
+        Arc::strong_count(&self.kvs().db)
+    }
+
+    fn kvs(&self) -> &KVS {
+        match self {
+            Self::Committed(c) => c.kvs(),
+            Self::Incomming(i) => i.kvs(),
+        }
+    }
+
+    // TODO: Optimize, using bloom filters.
+    // TODO: Check topics query limits <= 4.
+    // TODO: Filter by address, topics
+    // pub fn get_logs(&self, log_filter: LogFilter) -> Vec<LogWithLocation> {
+    //     let mut result = Vec::new();
+
+    //     for (block_id, txs) in (log_filter.from_block..=log_filter.to_block)
+    //         .filter_map(|b| self.get_transactions_in_block(b).map(|txs| (b, txs)))
+    //     {
+    //         txs.into_iter()
+    //             .map(|tx_hash| {
+    //                 (
+    //                     tx_hash,
+    //                     self.get_transaction_receipt(tx_hash)
+    //                         .expect("Transacton not found by hash, while exist by number"),
+    //                 )
+    //             })
+    //             .enumerate()
+    //             .for_each(|(tx_id, (tx_hash, receipt))| {
+    //                 for log in receipt.logs {
+    //                     let log_entry = LogWithLocation {
+    //                         transaction_hash: tx_hash,
+    //                         transaction_id: tx_id as u64,
+    //                         block_num: block_id,
+    //                         data: log.data,
+    //                         topics: log.topics,
+    //                         address: log.address,
+    //                     };
+    //                     result.push(log_entry)
+    //                 }
+    //             });
+    //     }
+    //     result
+    // }
+
+    // pub fn get_account_state(&self, address: H160) -> Option<AccountState> {
+    //     self.as_incomming_state()
+    //         .and_then(|s| s.get(&address))
+    //         .map(|(state, _)| state.clone().into())
+    //         .unwrap_or_else(|| {
+    //             self.kvs().typed_for(self.last_root()).get(&address).map(
+    //                 |Account {
+    //                      nonce,
+    //                      balance,
+    //                      code_hash,
+    //                      ..
+    //                  }| {
+    //                     let code = self
+    //                         .kvs()
+    //                         .get::<Codes>(code_hash)
+    //                         // TODO: default only when code_hash == Code::default().hash()
+    //                         .unwrap_or_default();
+
+    //                     AccountState {
+    //                         nonce,
+    //                         balance,
+    //                         code,
+    //                     }
+    //                 },
+    //             )
+    //         })
+    // }
+
+    pub fn try_commit(&mut self, slot: u64) -> Result<(), anyhow::Error> {
+        match self {
+            EvmState::Committed(committed) => {
+                return Err(anyhow::Error::msg(format!(
+                    "Commit called on already committed block = {:?}.",
+                    committed.state
+                )))
+            }
+            EvmState::Incomming(incomming) => {
+                if incomming.state.is_active_changes() {
+                    debug!(
+                        "Found non-empty evm state, committing block = {}.",
+                        incomming.state.block_number
+                    );
+                    let mut new_backend = incomming.take().commit_block(slot).into();
+                    std::mem::swap(self, &mut new_backend)
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Return block header if this state was committed before.
+    pub fn get_block_header(&self) -> Option<&BlockHeader> {
+        match self {
+            EvmState::Committed(committed) => Some(&committed.state.block),
+            EvmState::Incomming(_) => None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct StaticEntries {}
+
+impl ItemCounter for StaticEntries {
+    fn increase(&mut self, _: H256) -> usize {
+        1
+    }
+    fn decrease(&mut self, _: H256) -> usize {
+        1
+    }
+}
+
+impl Default for Incomming {
+    fn default() -> Self {
+        Incomming {
+            block_number: 0,
+            state_root: empty_trie_hash(),
+            state_updates: HashMap::new(),
+            executed_transactions: Vec::new(),
+            used_gas: 0,
+            timestamp: 0,
+        }
+    }
+}
+impl Default for EvmBackend<Incomming> {
+    fn default() -> Self {
+        let kvs = KVS::create_temporary().expect("Unable to create temporary storage");
+        let state = Incomming::default();
+        EvmBackend { state, kvs }
+    }
+}
+
+/// NOTE: Only for testing purposes.
+impl Default for EvmState {
+    fn default() -> Self {
+        EvmState::Incomming(EvmBackend::default())
+    }
+}
+
+impl From<Incomming> for EvmPersistState {
+    fn from(inc: Incomming) -> EvmPersistState {
+        EvmPersistState::Incomming(inc)
+    }
+}
+
+impl From<Committed> for EvmPersistState {
+    fn from(comm: Committed) -> EvmPersistState {
+        EvmPersistState::Committed(comm)
+    }
+}
+
+impl From<EvmBackend<Incomming>> for EvmState {
+    fn from(inc: EvmBackend<Incomming>) -> EvmState {
+        EvmState::Incomming(inc)
+    }
+}
+
+impl From<EvmBackend<Committed>> for EvmState {
+    fn from(comm: EvmBackend<Committed>) -> EvmState {
+        EvmState::Committed(comm)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        str::FromStr,
+    };
+
+    use primitive_types::{H160, H256, U256};
+    use rand::rngs::mock::StepRng;
+    use rand::Rng;
+
+    use super::*;
+
+    const RANDOM_INCR: u64 = 1; // TODO: replace by rand::SeedableRng implementor
+    const MAX_SIZE: usize = 32; // Max size of test collections.
+
+    const SEED: u64 = 1;
+
+    impl<State> EvmBackend<State>
+    where
+        EvmBackend<State>: AccountProvider,
+    {
+        fn get_account(&self, address: H160) -> Option<Account> {
+            self.kvs.typed_for(self.last_root()).get(&address)
+        }
+    }
+
+    fn generate_account_by_seed(seed: u64) -> AccountState {
+        let mut rng = StepRng::new(seed * RANDOM_INCR + seed, RANDOM_INCR);
+        let nonce: [u8; 32] = rng.gen();
+        let balance: [u8; 32] = rng.gen();
+
+        let nonce = U256::from_little_endian(&nonce);
+        let balance = U256::from_little_endian(&balance);
+        let code_len: usize = rng.gen_range(0..=MAX_SIZE);
+        let code = (0..code_len)
+            .into_iter()
+            .map(|_| rng.gen())
+            .collect::<Vec<u8>>()
+            .into();
+
+        AccountState {
+            nonce,
+            balance,
+            code,
+        }
+    }
+
+    fn generate_accounts_state(seed: u64, accounts: &[H160]) -> BTreeMap<H160, AccountState> {
+        let mut rng = StepRng::new(seed, RANDOM_INCR);
+        let mut map = BTreeMap::new();
+        for account in accounts {
+            let seed = rng.gen();
+            let state = generate_account_by_seed(seed);
+            map.insert(*account, state);
+        }
+        map
+    }
+
+    fn generate_storage(seed: u64, accounts: &[H160]) -> BTreeMap<(H160, H256), H256> {
+        let mut rng = StepRng::new(seed, RANDOM_INCR);
+
+        let mut map = BTreeMap::new();
+
+        for acc in accounts {
+            let storage_len = rng.gen_range(0..=MAX_SIZE);
+            for _ in 0..storage_len {
+                let addr: [u8; 32] = rng.gen();
+                let data: [u8; 32] = rng.gen();
+
+                let addr = H256::from_slice(&addr);
+                let data = H256::from_slice(&data);
+                map.insert((*acc, addr), data);
+            }
+        }
+        map
+    }
+
+    fn generate_accounts_addresses(seed: u64, count: usize) -> Vec<H160> {
+        let mut rng = StepRng::new(seed, RANDOM_INCR);
+        (0..count)
+            .into_iter()
+            .map(|_| H256::from_slice(&rng.gen::<[u8; 32]>()).into())
+            .collect()
+    }
+
+    fn to_state_diff<K: Ord, Mv>(
+        inserts: BTreeMap<K, Mv>,
+        removes: BTreeSet<K>,
+    ) -> BTreeMap<K, Option<Mv>> {
+        let len = inserts.len() + removes.len();
+        let mut map = BTreeMap::new();
+        for insert in inserts {
+            assert!(
+                map.insert(insert.0, Some(insert.1)).is_none(),
+                "double insert"
+            );
+        }
+
+        for insert in removes {
+            assert!(
+                map.insert(insert, None).is_none(),
+                "delete after insert is not allowed"
+            );
+        }
+        assert_eq!(map.len(), len, "length differ from inserts + removes len");
+        map
+    }
+
+    fn save_state(
+        state: &mut EvmBackend<Incomming>,
+        accounts: &BTreeMap<H160, Option<AccountState>>,
+        storages: &BTreeMap<(H160, H256), Option<H256>>,
+    ) {
+        for (address, account_state) in accounts {
+            if let Some(account_state) = account_state.as_ref().cloned() {
+                state.set_account_state(*address, account_state);
+            } else {
+                state.remove_account(*address);
+            }
+        }
+
+        let storages_per_account: HashMap<H160, HashMap<H256, H256>> =
+            storages
+                .iter()
+                .fold(HashMap::new(), |mut s, ((address, index), expected)| {
+                    s.entry(*address)
+                        .or_default()
+                        .insert(*index, expected.unwrap_or_default());
+                    s
+                });
+
+        for (address, storages) in storages_per_account {
+            state.ext_storage(address, storages);
+        }
+    }
+
+    fn assert_state<State>(
+        state: &EvmBackend<State>,
+        accounts: &BTreeMap<H160, Option<AccountState>>,
+        storage: &BTreeMap<(H160, H256), Option<H256>>,
+    ) where
+        EvmBackend<State>: AccountProvider,
+    {
+        for (address, expected) in accounts {
+            let account_state = state.get_account_state(*address);
+
+            assert_eq!(&account_state, expected);
+        }
+
+        let mut per_account_storage: HashMap<H160, HashMap<H256, H256>> = HashMap::new();
+
+        for ((address, index), expected) in storage {
+            per_account_storage
+                .entry(*address)
+                .or_default()
+                .insert(*index, expected.unwrap_or_default());
+        }
+
+        for ((address, index), expected) in storage {
+            assert_eq!(
+                state.get_storage(*address, *index).as_ref(),
+                expected.as_ref()
+            )
+        }
+    }
+
+    #[test]
+    fn add_two_accounts_check_helpers() {
+        let accounts = generate_accounts_addresses(SEED, 2);
+
+        let storage = generate_storage(SEED, &accounts);
+        let accounts_state = generate_accounts_state(SEED, &accounts);
+        let storage_diff = to_state_diff(storage, BTreeSet::new());
+        let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
+
+        let mut evm_state = EvmBackend::default();
+
+        assert_eq!(
+            evm_state
+                .get_account_state(H160::random())
+                .unwrap_or_default()
+                .balance,
+            U256::zero(),
+        );
+        save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
+
+        assert_state(&evm_state, &accounts_state_diff, &storage_diff);
+    }
+
+    #[test]
+    fn fork_add_remove_accounts() {
+        let accounts = generate_accounts_addresses(SEED, 10);
+
+        let storage = generate_storage(SEED, &accounts);
+        let accounts_state = generate_accounts_state(SEED, &accounts);
+        let storage_diff = to_state_diff(storage, BTreeSet::new());
+        let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
+
+        let mut evm_state = EvmBackend::default();
+
+        save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
+        let committed = evm_state.commit_block(0);
+
+        assert_state(&committed, &accounts_state_diff, &storage_diff);
+
+        assert_state(&committed, &accounts_state_diff, &storage_diff);
+
+        let mut new_evm_state = committed.next_incomming(0);
+        assert_state(&new_evm_state, &accounts_state_diff, &storage_diff);
+
+        let new_accounts = generate_accounts_addresses(SEED + 1, 2);
+        let new_accounts_state = generate_accounts_state(SEED + 1, &new_accounts);
+        let removed_accounts: BTreeSet<_> = accounts[0..2].iter().copied().collect();
+        let new_accounts_state_diff = to_state_diff(new_accounts_state, removed_accounts);
+
+        save_state(
+            &mut new_evm_state,
+            &new_accounts_state_diff,
+            &BTreeMap::new(),
+        );
+
+        assert_state(&new_evm_state, &new_accounts_state_diff, &BTreeMap::new());
+    }
+
+    #[test]
+    fn reads_the_same_after_consequent_dumps() {
+        use std::ops::Bound::Included;
+        let _ = simple_logger::SimpleLogger::from_env().init();
+
+        const N_VERSIONS: usize = 10;
+        const ACCOUNTS_PER_VERSION: usize = 10;
+
+        let accounts = generate_accounts_addresses(SEED, ACCOUNTS_PER_VERSION * N_VERSIONS);
+        let accounts_state = generate_accounts_state(SEED, &accounts);
+        let accounts_storage = generate_storage(SEED, &accounts);
+
+        let mut evm_state = EvmBackend::default();
+
+        for accounts_per_version in accounts.chunks(N_VERSIONS) {
+            for account in accounts_per_version {
+                log::debug!("working with account: {:?}", account);
+
+                let account_state = accounts_state[account].clone();
+
+                evm_state.set_account_state(*account, account_state);
+
+                let storage: HashMap<H256, H256> = accounts_storage
+                    .range((
+                        Included((*account, H256::zero())),
+                        Included((*account, H256::repeat_byte(u8::MAX))),
+                    ))
+                    .map(|((address, index), data)| {
+                        assert_eq!(account, address);
+                        (*index, *data)
+                    })
+                    .collect();
+
+                evm_state.ext_storage(*account, storage);
+            }
+
+            let committed = evm_state.commit_block(0);
+            evm_state = committed.next_incomming(0);
+        }
+
+        let accounts_state_diff = to_state_diff(accounts_state, BTreeSet::new());
+        let accounts_storage_diff = to_state_diff(accounts_storage, BTreeSet::new());
+
+        assert_state(&evm_state, &accounts_state_diff, &accounts_storage_diff);
+    }
+
+    #[test]
+    fn lookups_thru_forks() {
+        let _ = simple_logger::SimpleLogger::new().init();
+
+        let mut state = EvmBackend::default();
+
+        let accounts = generate_accounts_addresses(SEED, 1);
+        let account_states = generate_accounts_state(SEED, &accounts);
+
+        let account = accounts.first().copied().unwrap();
+        let account_state = account_states[&account].clone();
+
+        state.set_account_state(account, account_state.clone());
+
+        for _ in 0..42 {
+            let committed = state.take().commit_block(0);
+            state = committed.next_incomming(0);
+        }
+
+        let recv_state = state.get_account_state(account).unwrap();
+        assert_eq!(recv_state, account_state);
+    }
+
+    #[test]
+    fn it_handles_accounts_state_get_set_expectations() {
+        let _ = simple_logger::SimpleLogger::new().init();
+
+        let mut state = EvmBackend::default();
+
+        let addr = H160::random();
+        assert_eq!(state.get_account_state(addr), None);
+
+        let new_state = AccountState {
+            nonce: U256::from(1),
+            ..Default::default()
+        };
+
+        state.set_account_state(addr, new_state.clone());
+        assert_eq!(state.get_account_state(addr), Some(new_state.clone()));
+
+        let committed = state.take().commit_block(0);
+        state = committed.next_incomming(0);
+
+        assert_eq!(state.get_account_state(addr), Some(new_state.clone()));
+
+        let another_addr = H160::random();
+
+        assert_ne!(addr, another_addr);
+        assert_eq!(state.get_account_state(another_addr), None);
+
+        state.set_account_state(
+            addr,
+            AccountState {
+                nonce: U256::from(2),
+                ..new_state
+            },
+        );
+
+        state.set_account_state(
+            another_addr,
+            AccountState {
+                nonce: U256::from(1),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            state.get_account_state(addr).map(|acc| acc.nonce),
+            Some(U256::from(2))
+        );
+        assert_eq!(
+            state.get_account_state(another_addr).map(|acc| acc.nonce),
+            Some(U256::from(1))
+        );
+
+        let state = state.commit_block(0);
+
+        assert_eq!(
+            state.get_account_state(addr).map(|acc| acc.nonce),
+            Some(U256::from(2))
+        );
+        assert_eq!(
+            state.get_account_state(another_addr).map(|acc| acc.nonce),
+            Some(U256::from(1))
+        );
+    }
+
+    #[test]
+    // https://github.com/openethereum/parity-ethereum/blob/v2.7.2-stable/ethcore/account-state/src/account.rs#L667
+    fn it_checks_storage_at() {
+        let address = H160::zero();
+
+        let account_state = AccountState {
+            nonce: 0.into(),
+            balance: 69.into(),
+            code: Code::empty(),
+        };
+
+        let storage_mod = Some((H256::zero(), H256::from_low_u64_be(0x1234)));
+
+        let mut state = EvmBackend::default();
+        state.set_account_state(address, account_state);
+        state.ext_storage(address, storage_mod);
+
+        let committed = state.take().commit_block(0);
+        let account = committed.get_account(address).unwrap();
+
+        assert_eq!(
+            committed.get_storage(address, H256::zero()),
+            Some(H256::from_low_u64_be(0x1234))
+        );
+        assert_eq!(
+            committed.get_storage(address, H256::from_low_u64_be(0x01)),
+            None
+        );
+        assert_eq!(
+            account.storage_root,
+            H256::from_str("c57e1afb758b07f8d2c8f13a3b6e44fa5ff94ab266facc5a4fd3f062426e50b2")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    // https://github.com/openethereum/parity-ethereum/blob/v2.7.2-stable/ethcore/account-state/src/account.rs#L705
+    fn it_checks_commit_storage() {
+        let address = H160::zero();
+
+        let account_state = AccountState {
+            nonce: 0.into(),
+            balance: 69.into(),
+            code: Code::empty(),
+        };
+
+        let storage_mod = Some((H256::from_low_u64_be(0), H256::from_low_u64_be(0x1234)));
+
+        let mut state = EvmBackend::default();
+        state.set_account_state(address, account_state);
+        state.ext_storage(address, storage_mod);
+
+        let committed = state.take().commit_block(0);
+        let account = committed.get_account(address).unwrap();
+
+        assert_eq!(
+            account.storage_root,
+            H256::from_str("c57e1afb758b07f8d2c8f13a3b6e44fa5ff94ab266facc5a4fd3f062426e50b2")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    // https://github.com/openethereum/parity-ethereum/blob/v2.7.2-stable/ethcore/account-state/src/account.rs#L716
+    fn it_checks_commit_remove_commit_storage() {
+        let address = H160::zero();
+
+        let account_state = AccountState {
+            nonce: 0.into(),
+            balance: 69.into(),
+            code: Code::empty(),
+        };
+
+        let mut state = EvmBackend::default();
+        state.set_account_state(address, account_state);
+
+        state.ext_storage(
+            address,
+            Some((H256::from_low_u64_be(0), H256::from_low_u64_be(0x1234))),
+        );
+        let committed = state.take().commit_block(0);
+        state = committed.next_incomming(0);
+        state.ext_storage(
+            address,
+            Some((H256::from_low_u64_be(1), H256::from_low_u64_be(0x1234))),
+        );
+        let committed = state.take().commit_block(0);
+        state = committed.next_incomming(0);
+
+        state.ext_storage(
+            address,
+            Some((H256::from_low_u64_be(1), H256::from_low_u64_be(0))),
+        );
+        let committed = state.take().commit_block(0);
+
+        let account = committed.get_account(address).unwrap();
+
+        assert_eq!(
+            account.storage_root,
+            H256::from_str("c57e1afb758b07f8d2c8f13a3b6e44fa5ff94ab266facc5a4fd3f062426e50b2")
+                .unwrap()
+        );
+    }
+}

@@ -574,8 +574,7 @@ pub fn add_snapshot<P: AsRef<Path>>(
 
     let mut evm_state_backup = Measure::start("evm-state-backup-ms");
     let backup_path = evm_state
-        .kvs
-        .backup()
+        .make_backup()
         .expect("Unable to save EVM storage data in new place");
     evm_state_backup.stop();
     info!("EVM state backup done in {:?}", backup_path);

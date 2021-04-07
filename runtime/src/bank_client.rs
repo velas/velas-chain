@@ -1,4 +1,5 @@
 use crate::bank::Bank;
+use evm_state::AccountProvider;
 use solana_sdk::{
     account::Account,
     client::{AsyncClient, Client, SyncClient},

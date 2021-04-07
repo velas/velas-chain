@@ -2409,7 +2409,7 @@ impl Blockstore {
         _block_slot: Slot,
         block: &evm::BlockHeader,
     ) -> Result<()> {
-        self.evm_blocks_cf.put(block.number, block)
+        self.evm_blocks_cf.put(block.block_number, block)
     }
 
     pub fn read_evm_block_header(
