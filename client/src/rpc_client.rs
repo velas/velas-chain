@@ -154,6 +154,7 @@ impl RpcClient {
         self.commitment_config
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn use_deprecated_commitment(&self) -> Result<bool, RpcError> {
         Ok(false)
     }
@@ -210,6 +211,7 @@ impl RpcClient {
         )
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn default_cluster_transaction_encoding(&self) -> Result<UiTransactionEncoding, RpcError> {
         Ok(UiTransactionEncoding::Base64)
     }

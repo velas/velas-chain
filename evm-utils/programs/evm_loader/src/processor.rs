@@ -446,7 +446,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-            CHAIN_ID.into(),
+            CHAIN_ID,
             0,
         );
         let mut executor = Some(&mut executor);
@@ -514,7 +514,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-            CHAIN_ID.into(),
+            CHAIN_ID,
             0,
         );
         let mut executor = Some(&mut executor);
@@ -635,7 +635,7 @@ mod test {
                 state.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
-                CHAIN_ID.into(),
+                CHAIN_ID,
                 0,
             );
             let mut executor = Some(&mut executor_orig);
@@ -684,7 +684,7 @@ mod test {
                 state.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
-                CHAIN_ID.into(),
+                CHAIN_ID,
                 0,
             );
             let mut executor = Some(&mut executor_orig);
@@ -720,7 +720,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-            CHAIN_ID.into(),
+            CHAIN_ID,
             0,
         );
         let mut executor = Some(&mut executor_orig);
@@ -793,7 +793,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-            CHAIN_ID.into(),
+            CHAIN_ID,
             0,
         );
         let mut executor = Some(&mut executor_orig);
@@ -884,7 +884,7 @@ mod test {
                 state.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
-                CHAIN_ID.into(),
+                CHAIN_ID,
                 0,
             );
             let mut executor = Some(&mut executor_orig);
@@ -930,7 +930,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-            CHAIN_ID.into(),
+            CHAIN_ID,
             0,
         );
         let mut executor = Some(&mut executor_orig);
@@ -1022,7 +1022,7 @@ mod test {
                 state.clone(),
                 evm_state::Config::istanbul(),
                 10000000,
-                CHAIN_ID.into(),
+                CHAIN_ID,
                 0,
             );
             let mut executor = Some(&mut executor_orig);
@@ -1098,7 +1098,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-            CHAIN_ID.into(),
+            CHAIN_ID,
             0,
         );
         let mut executor = Some(&mut executor);
@@ -1169,7 +1169,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-            CHAIN_ID.into(),
+            CHAIN_ID,
             0,
         );
 
@@ -1265,7 +1265,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-            CHAIN_ID.into(),
+            CHAIN_ID,
             0,
         );
         let mut executor = Some(&mut executor);
@@ -1323,7 +1323,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-            CHAIN_ID.into(),
+            CHAIN_ID,
             0,
         );
         let mut executor = Some(&mut executor);
@@ -1434,7 +1434,7 @@ mod test {
             evm_state::EvmState::default(),
             evm_state::Config::istanbul(),
             10000000,
-            CHAIN_ID.into(),
+            CHAIN_ID,
             0,
         );
         let mut executor = Some(&mut executor);

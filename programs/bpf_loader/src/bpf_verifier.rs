@@ -4,6 +4,7 @@ use thiserror::Error;
 
 /// Error definitions
 #[derive(Debug, Error, PartialEq)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum VerifierError {
     /// ProgramLengthNotMultiple
     #[error("program length must be a multiple of {} octets", ebpf::INSN_SIZE)]

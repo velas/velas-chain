@@ -7983,7 +7983,7 @@ pub(crate) mod tests {
             assert!(bank.transfer(20000, &mint_keypair, &bob.pubkey()).is_ok());
 
             let mut users = Vec::new();
-            users.resize_with(num_sleeps as usize, || Keypair::new());
+            users.resize_with(num_sleeps as usize, Keypair::new);
             for user in &users {
                 assert!(bank.transfer(20000, &mint_keypair, &user.pubkey()).is_ok());
             }

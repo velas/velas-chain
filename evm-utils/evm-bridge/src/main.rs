@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 use log::*;
 
 use std::sync::Arc;
@@ -1312,6 +1314,7 @@ fn deploy_big_tx(
 }
 
 trait AsNativeRpcError<T> {
+    #[allow(clippy::wrong_self_convention)]
     fn as_native_error(self) -> EvmResult<T>;
 }
 

@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 use std::convert::TryInto;
 use std::str::FromStr;
 
