@@ -29,6 +29,7 @@ bytes = "0.6.0"
 snafu = "0.6.8"
 derive_more = "0.99.11"
 tempfile = "3.1.0"
+itertools = "0.10"
 
 [dev-dependencies]
 criterion = "0.3.3"

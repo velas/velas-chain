@@ -633,8 +633,8 @@ impl RPCReceipt {
         Ok(RPCReceipt {
             to: to.map(Hex),
             contract_address: contract_address.map(Hex),
-            gas_used: receipt.used_gas.into(),
-            cumulative_gas_used: receipt.used_gas.into(),
+            gas_used: Hex(receipt.used_gas.into()),
+            cumulative_gas_used: Hex(receipt.used_gas.into()),
             transaction_hash: tx_hash.into(),
             transaction_index: tx_index,
             block_hash: block_hash.into(),

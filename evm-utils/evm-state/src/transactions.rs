@@ -312,7 +312,7 @@ pub struct TransactionReceipt {
     pub block_number: u64,
     pub index: u64,
     // pub state_root: H256, // State root not needed in newer evm versions
-    pub used_gas: Gas,
+    pub used_gas: u64,
     // pub logs_bloom: LogsBloom,
     pub logs: Vec<Log>,
 }
@@ -320,7 +320,7 @@ pub struct TransactionReceipt {
 impl TransactionReceipt {
     pub fn new(
         transaction: TransactionInReceipt,
-        used_gas: Gas,
+        used_gas: u64,
         block_number: u64,
         index: u64,
         logs: Vec<Log>,

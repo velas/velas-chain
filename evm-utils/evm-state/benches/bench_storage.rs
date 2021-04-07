@@ -6,7 +6,7 @@ use tempfile::tempdir;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
-use evm_state::{types::BlockNum, EvmState};
+use evm_state::{types::BlockNum, EvmBackend, EvmState, Incomming};
 
 mod utils;
 
@@ -23,13 +23,12 @@ struct Params {
     accounts_per_100k: usize,
 }
 
-fn add_some_and_advance(state: &mut EvmState, params: &Params) {
+fn add_some_and_advance(state: &mut EvmBackend<Incomming>, params: &Params) {
     // repeat 1/3 of accounts from previous slots
     let mut addresses = utils::AddrMixer::new(3);
     let mut rng = rand::thread_rng();
 
-    for _ in 0..params.n_slots {
-        let slot = state.block_num;
+    for slot in 0..params.n_slots {
         addresses.advance();
 
         if rng.gen_ratio(params.accounts_per_100k as u32, 100_000) {
@@ -47,11 +46,9 @@ fn add_some_and_advance(state: &mut EvmState, params: &Params) {
             // }
         }
 
-        state.commit_block(0);
-        *state = state.fork(slot + 1);
+        let committed = state.clone().commit_block(slot);
+        *state = committed.next_incomming(0);
     }
-
-    state.commit_block(0);
 }
 
 fn fill_new_db_then_backup(c: &mut Criterion) {
@@ -68,36 +65,37 @@ fn fill_new_db_then_backup(c: &mut Criterion) {
         .for_each(|params| {
             let dir = tempdir().unwrap();
 
-            let mut state =
+            let evm_state =
                 EvmState::new(&dir).expect("Unable to create new EVM state in temporary directory");
+            let mut state = match evm_state {
+                EvmState::Incomming(i) => i,
+                _ => unreachable!(),
+            };
             add_some_and_advance(&mut state, &params);
 
-            let slot = state.block_num;
-            let root = state.root;
-            drop(state);
+            let evm_state = EvmState::Incomming(state);
+            assert!(
+                evm_state.kvs_references() == 1,
+                "Ensure that only one kvs users left."
+            );
+            let persist_state = evm_state.save_state();
 
-            group.bench_with_input(
+            let _persist = group.bench_with_input(
                 BenchmarkId::from_parameter(&params),
                 &params,
                 |b, _params| {
                     b.iter_batched(
                         || {
-                            let state = EvmState::load_from(
-                                &dir,
-                                evm_state::types::EvmStatePersistFields::Empty {
-                                    block_number: slot,
-                                    state_root: root,
-                                },
-                            )
-                            .expect("Unable to load EVM state from temporary directory");
+                            let evm_state = EvmState::load_from(&dir, persist_state.clone())
+                                .expect("Unable to create new EVM state in temporary directory");
 
                             let empty_dir = tempdir().unwrap();
                             assert_eq!(0, fs::read_dir(&empty_dir).unwrap().count());
 
-                            (state, empty_dir)
+                            (evm_state, empty_dir)
                         },
                         |(state, target_dir)| {
-                            let _ = state.kvs.backup().expect(
+                            let _ = state.make_backup().expect(
                                 "Unable to save EVM state storage data into temporary directory",
                             );
                             (state, target_dir) // drop outside
@@ -110,6 +108,7 @@ fn fill_new_db_then_backup(c: &mut Criterion) {
 }
 
 fn fill_new_db_then_backup_and_then_backup_again(c: &mut Criterion) {
+    // let _ = simple_logger::SimpleLogger::default().init();
     let mut group = c.benchmark_group("fill then backup twice");
     group.sample_size(10);
 
@@ -137,37 +136,40 @@ fn fill_new_db_then_backup_and_then_backup_again(c: &mut Criterion) {
     .for_each(|(params1, params2)| {
         let dir = tempdir().unwrap();
 
-        let mut state =
+        let evm_state =
             EvmState::new(&dir).expect("Unable to create new EVM state in temporary directory");
+        let mut state = match evm_state {
+            EvmState::Incomming(i) => i,
+            _ => unreachable!(),
+        };
         add_some_and_advance(&mut state, &params1);
-
-        let slot = state.block_num;
-        let root = state.root;
-        drop(state);
-
+        let evm_state = EvmState::Incomming(state);
+        assert!(
+            evm_state.kvs_references() == 1,
+            "Ensure that only one kvs users left."
+        );
+        let persist_state = evm_state.save_state();
+        log::info!(" Persist state = {:?}", persist_state);
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("{} => {}", &params1, &params2)),
             &params2,
             |b, _params| {
                 b.iter_batched(
                     || {
-                        let mut state = EvmState::load_from(
-                            &dir,
-                            evm_state::types::EvmStatePersistFields::Empty {
-                                block_number: slot,
-                                state_root: root,
-                            },
-                        )
-                        .expect("Unable to load EVM state from temporary directory");
-
-                        let _ = state.kvs.backup().unwrap();
-
+                        let evm_state = EvmState::load_from(&dir, persist_state.clone())
+                            .expect("Unable to create new EVM state in temporary directory");
+                        let _ = evm_state.make_backup().unwrap();
+                        let mut state = match evm_state {
+                            EvmState::Incomming(i) => i,
+                            _ => unreachable!(),
+                        };
                         add_some_and_advance(&mut state, &params2);
 
-                        state
+                        let evm_state = EvmState::Incomming(state);
+                        evm_state
                     },
                     |state| {
-                        let _ = state.kvs.backup().unwrap();
+                        let _ = state.make_backup().unwrap();
                         state // drop outside
                     },
                     BatchSize::NumIterations(1),

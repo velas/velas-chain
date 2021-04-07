@@ -80,7 +80,7 @@ pub(crate) struct DeserializableVersionedBank {
 
     pub(crate) evm_chain_id: u64,
     // TODO: remove Hex wrapper and ser/de as plain H256
-    pub(crate) evm_state_root: evm_rpc::Hex<evm_state::H256>,
+    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
 }
 
 impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
@@ -118,7 +118,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             epoch_stakes: dvb.epoch_stakes,
             is_delta: dvb.is_delta,
             evm_chain_id: dvb.evm_chain_id,
-            evm_state_root: dvb.evm_state_root.0,
+            evm_persist_feilds: dvb.evm_persist_feilds,
         }
     }
 }
@@ -161,7 +161,7 @@ pub(crate) struct SerializableVersionedBank<'a> {
     pub(crate) is_delta: bool,
     pub(crate) message_processor: MessageProcessor,
     pub(crate) evm_chain_id: u64,
-    pub(crate) evm_state_root: evm_rpc::Hex<evm_state::H256>,
+    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
 }
 
 impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedBank<'a> {
@@ -204,7 +204,7 @@ impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedB
             is_delta: rhs.is_delta,
             message_processor: new(),
             evm_chain_id: rhs.evm_chain_id,
-            evm_state_root: evm_rpc::Hex(rhs.evm_state_root),
+            evm_persist_feilds: rhs.evm_persist_feilds,
         }
     }
 }

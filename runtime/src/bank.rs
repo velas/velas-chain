@@ -25,6 +25,7 @@ use crate::{
     vote_account::ArcVoteAccount,
 };
 use byteorder::{ByteOrder, LittleEndian};
+use evm_state::AccountProvider;
 use evm_state::FromKey;
 use itertools::Itertools;
 use log::*;
@@ -585,7 +586,7 @@ pub(crate) struct BankFieldsToDeserialize {
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) evm_chain_id: u64,
-    pub(crate) evm_state_root: evm_state::H256,
+    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
 }
 
 // Bank's common fields shared by all supported snapshot versions for serialization.
@@ -626,7 +627,7 @@ pub(crate) struct BankFieldsToSerialize<'a> {
     pub(crate) epoch_stakes: &'a HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) evm_chain_id: u64,
-    pub(crate) evm_state_root: evm_state::H256,
+    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -666,6 +667,9 @@ impl PartialEq for Bank {
             && *self.stakes.read().unwrap() == *other.stakes.read().unwrap()
             && self.epoch_stakes == other.epoch_stakes
             && self.is_delta.load(Relaxed) == other.is_delta.load(Relaxed)
+            && self.evm_chain_id == other.evm_chain_id
+            && self.evm_state.read().unwrap().last_root()
+                == other.evm_state.read().unwrap().last_root()
     }
 }
 
@@ -944,6 +948,7 @@ impl Bank {
                     evm_state_path,
                     evm_genesis_path,
                     genesis_config.evm_root_hash,
+                    genesis_config.creation_time as u64,
                 )
                 .unwrap(),
             );
@@ -1020,7 +1025,7 @@ impl Bank {
             .evm_state
             .read()
             .expect("parent evm state was poisoned")
-            .fork();
+            .new_from_parent(parent.clock().unix_timestamp);
 
         let mut new = Bank {
             rc,
@@ -1307,12 +1312,12 @@ impl Bank {
             epoch_stakes: &self.epoch_stakes,
             is_delta: self.is_delta.load(Relaxed),
             evm_chain_id: self.evm_chain_id,
-            evm_state_root: self.evm_state.read().unwrap().root,
+            evm_persist_feilds: self.evm_state.read().unwrap().clone().save_state(),
         }
     }
 
     pub fn evm_block(&self) -> Option<evm_state::BlockHeader> {
-        self.evm_state.read().unwrap().block.clone()
+        self.evm_state.read().unwrap().get_block_header().cloned()
     }
 
     pub fn collector_id(&self) -> &Pubkey {
@@ -2030,7 +2035,8 @@ impl Bank {
         self.evm_state
             .write()
             .expect("evm state was poisoned")
-            .commit_block(self.clock().unix_timestamp as u64);
+            .try_commit(self.slot())
+            .expect("failed to commit evm");
 
         debug!(
             "EVM state commit takes {} us",
@@ -2039,8 +2045,8 @@ impl Bank {
 
         debug!(
             "Set evm state root to {:?} at block {}",
-            self.evm_state.read().unwrap().root,
-            self.slot()
+            self.evm_state.read().unwrap().last_root(),
+            self.evm_state.read().unwrap().block_number()
         );
     }
 
@@ -2927,7 +2933,7 @@ impl Bank {
         Vec<usize>,
         u64,
         u64,
-        Option<evm_state::EvmState>,
+        Option<evm_state::EvmBackend<evm_state::Incomming>>,
     ) {
         let txs = batch.transactions();
         debug!("processing transactions: {}", txs.len());
@@ -3007,18 +3013,18 @@ impl Bank {
                     let mut evm_executor = if tx.message.is_modify_evm_state() {
                         // append to old patch if exist, or create new, from existing evm state
                         let state = evm_patch.take().unwrap_or_else(|| {
-                            self.evm_state
-                                .read()
-                                .expect("bank evm state was poisoned")
-                                .clone()
+                            match &*self.evm_state.read().expect("bank evm state was poisoned") {
+                                evm_state::EvmState::Incomming(i) => i.clone(),
+                                evm_state::EvmState::Committed(_) => {
+                                    panic!("Bank state was committed",)
+                                }
+                            }
                         });
 
                         let evm_executor = evm_state::Executor::with_config(
                             state,
-                            evm_state::Config::istanbul(),
-                            u64::max_value(),
-                            self.evm_chain_id,
-                            self.slot(),
+                            evm_state::ChainContext::default(), // TODO: Replace by loading from sysvars
+                            evm_state::EvmConfig::new(self.evm_chain_id),
                         );
                         Some(evm_executor)
                     } else {
@@ -3252,7 +3258,7 @@ impl Bank {
         tx_count: u64,
         signature_count: u64,
         timings: &mut ExecuteTimings,
-        patch: Option<evm_state::EvmState>,
+        patch: Option<evm_state::EvmBackend<evm_state::Incomming>>,
     ) -> TransactionResults {
         assert!(
             !self.freeze_started(),
@@ -3291,7 +3297,7 @@ impl Bank {
             let mut evm_state = self.evm_state.write().expect("bank evm state was poisoned");
             trace!("Updating evm state, before = {:?}", *evm_state);
             trace!("Updating evm state, after = {:?}", patch);
-            *evm_state = patch
+            *evm_state = patch.into()
         }
         // once committed there is no way to unroll
         write_time.stop();
@@ -4302,7 +4308,7 @@ impl Bank {
             self.evm_state
                 .read()
                 .expect("evm state poisoned")
-                .root
+                .last_root()
                 .as_ref(),
         ]);
 

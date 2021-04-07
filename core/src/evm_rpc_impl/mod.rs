@@ -12,7 +12,7 @@ use evm_rpc::{
     error::{self, Error},
     Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTransaction,
 };
-use evm_state::{Address, Config, Gas, LogFilter, H256, U256};
+use evm_state::{AccountProvider, Address, Config, Gas, LogFilter, H256, U256};
 
 use crate::rpc::JsonRpcRequestProcessor;
 
@@ -153,54 +153,55 @@ impl ChainMockERPC for ChainMockERPCImpl {
             Some(block) => block,
             None => return Ok(None),
         };
+        return Err(Error::Unimplemented {});
 
-        let block_hash = solana_sdk::hash::Hash::from_str(&block.blockhash).unwrap();
-        let block_hash = H256::from_slice(&block_hash.0);
-        let parent_hash = solana_sdk::hash::Hash::from_str(&block.previous_blockhash).unwrap();
-        let bank = meta.bank(None);
-        let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
-        let tx_hashes = evm_lock.get_transactions_in_block(block_num);
-        let transactions = if full {
-            let txs = tx_hashes
-                .iter()
-                .flatten()
-                .map(|tx_hash| {
-                    evm_lock
-                        .get_transaction_receipt(*tx_hash)
-                        .expect("Transaction exist")
-                })
-                .filter_map(|receipt| RPCTransaction::new_from_receipt(receipt, block_hash).ok())
-                .collect();
-            Either::Right(txs)
-        } else {
-            let txs = tx_hashes.into_iter().flatten().map(Hex).collect();
-            Either::Left(txs)
-        };
-        drop(evm_lock);
+        // let block_hash = solana_sdk::hash::Hash::from_str(&block.blockhash).unwrap();
+        // let block_hash = H256::from_slice(&block_hash.0);
+        // let parent_hash = solana_sdk::hash::Hash::from_str(&block.previous_blockhash).unwrap();
+        // let bank = meta.bank(None);
+        // let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
+        // let tx_hashes = evm_lock.get_transactions_in_block(block_num);
+        // let transactions = if full {
+        //     let txs = tx_hashes
+        //         .iter()
+        //         .flatten()
+        //         .map(|tx_hash| {
+        //             evm_lock
+        //                 .get_transaction_receipt(*tx_hash)
+        //                 .expect("Transaction exist")
+        //         })
+        //         .filter_map(|receipt| RPCTransaction::new_from_receipt(receipt, block_hash).ok())
+        //         .collect();
+        //     Either::Right(txs)
+        // } else {
+        //     let txs = tx_hashes.into_iter().flatten().map(Hex).collect();
+        //     Either::Left(txs)
+        // };
+        // drop(evm_lock);
 
-        let result = RPCBlock {
-            number: U256::from(block_num).into(),
-            hash: H256::from_slice(&block_hash.0).into(),
-            parent_hash: H256::from_slice(&parent_hash.0).into(),
-            size: 0x100.into(),
-            gas_limit: Hex(0x10000.into()),
-            gas_used: Gas::zero().into(),
-            timestamp: Hex(block.block_time.unwrap_or(0) as u64),
-            transactions,
+        // let result = RPCBlock {
+        //     number: U256::from(block_num).into(),
+        //     hash: H256::from_slice(&block_hash.0).into(),
+        //     parent_hash: H256::from_slice(&parent_hash.0).into(),
+        //     size: 0x100.into(),
+        //     gas_limit: Hex(0x10000.into()),
+        //     gas_used: Gas::zero().into(),
+        //     timestamp: Hex(block.block_time.unwrap_or(0) as u64),
+        //     transactions,
 
-            nonce: 0x7bb9369dcbaec019.into(),
-            sha3_uncles: H256::zero().into(),
-            logs_bloom: H256::zero().into(), // H2048
-            transactions_root: H256::zero().into(),
-            state_root: H256::zero().into(),
-            receipts_root: H256::zero().into(),
-            miner: Address::zero().into(),
-            difficulty: U256::zero().into(),
-            total_difficulty: U256::zero().into(),
-            extra_data: b"Native chain data ommitted...".to_vec().into(),
-            uncles: vec![],
-        };
-        Ok(Some(result))
+        //     nonce: 0x7bb9369dcbaec019.into(),
+        //     sha3_uncles: H256::zero().into(),
+        //     logs_bloom: H256::zero().into(), // H2048
+        //     transactions_root: H256::zero().into(),
+        //     state_root: H256::zero().into(),
+        //     receipts_root: H256::zero().into(),
+        //     miner: Address::zero().into(),
+        //     difficulty: U256::zero().into(),
+        //     total_difficulty: U256::zero().into(),
+        //     extra_data: b"Native chain data ommitted...".to_vec().into(),
+        //     uncles: vec![],
+        // };
+        // Ok(Some(result))
     }
 
     fn block_transaction_count_by_number(
@@ -339,23 +340,25 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Option<RPCTransaction>, Error> {
         let bank = meta.bank(CommitmentConfig::processed().into());
         let evm_state = bank.evm_state.read().unwrap();
-        let receipt = evm_state.get_transaction_receipt(tx_hash.0);
 
-        Ok(match receipt {
-            Some(receipt) => {
-                let block_hash = meta
-                    .get_confirmed_block_hash(receipt.block_number)
-                    .with_context(|| error::ProxyRpcError {})?;
-                let block_hash = block_hash.ok_or(Error::BlockNotFound {
-                    block: receipt.block_number,
-                })?;
-                let block_hash = solana_sdk::hash::Hash::from_str(&block_hash).unwrap();
-                let block_hash = H256::from_slice(&block_hash.0);
+        return Err(Error::Unimplemented {});
+        // let receipt = evm_state.get_transaction_receipt(tx_hash.0);
 
-                Some(RPCTransaction::new_from_receipt(receipt, block_hash)?)
-            }
-            None => None,
-        })
+        // Ok(match receipt {
+        //     Some(receipt) => {
+        //         let block_hash = meta
+        //             .get_confirmed_block_hash(receipt.block_number)
+        //             .with_context(|| error::NativeRpcError {})?;
+        //         let block_hash = block_hash.ok_or(Error::BlockNotFound {
+        //             block: receipt.block_number,
+        //         })?;
+        //         let block_hash = solana_sdk::hash::Hash::from_str(&block_hash).unwrap();
+        //         let block_hash = H256::from_slice(&block_hash.0);
+
+        //         Some(RPCTransaction::new_from_receipt(receipt, block_hash)?)
+        //     }
+        //     None => None,
+        // })
     }
 
     fn transaction_receipt(
@@ -365,22 +368,24 @@ impl BasicERPC for BasicERPCImpl {
     ) -> Result<Option<RPCReceipt>, Error> {
         let bank = meta.bank(CommitmentConfig::processed().into());
         let evm_state = bank.evm_state.read().unwrap();
-        let receipt = evm_state.get_transaction_receipt(tx_hash.0);
 
-        Ok(match receipt {
-            Some(receipt) => {
-                let block_hash = meta
-                    .get_confirmed_block_hash(receipt.block_number)
-                    .with_context(|| error::ProxyRpcError {})?;
-                let block_hash = block_hash.ok_or(Error::BlockNotFound {
-                    block: receipt.block_number,
-                })?;
-                let block_hash = solana_sdk::hash::Hash::from_str(&block_hash).unwrap();
-                let block_hash = H256::from_slice(&block_hash.0);
-                Some(RPCReceipt::new_from_receipt(receipt, block_hash)?)
-            }
-            None => None,
-        })
+        return Err(Error::Unimplemented {});
+        // let receipt = evm_state.get_transaction_receipt(tx_hash.0);
+
+        // Ok(match receipt {
+        //     Some(receipt) => {
+        //         let block_hash = meta
+        //             .get_confirmed_block_hash(receipt.block_number)
+        //             .with_context(|| error::NativeRpcError {})?;
+        //         let block_hash = block_hash.ok_or(Error::BlockNotFound {
+        //             block: receipt.block_number,
+        //         })?;
+        //         let block_hash = solana_sdk::hash::Hash::from_str(&block_hash).unwrap();
+        //         let block_hash = H256::from_slice(&block_hash.0);
+        //         Some(RPCReceipt::new_from_receipt(receipt, block_hash)?)
+        //     }
+        //     None => None,
+        // })
     }
 
     fn call(
@@ -418,11 +423,12 @@ impl BasicERPC for BasicERPCImpl {
             to_block: to,
         };
 
-        Ok(evm_lock
-            .get_logs(filter)
-            .into_iter()
-            .map(|l| l.into())
-            .collect())
+        return Err(Error::Unimplemented {});
+        // Ok(evm_lock
+        //     .get_logs(filter)
+        //     .into_iter()
+        //     .map(|l| l.into())
+        //     .collect())
     }
 }
 
@@ -450,15 +456,17 @@ fn call(
         .expect("meta bank EVM state was poisoned");
 
     let evm_state = evm_state.clone();
-    let mut estimate_config = Config::istanbul();
+    let evm_state = match evm_state.new_from_parent(0) {
+        // TODO get timestamp from bank
+        evm_state::EvmState::Incomming(i) => i,
+        evm_state::EvmState::Committed(_) => unreachable!(),
+    };
+    let mut estimate_config = evm_state::EvmConfig::default();
     estimate_config.estimate = true;
-
     let mut executor = evm_state::Executor::with_config(
         evm_state,
+        Default::default(), // TODO replace by chain_id getter from bank.
         estimate_config,
-        gas_limit,
-        bank.evm_chain_id,
-        bank.slot(),
     );
 
     let result = if let Some(address) = tx.to {
@@ -472,6 +480,6 @@ fn call(
         executor.with_executor(|e| (e.transact_create(caller, value, input, gas_limit), vec![]))
     };
 
-    let gas_used = executor.used_gas();
+    let gas_used = executor.deconstruct().state.used_gas;
     Ok((result.0, result.1, gas_used))
 }

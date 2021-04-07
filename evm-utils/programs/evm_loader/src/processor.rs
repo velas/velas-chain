@@ -95,7 +95,10 @@ impl EvmProcessor {
             "EvmTransaction: Executed transaction result: {:?}",
             result
         );
-        if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
+        if matches!(
+            result.exit_reason,
+            ExitReason::Fatal(_) | ExitReason::Error(_)
+        ) {
             return Err(InstructionError::InvalidError);
         }
         Ok(())
@@ -161,7 +164,10 @@ impl EvmProcessor {
             "EvmAuthorizedTransaction: Executed transaction result: {:?}",
             result
         );
-        if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
+        if matches!(
+            result.exit_reason,
+            ExitReason::Fatal(_) | ExitReason::Error(_)
+        ) {
             return Err(InstructionError::InvalidError);
         }
         Ok(())
@@ -342,7 +348,10 @@ impl EvmProcessor {
                     "BigTransaction::EvmTransactionExecute: Execute tx exit status = {:?}",
                     result
                 );
-                if matches!(result.0, ExitReason::Fatal(_) | ExitReason::Error(_)) {
+                if matches!(
+                    result.exit_reason,
+                    ExitReason::Fatal(_) | ExitReason::Error(_)
+                ) {
                     Err(InstructionError::InvalidError)
                 } else {
                     Ok(())
@@ -404,7 +413,7 @@ mod test {
         transactions::{TransactionAction, TransactionSignature},
         FromKey,
     };
-    use evm_state::{ExitReason, ExitSucceed};
+    use evm_state::{AccountProvider, ExitReason, ExitSucceed};
     use primitive_types::{H160, H256, U256};
     use solana_sdk::keyed_account::KeyedAccount;
     use solana_sdk::native_loader;
@@ -442,13 +451,7 @@ mod test {
     #[test]
     fn execute_tx() {
         let _logger = simple_logger::SimpleLogger::new().init();
-        let mut executor = evm_state::Executor::with_config(
-            evm_state::EvmState::default(),
-            evm_state::Config::istanbul(),
-            10000000,
-            CHAIN_ID.into(),
-            0,
-        );
+        let mut executor = evm_state::Executor::testing();
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
@@ -510,13 +513,7 @@ mod test {
 
     #[test]
     fn tx_preserve_nonce() {
-        let mut executor = evm_state::Executor::with_config(
-            evm_state::EvmState::default(),
-            evm_state::Config::istanbul(),
-            10000000,
-            CHAIN_ID.into(),
-            0,
-        );
+        let mut executor = evm_state::Executor::testing();
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
@@ -597,7 +594,7 @@ mod test {
 
     #[test]
     fn execute_tx_with_state_apply() {
-        let mut state = evm_state::EvmState::default();
+        let mut state = evm_state::EvmBackend::default();
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
@@ -631,13 +628,7 @@ mod test {
             None,
         );
         {
-            let mut executor_orig = evm_state::Executor::with_config(
-                state.clone(),
-                evm_state::Config::istanbul(),
-                10000000,
-                CHAIN_ID.into(),
-                0,
-            );
+            let mut executor_orig = evm_state::Executor::default_configs(state);
             let mut executor = Some(&mut executor_orig);
             assert!(processor
                 .process_instruction(
@@ -651,8 +642,8 @@ mod test {
                 .is_ok());
             println!("cx = {:?}", executor);
 
-            state = executor_orig.deconstruct();
-            state.commit();
+            let committed = executor_orig.deconstruct().commit_block(0);
+            state = committed.next_incomming(0);
         }
 
         assert_eq!(
@@ -680,13 +671,7 @@ mod test {
         let tx_hash = tx_call.signing_hash(Some(CHAIN_ID));
         let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
         {
-            let mut executor_orig = evm_state::Executor::with_config(
-                state.clone(),
-                evm_state::Config::istanbul(),
-                10000000,
-                CHAIN_ID.into(),
-                0,
-            );
+            let mut executor_orig = evm_state::Executor::default_configs(state);
             let mut executor = Some(&mut executor_orig);
 
             assert!(processor
@@ -701,28 +686,21 @@ mod test {
                 .is_ok());
             println!("cx = {:?}", executor);
 
-            state = executor_orig.deconstruct();
-            state.commit();
+            let committed = executor_orig.deconstruct().commit_block(0);
+
+            let receipt = committed.find_committed_transaction(tx_hash).unwrap();
+            assert!(matches!(
+                receipt.status,
+                ExitReason::Succeed(ExitSucceed::Returned)
+            ));
         }
 
-        let receipt = state.get_transaction_receipt(tx_hash).unwrap();
-
-        assert!(matches!(
-            receipt.status,
-            ExitReason::Succeed(ExitSucceed::Returned)
-        ));
         // TODO: Assert that tx executed with result.
     }
 
     #[test]
     fn execute_native_transfer_tx() {
-        let mut executor_orig = evm_state::Executor::with_config(
-            evm_state::EvmState::default(),
-            evm_state::Config::istanbul(),
-            10000000,
-            CHAIN_ID.into(),
-            0,
-        );
+        let mut executor_orig = evm_state::Executor::testing();
         let mut executor = Some(&mut executor_orig);
         let processor = EvmProcessor::default();
         let user_account = RefCell::new(solana_sdk::account::Account {
@@ -789,13 +767,7 @@ mod test {
 
     #[test]
     fn execute_transfer_to_native_without_needed_account() {
-        let mut executor_orig = evm_state::Executor::with_config(
-            evm_state::EvmState::default(),
-            evm_state::Config::istanbul(),
-            10000000,
-            CHAIN_ID.into(),
-            0,
-        );
+        let mut executor_orig = evm_state::Executor::testing();
         let mut executor = Some(&mut executor_orig);
         let processor = EvmProcessor::default();
         let first_user_account = RefCell::new(solana_sdk::account::Account {
@@ -840,7 +812,7 @@ mod test {
         );
         assert_eq!(keyed_accounts[1].try_account_ref_mut().unwrap().lamports, 0);
 
-        let state = executor_orig.deconstruct();
+        let mut state = executor_orig.deconstruct();
         assert_eq!(
             state
                 .get_account_state(ether_dummy_address)
@@ -880,13 +852,7 @@ mod test {
 
         let tx_call = tx_call.sign(&ether_sc, Some(CHAIN_ID));
         {
-            let mut executor_orig = evm_state::Executor::with_config(
-                state.clone(),
-                evm_state::Config::istanbul(),
-                10000000,
-                CHAIN_ID.into(),
-                0,
-            );
+            let mut executor_orig = evm_state::Executor::default_configs(state);
             let mut executor = Some(&mut executor_orig);
 
             // Error transaction has no needed account.
@@ -901,8 +867,8 @@ mod test {
                 )
                 .is_err());
             println!("cx = {:?}", executor);
-
-            executor_orig.deconstruct().commit();
+            let committed = executor_orig.deconstruct().commit_block(0);
+            state = committed.next_incomming(0);
         }
 
         // Nothing should change, because of error
@@ -926,13 +892,7 @@ mod test {
     fn execute_transfer_roundtrip() {
         let _ = simple_logger::SimpleLogger::new().init();
 
-        let mut executor_orig = evm_state::Executor::with_config(
-            evm_state::EvmState::default(),
-            evm_state::Config::istanbul(),
-            10000000,
-            CHAIN_ID.into(),
-            0,
-        );
+        let mut executor_orig = evm_state::Executor::testing();
         let mut executor = Some(&mut executor_orig);
         let processor = EvmProcessor::default();
         let first_user_account = RefCell::new(solana_sdk::account::Account {
@@ -1018,29 +978,24 @@ mod test {
 
         let tx_call = tx_call.sign(&ether_sc, Some(CHAIN_ID));
         {
-            let mut executor_orig = evm_state::Executor::with_config(
-                state.clone(),
-                evm_state::Config::istanbul(),
-                10000000,
-                CHAIN_ID.into(),
-                0,
-            );
+            let mut executor_orig = evm_state::Executor::default_configs(state);
             let mut executor = Some(&mut executor_orig);
+            let mut invoke_context = MockInvokeContext::default();
 
-            processor
-                .process_instruction(
-                    &crate::ID,
-                    &keyed_accounts,
-                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
-                        .unwrap(),
-                    executor.as_deref_mut(),
-                    &mut MockInvokeContext::default(),
-                )
-                .unwrap();
+            println!("cx before = {:?}", executor);
+            let result = processor.process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
+                executor.as_deref_mut(),
+                &mut invoke_context,
+            );
             println!("cx = {:?}", executor);
+            println!("logger = {:?}", invoke_context.logger);
+            result.unwrap();
 
-            state = executor_orig.deconstruct();
-            state.commit();
+            let committed = executor_orig.deconstruct().commit_block(0);
+            state = committed.next_incomming(0);
         }
 
         assert_eq!(
@@ -1094,19 +1049,14 @@ mod test {
     #[test]
     fn each_solana_tx_should_contain_writeable_evm_state() {
         let _ = simple_logger::SimpleLogger::new().init();
-        let mut executor = evm_state::Executor::with_config(
-            evm_state::EvmState::default(),
-            evm_state::Config::istanbul(),
-            10000000,
-            CHAIN_ID.into(),
-            0,
-        );
-        let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
 
         let mut dummy_accounts = BTreeMap::new();
 
         for ix in all_ixs() {
+            // Create clear executor for each run, to avoid state conflicts in instructions (signed and unsigned tx with same nonce).
+            let mut executor = evm_state::Executor::testing();
+            let mut executor = Some(&mut executor);
             // insert new accounts, if some missing
             for acc in &ix.accounts {
                 dummy_accounts
@@ -1131,7 +1081,7 @@ mod test {
                     }
                 })
                 .collect();
-
+            let mut context = MockInvokeContext::default();
             println!("Keyed accounts = {:?}", keyed_accounts);
             // First execution without evm state key, should fail.
             let err = processor
@@ -1140,38 +1090,34 @@ mod test {
                     &keyed_accounts[1..],
                     &bincode::serialize(&data).unwrap(),
                     executor.as_deref_mut(),
-                    &mut MockInvokeContext::default(),
+                    &mut context,
                 )
                 .unwrap_err();
-
+            println!("logg = {:?}", context.logger);
             match err {
                 InstructionError::NotEnoughAccountKeys | InstructionError::MissingAccount => {}
                 rest => panic!("Unexpected result = {:?}", rest),
             }
 
             // Because first execution is fail, state didn't changes, and second execution should pass.
-            processor
-                .process_instruction(
-                    &crate::ID,
-                    &keyed_accounts,
-                    &bincode::serialize(&data).unwrap(),
-                    executor.as_deref_mut(),
-                    &mut MockInvokeContext::default(),
-                )
-                .unwrap();
+            let result = processor.process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &bincode::serialize(&data).unwrap(),
+                executor.as_deref_mut(),
+                &mut context,
+            );
+
+            println!("cx =  {:?}", executor);
+            println!("logg = {:?}", context.logger);
+            result.unwrap();
         }
     }
 
     #[test]
     fn authorized_tx_only_from_signer() {
         let _ = simple_logger::SimpleLogger::new().init();
-        let mut executor = evm_state::Executor::with_config(
-            evm_state::EvmState::default(),
-            evm_state::Config::istanbul(),
-            10000000,
-            CHAIN_ID.into(),
-            0,
-        );
+        let mut executor = evm_state::Executor::testing();
 
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let mut executor = Some(&mut executor);
@@ -1261,13 +1207,7 @@ mod test {
 
     #[test]
     fn big_tx_allocation_error() {
-        let mut executor = evm_state::Executor::with_config(
-            evm_state::EvmState::default(),
-            evm_state::Config::istanbul(),
-            10000000,
-            CHAIN_ID.into(),
-            0,
-        );
+        let mut executor = evm_state::Executor::testing();
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
@@ -1319,13 +1259,7 @@ mod test {
     fn big_tx_write_out_of_bound() {
         let _ = simple_logger::SimpleLogger::new().init();
 
-        let mut executor = evm_state::Executor::with_config(
-            evm_state::EvmState::default(),
-            evm_state::Config::istanbul(),
-            10000000,
-            CHAIN_ID.into(),
-            0,
-        );
+        let mut executor = evm_state::Executor::testing();
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
@@ -1430,13 +1364,7 @@ mod test {
 
     #[test]
     fn big_tx_write_without_alloc() {
-        let mut executor = evm_state::Executor::with_config(
-            evm_state::EvmState::default(),
-            evm_state::Config::istanbul(),
-            10000000,
-            CHAIN_ID.into(),
-            0,
-        );
+        let mut executor = evm_state::Executor::testing();
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
