@@ -1018,7 +1018,7 @@ struct Args {
     rpc_address: String,
     #[structopt(default_value = "127.0.0.1:8545")]
     binding_address: SocketAddr,
-    #[structopt(default_value = "0xdead")]
+    #[structopt(default_value = "57005")] // 0xdead
     evm_chain_id: u64,
 }
 
