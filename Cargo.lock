@@ -4518,6 +4518,7 @@ dependencies = [
  "Inflector",
  "base64 0.12.3",
  "bincode",
+ "borsh",
  "bs58",
  "bv",
  "lazy_static",
