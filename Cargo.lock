@@ -4853,6 +4853,7 @@ name = "solana-core"
 version = "1.5.14"
 dependencies = [
  "ahash 0.6.3",
+ "anyhow",
  "base64 0.12.3",
  "bincode",
  "bs58",

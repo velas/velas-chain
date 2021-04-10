@@ -151,6 +151,7 @@ pub struct LogFilter {
 pub struct BlockHeader {
     pub parent_hash: H256,
     pub state_root: H256,
+    pub transactions: Vec<H256>,
     pub transactions_root: H256,
     pub receipts_root: H256,
     // pub logs_bloom: LogsBloom,
@@ -171,8 +172,10 @@ impl BlockHeader {
         gas_used: u64,
         timestamp: u64,
         slot: u64,
-        processed_transactions: impl Iterator<Item = &'a TransactionReceipt>,
+        processed_transactions: impl Iterator<Item = &'a (H256, TransactionReceipt)>,
     ) -> BlockHeader {
+        let transaction_receipts: Vec<_> = processed_transactions.collect();
+        let transactions: Vec<H256> = transaction_receipts.iter().map(|(k, _)| *k).collect();
         BlockHeader {
             parent_hash,
             gas_limit,
@@ -181,17 +184,24 @@ impl BlockHeader {
             state_root,
             timestamp,
             native_chain_slot: slot,
+            transactions,
             // TODO: Add real transaction receipts and transaction list
             receipts_root: H256::zero(),
             transactions_root: H256::zero(),
         }
+    }
+
+    pub fn hash(&self) -> H256 {
+        let mut stream = RlpStream::new();
+        self.rlp_append(&mut stream);
+        H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block {
     pub header: BlockHeader,
-    pub transactions: Vec<crate::transactions::Transaction>,
+    pub transactions: Vec<(crate::H256, crate::transactions::TransactionReceipt)>,
 }
 
 impl Encodable for BlockHeader {

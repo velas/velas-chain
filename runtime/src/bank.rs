@@ -1316,8 +1316,8 @@ impl Bank {
         }
     }
 
-    pub fn evm_block(&self) -> Option<evm_state::BlockHeader> {
-        self.evm_state.read().unwrap().get_block_header().cloned()
+    pub fn evm_block(&self) -> Option<evm_state::Block> {
+        self.evm_state.read().unwrap().get_block()
     }
 
     pub fn collector_id(&self) -> &Pubkey {

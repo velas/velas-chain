@@ -211,7 +211,7 @@ impl Executor {
         let unsigned_tx = UnsignedTransactionWithCaller {
             unsigned_tx: tx,
             caller,
-            chain_id: chain_id,
+            chain_id,
         };
 
         self.register_tx_with_receipt(TransactionInReceipt::Unsigned(unsigned_tx), result.clone());

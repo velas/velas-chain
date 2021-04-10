@@ -15,6 +15,7 @@ use crate::{
     shred::{Result as ShredResult, Shred, Shredder},
 };
 use bincode::deserialize;
+use evm::H256;
 use log::*;
 use rayon::{
     iter::{IntoParallelRefIterator, ParallelIterator},
@@ -143,6 +144,7 @@ pub struct Blockstore {
 
     // evm
     evm_blocks_cf: LedgerColumn<cf::EvmBlockHeader>,
+    evm_transactions_cf: LedgerColumn<cf::EvmTransactionReceipts>,
 
     last_root: Arc<RwLock<Slot>>,
     insert_shreds_lock: Arc<Mutex<()>>,
@@ -317,6 +319,8 @@ impl Blockstore {
 
         let evm_blocks_cf = db.column();
 
+        let evm_transactions_cf = db.column();
+
         let db = Arc::new(db);
 
         // Get max root or 0 if it doesn't exist
@@ -364,6 +368,7 @@ impl Blockstore {
             blocktime_cf,
             perf_samples_cf,
             evm_blocks_cf,
+            evm_transactions_cf,
             new_shreds_signals: vec![],
             completed_slots_senders: vec![],
             insert_shreds_lock: Arc::new(Mutex::new(())),
@@ -1704,6 +1709,24 @@ impl Blockstore {
         Ok(root_iterator.next().unwrap_or_default())
     }
 
+    pub fn get_first_available_evm_block(&self) -> Result<evm::BlockNum> {
+        Ok(self
+            .evm_blocks_cf
+            .iter(IteratorMode::Start)?
+            .map(|(block, _)| block)
+            .next()
+            .unwrap_or_else(|| evm::BlockNum::MAX))
+    }
+
+    pub fn get_last_available_evm_block(&self) -> Result<evm::BlockNum> {
+        Ok(self
+            .evm_blocks_cf
+            .iter(IteratorMode::End)?
+            .map(|(block, _)| block)
+            .next()
+            .unwrap_or_else(|| evm::BlockNum::MAX))
+    }
+
     pub fn get_confirmed_block_hash(&self, slot: Slot) -> Result<String> {
         datapoint_info!(
             "blockstore-rpc-api",
@@ -1803,6 +1826,47 @@ impl Blockstore {
             }
         }
         Err(BlockstoreError::SlotNotRooted)
+    }
+
+    /// Returns block, and flag if that block was rooted (confirmed)
+    pub fn get_evm_block(&self, block_number: evm::BlockNum) -> Result<(evm::Block, bool)> {
+        datapoint_info!(
+            "blockstore-rpc-api",
+            ("method", "get_evm_block".to_string(), String)
+        );
+        // TODO: Integrate with cleanup service
+        // let lowest_cleanup_slot = self.lowest_cleanup_slot.read().unwrap();
+        // // lowest_cleanup_slot is the last slot that was not cleaned up by
+        // // LedgerCleanupService
+        // if *lowest_cleanup_slot > 0 && *lowest_cleanup_slot >= slot {
+        //     return Err(BlockstoreError::SlotCleanedUp);
+        // }
+        let block_header = if let Some(block_header) = self.read_evm_block_header(block_number)? {
+            block_header
+        } else {
+            return Err(BlockstoreError::SlotCleanedUp);
+        };
+        let mut txs = Vec::new();
+        for hash in &block_header.transactions {
+            let tx = self.read_evm_transaction((*hash, block_header.block_number))?;
+            if let Some(tx) = tx {
+                txs.push((*hash, tx))
+            } else {
+                warn!(
+                    "Evm transaction = {}, was cleanedup, while block still exist",
+                    hash
+                );
+            };
+        }
+
+        let confirmed = self.is_root(block_header.native_chain_slot);
+        Ok((
+            evm::Block {
+                header: block_header,
+                transactions: txs,
+            },
+            confirmed,
+        ))
     }
 
     fn map_transactions_to_statuses<'a>(
@@ -2419,6 +2483,58 @@ impl Blockstore {
         self.evm_blocks_cf.get(block_index)
     }
 
+    pub fn read_evm_transaction(
+        &self,
+        index: (H256, Slot),
+    ) -> Result<Option<evm::TransactionReceipt>> {
+        let (signature, slot) = index;
+        let result = self.evm_transactions_cf.get((0, signature, slot))?;
+        if result.is_none() {
+            Ok(self
+                .evm_transactions_cf
+                .get((1, signature, slot))?
+                .and_then(|meta| meta.try_into().ok()))
+        } else {
+            Ok(result.and_then(|meta| meta.try_into().ok()))
+        }
+    }
+
+    pub fn find_evm_transaction(&self, hash: H256) -> Result<Option<evm::TransactionReceipt>> {
+        if let Some(((_p, found_hash, _block), data)) = self
+            .evm_transactions_cf
+            .iter(IteratorMode::From((0, hash, 0), IteratorDirection::Forward))?
+            .next()
+        {
+            if found_hash == hash {
+                return Ok(Some(deserialize(&data)?));
+            }
+        }
+        if let Some(((_p, found_hash, _block), data)) = self
+            .evm_transactions_cf
+            .iter(IteratorMode::From((1, hash, 0), IteratorDirection::Forward))?
+            .next()
+        {
+            if found_hash == hash {
+                return Ok(Some(deserialize(&data)?));
+            }
+        }
+        return Ok(None);
+    }
+
+    pub fn write_evm_transaction(
+        &self,
+        slot: Slot,
+        hash: H256,
+        status: evm::TransactionReceipt,
+    ) -> Result<()> {
+        // reuse mechanism of transaction_status_index_cf gating
+        let mut w_active_transaction_status_index =
+            self.active_transaction_status_index.write().unwrap();
+        let primary_index = self.get_primary_index(slot, &mut w_active_transaction_status_index)?;
+        self.evm_transactions_cf
+            .put((primary_index, hash, slot), &status)?;
+        Ok(())
+    }
     /// Returns the entry vector for the slot starting with `shred_start_index`
     pub fn get_slot_entries(&self, slot: Slot, shred_start_index: u64) -> Result<Vec<Entry>> {
         self.get_slot_entries_with_shred_info(slot, shred_start_index, false)

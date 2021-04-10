@@ -94,6 +94,7 @@ tokio_codec_01 = { version = "0.1", package = "tokio-codec" }
 solana-rayon-threadlimit = { path = "../rayon-threadlimit", version = "1.5.14" }
 trees = "0.2.1"
 snafu = "0.6"
+anyhow = "1"
 
 [dev-dependencies]
 matches = "0.1.6"

@@ -17,7 +17,7 @@ use triedb::{
 };
 
 use crate::{
-    storage::{Codes, Receipts, Storage as KVS, TransactionHashesPerBlock},
+    storage::{Codes, Storage as KVS},
     transactions::TransactionReceipt,
     types::*,
 };
@@ -35,10 +35,6 @@ pub struct Committed {
 }
 
 impl Committed {
-    fn get_block(&self) -> &BlockHeader {
-        &self.block
-    }
-
     // Returns next Icomming state.
     fn next_incomming(&self, timestamp: u64) -> Incomming {
         debug!("Creating new state = {}.", self.block.block_number + 1);
@@ -76,6 +72,7 @@ impl Incomming {
 
     fn new_update_time(&self, timestamp: u64) -> Self {
         trace!("Updating time for state, timestamp={}", timestamp);
+        debug_assert!(!self.is_active_changes());
         let mut new = self.clone();
         new.timestamp = timestamp;
         new
@@ -97,7 +94,7 @@ impl Incomming {
             self.used_gas,
             self.timestamp,
             slot,
-            committed_transactions.iter().map(|tx| &tx.1),
+            committed_transactions.iter(),
         );
         Committed {
             block,
@@ -118,18 +115,9 @@ pub struct EvmBackend<State> {
     pub kvs: KVS,
 }
 
-<<<<<<< HEAD:evm-utils/evm-state/src/layered_backend.rs
-impl<T> From<Maybe<T>> for Option<T> {
-    fn from(mb: Maybe<T>) -> Self {
-        match mb {
-            Maybe::Just(val) => Some(val),
-            Maybe::Nothing => None,
-        }
-=======
 impl<State> EvmBackend<State> {
     pub fn new(state: State, kvs: KVS) -> Self {
         Self { state, kvs }
->>>>>>> 9e99117fe (feat(evm) Split evm state into two types incomming and outgoing.):evm-utils/evm-state/src/state.rs
     }
 }
 
@@ -461,7 +449,7 @@ pub enum EvmState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvmPersistState {
     Committed(Committed),
-    Incomming(Incomming),
+    Incomming(Incomming), // Usually bank will never try to freeze banks with persist state.
 }
 impl Default for EvmPersistState {
     fn default() -> Self {
@@ -554,69 +542,6 @@ impl EvmState {
         }
     }
 
-    // TODO: Optimize, using bloom filters.
-    // TODO: Check topics query limits <= 4.
-    // TODO: Filter by address, topics
-    // pub fn get_logs(&self, log_filter: LogFilter) -> Vec<LogWithLocation> {
-    //     let mut result = Vec::new();
-
-    //     for (block_id, txs) in (log_filter.from_block..=log_filter.to_block)
-    //         .filter_map(|b| self.get_transactions_in_block(b).map(|txs| (b, txs)))
-    //     {
-    //         txs.into_iter()
-    //             .map(|tx_hash| {
-    //                 (
-    //                     tx_hash,
-    //                     self.get_transaction_receipt(tx_hash)
-    //                         .expect("Transacton not found by hash, while exist by number"),
-    //                 )
-    //             })
-    //             .enumerate()
-    //             .for_each(|(tx_id, (tx_hash, receipt))| {
-    //                 for log in receipt.logs {
-    //                     let log_entry = LogWithLocation {
-    //                         transaction_hash: tx_hash,
-    //                         transaction_id: tx_id as u64,
-    //                         block_num: block_id,
-    //                         data: log.data,
-    //                         topics: log.topics,
-    //                         address: log.address,
-    //                     };
-    //                     result.push(log_entry)
-    //                 }
-    //             });
-    //     }
-    //     result
-    // }
-
-    // pub fn get_account_state(&self, address: H160) -> Option<AccountState> {
-    //     self.as_incomming_state()
-    //         .and_then(|s| s.get(&address))
-    //         .map(|(state, _)| state.clone().into())
-    //         .unwrap_or_else(|| {
-    //             self.kvs().typed_for(self.last_root()).get(&address).map(
-    //                 |Account {
-    //                      nonce,
-    //                      balance,
-    //                      code_hash,
-    //                      ..
-    //                  }| {
-    //                     let code = self
-    //                         .kvs()
-    //                         .get::<Codes>(code_hash)
-    //                         // TODO: default only when code_hash == Code::default().hash()
-    //                         .unwrap_or_default();
-
-    //                     AccountState {
-    //                         nonce,
-    //                         balance,
-    //                         code,
-    //                     }
-    //                 },
-    //             )
-    //         })
-    // }
-
     pub fn try_commit(&mut self, slot: u64) -> Result<(), anyhow::Error> {
         match self {
             EvmState::Committed(committed) => {
@@ -640,10 +565,21 @@ impl EvmState {
     }
 
     /// Return block header if this state was committed before.
-    pub fn get_block_header(&self) -> Option<&BlockHeader> {
+    pub fn get_block(&self) -> Option<Block> {
         match self {
-            EvmState::Committed(committed) => Some(&committed.state.block),
             EvmState::Incomming(_) => None,
+            EvmState::Committed(committed) => {
+                let block = Block {
+                    header: committed.state.block.clone(),
+                    transactions: committed
+                        .state
+                        .committed_transactions
+                        .iter()
+                        .cloned()
+                        .collect(),
+                };
+                Some(block)
+            }
         }
     }
 }
