@@ -7,7 +7,7 @@ use log::*;
 use serde::{Deserialize, Serialize};
 
 use super::state::{AccountProvider, EvmBackend, Incomming};
-use crate::{types::*, DEFAULT_GAS_LIMIT};
+use crate::types::*;
 
 /// Transaction information.
 /// This information will be propagated to solidity.

@@ -149,7 +149,7 @@ impl Storage {
 
 #[derive(Debug)]
 // Hack to close rocksdb background threads. And flush database.
-pub struct DBWithClose(DB);
+pub struct DbWithClose(DB);
 
 impl Drop for DbWithClose {
     fn drop(&mut self) {

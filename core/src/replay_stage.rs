@@ -1960,7 +1960,7 @@ impl ReplayStage {
             let block = bank.evm_block();
             if let Some(block) = block {
                 evm_block_recorder_sender
-                    .send((bank.slot(), block))
+                    .send(block)
                     .unwrap_or_else(|err| warn!("evm_block_recorder_sender failed: {:?}", err));
             }
         }

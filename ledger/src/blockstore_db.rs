@@ -1,7 +1,8 @@
 use crate::blockstore_meta;
 use bincode::{deserialize, serialize};
 use byteorder::{BigEndian, ByteOrder};
-use columns::EvmBlockHeader;
+use columns::{EvmBlockHeader, EvmTransactionReceipts};
+use evm_state::H256;
 use log::*;
 use prost::Message;
 pub use rocksdb::Direction as IteratorDirection;
@@ -158,6 +159,10 @@ pub mod columns {
     #[derive(Debug)]
     /// The evm block header.
     pub struct EvmBlockHeader;
+
+    #[derive(Debug)]
+    /// The evm transaction with statuses.
+    pub struct EvmTransactionReceipts;
 }
 
 pub enum AccessType {
@@ -268,6 +273,8 @@ impl Rocks {
             ColumnFamilyDescriptor::new(PerfSamples::NAME, get_cf_options(&access_type));
         let evm_headers_cf_descriptor =
             ColumnFamilyDescriptor::new(EvmBlockHeader::NAME, get_cf_options(&access_type));
+        let evm_transactions_cf_descriptor =
+            ColumnFamilyDescriptor::new(EvmTransactionReceipts::NAME, get_cf_options(&access_type));
 
         let cfs = vec![
             (SlotMeta::NAME, meta_cf_descriptor),
@@ -289,6 +296,7 @@ impl Rocks {
             (Blocktime::NAME, blocktime_cf_descriptor),
             (PerfSamples::NAME, perf_samples_cf_descriptor),
             (EvmBlockHeader::NAME, evm_headers_cf_descriptor),
+            (EvmTransactionReceipts::NAME, evm_transactions_cf_descriptor),
         ];
 
         // Open the database
@@ -348,6 +356,7 @@ impl Rocks {
             Blocktime::NAME,
             PerfSamples::NAME,
             EvmBlockHeader::NAME,
+            EvmTransactionReceipts::NAME,
         ]
     }
 
@@ -749,6 +758,45 @@ impl ColumnName for columns::EvmBlockHeader {
 
 impl TypedColumn for columns::EvmBlockHeader {
     type Type = evm_state::BlockHeader;
+}
+
+impl Column for columns::EvmTransactionReceipts {
+    type Index = (u64, H256, Slot);
+
+    fn key((index, hash, slot): (u64, H256, Slot)) -> Vec<u8> {
+        let mut key = vec![0; 8 + 32 + 8]; // size_of u64 + size_of HASH + size_of Slot
+        BigEndian::write_u64(&mut key[0..8], index);
+        key[8..40].clone_from_slice(&hash.as_bytes()[0..32]);
+        BigEndian::write_u64(&mut key[40..48], slot);
+        key
+    }
+
+    fn index(key: &[u8]) -> (u64, H256, Slot) {
+        if key.len() != 48 {
+            Self::as_index(0)
+        } else {
+            let index = BigEndian::read_u64(&key[0..8]);
+            let hash = H256::from_slice(&key[8..40]);
+            let slot = BigEndian::read_u64(&key[40..48]);
+            (index, hash, slot)
+        }
+    }
+
+    fn primary_index(index: Self::Index) -> u64 {
+        index.0
+    }
+
+    fn as_index(index: u64) -> Self::Index {
+        (index, H256::default(), 0)
+    }
+}
+
+impl ColumnName for columns::EvmTransactionReceipts {
+    const NAME: &'static str = EVM_TRANSACTIONS;
+}
+
+impl TypedColumn for columns::EvmTransactionReceipts {
+    type Type = evm_state::TransactionReceipt;
 }
 
 // impl ProtobufColumn for columns::EvmBlockHeader {
