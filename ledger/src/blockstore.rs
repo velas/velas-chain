@@ -1724,7 +1724,7 @@ impl Blockstore {
             .iter(IteratorMode::End)?
             .map(|(block, _)| block)
             .next()
-            .unwrap_or_else(|| evm::BlockNum::MAX))
+            .unwrap_or_else(|| evm::BlockNum::MIN))
     }
 
     pub fn get_confirmed_block_hash(&self, slot: Slot) -> Result<String> {

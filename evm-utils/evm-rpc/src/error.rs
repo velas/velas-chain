@@ -42,6 +42,9 @@ pub enum Error {
     #[snafu(display("Failed to find block {}", block))]
     BlockNotFound { block: evm_state::BlockNum },
 
+    #[snafu(display("Failed to find state for block {}", block))]
+    StateNotFoundForBlock { block: String },
+
     #[snafu(display("Failed to process native chain request: {}", source))]
     ProxyRpcError { source: JRpcError },
 
@@ -89,6 +92,7 @@ const EVM_STATE_RPC_ERROR: i64 = 1002;
 const NATIVE_RPC_ERROR: i64 = 1003;
 
 const BLOCK_NOT_FOUND_RPC_ERROR: i64 = 2001;
+const STATE_NOT_FOUND_RPC_ERROR: i64 = 2002;
 
 impl From<Error> for JRpcError {
     fn from(err: Error) -> Self {
@@ -118,6 +122,7 @@ impl From<Error> for JRpcError {
                 internal_error_with_details(NATIVE_RPC_ERROR, &err, &source)
             }
             Error::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &err),
+            Error::StateNotFoundForBlock { .. } => internal_error(STATE_NOT_FOUND_RPC_ERROR, &err),
             Error::Unimplemented {} => {
                 let mut error = Self::invalid_request();
                 error.message = err.to_string();

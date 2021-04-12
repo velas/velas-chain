@@ -619,6 +619,19 @@ impl EvmState {
             }
         }
     }
+
+    pub fn get_account_state_at(&self, root: H256, address: H160) -> Option<AccountState> {
+        match self {
+            Self::Incomming(i) => i.get_account_state_from_kvs(root, address),
+            Self::Committed(c) => c.get_account_state_from_kvs(root, address),
+        }
+    }
+    pub fn get_storage_at(&self, root: H256, address: H160, index: H256) -> Option<H256> {
+        match self {
+            Self::Incomming(i) => i.get_storage_from_kvs(root, address, index),
+            Self::Committed(c) => c.get_storage_from_kvs(root, address, index),
+        }
+    }
 }
 
 #[derive(Default)]
