@@ -11,30 +11,47 @@ use evm_rpc::{
     Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{AccountProvider, Address, Gas, LogFilter, H256, U256};
+use solana_runtime::bank::Bank;
 
 use crate::rpc::JsonRpcRequestProcessor;
+use std::sync::Arc;
 
 const DEFAULT_COMITTMENT: Option<CommitmentConfig> = Some(CommitmentConfig {
     commitment: CommitmentLevel::Processed,
 });
 
-fn block_to_commitment(block: Option<String>) -> Option<CommitmentConfig> {
-    // TODO: try to request state by blocks.state_root in database.
-    let commitment = match block?.as_ref() {
-        "earliest" => CommitmentLevel::Processed,
-        "latest" => CommitmentLevel::Confirmed,
-        "pending" => CommitmentLevel::Confirmed,
-        v => {
-            // Try to parse newest version of block commitment.
-            if let Ok(c) = serde_json::from_str::<CommitmentLevel>(v) {
-                c
-            } else {
-                // Probably user provide specific slot number, we didn't support bank from future, so just return default.
-                return None;
+fn block_to_bank_and_root(
+    block: Option<String>,
+    meta: &JsonRpcRequestProcessor,
+) -> Option<(Arc<Bank>, H256)> {
+    let commitment = if let Some(block) = &block {
+        match block.as_ref() {
+            "earliest" => Some(CommitmentLevel::Confirmed),
+            "latest" => Some(CommitmentLevel::Processed),
+            "pending" => Some(CommitmentLevel::Processed),
+            v => {
+                // Try to parse newest version of block commitment.
+                if let Ok(c) = serde_json::from_str::<CommitmentLevel>(v) {
+                    Some(c)
+                } else {
+                    // Probably user provide specific slot number, we didn't support bank from future, so just return default.
+                    None
+                }
             }
         }
+    } else {
+        None
     };
-    Some(CommitmentConfig { commitment })
+    let bank = meta.bank(commitment.map(|commitment| CommitmentConfig { commitment }));
+    let last_root = {
+        let lock = bank.evm_state.read().expect("Evm state poisoned");
+        let block_num = block_to_confirmed_num(block, meta).unwrap_or_else(|| lock.block_number());
+        meta.blockstore
+            .get_evm_block(block_num)
+            .map(|(b, _)| b.header.state_root)
+            .unwrap_or_else(|_| lock.last_root())
+    };
+    Some((bank, last_root))
 }
 
 fn block_to_confirmed_num(
@@ -120,14 +137,13 @@ impl ChainMockERPC for ChainMockERPCImpl {
         let num = block_to_confirmed_num(Some(&block), &meta);
         // TODO: Inline evm_state lookups, and request only solana headers.
         let block_num = num.unwrap_or(0);
-        if block_num == 0 {
-            return Ok(None);
-        }
-        let (block, confirmed) = meta
-            .blockstore
-            .get_evm_block(block_num)
-            .map_err(anyhow::Error::from)
-            .with_context(|| error::NativeRpcError {})?;
+        let (block, confirmed) = match meta.blockstore.get_evm_block(block_num) {
+            Err(e) => {
+                error!("Error requesting block:{}, error:{:?}", block_num, e);
+                return Ok(None);
+            }
+            Ok(b) => b,
+        };
 
         let block_hash = block.header.hash();
         let parent_hash = block.header.parent_hash;
@@ -248,7 +264,7 @@ impl BasicERPC for BasicERPCImpl {
 
     // The same as get_slot
     fn block_number(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error> {
-        let bank = meta.bank(None);
+        let bank = meta.bank(Some(CommitmentConfig::processed()));
         let evm = bank.evm_state.read().unwrap();
         Ok(Hex(evm.block_number() as usize))
     }
@@ -259,9 +275,15 @@ impl BasicERPC for BasicERPCImpl {
         address: Hex<Address>,
         block: Option<String>,
     ) -> Result<Hex<U256>, Error> {
-        let bank = meta.bank(block_to_commitment(block));
-        let evm_state = bank.evm_state.read().unwrap();
-        let account = evm_state.get_account_state(address.0).unwrap_or_default();
+        let (bank, root) = block_to_bank_and_root(block.clone(), &meta).ok_or_else(|| {
+            error::Error::StateNotFoundForBlock {
+                block: block.unwrap_or("latest".to_string()),
+            }
+        })?;
+        let evm_state = bank.evm_state.read().expect("Evm state poisoned");
+        let account = evm_state
+            .get_account_state_at(root, address.0)
+            .unwrap_or_default();
         Ok(Hex(account.balance))
     }
 
@@ -272,10 +294,14 @@ impl BasicERPC for BasicERPCImpl {
         data: Hex<H256>,
         block: Option<String>,
     ) -> Result<Hex<H256>, Error> {
-        let bank = meta.bank(block_to_commitment(block));
-        let evm_state = bank.evm_state.read().unwrap();
+        let (bank, root) = block_to_bank_and_root(block.clone(), &meta).ok_or_else(|| {
+            error::Error::StateNotFoundForBlock {
+                block: block.unwrap_or("latest".to_string()),
+            }
+        })?;
+        let evm_state = bank.evm_state.read().expect("Evm state poisoned");
         Ok(Hex(evm_state
-            .get_storage(address.0, data.0)
+            .get_storage_at(root, address.0, data.0)
             .unwrap_or_default()))
     }
 
@@ -285,9 +311,15 @@ impl BasicERPC for BasicERPCImpl {
         address: Hex<Address>,
         block: Option<String>,
     ) -> Result<Hex<U256>, Error> {
-        let bank = meta.bank(block_to_commitment(block));
-        let evm_state = bank.evm_state.read().unwrap();
-        let account = evm_state.get_account_state(address.0).unwrap_or_default();
+        let (bank, root) = block_to_bank_and_root(block.clone(), &meta).ok_or_else(|| {
+            error::Error::StateNotFoundForBlock {
+                block: block.unwrap_or("latest".to_string()),
+            }
+        })?;
+        let evm_state = bank.evm_state.read().expect("Evm state poisoned");
+        let account = evm_state
+            .get_account_state_at(root, address.0)
+            .unwrap_or_default();
         Ok(Hex(account.nonce))
     }
 
@@ -297,9 +329,15 @@ impl BasicERPC for BasicERPCImpl {
         address: Hex<Address>,
         block: Option<String>,
     ) -> Result<Bytes, Error> {
-        let bank = meta.bank(block_to_commitment(block));
-        let evm_state = bank.evm_state.read().unwrap();
-        let account = evm_state.get_account_state(address.0).unwrap_or_default();
+        let (bank, root) = block_to_bank_and_root(block.clone(), &meta).ok_or_else(|| {
+            error::Error::StateNotFoundForBlock {
+                block: block.unwrap_or("latest".to_string()),
+            }
+        })?;
+        let evm_state = bank.evm_state.read().expect("Evm state poisoned");
+        let account = evm_state
+            .get_account_state_at(root, address.0)
+            .unwrap_or_default();
         Ok(Bytes(account.code.into()))
     }
 
