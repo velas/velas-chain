@@ -2518,23 +2518,33 @@ impl Bank {
         batch
     }
 
-    pub fn take_evm_state_cloned(&self) -> evm_state::EvmBackend<evm_state::Incomming> {
+    pub fn take_evm_state_cloned(&self) -> Option<evm_state::EvmBackend<evm_state::Incomming>> {
         match &*self.evm_state.read().expect("bank evm state was poisoned") {
-            evm_state::EvmState::Incomming(i) => i.clone(),
+            evm_state::EvmState::Incomming(i) => Some(i.clone()),
             evm_state::EvmState::Committed(_) => {
-                panic!("Bank state was committed",)
+                warn!(
+                    "Take evm after freeze, bank_slot={}, bank_is_freeze={}",
+                    self.slot(),
+                    self.is_frozen()
+                );
+                None // Return None, so this transaction will fail to execute,
+                     // this transaction will be marked as retriable after bank realise that PoH is reached it's max height.
             }
         }
     }
 
-    pub fn take_evm_state_form_simulation(&self) -> evm_state::EvmBackend<evm_state::Incomming> {
-        match &*self.evm_state.read().expect("bank evm state was poisoned") {
-            evm_state::EvmState::Incomming(i) => i.clone(),
-            evm_state::EvmState::Committed(c) => {
-                debug!("Creating cloned evm state for simulation");
-                c.next_incomming(self.clock().unix_timestamp as u64)
-            }
-        }
+    pub fn take_evm_state_form_simulation(
+        &self,
+    ) -> Option<evm_state::EvmBackend<evm_state::Incomming>> {
+        Some(
+            match &*self.evm_state.read().expect("bank evm state was poisoned") {
+                evm_state::EvmState::Incomming(i) => i.clone(),
+                evm_state::EvmState::Committed(c) => {
+                    debug!("Creating cloned evm state for simulation");
+                    c.next_incomming(self.clock().unix_timestamp as u64)
+                }
+            },
+        )
     }
 
     /// Run transactions against a frozen bank without committing the results
@@ -2977,7 +2987,7 @@ impl Bank {
         enable_cpi_recording: bool,
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
-        evm_state_getter: impl Fn(&Self) -> evm_state::EvmBackend<evm_state::Incomming>,
+        evm_state_getter: impl Fn(&Self) -> Option<evm_state::EvmBackend<evm_state::Incomming>>,
     ) -> (
         Vec<TransactionLoadResult>,
         Vec<TransactionExecutionResult>,
@@ -3065,19 +3075,24 @@ impl Bank {
                     // Create evm_executor only if evm_state account is locked.
                     let mut evm_executor = if tx.message.is_modify_evm_state() {
                         // append to old patch if exist, or create new, from existing evm state
-                        let state = evm_patch.take().unwrap_or_else(|| evm_state_getter(self));
+                        let state = evm_patch.take().or_else(|| evm_state_getter(self));
                         let last_hashes = self
                             .evm_blockhashes
                             .read()
                             .expect("evm_blockhahes poisoned")
                             .get_hashes()
                             .clone();
-                        let evm_executor = evm_state::Executor::with_config(
-                            state,
-                            evm_state::ChainContext::new(last_hashes), // TODO: Replace by loading from sysvars
-                            evm_state::EvmConfig::new(self.evm_chain_id),
-                        );
-                        Some(evm_executor)
+                        if let Some(state) = state {
+                            let evm_executor = evm_state::Executor::with_config(
+                                state,
+                                evm_state::ChainContext::new(last_hashes), // TODO: Replace by loading from sysvars
+                                evm_state::EvmConfig::new(self.evm_chain_id),
+                            );
+                            Some(evm_executor)
+                        } else {
+                            warn!("Executing evm transaction on already locked bank, ignoring.");
+                            None
+                        }
                     } else {
                         None
                     };

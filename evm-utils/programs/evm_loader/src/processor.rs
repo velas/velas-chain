@@ -32,7 +32,12 @@ impl EvmProcessor {
         executor: Option<&mut Executor>,
         invoke_context: &mut dyn InvokeContext,
     ) -> Result<(), InstructionError> {
-        let executor = executor.expect("Evm execution from crossprogram is not allowed.");
+        let executor = if let Some(executor) = executor {
+            executor
+        } else {
+            debug!("Evm execution without executor is not allowed.");
+            return Err(InstructionError::InvalidError);
+        };
 
         let (evm_state_account, keyed_accounts) = Self::check_evm_account(keyed_accounts)?;
 
