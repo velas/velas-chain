@@ -14,7 +14,7 @@ solana-clap-utils = { path = "../clap-utils", version = "1.5.14" }
 solana-streamer = { path = "../streamer", version = "1.5.14" }
 solana-logger = { path = "../logger", version = "1.5.14" }
 solana-net-utils = { path = "../net-utils", version = "1.5.14" }
-solana-version = { path = "../version", version = "0.2.0" }
+solana-version = { path = "../version" }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

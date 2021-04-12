@@ -16,7 +16,7 @@ serde = "1.0.118"
 serde_json = "1.0.56"
 solana-clap-utils = { path = "../clap-utils", version = "1.5.14" }
 solana-logger = { path = "../logger", version = "1.5.14" }
-solana-version = { path = "../version", version = "0.2.0" }
+solana-version = { path = "../version" }
 
 [[bin]]
 name = "solana-log-analyzer"

@@ -17,7 +17,7 @@ solana-ledger = { path = "../ledger", version = "1.5.14" }
 solana-sdk = { path = "../sdk", version = "1.5.14" }
 solana-clap-utils = { path = "../clap-utils", version = "1.5.14" }
 solana-measure = { path = "../measure", version = "1.5.14" }
-solana-version = { path = "../version", version = "0.2.0" }
+solana-version = { path = "../version" }
 solana-perf = { path = "../perf", version = "1.5.14" }
 
 [package.metadata.docs.rs]

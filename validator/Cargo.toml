@@ -35,7 +35,7 @@ solana-metrics = { path = "../metrics", version = "1.5.14" }
 solana-net-utils = { path = "../net-utils", version = "1.5.14" }
 solana-runtime = { path = "../runtime", version = "1.5.14" }
 solana-sdk = { path = "../sdk", version = "1.5.14" }
-solana-version = { path = "../version", version = "0.2.0" }
+solana-version = { path = "../version" }
 solana-vote-program = { path = "../programs/vote", version = "1.5.14" }
 symlink = "0.1.0"
 

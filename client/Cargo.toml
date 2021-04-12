@@ -28,7 +28,7 @@ solana-clap-utils = { path = "../clap-utils", version = "1.5.14" }
 solana-net-utils = { path = "../net-utils", version = "1.5.14" }
 solana-sdk = { path = "../sdk", version = "1.5.14" }
 solana-transaction-status = { path = "../transaction-status", version = "1.5.14" }
-solana-version = { path = "../version", version = "0.2.0" }
+solana-version = { path = "../version" }
 solana-vote-program = { path = "../programs/vote", version = "1.5.14" }
 solana-stake-program = { path = "../programs/stake", version = "1.5.14" }
 thiserror = "1.0"
