@@ -1,8 +1,5 @@
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use solana_ledger::blockstore::Blockstore;
-use solana_runtime::bank::RewardInfo;
-use solana_sdk::{clock::Slot, pubkey::Pubkey};
-use solana_transaction_status::Reward;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -12,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use evm_state::{Block, BlockHeader, BlockNum};
+use evm_state::Block;
 
 pub type EvmRecorderReceiver = Receiver<Block>;
 pub type EvmRecorderSender = Sender<Block>;

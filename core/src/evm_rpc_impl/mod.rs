@@ -1,10 +1,8 @@
 use std::convert::TryInto;
-use std::str::FromStr;
 
 use sha3::{Digest, Keccak256};
 use snafu::ResultExt;
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
-use solana_transaction_status::UiTransactionEncoding;
 
 use evm_rpc::{
     basic::BasicERPC,
@@ -12,7 +10,7 @@ use evm_rpc::{
     error::{self, Error},
     Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTopicFilter, RPCTransaction,
 };
-use evm_state::{AccountProvider, Address, Config, Gas, LogFilter, H256, U256};
+use evm_state::{AccountProvider, Address, Gas, LogFilter, H256, U256};
 
 use crate::rpc::JsonRpcRequestProcessor;
 
@@ -169,6 +167,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
             total_difficulty: U256::zero().into(),
             extra_data: b"Native chain data ommitted...".to_vec().into(),
             sha3_uncles: H256::zero().into(),
+            is_finalized: confirmed,
             uncles: vec![],
         };
         Ok(Some(result))

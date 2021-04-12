@@ -99,7 +99,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         ));
 
         let state = executor.deconstruct();
-        let committed = state.commit_block(0);
+        let committed = state.commit_block(0, Default::default());
         let updated_state = committed.next_incomming(0);
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
@@ -145,7 +145,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         ));
 
         let state = executor.deconstruct();
-        let committed = state.commit_block(0);
+        let committed = state.commit_block(0, Default::default());
         let updated_state = committed.next_incomming(0);
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
@@ -202,7 +202,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         let state = executor.deconstruct();
 
-        let committed = state.commit_block(0);
+        let committed = state.commit_block(0, Default::default());
         let updated_state = committed.next_incomming(0);
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
@@ -261,12 +261,12 @@ fn criterion_benchmark(c: &mut Criterion) {
                 ));
 
                 let mut state = executor.deconstruct();
-                let committed = state.commit_block(0);
+                let committed = state.commit_block(0, Default::default());
                 state = committed.next_incomming(0);
 
                 for new_slot in 1..=*n_forks {
                     // state.freeze();
-                    let committed = state.commit_block(new_slot);
+                    let committed = state.commit_block(new_slot, Default::default());
                     state = committed.next_incomming(0);
                 }
 
@@ -317,7 +317,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             .chain(accounts.iter().copied())
             .for_each(|address| state.set_account_state(address, AccountState::default()));
 
-        let committed = state.commit_block(0);
+        let committed = state.commit_block(0, Default::default());
 
         let  state = committed.next_incomming(0);
         let mut executor =
@@ -331,7 +331,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             ExitReason::Succeed(ExitSucceed::Returned)
         ));
 
-        let committed = executor.deconstruct().commit_block(0);
+        let committed = executor.deconstruct().commit_block(0, Default::default());
         let state = committed.next_incomming(0);
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());

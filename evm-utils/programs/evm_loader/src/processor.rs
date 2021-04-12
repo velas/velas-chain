@@ -642,7 +642,9 @@ mod test {
                 .is_ok());
             println!("cx = {:?}", executor);
 
-            let committed = executor_orig.deconstruct().commit_block(0);
+            let committed = executor_orig
+                .deconstruct()
+                .commit_block(0, Default::default());
             state = committed.next_incomming(0);
         }
 
@@ -686,7 +688,9 @@ mod test {
                 .is_ok());
             println!("cx = {:?}", executor);
 
-            let committed = executor_orig.deconstruct().commit_block(0);
+            let committed = executor_orig
+                .deconstruct()
+                .commit_block(0, Default::default());
 
             let receipt = committed.find_committed_transaction(tx_hash).unwrap();
             assert!(matches!(
@@ -867,7 +871,9 @@ mod test {
                 )
                 .is_err());
             println!("cx = {:?}", executor);
-            let committed = executor_orig.deconstruct().commit_block(0);
+            let committed = executor_orig
+                .deconstruct()
+                .commit_block(0, Default::default());
             state = committed.next_incomming(0);
         }
 
@@ -994,7 +1000,9 @@ mod test {
             println!("logger = {:?}", invoke_context.logger);
             result.unwrap();
 
-            let committed = executor_orig.deconstruct().commit_block(0);
+            let committed = executor_orig
+                .deconstruct()
+                .commit_block(0, Default::default());
             state = committed.next_incomming(0);
         }
 

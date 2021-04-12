@@ -76,6 +76,7 @@ pub struct RPCBlock {
     pub gas_used: Hex<Gas>,
     pub timestamp: Hex<u64>,
     pub transactions: Either<Vec<Hex<H256>>, Vec<RPCTransaction>>,
+    pub is_finalized: bool,
 
     pub transactions_root: Hex<H256>,
     pub state_root: Hex<H256>,

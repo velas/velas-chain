@@ -79,14 +79,15 @@ pub(crate) struct DeserializableVersionedBank {
     pub(crate) message_processor: MessageProcessor,
 
     pub(crate) evm_chain_id: u64,
-    // TODO: remove Hex wrapper and ser/de as plain H256
     pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
+    pub(crate) evm_blockhashes: BlockHashEvm,
 }
 
 impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
     fn from(dvb: DeserializableVersionedBank) -> Self {
         BankFieldsToDeserialize {
             blockhash_queue: dvb.blockhash_queue,
+            evm_blockhashes: dvb.evm_blockhashes,
             ancestors: dvb.ancestors,
             hash: dvb.hash,
             parent_hash: dvb.parent_hash,
@@ -162,6 +163,7 @@ pub(crate) struct SerializableVersionedBank<'a> {
     pub(crate) message_processor: MessageProcessor,
     pub(crate) evm_chain_id: u64,
     pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
+    pub(crate) evm_blockhashes: &'a RwLock<BlockHashEvm>,
 }
 
 impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedBank<'a> {
@@ -171,6 +173,7 @@ impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedB
         }
         Self {
             blockhash_queue: rhs.blockhash_queue,
+            evm_blockhashes: rhs.evm_blockhashes,
             ancestors: rhs.ancestors,
             hash: rhs.hash,
             parent_hash: rhs.parent_hash,

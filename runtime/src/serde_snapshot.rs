@@ -5,7 +5,7 @@ use {
         accounts_index::{AccountIndex, Ancestors},
         append_vec::AppendVec,
         bank::{Bank, BankFieldsToDeserialize, BankRc, Builtins},
-        blockhash_queue::BlockhashQueue,
+        blockhash_queue::{BlockHashEvm, BlockhashQueue},
         epoch_stakes::EpochStakes,
         message_processor::MessageProcessor,
         rent_collector::RentCollector,

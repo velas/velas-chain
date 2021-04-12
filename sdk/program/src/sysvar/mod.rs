@@ -7,6 +7,7 @@ pub mod epoch_schedule;
 pub mod fees;
 pub mod instructions;
 pub mod recent_blockhashes;
+pub mod recent_evm_blockhashes;
 pub mod rent;
 pub mod rewards;
 pub mod slot_hashes;
@@ -18,6 +19,7 @@ pub fn is_sysvar_id(id: &Pubkey) -> bool {
         || epoch_schedule::check_id(id)
         || fees::check_id(id)
         || recent_blockhashes::check_id(id)
+        || recent_evm_blockhashes::check_id(id)
         || rent::check_id(id)
         || rewards::check_id(id)
         || slot_hashes::check_id(id)

@@ -1,8 +1,15 @@
+use serde::{
+    de::{SeqAccess, Visitor},
+    ser::SerializeTuple,
+    Deserializer, Serializer,
+};
 use serde::{Deserialize, Serialize};
 use solana_sdk::{
     fee_calculator::FeeCalculator, hash::Hash, sysvar::recent_blockhashes, timing::timestamp,
 };
 use std::collections::HashMap;
+use std::fmt;
+use std::marker::PhantomData;
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, AbiExample)]
 struct HashAge {
@@ -131,10 +138,89 @@ impl BlockhashQueue {
         self.max_age
     }
 }
+
+pub const MAX_EVM_BLOCKHAHES: usize = 256;
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BlockHashEvm {
+    #[serde(with = "BlockHashEvm")]
+    hashes: [evm_state::H256; MAX_EVM_BLOCKHAHES],
+}
+
+impl BlockHashEvm {
+    pub fn new() -> BlockHashEvm {
+        BlockHashEvm {
+            hashes: [evm_state::H256::zero(); MAX_EVM_BLOCKHAHES],
+        }
+    }
+    pub fn get_hashes(&self) -> &[evm_state::H256; MAX_EVM_BLOCKHAHES] {
+        &self.hashes
+    }
+
+    pub fn insert_hash(&mut self, hash: evm_state::H256) {
+        let new_hashes = self.hashes;
+        self.hashes[0..MAX_EVM_BLOCKHAHES - 1].copy_from_slice(&new_hashes[1..MAX_EVM_BLOCKHAHES]);
+        self.hashes[MAX_EVM_BLOCKHAHES - 1] = hash
+    }
+
+    fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<[evm_state::H256; MAX_EVM_BLOCKHAHES], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor<T> {
+            element: PhantomData<T>,
+        }
+        impl<'de, T> Visitor<'de> for ArrayVisitor<T>
+        where
+            T: Default + Copy + Deserialize<'de>,
+        {
+            type Value = [T; MAX_EVM_BLOCKHAHES];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str(concat!("an array of length ", 256))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<[T; MAX_EVM_BLOCKHAHES], A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [T::default(); MAX_EVM_BLOCKHAHES];
+                for i in 0..MAX_EVM_BLOCKHAHES {
+                    arr[i] = seq
+                        .next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        let visitor = ArrayVisitor {
+            element: PhantomData,
+        };
+        deserializer.deserialize_tuple(MAX_EVM_BLOCKHAHES, visitor)
+    }
+
+    fn serialize<S>(
+        data: &[evm_state::H256; MAX_EVM_BLOCKHAHES],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = serializer.serialize_tuple(data.len())?;
+        for elem in &data[..] {
+            seq.serialize_element(elem)?;
+        }
+        seq.end()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bincode::serialize;
+    use evm_state::H256;
     use solana_sdk::{
         clock::MAX_RECENT_BLOCKHASHES, hash::hash, sysvar::recent_blockhashes::IterItem,
     };
@@ -194,6 +280,34 @@ mod tests {
                 Some(true),
                 blockhash_queue.check_hash_age(hash, MAX_RECENT_BLOCKHASHES)
             );
+        }
+    }
+
+    #[test]
+    fn test_evm_blockhaheshes() {
+        let mut blockhash_queue = BlockHashEvm::new();
+        assert_eq!(
+            blockhash_queue.get_hashes(),
+            &[H256::zero(); MAX_EVM_BLOCKHAHES]
+        );
+        let hash1 = H256::repeat_byte(1);
+        blockhash_queue.insert_hash(hash1);
+        for hash in &blockhash_queue.get_hashes()[..MAX_EVM_BLOCKHAHES - 1] {
+            assert_eq!(*hash, H256::zero())
+        }
+        assert_eq!(blockhash_queue.get_hashes()[MAX_EVM_BLOCKHAHES - 1], hash1);
+
+        for i in 0..MAX_EVM_BLOCKHAHES {
+            let hash1 = H256::repeat_byte(i as u8);
+            blockhash_queue.insert_hash(hash1)
+        }
+
+        for (i, hash) in blockhash_queue.get_hashes()[..MAX_EVM_BLOCKHAHES]
+            .iter()
+            .enumerate()
+        {
+            let hash1 = H256::repeat_byte(i as u8);
+            assert_eq!(*hash, hash1)
         }
     }
 }
