@@ -81,3 +81,14 @@ impl Sysvar for RecentBlockhashes {
         MAX_ENTRIES * 32
     }
 }
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn test_seriazize_evm_blockhashes() {
+        let blockhashes = RecentBlockhashes::default();
+        assert_eq!(bincode::serialize(&blockhashes).unwrap().len(), MAX_ENTRIES * 32)
+    }
+}
