@@ -109,6 +109,7 @@ args+=(
 )
 default_arg --gossip-port 8001
 default_arg --log -
+default_arg --enable-rpc-transaction-history
 
 
 pid=

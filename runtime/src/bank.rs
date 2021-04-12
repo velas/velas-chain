@@ -5016,6 +5016,10 @@ impl Bank {
             existing_sysvar_account_count += 1;
         }
 
+        if self.get_account(&sysvar::recent_evm_blockhashes::id()).is_some() {
+            existing_sysvar_account_count += 1;
+        }
+
         if self.get_account(&evm_loader::id()).is_some() {
             existing_native_program_account_count += 1;
         }
@@ -10624,29 +10628,29 @@ pub(crate) mod tests {
             if bank.slot == 0 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "BVQzGxPW2tFCdz3UZh3WcXJD8rFpf8383uAWYz6D3DMQ"
+                    "2QDA1Ehyt8uEziVPXyCQphXicEDJsyvb1HbyCEtrUe2K"
                 );
                 assert_eq!(
-                    bank.evm_state.read().unwrap().root,
+                    bank.evm_state.read().unwrap().last_root(),
                     evm_state::empty_trie_hash()
                 )
             }
             if bank.slot == 32 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "GnBex23MFXVXKc1A3rguPUEUSUD8wztot7fjqDUVeMgh"
+                    "7x879deKLA5jAVpFTTV7w8wThuePdi1vzHwd5M3tgF83"
                 );
             }
             if bank.slot == 64 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "5mZTXogcLNXFbjVntWWpnjJv9Vt58zaFHQra35VnLZAy"
+                    "2hDcZFBGCyXbBshR9VfcvFUZpXu3noDiW3L5X2oFX93E"
                 );
             }
             if bank.slot == 128 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "3hB74cKir8tdFFJuGkVsVMjD4rWtfeNpbJFjPRCn4xrB"
+                    "6o6RvvLmmF2xQgX8THLyYGz9S11xpmoVvZmFBXeN1bk8"
                 );
                 break;
             }
@@ -10788,7 +10792,7 @@ pub(crate) mod tests {
         // No more slots should be shrunk
         assert_eq!(bank2.shrink_candidate_slots(), 0);
         // alive_counts represents the count of alive accounts in the three slots 0,1,2
-        assert_eq!(alive_counts, vec![10, 1, 7]);
+        assert_eq!(alive_counts, vec![11, 1, 7]);
     }
 
     #[test]
@@ -10836,7 +10840,7 @@ pub(crate) mod tests {
             .map(|_| bank.process_stale_slot_with_budget(0, force_to_return_alive_account))
             .sum();
         // consumed_budgets represents the count of alive accounts in the three slots 0,1,2
-        assert_eq!(consumed_budgets, 11);
+        assert_eq!(consumed_budgets, 12);
     }
 
     #[test]
@@ -11608,11 +11612,11 @@ pub(crate) mod tests {
             &feature::create_account(&Feature { activated_at: None }, feature_balance),
         );
 
-        // 13 is minimum adjusted cap increase in adjust_capitalization_for_existing_specially_retained_accounts
+        // 14 is minimum adjusted cap increase in adjust_capitalization_for_existing_specially_retained_accounts
         assert_capitalization_diff_with_new_bank(
             &bank1,
             || Bank::new_from_parent(&bank1, &Pubkey::default(), bank1.first_slot_in_next_epoch()),
-            |old, new| assert_eq!(old + 13, new),
+            |old, new| assert_eq!(old + 14, new),
         );
     }
 
@@ -11692,11 +11696,11 @@ pub(crate) mod tests {
             &feature::create_account(&Feature { activated_at: None }, feature_balance),
         );
 
-        // 17 is maximum adjusted cap increase in adjust_capitalization_for_existing_specially_retained_accounts
+        // 18 is maximum adjusted cap increase in adjust_capitalization_for_existing_specially_retained_accounts
         assert_capitalization_diff_with_new_bank(
             &bank1,
             || Bank::new_from_parent(&bank1, &Pubkey::default(), bank1.first_slot_in_next_epoch()),
-            |old, new| assert_eq!(old + 17, new),
+            |old, new| assert_eq!(old + 18, new),
         );
     }
 

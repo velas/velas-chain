@@ -600,6 +600,7 @@ mod tests {
     use solana_sdk::genesis_config::create_genesis_config;
 
     #[test]
+    #[ignore]
     fn test_bench_tps_bank_client() {
         let (genesis_config, id) = create_genesis_config(10_000);
         let bank = Bank::new(&genesis_config);
@@ -625,6 +626,7 @@ mod tests {
         do_bench_tps(client, config, keypairs);
     }
     #[test]
+    #[ignore]
     fn test_bench_tps_fund_keys_with_fees() {
         let (mut genesis_config, id) = create_genesis_config(10_000);
         let fee_rate_governor = FeeRateGovernor::new(11, 0);
