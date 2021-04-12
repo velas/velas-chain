@@ -256,6 +256,7 @@ impl LogFilter {
 pub struct BlockHeader {
     pub parent_hash: H256,
     pub state_root: H256,
+    pub native_chain_hash: H256,
     pub transactions: Vec<H256>,
     pub transactions_root: H256,
     pub receipts_root: H256,
@@ -276,7 +277,8 @@ impl BlockHeader {
         block_number: u64,
         gas_used: u64,
         timestamp: u64,
-        slot: u64,
+        native_chain_slot: u64,
+        native_chain_hash: H256,
         processed_transactions: impl Iterator<Item = &'a (H256, TransactionReceipt)>,
     ) -> BlockHeader {
         let transaction_receipts: Vec<_> = processed_transactions.collect();
@@ -294,7 +296,8 @@ impl BlockHeader {
             gas_used,
             state_root,
             timestamp,
-            native_chain_slot: slot,
+            native_chain_slot,
+            native_chain_hash,
             transactions,
             logs_bloom,
             // TODO: Add real transaction receipts and transaction list
@@ -335,8 +338,8 @@ impl Encodable for BlockHeader {
         s.append(&U256::from(self.gas_used));
         s.append(&self.timestamp);
         s.append(&extra_data);
-        s.append(&EMPTH_HASH); // mix hash is not available in PoS chains
-        s.append(&0u64); // nonce like mix hash is not available in PoS
+        s.append(&self.native_chain_hash); // mix hash is not available in PoS chains, using native chain hash.
+        s.append(&self.native_chain_slot); // nonce like mix hash is not available in PoS, using native chain slot.
     }
 }
 

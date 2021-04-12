@@ -698,7 +698,7 @@ mod tests {
 
         let state = executor.deconstruct();
 
-        let committed = state.commit_block(0);
+        let committed = state.commit_block(0, Default::default());
         // In this realm Bob returns coins to Alice
         {
             let mut alice = alice.clone();
@@ -919,7 +919,7 @@ mod tests {
         );
 
         // ensure that after commit state remain the same
-        let committed = state.commit_block(0);
+        let committed = state.commit_block(0, Default::default());
         let contract = Vec::<u8>::from(
             committed
                 .get_account_state(name_to_key("contract"))

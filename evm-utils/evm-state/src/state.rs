@@ -41,6 +41,7 @@ impl Committed {
         Incomming::new(
             self.block.block_number + 1,
             self.block.state_root,
+            self.block.hash(),
             timestamp,
         )
     }
@@ -52,6 +53,7 @@ pub struct Incomming {
     pub timestamp: u64,
     pub used_gas: u64,
     state_root: H256,
+    last_block_hash: H256,
     /// Maybe::Nothing indicates removed account
     state_updates: HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>,
 
@@ -61,10 +63,16 @@ pub struct Incomming {
 }
 
 impl Incomming {
-    fn new(block_number: BlockNum, state_root: H256, timestamp: u64) -> Self {
+    fn new(
+        block_number: BlockNum,
+        state_root: H256,
+        last_block_hash: H256,
+        timestamp: u64,
+    ) -> Self {
         Incomming {
             block_number,
             state_root,
+            last_block_hash,
             timestamp,
             ..Default::default()
         }
@@ -84,16 +92,17 @@ impl Incomming {
             && self.used_gas == 0)
     }
 
-    fn to_committed(self, slot: u64) -> Committed {
+    fn to_committed(self, slot: u64, native_blockhash: H256) -> Committed {
         let committed_transactions: Vec<_> = self.executed_transactions;
         let block = BlockHeader::new(
-            H256::zero(),
+            self.last_block_hash,
             DEFAULT_GAS_LIMIT,
             self.state_root,
             self.block_number,
             self.used_gas,
             self.timestamp,
             slot,
+            native_blockhash,
             committed_transactions.iter(),
         );
         Committed {
@@ -104,7 +113,12 @@ impl Incomming {
 
     // Take current state, replace original with empty
     fn take(&mut self) -> Incomming {
-        let empty = Incomming::new(self.block_number, self.state_root, self.timestamp);
+        let empty = Incomming::new(
+            self.block_number,
+            self.state_root,
+            self.last_block_hash,
+            self.timestamp,
+        );
         std::mem::replace(self, empty)
     }
 }
@@ -186,10 +200,10 @@ impl EvmBackend<Incomming> {
         state.state_root = new_root;
     }
 
-    pub fn commit_block(mut self, slot: u64) -> EvmBackend<Committed> {
+    pub fn commit_block(mut self, slot: u64, native_blockhash: H256) -> EvmBackend<Committed> {
         debug!("commit: State before = {:?}", self.state);
         self.flush_changes();
-        let state = self.state.to_committed(slot);
+        let state = self.state.to_committed(slot, native_blockhash);
         debug!("commit: State after = {:?}", state);
         EvmBackend {
             state,
@@ -305,6 +319,7 @@ pub trait AccountProvider {
     fn get_account_state(&self, address: H160) -> Option<AccountState>;
     fn get_storage(&self, address: H160, index: H256) -> Option<H256>;
     fn block_number(&self) -> u64;
+    fn timestamp(&self) -> u64;
 }
 
 impl AccountProvider for EvmBackend<Incomming> {
@@ -328,6 +343,10 @@ impl AccountProvider for EvmBackend<Incomming> {
     fn block_number(&self) -> u64 {
         self.state.block_number
     }
+
+    fn timestamp(&self) -> u64 {
+        self.state.timestamp
+    }
 }
 
 impl AccountProvider for EvmBackend<Committed> {
@@ -345,6 +364,10 @@ impl AccountProvider for EvmBackend<Committed> {
 
     fn block_number(&self) -> u64 {
         self.state.block.block_number
+    }
+
+    fn timestamp(&self) -> u64 {
+        self.state.block.timestamp
     }
 }
 
@@ -374,6 +397,13 @@ impl AccountProvider for EvmState {
         match self {
             Self::Incomming(i) => i.block_number(),
             Self::Committed(c) => c.block_number(),
+        }
+    }
+
+    fn timestamp(&self) -> u64 {
+        match self {
+            Self::Incomming(i) => i.timestamp(),
+            Self::Committed(c) => c.timestamp(),
         }
     }
 }
@@ -485,7 +515,7 @@ impl EvmState {
         KVS::restore_from(evm_genesis, &evm_state)?;
         Self::load_from(
             evm_state,
-            Incomming::new(BlockNum::default(), root_hash, timestamp),
+            Incomming::new(1, root_hash, H256::zero(), timestamp),
         )
     }
 
@@ -542,26 +572,33 @@ impl EvmState {
         }
     }
 
-    pub fn try_commit(&mut self, slot: u64) -> Result<(), anyhow::Error> {
+    pub fn try_commit(
+        &mut self,
+        slot: u64,
+        last_blockhash: [u8; 32],
+    ) -> Result<Option<H256>, anyhow::Error> {
         match self {
-            EvmState::Committed(committed) => {
-                return Err(anyhow::Error::msg(format!(
-                    "Commit called on already committed block = {:?}.",
-                    committed.state
-                )))
-            }
+            EvmState::Committed(committed) => Err(anyhow::Error::msg(format!(
+                "Commit called on already committed block = {:?}.",
+                committed.state
+            ))),
             EvmState::Incomming(incomming) => {
                 if incomming.state.is_active_changes() {
                     debug!(
                         "Found non-empty evm state, committing block = {}.",
                         incomming.state.block_number
                     );
-                    let mut new_backend = incomming.take().commit_block(slot).into();
-                    std::mem::swap(self, &mut new_backend)
+                    let native_blockhash = H256::from_slice(&last_blockhash);
+                    let committed = incomming.take().commit_block(slot, native_blockhash);
+                    let last_hash = committed.state.block.hash();
+                    let mut new_backend = committed.into();
+                    std::mem::swap(self, &mut new_backend);
+                    Ok(Some(last_hash))
+                } else {
+                    Ok(None)
                 }
             }
         }
-        Ok(())
     }
 
     /// Return block header if this state was committed before.
@@ -601,6 +638,7 @@ impl Default for Incomming {
         Incomming {
             block_number: 0,
             state_root: empty_trie_hash(),
+            last_block_hash: H256::zero(),
             state_updates: HashMap::new(),
             executed_transactions: Vec::new(),
             used_gas: 0,
@@ -849,7 +887,7 @@ mod tests {
         let mut evm_state = EvmBackend::default();
 
         save_state(&mut evm_state, &accounts_state_diff, &storage_diff);
-        let committed = evm_state.commit_block(0);
+        let committed = evm_state.commit_block(0, Default::default());
 
         assert_state(&committed, &accounts_state_diff, &storage_diff);
 
@@ -908,7 +946,7 @@ mod tests {
                 evm_state.ext_storage(*account, storage);
             }
 
-            let committed = evm_state.commit_block(0);
+            let committed = evm_state.commit_block(0, Default::default());
             evm_state = committed.next_incomming(0);
         }
 
@@ -933,7 +971,7 @@ mod tests {
         state.set_account_state(account, account_state.clone());
 
         for _ in 0..42 {
-            let committed = state.take().commit_block(0);
+            let committed = state.take().commit_block(0, Default::default());
             state = committed.next_incomming(0);
         }
 
@@ -958,7 +996,7 @@ mod tests {
         state.set_account_state(addr, new_state.clone());
         assert_eq!(state.get_account_state(addr), Some(new_state.clone()));
 
-        let committed = state.take().commit_block(0);
+        let committed = state.take().commit_block(0, Default::default());
         state = committed.next_incomming(0);
 
         assert_eq!(state.get_account_state(addr), Some(new_state.clone()));
@@ -993,7 +1031,7 @@ mod tests {
             Some(U256::from(1))
         );
 
-        let state = state.commit_block(0);
+        let state = state.commit_block(0, Default::default());
 
         assert_eq!(
             state.get_account_state(addr).map(|acc| acc.nonce),
@@ -1022,7 +1060,7 @@ mod tests {
         state.set_account_state(address, account_state);
         state.ext_storage(address, storage_mod);
 
-        let committed = state.take().commit_block(0);
+        let committed = state.take().commit_block(0, Default::default());
         let account = committed.get_account(address).unwrap();
 
         assert_eq!(
@@ -1057,7 +1095,7 @@ mod tests {
         state.set_account_state(address, account_state);
         state.ext_storage(address, storage_mod);
 
-        let committed = state.take().commit_block(0);
+        let committed = state.take().commit_block(0, Default::default());
         let account = committed.get_account(address).unwrap();
 
         assert_eq!(
@@ -1085,20 +1123,20 @@ mod tests {
             address,
             Some((H256::from_low_u64_be(0), H256::from_low_u64_be(0x1234))),
         );
-        let committed = state.take().commit_block(0);
+        let committed = state.take().commit_block(0, Default::default());
         state = committed.next_incomming(0);
         state.ext_storage(
             address,
             Some((H256::from_low_u64_be(1), H256::from_low_u64_be(0x1234))),
         );
-        let committed = state.take().commit_block(0);
+        let committed = state.take().commit_block(0, Default::default());
         state = committed.next_incomming(0);
 
         state.ext_storage(
             address,
             Some((H256::from_low_u64_be(1), H256::from_low_u64_be(0))),
         );
-        let committed = state.take().commit_block(0);
+        let committed = state.take().commit_block(0, Default::default());
 
         let account = committed.get_account(address).unwrap();
 

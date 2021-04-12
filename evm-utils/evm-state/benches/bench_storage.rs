@@ -46,7 +46,7 @@ fn add_some_and_advance(state: &mut EvmBackend<Incomming>, params: &Params) {
             // }
         }
 
-        let committed = state.clone().commit_block(slot);
+        let committed = state.clone().commit_block(slot, Default::default());
         *state = committed.next_incomming(0);
     }
 }

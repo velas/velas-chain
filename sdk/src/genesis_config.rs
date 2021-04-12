@@ -254,7 +254,7 @@ impl GenesisConfig {
             }
         };
         // create zero block
-        let committed = evm_state.commit_block(0);
+        let committed = evm_state.commit_block(0, H256::zero());
         let genesis_evm_block = &committed.state.block;
         assert_eq!(genesis_evm_block.state_root, self.evm_root_hash);
         // TOOD: assert block number, and parent block_hash

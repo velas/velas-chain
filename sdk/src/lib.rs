@@ -35,6 +35,7 @@ pub mod process_instruction;
 pub mod program_utils;
 pub mod pubkey;
 pub mod recent_blockhashes_account;
+pub mod recent_evm_blockhashes_account;
 pub mod rpc_port;
 pub mod secp256k1_instruction;
 pub mod shred_version;

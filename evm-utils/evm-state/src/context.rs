@@ -15,11 +15,24 @@ use crate::types::*;
 pub struct TransactionContext {
     gas_price: u64,
     origin: H160,
+    coinbase: H160, // Zero inited
 }
 
 impl TransactionContext {
     pub fn new(gas_price: u64, origin: H160) -> TransactionContext {
-        Self { gas_price, origin }
+        Self {
+            gas_price,
+            origin,
+            coinbase: H160::zero(),
+        }
+    }
+
+    pub fn new_with_coinbase(gas_price: u64, origin: H160, coinbase: H160) -> TransactionContext {
+        Self {
+            gas_price,
+            origin,
+            coinbase,
+        }
     }
 }
 
@@ -84,17 +97,13 @@ impl EvmConfig {
 pub struct ChainContext {
     // From sysvars
     last_hashes: [H256; 256], // From sysvar EvmBlockHashes
-    timestamp: u64,           // From sysvar Clock
 
     // Mocked with empty value
-    coinbase: H160,   // Zero inited
     difficulty: U256, // Zero
 }
 impl fmt::Debug for ChainContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ChainContext")
-            .field("timestamp", &self.timestamp)
-            .field("coinbase", &self.coinbase)
             .field("difficulty", &self.difficulty)
             .field(
                 "last_hashes", // limit debug hashes to last 5
@@ -114,16 +123,14 @@ impl fmt::Debug for ChainContext {
 
 impl Default for ChainContext {
     fn default() -> Self {
-        Self::new([H256::zero(); 256], 0)
+        Self::new([H256::zero(); 256])
     }
 }
 
 impl ChainContext {
-    fn new(last_hashes: [H256; 256], timestamp: u64) -> Self {
+    pub fn new(last_hashes: [H256; 256]) -> Self {
         ChainContext {
             last_hashes,
-            timestamp,
-            coinbase: H160::zero(),
             difficulty: U256::zero(),
         }
     }
@@ -224,8 +231,16 @@ where
         self.tx_context.origin
     }
 
+    fn block_coinbase(&self) -> H160 {
+        self.tx_context.coinbase.into()
+    }
+
     fn block_number(&self) -> U256 {
         self.backend.block_number().into()
+    }
+
+    fn block_timestamp(&self) -> U256 {
+        self.backend.timestamp().into()
     }
 
     fn block_hash(&self, number: U256) -> H256 {
@@ -239,12 +254,6 @@ where
             let index = (current_block - number - U256::one()).as_usize();
             self.chain_context.last_hashes[index]
         }
-    }
-    fn block_coinbase(&self) -> H160 {
-        self.chain_context.coinbase.into()
-    }
-    fn block_timestamp(&self) -> U256 {
-        self.chain_context.timestamp.into()
     }
     fn block_difficulty(&self) -> U256 {
         self.chain_context.difficulty.into()
