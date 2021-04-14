@@ -139,32 +139,33 @@ impl BlockhashQueue {
     }
 }
 
-pub const MAX_EVM_BLOCKHAHES: usize = 256;
+pub const MAX_EVM_BLOCKHASHES: usize = 256;
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BlockHashEvm {
     #[serde(with = "BlockHashEvm")]
-    hashes: [evm_state::H256; MAX_EVM_BLOCKHAHES],
+    hashes: [evm_state::H256; MAX_EVM_BLOCKHASHES],
 }
 
 impl BlockHashEvm {
     pub fn new() -> BlockHashEvm {
         BlockHashEvm {
-            hashes: [evm_state::H256::zero(); MAX_EVM_BLOCKHAHES],
+            hashes: [evm_state::H256::zero(); MAX_EVM_BLOCKHASHES],
         }
     }
-    pub fn get_hashes(&self) -> &[evm_state::H256; MAX_EVM_BLOCKHAHES] {
+    pub fn get_hashes(&self) -> &[evm_state::H256; MAX_EVM_BLOCKHASHES] {
         &self.hashes
     }
 
     pub fn insert_hash(&mut self, hash: evm_state::H256) {
         let new_hashes = self.hashes;
-        self.hashes[0..MAX_EVM_BLOCKHAHES - 1].copy_from_slice(&new_hashes[1..MAX_EVM_BLOCKHAHES]);
-        self.hashes[MAX_EVM_BLOCKHAHES - 1] = hash
+        self.hashes[0..MAX_EVM_BLOCKHASHES - 1]
+            .copy_from_slice(&new_hashes[1..MAX_EVM_BLOCKHASHES]);
+        self.hashes[MAX_EVM_BLOCKHASHES - 1] = hash
     }
 
     fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<[evm_state::H256; MAX_EVM_BLOCKHAHES], D::Error>
+    ) -> Result<[evm_state::H256; MAX_EVM_BLOCKHASHES], D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -175,18 +176,18 @@ impl BlockHashEvm {
         where
             T: Default + Copy + Deserialize<'de>,
         {
-            type Value = [T; MAX_EVM_BLOCKHAHES];
+            type Value = [T; MAX_EVM_BLOCKHASHES];
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str(concat!("an array of length ", 256))
             }
 
-            fn visit_seq<A>(self, mut seq: A) -> Result<[T; MAX_EVM_BLOCKHAHES], A::Error>
+            fn visit_seq<A>(self, mut seq: A) -> Result<[T; MAX_EVM_BLOCKHASHES], A::Error>
             where
                 A: SeqAccess<'de>,
             {
-                let mut arr = [T::default(); MAX_EVM_BLOCKHAHES];
-                for i in 0..MAX_EVM_BLOCKHAHES {
+                let mut arr = [T::default(); MAX_EVM_BLOCKHASHES];
+                for i in 0..MAX_EVM_BLOCKHASHES {
                     arr[i] = seq
                         .next_element()?
                         .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
@@ -198,11 +199,11 @@ impl BlockHashEvm {
         let visitor = ArrayVisitor {
             element: PhantomData,
         };
-        deserializer.deserialize_tuple(MAX_EVM_BLOCKHAHES, visitor)
+        deserializer.deserialize_tuple(MAX_EVM_BLOCKHASHES, visitor)
     }
 
     fn serialize<S>(
-        data: &[evm_state::H256; MAX_EVM_BLOCKHAHES],
+        data: &[evm_state::H256; MAX_EVM_BLOCKHASHES],
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -288,21 +289,21 @@ mod tests {
         let mut blockhash_queue = BlockHashEvm::new();
         assert_eq!(
             blockhash_queue.get_hashes(),
-            &[H256::zero(); MAX_EVM_BLOCKHAHES]
+            &[H256::zero(); MAX_EVM_BLOCKHASHES]
         );
         let hash1 = H256::repeat_byte(1);
         blockhash_queue.insert_hash(hash1);
-        for hash in &blockhash_queue.get_hashes()[..MAX_EVM_BLOCKHAHES - 1] {
+        for hash in &blockhash_queue.get_hashes()[..MAX_EVM_BLOCKHASHES - 1] {
             assert_eq!(*hash, H256::zero())
         }
-        assert_eq!(blockhash_queue.get_hashes()[MAX_EVM_BLOCKHAHES - 1], hash1);
+        assert_eq!(blockhash_queue.get_hashes()[MAX_EVM_BLOCKHASHES - 1], hash1);
 
-        for i in 0..MAX_EVM_BLOCKHAHES {
+        for i in 0..MAX_EVM_BLOCKHASHES {
             let hash1 = H256::repeat_byte(i as u8);
             blockhash_queue.insert_hash(hash1)
         }
 
-        for (i, hash) in blockhash_queue.get_hashes()[..MAX_EVM_BLOCKHAHES]
+        for (i, hash) in blockhash_queue.get_hashes()[..MAX_EVM_BLOCKHASHES]
             .iter()
             .enumerate()
         {

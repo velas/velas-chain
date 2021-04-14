@@ -38,7 +38,7 @@ pub const DEFAULT_MS_PER_SLOT: u64 = 1_000 * DEFAULT_TICKS_PER_SLOT / DEFAULT_TI
 pub const MAX_HASH_AGE_IN_SECONDS: usize = 120;
 
 // Number of max evm blockhashes to save;
-pub const MAX_EVM_BLOCKHAHES: usize = 256;
+pub const MAX_EVM_BLOCKHASHES: usize = 256;
 
 // Number of maximum recent blockhashes (one blockhash per slot)
 pub const MAX_RECENT_BLOCKHASHES: usize =

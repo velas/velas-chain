@@ -144,7 +144,7 @@ impl EvmBridge {
         debug!("Getting block hash");
         let (blockhash, _fee_calculator, _) = self
             .rpc_client
-            .get_recent_blockhash_with_commitment(CommitmentConfig::default())
+            .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
             .unwrap()
             .value;
 
@@ -152,7 +152,13 @@ impl EvmBridge {
         debug!("Sending tx = {:?}", send_raw_tx);
 
         self.rpc_client
-            .send_transaction_with_config(&send_raw_tx, RpcSendTransactionConfig::default())
+            .send_transaction_with_config(
+                &send_raw_tx,
+                RpcSendTransactionConfig {
+                    preflight_commitment: Some(CommitmentLevel::Processed),
+                    ..Default::default()
+                },
+            )
             .map(|_| Hex(hash))
             .as_native_error()
     }

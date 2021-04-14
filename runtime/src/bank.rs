@@ -1947,7 +1947,7 @@ impl Bank {
 
     fn update_recent_evm_blockhashes_locked(&self, locked_blockhash_queue: &BlockHashEvm) {
         self.update_sysvar_account(&sysvar::recent_evm_blockhashes::id(), |account| {
-            let mut hashes = [Hash::default(); crate::blockhash_queue::MAX_EVM_BLOCKHAHES];
+            let mut hashes = [Hash::default(); crate::blockhash_queue::MAX_EVM_BLOCKHASHES];
             for (i, hash) in locked_blockhash_queue.get_hashes().iter().enumerate() {
                 hashes[i] = Hash::new_from_array(hash.as_fixed_bytes().clone())
             }
@@ -2979,6 +2979,14 @@ impl Bank {
         cache.remove(pubkey);
     }
 
+    pub fn evm_hashes(&self) -> [evm_state::H256; crate::blockhash_queue::MAX_EVM_BLOCKHASHES] {
+        self.evm_blockhashes
+            .read()
+            .expect("evm_blockhahes poisoned")
+            .get_hashes()
+            .clone()
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn load_and_execute_transactions(
         &self,
@@ -3085,7 +3093,7 @@ impl Bank {
                         if let Some(state) = state {
                             let evm_executor = evm_state::Executor::with_config(
                                 state,
-                                evm_state::ChainContext::new(last_hashes), // TODO: Replace by loading from sysvars
+                                evm_state::ChainContext::new(last_hashes),
                                 evm_state::EvmConfig::new(self.evm_chain_id),
                             );
                             Some(evm_executor)
@@ -5016,7 +5024,10 @@ impl Bank {
             existing_sysvar_account_count += 1;
         }
 
-        if self.get_account(&sysvar::recent_evm_blockhashes::id()).is_some() {
+        if self
+            .get_account(&sysvar::recent_evm_blockhashes::id())
+            .is_some()
+        {
             existing_sysvar_account_count += 1;
         }
 
