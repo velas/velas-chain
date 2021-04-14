@@ -49,7 +49,10 @@ pub enum Error {
     ProxyRpcError { source: JRpcError },
 
     #[snafu(display("Failed to execute request, rpc return error: {}", source))]
-    NativeRpcError { source: anyhow::Error },
+    NativeRpcError {
+        details: String,
+        source: anyhow::Error,
+    },
 
     #[snafu(display("Error in evm processing layer"))]
     EvmStateError { source: evm_state::error::Error },
@@ -62,6 +65,9 @@ pub enum Error {
         chain_id: u64,
         tx_chain_id: Option<u64>,
     },
+
+    #[snafu(display("Secret key for account not found, account: {:?}", account))]
+    KeyNotFound { account: evm_state::H160 },
     // InvalidParams {},
     // UnsupportedTrieQuery,
     // NotFound,
@@ -93,6 +99,7 @@ const NATIVE_RPC_ERROR: i64 = 1003;
 
 const BLOCK_NOT_FOUND_RPC_ERROR: i64 = 2001;
 const STATE_NOT_FOUND_RPC_ERROR: i64 = 2002;
+const KEY_NOT_FOUND_RPC_ERROR: i64 = 2003;
 
 impl From<Error> for JRpcError {
     fn from(err: Error) -> Self {
@@ -118,15 +125,40 @@ impl From<Error> for JRpcError {
             Error::EvmStateError { source } => {
                 internal_error_with_details(EVM_STATE_RPC_ERROR, &err, &source)
             }
-            Error::NativeRpcError { source } => {
-                internal_error_with_details(NATIVE_RPC_ERROR, &err, &source)
-            }
+            Error::NativeRpcError {
+                source: _source,
+                details,
+            } => internal_error_with_details(NATIVE_RPC_ERROR, &err, &details),
             Error::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &err),
             Error::StateNotFoundForBlock { .. } => internal_error(STATE_NOT_FOUND_RPC_ERROR, &err),
+            Error::KeyNotFound { .. } => internal_error(KEY_NOT_FOUND_RPC_ERROR, &err),
             Error::Unimplemented {} => {
                 let mut error = Self::invalid_request();
                 error.message = err.to_string();
                 error
+            }
+        }
+    }
+}
+
+pub trait AsNativeRpcError<T> {
+    fn as_native_error(self) -> Result<T, Error>;
+}
+
+impl<T, Err> AsNativeRpcError<T> for Result<T, Err>
+where
+    anyhow::Error: From<Err>,
+    Err: std::fmt::Debug,
+{
+    fn as_native_error(self) -> Result<T, Error> {
+        match self {
+            Ok(ok) => Ok(ok),
+            Err(e) => {
+                let details = format!("{:?}", e);
+                Err(Error::NativeRpcError {
+                    source: anyhow::Error::from(e),
+                    details,
+                })
             }
         }
     }

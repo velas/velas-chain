@@ -1,13 +1,12 @@
 use std::convert::TryInto;
 
 use sha3::{Digest, Keccak256};
-use snafu::ResultExt;
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 
 use evm_rpc::{
     basic::BasicERPC,
     chain_mock::ChainMockERPC,
-    error::{self, Error},
+    error::{self, AsNativeRpcError, Error},
     Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{AccountProvider, Address, Gas, LogFilter, H256, U256};
@@ -349,8 +348,7 @@ impl BasicERPC for BasicERPCImpl {
         let receipt = meta
             .blockstore
             .find_evm_transaction(tx_hash.0)
-            .map_err(anyhow::Error::from)
-            .with_context(|| error::NativeRpcError {})?;
+            .as_native_error()?;
 
         Ok(match receipt {
             Some(receipt) => {
@@ -375,8 +373,7 @@ impl BasicERPC for BasicERPCImpl {
         let receipt = meta
             .blockstore
             .find_evm_transaction(tx_hash.0)
-            .map_err(anyhow::Error::from)
-            .with_context(|| error::NativeRpcError {})?;
+            .as_native_error()?;
 
         Ok(match receipt {
             Some(receipt) => {
@@ -441,8 +438,7 @@ impl BasicERPC for BasicERPCImpl {
                 warn!("filter_logs = {:?}", e);
                 e
             })
-            .map_err(anyhow::Error::from)
-            .with_context(|| error::NativeRpcError {})?;
+            .as_native_error()?;
         Ok(logs.into_iter().map(|l| l.into()).collect())
     }
 }
