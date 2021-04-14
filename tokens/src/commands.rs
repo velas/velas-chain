@@ -914,7 +914,7 @@ pub fn test_process_distribute_tokens_with_client(
 pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keypair: Keypair) {
     let exit = Arc::new(AtomicBool::default());
     let fee_payer = Keypair::new();
-    let min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
+    let min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400 + sol_to_lamports(1000.0);
     let transaction = transfer(
         client,
         sol_to_lamports(1.0),
@@ -951,7 +951,7 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
         .send_and_confirm_transaction_with_spinner(&transaction)
         .unwrap();
 
-    let expected_amount = 2 * min_stake + sol_to_lamports(1000.0);
+    let expected_amount = min_stake + sol_to_lamports(1000.0);
     let alice_pubkey = solana_sdk::pubkey::new_rand();
     let file = NamedTempFile::new().unwrap();
     let input_csv = file.path().to_str().unwrap().to_string();
