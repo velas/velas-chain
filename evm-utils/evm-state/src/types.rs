@@ -226,7 +226,7 @@ impl LogFilter {
                 topics
                     .into_iter()
                     .flatten()
-                    .fold(bloom_addr.clone(), |bloom, topic| {
+                    .fold(bloom_addr, |bloom, topic| {
                         log::info!("Starting bloom = {:?}, adding topic ={:?}", bloom, topic);
                         let result = bloom | Bloom::from(Input::Hash(topic.as_fixed_bytes()));
                         log::info!("Resulting bloom = {:?}", result);
@@ -248,7 +248,7 @@ impl LogFilter {
                 return false;
             }
         }
-        return true;
+        true
     }
 }
 
@@ -349,11 +349,11 @@ pub enum Maybe<T> {
     Nothing,
 }
 
-impl<T> Into<Option<T>> for Maybe<T> {
-    fn into(self) -> Option<T> {
-        match self {
-            Self::Just(val) => Some(val),
-            Self::Nothing => None,
+impl<T> From<Maybe<T>> for Option<T> {
+    fn from(rhs: Maybe<T>) -> Option<T> {
+        match rhs {
+            Maybe::Just(val) => Some(val),
+            Maybe::Nothing => None,
         }
     }
 }

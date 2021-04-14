@@ -228,7 +228,7 @@ lazy_static! {
     .collect();
 
     /// Map of feature identifiers to user-visible description
-    pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = FEATURE_NAMES_BEFORE_MAINNET.iter().map(|(k,v)| (k.clone(), v.clone()))
+    pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = FEATURE_NAMES_BEFORE_MAINNET.iter().map(|(k,v)| (*k, *v))
     .chain(
         [
             (test_features::id(), "Test feature used as example how to implement features.")

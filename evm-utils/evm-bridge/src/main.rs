@@ -162,7 +162,7 @@ impl EvmBridge {
                 },
             )
             .map(|_| Hex(hash))
-            .as_native_error()
+            .into_native_error()
     }
 }
 
@@ -178,9 +178,9 @@ macro_rules! proxy_evm_rpc {
     )
 }
 
-pub struct BridgeERPCImpl;
+pub struct BridgeErpcImpl;
 
-impl BridgeERPC for BridgeERPCImpl {
+impl BridgeERPC for BridgeErpcImpl {
     type Metadata = Arc<EvmBridge>;
 
     fn accounts(&self, meta: Self::Metadata) -> EvmResult<Vec<Hex<Address>>> {
@@ -208,7 +208,7 @@ impl BridgeERPC for BridgeERPCImpl {
         let secret_key = meta
             .accounts
             .get(&address)
-            .ok_or_else(|| Error::KeyNotFound { account: address })?;
+            .ok_or(Error::KeyNotFound { account: address })?;
         let nonce = tx
             .nonce
             .map(|a| a.0)
@@ -253,7 +253,7 @@ impl BridgeERPC for BridgeERPCImpl {
     }
 
     fn gas_price(&self, _meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
-        const GWEI: u64 = 1000_000_000;
+        const GWEI: u64 = 1_000_000_000;
         //TODO: Add gas logic
         let gas_price = 21000 * solana_evm_loader_program::scope::evm::LAMPORTS_TO_GWEI_PRICE
             / DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE; // 21000 is smallest call in evm
@@ -267,8 +267,8 @@ impl BridgeERPC for BridgeERPCImpl {
     }
 }
 
-pub struct ChainMockERPCProxy;
-impl ChainMockERPC for ChainMockERPCProxy {
+pub struct ChainMockErpcProxy;
+impl ChainMockERPC for ChainMockErpcProxy {
     type Metadata = Arc<EvmBridge>;
 
     fn network_id(&self, meta: Self::Metadata) -> EvmResult<String> {
@@ -406,8 +406,8 @@ impl ChainMockERPC for ChainMockERPCProxy {
     }
 }
 
-pub struct BasicERPCProxy;
-impl BasicERPC for BasicERPCProxy {
+pub struct BasicErpcProxy;
+impl BasicERPC for BasicErpcProxy {
     type Metadata = Arc<EvmBridge>;
 
     // The same as get_slot
@@ -1068,11 +1068,11 @@ fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let sol_rpc = RpcSolProxy;
     io.extend_with(sol_rpc.to_delegate());
-    let ether_bridge = BridgeERPCImpl;
+    let ether_bridge = BridgeErpcImpl;
     io.extend_with(ether_bridge.to_delegate());
-    let ether_basic = BasicERPCProxy;
+    let ether_basic = BasicErpcProxy;
     io.extend_with(ether_basic.to_delegate());
-    let ether_mock = ChainMockERPCProxy;
+    let ether_mock = ChainMockErpcProxy;
     io.extend_with(ether_mock.to_delegate());
 
     info!("Creating server with: {}", binding_address);
@@ -1196,7 +1196,7 @@ fn deploy_big_tx(
 
     debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
-    let tx_bytes = bincode::serialize(&tx).as_native_error()?;
+    let tx_bytes = bincode::serialize(&tx).into_native_error()?;
     debug!(
         "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
         storage_pubkey,
@@ -1206,11 +1206,11 @@ fn deploy_big_tx(
 
     let balance = rpc_client
         .get_minimum_balance_for_rent_exemption(tx_bytes.len())
-        .as_native_error()?;
+        .into_native_error()?;
 
     let (blockhash, _, _) = rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::finalized())
-        .as_native_error()?
+        .into_native_error()?
         .value;
 
     let create_storage_ix = system_instruction::create_account(
@@ -1248,9 +1248,11 @@ fn deploy_big_tx(
             error!("Error create and allocate {} tx: {:?}", storage_pubkey, e);
             e
         })
-        .as_native_error()?;
+        .into_native_error()?;
 
-    let (blockhash, _) = rpc_client.get_new_blockhash(&blockhash).as_native_error()?;
+    let (blockhash, _) = rpc_client
+        .get_new_blockhash(&blockhash)
+        .into_native_error()?;
 
     let write_data_txs: Vec<solana::Transaction> = tx_bytes
         // TODO: encapsulate
@@ -1281,11 +1283,11 @@ fn deploy_big_tx(
             error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
             e
         })
-        .as_native_error()?;
+        .into_native_error()?;
 
     let (blockhash, _, _) = rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
-        .as_native_error()?
+        .into_native_error()?
         .value;
 
     let execute_tx = solana::Transaction::new_signed_with_payer(
@@ -1318,7 +1320,7 @@ fn deploy_big_tx(
             error!("Execute EVM tx at {} failed: {:?}", storage_pubkey, e);
             e
         })
-        .as_native_error()?;
+        .into_native_error()?;
 
     // TODO: here we can transfer back lamports and delete storage
 

@@ -30,7 +30,7 @@ pub enum RPCTopicFilter {
 }
 
 impl RPCTopicFilter {
-    pub fn to_topics(value: Option<RPCTopicFilter>) -> LogFilterTopicEntry {
+    pub fn into_topics(value: Option<RPCTopicFilter>) -> LogFilterTopicEntry {
         match value {
             Some(RPCTopicFilter::Single(t)) => LogFilterTopicEntry::One(t.0),
             Some(RPCTopicFilter::Or(t)) => {

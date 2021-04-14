@@ -1303,6 +1303,9 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
         }
 
         // After withdraw we should have atleast MIN_DELEGATE_STAKE_AMOUNT on balance.
+
+        // this is constant, and can be changed in future
+        #[allow(clippy::absurd_extreme_comparisons)]
         if self.lamports()?.saturating_sub(lamports) < MIN_DELEGATE_STAKE_AMOUNT
             // or our account should be removed
             && lamports != self.lamports()?

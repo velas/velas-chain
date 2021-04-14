@@ -69,6 +69,7 @@ impl Executor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn transaction_execute_raw<F>(
         &mut self,
         caller: H160,

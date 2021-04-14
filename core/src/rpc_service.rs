@@ -392,9 +392,9 @@ impl JsonRpcService {
                 let mut io = MetaIoHandler::default();
                 let rpc = RpcSolImpl;
                 io.extend_with(rpc.to_delegate());
-                let ether_basic = super::evm_rpc_impl::BasicERPCImpl;
+                let ether_basic = super::evm_rpc_impl::BasicErpcImpl;
                 io.extend_with(ether_basic.to_delegate());
-                let chain_mock = super::evm_rpc_impl::ChainMockERPCImpl;
+                let chain_mock = super::evm_rpc_impl::ChainMockErpcImpl;
                 io.extend_with(chain_mock.to_delegate());
 
                 let request_middleware = RpcRequestMiddleware::new(

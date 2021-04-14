@@ -236,7 +236,7 @@ where
     }
 
     fn block_coinbase(&self) -> H160 {
-        self.tx_context.coinbase.into()
+        self.tx_context.coinbase
     }
 
     fn block_number(&self) -> U256 {
@@ -260,7 +260,7 @@ where
         }
     }
     fn block_difficulty(&self) -> U256 {
-        self.chain_context.difficulty.into()
+        self.chain_context.difficulty
     }
     fn block_gas_limit(&self) -> U256 {
         self.config.gas_limit.into()
