@@ -478,9 +478,10 @@ fn call(
     };
     let mut estimate_config = evm_state::EvmConfig::default();
     estimate_config.estimate = true;
+    let last_hashes = bank.evm_hashes();
     let mut executor = evm_state::Executor::with_config(
         evm_state,
-        Default::default(), // TODO replace by chain_id getter from bank.
+        evm_state::ChainContext::new(last_hashes),
         estimate_config,
     );
 

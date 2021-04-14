@@ -1345,7 +1345,7 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "0.23.0"
-source = "git+https://github.com/velas/evm?branch=precompiles-closure#53d7b921e5705f26437689bb2afdd7f80e9d644f"
+source = "git+https://github.com/velas/evm?branch=evm-estimate-dontrecord-l64#e60bf6c62197f3486f31a263c74a058479d923d8"
 dependencies = [
  "ethereum",
  "evm-core",
@@ -1397,7 +1397,7 @@ dependencies = [
 [[package]]
 name = "evm-core"
 version = "0.23.0"
-source = "git+https://github.com/velas/evm?branch=precompiles-closure#53d7b921e5705f26437689bb2afdd7f80e9d644f"
+source = "git+https://github.com/velas/evm?branch=evm-estimate-dontrecord-l64#e60bf6c62197f3486f31a263c74a058479d923d8"
 dependencies = [
  "parity-scale-codec",
  "primitive-types",
@@ -1407,7 +1407,7 @@ dependencies = [
 [[package]]
 name = "evm-gasometer"
 version = "0.23.0"
-source = "git+https://github.com/velas/evm?branch=precompiles-closure#53d7b921e5705f26437689bb2afdd7f80e9d644f"
+source = "git+https://github.com/velas/evm?branch=evm-estimate-dontrecord-l64#e60bf6c62197f3486f31a263c74a058479d923d8"
 dependencies = [
  "evm-core",
  "evm-runtime",
@@ -1441,7 +1441,7 @@ dependencies = [
 [[package]]
 name = "evm-runtime"
 version = "0.23.0"
-source = "git+https://github.com/velas/evm?branch=precompiles-closure#53d7b921e5705f26437689bb2afdd7f80e9d644f"
+source = "git+https://github.com/velas/evm?branch=evm-estimate-dontrecord-l64#e60bf6c62197f3486f31a263c74a058479d923d8"
 dependencies = [
  "evm-core",
  "primitive-types",

@@ -85,9 +85,13 @@ impl EvmConfig {
         }
     }
     pub(crate) fn to_evm_params(&self) -> evm::Config {
-        match self.executor_config {
-            HardforkConfig::Istanbul => evm::Config::istanbul(),
-            HardforkConfig::Frontier => evm::Config::frontier(),
+        evm::Config {
+            estimate: self.estimate,
+            has_chain_id: true,
+            ..match self.executor_config {
+                HardforkConfig::Istanbul => evm::Config::istanbul(),
+                HardforkConfig::Frontier => evm::Config::frontier(),
+            }
         }
     }
 }
@@ -138,7 +142,7 @@ impl ChainContext {
 
 #[derive(Debug)]
 pub struct ExecutorContext<'a, State> {
-    backend: &'a mut EvmBackend<State>,
+    pub(crate) backend: &'a mut EvmBackend<State>,
     chain_context: ChainContext,
     tx_context: TransactionContext,
     config: EvmConfig,
