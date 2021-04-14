@@ -25,7 +25,8 @@ use solana_vote_program::vote_state::{VoteState, VoteStateVersions};
 use std::{collections::HashSet, convert::TryFrom};
 
 /// Minimal amount for delegate to create stake account. = 10k
-pub const MIN_DELEGATE_STAKE_AMOUNT: u64 = solana_sdk::native_token::sol_to_lamports_u64(10_000);
+// Removed requirement of having 10k to create stake account. 14.04.2021, keeping constant, to allow more smooth future changes.
+pub const MIN_DELEGATE_STAKE_AMOUNT: u64 = solana_sdk::native_token::sol_to_lamports_u64(0);
 
 /// Amount of stake to be in majority = 1M
 pub const MIN_STAKERS_TO_BE_MAJORITY: u64 =
@@ -3086,7 +3087,7 @@ mod tests {
     #[test]
     fn test_withdraw_stake() {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
-        let stake_lamports = MIN_DELEGATE_STAKE_AMOUNT;
+        let stake_lamports = MIN_DELEGATE_STAKE_AMOUNT + 400;
         let stake_account = Account::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Uninitialized,

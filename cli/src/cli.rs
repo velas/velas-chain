@@ -2538,13 +2538,13 @@ mod tests {
             pubkey: None,
             use_lamports_unit: true,
         };
-        assert_eq!(process_command(&config).unwrap(), "10000000000400 lamports");
+        assert_eq!(process_command(&config).unwrap(), "400 lamports");
 
         config.command = CliCommand::Balance {
             pubkey: None,
             use_lamports_unit: false,
         };
-        assert_eq!(process_command(&config).unwrap(), "10000.0000004 VLX");
+        assert_eq!(process_command(&config).unwrap(), "0.0000004 VLX");
 
         let good_signature = Signature::new(&bs58::decode(SIGNATURE).into_vec().unwrap());
         config.command = CliCommand::Confirm(good_signature);

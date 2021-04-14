@@ -266,7 +266,7 @@ fn test_stake_account_lifetime() {
     let identity_keypair = Keypair::new();
     let identity_pubkey = identity_keypair.pubkey();
 
-    let min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
+    let min_stake = 100 + MIN_DELEGATE_STAKE_AMOUNT + 400;
 
     let GenesisConfigInfo {
         genesis_config,
@@ -532,14 +532,15 @@ fn test_create_stake_account_from_seed() {
     let identity_keypair = Keypair::new();
     let identity_pubkey = identity_keypair.pubkey();
 
+    let min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(
-        MIN_DELEGATE_STAKE_AMOUNT * 2,
+        min_stake * 2,
         &solana_sdk::pubkey::new_rand(),
-        MIN_DELEGATE_STAKE_AMOUNT,
+        min_stake,
     );
     let bank = Bank::new(&genesis_config);
     let mint_pubkey = mint_keypair.pubkey();
@@ -580,7 +581,7 @@ fn test_create_stake_account_from_seed() {
             &vote_pubkey,
             &authorized,
             &stake_state::Lockup::default(),
-            MIN_DELEGATE_STAKE_AMOUNT + 400,
+            min_stake,
         ),
         Some(&mint_pubkey),
     );
@@ -592,7 +593,7 @@ fn test_create_stake_account_from_seed() {
     let account = bank.get_account(&stake_pubkey).expect("account not found");
     let stake_state = account.state().expect("couldn't unpack account data");
     if let StakeState::Stake(_meta, stake) = stake_state {
-        assert_eq!(stake.delegation.stake, MIN_DELEGATE_STAKE_AMOUNT + 400);
+        assert_eq!(stake.delegation.stake, min_stake);
     } else {
         panic!("wrong account type found")
     }

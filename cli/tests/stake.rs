@@ -272,6 +272,7 @@ fn test_stake_delegation_and_deactivation() {
 fn test_offline_stake_delegation_and_deactivation() {
     solana_logger::setup();
 
+    let aproximate_min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let mint_keypair = Keypair::new();
     let test_validator = TestValidator::with_no_fees(mint_keypair.pubkey());
     let faucet_addr = run_local_faucet(mint_keypair, None);
@@ -301,12 +302,12 @@ fn test_offline_stake_delegation_and_deactivation() {
         &rpc_client,
         &faucet_addr,
         &config_validator.signers[0].pubkey(),
-        MIN_DELEGATE_STAKE_AMOUNT * 2,
+        aproximate_min_stake * 2,
         &config_offline,
     )
     .unwrap();
     check_recent_balance(
-        MIN_DELEGATE_STAKE_AMOUNT * 2,
+        aproximate_min_stake * 2,
         &rpc_client,
         &config_validator.signers[0].pubkey(),
     );
@@ -315,12 +316,12 @@ fn test_offline_stake_delegation_and_deactivation() {
         &rpc_client,
         &faucet_addr,
         &config_offline.signers[0].pubkey(),
-        MIN_DELEGATE_STAKE_AMOUNT * 2,
+        aproximate_min_stake * 2,
         &config_validator,
     )
     .unwrap();
     check_recent_balance(
-        MIN_DELEGATE_STAKE_AMOUNT * 2,
+        aproximate_min_stake * 2,
         &rpc_client,
         &config_offline.signers[0].pubkey(),
     );
@@ -333,7 +334,7 @@ fn test_offline_stake_delegation_and_deactivation() {
         staker: Some(config_offline.signers[0].pubkey()),
         withdrawer: None,
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
+        amount: SpendAmount::Some(aproximate_min_stake),
         sign_only: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
@@ -411,6 +412,7 @@ fn test_offline_stake_delegation_and_deactivation() {
 fn test_nonced_stake_delegation_and_deactivation() {
     solana_logger::setup();
 
+    let aproximate_min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let mint_keypair = Keypair::new();
     let test_validator = TestValidator::with_no_fees(mint_keypair.pubkey());
     let faucet_addr = run_local_faucet(mint_keypair, None);
@@ -431,7 +433,7 @@ fn test_nonced_stake_delegation_and_deactivation() {
         &rpc_client,
         &faucet_addr,
         &config.signers[0].pubkey(),
-        MIN_DELEGATE_STAKE_AMOUNT * 2,
+        aproximate_min_stake * 2,
         &config,
     )
     .unwrap();
@@ -446,7 +448,7 @@ fn test_nonced_stake_delegation_and_deactivation() {
         withdrawer: None,
         lockup: Lockup::default(),
         // Minumum plus add some lamports for rent
-        amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
+        amount: SpendAmount::Some(aproximate_min_stake),
         sign_only: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
@@ -1069,6 +1071,7 @@ fn test_stake_split() {
 fn test_stake_set_lockup() {
     solana_logger::setup();
 
+    let aproximate_min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let mint_keypair = Keypair::new();
     let test_validator = TestValidator::with_custom_fees(mint_keypair.pubkey(), 1);
     let faucet_addr = run_local_faucet(mint_keypair, None);
@@ -1094,12 +1097,12 @@ fn test_stake_set_lockup() {
         &rpc_client,
         &faucet_addr,
         &config.signers[0].pubkey(),
-        20 * MIN_DELEGATE_STAKE_AMOUNT,
+        20 * aproximate_min_stake,
         &config,
     )
     .unwrap();
     check_recent_balance(
-        20 * MIN_DELEGATE_STAKE_AMOUNT,
+        20 * aproximate_min_stake,
         &rpc_client,
         &config.signers[0].pubkey(),
     );
@@ -1109,7 +1112,7 @@ fn test_stake_set_lockup() {
     check_recent_balance(100_000, &rpc_client, &offline_pubkey);
 
     // Create stake account, identity is authority
-    let minimum_stake_balance = MIN_DELEGATE_STAKE_AMOUNT
+    let minimum_stake_balance = aproximate_min_stake
         + rpc_client
             .get_minimum_balance_for_rent_exemption(std::mem::size_of::<StakeState>())
             .unwrap();
