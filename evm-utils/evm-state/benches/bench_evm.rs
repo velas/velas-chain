@@ -155,7 +155,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         let tx = UnsignedTransaction {
             nonce: 0.into(),
-            gas_price: 1.into(),
+            gas_price: 0.into(),
             gas_limit: u64::max_value().into(),
             action: TransactionAction::Call(contract_address),
             value: 0.into(),
@@ -210,7 +210,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let user_key = secp256k1::key::SecretKey::new(&mut rng);
         let tx = UnsignedTransaction {
             nonce: 0.into(),
-            gas_price: 1.into(),
+            gas_price: 0.into(),
             gas_limit: u64::max_value().into(),
             action: TransactionAction::Call(contract_address),
             value: 0.into(),

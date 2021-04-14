@@ -4035,7 +4035,7 @@ impl Bank {
             n.into(),
             Some(self.evm_chain_id),
         );
-        let ix = solana_evm_loader_program::send_raw_tx(fee_payer.pubkey(), evm_tx);
+        let ix = solana_evm_loader_program::send_raw_tx(fee_payer.pubkey(), evm_tx, None);
         let tx = Transaction::new_signed_with_payer(
             &[ix],
             Some(&fee_payer.pubkey()),
@@ -7982,7 +7982,22 @@ pub(crate) mod tests {
         let alice = Keypair::new();
         let bob = Keypair::new();
 
+        fn fund_evm(from_keypair: &Keypair, hash: Hash, lamports: u64) -> Transaction {
+            let tx = solana_evm_loader_program::processor::dummy_call(0).0;
+            let from_pubkey = from_keypair.pubkey();
+            let instructions = solana_evm_loader_program::transfer_native_to_eth_ixs(
+                from_pubkey,
+                lamports,
+                tx.caller().unwrap(),
+            );
+            let message = Message::new(&instructions, Some(&from_pubkey));
+            Transaction::new(&[from_keypair], message, hash)
+        }
+
+        let recent_hash = genesis_config.hash();
         assert!(bank.transfer(20000, &mint_keypair, &alice.pubkey()).is_ok());
+        let tx = fund_evm(&mint_keypair, recent_hash, 20000);
+        bank.process_transaction(&tx).unwrap();
         assert!(bank.transfer(20000, &mint_keypair, &bob.pubkey()).is_ok());
 
         let create_tx = |from_keypair: &Keypair, hash: Hash, nonce: usize| {
@@ -7990,6 +8005,7 @@ pub(crate) mod tests {
             let instruction = solana_evm_loader_program::send_raw_tx(
                 from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(nonce).0,
+                None,
             );
             let message = Message::new(&[instruction], Some(&from_pubkey));
             Transaction::new(&[from_keypair], message, hash)
@@ -8047,8 +8063,21 @@ pub(crate) mod tests {
             let instruction = solana_evm_loader_program::send_raw_tx(
                 from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(nonce).0,
+                None,
             );
             let message = Message::new(&[instruction], Some(&from_pubkey));
+            Transaction::new(&[from_keypair], message, hash)
+        }
+
+        fn fund_evm(from_keypair: &Keypair, hash: Hash, lamports: u64) -> Transaction {
+            let tx = solana_evm_loader_program::processor::dummy_call(0).0;
+            let from_pubkey = from_keypair.pubkey();
+            let instructions = solana_evm_loader_program::transfer_native_to_eth_ixs(
+                from_pubkey,
+                lamports,
+                tx.caller().unwrap(),
+            );
+            let message = Message::new(&instructions, Some(&from_pubkey));
             Transaction::new(&[from_keypair], message, hash)
         }
 
@@ -8078,9 +8107,8 @@ pub(crate) mod tests {
             let alice = Keypair::new();
             assert!(bank.transfer(20000, &mint_keypair, &alice.pubkey()).is_ok());
 
-            let bob = Keypair::new();
-            assert!(bank.transfer(20000, &mint_keypair, &bob.pubkey()).is_ok());
-
+            let tx = fund_evm(&mint_keypair, recent_hash, 20000);
+            bank.process_transaction(&tx).unwrap();
             let mut users = Vec::new();
             users.resize_with(num_sleeps as usize, || Keypair::new());
             for user in &users {

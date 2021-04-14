@@ -16,7 +16,7 @@ pub mod scope {
         pub use evm_state::*;
         pub use primitive_types::H160 as Address;
 
-        const LAMPORTS_TO_GWEI_PRICE: u64 = 1_000_000_000; // Lamports is 1/10^9 of SOLs while GWEI is 1/10^18
+        pub const LAMPORTS_TO_GWEI_PRICE: u64 = 1_000_000_000; // Lamports is 1/10^9 of SOLs while GWEI is 1/10^18
 
         // Convert lamports to gwei
         pub fn lamports_to_gwei(lamports: u64) -> U256 {
@@ -41,11 +41,18 @@ use instructions::{EvmBigTransaction, EvmInstruction};
 use scope::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 
-pub fn send_raw_tx(signer: solana::Address, evm_tx: evm::Transaction) -> solana::Instruction {
-    let account_metas = vec![
+pub fn send_raw_tx(
+    signer: solana::Address,
+    evm_tx: evm::Transaction,
+    gas_collector: Option<solana::Address>,
+) -> solana::Instruction {
+    let mut account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
         AccountMeta::new(signer, true),
     ];
+    if let Some(gas_collector) = gas_collector {
+        account_metas.push(AccountMeta::new(gas_collector, false))
+    }
 
     Instruction::new(
         crate::ID,
@@ -133,11 +140,18 @@ pub fn big_tx_write(storage: &solana::Address, offset: u64, chunk: Vec<u8>) -> s
     )
 }
 
-pub fn big_tx_execute(storage: &solana::Address) -> solana::Instruction {
-    let account_metas = vec![
+pub fn big_tx_execute(
+    storage: &solana::Address,
+    gas_collector: Option<&solana::Address>,
+) -> solana::Instruction {
+    let mut account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
         AccountMeta::new(*storage, true),
     ];
+
+    if let Some(gas_collector) = gas_collector {
+        account_metas.push(AccountMeta::new(*gas_collector, false))
+    }
 
     let big_tx = EvmBigTransaction::EvmTransactionExecute {};
 
