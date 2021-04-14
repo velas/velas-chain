@@ -123,15 +123,15 @@ impl Executor {
             GasLimitOutOfBounds { gas_limit }
         );
 
-        // let max_fee = gas_limit * gas_price;
-        // ensure!(
-        //     max_fee + value <= state_account.balance,
-        //     CantPayTheBills {
-        //         value,
-        //         max_fee,
-        //         state_balance: state_account.balance,
-        //     }
-        // );
+        let max_fee = gas_limit * gas_price;
+        ensure!(
+            max_fee + value <= state_account.balance,
+            CantPayTheBills {
+                value,
+                max_fee,
+                state_balance: state_account.balance,
+            }
+        );
 
         let config = self.config.to_evm_params();
         let transaction_context = TransactionContext::new(gas_price.as_u64(), caller);
@@ -167,9 +167,21 @@ impl Executor {
             }
         };
         let used_gas = executor.used_gas();
+        let fee = executor.fee(gas_price.into());
+        let mut executor_state = executor.into_state();
 
+        if let ExitReason::Succeed(_) = &exit_reason {
+            // Burn the fee, if transaction executed correctly
+            executor_state
+                .withdraw(caller, fee)
+                .map_err(|_| Error::CantPayTheBills {
+                    value,
+                    max_fee: fee,
+                    state_balance: state_account.balance,
+                })?;
+        }
         assert!(used_gas < execution_context.gas_left());
-        let (updates, logs) = executor.into_state().deconstruct();
+        let (updates, logs) = executor_state.deconstruct();
 
         let tx_logs: Vec<_> = logs.into_iter().collect();
         execution_context.apply(updates, used_gas);
@@ -318,6 +330,52 @@ impl Executor {
 
         self.evm_backend.push_transaction_receipt(tx_hash, receipt);
     }
+
+    /// Mint evm tokens to some address.
+    ///
+    /// Internally just mint token, and create system transaction (not implemented):
+    /// 1. Type: Call
+    /// 2. from: EVM_BURN_ADDRESS
+    /// 3. to: recipient (some address specified by method caller)
+    /// 4. data: empty,
+    /// 5. value: amount (specified by method caller)
+    ///
+    /// After transaction EVM_BURN_ADDRESS will cleanup.
+    pub fn deposit(&mut self, recipient: H160, amount: U256) {
+        self.with_executor(|e| e.state_mut().deposit(recipient, amount));
+    }
+
+    //  /// Burn some tokens on address:
+    //  ///
+    //  ///
+    //  /// Internally just burn address, and create system transaction (not implemented):
+    //  /// 1. Type: Call
+    //  /// 2. from: from (some address specified by method caller)
+    //  /// 3. to: EVM_BURN_ADDRESS
+    //  /// 4. data: empty,
+    //  /// 5. value: amount (specified by method caller)
+    //  ///
+    //  /// Note: This operation is failable, and can return error in case, when user has no enough tokens on his account.
+    // pub fn burn(&mut self, from: H160, amount: U256) -> ExecutionResult {
+    //     match self.with_executor(|e| e.state_mut().withdraw(evm_address, gweis)) {
+    //         Ok(_) => {},
+    //         Err(e) => return ExecutionResult {
+    //             exit_reason: ExitReason::Error(e), // Error - should be rollbacked.
+    //             exit_data: vec![],
+    //             used_gas: 0,
+    //             tx_logs: vec![]
+    //         }
+    //     }
+
+    //     let unsigned_tx = UnsignedTransactionWithCaller {
+    //         unsigned_tx: tx,
+    //         caller,
+    //         chain_id,
+    //     };
+
+    //     self.register_tx_with_receipt(TransactionInReceipt::Unsigned(unsigned_tx), result.clone());
+
+    // }
 
     pub fn get_tx_receipt_by_hash(&mut self, tx: H256) -> Option<&TransactionReceipt> {
         self.evm_backend.find_transaction_receipt(tx)

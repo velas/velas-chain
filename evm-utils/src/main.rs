@@ -93,7 +93,7 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 solana_sdk::program_utils::limited_deserialize(&buf).unwrap();
 
             debug!("loaded tx = {:?}", tx);
-            let ix = solana_evm_loader_program::send_raw_tx(signer.pubkey(), tx);
+            let ix = solana_evm_loader_program::send_raw_tx(signer.pubkey(), tx, None);
 
             let message = Message::new(&[ix], Some(&signer.pubkey()));
             let mut create_account_tx = solana::Transaction::new_unsigned(message);

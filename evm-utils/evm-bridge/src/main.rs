@@ -20,7 +20,8 @@ use snafu::ResultExt;
 use solana_account_decoder::{parse_token::UiTokenAmount, UiAccount};
 use solana_evm_loader_program::{scope::*, tx_chunks::TxChunks};
 use solana_sdk::{
-    clock::DEFAULT_TICKS_PER_SECOND, commitment_config::CommitmentLevel, instruction::AccountMeta,
+    clock::DEFAULT_TICKS_PER_SECOND, commitment_config::CommitmentLevel,
+    fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE, instruction::AccountMeta,
 };
 
 use solana_runtime::commitment::BlockCommitmentArray;
@@ -131,7 +132,8 @@ impl EvmBridge {
             }
         }
 
-        let mut ix = solana_evm_loader_program::send_raw_tx(self.key.pubkey(), tx);
+        let mut ix =
+            solana_evm_loader_program::send_raw_tx(self.key.pubkey(), tx, Some(self.key.pubkey()));
 
         // Add meta accounts as additional arguments
         for account in meta_keys {
@@ -239,8 +241,13 @@ impl BridgeERPC for BridgeERPCImpl {
     }
 
     fn gas_price(&self, _meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
+        const GWEI: u64 = 1000_000_000;
         //TODO: Add gas logic
-        Ok(Hex(1.into()))
+        let gas_price = 21000 * solana_evm_loader_program::scope::evm::LAMPORTS_TO_GWEI_PRICE
+            / DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE; // 21000 is smallest call in evm
+
+        let gas_price = gas_price - gas_price % GWEI; //round to gwei for metamask
+        Ok(Hex(gas_price.into()))
     }
 
     fn compilers(&self, _meta: Self::Metadata) -> EvmResult<Vec<String>> {
@@ -1258,7 +1265,10 @@ fn deploy_big_tx(
         .value;
 
     let execute_tx = solana::Transaction::new_signed_with_payer(
-        &[solana_evm_loader_program::big_tx_execute(&storage_pubkey)],
+        &[solana_evm_loader_program::big_tx_execute(
+            &storage_pubkey,
+            Some(&payer_pubkey),
+        )],
         Some(&payer_pubkey),
         &signers,
         blockhash,
