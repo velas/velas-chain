@@ -8,7 +8,7 @@ use std::{collections::HashMap, net::SocketAddr};
 use evm_rpc::basic::BasicERPC;
 use evm_rpc::bridge::BridgeERPC;
 use evm_rpc::chain_mock::ChainMockERPC;
-use evm_rpc::error::*;
+use evm_rpc::error::{Error, *};
 use evm_rpc::*;
 use evm_state::*;
 use sha3::{Digest, Keccak256};
@@ -203,7 +203,10 @@ impl BridgeERPC for BridgeERPCImpl {
 
         debug!("send_transaction from = {}", address);
 
-        let secret_key = meta.accounts.get(&address).unwrap();
+        let secret_key = meta
+            .accounts
+            .get(&address)
+            .ok_or_else(|| Error::KeyNotFound { account: address })?;
         let nonce = tx
             .nonce
             .map(|a| a.0)
@@ -233,7 +236,10 @@ impl BridgeERPC for BridgeERPCImpl {
     ) -> FutureEvmResult<Hex<H256>> {
         debug!("send_raw_transaction");
 
-        let tx: evm::Transaction = rlp::decode(&bytes.0).unwrap();
+        let tx: evm::Transaction = rlp::decode(&bytes.0).with_context(|| RlpError {
+            struct_name: "RawTransaction".to_string(),
+            input_data: hex::encode(&bytes.0),
+        })?;
 
         // TODO: Check chain_id.
         // TODO: check gas price.
@@ -494,6 +500,7 @@ fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
             },
         },
         _ => evm_rpc::Error::NativeRpcError {
+            details: format!("{:?}", client_error),
             source: client_error.into(),
         },
     }
@@ -1295,18 +1302,4 @@ fn deploy_big_tx(
     // TODO: here we can transfer back lamports and delete storage
 
     Ok(())
-}
-
-trait AsNativeRpcError<T> {
-    fn as_native_error(self) -> EvmResult<T>;
-}
-
-impl<T, Err> AsNativeRpcError<T> for StdResult<T, Err>
-where
-    anyhow::Error: From<Err>,
-{
-    fn as_native_error(self) -> EvmResult<T> {
-        self.map_err(anyhow::Error::from)
-            .with_context(|| NativeRpcError {})
-    }
 }

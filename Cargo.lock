@@ -1368,6 +1368,7 @@ dependencies = [
  "env_logger 0.8.3",
  "evm-rpc",
  "evm-state",
+ "hex",
  "jsonrpc-core",
  "jsonrpc-core-client",
  "jsonrpc-derive",
