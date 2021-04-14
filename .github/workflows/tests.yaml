@@ -7,8 +7,28 @@ on:
     - cron: "0 10 * * *"
 
 jobs:  
-  test:
+  checks:
     name: check
+    runs-on: build
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
+      - name: install dependencies
+        run: |
+          apt-get update
+          apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang      
+      - name: Run cargo clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+  test:
+    name: test
     runs-on: build
     steps:
       - uses: actions/checkout@v2
@@ -22,11 +42,8 @@ jobs:
         run: |
           apt-get update
           apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang      
-      - name: Run cargo check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
       - name: Run cargo test
         uses: actions-rs/cargo@v1
         with:
           command: test
+

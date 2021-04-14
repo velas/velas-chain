@@ -949,6 +949,8 @@ pub fn process_create_stake_account(
             return Err(CliError::BadParameter(err_msg).into());
         }
 
+        #[allow(clippy::absurd_extreme_comparisons)]
+        // this is constant and can be changed in future
         if lamports < MIN_DELEGATE_STAKE_AMOUNT {
             return Err(CliError::BadParameter(format!(
                 "need at least {} VLX to start staking, provided VLX: {}",
@@ -1258,6 +1260,8 @@ pub fn process_split_stake(
             return Err(CliError::BadParameter(err_msg).into());
         }
 
+        #[allow(clippy::absurd_extreme_comparisons)]
+        // this is constant and can be changed in future
         if lamports < MIN_DELEGATE_STAKE_AMOUNT {
             return Err(CliError::BadParameter(format!(
                 "need at least {} VLX to start staking, provided VLX: {}",

@@ -398,7 +398,7 @@ where
     let mut dest_keypair_chunks: Vec<VecDeque<_>> = Vec::new();
     assert!(gen_keypairs.len() >= 2 * tx_count);
     for chunk in gen_keypairs.chunks_exact(2 * tx_count) {
-        source_keypair_chunks.push(chunk[..tx_count].iter().cloned().collect());
+        source_keypair_chunks.push(chunk[..tx_count].to_vec());
         dest_keypair_chunks.push(chunk[tx_count..].iter().cloned().collect());
     }
 

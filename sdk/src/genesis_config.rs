@@ -375,8 +375,7 @@ pub mod evm_genesis {
     use std::path::PathBuf;
 
     pub fn copy_dir(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), std::io::Error> {
-        let mut stack = Vec::new();
-        stack.push(PathBuf::from(from.as_ref()));
+        let mut stack = vec![PathBuf::from(from.as_ref())];
 
         let output_root = PathBuf::from(to.as_ref());
         let input_root = PathBuf::from(from.as_ref()).components().count();

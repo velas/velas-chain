@@ -6,7 +6,7 @@ use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use evm_rpc::{
     basic::BasicERPC,
     chain_mock::ChainMockERPC,
-    error::{self, AsNativeRpcError, Error},
+    error::{Error, IntoNativeRpcError},
     Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{AccountProvider, Address, Gas, LogFilter, H256, U256};
@@ -22,7 +22,7 @@ const DEFAULT_COMITTMENT: Option<CommitmentConfig> = Some(CommitmentConfig {
 fn block_to_bank_and_root(
     block: Option<String>,
     meta: &JsonRpcRequestProcessor,
-) -> Option<(Arc<Bank>, H256)> {
+) -> (Arc<Bank>, H256) {
     let commitment = if let Some(block) = &block {
         match block.as_ref() {
             "earliest" => Some(CommitmentLevel::Confirmed),
@@ -50,7 +50,7 @@ fn block_to_bank_and_root(
             .map(|(b, _)| b.header.state_root)
             .unwrap_or_else(|_| lock.last_root())
     };
-    Some((bank, last_root))
+    (bank, last_root)
 }
 
 fn block_to_confirmed_num(
@@ -65,8 +65,8 @@ fn block_to_confirmed_num(
     }
 }
 
-pub struct ChainMockERPCImpl;
-impl ChainMockERPC for ChainMockERPCImpl {
+pub struct ChainMockErpcImpl;
+impl ChainMockERPC for ChainMockErpcImpl {
     type Metadata = JsonRpcRequestProcessor;
 
     fn network_id(&self, meta: Self::Metadata) -> Result<String, Error> {
@@ -170,7 +170,7 @@ impl ChainMockERPC for ChainMockERPCImpl {
             size: 0x100.into(),
             gas_limit: Hex(block.header.gas_limit.into()),
             gas_used: Hex(block.header.gas_used.into()),
-            timestamp: Hex(block.header.timestamp.into()),
+            timestamp: Hex(block.header.timestamp),
             transactions,
             nonce: 0x7bb9369dcbaec019.into(),
             logs_bloom: block.header.logs_bloom, // H2048
@@ -257,8 +257,8 @@ impl ChainMockERPC for ChainMockERPCImpl {
     }
 }
 
-pub struct BasicERPCImpl;
-impl BasicERPC for BasicERPCImpl {
+pub struct BasicErpcImpl;
+impl BasicERPC for BasicErpcImpl {
     type Metadata = JsonRpcRequestProcessor;
 
     // The same as get_slot
@@ -274,11 +274,7 @@ impl BasicERPC for BasicERPCImpl {
         address: Hex<Address>,
         block: Option<String>,
     ) -> Result<Hex<U256>, Error> {
-        let (bank, root) = block_to_bank_and_root(block.clone(), &meta).ok_or_else(|| {
-            error::Error::StateNotFoundForBlock {
-                block: block.unwrap_or("latest".to_string()),
-            }
-        })?;
+        let (bank, root) = block_to_bank_and_root(block, &meta);
         let evm_state = bank.evm_state.read().expect("Evm state poisoned");
         let account = evm_state
             .get_account_state_at(root, address.0)
@@ -293,11 +289,7 @@ impl BasicERPC for BasicERPCImpl {
         data: Hex<H256>,
         block: Option<String>,
     ) -> Result<Hex<H256>, Error> {
-        let (bank, root) = block_to_bank_and_root(block.clone(), &meta).ok_or_else(|| {
-            error::Error::StateNotFoundForBlock {
-                block: block.unwrap_or("latest".to_string()),
-            }
-        })?;
+        let (bank, root) = block_to_bank_and_root(block, &meta);
         let evm_state = bank.evm_state.read().expect("Evm state poisoned");
         Ok(Hex(evm_state
             .get_storage_at(root, address.0, data.0)
@@ -310,11 +302,7 @@ impl BasicERPC for BasicERPCImpl {
         address: Hex<Address>,
         block: Option<String>,
     ) -> Result<Hex<U256>, Error> {
-        let (bank, root) = block_to_bank_and_root(block.clone(), &meta).ok_or_else(|| {
-            error::Error::StateNotFoundForBlock {
-                block: block.unwrap_or("latest".to_string()),
-            }
-        })?;
+        let (bank, root) = block_to_bank_and_root(block, &meta);
         let evm_state = bank.evm_state.read().expect("Evm state poisoned");
         let account = evm_state
             .get_account_state_at(root, address.0)
@@ -328,11 +316,7 @@ impl BasicERPC for BasicERPCImpl {
         address: Hex<Address>,
         block: Option<String>,
     ) -> Result<Bytes, Error> {
-        let (bank, root) = block_to_bank_and_root(block.clone(), &meta).ok_or_else(|| {
-            error::Error::StateNotFoundForBlock {
-                block: block.unwrap_or("latest".to_string()),
-            }
-        })?;
+        let (bank, root) = block_to_bank_and_root(block, &meta);
         let evm_state = bank.evm_state.read().expect("Evm state poisoned");
         let account = evm_state
             .get_account_state_at(root, address.0)
@@ -348,7 +332,7 @@ impl BasicERPC for BasicERPCImpl {
         let receipt = meta
             .blockstore
             .find_evm_transaction(tx_hash.0)
-            .as_native_error()?;
+            .into_native_error()?;
 
         Ok(match receipt {
             Some(receipt) => {
@@ -373,7 +357,7 @@ impl BasicERPC for BasicERPCImpl {
         let receipt = meta
             .blockstore
             .find_evm_transaction(tx_hash.0)
-            .as_native_error()?;
+            .into_native_error()?;
 
         Ok(match receipt {
             Some(receipt) => {
@@ -425,7 +409,7 @@ impl BasicERPC for BasicERPCImpl {
                 .topics
                 .into_iter()
                 .flatten()
-                .map(RPCTopicFilter::to_topics)
+                .map(RPCTopicFilter::into_topics)
                 .collect(),
             from_block: from,
             to_block: to,
@@ -438,7 +422,7 @@ impl BasicERPC for BasicERPCImpl {
                 warn!("filter_logs = {:?}", e);
                 e
             })
-            .as_native_error()?;
+            .into_native_error()?;
         Ok(logs.into_iter().map(|l| l.into()).collect())
     }
 }
@@ -472,8 +456,11 @@ fn call(
         evm_state::EvmState::Incomming(i) => i,
         evm_state::EvmState::Committed(_) => unreachable!(),
     };
-    let mut estimate_config = evm_state::EvmConfig::default();
-    estimate_config.estimate = true;
+    let estimate_config = evm_state::EvmConfig {
+        estimate: true,
+        ..Default::default()
+    };
+
     let last_hashes = bank.evm_hashes();
     let mut executor = evm_state::Executor::with_config(
         evm_state,

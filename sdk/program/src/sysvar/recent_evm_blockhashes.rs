@@ -49,8 +49,8 @@ impl RecentBlockhashes {
                 A: SeqAccess<'de>,
             {
                 let mut arr = [T::default(); MAX_ENTRIES];
-                for i in 0..MAX_ENTRIES {
-                    arr[i] = seq
+                for (i, item) in arr.iter_mut().enumerate() {
+                    *item = seq
                         .next_element()?
                         .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
                 }
@@ -82,13 +82,15 @@ impl Sysvar for RecentBlockhashes {
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
     #[test]
     fn test_seriazize_evm_blockhashes() {
         let blockhashes = RecentBlockhashes::default();
-        assert_eq!(bincode::serialize(&blockhashes).unwrap().len(), MAX_ENTRIES * 32)
+        assert_eq!(
+            bincode::serialize(&blockhashes).unwrap().len(),
+            MAX_ENTRIES * 32
+        )
     }
 }

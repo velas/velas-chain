@@ -187,8 +187,8 @@ impl BlockHashEvm {
                 A: SeqAccess<'de>,
             {
                 let mut arr = [T::default(); MAX_EVM_BLOCKHASHES];
-                for i in 0..MAX_EVM_BLOCKHASHES {
-                    arr[i] = seq
+                for (i, item) in arr.iter_mut().enumerate().take(MAX_EVM_BLOCKHASHES) {
+                    *item = seq
                         .next_element()?
                         .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
                 }

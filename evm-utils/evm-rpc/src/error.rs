@@ -141,16 +141,16 @@ impl From<Error> for JRpcError {
     }
 }
 
-pub trait AsNativeRpcError<T> {
-    fn as_native_error(self) -> Result<T, Error>;
+pub trait IntoNativeRpcError<T> {
+    fn into_native_error(self) -> Result<T, Error>;
 }
 
-impl<T, Err> AsNativeRpcError<T> for Result<T, Err>
+impl<T, Err> IntoNativeRpcError<T> for Result<T, Err>
 where
     anyhow::Error: From<Err>,
     Err: std::fmt::Debug,
 {
-    fn as_native_error(self) -> Result<T, Error> {
+    fn into_native_error(self) -> Result<T, Error> {
         match self {
             Ok(ok) => Ok(ok),
             Err(e) => {

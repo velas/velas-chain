@@ -92,7 +92,7 @@ impl Incomming {
             && self.used_gas == 0)
     }
 
-    fn to_committed(self, slot: u64, native_blockhash: H256) -> Committed {
+    fn into_committed(self, slot: u64, native_blockhash: H256) -> Committed {
         let committed_transactions: Vec<_> = self.executed_transactions;
         let block = BlockHeader::new(
             self.last_block_hash,
@@ -203,7 +203,7 @@ impl EvmBackend<Incomming> {
     pub fn commit_block(mut self, slot: u64, native_blockhash: H256) -> EvmBackend<Committed> {
         debug!("commit: State before = {:?}", self.state);
         self.flush_changes();
-        let state = self.state.to_committed(slot, native_blockhash);
+        let state = self.state.into_committed(slot, native_blockhash);
         debug!("commit: State after = {:?}", state);
         EvmBackend {
             state,
@@ -608,12 +608,7 @@ impl EvmState {
             EvmState::Committed(committed) => {
                 let block = Block {
                     header: committed.state.block.clone(),
-                    transactions: committed
-                        .state
-                        .committed_transactions
-                        .iter()
-                        .cloned()
-                        .collect(),
+                    transactions: committed.state.committed_transactions.clone(),
                 };
                 Some(block)
             }

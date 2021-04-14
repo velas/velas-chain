@@ -1715,7 +1715,7 @@ impl Blockstore {
             .iter(IteratorMode::Start)?
             .map(|(block, _)| block)
             .next()
-            .unwrap_or_else(|| evm::BlockNum::MAX))
+            .unwrap_or(evm::BlockNum::MAX))
     }
 
     pub fn get_last_available_evm_block(&self) -> Result<evm::BlockNum> {
@@ -1724,7 +1724,7 @@ impl Blockstore {
             .iter(IteratorMode::End)?
             .map(|(block, _)| block)
             .next()
-            .unwrap_or_else(|| evm::BlockNum::MIN))
+            .unwrap_or(evm::BlockNum::MIN))
     }
 
     pub fn get_confirmed_block_hash(&self, slot: Slot) -> Result<String> {
@@ -2483,6 +2483,7 @@ impl Blockstore {
         self.evm_blocks_cf.get(block_index)
     }
 
+    #[allow(clippy::useless_conversion)] // to keep code the same when evm_transaction_cf will change type.
     pub fn read_evm_transaction(
         &self,
         index: (H256, Slot),
@@ -2562,7 +2563,7 @@ impl Blockstore {
                 });
             }
         }
-        return Ok(logs);
+        Ok(logs)
     }
 
     pub fn find_evm_transaction(&self, hash: H256) -> Result<Option<evm::TransactionReceipt>> {
@@ -2584,7 +2585,7 @@ impl Blockstore {
                 return Ok(Some(deserialize(&data)?));
             }
         }
-        return Ok(None);
+        Ok(None)
     }
 
     pub fn write_evm_transaction(
