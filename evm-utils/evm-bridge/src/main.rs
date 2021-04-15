@@ -1021,6 +1021,7 @@ use jsonrpc_core::middleware::{NoopCallFuture, NoopFuture};
 
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
+#[derive(Clone)]
 struct LoggingMiddleware;
 impl<M: jsonrpc_core::Metadata> Middleware<M> for LoggingMiddleware {
     type Future = NoopFuture;
@@ -1068,18 +1069,28 @@ fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
     io.extend_with(ether_mock.to_delegate());
 
     info!("Creating server with: {}", binding_address);
-    let server =
-        ServerBuilder::with_meta_extractor(io, move |_req: &hyper::Request<hyper::Body>| {
-            meta.clone()
-        })
-        .cors(DomainsValidation::AllowOnly(vec![
-            AccessControlAllowOrigin::Any,
-        ]))
-        .threads(4)
-        .cors_max_age(86400)
-        .start_http(&binding_address)
-        .expect("Unable to start EVM bridge server");
+    let meta_clone = meta.clone();
+    let server = ServerBuilder::with_meta_extractor(
+        io.clone(),
+        move |_req: &hyper::Request<hyper::Body>| meta_clone.clone(),
+    )
+    .cors(DomainsValidation::AllowOnly(vec![
+        AccessControlAllowOrigin::Any,
+    ]))
+    .threads(4)
+    .cors_max_age(86400)
+    .start_http(&binding_address)
+    .expect("Unable to start EVM bridge server");
 
+    let ws_server = {
+        let mut websocket_binding = binding_address;
+        websocket_binding.set_port(binding_address.port() + 1);
+        info!("Creating websocket server: {}", websocket_binding);
+        jsonrpc_ws_server::ServerBuilder::with_meta_extractor(io, move |_: &_| meta.clone())
+            .start(&websocket_binding)
+            .expect("Unable to start EVM bridge server")
+    };
+    ws_server.wait().unwrap();
     server.wait();
     Ok(())
 }
