@@ -1,6 +1,5 @@
 use clap::{
-    crate_description, crate_name, value_t_or_exit, AppSettings, Arg, ArgGroup, ArgMatches,
-    SubCommand,
+    crate_description, value_t_or_exit, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand,
 };
 use console::style;
 use solana_clap_utils::{
@@ -247,7 +246,7 @@ pub fn parse_args<'a>(
 fn main() -> Result<(), Box<dyn error::Error>> {
     solana_logger::setup_with_default("off");
     let matches = app(
-        crate_name!(),
+        "velas-cli",
         crate_description!(),
         solana_version::version!(),
     )
