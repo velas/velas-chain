@@ -181,7 +181,14 @@ impl Executor {
                     state_balance: state_account.balance,
                 })?;
         }
-        assert!(used_gas < execution_context.gas_left());
+        // This was assert before, but at some point evm executor waste more gas than exist (on solidty assert opcode).
+        ensure!(
+            used_gas < block_gas_limit_left,
+            GasUsedOutOfBounds {
+                used_gas,
+                gas_limit: block_gas_limit_left
+            }
+        );
         let (updates, logs) = executor_state.deconstruct();
 
         let tx_logs: Vec<_> = logs.into_iter().collect();
