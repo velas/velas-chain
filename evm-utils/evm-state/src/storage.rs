@@ -23,7 +23,7 @@ use crate::{
     transactions::{Transaction, TransactionReceipt},
     types::*,
 };
-use triedb::{rocksdb::RocksMemoryTrieMut, FixedSecureTrieMut};
+use triedb::{empty_trie_hash, rocksdb::RocksMemoryTrieMut, FixedSecureTrieMut};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -137,6 +137,18 @@ impl Storage {
         engine.restore_from_latest_backup(&target, &target, &RestoreOptions::default())?;
 
         Ok(())
+    }
+
+    /// Temporary solution to check if anything was purged from bd.
+    pub fn check_root_exist(&self, root: H256) -> bool {
+        if root == empty_trie_hash() {
+            true // empty root should exist always
+        } else {
+            match self.db.get(root.as_ref()) {
+                Ok(Some(_)) => true, // only return true if root is retrivable
+                _ => false,
+            }
+        }
     }
 
     pub fn typed_for<K: AsRef<[u8]>, V: Encodable + Decodable>(
