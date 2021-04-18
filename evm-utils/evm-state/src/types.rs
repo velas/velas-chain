@@ -316,7 +316,7 @@ impl BlockHeader {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block {
     pub header: BlockHeader,
-    pub transactions: Vec<(crate::H256, crate::transactions::TransactionReceipt)>,
+    pub transactions: Vec<(crate::H256, TransactionReceipt)>,
 }
 
 impl Encodable for BlockHeader {
