@@ -81,7 +81,9 @@ pub struct RPCBlock {
     pub transactions_root: Hex<H256>,
     pub state_root: Hex<H256>,
     pub receipts_root: Hex<H256>,
-    pub nonce: Hex<u64>,
+    #[serde(with = "serialize::hex_serde::padded")]
+    pub nonce: u64,
+    pub mix_hash: Hex<H256>,
 
     pub sha3_uncles: Hex<H256>,
     pub logs_bloom: ethbloom::Bloom, // H2048

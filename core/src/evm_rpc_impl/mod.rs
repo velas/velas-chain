@@ -172,17 +172,18 @@ impl ChainMockERPC for ChainMockErpcImpl {
             gas_used: Hex(block.header.gas_used.into()),
             timestamp: Hex(block.header.timestamp),
             transactions,
-            nonce: 0x7bb9369dcbaec019.into(),
+            nonce: block.header.native_chain_slot,
+            mix_hash: block.header.native_chain_hash.into(),
             logs_bloom: block.header.logs_bloom, // H2048
             transactions_root: Hex(block.header.transactions_root),
             state_root: Hex(block.header.state_root),
             receipts_root: Hex(block.header.receipts_root),
+            is_finalized: confirmed,
             miner: Address::zero().into(),
             difficulty: U256::zero().into(),
             total_difficulty: U256::zero().into(),
-            extra_data: b"Native chain data ommitted...".to_vec().into(),
+            extra_data: b"Velas EVM compatibility layer...".to_vec().into(),
             sha3_uncles: H256::zero().into(),
-            is_finalized: confirmed,
             uncles: vec![],
         };
         Ok(Some(result))

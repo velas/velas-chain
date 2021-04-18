@@ -268,6 +268,58 @@ impl<T: FormatHex + FromStr> From<T> for Hex<T> {
         Hex(b)
     }
 }
+
+// The starting of removing Hex type in favour of #[serde(with)] atribute
+// Currently used only for nonce, because its u64, but should be serialized as HASH
+pub mod hex_serde {
+    use super::FormatHex;
+    use serde::de;
+    use serde::{de::Deserializer, ser::Serializer};
+    use std::fmt;
+    use std::marker::PhantomData;
+
+    struct HexVisitor<T> {
+        _marker: PhantomData<T>,
+    }
+
+    impl<'de, T: FormatHex> de::Visitor<'de> for HexVisitor<T> {
+        type Value = T;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("Must be a valid hex string")
+        }
+
+        fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            match T::from_hex(&s[2..]) {
+                Ok(d) if &s[..2] == "0x" => Ok(d),
+                _ => Err(de::Error::invalid_value(de::Unexpected::Str(s), &self)),
+            }
+        }
+    }
+    pub mod padded {
+
+        use super::*;
+
+        pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serializer.serialize_str(&format!("{:#018x}", value))
+        }
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_str(HexVisitor {
+                _marker: PhantomData,
+            })
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
