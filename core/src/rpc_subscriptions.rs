@@ -1022,7 +1022,7 @@ impl RpcSubscriptions {
         });
     }
 
-    pub fn add_evm_new_blocks(
+    pub fn add_evm_block_subscription(
         &self,
         sub_id: SubscriptionId,
         subscriber: Subscriber<evm_rpc::RPCBlock>,
@@ -1032,7 +1032,7 @@ impl RpcSubscriptions {
         subscriptions.insert(sub_id, sink);
     }
 
-    pub fn remove_evm_new_blocks(&self, id: &SubscriptionId) -> bool {
+    pub fn remove_evm_block_subscription(&self, id: &SubscriptionId) -> bool {
         let mut subscriptions = self.subscriptions.evm_block_subscriptions.write().unwrap();
         subscriptions.remove(id).is_some()
     }

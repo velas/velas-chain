@@ -190,7 +190,10 @@ impl<'a> ExecutorContext<'a, Incomming> {
                     storage,
                     reset_storage: _,
                 } => {
-                    debug!("Apply::Modify address = {}, basic = {:?}", address, basic);
+                    debug!(
+                        "Apply::Modify address = {}, basic = {:?}, code = {:?}",
+                        address, basic, code
+                    );
 
                     let storage = HashMap::<H256, H256>::from_iter(storage);
                     debug!("Apply::Modify storage = {:?}", storage);

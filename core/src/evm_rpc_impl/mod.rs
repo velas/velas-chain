@@ -124,7 +124,7 @@ impl ChainMockERPC for ChainMockErpcImpl {
         block_hash: Hex<H256>,
         full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
-        error!("Requested hash = {:?}", block_hash.0);
+        debug!("Requested hash = {:?}", block_hash.0);
         let block = match meta.blockstore.read_evm_block_id_by_hash(block_hash.0) {
             Err(e) => {
                 error!("Error requesting block:{}, error:{:?}", block_hash, e);
@@ -132,7 +132,7 @@ impl ChainMockERPC for ChainMockErpcImpl {
             }
             Ok(b) => b,
         };
-        error!("Found block = {:?}", block);
+        debug!("Found block = {:?}", block);
         if block.is_none() {
             return Ok(None);
         }
@@ -429,7 +429,7 @@ fn call(
     let caller = tx.from.map(|a| a.0).unwrap_or_default();
 
     let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
-    let input = tx.data.map(|a| a.0).unwrap_or_else(Vec::new);
+    let input = tx.input.map(|a| a.0).unwrap_or_else(Vec::new);
     let gas_limit = tx.gas.map(|a| a.0).unwrap_or_else(|| 300000000.into());
     let gas_limit: u64 = gas_limit
         .try_into()

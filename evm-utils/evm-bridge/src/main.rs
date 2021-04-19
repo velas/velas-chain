@@ -51,7 +51,6 @@ use solana_client::{
 use solana_core::rpc::RpcSol;
 
 use std::result::Result as StdResult;
-
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
 type FutureEvmResult<T> = EvmResult<T>;
 
@@ -223,7 +222,7 @@ impl BridgeERPC for BridgeErpcImpl {
                 .map(|a| evm::TransactionAction::Call(a.0))
                 .unwrap_or(evm::TransactionAction::Create),
             value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
-            input: tx.data.map(|a| a.0).unwrap_or_default(),
+            input: tx.input.map(|a| a.0).unwrap_or_default(),
         };
 
         let tx = tx_create.sign(&secret_key, Some(meta.evm_chain_id));
