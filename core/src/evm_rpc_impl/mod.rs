@@ -120,11 +120,24 @@ impl ChainMockERPC for ChainMockErpcImpl {
 
     fn block_by_hash(
         &self,
-        _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-        _full: bool,
+        meta: Self::Metadata,
+        block_hash: Hex<H256>,
+        full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
-        Err(Error::Unimplemented {})
+        error!("Requested hash = {:?}", block_hash.0);
+        let block = match meta.blockstore.read_evm_block_id_by_hash(block_hash.0) {
+            Err(e) => {
+                error!("Error requesting block:{}, error:{:?}", block_hash, e);
+                return Ok(None);
+            }
+            Ok(b) => b,
+        };
+        error!("Found block = {:?}", block);
+        if block.is_none() {
+            return Ok(None);
+        }
+
+        self.block_by_number(meta, format!("{:#x}", block.unwrap()), full)
     }
 
     fn block_by_number(
