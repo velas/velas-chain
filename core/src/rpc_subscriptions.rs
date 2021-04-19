@@ -5,6 +5,7 @@ use crate::{
     rpc::{get_parsed_token_account, get_parsed_token_accounts},
 };
 use core::hash::Hash;
+use evm_rpc::Hex;
 use jsonrpc_core::futures::Future;
 use jsonrpc_pubsub::{
     typed::{Sink, Subscriber},
@@ -93,6 +94,7 @@ enum NotificationEntry {
     Bank(CommitmentSlots),
     Gossip(Slot),
     SignaturesReceived((Slot, Vec<Signature>)),
+    EvmBlock(evm_rpc::RPCBlock),
 }
 
 impl std::fmt::Debug for NotificationEntry {
@@ -100,6 +102,7 @@ impl std::fmt::Debug for NotificationEntry {
         match self {
             NotificationEntry::Root(root) => write!(f, "Root({})", root),
             NotificationEntry::Vote(vote) => write!(f, "Vote({:?})", vote),
+            NotificationEntry::EvmBlock(b) => write!(f, "EvmBlock({:?})", b),
             NotificationEntry::Slot(slot_info) => write!(f, "Slot({:?})", slot_info),
             NotificationEntry::SlotUpdate(slot_update) => {
                 write!(f, "SlotUpdate({:?})", slot_update)
@@ -154,6 +157,7 @@ type RpcSlotSubscriptions = RwLock<HashMap<SubscriptionId, Sink<SlotInfo>>>;
 type RpcSlotUpdateSubscriptions = RwLock<HashMap<SubscriptionId, Sink<Arc<SlotUpdate>>>>;
 type RpcVoteSubscriptions = RwLock<HashMap<SubscriptionId, Sink<RpcVote>>>;
 type RpcRootSubscriptions = RwLock<HashMap<SubscriptionId, Sink<Slot>>>;
+type EvmBlockSubscriptions = RwLock<HashMap<SubscriptionId, Sink<evm_rpc::RPCBlock>>>;
 
 fn add_subscription<K, S, T>(
     subscriptions: &mut HashMap<K, HashMap<SubscriptionId, SubscriptionData<S, T>>>,
@@ -401,6 +405,7 @@ struct Subscriptions {
     slots_updates_subscriptions: Arc<RpcSlotUpdateSubscriptions>,
     vote_subscriptions: Arc<RpcVoteSubscriptions>,
     root_subscriptions: Arc<RpcRootSubscriptions>,
+    evm_block_subscriptions: Arc<EvmBlockSubscriptions>,
 }
 
 impl Subscriptions {
@@ -417,6 +422,7 @@ impl Subscriptions {
         total += self.slot_subscriptions.read().unwrap().len();
         total += self.vote_subscriptions.read().unwrap().len();
         total += self.root_subscriptions.read().unwrap().len();
+        total += self.evm_block_subscriptions.read().unwrap().len();
         total
     }
 }
@@ -481,6 +487,7 @@ impl RpcSubscriptions {
         let slots_updates_subscriptions = Arc::new(RpcSlotUpdateSubscriptions::default());
         let vote_subscriptions = Arc::new(RpcVoteSubscriptions::default());
         let root_subscriptions = Arc::new(RpcRootSubscriptions::default());
+        let evm_block_subscriptions = Arc::new(EvmBlockSubscriptions::default());
         let notification_sender = Arc::new(Mutex::new(notification_sender));
 
         let _bank_forks = bank_forks.clone();
@@ -499,6 +506,7 @@ impl RpcSubscriptions {
             slots_updates_subscriptions,
             vote_subscriptions,
             root_subscriptions,
+            evm_block_subscriptions,
         };
         let _subscriptions = subscriptions.clone();
 
@@ -1014,6 +1022,36 @@ impl RpcSubscriptions {
         });
     }
 
+    pub fn add_evm_new_blocks(
+        &self,
+        sub_id: SubscriptionId,
+        subscriber: Subscriber<evm_rpc::RPCBlock>,
+    ) {
+        let sink = subscriber.assign_id(sub_id.clone()).unwrap();
+        let mut subscriptions = self.subscriptions.evm_block_subscriptions.write().unwrap();
+        subscriptions.insert(sub_id, sink);
+    }
+
+    pub fn remove_evm_new_blocks(&self, id: &SubscriptionId) -> bool {
+        let mut subscriptions = self.subscriptions.evm_block_subscriptions.write().unwrap();
+        subscriptions.remove(id).is_some()
+    }
+
+    pub fn notify_evm_block(&self, new_head: evm_state::Block) {
+        let transactions = new_head
+            .transactions
+            .iter()
+            .map(|(k, _)| *k)
+            .map(Hex)
+            .collect();
+        let block = evm_rpc::RPCBlock::new_from_head(
+            new_head.header,
+            false,
+            evm_rpc::Either::Left(transactions),
+        );
+        self.enqueue_notification(NotificationEntry::EvmBlock(block))
+    }
+
     fn enqueue_notification(&self, notification_entry: NotificationEntry) {
         match self
             .notification_sender
@@ -1104,6 +1142,20 @@ impl RpcSubscriptions {
                         for (_, sink) in subscriptions.iter() {
                             inc_new_counter_info!("rpc-subscription-notify-root", 1);
                             notifier.notify(root, sink);
+                        }
+                    }
+                    NotificationEntry::EvmBlock(block) => {
+                        let subscriptions = subscriptions.evm_block_subscriptions.read().unwrap();
+                        let num_subscriptions = subscriptions.len();
+                        if num_subscriptions > 0 {
+                            debug!(
+                                "block notify: {:?}, num_subscriptions: {:?}",
+                                block, num_subscriptions
+                            );
+                        }
+                        for (_, sink) in subscriptions.iter() {
+                            inc_new_counter_info!("rpc-subscription-notify-block", 1);
+                            notifier.notify(block.clone(), sink);
                         }
                     }
                     NotificationEntry::Bank(commitment_slots) => {
