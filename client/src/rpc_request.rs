@@ -73,6 +73,7 @@ pub enum RpcRequest {
     EthGetBalance,
 
     EthGetBlockByNumber,
+    EthGetBlockByHash,
     EthBlockNumber,
     EthGetStorageAt,
     EthGetCode,
@@ -150,6 +151,7 @@ impl fmt::Display for RpcRequest {
             RpcRequest::EthGetTransactionCount => "eth_getTransactionCount",
             RpcRequest::EthGetBalance => "eth_getBalance",
             RpcRequest::EthGetBlockByNumber => "eth_getBlockByNumber",
+            RpcRequest::EthGetBlockByHash => "eth_getBlockByHash",
             RpcRequest::EthBlockNumber => "eth_blockNumber",
             RpcRequest::EthGetStorageAt => "eth_getStorageAt",
             RpcRequest::EthGetCode => "eth_getCode",

@@ -321,11 +321,11 @@ impl ChainMockERPC for ChainMockErpcProxy {
 
     fn block_by_hash(
         &self,
-        _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-        _full: bool,
+        meta: Self::Metadata,
+        block_hash: Hex<H256>,
+        full: bool,
     ) -> EvmResult<Option<RPCBlock>> {
-        Err(evm_rpc::error::Error::Unimplemented {})
+        proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
     }
 
     fn block_by_number(
