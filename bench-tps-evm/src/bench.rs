@@ -606,10 +606,12 @@ mod tests {
         let bank = Bank::new(&genesis_config);
         let client = Arc::new(BankClient::new(bank));
 
-        let mut config = Config::default();
-        config.id = id;
-        config.tx_count = 10;
-        config.duration = Duration::from_secs(5);
+        let config = Config {
+            id,
+            tx_count: 10,
+            duration: Duration::from_secs(5),
+            ..Config::default()
+        };
 
         let keypair_count = config.tx_count * config.keypair_multiplier;
         let keypairs =
@@ -650,7 +652,7 @@ mod tests {
         for (_kp, secret_key) in &keypairs {
             assert_eq!(
                 client.get_evm_balance(&secret_key.to_address()).unwrap(),
-                solana_evm_loader_program::scope::evm::lamports_to_gwei(lamports.into())
+                solana_evm_loader_program::scope::evm::lamports_to_gwei(lamports)
             );
         }
     }

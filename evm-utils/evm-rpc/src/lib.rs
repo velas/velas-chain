@@ -30,6 +30,7 @@ pub enum RPCTopicFilter {
 }
 
 impl RPCTopicFilter {
+    #[allow(clippy::wrong_self_convention)]
     pub fn into_topics(value: Option<RPCTopicFilter>) -> LogFilterTopicEntry {
         match value {
             Some(RPCTopicFilter::Single(t)) => LogFilterTopicEntry::One(t.0),
@@ -606,7 +607,7 @@ impl RPCTransaction {
             gas: Some(gas_limit.into()),
             gas_price: Some(gas_price.into()),
             value: Some(value.into()),
-            input: Some(input.clone().into()),
+            input: Some(input.into()),
             nonce: Some(nonce.into()),
             hash: Some(hash.into()),
             transaction_index: Some((receipt.index as usize).into()),
