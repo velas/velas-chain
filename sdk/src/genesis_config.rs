@@ -102,7 +102,7 @@ pub struct GenesisConfig {
     pub evm_chain_id: u64,
 }
 
-pub static EVM_MAINNET_CHAIN_ID: u64 = 105;
+pub static EVM_MAINNET_CHAIN_ID: u64 = 106;
 pub static EVM_TESTNET_CHAIN_ID: u64 = 111;
 pub static EVM_DEVELOP_CHAIN_ID: u64 = 0xdead;
 
