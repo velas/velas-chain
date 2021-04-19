@@ -195,6 +195,7 @@ pub trait RpcSolPubSub {
         meta: Self::Metadata,
         subscriber: Subscriber<evm_rpc::RPCBlock>,
         topic: String,
+        anydata: Option<jsonrpc_core::Value>,
     );
 
     // Unsubscribe from new heads notifications.
@@ -560,6 +561,7 @@ impl RpcSolPubSub for RpcSolPubSubImpl {
         _meta: Self::Metadata,
         subscriber: Subscriber<evm_rpc::RPCBlock>,
         topic: String,
+        _anydata: Option<jsonrpc_core::Value>,
     ) {
         info!("eth_subscribe_new_heads");
         if topic == "newHeads" {
