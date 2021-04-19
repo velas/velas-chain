@@ -613,10 +613,7 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_create.clone()
-                })
-                .unwrap(),
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create }).unwrap(),
                 executor.as_deref_mut(),
                 &mut mock,
             )
@@ -729,10 +726,7 @@ mod test {
         let keyed_accounts = [evm_keyed_account];
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let address = secret_key.to_address();
-        executor
-            .as_mut()
-            .unwrap()
-            .deposit(address, U256::from(1) * 0);
+        executor.as_mut().unwrap().deposit(address, U256::from(1));
         let burn_addr = H160::zero();
         let tx_0 = evm::UnsignedTransaction {
             nonce: 0.into(),
@@ -742,7 +736,7 @@ mod test {
             value: 0.into(),
             input: vec![],
         };
-        let tx_0_sign = tx_0.clone().sign(&secret_key, Some(CHAIN_ID));
+        let tx_0_sign = tx_0.sign(&secret_key, Some(CHAIN_ID));
 
         // Transaction should fail because can't pay the bill.
         assert!(processor

@@ -168,7 +168,7 @@ impl Executor {
             }
         };
         let used_gas = executor.used_gas();
-        let fee = executor.fee(gas_price.into());
+        let fee = executor.fee(gas_price);
         let mut executor_state = executor.into_state();
 
         if let ExitReason::Succeed(_) = &exit_reason {
@@ -520,8 +520,10 @@ mod tests {
         let _logger = simple_logger::SimpleLogger::new().init();
 
         let chain_id = 0xeba;
-        let mut evm_config = EvmConfig::default();
-        evm_config.chain_id = chain_id;
+        let evm_config = EvmConfig {
+            chain_id,
+            ..EvmConfig::default()
+        };
         let mut executor =
             Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
 
@@ -553,8 +555,10 @@ mod tests {
         let _logger = simple_logger::SimpleLogger::new().init();
 
         let chain_id = 0xeba;
-        let mut evm_config = EvmConfig::default();
-        evm_config.chain_id = chain_id;
+        let evm_config = EvmConfig {
+            chain_id,
+            ..EvmConfig::default()
+        };
         let mut executor =
             Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
 
@@ -590,8 +594,10 @@ mod tests {
 
         let chain_id = 0xeba;
         let another_chain_id = 0xb0ba;
-        let mut evm_config = EvmConfig::default();
-        evm_config.chain_id = chain_id;
+        let evm_config = EvmConfig {
+            chain_id,
+            ..EvmConfig::default()
+        };
         let mut executor =
             Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
 

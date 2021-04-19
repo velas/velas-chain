@@ -86,6 +86,7 @@ pub struct RpcVote {
     pub timestamp: Option<UnixTimestamp>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum NotificationEntry {
     Slot(SlotInfo),
     SlotUpdate(SlotUpdate),

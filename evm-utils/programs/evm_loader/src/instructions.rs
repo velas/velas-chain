@@ -164,7 +164,7 @@ mod test {
 
         let addr = addr.0;
         let data = EvmInstruction::SwapNativeToEther {
-            lamports: lamports,
+            lamports,
             evm_address: addr,
         };
         let data = bincode::serialize(&data).unwrap();

@@ -8105,7 +8105,7 @@ pub(crate) mod tests {
             let tx = fund_evm(&mint_keypair, recent_hash, 20000);
             bank.process_transaction(&tx).unwrap();
             let mut users = Vec::new();
-            users.resize_with(num_sleeps as usize, || Keypair::new());
+            users.resize_with(num_sleeps as usize, Keypair::new);
             for user in &users {
                 assert!(bank.transfer(20000, &mint_keypair, &user.pubkey()).is_ok());
             }

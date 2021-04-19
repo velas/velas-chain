@@ -144,10 +144,8 @@ impl Storage {
         if root == empty_trie_hash() {
             true // empty root should exist always
         } else {
-            match self.db.get(root.as_ref()) {
-                Ok(Some(_)) => true, // only return true if root is retrivable
-                _ => false,
-            }
+            // only return true if root is retrivable
+            matches!(self.db.get(root.as_ref()), Ok(Some(_)))
         }
     }
 

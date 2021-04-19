@@ -26,12 +26,16 @@ mod tests {
     fn test_create_account() {
         let mut blocks: [Hash; MAX_ENTRIES] = [Hash::default(); MAX_ENTRIES];
 
-        for i in 0..MAX_ENTRIES {
-            // create hash with visibly recognizable ordering
-            let mut h = [0; HASH_BYTES];
-            h[HASH_BYTES - 1] = i as u8;
-            blocks[i] = Hash::new(&h)
-        }
+        blocks
+            .iter_mut()
+            .enumerate()
+            .take(MAX_ENTRIES)
+            .for_each(|(i, entry)| {
+                // create hash with visibly recognizable ordering
+                let mut h = [0; HASH_BYTES];
+                h[HASH_BYTES - 1] = i as u8;
+                *entry = Hash::new(&h);
+            });
 
         let account = create_account_with_data(42, blocks);
         let recent_blockhashes = from_account::<RecentBlockhashes>(&account).unwrap();
