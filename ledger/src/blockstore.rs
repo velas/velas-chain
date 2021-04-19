@@ -145,6 +145,7 @@ pub struct Blockstore {
     // evm
     evm_blocks_cf: LedgerColumn<cf::EvmBlockHeader>,
     evm_transactions_cf: LedgerColumn<cf::EvmTransactionReceipts>,
+    evm_blocks_by_hash_cf: LedgerColumn<cf::EvmHeaderIndexByHash>,
 
     last_root: Arc<RwLock<Slot>>,
     insert_shreds_lock: Arc<Mutex<()>>,
@@ -320,6 +321,7 @@ impl Blockstore {
         let evm_blocks_cf = db.column();
 
         let evm_transactions_cf = db.column();
+        let evm_blocks_by_hash_cf = db.column();
 
         let db = Arc::new(db);
 
@@ -369,6 +371,7 @@ impl Blockstore {
             perf_samples_cf,
             evm_blocks_cf,
             evm_transactions_cf,
+            evm_blocks_by_hash_cf,
             new_shreds_signals: vec![],
             completed_slots_senders: vec![],
             insert_shreds_lock: Arc::new(Mutex::new(())),
@@ -2473,7 +2476,9 @@ impl Blockstore {
         _block_slot: Slot,
         block: &evm::BlockHeader,
     ) -> Result<()> {
-        self.evm_blocks_cf.put(block.block_number, block)
+        self.evm_blocks_cf.put(block.block_number, block)?;
+        error!("Printing block_hash = {:?}", block.hash());
+        self.write_evm_block_id_by_hash(block.native_chain_slot, block.hash(), block.block_number)
     }
 
     pub fn read_evm_block_header(
@@ -2481,6 +2486,26 @@ impl Blockstore {
         block_index: evm::BlockNum,
     ) -> Result<Option<evm::BlockHeader>> {
         self.evm_blocks_cf.get(block_index)
+    }
+
+    pub fn write_evm_block_id_by_hash(
+        &self,
+        slot: Slot,
+        hash: H256,
+        id: evm_state::BlockNum,
+    ) -> Result<()> {
+        let mut w_active_transaction_status_index =
+            self.active_transaction_status_index.write().unwrap();
+        let primary_index = self.get_primary_index(slot, &mut w_active_transaction_status_index)?;
+        self.evm_blocks_by_hash_cf.put((primary_index, hash), &id)
+    }
+    pub fn read_evm_block_id_by_hash(&self, hash: H256) -> Result<Option<evm_state::BlockNum>> {
+        let result = self.evm_blocks_by_hash_cf.get((0, hash))?;
+        if result.is_none() {
+            Ok(self.evm_blocks_by_hash_cf.get((1, hash))?)
+        } else {
+            Ok(result)
+        }
     }
 
     #[allow(clippy::useless_conversion)] // to keep code the same when evm_transaction_cf will change type.

@@ -1,7 +1,7 @@
 use crate::blockstore_meta;
 use bincode::{deserialize, serialize};
 use byteorder::{BigEndian, ByteOrder};
-use columns::{EvmBlockHeader, EvmTransactionReceipts};
+use columns::{EvmBlockHeader, EvmHeaderIndexByHash, EvmTransactionReceipts};
 use evm_state::H256;
 use log::*;
 use prost::Message;
@@ -59,6 +59,7 @@ const BLOCKTIME_CF: &str = "blocktime";
 const PERF_SAMPLES_CF: &str = "perf_samples";
 
 const EVM_HEADERS: &str = "evm_headers";
+const EVM_BLOCK_BY_HASH: &str = "evm_block_by_hash";
 const EVM_TRANSACTIONS: &str = "evm_transactions";
 
 #[derive(Error, Debug)]
@@ -159,6 +160,10 @@ pub mod columns {
     #[derive(Debug)]
     /// The evm block header.
     pub struct EvmBlockHeader;
+
+    #[derive(Debug)]
+    /// The evm block header by Hash.
+    pub struct EvmHeaderIndexByHash;
 
     #[derive(Debug)]
     /// The evm transaction with statuses.
@@ -273,6 +278,8 @@ impl Rocks {
             ColumnFamilyDescriptor::new(PerfSamples::NAME, get_cf_options(&access_type));
         let evm_headers_cf_descriptor =
             ColumnFamilyDescriptor::new(EvmBlockHeader::NAME, get_cf_options(&access_type));
+        let evm_headers_by_hash_cf_descriptor =
+            ColumnFamilyDescriptor::new(EvmHeaderIndexByHash::NAME, get_cf_options(&access_type));
         let evm_transactions_cf_descriptor =
             ColumnFamilyDescriptor::new(EvmTransactionReceipts::NAME, get_cf_options(&access_type));
 
@@ -297,6 +304,10 @@ impl Rocks {
             (PerfSamples::NAME, perf_samples_cf_descriptor),
             (EvmBlockHeader::NAME, evm_headers_cf_descriptor),
             (EvmTransactionReceipts::NAME, evm_transactions_cf_descriptor),
+            (
+                EvmHeaderIndexByHash::NAME,
+                evm_headers_by_hash_cf_descriptor,
+            ),
         ];
 
         // Open the database
@@ -357,6 +368,7 @@ impl Rocks {
             PerfSamples::NAME,
             EvmBlockHeader::NAME,
             EvmTransactionReceipts::NAME,
+            EvmHeaderIndexByHash::NAME,
         ]
     }
 
@@ -758,6 +770,43 @@ impl ColumnName for columns::EvmBlockHeader {
 
 impl TypedColumn for columns::EvmBlockHeader {
     type Type = evm_state::BlockHeader;
+}
+
+impl Column for columns::EvmHeaderIndexByHash {
+    type Index = (u64, H256);
+
+    fn key((index, hash): (u64, H256)) -> Vec<u8> {
+        let mut key = vec![0; 8 + 32]; // size_of u64 + size_of HASH + size_of Slot
+        BigEndian::write_u64(&mut key[0..8], index);
+        key[8..40].clone_from_slice(&hash.as_bytes()[0..32]);
+        key
+    }
+
+    fn index(key: &[u8]) -> (u64, H256) {
+        if key.len() != 40 {
+            Self::as_index(0)
+        } else {
+            let index = BigEndian::read_u64(&key[0..8]);
+            let hash = H256::from_slice(&key[8..40]);
+            (index, hash)
+        }
+    }
+
+    fn primary_index(index: Self::Index) -> u64 {
+        index.0
+    }
+
+    fn as_index(index: u64) -> Self::Index {
+        (index, H256::default())
+    }
+}
+
+impl ColumnName for columns::EvmHeaderIndexByHash {
+    const NAME: &'static str = EVM_BLOCK_BY_HASH;
+}
+
+impl TypedColumn for columns::EvmHeaderIndexByHash {
+    type Type = evm_state::BlockNum;
 }
 
 impl Column for columns::EvmTransactionReceipts {
