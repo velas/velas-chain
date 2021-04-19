@@ -137,7 +137,8 @@ pub struct RPCTransaction {
     pub gas: Option<Hex<Gas>>,
     pub gas_price: Option<Hex<Gas>>,
     pub value: Option<Hex<U256>>,
-    pub data: Option<Bytes>,
+    #[serde(alias = "data")]
+    pub input: Option<Bytes>,
     pub nonce: Option<Hex<U256>>,
 
     pub hash: Option<Hex<H256>>,
@@ -605,7 +606,7 @@ impl RPCTransaction {
             gas: Some(gas_limit.into()),
             gas_price: Some(gas_price.into()),
             value: Some(value.into()),
-            data: Some(input.clone().into()),
+            input: Some(input.clone().into()),
             nonce: Some(nonce.into()),
             hash: Some(hash.into()),
             transaction_index: Some((receipt.index as usize).into()),

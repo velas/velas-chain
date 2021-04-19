@@ -572,7 +572,8 @@ impl RpcSolPubSub for RpcSolPubSubImpl {
             let id = self.uid.fetch_add(1, atomic::Ordering::Relaxed);
             let sub_id = SubscriptionId::Number(id as u64);
             info!("new_heads_subscribe: id={:?}", sub_id);
-            self.subscriptions.add_evm_new_blocks(sub_id, subscriber);
+            self.subscriptions
+                .add_evm_block_subscription(sub_id, subscriber);
         } else {
             error!(
                 "eth_subscribe: Trying to subscribe to unsupported topic: {}",
@@ -584,7 +585,7 @@ impl RpcSolPubSub for RpcSolPubSubImpl {
     // Unsubscribe from new heads notifications.
     fn eth_unsubscribe(&self, _meta: Option<Self::Metadata>, id: SubscriptionId) -> Result<bool> {
         info!("evm_new_heads_unsubscribe");
-        if self.subscriptions.remove_evm_new_blocks(&id) {
+        if self.subscriptions.remove_evm_block_subscription(&id) {
             Ok(true)
         } else {
             Err(Error {

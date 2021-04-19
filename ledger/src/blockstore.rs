@@ -2477,7 +2477,6 @@ impl Blockstore {
         block: &evm::BlockHeader,
     ) -> Result<()> {
         self.evm_blocks_cf.put(block.block_number, block)?;
-        error!("Printing block_hash = {:?}", block.hash());
         self.write_evm_block_id_by_hash(block.native_chain_slot, block.hash(), block.block_number)
     }
 
