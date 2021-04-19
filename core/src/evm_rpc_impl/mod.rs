@@ -145,7 +145,6 @@ impl ChainMockERPC for ChainMockErpcImpl {
         };
 
         let block_hash = block.header.hash();
-        let parent_hash = block.header.parent_hash;
         let transactions = if full {
             let txs = block
                 .transactions
@@ -163,30 +162,11 @@ impl ChainMockERPC for ChainMockErpcImpl {
             Either::Left(txs)
         };
 
-        let result = RPCBlock {
-            number: U256::from(block.header.block_number).into(),
-            hash: block_hash.into(),
-            parent_hash: parent_hash.into(),
-            size: 0x100.into(),
-            gas_limit: Hex(block.header.gas_limit.into()),
-            gas_used: Hex(block.header.gas_used.into()),
-            timestamp: Hex(block.header.timestamp),
+        Ok(Some(RPCBlock::new_from_head(
+            block.header,
+            confirmed,
             transactions,
-            nonce: block.header.native_chain_slot,
-            mix_hash: block.header.native_chain_hash.into(),
-            logs_bloom: block.header.logs_bloom, // H2048
-            transactions_root: Hex(block.header.transactions_root),
-            state_root: Hex(block.header.state_root),
-            receipts_root: Hex(block.header.receipts_root),
-            is_finalized: confirmed,
-            miner: Address::zero().into(),
-            difficulty: U256::zero().into(),
-            total_difficulty: U256::zero().into(),
-            extra_data: b"Velas EVM compatibility layer...".to_vec().into(),
-            sha3_uncles: H256::zero().into(),
-            uncles: vec![],
-        };
-        Ok(Some(result))
+        )))
     }
 
     fn block_transaction_count_by_number(

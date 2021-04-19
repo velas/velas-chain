@@ -334,6 +334,7 @@ impl ReplayStage {
                         &replay_vote_sender,
                         &bank_notification_sender,
                         &rewards_recorder_sender,
+                        &subscriptions,
                         &evm_block_recorder_sender,
                     );
                     replay_active_banks_time.stop();
@@ -1317,6 +1318,7 @@ impl ReplayStage {
         replay_vote_sender: &ReplayVoteSender,
         bank_notification_sender: &Option<BankNotificationSender>,
         rewards_recorder_sender: &Option<RewardsRecorderSender>,
+        subscriptions: &Arc<RpcSubscriptions>,
         evm_block_recorder_sender: &Option<EvmRecorderSender>,
     ) -> bool {
         let mut did_complete_bank = false;
@@ -1398,7 +1400,7 @@ impl ReplayStage {
                     }
 
                     Self::record_rewards(&bank, &rewards_recorder_sender);
-                    Self::record_evm_block(&bank, &evm_block_recorder_sender);
+                    Self::record_evm_block(&bank, &subscriptions, &evm_block_recorder_sender);
                 } else {
                     Self::mark_dead_slot(
                         blockstore,
@@ -1955,10 +1957,15 @@ impl ReplayStage {
         }
     }
 
-    fn record_evm_block(bank: &Bank, evm_block_recorder_sender: &Option<EvmRecorderSender>) {
+    fn record_evm_block(
+        bank: &Bank,
+        subscriptions: &Arc<RpcSubscriptions>,
+        evm_block_recorder_sender: &Option<EvmRecorderSender>,
+    ) {
         if let Some(evm_block_recorder_sender) = evm_block_recorder_sender {
             let block = bank.evm_block();
             if let Some(block) = block {
+                subscriptions.notify_evm_block(block.clone());
                 evm_block_recorder_sender
                     .send(block)
                     .unwrap_or_else(|err| warn!("evm_block_recorder_sender failed: {:?}", err));

@@ -95,6 +95,39 @@ pub struct RPCBlock {
     pub uncles: Vec<Hex<H256>>,
 }
 
+impl RPCBlock {
+    pub fn new_from_head(
+        header: evm_state::BlockHeader,
+        confirmed: bool,
+        transactions: Either<Vec<Hex<H256>>, Vec<RPCTransaction>>,
+    ) -> Self {
+        let block_hash = header.hash();
+        RPCBlock {
+            number: U256::from(header.block_number).into(),
+            hash: block_hash.into(),
+            parent_hash: header.parent_hash.into(),
+            size: 0x100.into(),
+            gas_limit: Hex(header.gas_limit.into()),
+            gas_used: Hex(header.gas_used.into()),
+            timestamp: Hex(header.timestamp),
+            transactions,
+            nonce: header.native_chain_slot,
+            mix_hash: header.native_chain_hash.into(),
+            logs_bloom: header.logs_bloom, // H2048
+            transactions_root: Hex(header.transactions_root),
+            state_root: Hex(header.state_root),
+            receipts_root: Hex(header.receipts_root),
+            is_finalized: confirmed,
+            miner: Address::zero().into(),
+            difficulty: U256::zero().into(),
+            total_difficulty: U256::zero().into(),
+            extra_data: b"Velas EVM compatibility layer...".to_vec().into(),
+            sha3_uncles: H256::zero().into(),
+            uncles: vec![],
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCTransaction {

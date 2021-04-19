@@ -187,6 +187,23 @@ pub trait RpcSolPubSub {
         name = "rootUnsubscribe"
     )]
     fn root_unsubscribe(&self, meta: Option<Self::Metadata>, id: SubscriptionId) -> Result<bool>;
+
+    // Get notification when a new heads is set
+    #[pubsub(subscription = "eth_subscription", subscribe, name = "eth_subscribe")]
+    fn eth_subscribe(
+        &self,
+        meta: Self::Metadata,
+        subscriber: Subscriber<evm_rpc::RPCBlock>,
+        topic: String,
+    );
+
+    // Unsubscribe from new heads notifications.
+    #[pubsub(
+        subscription = "eth_subscription",
+        unsubscribe,
+        name = "eth_unsubscribe"
+    )]
+    fn eth_unsubscribe(&self, meta: Option<Self::Metadata>, id: SubscriptionId) -> Result<bool>;
 }
 
 pub struct RpcSolPubSubImpl {
@@ -527,6 +544,45 @@ impl RpcSolPubSub for RpcSolPubSubImpl {
     fn root_unsubscribe(&self, _meta: Option<Self::Metadata>, id: SubscriptionId) -> Result<bool> {
         info!("root_unsubscribe");
         if self.subscriptions.remove_root_subscription(&id) {
+            Ok(true)
+        } else {
+            Err(Error {
+                code: ErrorCode::InvalidParams,
+                message: "Invalid Request: Subscription id does not exist".into(),
+                data: None,
+            })
+        }
+    }
+
+    // Get notification when a new heads is set
+    fn eth_subscribe(
+        &self,
+        _meta: Self::Metadata,
+        subscriber: Subscriber<evm_rpc::RPCBlock>,
+        topic: String,
+    ) {
+        info!("eth_subscribe_new_heads");
+        if topic == "newHeads" {
+            if let Err(err) = self.check_subscription_count() {
+                subscriber.reject(err).unwrap_or_default();
+                return;
+            }
+            let id = self.uid.fetch_add(1, atomic::Ordering::Relaxed);
+            let sub_id = SubscriptionId::Number(id as u64);
+            info!("new_heads_subscribe: id={:?}", sub_id);
+            self.subscriptions.add_evm_new_blocks(sub_id, subscriber);
+        } else {
+            error!(
+                "eth_subscribe: Trying to subscribe to unsupported topic: {}",
+                topic
+            )
+        }
+    }
+
+    // Unsubscribe from new heads notifications.
+    fn eth_unsubscribe(&self, _meta: Option<Self::Metadata>, id: SubscriptionId) -> Result<bool> {
+        info!("evm_new_heads_unsubscribe");
+        if self.subscriptions.remove_evm_new_blocks(&id) {
             Ok(true)
         } else {
             Err(Error {
