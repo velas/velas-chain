@@ -157,13 +157,18 @@ impl ChainMockERPC for ChainMockErpcImpl {
             Ok(b) => b,
         };
 
+        let bank = meta.bank(None);
+        let chain_id = bank.evm_chain_id;
+
         let block_hash = block.header.hash();
         let transactions = if full {
             let txs = block
                 .transactions
                 .into_iter()
                 .map(|(_k, v)| v)
-                .filter_map(|receipt| RPCTransaction::new_from_receipt(receipt, block_hash).ok())
+                .filter_map(|receipt| {
+                    RPCTransaction::new_from_receipt(receipt, block_hash, chain_id).ok()
+                })
                 .collect();
             Either::Right(txs)
         } else {
@@ -323,6 +328,8 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
     ) -> Result<Option<RPCTransaction>, Error> {
+        let bank = meta.bank(None);
+        let chain_id = bank.evm_chain_id;
         let receipt = meta
             .blockstore
             .find_evm_transaction(tx_hash.0)
@@ -337,7 +344,9 @@ impl BasicERPC for BasicErpcImpl {
                         block: receipt.block_number,
                     })?;
                 let block_hash = block.header.hash();
-                Some(RPCTransaction::new_from_receipt(receipt, block_hash)?)
+                Some(RPCTransaction::new_from_receipt(
+                    receipt, block_hash, chain_id,
+                )?)
             }
             None => None,
         })
