@@ -672,7 +672,7 @@ impl RpcClient {
         transaction: &Transaction,
     ) -> ClientResult<Signature> {
         const SEND_RETRIES: usize = 20;
-        const STATUS_RETRIES: usize = 20;
+        const STATUS_RETRIES: usize = 40;
 
         for _ in 0..SEND_RETRIES {
             let signature = self.send_transaction(transaction)?;
