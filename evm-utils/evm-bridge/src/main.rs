@@ -54,6 +54,68 @@ use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
 type FutureEvmResult<T> = EvmResult<T>;
 
+// A compatibility layer, to make software more fluently.
+mod compatibility {
+    use evm_state::{Gas, TransactionAction, U256};
+    use rlp::{Decodable, DecoderError, Rlp};
+    #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+    pub struct TransactionSignature {
+        pub v: u64,
+        pub r: U256,
+        pub s: U256,
+    }
+    #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+    pub struct Transaction {
+        pub nonce: U256,
+        pub gas_price: Gas,
+        pub gas_limit: Gas,
+        pub action: TransactionAction,
+        pub value: U256,
+        pub signature: TransactionSignature,
+        pub input: Vec<u8>,
+    }
+
+    impl Decodable for Transaction {
+        fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+            Ok(Self {
+                nonce: rlp.val_at(0)?,
+                gas_price: rlp.val_at(1)?,
+                gas_limit: rlp.val_at(2)?,
+                action: rlp.val_at(3)?,
+                value: rlp.val_at(4)?,
+                input: rlp.val_at(5)?,
+                signature: TransactionSignature {
+                    v: rlp.val_at(6)?,
+                    r: rlp.val_at(7)?,
+                    s: rlp.val_at(8)?,
+                },
+            })
+        }
+    }
+
+    impl From<Transaction> for evm_state::Transaction {
+        fn from(tx: Transaction) -> evm_state::Transaction {
+            let mut r = [0u8; 32];
+            let mut s = [0u8; 32];
+            tx.signature.r.to_big_endian(&mut r);
+            tx.signature.s.to_big_endian(&mut s);
+            evm_state::Transaction {
+                nonce: tx.nonce,
+                gas_limit: tx.gas_limit,
+                gas_price: tx.gas_price,
+                action: tx.action,
+                value: tx.value,
+                input: tx.input,
+                signature: evm_state::TransactionSignature {
+                    v: tx.signature.v,
+                    r: r.into(),
+                    s: s.into(),
+                },
+            }
+        }
+    }
+}
+
 pub struct EvmBridge {
     evm_chain_id: u64,
     key: solana_sdk::signature::Keypair,
@@ -237,10 +299,11 @@ impl BridgeERPC for BridgeErpcImpl {
     ) -> FutureEvmResult<Hex<H256>> {
         debug!("send_raw_transaction");
 
-        let tx: evm::Transaction = rlp::decode(&bytes.0).with_context(|| RlpError {
+        let tx: compatibility::Transaction = rlp::decode(&bytes.0).with_context(|| RlpError {
             struct_name: "RawTransaction".to_string(),
             input_data: hex::encode(&bytes.0),
         })?;
+        let tx: evm::Transaction = tx.into();
 
         // TODO: Check chain_id.
         // TODO: check gas price.

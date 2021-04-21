@@ -152,9 +152,9 @@ pub struct RPCTransaction {
     #[serde(rename = "V")]
     pub v: Option<Hex<u64>>,
     #[serde(rename = "R")]
-    pub r: Option<Hex<H256>>,
+    pub r: Option<Hex<U256>>,
     #[serde(rename = "S")]
-    pub s: Option<Hex<H256>>,
+    pub s: Option<Hex<U256>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -593,8 +593,8 @@ impl RPCTransaction {
                         value,
                         nonce,
                         tx.signature.v,
-                        tx.signature.r,
-                        tx.signature.s,
+                        tx.signature.r.as_bytes().into(),
+                        tx.signature.s.as_bytes().into(),
                     )
                 }
                 TransactionInReceipt::Unsigned(tx) => {
@@ -629,8 +629,8 @@ impl RPCTransaction {
                         value,
                         nonce,
                         v,
-                        H256::zero(),
-                        H256::zero(),
+                        U256::zero(),
+                        U256::zero(),
                     )
                 }
             };
