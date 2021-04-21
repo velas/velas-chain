@@ -43,7 +43,6 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signer},
 };
-use velas_validator::redirect_stderr_to_file;
 use std::{
     collections::HashSet,
     env,
@@ -59,6 +58,7 @@ use std::{
     thread::sleep,
     time::{Duration, Instant},
 };
+use velas_validator::redirect_stderr_to_file;
 
 #[derive(Debug, PartialEq)]
 enum Operation {
