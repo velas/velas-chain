@@ -1,9 +1,6 @@
-use crate::{
-    parse_account_data::{ParsableAccount, ParseAccountError},
-    
-};
+use crate::parse_account_data::{ParsableAccount, ParseAccountError};
 
-use borsh::{BorshDeserialize};
+use borsh::BorshDeserialize;
 use velas_account::*;
 const ACCOUNT_LEN: usize = 67;
 
@@ -32,19 +29,19 @@ pub enum VelasAccountType {
 mod velas_account {
     use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
     use serde::{Deserialize, Serialize};
-    use solana_sdk::pubkey::Pubkey;
+    use solana_sdk::{clock::UnixTimestamp, pubkey::Pubkey};
 
     /// Program states.
     #[repr(C)]
     #[derive(
+        Serialize,
+        Deserialize,
         BorshSerialize,
         BorshDeserialize,
         BorshSchema,
         PartialEq,
         Debug,
         Clone,
-        Serialize,
-        Deserialize,
     )]
     pub struct VAccountInfo {
         /// Vaccount version
@@ -60,14 +57,14 @@ mod velas_account {
     /// Storage of the basic Vaccount information.
     #[repr(C)]
     #[derive(
+        Serialize,
+        Deserialize,
         BorshSerialize,
         BorshDeserialize,
         BorshSchema,
         PartialEq,
         Debug,
         Clone,
-        Serialize,
-        Deserialize,
     )]
     pub struct VAccountStorage {
         /// Owner key in not extended VAccount
@@ -79,6 +76,8 @@ mod velas_account {
     /// Operational key state.
     #[repr(C)]
     #[derive(
+        Serialize,
+        Deserialize,
         Clone,
         Debug,
         Default,
@@ -86,8 +85,6 @@ mod velas_account {
         BorshDeserialize,
         BorshSerialize,
         BorshSchema,
-        Serialize,
-        Deserialize,
     )]
     pub struct Operational {
         /// Operational key
@@ -99,7 +96,9 @@ mod velas_account {
         /// Allowed instruction for operational key
         pub scopes: Vec<u8>,
         /// Allowed programs to call
-        pub whitelist_programs: Vec<Whitelist>,
+        pub whitelist_programs: Vec<ExternalProgram>,
+        /// Allowed token accounts
+        pub whitelist_tokens: Vec<ExternalToken>,
         /// Master key is allowed to call any instruction in Vaccount
         pub is_master_key: bool,
     }
@@ -107,6 +106,8 @@ mod velas_account {
     /// Operational key state.
     #[repr(C)]
     #[derive(
+        Serialize,
+        Deserialize,
         Clone,
         Debug,
         Default,
@@ -116,10 +117,8 @@ mod velas_account {
         BorshDeserialize,
         BorshSerialize,
         BorshSchema,
-        Serialize,
-        Deserialize,
     )]
-    pub struct Whitelist {
+    pub struct ExternalProgram {
         /// Allowed to call program code id
         pub program_id: Pubkey,
         /// Allowed to call instruction inside program
@@ -129,6 +128,8 @@ mod velas_account {
     /// Operational key state.
     #[repr(u8)]
     #[derive(
+        Serialize,
+        Deserialize,
         Clone,
         Copy,
         Debug,
@@ -136,20 +137,60 @@ mod velas_account {
         BorshDeserialize,
         BorshSerialize,
         BorshSchema,
-        Serialize,
-        Deserialize,
     )]
     pub enum OperationalState {
-        /// Operational key is not yet initialized
-        Uninitialized,
         /// Operational key is initialized
         Initialized,
         /// Operational has been frozen by the owner/operational freeze authority.
         Frozen,
     }
+
+    /// Token account.
+    #[repr(C)]
+    #[derive(
+        Serialize,
+        Deserialize,
+        Clone,
+        Debug,
+        Default,
+        PartialEq,
+        Eq,
+        Hash,
+        BorshDeserialize,
+        BorshSerialize,
+        BorshSchema,
+    )]
+    pub struct ExternalToken {
+        /// Token account with daily transfer limit
+        pub account: TokenAccount,
+        /// Last uses of transfer
+        pub last_transfer: UnixTimestamp,
+    }
+
+    /// Token daily limit.
+    #[repr(C)]
+    #[derive(
+        Serialize,
+        Deserialize,
+        Clone,
+        Debug,
+        Default,
+        PartialEq,
+        Eq,
+        Hash,
+        BorshDeserialize,
+        BorshSerialize,
+        BorshSchema,
+    )]
+    pub struct TokenAccount {
+        /// Token address with vaccount authority
+        pub token_account: Pubkey,
+        /// The remainder of the daily limit lamports for transfer
+        pub remainder_daily_limit: u64,
+    }
     impl Default for OperationalState {
         fn default() -> Self {
-            OperationalState::Uninitialized
+            OperationalState::Initialized
         }
     }
 }
