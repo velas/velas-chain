@@ -56,8 +56,10 @@ type FutureEvmResult<T> = EvmResult<T>;
 
 // A compatibility layer, to make software more fluently.
 mod compatibility {
-    use evm_state::{Gas, TransactionAction, U256};
+    use evm_rpc::Hex;
+    use evm_state::{Gas, TransactionAction, H256, U256};
     use rlp::{Decodable, DecoderError, Rlp};
+
     #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
     pub struct TransactionSignature {
         pub v: u64,
@@ -112,6 +114,22 @@ mod compatibility {
                     s: s.into(),
                 },
             }
+        }
+    }
+
+    pub fn patch_block(block: evm_rpc::RPCBlock) -> evm_rpc::RPCBlock {
+        let txs_empty = match &block.transactions {
+            evm_rpc::Either::Left(txs) => txs.is_empty(),
+            evm_rpc::Either::Right(txs) => txs.is_empty(),
+        };
+        if txs_empty && block.transactions_root.0 == H256::zero() {
+            evm_rpc::RPCBlock {
+                transactions_root: Hex(evm_state::empty_trie_hash()),
+                receipts_root: Hex(evm_state::empty_trie_hash()),
+                ..block
+            }
+        } else {
+            block
         }
     }
 }
@@ -388,6 +406,7 @@ impl ChainMockERPC for ChainMockErpcProxy {
         full: bool,
     ) -> EvmResult<Option<RPCBlock>> {
         proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
+            .map(|o: Option<_>| o.map(compatibility::patch_block))
     }
 
     fn block_by_number(
@@ -397,6 +416,7 @@ impl ChainMockERPC for ChainMockErpcProxy {
         full: bool,
     ) -> EvmResult<Option<RPCBlock>> {
         proxy_evm_rpc!(meta.rpc_client, EthGetBlockByNumber, block, full)
+            .map(|o: Option<_>| o.map(compatibility::patch_block))
     }
 
     fn block_transaction_count_by_number(
