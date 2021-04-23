@@ -22,7 +22,7 @@ fn format_hex_trimmed<T: LowerHex>(val: &T) -> String {
 
 impl<T: FormatHex> Hex<T> {
     pub fn from_hex(data: &str) -> Result<Self, Error> {
-        if &data[0..2] != "0x" {
+        if data.len() < 3 || &data[0..2] != "0x" {
             return InvalidHexPrefix {
                 input_data: data.to_string(),
             }
@@ -231,6 +231,9 @@ impl<'de> de::Visitor<'de> for BytesVisitor {
     where
         E: de::Error,
     {
+        if s.len() < 3 {
+            return Err(de::Error::invalid_value(de::Unexpected::Str(s), &self));
+        }
         match hex::decode(&s[2..]) {
             Ok(d) if &s[..2] == "0x" => Ok(Bytes(d)),
             _ => Err(de::Error::invalid_value(de::Unexpected::Str(s), &self)),
