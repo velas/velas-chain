@@ -1,4 +1,5 @@
 use crate::rpc_response::RpcSimulateTransactionResult;
+use derivative::Derivative;
 use serde_json::{json, Value};
 use solana_sdk::{clock::Slot, pubkey::Pubkey};
 use std::fmt;
@@ -216,7 +217,8 @@ impl fmt::Display for RpcResponseErrorData {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Derivative, Error)]
+#[derivative(Debug)]
 pub enum RpcError {
     #[error("RPC request error: {0}")]
     RpcRequestError(String),
@@ -225,6 +227,7 @@ pub enum RpcError {
         code: i64,
         message: String,
         data: RpcResponseErrorData,
+        #[derivative(Debug = "ignore")]
         original_err: serde_json::Value,
     },
     #[error("parse error: expected {0}")]

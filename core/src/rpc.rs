@@ -1620,7 +1620,7 @@ impl JsonRpcRequestProcessor {
                 return bigtable_block;
             }
         }
-        return block;
+        block
     }
 }
 

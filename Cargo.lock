@@ -4870,6 +4870,7 @@ dependencies = [
  "bincode",
  "bs58",
  "clap",
+ "derivative",
  "evm-rpc",
  "evm-state",
  "indicatif",

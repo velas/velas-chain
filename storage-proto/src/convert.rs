@@ -827,7 +827,7 @@ trait ConvertFromBytes {
 
     fn from_slice(bytes: &[u8]) -> Self;
 
-    fn to_vec(self) -> Vec<u8>;
+    fn into_vec(self) -> Vec<u8>;
 }
 
 impl ConvertFromBytes for evm_state::H256 {
@@ -839,7 +839,7 @@ impl ConvertFromBytes for evm_state::H256 {
         Self::from_slice(&bytes)
     }
 
-    fn to_vec(self) -> Vec<u8> {
+    fn into_vec(self) -> Vec<u8> {
         self.as_bytes().to_vec()
     }
 }
@@ -853,7 +853,7 @@ impl ConvertFromBytes for evm_state::H160 {
         Self::from_slice(&bytes)
     }
 
-    fn to_vec(self) -> Vec<u8> {
+    fn into_vec(self) -> Vec<u8> {
         self.as_bytes().to_vec()
     }
 }
@@ -866,7 +866,7 @@ impl ConvertFromBytes for evm_state::Bloom {
     fn from_slice(bytes: &[u8]) -> Self {
         Self::from_slice(&bytes)
     }
-    fn to_vec(self) -> Vec<u8> {
+    fn into_vec(self) -> Vec<u8> {
         self.as_bytes().to_vec()
     }
 }
@@ -884,16 +884,16 @@ impl From<evm_state::BlockHeader> for generated_evm::EvmBlockHeader {
         let transactions: Vec<_> = header
             .transactions
             .into_iter()
-            .map(ConvertFromBytes::to_vec)
+            .map(ConvertFromBytes::into_vec)
             .collect();
         Self {
-            parent_hash: header.parent_hash.to_vec(),
-            state_root: header.state_root.to_vec(),
-            native_chain_hash: header.native_chain_hash.to_vec(),
+            parent_hash: header.parent_hash.into_vec(),
+            state_root: header.state_root.into_vec(),
+            native_chain_hash: header.native_chain_hash.into_vec(),
             transactions,
-            transactions_root: header.transactions_root.to_vec(),
-            receipts_root: header.receipts_root.to_vec(),
-            logs_bloom: header.logs_bloom.to_vec(),
+            transactions_root: header.transactions_root.into_vec(),
+            receipts_root: header.receipts_root.into_vec(),
+            logs_bloom: header.logs_bloom.into_vec(),
             block_number: header.block_number,
             gas_limit: header.gas_limit,
             gas_used: header.gas_used,
@@ -934,7 +934,7 @@ impl From<evm_state::TransactionReceipt> for generated_evm::TransactionReceipt {
             transaction: Some(tx.transaction.into()),
             status: Some(tx.status.into()),
             logs: tx.logs.into_iter().map(From::from).collect(),
-            logs_bloom: tx.logs_bloom.to_vec(),
+            logs_bloom: tx.logs_bloom.into_vec(),
 
             used_gas: tx.used_gas,
             index: tx.index,
@@ -1023,7 +1023,7 @@ impl From<evm_state::UnsignedTransactionWithCaller>
         Self {
             rlp_encoded_body: bytes.to_vec(),
             chain_id: unsigned.chain_id.unwrap_or_default(),
-            caller: unsigned.caller.to_vec(),
+            caller: unsigned.caller.into_vec(),
         }
     }
 }
@@ -1054,11 +1054,11 @@ impl From<evm_state::Log> for generated_evm::Log {
         let topics: Vec<_> = logs
             .topics
             .into_iter()
-            .map(ConvertFromBytes::to_vec)
+            .map(ConvertFromBytes::into_vec)
             .collect();
         Self {
             topics,
-            address: logs.address.to_vec(),
+            address: logs.address.into_vec(),
             data: logs.data,
         }
     }
@@ -1249,7 +1249,7 @@ impl TryFrom<generated_evm::ExitReason> for evm_state::ExitReason {
 impl From<(evm_state::H256, evm_state::TransactionReceipt)> for generated_evm::ReceiptWithHash {
     fn from(tx_with_hash: (evm_state::H256, evm_state::TransactionReceipt)) -> Self {
         Self {
-            hash: tx_with_hash.0.to_vec(),
+            hash: tx_with_hash.0.into_vec(),
             transaction: Some(tx_with_hash.1.into()),
         }
     }
