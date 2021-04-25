@@ -16,6 +16,7 @@ fn main() -> Result<(), std::io::Error> {
             &[
                 proto_files.join("confirmed_block.proto"),
                 proto_files.join("transaction_by_addr.proto"),
+                proto_files.join("evm.proto"),
             ],
             &[proto_files],
         )

@@ -278,6 +278,31 @@ impl Decodable for Transaction {
     }
 }
 
+impl Encodable for UnsignedTransaction {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(6);
+        s.append(&self.nonce);
+        s.append(&self.gas_price);
+        s.append(&self.gas_limit);
+        s.append(&self.action);
+        s.append(&self.value);
+        s.append(&self.input);
+    }
+}
+
+impl Decodable for UnsignedTransaction {
+    fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+        Ok(Self {
+            nonce: rlp.val_at(0)?,
+            gas_price: rlp.val_at(1)?,
+            gas_limit: rlp.val_at(2)?,
+            action: rlp.val_at(3)?,
+            value: rlp.val_at(4)?,
+            input: rlp.val_at(5)?,
+        })
+    }
+}
+
 impl From<Transaction> for UnsignedTransaction {
     fn from(val: Transaction) -> UnsignedTransaction {
         UnsignedTransaction {

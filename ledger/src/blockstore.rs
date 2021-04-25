@@ -2476,7 +2476,9 @@ impl Blockstore {
         _block_slot: Slot,
         block: &evm::BlockHeader,
     ) -> Result<()> {
-        self.evm_blocks_cf.put(block.block_number, block)?;
+        let proto_block = block.clone().into();
+        self.evm_blocks_cf
+            .put_protobuf(block.block_number, &proto_block)?;
         self.write_evm_block_id_by_hash(block.native_chain_slot, block.hash(), block.block_number)
     }
 
@@ -2484,7 +2486,9 @@ impl Blockstore {
         &self,
         block_index: evm::BlockNum,
     ) -> Result<Option<evm::BlockHeader>> {
-        self.evm_blocks_cf.get(block_index)
+        self.evm_blocks_cf
+            .get_protobuf_or_bincode::<evm::BlockHeader>(block_index)
+            .map(|block| block.and_then(|block| block.try_into().ok()))
     }
 
     pub fn write_evm_block_id_by_hash(
@@ -2496,28 +2500,34 @@ impl Blockstore {
         let mut w_active_transaction_status_index =
             self.active_transaction_status_index.write().unwrap();
         let primary_index = self.get_primary_index(slot, &mut w_active_transaction_status_index)?;
-        self.evm_blocks_by_hash_cf.put((primary_index, hash), &id)
+        self.evm_blocks_by_hash_cf
+            .put_protobuf((primary_index, hash), &id)
     }
     pub fn read_evm_block_id_by_hash(&self, hash: H256) -> Result<Option<evm_state::BlockNum>> {
-        let result = self.evm_blocks_by_hash_cf.get((0, hash))?;
+        let result = self
+            .evm_blocks_by_hash_cf
+            .get_protobuf_or_bincode::<evm_state::BlockNum>((0, hash))?;
         if result.is_none() {
-            Ok(self.evm_blocks_by_hash_cf.get((1, hash))?)
+            Ok(self
+                .evm_blocks_by_hash_cf
+                .get_protobuf_or_bincode::<evm_state::BlockNum>((1, hash))?)
         } else {
             Ok(result)
         }
     }
 
-    #[allow(clippy::useless_conversion)] // to keep code the same when evm_transaction_cf will change type.
     pub fn read_evm_transaction(
         &self,
         index: (H256, Slot),
     ) -> Result<Option<evm::TransactionReceipt>> {
         let (signature, slot) = index;
-        let result = self.evm_transactions_cf.get((0, signature, slot))?;
+        let result = self
+            .evm_transactions_cf
+            .get_protobuf_or_bincode::<evm::TransactionReceipt>((0, signature, slot))?;
         if result.is_none() {
             Ok(self
                 .evm_transactions_cf
-                .get((1, signature, slot))?
+                .get_protobuf_or_bincode::<evm::TransactionReceipt>((1, signature, slot))?
                 .and_then(|meta| meta.try_into().ok()))
         } else {
             Ok(result.and_then(|meta| meta.try_into().ok()))
@@ -2536,7 +2546,11 @@ impl Blockstore {
             if block_num > filter.to_block {
                 break;
             }
-            let block: evm::BlockHeader = deserialize(&data)?;
+            let block: evm::BlockHeader = self
+                .evm_blocks_cf
+                .deserialize_protobuf_or_bincode::<evm::BlockHeader>(&data)?
+                .try_into()
+                .map_err(|e| BlockstoreError::ProtobufDecodeError(prost::DecodeError::new(e)))?;
             // First filterout all blocks that not contain ALL topic + addresses
             if !masks
                 .iter()
@@ -2597,7 +2611,14 @@ impl Blockstore {
             .next()
         {
             if found_hash == hash {
-                return Ok(Some(deserialize(&data)?));
+                let tx = self
+                    .evm_transactions_cf
+                    .deserialize_protobuf_or_bincode::<evm::TransactionReceipt>(&data)?
+                    .try_into()
+                    .map_err(|e| {
+                        BlockstoreError::ProtobufDecodeError(prost::DecodeError::new(e))
+                    })?;
+                return Ok(Some(tx));
             }
         }
         if let Some(((_p, found_hash, _block), data)) = self
@@ -2606,7 +2627,14 @@ impl Blockstore {
             .next()
         {
             if found_hash == hash {
-                return Ok(Some(deserialize(&data)?));
+                let tx = self
+                    .evm_transactions_cf
+                    .deserialize_protobuf_or_bincode::<evm::TransactionReceipt>(&data)?
+                    .try_into()
+                    .map_err(|e| {
+                        BlockstoreError::ProtobufDecodeError(prost::DecodeError::new(e))
+                    })?;
+                return Ok(Some(tx));
             }
         }
         Ok(None)
@@ -2622,8 +2650,9 @@ impl Blockstore {
         let mut w_active_transaction_status_index =
             self.active_transaction_status_index.write().unwrap();
         let primary_index = self.get_primary_index(slot, &mut w_active_transaction_status_index)?;
+        let status = status.into();
         self.evm_transactions_cf
-            .put((primary_index, hash, slot), &status)?;
+            .put_protobuf((primary_index, hash, slot), &status)?;
         Ok(())
     }
     /// Returns the entry vector for the slot starting with `shred_start_index`
