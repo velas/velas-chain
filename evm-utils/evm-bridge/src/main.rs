@@ -223,11 +223,18 @@ impl EvmBridge {
         let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
 
         debug!("Getting block hash");
-        let (blockhash, _fee_calculator, _) = self
+        let (blockhash, _fee_calculator, _) = match self
             .rpc_client
             .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
-            .unwrap()
-            .value;
+        {
+            Ok(ok) => ok.value,
+            Err(e) => {
+                return Err(Error::NativeRpcError {
+                    details: String::from("Failed to get recent blockhash"),
+                    source: e.into(),
+                })
+            }
+        };
 
         send_raw_tx.sign(&vec![&self.key], blockhash);
         debug!("Sending tx = {:?}", send_raw_tx);
