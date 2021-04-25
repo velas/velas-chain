@@ -45,10 +45,9 @@ fn block_to_bank_and_root(
     let last_root = {
         let lock = bank.evm_state.read().expect("Evm state poisoned");
         let block_num = block_to_confirmed_num(block, meta).unwrap_or_else(|| lock.block_number());
-        meta.blockstore
-            .get_evm_block(block_num)
+        meta.get_evm_block_by_id(block_num)
             .map(|(b, _)| b.header.state_root)
-            .unwrap_or_else(|_| lock.last_root())
+            .unwrap_or_else(|| lock.last_root())
     };
     (bank, last_root)
 }
@@ -59,8 +58,12 @@ fn block_to_confirmed_num(
 ) -> Option<u64> {
     let block = block?;
     match block.as_ref() {
-        "earliest" => meta.blockstore.get_first_available_evm_block().ok(),
-        "pending" | "latest" => meta.blockstore.get_last_available_evm_block().ok(),
+        "earliest" => Some(meta.get_frist_available_evm_block()),
+        "pending" | "latest" => Some(meta.get_last_available_evm_block().unwrap_or_else(|| {
+            let bank = meta.bank(Some(CommitmentConfig::processed()));
+            let evm = bank.evm_state.read().unwrap();
+            evm.block_number().saturating_sub(1)
+        })),
         v => Hex::<u64>::from_hex(&v).ok().map(|f| f.0),
     }
 }
@@ -125,19 +128,16 @@ impl ChainMockERPC for ChainMockErpcImpl {
         full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
         debug!("Requested hash = {:?}", block_hash.0);
-        let block = match meta.blockstore.read_evm_block_id_by_hash(block_hash.0) {
-            Err(e) => {
-                error!("Error requesting block:{}, error:{:?}", block_hash, e);
+        let block = match meta.get_evm_block_id_by_hash(block_hash.0) {
+            None => {
+                error!("Not found block for hash:{}", block_hash);
                 return Ok(None);
             }
-            Ok(b) => b,
+            Some(b) => b,
         };
         debug!("Found block = {:?}", block);
-        if block.is_none() {
-            return Ok(None);
-        }
 
-        self.block_by_number(meta, format!("{:#x}", block.unwrap()), full)
+        self.block_by_number(meta, format!("{:#x}", block), full)
     }
 
     fn block_by_number(
@@ -148,13 +148,13 @@ impl ChainMockERPC for ChainMockErpcImpl {
     ) -> Result<Option<RPCBlock>, Error> {
         let num = block_to_confirmed_num(Some(&block), &meta);
         // TODO: Inline evm_state lookups, and request only solana headers.
-        let block_num = num.unwrap_or(0);
-        let (block, confirmed) = match meta.blockstore.get_evm_block(block_num) {
-            Err(e) => {
-                error!("Error requesting block:{}, error:{:?}", block_num, e);
+        let (block, confirmed) = match num.and_then(|block_num| meta.get_evm_block_by_id(block_num))
+        {
+            None => {
+                error!("Error requesting block:{} ({:?}) not found", block, num);
                 return Ok(None);
             }
-            Ok(b) => b,
+            Some(b) => b,
         };
 
         let bank = meta.bank(None);
@@ -330,19 +330,15 @@ impl BasicERPC for BasicErpcImpl {
     ) -> Result<Option<RPCTransaction>, Error> {
         let bank = meta.bank(None);
         let chain_id = bank.evm_chain_id;
-        let receipt = meta
-            .blockstore
-            .find_evm_transaction(tx_hash.0)
-            .into_native_error()?;
+        let receipt = meta.get_evm_receipt_by_hash(tx_hash.0);
 
         Ok(match receipt {
             Some(receipt) => {
-                let (block, _) = meta
-                    .blockstore
-                    .get_evm_block(receipt.block_number)
-                    .map_err(|_| Error::BlockNotFound {
+                let (block, _) = meta.get_evm_block_by_id(receipt.block_number).ok_or({
+                    Error::BlockNotFound {
                         block: receipt.block_number,
-                    })?;
+                    }
+                })?;
                 let block_hash = block.header.hash();
                 Some(RPCTransaction::new_from_receipt(
                     receipt, block_hash, chain_id,
@@ -357,19 +353,14 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
     ) -> Result<Option<RPCReceipt>, Error> {
-        let receipt = meta
-            .blockstore
-            .find_evm_transaction(tx_hash.0)
-            .into_native_error()?;
-
+        let receipt = meta.get_evm_receipt_by_hash(tx_hash.0);
         Ok(match receipt {
             Some(receipt) => {
-                let (block, _) = meta
-                    .blockstore
-                    .get_evm_block(receipt.block_number)
-                    .map_err(|_| Error::BlockNotFound {
+                let (block, _) = meta.get_evm_block_by_id(receipt.block_number).ok_or({
+                    Error::BlockNotFound {
                         block: receipt.block_number,
-                    })?;
+                    }
+                })?;
                 let block_hash = block.header.hash();
                 Some(RPCReceipt::new_from_receipt(receipt, block_hash)?)
             }

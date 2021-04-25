@@ -890,7 +890,7 @@ impl From<evm_state::BlockHeader> for generated_evm::EvmBlockHeader {
             parent_hash: header.parent_hash.to_vec(),
             state_root: header.state_root.to_vec(),
             native_chain_hash: header.native_chain_hash.to_vec(),
-            transactions: transactions,
+            transactions,
             transactions_root: header.transactions_root.to_vec(),
             receipts_root: header.receipts_root.to_vec(),
             logs_bloom: header.logs_bloom.to_vec(),

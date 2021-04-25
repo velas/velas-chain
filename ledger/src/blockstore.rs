@@ -1745,13 +1745,12 @@ impl Blockstore {
             .unwrap_or(evm::BlockNum::MAX))
     }
 
-    pub fn get_last_available_evm_block(&self) -> Result<evm::BlockNum> {
+    pub fn get_last_available_evm_block(&self) -> Result<Option<evm::BlockNum>> {
         Ok(self
             .evm_blocks_cf
             .iter(IteratorMode::End)?
             .map(|(block, _)| block)
-            .next()
-            .unwrap_or(evm::BlockNum::MIN))
+            .next())
     }
 
     pub fn get_confirmed_block_hash(&self, slot: Slot) -> Result<String> {

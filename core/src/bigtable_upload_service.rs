@@ -87,7 +87,10 @@ impl BigTableUploadService {
                 }
             }
             // start to process evm blocks, only if something changed on native chain
-            let end_block = blockstore.get_last_available_evm_block().unwrap_or(0);
+            let end_block = blockstore
+                .get_last_available_evm_block()
+                .unwrap_or_default()
+                .unwrap_or_default();
             if end_block <= start_evm_block {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 continue;
