@@ -169,6 +169,7 @@ pub struct RPCReceipt {
     pub contract_address: Option<Hex<Address>>,
     pub logs_bloom: ethbloom::Bloom, // H2048
     pub to: Option<Hex<Address>>,
+    pub from: Option<Hex<Address>>,
     pub logs: Vec<RPCLog>,
     pub status: Hex<usize>,
 }
@@ -659,7 +660,7 @@ impl RPCReceipt {
         receipt: evm_state::transactions::TransactionReceipt,
         block_hash: H256,
     ) -> Result<Self, crate::Error> {
-        let (to, contract_address, tx_hash) = match receipt.transaction {
+        let (from, to, contract_address, tx_hash) = match receipt.transaction {
             TransactionInReceipt::Signed(tx) => {
                 let from = tx.caller().with_context(|| EvmStateError)?;
                 let nonce = tx.nonce;
@@ -676,7 +677,7 @@ impl RPCReceipt {
                 };
 
                 let hash = tx.signing_hash();
-                (to, creates, hash)
+                (from, to, creates, hash)
             }
             TransactionInReceipt::Unsigned(tx) => {
                 let from = tx.caller;
@@ -694,7 +695,7 @@ impl RPCReceipt {
                 };
 
                 let hash = tx.unsigned_tx.signing_hash(tx.chain_id);
-                (to, creates, hash)
+                (from, to, creates, hash)
             }
         };
 
@@ -719,6 +720,7 @@ impl RPCReceipt {
             .collect();
 
         Ok(RPCReceipt {
+            from: Hex(from).into(),
             to: to.map(Hex),
             contract_address: contract_address.map(Hex),
             gas_used: Hex(receipt.used_gas.into()),
