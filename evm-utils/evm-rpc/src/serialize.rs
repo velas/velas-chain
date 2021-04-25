@@ -22,13 +22,18 @@ fn format_hex_trimmed<T: LowerHex>(val: &T) -> String {
 
 impl<T: FormatHex> Hex<T> {
     pub fn from_hex(data: &str) -> Result<Self, Error> {
-        if data.len() < 3 || &data[0..2] != "0x" {
+        if data.len() < 2 || &data[0..2] != "0x" {
             return InvalidHexPrefix {
                 input_data: data.to_string(),
             }
             .fail();
         }
-        T::from_hex(&data[2..]).map(Hex)
+        let result = if data.len() == 2 {
+            T::from_hex("0")?
+        } else {
+            T::from_hex(&data[2..])?
+        };
+        Ok(Hex(result))
     }
 }
 
@@ -231,9 +236,13 @@ impl<'de> de::Visitor<'de> for BytesVisitor {
     where
         E: de::Error,
     {
-        if s.len() < 3 {
+        if s.len() < 2 || &s[..2] != "0x" {
             return Err(de::Error::invalid_value(de::Unexpected::Str(s), &self));
         }
+        if s.len() == 2 {
+            return Ok(Bytes(vec![]));
+        }
+
         match hex::decode(&s[2..]) {
             Ok(d) if &s[..2] == "0x" => Ok(Bytes(d)),
             _ => Err(de::Error::invalid_value(de::Unexpected::Str(s), &self)),
@@ -296,6 +305,10 @@ pub mod hex_serde {
         where
             E: de::Error,
         {
+            if s.len() < 3 || &s[..2] != "0x" {
+                return Err(de::Error::invalid_value(de::Unexpected::Str(s), &self));
+            }
+
             match T::from_hex(&s[2..]) {
                 Ok(d) if &s[..2] == "0x" => Ok(d),
                 _ => Err(de::Error::invalid_value(de::Unexpected::Str(s), &self)),
