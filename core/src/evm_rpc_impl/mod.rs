@@ -398,13 +398,22 @@ impl BasicERPC for BasicErpcImpl {
     }
 
     fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
+        const MAX_NUM_BLOCKS: u64 = 1000;
         let bank = meta.bank(None);
 
         let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
         let block_num = evm_lock.block_number();
-        let to = block_to_confirmed_num(log_filter.to_block.as_ref(), &meta).unwrap_or(block_num);
+        let mut to =
+            block_to_confirmed_num(log_filter.to_block.as_ref(), &meta).unwrap_or(block_num);
         let from =
             block_to_confirmed_num(log_filter.from_block.as_ref(), &meta).unwrap_or(block_num);
+        if to > from + MAX_NUM_BLOCKS {
+            warn!(
+                "Log filter, block range is too big, reducing, to={}, from={}",
+                to, from
+            );
+            to = from + MAX_NUM_BLOCKS
+        }
 
         let filter = LogFilter {
             address: log_filter.address.map(|k| k.0),
@@ -417,12 +426,13 @@ impl BasicERPC for BasicErpcImpl {
             from_block: from,
             to_block: to,
         };
-        warn!("filter = {:?}", filter);
+        debug!("filter = {:?}", filter);
+
         let logs = meta
             .blockstore
             .filter_logs(filter)
             .map_err(|e| {
-                warn!("filter_logs = {:?}", e);
+                debug!("filter_logs error = {:?}", e);
                 e
             })
             .into_native_error()?;

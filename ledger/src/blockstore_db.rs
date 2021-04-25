@@ -18,7 +18,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Signature,
 };
-use solana_storage_proto::convert::generated;
+use solana_storage_proto::convert::{generated, generated_evm};
 use std::{collections::HashMap, fs, marker::PhantomData, path::Path, sync::Arc};
 use thiserror::Error;
 
@@ -768,8 +768,12 @@ impl ColumnName for columns::EvmBlockHeader {
     const NAME: &'static str = EVM_HEADERS;
 }
 
-impl TypedColumn for columns::EvmBlockHeader {
-    type Type = evm_state::BlockHeader;
+// impl TypedColumn for columns::EvmBlockHeader {
+//     type Type = evm_state::BlockHeader;
+// }
+
+impl ProtobufColumn for columns::EvmBlockHeader {
+    type Type = generated_evm::EvmBlockHeader;
 }
 
 impl Column for columns::EvmHeaderIndexByHash {
@@ -805,7 +809,11 @@ impl ColumnName for columns::EvmHeaderIndexByHash {
     const NAME: &'static str = EVM_BLOCK_BY_HASH;
 }
 
-impl TypedColumn for columns::EvmHeaderIndexByHash {
+// impl TypedColumn for columns::EvmHeaderIndexByHash {
+//     type Type = evm_state::BlockNum;
+// }
+
+impl ProtobufColumn for columns::EvmHeaderIndexByHash {
     type Type = evm_state::BlockNum;
 }
 
@@ -844,14 +852,12 @@ impl ColumnName for columns::EvmTransactionReceipts {
     const NAME: &'static str = EVM_TRANSACTIONS;
 }
 
-impl TypedColumn for columns::EvmTransactionReceipts {
-    type Type = evm_state::TransactionReceipt;
-}
-
-// impl ProtobufColumn for columns::EvmBlockHeader {
-//     type Type = generated::TransactionStatusMeta;
+// impl TypedColumn for columns::EvmTransactionReceipts {
+//     type Type = evm_state::TransactionReceipt;
 // }
-
+impl ProtobufColumn for columns::EvmTransactionReceipts {
+    type Type = generated_evm::TransactionReceipt;
+}
 #[derive(Debug, Clone)]
 pub struct Database {
     backend: Arc<Rocks>,
@@ -1086,11 +1092,9 @@ where
         key: C::Index,
     ) -> Result<Option<C::Type>> {
         if let Some(serialized_value) = self.backend.get_cf(self.handle(), &C::key(key))? {
-            let value = match C::Type::decode(&serialized_value[..]) {
-                Ok(value) => value,
-                Err(_) => deserialize::<T>(&serialized_value)?.into(),
-            };
-            Ok(Some(value))
+            Ok(Some(
+                self.deserialize_protobuf_or_bincode::<T>(&serialized_value)?,
+            ))
         } else {
             Ok(None)
         }
@@ -1108,6 +1112,17 @@ where
         let mut buf = Vec::with_capacity(value.encoded_len());
         value.encode(&mut buf)?;
         self.backend.put_cf(self.handle(), &C::key(key), &buf)
+    }
+
+    pub fn deserialize_protobuf_or_bincode<T>(&self, serialized_value: &[u8]) -> Result<C::Type>
+    where
+        T: Into<C::Type> + DeserializeOwned,
+    {
+        let value = match C::Type::decode(serialized_value) {
+            Ok(value) => value,
+            Err(_) => deserialize::<T>(serialized_value)?.into(),
+        };
+        Ok(value)
     }
 }
 

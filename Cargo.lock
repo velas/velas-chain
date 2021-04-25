@@ -5931,7 +5931,9 @@ version = "1.5.14"
 dependencies = [
  "bincode",
  "bs58",
+ "evm-state",
  "prost",
+ "rlp",
  "serde",
  "serde_derive",
  "solana-account-decoder",

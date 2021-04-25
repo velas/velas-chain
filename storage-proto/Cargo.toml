@@ -16,7 +16,9 @@ serde = "1.0.118"
 serde_derive = "1.0.103"
 solana-account-decoder = { path = "../account-decoder", version = "1.5.14" }
 solana-sdk = { path = "../sdk", version = "1.5.14" }
+evm-state = { path = "../evm-utils/evm-state" }
 solana-transaction-status = { path = "../transaction-status", version = "1.5.14" }
+rlp = "0.5.0"
 
 [lib]
 crate-type = ["lib"]

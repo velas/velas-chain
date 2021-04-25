@@ -12,6 +12,7 @@ pub mod error;
 pub mod transactions;
 pub mod types;
 
+pub use ethbloom::Bloom;
 pub use transactions::*;
 pub use types::*;
 pub use {

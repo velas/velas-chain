@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package solana.storage.EvmCompatibility;
+
+message EvmBlockHeader {
+  bytes parent_hash = 1;
+  bytes state_root = 2;
+  bytes native_chain_hash = 3;
+  repeated bytes transactions = 4;
+  bytes transactions_root = 5;
+  bytes receipts_root = 6;
+  bytes logs_bloom = 7;
+  uint64 block_number = 8;
+  uint64 gas_limit = 9;
+  uint64 gas_used = 10;
+  uint64 timestamp = 11;
+  uint64 native_chain_slot = 12;
+}
+
+// Unsigned and signed transaction are encoded in rlp format, because there is
+// no reason to keep their fields.
+message Transaction { bytes rlp_encoded_body = 1; }
+
+message UnsignedTransactionWithCaller {
+  bytes rlp_encoded_body = 1;
+  bytes caller = 2;
+  uint64 chain_id = 3;
+}
+
+message TransactionInReceipt {
+  oneof transaction {
+    UnsignedTransactionWithCaller unsigned = 1;
+    Transaction signed = 2;
+  }
+}
+
+message TransactionReceipt {
+  TransactionInReceipt transaction = 1;
+  ExitReason status = 2;
+  uint64 block_number = 3;
+  uint64 index = 4;
+  uint64 used_gas = 5;
+  bytes logs_bloom = 6;
+  repeated Log logs = 7;
+}
+
+message Log {
+  bytes address = 1;
+  repeated bytes topics = 2;
+  bytes data = 3;
+}
+
+message ExitReason {
+  ExitVariant variant = 1;
+  bool fatal = 2;
+  string other = 3;
+
+  enum ExitVariant {
+    // Succeed
+    STOPPED = 0;
+    RETURNED = 1;
+    SUICIDED = 2;
+    // Revert
+    REVERTED = 3;
+    // Fatal
+    NOT_SUPPORTED = 4;
+    UNHANDLED_INTERRUPT = 5;
+    OTHER_FATAL = 6;
+    // Error or Error as Fatal
+    STACK_UNDERFLOW = 7;
+    STACK_OVERFLOW = 8;
+    INVALID_JUMP = 9;
+    INVALID_RANGE = 10;
+    DESIGNATED_INVALID = 11;
+    CALL_TOO_DEEP = 12;
+    CREATE_COLLISION = 13;
+    CREATE_CONTRACT_LIMIT = 14;
+    OUT_OF_OFFSET = 15;
+    OUT_OF_GAS = 16;
+    OUT_OF_FUND = 17;
+    PC_UNDERFLOW = 18;
+    CREATE_EMPTY = 19;
+    OTHER = 20;
+  }
+}
