@@ -17,6 +17,16 @@ message EvmBlockHeader {
   uint64 native_chain_slot = 12;
 }
 
+message ReceiptWithHash {
+  bytes hash = 1;
+  TransactionReceipt transaction = 2;
+}
+
+message EvmFullBlock {
+  EvmBlockHeader header = 1;
+  repeated ReceiptWithHash transactions = 2;
+}
+
 // Unsigned and signed transaction are encoded in rlp format, because there is
 // no reason to keep their fields.
 message Transaction { bytes rlp_encoded_body = 1; }

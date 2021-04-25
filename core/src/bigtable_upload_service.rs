@@ -52,6 +52,7 @@ impl BigTableUploadService {
         exit: Arc<AtomicBool>,
     ) {
         let mut start_slot = 0;
+        let mut start_evm_block = 0;
         loop {
             if exit.load(Ordering::Relaxed) {
                 break;
@@ -82,6 +83,32 @@ impl BigTableUploadService {
                 Ok(()) => start_slot = end_slot,
                 Err(err) => {
                     warn!("bigtable: upload_confirmed_blocks: {}", err);
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            }
+            // start to process evm blocks, only if something changed on native chain
+            let end_block = blockstore.get_last_available_evm_block().unwrap_or(0);
+            if end_block <= start_evm_block {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                continue;
+            }
+            let result =
+                runtime.block_on(solana_ledger::bigtable_upload::upload_evm_confirmed_blocks(
+                    blockstore.clone(),
+                    bigtable_ledger_storage.clone(),
+                    start_evm_block,
+                    Some(end_block),
+                    false,
+                    false,
+                    exit.clone(),
+                ));
+
+            match result {
+                Ok(not_confirmed_blocks) => {
+                    start_evm_block = end_block - not_confirmed_blocks;
+                }
+                Err(err) => {
+                    warn!("bigtable: upload_evm_confirmed_blocks: {}", err);
                     std::thread::sleep(std::time::Duration::from_secs(2));
                 }
             }

@@ -9,6 +9,7 @@ use solana_sdk::{
     transaction::{Transaction, TransactionError},
 };
 use solana_storage_proto::convert::generated;
+use solana_storage_proto::convert::generated_evm;
 use solana_storage_proto::convert::tx_by_addr;
 use solana_transaction_status::{
     ConfirmedBlock, ConfirmedTransaction, ConfirmedTransactionStatusWithSignature, Reward,
@@ -627,6 +628,180 @@ impl LedgerStorage {
         info!(
             "uploaded block for slot {}: {} transactions, {} bytes",
             slot, num_transactions, bytes_written
+        );
+
+        Ok(())
+    }
+
+    //
+    // evm scope
+    //
+
+    /// Return the available slot that contains a block
+    pub async fn get_evm_first_available_block(&self) -> Result<Option<evm_state::BlockNum>> {
+        let mut bigtable = self.connection.client();
+        let blocks = bigtable.get_row_keys("evm-blocks", None, None, 1).await?;
+        if blocks.is_empty() {
+            return Ok(None);
+        }
+        Ok(key_to_slot(&blocks[0]))
+    }
+
+    /// Fetch the next slots after the provided slot that contains a block
+    ///
+    /// start_slot: slot to start the search from (inclusive)
+    /// limit: stop after this many slots have been found; if limit==0, all records in the table
+    /// after start_slot will be read
+    pub async fn get_evm_confirmed_blocks(
+        &self,
+        start_block: evm_state::BlockNum,
+        limit: usize,
+    ) -> Result<Vec<evm_state::BlockNum>> {
+        let mut bigtable = self.connection.client();
+        let blocks = bigtable
+            .get_row_keys(
+                "evm-blocks",
+                Some(slot_to_key(start_block)),
+                None,
+                limit as i64,
+            )
+            .await?;
+        Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
+    }
+
+    /// Fetch the confirmed block from the desired slot
+    pub async fn get_evm_confirmed_block_header(
+        &self,
+        block_num: evm_state::BlockNum,
+    ) -> Result<evm_state::BlockHeader> {
+        let mut bigtable = self.connection.client();
+        let block_cell_data = bigtable
+            .get_protobuf_or_bincode_cell::<evm_state::BlockHeader, generated_evm::EvmBlockHeader>(
+                "evm-block",
+                slot_to_key(block_num),
+            )
+            .await
+            .map_err(|err| match err {
+                bigtable::Error::RowNotFound => Error::BlockNotFound(block_num),
+                _ => err.into(),
+            })?;
+        Ok(match block_cell_data {
+            bigtable::CellData::Bincode(block) => block,
+            bigtable::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
+                bigtable::Error::ObjectCorrupt(format!("evm-blocks/{}", slot_to_key(block_num)))
+            })?,
+        })
+    }
+
+    pub async fn get_evm_confirmed_full_block(
+        &self,
+        block_num: evm_state::BlockNum,
+    ) -> Result<evm_state::Block> {
+        let mut bigtable = self.connection.client();
+        let block_cell_data = bigtable
+            .get_protobuf_or_bincode_cell::<evm_state::Block, generated_evm::EvmFullBlock>(
+                "evm-full-blocks",
+                slot_to_key(block_num),
+            )
+            .await
+            .map_err(|err| match err {
+                bigtable::Error::RowNotFound => Error::BlockNotFound(block_num),
+                _ => err.into(),
+            })?;
+        Ok(match block_cell_data {
+            bigtable::CellData::Bincode(block) => block,
+            bigtable::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
+                bigtable::Error::ObjectCorrupt(format!(
+                    "evm-full-blocks/{}",
+                    slot_to_key(block_num)
+                ))
+            })?,
+        })
+    }
+
+    /// Fetch a confirmed transaction
+    pub async fn get_evm_confirmed_receipt(
+        &self,
+        hash: &evm_state::H256,
+    ) -> Result<Option<evm_state::TransactionReceipt>> {
+        let mut bigtable = self.connection.client();
+
+        // Figure out which block the transaction is located in
+        let tx_cell = bigtable
+            .get_protobuf_or_bincode_cell::<evm_state::TransactionReceipt, generated_evm::TransactionReceipt>(
+                "evm-tx",
+                evm_rpc::Hex(*hash).to_string(),
+            )
+            .await
+            .map(Some)
+            .or_else(|err| match err {
+                bigtable::Error::RowNotFound => Ok(None),
+                _ => Err(err),
+            })?;
+        let tx_cell = if let Some(tx_cell) = tx_cell {
+            tx_cell
+        } else {
+            return Ok(None);
+        };
+
+        Ok(Some(match tx_cell {
+            bigtable::CellData::Bincode(tx) => tx,
+            bigtable::CellData::Protobuf(tx) => tx.try_into().map_err(|_err| {
+                bigtable::Error::ObjectCorrupt(format!(
+                    "evm-tx/{}",
+                    evm_rpc::Hex(*hash).to_string()
+                ))
+            })?,
+        }))
+    }
+
+    // Upload a new confirmed block and associated meta data.
+    pub async fn upload_evm_block(
+        &self,
+        block_num: evm_state::BlockNum,
+        full_block: evm_state::Block,
+    ) -> Result<()> {
+        let mut bytes_written = 0;
+
+        let mut tx_cells = vec![];
+        for (hash, tx) in full_block.transactions.iter() {
+            tx_cells.push((evm_rpc::Hex(*hash).to_string(), tx.clone().into()));
+        }
+
+        if !tx_cells.is_empty() {
+            bytes_written += self
+                .connection
+                .put_protobuf_cells_with_retry::<generated_evm::TransactionReceipt>(
+                    "evm-tx", &tx_cells,
+                )
+                .await?;
+        }
+
+        let num_transactions = full_block.transactions.len();
+
+        let block_header_cells = [(slot_to_key(block_num), full_block.header.clone().into())];
+        bytes_written += self
+            .connection
+            .put_protobuf_cells_with_retry::<generated_evm::EvmBlockHeader>(
+                "evm-blocks",
+                &block_header_cells,
+            )
+            .await?;
+        let blocks_cells = [(slot_to_key(block_num), full_block.into())];
+
+        // Store the block itself last, after all other metadata about the block has been
+        // successfully stored.  This avoids partial uploaded blocks from becoming visible to
+        // `get_confirmed_block()` and `get_confirmed_blocks()`
+        bytes_written += self
+            .connection
+            .put_protobuf_cells_with_retry::<generated_evm::EvmFullBlock>(
+                "evm-full-blocks",
+                &blocks_cells,
+            )
+            .await?;
+        info!(
+            "uploaded block num {}: {} transactions, {} bytes",
+            block_num, num_transactions, bytes_written
         );
 
         Ok(())

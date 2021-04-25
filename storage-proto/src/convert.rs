@@ -1246,6 +1246,56 @@ impl TryFrom<generated_evm::ExitReason> for evm_state::ExitReason {
     }
 }
 
+impl From<(evm_state::H256, evm_state::TransactionReceipt)> for generated_evm::ReceiptWithHash {
+    fn from(tx_with_hash: (evm_state::H256, evm_state::TransactionReceipt)) -> Self {
+        Self {
+            hash: tx_with_hash.0.to_vec(),
+            transaction: Some(tx_with_hash.1.into()),
+        }
+    }
+}
+
+impl TryFrom<generated_evm::ReceiptWithHash> for (evm_state::H256, evm_state::TransactionReceipt) {
+    type Error = &'static str;
+    fn try_from(tx_with_hash: generated_evm::ReceiptWithHash) -> Result<Self, Self::Error> {
+        Ok((
+            convert_from_bytes(tx_with_hash.hash)?,
+            tx_with_hash
+                .transaction
+                .ok_or("Transaction is missing in receipt with hash")?
+                .try_into()?,
+        ))
+    }
+}
+
+impl From<evm_state::Block> for generated_evm::EvmFullBlock {
+    fn from(block: evm_state::Block) -> Self {
+        let transactions: Vec<_> = block.transactions.into_iter().map(Into::into).collect();
+        Self {
+            transactions,
+            header: Some(block.header.into()),
+        }
+    }
+}
+
+impl TryFrom<generated_evm::EvmFullBlock> for evm_state::Block {
+    type Error = &'static str;
+    fn try_from(block: generated_evm::EvmFullBlock) -> Result<Self, Self::Error> {
+        let transactions: Result<Vec<_>, _> = block
+            .transactions
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect();
+        Ok(Self {
+            transactions: transactions?,
+            header: block
+                .header
+                .ok_or("Block header is missing in full block")?
+                .try_into()?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1917,6 +1967,97 @@ mod test {
         };
 
         let block_serialized: generated_evm::EvmBlockHeader = block.clone().into();
+        assert_eq!(block, block_serialized.try_into().unwrap());
+    }
+
+    #[test]
+    fn test_evm_full_block() {
+        let block = evm_state::BlockHeader {
+            parent_hash: evm_state::H256::random(),
+            state_root: evm_state::H256::random(),
+            native_chain_hash: evm_state::H256::random(),
+            native_chain_slot: 6,
+            block_number: 234,
+            gas_limit: 543,
+            gas_used: 612,
+            timestamp: 123123612,
+            transactions: vec![
+                evm_state::H256::random(),
+                evm_state::H256::random(),
+                evm_state::H256::random(),
+            ],
+            logs_bloom: evm_state::Bloom::random(),
+            transactions_root: evm_state::H256::random(),
+            receipts_root: evm_state::H256::random(),
+        };
+        let tx1 =
+            evm_state::TransactionInReceipt::Unsigned(evm_state::UnsignedTransactionWithCaller {
+                unsigned_tx: evm_state::UnsignedTransaction {
+                    nonce: 1.into(),
+                    gas_limit: 2.into(),
+                    gas_price: 3.into(),
+                    action: evm_state::TransactionAction::Call(evm_state::H160::random()),
+                    value: 5.into(),
+                    input: b"random bytes".to_vec(),
+                },
+                caller: evm_state::H160::random(),
+                chain_id: Some(0xdead),
+            });
+
+        let tx2 = evm_state::TransactionInReceipt::Signed(evm_state::Transaction {
+            nonce: 1.into(),
+            gas_limit: 4.into(),
+            gas_price: 6.into(),
+            action: evm_state::TransactionAction::Create,
+            value: 23.into(),
+            input: b"123random bytes".to_vec(),
+            signature: evm_state::TransactionSignature {
+                v: 120,
+                r: evm_state::H256::random(),
+                s: evm_state::H256::random(),
+            },
+        });
+        let transactions = vec![
+            evm_state::TransactionReceipt {
+                transaction: tx1,
+                status: evm_state::ExitReason::Fatal(evm_state::ExitFatal::Other(
+                    "test error".into(),
+                )),
+                block_number: 12313,
+                index: 15345,
+                used_gas: 543543,
+                logs_bloom: evm_state::Bloom::random(),
+                logs: vec![evm_state::Log {
+                    address: evm_state::H160::random(),
+                    data: b"random string topic".to_vec(),
+                    topics: vec![evm_state::H256::random(), evm_state::H256::random()],
+                }],
+            },
+            evm_state::TransactionReceipt {
+                transaction: tx2,
+                status: evm_state::ExitReason::Error(evm_state::ExitError::Other(
+                    "test error".into(),
+                )),
+                block_number: 12313,
+                index: 15345,
+                used_gas: 543543,
+                logs_bloom: evm_state::Bloom::random(),
+                logs: vec![evm_state::Log {
+                    address: evm_state::H160::random(),
+                    data: b"random string topic".to_vec(),
+                    topics: vec![evm_state::H256::random(), evm_state::H256::random()],
+                }],
+            },
+        ];
+        let block = evm_state::Block {
+            transactions: transactions
+                .into_iter()
+                .map(|t| (evm_state::H256::random(), t))
+                .collect(),
+            header: block,
+        };
+
+        let block_serialized: generated_evm::EvmFullBlock = block.clone().into();
         assert_eq!(block, block_serialized.try_into().unwrap());
     }
 }
