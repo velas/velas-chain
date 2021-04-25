@@ -25,6 +25,20 @@ pub struct EvmBlockHeader {
     #[prost(uint64, tag = "12")]
     pub native_chain_slot: u64,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReceiptWithHash {
+    #[prost(bytes, tag = "1")]
+    pub hash: std::vec::Vec<u8>,
+    #[prost(message, optional, tag = "2")]
+    pub transaction: ::std::option::Option<TransactionReceipt>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EvmFullBlock {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::std::option::Option<EvmBlockHeader>,
+    #[prost(message, repeated, tag = "2")]
+    pub transactions: ::std::vec::Vec<ReceiptWithHash>,
+}
 /// Unsigned and signed transaction are encoded in rlp format, because there is
 /// no reason to keep their fields.
 #[derive(Clone, PartialEq, ::prost::Message)]

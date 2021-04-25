@@ -313,7 +313,7 @@ impl BlockHeader {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Block {
     pub header: BlockHeader,
     pub transactions: Vec<(crate::H256, TransactionReceipt)>,

@@ -16,7 +16,7 @@ if [[ -n $BIGTABLE_EMULATOR_HOST ]]; then
     cbt+=(-project emulator)
 fi
 
-for table in blocks tx tx-by-addr; do
+for table in evm-blocks evm-tx evm-full-blocks; do
     (
         set -x
         "${cbt[@]}" createtable $table

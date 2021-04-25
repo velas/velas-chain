@@ -18,6 +18,70 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 
+mod evm {
+    use super::*;
+    pub async fn upload(
+        blockstore: Blockstore,
+        starting_block: Slot,
+        ending_block: Option<Slot>,
+        push_not_confirmed: bool,
+        force_reupload: bool,
+    ) -> Result<Slot, Box<dyn std::error::Error>> {
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+            .await
+            .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
+
+        solana_ledger::bigtable_upload::upload_evm_confirmed_blocks(
+            Arc::new(blockstore),
+            bigtable,
+            starting_block,
+            ending_block,
+            push_not_confirmed,
+            force_reupload,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+    }
+
+    pub async fn first_available_block() -> Result<(), Box<dyn std::error::Error>> {
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(true, None).await?;
+        match bigtable.get_evm_first_available_block().await? {
+            Some(block) => println!("{}", block),
+            None => println!("No blocks available"),
+        }
+
+        Ok(())
+    }
+
+    pub async fn block(block_num: evm_state::BlockNum) -> Result<(), Box<dyn std::error::Error>> {
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+            .await
+            .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
+
+        let block = bigtable.get_evm_confirmed_full_block(block_num).await?;
+        println!("{:?}", block);
+        println!("block_hash={:?}", block.header.hash());
+        Ok(())
+    }
+
+    pub async fn blocks(
+        starting_slot: Slot,
+        limit: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+            .await
+            .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
+
+        let slots = bigtable
+            .get_evm_confirmed_blocks(starting_slot, limit)
+            .await?;
+        println!("{:?}", slots);
+        println!("{} blocks found", slots.len());
+
+        Ok(())
+    }
+}
+
 async fn upload(
     blockstore: Blockstore,
     starting_slot: Slot,
@@ -222,6 +286,93 @@ impl BigTableSubCommand for App<'_, '_> {
             SubCommand::with_name("bigtable")
                 .about("Ledger data on a BigTable instance")
                 .setting(AppSettings::ArgRequiredElseHelp)
+                .subcommand(
+                    SubCommand::with_name("evm")
+                    .about("Evm scope of bigtable ledger")
+                        .subcommand(
+                        SubCommand::with_name("upload")
+                            .about("Upload the ledger to BigTable")
+                            .arg(
+                                Arg::with_name("starting_block")
+                                    .long("starting-block")
+                                    .validator(is_slot)
+                                    .value_name("BLOCK")
+                                    .takes_value(true)
+                                    .index(1)
+                                    .help(
+                                        "Start uploading at this block [default: first available block]",
+                                    ),
+                            )
+                            .arg(
+                                Arg::with_name("ending_block")
+                                    .long("ending-block")
+                                    .validator(is_slot)
+                                    .value_name("BLOCK")
+                                    .takes_value(true)
+                                    .index(2)
+                                    .help("Stop uploading at this block [default: last available block]"),
+                            )
+                            .arg(
+                                Arg::with_name("push_not_confirmed")
+                                    .long("push-not-confirmed")
+                                    .takes_value(false)
+                                    .help("Don't skip unrooted blocks"),
+                            )
+                            .arg(
+                                Arg::with_name("force_reupload")
+                                    .long("force")
+                                    .takes_value(false)
+                                    .help(
+                                        "Force reupload of any blocks already present in BigTable instance\
+                                        Note: reupload will *not* delete any data from the tx-by-addr table;\
+                                        Use with care.",
+                                    ),
+                            ),
+                    )
+                    .subcommand(
+                        SubCommand::with_name("first-available-block")
+                            .about("Get the first available block in the storage"),
+                    )
+                    .subcommand(
+                        SubCommand::with_name("blocks")
+                            .about("Get a list of blocks with confirmed blocks for the given range")
+                            .arg(
+                                Arg::with_name("starting_block")
+                                    .long("starting-block")
+                                    .validator(is_slot)
+                                    .value_name("BLOCK")
+                                    .takes_value(true)
+                                    .index(1)
+                                    .required(true)
+                                    .default_value("1")
+                                    .help("Start listing at this block"),
+                            )
+                            .arg(
+                                Arg::with_name("limit")
+                                    .long("limit")
+                                    .validator(is_slot)
+                                    .value_name("LIMIT")
+                                    .takes_value(true)
+                                    .index(2)
+                                    .required(true)
+                                    .default_value("1000")
+                                    .help("Maximum number of blocks to return"),
+                            ),
+                    )
+                    .subcommand(
+                        SubCommand::with_name("block")
+                            .about("Get a confirmed block")
+                            .arg(
+                                Arg::with_name("block")
+                                    .long("block")
+                                    .validator(is_slot)
+                                    .value_name("BLOCK")
+                                    .takes_value(true)
+                                    .index(1)
+                                    .required(true),
+                            ),
+                    )
+                )
                 .subcommand(
                     SubCommand::with_name("upload")
                         .about("Upload the ledger to BigTable")
@@ -456,6 +607,40 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 query_chunk_size,
             ))
         }
+        ("evm", Some(arg_matches)) => match arg_matches.subcommand() {
+            ("upload", Some(arg_matches)) => {
+                let starting_block = value_t!(arg_matches, "starting_block", Slot).unwrap_or(1);
+                let ending_block = value_t!(arg_matches, "ending_block", Slot).ok();
+                let push_not_confirmed = arg_matches.is_present("push_not_confirmed");
+                let force_reupload = arg_matches.is_present("force_reupload");
+                let blockstore =
+                    crate::open_blockstore(&ledger_path, AccessType::TryPrimaryThenSecondary, None);
+
+                runtime
+                    .block_on(evm::upload(
+                        blockstore,
+                        starting_block,
+                        ending_block,
+                        push_not_confirmed,
+                        force_reupload,
+                    ))
+                    .map(drop)
+            }
+            ("first-available-block", Some(_arg_matches)) => {
+                runtime.block_on(evm::first_available_block())
+            }
+            ("block", Some(arg_matches)) => {
+                let block_num = value_t_or_exit!(arg_matches, "block", Slot);
+                runtime.block_on(evm::block(block_num))
+            }
+            ("blocks", Some(arg_matches)) => {
+                let starting_block = value_t_or_exit!(arg_matches, "starting_block", Slot);
+                let limit = value_t_or_exit!(arg_matches, "limit", usize);
+
+                runtime.block_on(evm::blocks(starting_block, limit))
+            }
+            _ => unreachable!(),
+        },
         _ => unreachable!(),
     };
 

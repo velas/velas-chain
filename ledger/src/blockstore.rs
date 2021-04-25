@@ -1712,6 +1712,30 @@ impl Blockstore {
         Ok(root_iterator.next().unwrap_or_default())
     }
 
+    pub fn evm_blocks_iterator(
+        &self,
+        block_num: evm::BlockNum,
+    ) -> Result<impl Iterator<Item = (evm::BlockNum, evm::BlockHeader)> + '_> {
+        let blocks_headers = self
+            .evm_blocks_cf
+            .iter(IteratorMode::From(block_num, IteratorDirection::Forward))?;
+        Ok(blocks_headers.map(move |(block_num, block_header)| {
+            (
+                block_num,
+                self.evm_blocks_cf
+                    .deserialize_protobuf_or_bincode::<evm::BlockHeader>(&block_header)
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Could not deserialize BlockHeader for block_num {}: {:?}",
+                            block_num, e
+                        )
+                    })
+                    .try_into()
+                    .expect("Convertation should always pass"),
+            )
+        }))
+    }
+
     pub fn get_first_available_evm_block(&self) -> Result<evm::BlockNum> {
         Ok(self
             .evm_blocks_cf
