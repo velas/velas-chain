@@ -694,10 +694,12 @@ mod tests {
 
         let path = &make_tmp_path("genesis_config");
         let evm_state_path = &make_tmp_path("evm_state_path");
-        let evm_state_root = evm_genesis::generate_evm_state_json(evm_state_path).unwrap();
+        std::fs::create_dir_all(&evm_state_path).unwrap();
+        let evm_state_path = evm_state_path.join("file.json");
+        let evm_state_root = evm_genesis::generate_evm_state_json(&evm_state_path).unwrap();
         config.evm_root_hash = evm_state_root;
         config
-            .generate_evm_state(&path, Some(evm_state_path))
+            .generate_evm_state(&path, Some(&evm_state_path))
             .expect("generate_evm_state");
         config.write(&path).expect("write");
         let loaded_config = GenesisConfig::load(&path).expect("load");
