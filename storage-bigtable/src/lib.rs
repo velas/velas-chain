@@ -669,6 +669,17 @@ impl LedgerStorage {
         Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
     }
 
+    pub async fn get_evm_block_by_hash(
+        &self,
+        block_hash: evm_state::H256,
+    ) -> Result<evm_state::BlockNum> {
+        let mut bigtable = self.connection.client();
+        let block = bigtable
+            .get_bincode_cell::<u64>("evm-blocks-by-hash", evm_rpc::Hex(block_hash).to_string())
+            .await?;
+        Ok(block)
+    }
+
     /// Fetch the confirmed block from the desired slot
     pub async fn get_evm_confirmed_block_header(
         &self,
@@ -778,6 +789,14 @@ impl LedgerStorage {
         }
 
         let num_transactions = full_block.transactions.len();
+        let block_by_hash_cells = [(
+            evm_rpc::Hex(full_block.header.hash()).to_string(),
+            full_block.header.block_number,
+        )];
+        bytes_written += self
+            .connection
+            .put_bincode_cells_with_retry("evm-blocks-by-hash", &block_by_hash_cells)
+            .await?;
 
         let block_header_cells = [(slot_to_key(block_num), full_block.header.clone().into())];
         bytes_written += self
