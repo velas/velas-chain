@@ -14,10 +14,16 @@ use bincode::{config::Options, serialize};
 use jsonrpc_core::{types::error, Error, Metadata, Result};
 use jsonrpc_derive::rpc;
 use solana_account_decoder::{
+    parse_account_data::velas_account,
     parse_account_data::AccountAdditionalData,
     parse_token::{
         get_token_account_mint, spl_token_id_v2_0, spl_token_v2_0_native_mint,
         token_amount_to_ui_amount, UiTokenAmount,
+    },
+    parse_velas_account::{
+        parse_velas_account,
+        velas_account::{VAccountInfo, VAccountStorage},
+        VelasAccountType, ACCOUNT_LEN as VELAS_ACCOUNT_SIZE,
     },
     UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig,
 };
@@ -1624,6 +1630,111 @@ impl JsonRpcRequestProcessor {
         }
         block
     }
+
+    fn get_velas_account_by_owner_key(
+        &self,
+        owner_key: Pubkey,
+    ) -> Result<RpcResponse<Vec<String>>> {
+        let (slot, accounts_iter) =
+            self.find_velas_accounts_storages(|storage| storage.owners.contains(&owner_key));
+
+        let accounts = accounts_iter.flat_map(|(storage_key, _)| {
+            self.get_velas_account_for_storage(storage_key)
+                .map(|(pubkey, _)| pubkey)
+        });
+
+        Ok(RpcResponse {
+            context: RpcResponseContext { slot },
+            value: accounts.map(|pubkey| pubkey.to_string()).collect(),
+        })
+    }
+
+    fn get_velas_account_by_operational_key(
+        &self,
+        operational_key: Pubkey,
+    ) -> Result<RpcResponse<Vec<String>>> {
+        let (slot, accounts_iter) = self.find_velas_accounts_storages(|storage| {
+            storage
+                .operationals
+                .iter()
+                .any(|operational| operational.pubkey == operational_key)
+        });
+
+        let accounts = accounts_iter.flat_map(|(storage_key, _)| {
+            self.get_velas_account_for_storage(storage_key)
+                .map(|(pubkey, _)| pubkey)
+        });
+
+        Ok(RpcResponse {
+            context: RpcResponseContext { slot },
+            value: accounts.map(|pubkey| pubkey.to_string()).collect(),
+        })
+    }
+
+    fn find_velas_accounts_storages(
+        &self,
+        mut predicate: impl FnMut(&VAccountStorage) -> bool,
+    ) -> (Slot, impl Iterator<Item = (Pubkey, VAccountStorage)>) {
+        let bank = self.bank(None);
+
+        fn is_velas_account_storage(account: &Account) -> bool {
+            account.owner == velas_account::id() && account.data.len() != VELAS_ACCOUNT_SIZE
+        }
+
+        let storages_iter = if self
+            .config
+            .account_indexes
+            .contains(&AccountIndex::ProgramId)
+        {
+            let index_key = IndexKey::ProgramId(velas_account::id());
+            bank.get_filtered_indexed_accounts(&index_key, is_velas_account_storage)
+        } else {
+            bank.get_filtered_program_accounts(&velas_account::id(), is_velas_account_storage)
+        }
+        .into_iter()
+        .flat_map(
+            |(pubkey, account)| match parse_velas_account(account.data.as_slice()) {
+                Ok(VelasAccountType::Storage(storage)) => Some((pubkey, storage)),
+                Ok(VelasAccountType::Account(_)) | Err(_) => None,
+            },
+        )
+        .filter(move |(_, storage)| predicate(&storage));
+
+        (bank.slot(), storages_iter)
+    }
+
+    fn get_velas_account_for_storage(
+        &self,
+        storage_key: Pubkey,
+    ) -> impl Iterator<Item = (Pubkey, VAccountInfo)> {
+        let bank = self.bank(None);
+
+        // let filters = vec![RpcFilterType::DataSize(VELAS_ACCOUNT_SIZE as u64)];
+
+        fn is_velas_account(account: &Account) -> bool {
+            account.owner == velas_account::id() && account.data.len() == VELAS_ACCOUNT_SIZE
+        }
+
+        if self
+            .config
+            .account_indexes
+            .contains(&AccountIndex::ProgramId)
+        {
+            let index_key = IndexKey::ProgramId(velas_account::id());
+            bank.get_filtered_indexed_accounts(&index_key, is_velas_account)
+        } else {
+            bank.get_filtered_program_accounts(&velas_account::id(), is_velas_account)
+        }
+        .into_iter()
+        .flat_map(move |(pubkey, account)| {
+            match parse_velas_account(account.data.as_slice()) {
+                Ok(VelasAccountType::Account(account)) if account.storage == storage_key => {
+                    Some((pubkey, account))
+                }
+                _ => None,
+            }
+        })
+    }
 }
 
 fn verify_transaction(transaction: &Transaction) -> Result<()> {
@@ -2245,6 +2356,20 @@ pub trait RpcSol {
         token_account_filter: RpcTokenAccountsFilter,
         config: Option<RpcAccountInfoConfig>,
     ) -> Result<RpcResponse<Vec<RpcKeyedAccount>>>;
+
+    #[rpc(meta, name = "getVelasAccountByOperationalKey")]
+    fn get_velas_account_by_operational_key(
+        &self,
+        meta: Self::Metadata,
+        pubkey_str: String,
+    ) -> Result<RpcResponse<Vec<String>>>;
+
+    #[rpc(meta, name = "getVelasAccountByOwnerKey")]
+    fn get_velas_account_by_owner_key(
+        &self,
+        meta: Self::Metadata,
+        pubkey_str: String,
+    ) -> Result<RpcResponse<Vec<String>>>;
 }
 
 fn _send_transaction(
@@ -3094,6 +3219,32 @@ impl RpcSol for RpcSolImpl {
         let delegate = verify_pubkey(delegate_str)?;
         let token_account_filter = verify_token_account_filter(token_account_filter)?;
         meta.get_token_accounts_by_delegate(&delegate, token_account_filter, config)
+    }
+
+    fn get_velas_account_by_owner_key(
+        &self,
+        meta: Self::Metadata,
+        pubkey_str: String,
+    ) -> Result<RpcResponse<Vec<String>>> {
+        debug!(
+            "get_velas_account_by_owner_key rpc request received: {:?}",
+            pubkey_str
+        );
+        let owner_key = verify_pubkey(pubkey_str)?;
+        meta.get_velas_account_by_owner_key(owner_key)
+    }
+
+    fn get_velas_account_by_operational_key(
+        &self,
+        meta: Self::Metadata,
+        pubkey_str: String,
+    ) -> Result<RpcResponse<Vec<String>>> {
+        debug!(
+            "get_velas_account_by_operational_key rpc request received: {:?}",
+            pubkey_str
+        );
+        let operational_key = verify_pubkey(pubkey_str)?;
+        meta.get_velas_account_by_operational_key(operational_key)
     }
 }
 
