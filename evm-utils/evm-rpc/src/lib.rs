@@ -132,6 +132,25 @@ impl RPCBlock {
     }
 }
 
+impl From<RPCBlock> for evm_state::BlockHeader {
+    fn from(b: RPCBlock) -> Self {
+        Self {
+            state_root: b.state_root.0,
+            transactions_root: b.transactions_root.0,
+            receipts_root: b.receipts_root.0,
+            native_chain_hash: b.mix_hash.0,
+            native_chain_slot: b.nonce,
+            parent_hash: b.parent_hash.0,
+            transactions: vec![],
+            logs_bloom: b.logs_bloom,
+            block_number: b.number.0.as_u64(),
+            gas_limit: b.gas_limit.0.as_u64(),
+            gas_used: b.gas_used.0.as_u64(),
+            timestamp: b.timestamp.0,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCTransaction {

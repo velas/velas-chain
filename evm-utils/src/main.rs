@@ -27,6 +27,18 @@ enum SubCommands {
         /// Address in EVM, that will receive tokens
         ether_address: Hex<evm::Address>,
     },
+    ///
+    /// At some point in our history, in database was found incorrect blocks (native chain slots was changed).
+    /// In order to recover that blocks from database, we found a solution.
+    ///
+    FindBlockHeader {
+        #[structopt(long = "expected-blockhash")]
+        expected_block_hash: Hex<evm::H256>,
+        #[structopt(long = "blocks-range")]
+        range: u64,
+        #[structopt(long = "file", default_value = "-")]
+        file: String,
+    },
 
     /// Print EVM address.
     PrintEvmAddress {
@@ -141,6 +153,48 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             debug!("Result = {:?}", result);
             let res = result.expect("Failed to send transaction using rpc");
             println!("Transaction signature = {}", res);
+        }
+        SubCommands::FindBlockHeader {
+            expected_block_hash,
+            range,
+            file,
+        } => {
+            use std::str::FromStr;
+            let (input, file): (_, Box<dyn std::io::Read>) = if file == "-" {
+                (
+                    "standart input(stdin)".to_string(),
+                    Box::new(std::io::stdin()),
+                )
+            } else {
+                (
+                    format!("file({})", file),
+                    Box::new(std::fs::File::open(file).unwrap()),
+                )
+            };
+            println!("Reading blockheader from: {}", input);
+            let block: evm_rpc::RPCBlock = serde_json::from_reader(file).unwrap();
+            let mut block: evm_state::BlockHeader = block.into();
+            let native_slot = block.native_chain_slot;
+            debug!("Readed block = {:?}", block);
+            for slot in native_slot - range..native_slot + range {
+                let native_block = if let Ok(native_block) = rpc_client.get_confirmed_block(slot) {
+                    native_block
+                } else {
+                    debug!("Skiped slot = {:?}, Cannot request blockhash", slot);
+                    continue;
+                };
+                let hash: solana_sdk::hash::Hash =
+                    solana_sdk::hash::Hash::from_str(&native_block.blockhash).unwrap();
+                let hash = evm::H256::from_slice(&hash.0);
+                block.native_chain_hash = hash;
+                block.native_chain_slot = slot;
+                debug!("Produced block = {:?}, hash = {:?}", block, block.hash());
+                if block.hash() == expected_block_hash.0 {
+                    println!("Block slot found, slot = {}", slot);
+                    return Ok(());
+                }
+            }
+            println!("Block slot not found.");
         }
         SubCommands::PrintEvmAddress { secret_key } => {
             println!("EVM Address: {:?}", secret_key.to_address());
