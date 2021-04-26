@@ -289,7 +289,7 @@ impl BigTableSubCommand for App<'_, '_> {
                 .subcommand(
                     SubCommand::with_name("evm")
                     .about("Evm scope of bigtable ledger")
-                .setting(AppSettings::ArgRequiredElseHelp)
+                    .setting(AppSettings::ArgRequiredElseHelp)
                         .subcommand(
                         SubCommand::with_name("upload")
                             .about("Upload the ledger to BigTable")

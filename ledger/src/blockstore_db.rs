@@ -743,24 +743,38 @@ impl TypedColumn for columns::ErasureMeta {
 // EVM blockstore
 
 impl Column for columns::EvmBlockHeader {
-    type Index = u64;
+    type Index = (evm_state::BlockNum, Option<Slot>);
 
-    fn key(index: u64) -> Vec<u8> {
-        let mut key = vec![0; 8];
-        BigEndian::write_u64(&mut key[..], index);
-        key
+    fn key((block, slot): (evm_state::BlockNum, Option<Slot>)) -> Vec<u8> {
+        if let Some(slot) = slot {
+            let mut key = vec![0; 16];
+            BigEndian::write_u64(&mut key[..8], block);
+            BigEndian::write_u64(&mut key[8..], slot);
+            key
+        } else {
+            // old type of index
+            let mut key = vec![0; 8];
+            BigEndian::write_u64(&mut key[..8], block);
+            key
+        }
     }
 
-    fn index(key: &[u8]) -> u64 {
-        BigEndian::read_u64(&key[..8])
+    fn index(key: &[u8]) -> (evm_state::BlockNum, Option<Slot>) {
+        let block = BigEndian::read_u64(&key[..8]);
+        if key.len() == 8 {
+            // old type of index, without slots, should be unique.
+            return (block, None);
+        }
+        let slot = BigEndian::read_u64(&key[8..]);
+        (block, Some(slot))
     }
 
-    fn primary_index(index: u64) -> u64 {
-        index
-    }
-
-    fn as_index(block: u64) -> u64 {
+    fn primary_index((block, _): (evm_state::BlockNum, Option<Slot>)) -> u64 {
         block
+    }
+
+    fn as_index(block: u64) -> (evm_state::BlockNum, Option<Slot>) {
+        (block, None)
     }
 }
 

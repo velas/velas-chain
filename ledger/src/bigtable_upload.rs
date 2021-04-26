@@ -236,7 +236,7 @@ pub async fn upload_evm_confirmed_blocks(
         "Loading evm ledger blocks starting at {}...",
         starting_block
     );
-    let block_headers: Vec<_> = blockstore
+    let mut block_headers: Vec<_> = blockstore
         .evm_blocks_iterator(starting_block)
         .map_err(|err| {
             format!(
@@ -244,7 +244,7 @@ pub async fn upload_evm_confirmed_blocks(
                 starting_block, err
             )
         })?
-        .filter_map(|(block_num, _slot_meta)| {
+        .filter_map(|((block_num, _slot), _block)| {
             if let Some(ending_block) = &ending_block {
                 if block_num > *ending_block {
                     return None;
@@ -253,6 +253,9 @@ pub async fn upload_evm_confirmed_blocks(
             Some(block_num)
         })
         .collect();
+
+    // evm_blocks_iterator can return multiple blocks with same block_num, remove duplicates.
+    block_headers.dedup();
 
     if block_headers.is_empty() {
         return Err(format!(

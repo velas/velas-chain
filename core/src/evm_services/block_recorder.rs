@@ -50,7 +50,7 @@ impl EvmRecorderService {
         let block_header = block.header;
         debug!("Writing evm block num = {}", block_header.block_number);
         blockstore
-            .write_evm_block_header(block_header.native_chain_slot, &block_header)
+            .write_evm_block_header(&block_header)
             .expect("Expected database write to succed");
         for (hash, tx) in block.transactions {
             blockstore
