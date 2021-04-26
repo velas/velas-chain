@@ -64,6 +64,9 @@ use std::{
 mod bigtable;
 use bigtable::*;
 
+mod evm_blockstore;
+use evm_blockstore::*;
+
 #[derive(PartialEq)]
 enum LedgerOutputMethod {
     Print,
@@ -870,6 +873,8 @@ fn main() {
                 .help("Show additional information where supported"),
         )
         .bigtable_subcommand()
+
+        .evm_blockstore_subcommand()
         .subcommand(
             SubCommand::with_name("print")
             .about("Print the ledger")
@@ -1386,6 +1391,7 @@ fn main() {
 
     match matches.subcommand() {
         ("bigtable", Some(arg_matches)) => bigtable_process_command(&ledger_path, arg_matches),
+        ("evm_blockstore", Some(arg_matches)) => evm_blockstore_process_command(&ledger_path, arg_matches),
         ("print", Some(arg_matches)) => {
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             let ending_slot = value_t!(arg_matches, "ending_slot", Slot).unwrap_or(Slot::MAX);

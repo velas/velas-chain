@@ -260,11 +260,9 @@ pub struct BasicErpcImpl;
 impl BasicERPC for BasicErpcImpl {
     type Metadata = JsonRpcRequestProcessor;
 
-    // The same as get_slot
     fn block_number(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error> {
-        let bank = meta.bank(Some(CommitmentConfig::processed()));
-        let evm = bank.evm_state.read().unwrap();
-        Ok(Hex(evm.block_number() as usize))
+        let block = block_to_confirmed_num(Some("latest"), &meta).unwrap_or(0);
+        Ok(Hex(block as usize))
     }
 
     fn balance(

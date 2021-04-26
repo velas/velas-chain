@@ -1712,13 +1712,18 @@ impl Blockstore {
         Ok(root_iterator.next().unwrap_or_default())
     }
 
+    ///
+    /// Return iterator over evm blocks.
+    /// There can be more than one block with same block number and different slot numbers.
+    ///
     pub fn evm_blocks_iterator(
         &self,
         block_num: evm::BlockNum,
-    ) -> Result<impl Iterator<Item = (evm::BlockNum, evm::BlockHeader)> + '_> {
-        let blocks_headers = self
-            .evm_blocks_cf
-            .iter(IteratorMode::From(block_num, IteratorDirection::Forward))?;
+    ) -> Result<impl Iterator<Item = ((evm::BlockNum, Option<Slot>), evm::BlockHeader)> + '_> {
+        let blocks_headers = self.evm_blocks_cf.iter(IteratorMode::From(
+            cf::EvmBlockHeader::as_index(block_num),
+            IteratorDirection::Forward,
+        ))?;
         Ok(blocks_headers.map(move |(block_num, block_header)| {
             (
                 block_num,
@@ -1726,8 +1731,8 @@ impl Blockstore {
                     .deserialize_protobuf_or_bincode::<evm::BlockHeader>(&block_header)
                     .unwrap_or_else(|e| {
                         panic!(
-                            "Could not deserialize BlockHeader for block_num {}: {:?}",
-                            block_num, e
+                            "Could not deserialize BlockHeader for block_num {} slot {:?}: {:?}",
+                            block_num.0, block_num.1, e
                         )
                     })
                     .try_into()
@@ -1740,7 +1745,7 @@ impl Blockstore {
         Ok(self
             .evm_blocks_cf
             .iter(IteratorMode::Start)?
-            .map(|(block, _)| block)
+            .map(|((block, _slot), _)| block)
             .next()
             .unwrap_or(evm::BlockNum::MAX))
     }
@@ -1749,7 +1754,7 @@ impl Blockstore {
         Ok(self
             .evm_blocks_cf
             .iter(IteratorMode::End)?
-            .map(|(block, _)| block)
+            .map(|((block, _slot), _)| block)
             .next())
     }
 
@@ -1867,11 +1872,24 @@ impl Blockstore {
         // if *lowest_cleanup_slot > 0 && *lowest_cleanup_slot >= slot {
         //     return Err(BlockstoreError::SlotCleanedUp);
         // }
-        let block_header = if let Some(block_header) = self.read_evm_block_header(block_number)? {
-            block_header
-        } else {
+
+        let mut block_headers = self.read_evm_block_headers(block_number)?;
+
+        if block_headers.is_empty() {
             return Err(BlockstoreError::SlotCleanedUp);
         };
+        // we need to find one block from array:
+        // If confirmed block is present, then return it.
+        // Otherways return first block
+
+        let confirmed_block = block_headers
+            .iter()
+            .enumerate()
+            .find(|(_idx, b)| self.is_root(b.native_chain_slot))
+            .map(|(idx, _b)| idx);
+
+        let block_header = block_headers.remove(confirmed_block.unwrap_or_default());
+
         let mut txs = Vec::new();
         for hash in &block_header.transactions {
             let tx = self.read_evm_transaction((*hash, block_header.block_number))?;
@@ -2494,24 +2512,28 @@ impl Blockstore {
 
     // EVM scope
 
-    pub fn write_evm_block_header(
-        &self,
-        _block_slot: Slot,
-        block: &evm::BlockHeader,
-    ) -> Result<()> {
+    pub fn write_evm_block_header(&self, block: &evm::BlockHeader) -> Result<()> {
         let proto_block = block.clone().into();
-        self.evm_blocks_cf
-            .put_protobuf(block.block_number, &proto_block)?;
+        self.evm_blocks_cf.put_protobuf(
+            (block.block_number, Some(block.native_chain_slot)),
+            &proto_block,
+        )?;
         self.write_evm_block_id_by_hash(block.native_chain_slot, block.hash(), block.block_number)
     }
 
-    pub fn read_evm_block_header(
+    ///
+    /// Returns iterator over evm blocks.
+    /// If more than one evm block have been found on same block_num, this function return multiple items.
+    ///
+    pub fn read_evm_block_headers(
         &self,
         block_index: evm::BlockNum,
-    ) -> Result<Option<evm::BlockHeader>> {
-        self.evm_blocks_cf
-            .get_protobuf_or_bincode::<evm::BlockHeader>(block_index)
-            .map(|block| block.and_then(|block| block.try_into().ok()))
+    ) -> Result<Vec<evm::BlockHeader>> {
+        Ok(self
+            .evm_blocks_iterator(block_index)?
+            .take_while(|((block_num, _slot), _block)| *block_num == block_index)
+            .map(|((_block_num, _slot), block)| block)
+            .collect())
     }
 
     pub fn write_evm_block_id_by_hash(
@@ -2561,19 +2583,11 @@ impl Blockstore {
         let mut logs = Vec::new();
         let masks = filter.bloom_possibilities();
         info!("Starting search for logs with filter = {:?}", filter);
-        for (block_num, data) in self.evm_blocks_cf.iter(IteratorMode::From(
-            filter.from_block,
-            IteratorDirection::Forward,
-        ))? {
-            trace!("Searching block = {}", block_num);
+        for ((block_num, slot), block) in self.evm_blocks_iterator(filter.from_block)? {
+            trace!("Searching block = {}, slot({:?})", block_num, slot);
             if block_num > filter.to_block {
                 break;
             }
-            let block: evm::BlockHeader = self
-                .evm_blocks_cf
-                .deserialize_protobuf_or_bincode::<evm::BlockHeader>(&data)?
-                .try_into()
-                .map_err(|e| BlockstoreError::ProtobufDecodeError(prost::DecodeError::new(e)))?;
             // First filterout all blocks that not contain ALL topic + addresses
             if !masks
                 .iter()
