@@ -83,6 +83,10 @@ pub enum RpcRequest {
     EthCall,
     EthEstimateGas,
     EthGetLogs,
+
+    /// Velas Account scope
+    GetVelasAccountByOperationalKey,
+    GetVelasAccountByOwnerKey,
 }
 
 impl fmt::Display for RpcRequest {
@@ -161,6 +165,8 @@ impl fmt::Display for RpcRequest {
             RpcRequest::EthCall => "eth_call",
             RpcRequest::EthEstimateGas => "eth_estimateGas",
             RpcRequest::EthGetLogs => "eth_getLogs",
+            Self::GetVelasAccountByOperationalKey => "getVelasAccountByOperationalKey",
+            Self::GetVelasAccountByOwnerKey => "getVelasAccountByOwnerKey",
         };
 
         write!(f, "{}", method)

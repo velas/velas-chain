@@ -1063,6 +1063,22 @@ impl RpcSol for RpcSolProxy {
         )
     }
 
+    fn get_velas_account_by_operational_key(
+        &self,
+        meta: Self::Metadata,
+        pubkey_str: String,
+    ) -> Result<RpcResponse<Vec<String>>> {
+        proxy_sol_rpc!(meta.rpc_client, GetVelasAccountByOperationalKey, pubkey_str)
+    }
+
+    fn get_velas_account_by_owner_key(
+        &self,
+        meta: Self::Metadata,
+        pubkey_str: String,
+    ) -> Result<RpcResponse<Vec<String>>> {
+        proxy_sol_rpc!(meta.rpc_client, GetVelasAccountByOwnerKey, pubkey_str)
+    }
+
     fn get_recent_performance_samples(
         &self,
         meta: Self::Metadata,

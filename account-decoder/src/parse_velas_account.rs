@@ -1,8 +1,24 @@
+use std::convert::TryFrom;
+
 use crate::parse_account_data::{ParsableAccount, ParseAccountError};
 
 use borsh::BorshDeserialize;
 use velas_account::*;
-const ACCOUNT_LEN: usize = 67;
+
+pub const ACCOUNT_LEN: usize = 67;
+
+impl TryFrom<&[u8]> for VelasAccountType {
+    type Error = ParseAccountError;
+
+    fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
+        if data.len() == ACCOUNT_LEN {
+            VAccountInfo::try_from_slice(data).map(VelasAccountType::Account)
+        } else {
+            VAccountStorage::try_from_slice(data).map(VelasAccountType::Storage)
+        }
+        .map_err(|_| ParseAccountError::AccountNotParsable(ParsableAccount::VelasAccount))
+    }
+}
 
 pub fn parse_velas_account(data: &[u8]) -> Result<VelasAccountType, ParseAccountError> {
     let account =
@@ -26,7 +42,7 @@ pub enum VelasAccountType {
     Storage(VAccountStorage),
 }
 
-mod velas_account {
+pub mod velas_account {
     use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
     use serde::{Deserialize, Serialize};
     use solana_sdk::{clock::UnixTimestamp, pubkey::Pubkey};

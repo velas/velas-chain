@@ -14,7 +14,7 @@ use solana_sdk::{instruction::InstructionError, pubkey::Pubkey, system_program, 
 use std::collections::HashMap;
 use thiserror::Error;
 
-mod velas_account {
+pub mod velas_account {
     solana_sdk::declare_id!("VAcccHVjpknkW5N5R9sfRppQxYJrJYVV7QJGKchkQj5");
 }
 
@@ -27,6 +27,7 @@ lazy_static! {
     static ref TOKEN_PROGRAM_ID: Pubkey = spl_token_id_v2_0();
     static ref VOTE_PROGRAM_ID: Pubkey = solana_vote_program::id();
     static ref VELAS_ACCOUNT_PROGRAM_ID: Pubkey = velas_account::id();
+
     pub static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableAccount> = {
         let mut m = HashMap::new();
         m.insert(
