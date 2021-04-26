@@ -5288,6 +5288,7 @@ dependencies = [
  "bytecount",
  "clap",
  "csv",
+ "evm-rpc",
  "evm-state",
  "futures 0.3.13",
  "futures-util",

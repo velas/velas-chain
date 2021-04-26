@@ -2679,17 +2679,18 @@ impl Blockstore {
 
     pub fn write_evm_transaction(
         &self,
-        slot: Slot,
+        block_number: evm_state::BlockNum,
         hash: H256,
         status: evm::TransactionReceipt,
     ) -> Result<()> {
         // reuse mechanism of transaction_status_index_cf gating
         let mut w_active_transaction_status_index =
             self.active_transaction_status_index.write().unwrap();
-        let primary_index = self.get_primary_index(slot, &mut w_active_transaction_status_index)?;
+        let primary_index =
+            self.get_primary_index(block_number, &mut w_active_transaction_status_index)?;
         let status = status.into();
         self.evm_transactions_cf
-            .put_protobuf((primary_index, hash, slot), &status)?;
+            .put_protobuf((primary_index, hash, block_number), &status)?;
         Ok(())
     }
     /// Returns the entry vector for the slot starting with `shred_start_index`

@@ -35,6 +35,7 @@ solana-transaction-status = { path = "../transaction-status", version = "1.5.14"
 solana-version = { path = "../version" }
 solana-vote-program = { path = "../programs/vote", version = "1.5.14" }
 evm-state = { path = "../evm-utils/evm-state" }
+evm-rpc = { path = "../evm-utils/evm-rpc" }
 tempfile = "3.1.0"
 tokio = { version = "0.2.22", features = ["full"] }
 
