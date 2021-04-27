@@ -4,7 +4,16 @@ use crate::{
     secondary_index::*,
 };
 use dashmap::DashSet;
+use log::*;
 use ouroboros::self_referencing;
+use solana_account_decoder::{
+    parse_account_data::velas_account,
+    parse_velas_account::{
+        parse_velas_account,
+        velas_account::{VAccountInfo, VAccountStorage},
+        VelasAccountType,
+    },
+};
 use solana_measure::measure::Measure;
 use solana_sdk::{
     clock::Slot,
@@ -63,6 +72,9 @@ pub enum IndexKey {
     ProgramId(Pubkey),
     SplTokenMint(Pubkey),
     SplTokenOwner(Pubkey),
+    VelasAccountStorage(Pubkey),
+    VelasAccountOwner(Pubkey),
+    VelasAccountOperational(Pubkey),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -70,6 +82,9 @@ pub enum AccountIndex {
     ProgramId,
     SplTokenMint,
     SplTokenOwner,
+    VelasAccountStorage,
+    VelasAccountOwner,
+    VelasAccountOperational,
 }
 
 #[derive(Debug)]
@@ -262,6 +277,9 @@ pub struct AccountsIndex<T> {
     program_id_index: SecondaryIndex<DashMapSecondaryIndexEntry>,
     spl_token_mint_index: SecondaryIndex<DashMapSecondaryIndexEntry>,
     spl_token_owner_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
+    velas_account_storage_index: SecondaryIndex<DashMapSecondaryIndexEntry>,
+    velas_account_owner_index: SecondaryIndex<DashMapSecondaryIndexEntry>,
+    velas_account_operational_index: SecondaryIndex<DashMapSecondaryIndexEntry>,
     roots_tracker: RwLock<RootsTracker>,
     ongoing_scan_roots: RwLock<BTreeMap<Slot, u64>>,
     zero_lamport_pubkeys: DashSet<Pubkey>,
@@ -450,6 +468,32 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
                     Some(max_root),
                 );
             }
+
+            ScanTypes::Indexed(IndexKey::VelasAccountStorage(va_storage_key)) => self
+                .do_scan_secondary_index(
+                    ancestors,
+                    func,
+                    &self.velas_account_storage_index,
+                    &va_storage_key,
+                    Some(max_root),
+                ),
+
+            ScanTypes::Indexed(IndexKey::VelasAccountOwner(va_owner_key)) => self
+                .do_scan_secondary_index(
+                    ancestors,
+                    func,
+                    &self.velas_account_owner_index,
+                    &va_owner_key,
+                    Some(max_root),
+                ),
+            ScanTypes::Indexed(IndexKey::VelasAccountOperational(va_operational_key)) => self
+                .do_scan_secondary_index(
+                    ancestors,
+                    func,
+                    &self.velas_account_operational_index,
+                    &va_operational_key,
+                    Some(max_root),
+                ),
         }
 
         {
@@ -857,6 +901,37 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
                         ..SPL_TOKEN_ACCOUNT_MINT_OFFSET + PUBKEY_BYTES],
                 );
                 self.spl_token_mint_index.insert(&mint_key, pubkey, slot);
+            }
+        }
+
+        if *account_owner == velas_account::id() {
+            match parse_velas_account(account_data) {
+                Ok(VelasAccountType::Account(VAccountInfo { ref storage, .. })) => {
+                    if account_indexes.contains(&AccountIndex::VelasAccountStorage) {
+                        self.velas_account_storage_index
+                            .insert(storage, pubkey, slot);
+                    }
+                }
+                Ok(VelasAccountType::Storage(VAccountStorage {
+                    owners,
+                    operationals,
+                })) => {
+                    if account_indexes.contains(&AccountIndex::VelasAccountOwner) {
+                        for owner in owners {
+                            self.velas_account_owner_index.insert(&owner, pubkey, slot);
+                        }
+                    }
+                    if account_indexes.contains(&AccountIndex::VelasAccountOperational) {
+                        for operational in operationals {
+                            self.velas_account_operational_index.insert(
+                                &operational.pubkey,
+                                pubkey,
+                                slot,
+                            );
+                        }
+                    }
+                }
+                Err(err) => warn!("Unable to parse Velas Account: {:?}", err),
             }
         }
     }

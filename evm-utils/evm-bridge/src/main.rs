@@ -1063,20 +1063,24 @@ impl RpcSol for RpcSolProxy {
         )
     }
 
-    fn get_velas_account_by_operational_key(
+    fn get_velas_accounts_by_operational_key(
         &self,
         meta: Self::Metadata,
         pubkey_str: String,
     ) -> Result<RpcResponse<Vec<String>>> {
-        proxy_sol_rpc!(meta.rpc_client, GetVelasAccountByOperationalKey, pubkey_str)
+        proxy_sol_rpc!(
+            meta.rpc_client,
+            GetVelasAccountsByOperationalKey,
+            pubkey_str
+        )
     }
 
-    fn get_velas_account_by_owner_key(
+    fn get_velas_accounts_by_owner_key(
         &self,
         meta: Self::Metadata,
         pubkey_str: String,
     ) -> Result<RpcResponse<Vec<String>>> {
-        proxy_sol_rpc!(meta.rpc_client, GetVelasAccountByOwnerKey, pubkey_str)
+        proxy_sol_rpc!(meta.rpc_client, GetVelasAccountsByOwnerKey, pubkey_str)
     }
 
     fn get_recent_performance_samples(
@@ -1125,7 +1129,7 @@ struct Args {
     rpc_address: String,
     #[structopt(default_value = "127.0.0.1:8545")]
     binding_address: SocketAddr,
-    #[structopt(default_value = "0xdead")]
+    #[structopt(default_value = "57005")] // 0xdead
     evm_chain_id: u64,
 }
 

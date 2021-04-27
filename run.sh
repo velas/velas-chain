@@ -112,6 +112,10 @@ args=(
     --accounts-db-caching-enabled
     --snapshot-interval-slots 100
     --require-tower
+    --account-index program-id
+    --account-index velas-accounts-storages
+    --account-index velas-accounts-owners
+    --account-index velas-accounts-operationals
 )
 # shellcheck disable=SC2086
 velas-validator "${args[@]}" $SOLANA_RUN_SH_VALIDATOR_ARGS &

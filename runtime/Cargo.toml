@@ -46,6 +46,7 @@ solana-sdk = { path = "../sdk", version = "1.5.14" }
 solana-stake-program = { path = "../programs/stake", version = "1.5.14" }
 solana-vote-program = { path = "../programs/vote", version = "1.5.14" }
 solana-secp256k1-program = { path = "../programs/secp256k1", version = "1.5.14" }
+solana-account-decoder = { path = "../account-decoder", version = "1.5.14" }
 solana-evm-loader-program = { path = "../evm-utils/programs/evm_loader" }
 symlink = "0.1.0"
 tar = "0.4.28"

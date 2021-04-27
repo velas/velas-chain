@@ -5,7 +5,12 @@ use crate::parse_account_data::{ParsableAccount, ParseAccountError};
 use borsh::BorshDeserialize;
 use velas_account::*;
 
+// TODO: try to avoid direct size hardcodes
 pub const ACCOUNT_LEN: usize = 67;
+
+// TODO: test it
+pub const ACCOUNT_STORAGE_KEY_OFFSET: usize =
+    ACCOUNT_LEN - std::mem::size_of::<solana_sdk::pubkey::Pubkey>();
 
 impl TryFrom<&[u8]> for VelasAccountType {
     type Error = ParseAccountError;
