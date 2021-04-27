@@ -1,4 +1,5 @@
 use super::common::UnusedAccounts;
+use super::future::SerializableStorage;
 #[cfg(all(test, RUSTC_WITH_SPECIALIZATION))]
 use solana_frozen_abi::abi_example::IgnoreAsHelper;
 use {super::*, solana_measure::measure::Measure, std::cell::RefCell};
@@ -10,11 +11,6 @@ type AccountsDbFields = super::AccountsDbFields<SerializableAccountStorageEntry>
 pub(super) struct SerializableAccountStorageEntry {
     id: AppendVecId,
     accounts_current_len: usize,
-}
-
-pub trait SerializableStorage {
-    fn id(&self) -> AppendVecId;
-    fn current_len(&self) -> usize;
 }
 
 impl SerializableStorage for SerializableAccountStorageEntry {
@@ -79,8 +75,8 @@ pub(crate) struct DeserializableVersionedBank {
     pub(crate) message_processor: MessageProcessor,
 
     pub(crate) evm_chain_id: u64,
+    pub(crate) evm_persist_feilds: evm_state::persist_old::EvmPersistState,
     pub(crate) evm_blockhashes: BlockHashEvm,
-    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
 }
 
 impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
@@ -119,7 +115,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             epoch_stakes: dvb.epoch_stakes,
             is_delta: dvb.is_delta,
             evm_chain_id: dvb.evm_chain_id,
-            evm_persist_feilds: dvb.evm_persist_feilds,
+            evm_persist_feilds: dvb.evm_persist_feilds.into(),
         }
     }
 }
@@ -162,8 +158,8 @@ pub(crate) struct SerializableVersionedBank<'a> {
     pub(crate) is_delta: bool,
     pub(crate) message_processor: MessageProcessor,
     pub(crate) evm_chain_id: u64,
+    pub(crate) evm_persist_feilds: evm_state::persist_old::EvmPersistState,
     pub(crate) evm_blockhashes: &'a RwLock<BlockHashEvm>,
-    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
 }
 
 impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedBank<'a> {
@@ -207,7 +203,7 @@ impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedB
             is_delta: rhs.is_delta,
             message_processor: new(),
             evm_chain_id: rhs.evm_chain_id,
-            evm_persist_feilds: rhs.evm_persist_feilds,
+            evm_persist_feilds: rhs.evm_persist_feilds.into(),
         }
     }
 }

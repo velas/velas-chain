@@ -32,8 +32,14 @@ pub use triedb::empty_trie_hash;
 
 mod context;
 mod executor;
+pub mod persist_old;
 mod state;
 mod storage;
+
+// Cannot link to solana-sdk, because solana_sdk already linked to evm-state
+// Used in BlockHeader
+#[path = "../../../sdk/src/deserialize_utils.rs"]
+mod deserialize_utils;
 
 pub trait FromKey {
     fn to_public_key(&self) -> secp256k1::PublicKey;

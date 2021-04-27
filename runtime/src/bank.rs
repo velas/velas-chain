@@ -951,12 +951,15 @@ impl Bank {
         ));
 
         if let Some((evm_state_path, evm_genesis_path)) = evm_paths {
+            let spv_compatibility = bank.fix_spv_proofs_evm();
+
             bank.evm_state = RwLock::new(
                 evm_state::EvmState::new_from_genesis(
                     evm_state_path,
                     evm_genesis_path,
                     genesis_config.evm_root_hash,
                     genesis_config.creation_time as u64,
+                    spv_compatibility,
                 )
                 .unwrap(),
             );
@@ -1029,11 +1032,13 @@ impl Bank {
         let fee_rate_governor =
             FeeRateGovernor::new_derived(&parent.fee_rate_governor, parent.signature_count());
 
+        let spv_compatibility = parent.fix_spv_proofs_evm();
+
         let evm_state = parent
             .evm_state
             .read()
             .expect("parent evm state was poisoned")
-            .new_from_parent(parent.clock().unix_timestamp);
+            .new_from_parent(parent.clock().unix_timestamp, spv_compatibility);
 
         let mut new = Bank {
             rc,
@@ -1962,7 +1967,9 @@ impl Bank {
         let blockhash_queue = self.blockhash_queue.read().unwrap();
         let evm_blockhashes = self.evm_blockhashes.read().unwrap();
         self.update_recent_blockhashes_locked(&blockhash_queue);
-        self.update_recent_evm_blockhashes_locked(&evm_blockhashes);
+        if !self.fix_recent_blockhashes_sysvar_evm() {
+            self.update_recent_evm_blockhashes_locked(&evm_blockhashes);
+        }
     }
 
     fn get_timestamp_estimate(
@@ -2074,11 +2081,17 @@ impl Bank {
             self.evm_state.read().unwrap().last_root(),
             self.evm_state.read().unwrap().block_number()
         );
+
+        let mut w_evm_blockhash_queue = self
+            .evm_blockhashes
+            .write()
+            .expect("evm blockchashes poisoned");
+
         if let Some(hash) = hash {
-            self.evm_blockhashes
-                .write()
-                .expect("evm blockchashes poisoned")
-                .insert_hash(hash)
+            w_evm_blockhash_queue.insert_hash(hash);
+            if self.fix_recent_blockhashes_sysvar_evm() {
+                self.update_recent_evm_blockhashes_locked(&w_evm_blockhash_queue);
+            }
         }
     }
 
@@ -2741,7 +2754,7 @@ impl Bank {
             ClusterType::Development => false,
             ClusterType::Devnet => false,
             ClusterType::Testnet => false,
-            ClusterType::MainnetBeta => self.epoch == 61,
+            ClusterType::MainnetBeta => false,
         }
     }
 
@@ -4858,6 +4871,26 @@ impl Bank {
         false
     }
 
+    fn get_unlock_switch_vote_slot(cluster_type: ClusterType) -> Slot {
+        match cluster_type {
+            ClusterType::Development => 0,
+            ClusterType::Devnet => 0,
+            // Epoch 63
+            ClusterType::Testnet => 21_692_256,
+            // 400_000 slots into epoch 61
+            ClusterType::MainnetBeta => 26_752_000,
+        }
+    }
+
+    pub fn unlock_switch_vote(&self) -> bool {
+        let solana_unlock_switch =
+            self.slot() > Self::get_unlock_switch_vote_slot(self.cluster_type());
+        let velas_unlock_switch = self
+            .feature_set
+            .is_active(&feature_set::velas_hardfork_pack::id());
+        solana_unlock_switch || velas_unlock_switch
+    }
+
     pub fn deactivate_feature(&mut self, id: &Pubkey) {
         let mut feature_set = Arc::make_mut(&mut self.feature_set).clone();
         feature_set.active.remove(&id);
@@ -4907,9 +4940,10 @@ impl Bank {
         if new_feature_activations.contains(&feature_set::simple_capitalization::id()) {
             self.adjust_capitalization_for_existing_specially_retained_accounts();
         }
-
         self.ensure_feature_builtins(init_finish_or_warp, &new_feature_activations);
-        self.reconfigure_token2_native_mint();
+        self.reconfigure_token2_native_mint(
+            new_feature_activations.contains(&feature_set::velas_hardfork_pack::id()),
+        );
         self.ensure_no_storage_rewards_pool();
     }
 
@@ -5054,15 +5088,16 @@ impl Bank {
         );
     }
 
-    fn reconfigure_token2_native_mint(&mut self) {
-        let reconfigure_token2_native_mint = match self.cluster_type() {
+    fn reconfigure_token2_native_mint(&mut self, reconfigure_token2_native_mint_velas: bool) {
+        let reconfigure_token2_native_mint_old = match self.cluster_type() {
             ClusterType::Development => true,
             ClusterType::Devnet => true,
             ClusterType::Testnet => self.epoch() == 93,
             ClusterType::MainnetBeta => self.epoch() == 75,
         };
 
-        if reconfigure_token2_native_mint {
+        // It's okay if we trigget two activations sequentionally.
+        if reconfigure_token2_native_mint_old || reconfigure_token2_native_mint_velas {
             let mut native_mint_account = solana_sdk::account::Account {
                 owner: inline_spl_token_v2_0::id(),
                 data: inline_spl_token_v2_0::native_mint::ACCOUNT_DATA.to_vec(),
@@ -5103,8 +5138,8 @@ impl Bank {
             ClusterType::Development => false,
             // never do this for devnet; we're pristine here. :)
             ClusterType::Devnet => false,
-            // schedule to remove at testnet/tds
-            ClusterType::Testnet => self.epoch() == 93,
+            // tds is not exist in velas so dont do this
+            ClusterType::Testnet => false,
             // never do this for stable; we're pristine here. :)
             ClusterType::MainnetBeta => false,
         };
@@ -5126,6 +5161,16 @@ impl Bank {
                 };
             }
         }
+    }
+
+    fn fix_spv_proofs_evm(&self) -> bool {
+        self.feature_set
+            .is_active(&feature_set::velas_hardfork_pack::id())
+    }
+
+    fn fix_recent_blockhashes_sysvar_evm(&self) -> bool {
+        self.feature_set
+            .is_active(&feature_set::velas_hardfork_pack::id())
     }
 
     fn fix_recent_blockhashes_sysvar_delay(&self) -> bool {
@@ -8388,7 +8433,7 @@ pub(crate) mod tests {
             }
 
             evm_state
-                .try_commit(bank0.slot(), bank0.last_blockhash().0)
+                .try_commit(bank0.slot(), bank0.last_blockhash().0, false)
                 .unwrap();
         }
         let pubkey: evm_state::H160 = H256::random().into();
@@ -11258,6 +11303,54 @@ pub(crate) mod tests {
 
         let bank = Bank::new_from_parent(
             &bank,
+            &Pubkey::default(),
+            genesis_config.epoch_schedule.get_first_slot_in_epoch(75),
+        );
+
+        let native_mint_account = bank
+            .get_account(&inline_spl_token_v2_0::native_mint::id())
+            .unwrap();
+        assert_eq!(native_mint_account.data.len(), 82);
+        assert_eq!(
+            bank.get_balance(&inline_spl_token_v2_0::native_mint::id()),
+            4200000000
+        );
+        assert_eq!(native_mint_account.owner, inline_spl_token_v2_0::id());
+
+        // MainnetBeta - native mint with feature
+        genesis_config.cluster_type = ClusterType::MainnetBeta;
+
+        let feature_balance =
+            std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
+        let bank = Arc::new(Bank::new(&genesis_config));
+        assert_eq!(
+            bank.get_balance(&inline_spl_token_v2_0::native_mint::id()),
+            0
+        );
+        bank.deposit(&inline_spl_token_v2_0::native_mint::id(), 4200000000);
+
+        // schedule activation of velas_hardfork_pack which contain spl token reconfigure patch
+        bank.store_account_and_update_capitalization(
+            &feature_set::velas_hardfork_pack::id(),
+            &feature::create_account(&Feature { activated_at: None }, feature_balance),
+        );
+        let bank = Bank::new_from_parent(
+            &bank,
+            &Pubkey::default(),
+            genesis_config.epoch_schedule.get_first_slot_in_epoch(56), //arbitrary value less than 75 epoch
+        );
+
+        let native_mint_account = bank
+            .get_account(&inline_spl_token_v2_0::native_mint::id())
+            .unwrap();
+        assert_eq!(native_mint_account.data.len(), 82);
+        assert_eq!(
+            bank.get_balance(&inline_spl_token_v2_0::native_mint::id()),
+            4200000000
+        );
+        assert_eq!(native_mint_account.owner, inline_spl_token_v2_0::id());
+        let bank = Bank::new_from_parent(
+            &Arc::new(bank),
             &Pubkey::default(),
             genesis_config.epoch_schedule.get_first_slot_in_epoch(75),
         );

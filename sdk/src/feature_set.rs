@@ -179,6 +179,14 @@ pub mod test_features {
     solana_sdk::declare_id!("11111111111111111111111111111111");
 }
 
+pub mod velas_hardfork_pack {
+    // 1. difficulty not a hash but a number.
+    // 2. transactionRoot, receiptRoot - should calculate, and empty hashes should be setted too
+    // 3. nonce is 64bit hash not a number.
+    // 4. sha3uncle hash from zero block, not zeros.
+    solana_sdk::declare_id!("BKnQo95oYPsfGXY6at32zqcUfj9ZoKz6e4PmS8RH2Dmq");
+}
+
 lazy_static! {
 
     pub static ref FEATURE_NAMES_BEFORE_MAINNET: HashMap<Pubkey, &'static str> = [
@@ -231,7 +239,8 @@ lazy_static! {
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = FEATURE_NAMES_BEFORE_MAINNET.iter().map(|(k,v)| (*k, *v))
     .chain(
         [
-            (test_features::id(), "Test feature used as example how to implement features.")
+            (test_features::id(), "Test feature used as example how to implement features."),
+            (velas_hardfork_pack::id(), "EVMblockhashes sysvar history, roothashes calculation. Apply old (reconfigure_native_token, unlock_switch_vote).")
             /*************** ADD NEW FEATURES HERE ***************/
         ]
         .iter()

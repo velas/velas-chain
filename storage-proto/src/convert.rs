@@ -892,6 +892,7 @@ impl From<evm_state::BlockHeader> for generated_evm::EvmBlockHeader {
             gas_used: header.gas_used,
             timestamp: header.timestamp,
             native_chain_slot: header.native_chain_slot,
+            version: header.version.into(),
         }
     }
 }
@@ -917,6 +918,7 @@ impl TryFrom<generated_evm::EvmBlockHeader> for evm_state::BlockHeader {
             gas_used: header.gas_used,
             timestamp: header.timestamp,
             native_chain_slot: header.native_chain_slot,
+            version: header.version.try_into()?,
         })
     }
 }
@@ -1957,6 +1959,7 @@ mod test {
             logs_bloom: evm_state::Bloom::random(),
             transactions_root: evm_state::H256::random(),
             receipts_root: evm_state::H256::random(),
+            version: evm_state::BlockVersion::VersionConsistentHashes,
         };
 
         let block_serialized: generated_evm::EvmBlockHeader = block.clone().into();
@@ -1982,6 +1985,7 @@ mod test {
             logs_bloom: evm_state::Bloom::random(),
             transactions_root: evm_state::H256::random(),
             receipts_root: evm_state::H256::random(),
+            version: evm_state::BlockVersion::InitVersion,
         };
         let tx1 =
             evm_state::TransactionInReceipt::Unsigned(evm_state::UnsignedTransactionWithCaller {

@@ -76,7 +76,6 @@ where
 
 #[cfg(test)]
 fn accountsdb_from_stream<R, P>(
-    serde_style: SerdeStyle,
     stream: &mut BufReader<R>,
     account_paths: &[PathBuf],
     stream_append_vecs_path: P,
@@ -85,18 +84,15 @@ where
     R: Read,
     P: AsRef<Path>,
 {
-    match serde_style {
-        SerdeStyle::Newer => context_accountsdb_from_stream::<TypeContextFuture, R, P>(
-            stream,
-            account_paths,
-            stream_append_vecs_path,
-        ),
-    }
+    context_accountsdb_from_stream::<TypeContextFuture, R, P>(
+        stream,
+        account_paths,
+        stream_append_vecs_path,
+    )
 }
 
 #[cfg(test)]
 fn accountsdb_to_stream<W>(
-    serde_style: SerdeStyle,
     stream: &mut W,
     accounts_db: &AccountsDb,
     slot: Slot,
@@ -105,21 +101,19 @@ fn accountsdb_to_stream<W>(
 where
     W: Write,
 {
-    match serde_style {
-        SerdeStyle::Newer => serialize_into(
-            stream,
-            &SerializableAccountsDb::<TypeContextFuture> {
-                accounts_db,
-                slot,
-                account_storage_entries,
-                phantom: std::marker::PhantomData::default(),
-            },
-        ),
-    }
+    serialize_into(
+        stream,
+        &SerializableAccountsDb::<TypeContextFuture> {
+            accounts_db,
+            slot,
+            account_storage_entries,
+            phantom: std::marker::PhantomData::default(),
+        },
+    )
 }
 
 #[cfg(test)]
-fn test_accounts_serialize_style(serde_style: SerdeStyle) {
+fn test_accounts_serialize_style() {
     solana_logger::setup();
     let (_accounts_dir, paths) = get_temp_accounts_paths(4).unwrap();
     let accounts =
@@ -132,7 +126,6 @@ fn test_accounts_serialize_style(serde_style: SerdeStyle) {
 
     let mut writer = Cursor::new(vec![]);
     accountsdb_to_stream(
-        serde_style,
         &mut writer,
         &*accounts.accounts_db,
         0,
@@ -149,20 +142,14 @@ fn test_accounts_serialize_style(serde_style: SerdeStyle) {
     let mut reader = BufReader::new(&buf[..]);
     let (_accounts_dir, daccounts_paths) = get_temp_accounts_paths(2).unwrap();
     let daccounts = Accounts::new_empty(
-        accountsdb_from_stream(
-            serde_style,
-            &mut reader,
-            &daccounts_paths,
-            copied_accounts.path(),
-        )
-        .unwrap(),
+        accountsdb_from_stream(&mut reader, &daccounts_paths, copied_accounts.path()).unwrap(),
     );
     check_accounts(&daccounts, &pubkeys, 100);
     assert_eq!(accounts.bank_hash_at(0), daccounts.bank_hash_at(0));
 }
 
 #[cfg(test)]
-fn test_bank_serialize_style(serde_style: SerdeStyle) {
+fn test_bank_serialize_style(evm_version: EvmStateVersion) {
     solana_logger::setup();
     let (genesis_config, _) = create_genesis_config(500);
     let bank0 = Arc::new(Bank::new(&genesis_config));
@@ -191,7 +178,7 @@ fn test_bank_serialize_style(serde_style: SerdeStyle) {
     let mut buf = vec![];
     let mut writer = Cursor::new(&mut buf);
     crate::serde_snapshot::bank_to_stream(
-        serde_style,
+        evm_version,
         &mut std::io::BufWriter::new(&mut writer),
         &bank2,
         &snapshot_storages,
@@ -210,7 +197,7 @@ fn test_bank_serialize_style(serde_style: SerdeStyle) {
     let copied_accounts = TempDir::new().unwrap();
     copy_append_vecs(&bank2.rc.accounts.accounts_db, copied_accounts.path()).unwrap();
     let mut dbank = crate::serde_snapshot::bank_from_stream(
-        serde_style,
+        evm_version,
         &mut reader,
         copied_accounts.path(),
         &evm_state_dir.path(),
@@ -237,31 +224,29 @@ pub(crate) fn reconstruct_accounts_db_via_serialization(
 ) -> AccountsDb {
     let mut writer = Cursor::new(vec![]);
     let snapshot_storages = accounts.get_snapshot_storages(slot);
-    accountsdb_to_stream(
-        SerdeStyle::Newer,
-        &mut writer,
-        &accounts,
-        slot,
-        &snapshot_storages,
-    )
-    .unwrap();
+    accountsdb_to_stream(&mut writer, &accounts, slot, &snapshot_storages).unwrap();
 
     let buf = writer.into_inner();
     let mut reader = BufReader::new(&buf[..]);
     let copied_accounts = TempDir::new().unwrap();
     // Simulate obtaining a copy of the AppendVecs from a tarball
     copy_append_vecs(&accounts, copied_accounts.path()).unwrap();
-    accountsdb_from_stream(SerdeStyle::Newer, &mut reader, &[], copied_accounts.path()).unwrap()
+    accountsdb_from_stream(&mut reader, &[], copied_accounts.path()).unwrap()
 }
 
 #[test]
 fn test_accounts_serialize_newer() {
-    test_accounts_serialize_style(SerdeStyle::Newer)
+    test_accounts_serialize_style()
 }
 
 #[test]
 fn test_bank_serialize_newer() {
-    test_bank_serialize_style(SerdeStyle::Newer)
+    test_bank_serialize_style(EvmStateVersion::V1_4_0)
+}
+
+#[test]
+fn test_bank_serialize_older() {
+    test_bank_serialize_style(EvmStateVersion::V1_3_0)
 }
 
 #[cfg(all(test, RUSTC_WITH_SPECIALIZATION))]

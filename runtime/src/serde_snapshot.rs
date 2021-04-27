@@ -44,10 +44,12 @@ use solana_frozen_abi::abi_example::IgnoreAsHelper;
 
 mod common;
 mod future;
+mod future_legacy;
 mod tests;
 mod utils;
 
 use future::Context as TypeContextFuture;
+use future_legacy::Context as TypeContextFutureLegacy;
 #[allow(unused_imports)]
 use utils::{serialize_iter_as_map, serialize_iter_as_seq, serialize_iter_as_tuple};
 
@@ -58,8 +60,9 @@ pub(crate) use self::tests::reconstruct_accounts_db_via_serialization;
 pub(crate) use crate::accounts_db::{SnapshotStorage, SnapshotStorages};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum SerdeStyle {
-    Newer,
+pub(crate) enum EvmStateVersion {
+    V1_3_0,
+    V1_4_0,
 }
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
@@ -120,7 +123,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bank_from_stream<R, P>(
-    serde_style: SerdeStyle,
+    evm_state_version: EvmStateVersion,
     stream: &mut BufReader<R>,
     append_vecs_path: P,
     evm_state_path: &Path,
@@ -156,8 +159,9 @@ where
             Ok(bank)
         }};
     }
-    match serde_style {
-        SerdeStyle::Newer => INTO!(TypeContextFuture),
+    match evm_state_version {
+        EvmStateVersion::V1_3_0 => INTO!(TypeContextFutureLegacy),
+        EvmStateVersion::V1_4_0 => INTO!(TypeContextFuture),
     }
     .map_err(|err| {
         warn!("bankrc_from_stream error: {:?}", err);
@@ -166,7 +170,7 @@ where
 }
 
 pub(crate) fn bank_to_stream<W>(
-    serde_style: SerdeStyle,
+    evm_version: EvmStateVersion,
     stream: &mut BufWriter<W>,
     bank: &Bank,
     snapshot_storages: &[SnapshotStorage],
@@ -186,8 +190,9 @@ where
             )
         };
     }
-    match serde_style {
-        SerdeStyle::Newer => INTO!(TypeContextFuture),
+    match evm_version {
+        EvmStateVersion::V1_3_0 => INTO!(TypeContextFutureLegacy),
+        EvmStateVersion::V1_4_0 => INTO!(TypeContextFuture),
     }
     .map_err(|err| {
         warn!("bankrc_to_stream error: {:?}", err);

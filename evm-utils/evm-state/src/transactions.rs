@@ -347,11 +347,68 @@ pub enum TransactionInReceipt {
     Unsigned(UnsignedTransactionWithCaller),
 }
 
+impl Encodable for TransactionInReceipt {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        match self {
+            TransactionInReceipt::Signed(tx) => {
+                s.append_internal(tx);
+            }
+            TransactionInReceipt::Unsigned(tx) => {
+                s.append_internal(tx);
+            }
+        }
+    }
+}
+
+impl Decodable for TransactionInReceipt {
+    fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+        let items = rlp.item_count()?;
+        Ok(match items {
+            8 => TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode(rlp)?),
+            9 => TransactionInReceipt::Signed(Transaction::decode(rlp)?),
+            _ => return Err(DecoderError::RlpInvalidLength),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct UnsignedTransactionWithCaller {
     pub unsigned_tx: UnsignedTransaction,
     pub caller: H160,
     pub chain_id: Option<u64>,
+}
+
+impl Encodable for UnsignedTransactionWithCaller {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(8);
+        s.append(&self.unsigned_tx.nonce);
+        s.append(&self.unsigned_tx.gas_price);
+        s.append(&self.unsigned_tx.gas_limit);
+        s.append(&self.unsigned_tx.action);
+        s.append(&self.unsigned_tx.value);
+        s.append(&self.unsigned_tx.input);
+        s.append(&self.caller);
+        s.append(&self.chain_id.unwrap_or(0));
+    }
+}
+
+impl Decodable for UnsignedTransactionWithCaller {
+    fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+        let chain_id = rlp.val_at(7)?;
+        let chain_id = if chain_id == 0 { None } else { Some(chain_id) };
+        Ok(Self {
+            unsigned_tx: UnsignedTransaction {
+                nonce: rlp.val_at(0)?,
+                gas_price: rlp.val_at(1)?,
+                gas_limit: rlp.val_at(2)?,
+                action: rlp.val_at(3)?,
+                value: rlp.val_at(4)?,
+                input: rlp.val_at(5)?,
+            },
+            caller: rlp.val_at(6)?,
+            chain_id,
+        })
+    }
 }
 
 // TODO: Work on logs and state_root.
@@ -482,8 +539,54 @@ mod test {
         test_vector("f864808504a817c800825208943535353535353535353535353535353535353535808025a0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116da0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116d", "0xb1e2188bc490908a78184e4818dca53684167507417fdb4c09c2d64d32a9896a");
         test_vector("f867088504a817c8088302e2489435353535353535353535353535353535353535358202008025a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c12a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c10", "0x588df025c4c2d757d3e314bd3dfbfe352687324e6b8557ad1731585e96928aed");
     }
+    
     //
+    #[test]
+    fn test_of_generic_tx() {
+        let tx_data = "f864808504a817c800825208943535353535353535353535353535353535353535808025a0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116da0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116d";
+        let signed: TransactionInReceipt =
+            rlp::decode(&hex::decode(tx_data).unwrap()).expect("decoding tx data failed");
 
+        let signed = if let TransactionInReceipt::Signed(signed) = signed {
+            signed
+        } else {
+            unreachable!()
+        };
+        assert_eq!(
+            signed.caller().unwrap(),
+            Address::from_str("f0f6f18bca1b28cd68e4357452947e021241e9ce").unwrap()
+        );
+
+        let unsigned_tx = UnsignedTransaction {
+            nonce: 23.into(),
+            gas_price: 23421.into(),
+            gas_limit: 124543.into(),
+            action: TransactionAction::Call(H160::repeat_byte(2)),
+            value: 54353.into(),
+            input: vec![0, 1, 2, 3, 4, 1, 2, 3],
+        };
+
+        let unsigned = UnsignedTransactionWithCaller {
+            unsigned_tx,
+            caller: H160::repeat_byte(3),
+            chain_id: None,
+        };
+        let bytes = rlp::encode(&unsigned);
+        let unsigned_deserialized: TransactionInReceipt =
+            rlp::decode(&bytes).expect("decoding tx data failed");
+        assert_eq!(
+            unsigned_deserialized,
+            TransactionInReceipt::Unsigned(unsigned)
+        );
+        let unsigned = if let TransactionInReceipt::Unsigned(unsigned) = unsigned_deserialized {
+            unsigned
+        } else {
+            unreachable!()
+        };
+        assert_eq!(unsigned.caller, H160::repeat_byte(3));
+        assert_eq!(unsigned.unsigned_tx.value, 54353.into());
+        assert_eq!(unsigned.unsigned_tx.input, vec![0, 1, 2, 3, 4, 1, 2, 3]);
+    }
     #[test]
     fn should_recover_from_chain_specific_signing() {
         let mut rng = secp256k1::rand::thread_rng();
