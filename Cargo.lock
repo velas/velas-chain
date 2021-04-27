@@ -5696,6 +5696,7 @@ dependencies = [
  "rustc_version",
  "serde",
  "serde_derive",
+ "solana-account-decoder",
  "solana-config-program",
  "solana-evm-loader-program",
  "solana-frozen-abi 1.5.14",

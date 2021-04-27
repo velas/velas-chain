@@ -1441,7 +1441,14 @@ pub fn main() {
                 .long("account-index")
                 .takes_value(true)
                 .multiple(true)
-                .possible_values(&["program-id", "spl-token-owner", "spl-token-mint"])
+                .possible_values(&[
+                    "program-id",
+                    "spl-token-owner",
+                    "spl-token-mint",
+                    "velas-accounts-storages",
+                    "velas-accounts-owners",
+                    "velas-accounts-operationals",
+                ])
                 .value_name("INDEX")
                 .help("Enable an accounts index, indexed by the selected account field"),
         )
@@ -1578,7 +1585,10 @@ pub fn main() {
             "program-id" => AccountIndex::ProgramId,
             "spl-token-mint" => AccountIndex::SplTokenMint,
             "spl-token-owner" => AccountIndex::SplTokenOwner,
-            _ => unreachable!(),
+            "velas-accounts-storages" => AccountIndex::VelasAccountStorage,
+            "velas-accounts-owners" => AccountIndex::VelasAccountOwner,
+            "velas-accounts-operationals" => AccountIndex::VelasAccountOperational,
+            unexpected => panic!("Unable to handle 'account_indexes' flag {}", unexpected),
         })
         .collect();
 
