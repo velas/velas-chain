@@ -34,7 +34,6 @@ use solana_runtime::{
 };
 use solana_sdk::{
     clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
-    genesis_config::ClusterType,
     hash::Hash,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
@@ -1233,7 +1232,7 @@ impl ReplayStage {
         let node_keypair = cluster_info.keypair.clone();
 
         // Send our last few votes along with the new one
-        let vote_ix = if bank.slot() > Self::get_unlock_switch_vote_slot(bank.cluster_type()) {
+        let vote_ix = if bank.unlock_switch_vote() {
             switch_fork_decision
                 .to_vote_instruction(
                     vote,
@@ -2000,17 +1999,6 @@ impl ReplayStage {
                     }
                 }
             }
-        }
-    }
-
-    pub fn get_unlock_switch_vote_slot(cluster_type: ClusterType) -> Slot {
-        match cluster_type {
-            ClusterType::Development => 0,
-            ClusterType::Devnet => 0,
-            // Epoch 63
-            ClusterType::Testnet => 21_692_256,
-            // 400_000 slots into epoch 61
-            ClusterType::MainnetBeta => 26_752_000,
         }
     }
 

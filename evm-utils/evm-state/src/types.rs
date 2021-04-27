@@ -12,9 +12,70 @@ use auto_enums::auto_enum;
 use ethbloom::{Bloom, Input};
 use evm::backend::Log;
 pub use evm::backend::MemoryAccount;
+use fixed_hash::construct_fixed_hash;
+use impl_rlp::impl_fixed_hash_rlp;
 pub use primitive_types::{H160, H256, U256};
+use std::convert::TryFrom;
 
 pub type BlockNum = u64; // TODO: re-use existing one from sdk package
+
+/// Blocks versions.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BlockVersion {
+    /// bogous version without transactions roots, ommers = H256::zero, and nonce as scalar.
+    InitVersion,
+    ///
+    /// Version with fixed transactions root hashes, ommers and nonce values.
+    /// All but difficulty/PoW part, should be compatible with ethereum light clients.
+    ///
+    VersionConsistentHashes,
+}
+
+construct_fixed_hash! {
+    pub struct H64(8);
+}
+
+impl_fixed_hash_rlp! {
+    H64, 8
+}
+
+impl BlockVersion {
+    const BLOCK_VERSION_INIT: u64 = 0;
+    const BLOCK_VERSION_CONSISTENT_HASH: u64 = 1;
+    pub fn activate_spv_compatibility(&mut self) {
+        // don't update if we on future versions
+        if *self == BlockVersion::InitVersion {
+            *self = BlockVersion::VersionConsistentHashes;
+        }
+    }
+}
+impl From<BlockVersion> for u64 {
+    fn from(version: BlockVersion) -> u64 {
+        match version {
+            BlockVersion::InitVersion => BlockVersion::BLOCK_VERSION_INIT,
+            BlockVersion::VersionConsistentHashes => BlockVersion::BLOCK_VERSION_CONSISTENT_HASH,
+        }
+    }
+}
+
+impl TryFrom<u64> for BlockVersion {
+    type Error = &'static str;
+
+    fn try_from(version: u64) -> Result<BlockVersion, Self::Error> {
+        let version = match version {
+            BlockVersion::BLOCK_VERSION_INIT => BlockVersion::InitVersion,
+            BlockVersion::BLOCK_VERSION_CONSISTENT_HASH => BlockVersion::VersionConsistentHashes,
+            _ => return Err("Specific blockversion incompatible"),
+        };
+        return Ok(version);
+    }
+}
+
+impl Default for BlockVersion {
+    fn default() -> Self {
+        BlockVersion::InitVersion
+    }
+}
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountState {
@@ -266,6 +327,8 @@ pub struct BlockHeader {
     pub gas_used: u64,
     pub timestamp: u64,
     pub native_chain_slot: u64,
+    #[serde(deserialize_with = "crate::deserialize_utils::default_on_eof")]
+    pub version: BlockVersion,
 }
 
 // TODO: Add transactions in block
@@ -280,14 +343,23 @@ impl BlockHeader {
         native_chain_slot: u64,
         native_chain_hash: H256,
         processed_transactions: impl Iterator<Item = &'a (H256, TransactionReceipt)>,
+        version: BlockVersion,
     ) -> BlockHeader {
         let transaction_receipts: Vec<_> = processed_transactions.collect();
         let transactions: Vec<H256> = transaction_receipts.iter().map(|(k, _)| *k).collect();
 
         let mut logs_bloom = Bloom::default();
-        for (_, receipt) in transaction_receipts {
+        for (_, receipt) in &transaction_receipts {
             logs_bloom.accrue_bloom(&receipt.logs_bloom)
         }
+
+        let (receipts_root, transactions_root) = match version {
+            BlockVersion::InitVersion => (H256::zero(), H256::zero()),
+            BlockVersion::VersionConsistentHashes => (
+                transaction_roots::receipts_root(transaction_receipts.iter().map(|(_, tx)| tx)),
+                transaction_roots::transactions_root(transaction_receipts.iter().map(|(_, tx)| tx)),
+            ),
+        };
 
         BlockHeader {
             parent_hash,
@@ -301,8 +373,9 @@ impl BlockHeader {
             transactions,
             logs_bloom,
             // TODO: Add real transaction receipts and transaction list
-            receipts_root: H256::zero(),
-            transactions_root: H256::zero(),
+            receipts_root,
+            transactions_root,
+            version,
         }
     }
 
@@ -311,16 +384,8 @@ impl BlockHeader {
         self.rlp_append(&mut stream);
         H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
     }
-}
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct Block {
-    pub header: BlockHeader,
-    pub transactions: Vec<(crate::H256, TransactionReceipt)>,
-}
-
-impl Encodable for BlockHeader {
-    fn rlp_append(&self, s: &mut RlpStream) {
+    pub fn rlp_append_legacy(&self, s: &mut RlpStream) {
         const EMPTH_HASH: H256 = H256::zero();
         const EXTRA_DATA: &[u8; 32] = b"Velas EVM compatibility layer...";
         let extra_data = H256::from_slice(EXTRA_DATA);
@@ -341,6 +406,45 @@ impl Encodable for BlockHeader {
         s.append(&self.native_chain_hash); // mix hash is not available in PoS chains, using native chain hash.
         s.append(&self.native_chain_slot); // nonce like mix hash is not available in PoS, using native chain slot.
     }
+
+    pub fn rlp_append_newer(&self, s: &mut RlpStream) {
+        const EMPTH_HASH: H256 = H256::zero();
+        const ZERO_DIFFICULTY: U256 = U256::zero();
+        const EXTRA_DATA: &[u8; 32] = b"Velas EVM compatibility layer.v2";
+        let extra_data = H256::from_slice(EXTRA_DATA);
+        let nonce = H64::from_low_u64_be(self.native_chain_slot);
+        s.begin_list(15);
+        s.append(&self.parent_hash);
+        s.append(&empty_ommers_hash()); // ommers/unkles is impossible
+        s.append(&H160::from(EMPTH_HASH)); // Beneficiar address is empty, because reward received in native chain
+        s.append(&self.state_root);
+        s.append(&self.transactions_root);
+        s.append(&self.receipts_root);
+        s.append(&self.logs_bloom);
+        s.append(&ZERO_DIFFICULTY); // difficulty, is zero
+        s.append(&U256::from(self.block_number));
+        s.append(&U256::from(self.gas_limit));
+        s.append(&U256::from(self.gas_used));
+        s.append(&self.timestamp);
+        s.append(&extra_data);
+        s.append(&self.native_chain_hash); // mix hash is not available in PoS chains, using native chain hash.
+        s.append(&nonce); // nonce like mix hash is not available in PoS, using native chain slot but as 8 bytes array.
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Block {
+    pub header: BlockHeader,
+    pub transactions: Vec<(crate::H256, TransactionReceipt)>,
+}
+
+impl Encodable for BlockHeader {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        match self.version {
+            BlockVersion::InitVersion => self.rlp_append_legacy(s),
+            BlockVersion::VersionConsistentHashes => self.rlp_append_newer(s),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -358,9 +462,85 @@ impl<T> From<Maybe<T>> for Option<T> {
     }
 }
 
+mod transaction_roots {
+
+    use crate::{Log, TransactionReceipt, H256, U256};
+    use ethbloom::Bloom;
+    use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+    use triedb::FixedMemoryTrieMut;
+
+    pub struct EthereumReceipt {
+        pub gas_used: U256,
+        pub log_bloom: Bloom,
+        pub logs: Vec<Log>,
+        pub status: u8,
+    }
+
+    impl<'a> From<&'a TransactionReceipt> for EthereumReceipt {
+        fn from(receipt: &'a TransactionReceipt) -> Self {
+            Self {
+                gas_used: receipt.used_gas.into(),
+                log_bloom: receipt.logs_bloom,
+                logs: receipt.logs.clone(),
+                status: if let crate::ExitReason::Succeed(_) = receipt.status {
+                    1
+                } else {
+                    0
+                },
+            }
+        }
+    }
+
+    impl Encodable for EthereumReceipt {
+        fn rlp_append(&self, s: &mut RlpStream) {
+            s.begin_list(4);
+            s.append(&self.status);
+            s.append(&self.gas_used);
+            s.append(&self.log_bloom);
+            s.append_list(&self.logs);
+        }
+    }
+
+    impl Decodable for EthereumReceipt {
+        fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+            Ok(EthereumReceipt {
+                gas_used: rlp.val_at(1)?,
+                log_bloom: rlp.val_at(2)?,
+                logs: rlp.list_at(3)?,
+                status: rlp.val_at(0)?,
+            })
+        }
+    }
+
+    pub fn transactions_root<'a>(receipts: impl Iterator<Item = &'a TransactionReceipt>) -> H256 {
+        let mut trie = FixedMemoryTrieMut::default();
+        for (i, receipt) in receipts.enumerate() {
+            let transaction_in_receipt = &receipt.transaction;
+            trie.insert(&U256::from(i), transaction_in_receipt);
+        }
+        trie.root()
+    }
+
+    pub fn receipts_root<'a>(receipts: impl Iterator<Item = &'a TransactionReceipt>) -> H256 {
+        let mut trie = FixedMemoryTrieMut::default();
+        for (i, receipt) in receipts.enumerate() {
+            let ethereum_receipt: EthereumReceipt = receipt.into();
+            trie.insert(&U256::from(i), &ethereum_receipt);
+        }
+        trie.root()
+    }
+}
+
+pub fn empty_ommers_hash() -> H256 {
+    let encoded = rlp::encode_list::<_, H256>(&[]).to_vec();
+    let hash = H256::from_slice(Keccak256::digest(&encoded).as_slice());
+    hash
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     use quickcheck::{Arbitrary, Gen};
     use quickcheck_macros::quickcheck;
@@ -494,5 +674,176 @@ mod tests {
             data: vec![],
         };
         assert!(!log_entry_empty.is_log_match(&log))
+    }
+
+    #[test]
+    fn test_empty_ommers() {
+        let empty_ommers =
+            H256::from_str("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")
+                .unwrap();
+        assert!(empty_ommers_hash() == empty_ommers)
+    }
+
+    #[test]
+    fn block_1_testnet_legacy_rlp() {
+        let first_tx = crate::transactions::Transaction {
+            nonce: 0xc.into(),
+            gas_price: 0x1.into(),
+            gas_limit: 0x5448.into(),
+            value: U256::from_str("cb49b44ba602d800000").unwrap(),
+            input: vec![
+                0xb1, 0xd6, 0x92, 0x7a, 0x76, 0x2f, 0xea, 0xd9, 0x87, 0x56, 0xa1, 0x2b, 0x13, 0xb7,
+                0x1c, 0x64, 0x45, 0xf8, 0x3a, 0xfa, 0x25, 0x0d, 0x47, 0xc9, 0xc2, 0x29, 0x76, 0x93,
+                0x4a, 0x84, 0x02, 0xfc, 0xa1, 0x1b, 0x98, 0xe5,
+            ],
+            action: crate::transactions::TransactionAction::Call(
+                H160::from_str("56454c41532d434841494e000000000053574150").unwrap(),
+            ),
+            signature: crate::transactions::TransactionSignature {
+                v: 0x102,
+                r: H256::from_str(
+                    "649a29de0b5fce4e8063ae8a11138415bd82df7282618aebe0ec2d0d6c7cd174",
+                )
+                .unwrap(),
+                s: H256::from_str(
+                    "47d645e27d0d3d3b436cf7f209cabb8cae40c508ce372e3f7cf602cdfbb93b5c",
+                )
+                .unwrap(),
+            },
+        };
+        let tx_hash = first_tx.signing_hash();
+        let first_tx = crate::transactions::TransactionReceipt {
+            transaction: crate::transactions::TransactionInReceipt::Signed(first_tx),
+            block_number: 0x1,
+            index: 0x1,
+            logs: vec![],
+            logs_bloom: ethbloom::Bloom::zero(),
+            used_gas: 0x5448,
+            status: crate::ExitReason::Succeed(crate::ExitSucceed::Returned),
+        };
+
+        let transactions = vec![(tx_hash, first_tx)];
+        let block = BlockHeader::new(
+            H256::from_str("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap(),
+            0x11e1a300,
+            H256::from_str("de51bcb676b5b88624f3b9f57e8e5dcf8683d1ce61fd2bcc9ba390155311391c")
+                .unwrap(),
+            0x1,
+            0x5448,
+            0x607493ea,
+            0x0000000000000289,
+            H256::from_str("3a64b9f3f6ef73ee021782c41b95d4c2c6ed04c6c47613d65cdc545fec4287b5")
+                .unwrap(),
+            transactions.iter(),
+            BlockVersion::InitVersion,
+        );
+        assert_eq!(
+            block.hash(),
+            H256::from_str("99abf192da896d54e451601439d9e81b68f188f2289df2f8a5a61114469123db")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn block_1_testnet_newest_rlp_without_tx() {
+        let transactions = vec![];
+        let block = BlockHeader::new(
+            H256::from_str("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap(),
+            0x11e1a300,
+            H256::from_str("de51bcb676b5b88624f3b9f57e8e5dcf8683d1ce61fd2bcc9ba390155311391c")
+                .unwrap(),
+            0x1,
+            0x5448,
+            0x607493ea,
+            0x0000000000000289,
+            H256::from_str("3a64b9f3f6ef73ee021782c41b95d4c2c6ed04c6c47613d65cdc545fec4287b5")
+                .unwrap(),
+            transactions.iter(),
+            BlockVersion::VersionConsistentHashes,
+        );
+
+        use etc_block::HeaderHash;
+        let block_bytes = block.rlp_bytes();
+        println!("debug {:x}", block_bytes);
+        let rlp = etc_rlp::Rlp::new(&block_bytes);
+        let etc_header: etc_block::Header = rlp.as_val();
+        assert_eq!(etc_header.header_hash().as_ref(), block.hash().as_bytes());
+
+        assert_eq!(
+            block.hash(),
+            H256::from_str("81cb658d3064dabac80c1cc8a1832b39d2d8a1da6185146662eaa1b237a8e59d")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn block_1_testnet_newest_rlp_with_tx() {
+        let first_tx = crate::transactions::Transaction {
+            nonce: 0xc.into(),
+            gas_price: 0x1.into(),
+            gas_limit: 0x5448.into(),
+            value: U256::from_str("cb49b44ba602d800000").unwrap(),
+            input: vec![
+                0xb1, 0xd6, 0x92, 0x7a, 0x76, 0x2f, 0xea, 0xd9, 0x87, 0x56, 0xa1, 0x2b, 0x13, 0xb7,
+                0x1c, 0x64, 0x45, 0xf8, 0x3a, 0xfa, 0x25, 0x0d, 0x47, 0xc9, 0xc2, 0x29, 0x76, 0x93,
+                0x4a, 0x84, 0x02, 0xfc, 0xa1, 0x1b, 0x98, 0xe5,
+            ],
+            action: crate::transactions::TransactionAction::Call(
+                H160::from_str("56454c41532d434841494e000000000053574150").unwrap(),
+            ),
+            signature: crate::transactions::TransactionSignature {
+                v: 0x102,
+                r: H256::from_str(
+                    "649a29de0b5fce4e8063ae8a11138415bd82df7282618aebe0ec2d0d6c7cd174",
+                )
+                .unwrap(),
+                s: H256::from_str(
+                    "47d645e27d0d3d3b436cf7f209cabb8cae40c508ce372e3f7cf602cdfbb93b5c",
+                )
+                .unwrap(),
+            },
+        };
+        let tx_hash = first_tx.signing_hash();
+        let first_tx = crate::transactions::TransactionReceipt {
+            transaction: crate::transactions::TransactionInReceipt::Signed(first_tx),
+            block_number: 0x1,
+            index: 0x1,
+            logs: vec![],
+            logs_bloom: ethbloom::Bloom::zero(),
+            used_gas: 0x5448,
+            status: crate::ExitReason::Succeed(crate::ExitSucceed::Returned),
+        };
+
+        let transactions = vec![(tx_hash, first_tx)];
+        let block = BlockHeader::new(
+            H256::from_str("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap(),
+            0x11e1a300,
+            H256::from_str("de51bcb676b5b88624f3b9f57e8e5dcf8683d1ce61fd2bcc9ba390155311391c")
+                .unwrap(),
+            0x1,
+            0x5448,
+            0x607493ea,
+            0x0000000000000289,
+            H256::from_str("3a64b9f3f6ef73ee021782c41b95d4c2c6ed04c6c47613d65cdc545fec4287b5")
+                .unwrap(),
+            transactions.iter(),
+            BlockVersion::VersionConsistentHashes,
+        );
+
+        use etc_block::HeaderHash;
+        let block_bytes = block.rlp_bytes();
+        println!("debug {:x}", block_bytes);
+        let rlp = etc_rlp::Rlp::new(&block_bytes);
+        let etc_header: etc_block::Header = rlp.as_val();
+        assert_eq!(etc_header.header_hash().as_ref(), block.hash().as_bytes());
+
+        assert_eq!(
+            block.hash(),
+            H256::from_str("f876809374f63d085da228d82576dc7be56e942b88d769c2174c27cb5249a1ec")
+                .unwrap()
+        );
     }
 }

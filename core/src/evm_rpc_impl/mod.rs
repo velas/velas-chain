@@ -454,8 +454,7 @@ fn call(
         .expect("meta bank EVM state was poisoned");
 
     let evm_state = evm_state.clone();
-    let evm_state = match evm_state.new_from_parent(0) {
-        // TODO get timestamp from bank
+    let evm_state = match evm_state.new_from_parent(bank.clock().unix_timestamp, false) {
         evm_state::EvmState::Incomming(i) => i,
         evm_state::EvmState::Committed(_) => unreachable!(),
     };

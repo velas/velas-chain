@@ -160,23 +160,22 @@ impl RPCBlock {
             uncles: vec![],
         }
     }
-}
 
-impl From<RPCBlock> for evm_state::BlockHeader {
-    fn from(b: RPCBlock) -> Self {
-        Self {
-            state_root: b.state_root.0,
-            transactions_root: b.transactions_root.0,
-            receipts_root: b.receipts_root.0,
-            native_chain_hash: b.mix_hash.0,
-            native_chain_slot: b.nonce,
-            parent_hash: b.parent_hash.0,
+    pub fn into_native_block(&self, version: evm_state::BlockVersion) -> evm_state::BlockHeader {
+        evm_state::BlockHeader {
+            state_root: self.state_root.0,
+            transactions_root: self.transactions_root.0,
+            receipts_root: self.receipts_root.0,
+            native_chain_hash: self.mix_hash.0,
+            native_chain_slot: self.nonce,
+            parent_hash: self.parent_hash.0,
             transactions: vec![],
-            logs_bloom: b.logs_bloom,
-            block_number: b.number.0.as_u64(),
-            gas_limit: b.gas_limit.0.as_u64(),
-            gas_used: b.gas_used.0.as_u64(),
-            timestamp: b.timestamp.0,
+            logs_bloom: self.logs_bloom,
+            block_number: self.number.0.as_u64(),
+            gas_limit: self.gas_limit.0.as_u64(),
+            gas_used: self.gas_used.0.as_u64(),
+            timestamp: self.timestamp.0,
+            version,
         }
     }
 }

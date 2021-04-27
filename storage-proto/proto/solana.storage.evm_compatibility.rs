@@ -24,6 +24,8 @@ pub struct EvmBlockHeader {
     pub timestamp: u64,
     #[prost(uint64, tag = "12")]
     pub native_chain_slot: u64,
+    #[prost(uint64, tag = "13")]
+    pub version: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReceiptWithHash {

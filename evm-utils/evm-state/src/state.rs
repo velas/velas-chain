@@ -43,6 +43,7 @@ impl Committed {
             self.block.state_root,
             self.block.hash(),
             timestamp,
+            self.block.version,
         )
     }
 }
@@ -52,14 +53,16 @@ pub struct Incomming {
     pub block_number: BlockNum,
     pub timestamp: u64,
     pub used_gas: u64,
-    state_root: H256,
-    last_block_hash: H256,
+    pub(crate) state_root: H256,
+    pub(crate) last_block_hash: H256,
     /// Maybe::Nothing indicates removed account
-    state_updates: HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>,
+    pub(crate) state_updates: HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>,
 
     /// Transactions that was processed but wasn't committed.
-    /// Transactions should be ordered by execution order order on all validators.
-    executed_transactions: Vec<(H256, TransactionReceipt)>,
+    /// Transactions should be ordered by execution order on all validators.
+    pub(crate) executed_transactions: Vec<(H256, TransactionReceipt)>,
+    #[serde(deserialize_with = "crate::deserialize_utils::default_on_eof")]
+    pub(crate) block_version: BlockVersion,
 }
 
 impl Incomming {
@@ -68,12 +71,14 @@ impl Incomming {
         state_root: H256,
         last_block_hash: H256,
         timestamp: u64,
+        block_version: BlockVersion,
     ) -> Self {
         Incomming {
             block_number,
             timestamp,
             state_root,
             last_block_hash,
+            block_version,
             ..Default::default()
         }
     }
@@ -104,6 +109,7 @@ impl Incomming {
             slot,
             native_blockhash,
             committed_transactions.iter(),
+            self.block_version,
         );
         Committed {
             block,
@@ -118,6 +124,7 @@ impl Incomming {
             self.state_root,
             self.last_block_hash,
             self.timestamp,
+            self.block_version,
         );
         std::mem::replace(self, empty)
     }
@@ -504,6 +511,7 @@ impl EvmState {
         evm_genesis: impl AsRef<Path>,
         root_hash: H256,
         timestamp: u64,
+        spv_compatibility: bool,
     ) -> Result<Self, anyhow::Error> {
         let evm_state = evm_state.as_ref();
         if evm_state.is_dir() && evm_state.exists() {
@@ -513,21 +521,33 @@ impl EvmState {
         }
 
         KVS::restore_from(evm_genesis, &evm_state)?;
+        let version = if spv_compatibility {
+            BlockVersion::VersionConsistentHashes
+        } else {
+            BlockVersion::InitVersion
+        };
+
         Self::load_from(
             evm_state,
-            Incomming::new(1, root_hash, H256::zero(), timestamp),
+            Incomming::new(1, root_hash, H256::zero(), timestamp, version),
         )
     }
 
     /// Ignores all unapplied updates.
-    pub fn new_from_parent(&self, block_start_time: i64) -> Self {
-        let b = match self {
+    /// spv_compatibility - is oneway feature flag, if activated change current version from InitVersion to VersionConsistentHashes (dont change if version is feature).
+    pub fn new_from_parent(&self, block_start_time: i64, spv_compatibility: bool) -> Self {
+        let mut b = match self {
             EvmState::Committed(committed) => committed.next_incomming(block_start_time as u64),
             EvmState::Incomming(incomming) => EvmBackend {
                 state: incomming.state.new_update_time(block_start_time as u64),
                 kvs: incomming.kvs.clone(),
             },
         };
+
+        if spv_compatibility {
+            b.state.block_version.activate_spv_compatibility()
+        }
+
         EvmState::Incomming(b)
     }
 
@@ -657,6 +677,7 @@ impl Default for Incomming {
             executed_transactions: Vec::new(),
             used_gas: 0,
             timestamp: 0,
+            block_version: Default::default(),
         }
     }
 }
