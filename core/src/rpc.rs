@@ -1589,18 +1589,20 @@ impl JsonRpcRequestProcessor {
     pub fn get_evm_block_by_id(&self, id: evm_state::BlockNum) -> Option<(evm_state::Block, bool)> {
         let block = self.blockstore.get_evm_block(id).ok();
 
-        if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-            let bigtable_block = self
-                .runtime_handle
-                .block_on(bigtable_ledger_storage.get_evm_confirmed_full_block(id))
-                .ok();
+        if block.is_none() {
+            if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                let bigtable_block = self
+                    .runtime_handle
+                    .block_on(bigtable_ledger_storage.get_evm_confirmed_full_block(id))
+                    .ok();
 
-            // bigtable store only confirmed slots
-            return bigtable_block.map(|b| {
-                let above_our_chain = self.blockstore.last_root() < b.header.native_chain_slot;
-                // return confirmed if we have seen it before.
-                (b, !above_our_chain)
-            });
+                // bigtable store only confirmed slots
+                return bigtable_block.map(|b| {
+                    let above_our_chain = self.blockstore.last_root() < b.header.native_chain_slot;
+                    // return confirmed if we have seen it before.
+                    (b, !above_our_chain)
+                });
+            }
         }
         block
     }
