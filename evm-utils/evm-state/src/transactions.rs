@@ -72,6 +72,31 @@ impl Transaction {
         self.signing_rlp_append(&mut stream, chain_id);
         H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
     }
+
+    //
+    // R and S is a u256, and should be encoded as scalar.
+    // Remove this method when rpl_append will be fixed.
+    //
+    fn rlp_append_consistent(&self, stream: &mut RlpStream) {
+        let r = U256::from_big_endian(self.signature.r.as_bytes());
+        let s = U256::from_big_endian(self.signature.s.as_bytes());
+        stream.begin_list(9);
+        stream.append(&self.nonce);
+        stream.append(&self.gas_price);
+        stream.append(&self.gas_limit);
+        stream.append(&self.action);
+        stream.append(&self.value);
+        stream.append(&self.input);
+        stream.append(&self.signature.v);
+        stream.append(&r);
+        stream.append(&s);
+    }
+
+    pub fn tx_id_hash(&self) -> H256 {
+        let mut stream = RlpStream::new();
+        self.rlp_append_consistent(&mut stream);
+        H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -445,6 +470,19 @@ mod test {
         test_vector("f867088504a817c8088302e2489435353535353535353535353535353535353535358202008025a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c12a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c10", "0x9bddad43f934d313c2b79ca28a432dd2b7281029");
         test_vector("f867098504a817c809830334509435353535353535353535353535353535353535358202d98025a052f8f61201b2b11a78d6e866abc9c3db2ae8631fa656bfe5cb53668255367afba052f8f61201b2b11a78d6e866abc9c3db2ae8631fa656bfe5cb53668255367afb", "0x3c24d7329e92f84f08556ceb6df1cdb0104ca49f");
     }
+
+    #[test]
+    fn should_agree_with_vitalik_txid() {
+        let test_vector = |tx_data: &str, address: &'static str| {
+            let signed: Transaction =
+                rlp::decode(&hex::decode(tx_data).unwrap()).expect("decoding tx data failed");
+            assert_eq!(signed.tx_id_hash(), H256::from_str(&address[2..]).unwrap());
+        };
+
+        test_vector("f864808504a817c800825208943535353535353535353535353535353535353535808025a0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116da0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116d", "0xb1e2188bc490908a78184e4818dca53684167507417fdb4c09c2d64d32a9896a");
+        test_vector("f867088504a817c8088302e2489435353535353535353535353535353535353535358202008025a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c12a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c10", "0x588df025c4c2d757d3e314bd3dfbfe352687324e6b8557ad1731585e96928aed");
+    }
+    //
 
     #[test]
     fn should_recover_from_chain_specific_signing() {

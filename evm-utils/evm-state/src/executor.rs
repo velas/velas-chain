@@ -255,7 +255,7 @@ impl Executor {
         let input = evm_tx.input.clone();
         let value = evm_tx.value;
 
-        let tx_hash = evm_tx.signing_hash();
+        let tx_hash = evm_tx.tx_id_hash();
         let result = self.transaction_execute_raw(
             caller,
             nonce,
@@ -311,7 +311,7 @@ impl Executor {
     // TODO: Handle duplicates, statuses.
     fn register_tx_with_receipt(&mut self, tx: TransactionInReceipt, result: ExecutionResult) {
         let tx_hash = match &tx {
-            TransactionInReceipt::Signed(tx) => tx.signing_hash(),
+            TransactionInReceipt::Signed(tx) => tx.tx_id_hash(),
             TransactionInReceipt::Unsigned(tx) => {
                 tx.unsigned_tx.signing_hash(Some(self.config.chain_id))
             }
