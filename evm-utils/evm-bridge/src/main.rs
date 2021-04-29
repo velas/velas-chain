@@ -169,7 +169,7 @@ impl EvmBridge {
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
     fn send_tx(&self, tx: evm::Transaction) -> FutureEvmResult<Hex<H256>> {
-        let hash = tx.signing_hash();
+        let hash = tx.tx_id_hash();
         let bytes = bincode::serialize(&tx).unwrap();
 
         if bytes.len() > evm::TX_MTU {
@@ -422,8 +422,12 @@ impl ChainMockERPC for ChainMockErpcProxy {
         block: String,
         full: bool,
     ) -> EvmResult<Option<RPCBlock>> {
-        proxy_evm_rpc!(meta.rpc_client, EthGetBlockByNumber, block, full)
-            .map(|o: Option<_>| o.map(compatibility::patch_block))
+        if block == "0x0" {
+            Ok(Some(RPCBlock::default()))
+        } else {
+            proxy_evm_rpc!(meta.rpc_client, EthGetBlockByNumber, block, full)
+                .map(|o: Option<_>| o.map(compatibility::patch_block))
+        }
     }
 
     fn block_transaction_count_by_number(

@@ -165,9 +165,8 @@ impl ChainMockERPC for ChainMockErpcImpl {
             let txs = block
                 .transactions
                 .into_iter()
-                .map(|(_k, v)| v)
-                .filter_map(|receipt| {
-                    RPCTransaction::new_from_receipt(receipt, block_hash, chain_id).ok()
+                .filter_map(|(hash, receipt)| {
+                    RPCTransaction::new_from_receipt(receipt, hash, block_hash, chain_id).ok()
                 })
                 .collect();
             Either::Right(txs)
@@ -339,7 +338,7 @@ impl BasicERPC for BasicErpcImpl {
                 })?;
                 let block_hash = block.header.hash();
                 Some(RPCTransaction::new_from_receipt(
-                    receipt, block_hash, chain_id,
+                    receipt, tx_hash.0, block_hash, chain_id,
                 )?)
             }
             None => None,
@@ -360,7 +359,9 @@ impl BasicERPC for BasicErpcImpl {
                     }
                 })?;
                 let block_hash = block.header.hash();
-                Some(RPCReceipt::new_from_receipt(receipt, block_hash)?)
+                Some(RPCReceipt::new_from_receipt(
+                    receipt, tx_hash.0, block_hash,
+                )?)
             }
             None => None,
         })
