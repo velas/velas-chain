@@ -95,6 +95,36 @@ pub struct RPCBlock {
     pub extra_data: Bytes,
     pub uncles: Vec<Hex<H256>>,
 }
+impl Default for RPCBlock {
+    fn default() -> Self {
+        let empty_uncle: H256 =
+            H256::from_hex("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")
+                .unwrap();
+        RPCBlock {
+            number: U256::zero().into(),
+            hash: H256::zero().into(),
+            parent_hash: H256::repeat_byte(0xff).into(),
+            size: 0x100.into(),
+            gas_limit: U256::one().into(), // avoid divide by zero on explorer, if it calculate percent used.
+            gas_used: U256::zero().into(),
+            timestamp: 0.into(),
+            transactions: Either::Left(vec![]),
+            nonce: 0,
+            mix_hash: H256::zero().into(),
+            logs_bloom: ethbloom::Bloom::zero(), // H2048
+            transactions_root: H256::zero().into(),
+            state_root: H256::zero().into(),
+            receipts_root: H256::zero().into(),
+            is_finalized: true,
+            miner: Address::zero().into(),
+            difficulty: U256::zero().into(),
+            total_difficulty: U256::zero().into(),
+            uncles: vec![],
+            extra_data: b"Velas EVM compatibility layer...".to_vec().into(),
+            sha3_uncles: Hex(empty_uncle),
+        }
+    }
+}
 
 impl RPCBlock {
     pub fn new_from_head(
@@ -577,83 +607,79 @@ pub mod bridge {
 impl RPCTransaction {
     pub fn new_from_receipt(
         receipt: evm_state::transactions::TransactionReceipt,
+        tx_hash: H256,
         block_hash: H256,
         chain_id: u64,
     ) -> Result<Self, crate::Error> {
-        let (to, creates, hash, from, gas_limit, gas_price, input, value, nonce, v, r, s) =
-            match receipt.transaction {
-                TransactionInReceipt::Signed(tx) => {
-                    let hash = tx.signing_hash();
-                    let from = tx.caller().with_context(|| EvmStateError)?;
-                    let gas_limit = tx.gas_limit;
-                    let gas_price = tx.gas_price;
-                    let input = tx.input;
-                    let value = tx.value;
-                    let nonce = tx.nonce;
-                    let (to, creates) = match tx.action {
-                        evm_state::transactions::TransactionAction::Call(address) => {
-                            (Some(address), None)
-                        }
-                        evm_state::transactions::TransactionAction::Create => (
-                            None,
-                            Some(
-                                evm_state::transactions::TransactionAction::Create
-                                    .address(from, nonce),
-                            ),
+        let (to, creates, from, gas_limit, gas_price, input, value, nonce, v, r, s) = match receipt
+            .transaction
+        {
+            TransactionInReceipt::Signed(tx) => {
+                let from = tx.caller().with_context(|| EvmStateError)?;
+                let gas_limit = tx.gas_limit;
+                let gas_price = tx.gas_price;
+                let input = tx.input;
+                let value = tx.value;
+                let nonce = tx.nonce;
+                let (to, creates) = match tx.action {
+                    evm_state::transactions::TransactionAction::Call(address) => {
+                        (Some(address), None)
+                    }
+                    evm_state::transactions::TransactionAction::Create => (
+                        None,
+                        Some(
+                            evm_state::transactions::TransactionAction::Create.address(from, nonce),
                         ),
-                    };
-                    (
-                        to,
-                        creates,
-                        hash,
-                        from,
-                        gas_limit,
-                        gas_price,
-                        input,
-                        value,
-                        nonce,
-                        tx.signature.v,
-                        tx.signature.r.as_bytes().into(),
-                        tx.signature.s.as_bytes().into(),
-                    )
-                }
-                TransactionInReceipt::Unsigned(tx) => {
-                    let hash = tx.unsigned_tx.signing_hash(tx.chain_id);
-                    let from = tx.caller;
-                    let gas_limit = tx.unsigned_tx.gas_limit;
-                    let gas_price = tx.unsigned_tx.gas_price;
-                    let input = tx.unsigned_tx.input;
-                    let value = tx.unsigned_tx.value;
-                    let nonce = tx.unsigned_tx.nonce;
-                    let (to, creates) = match tx.unsigned_tx.action {
-                        evm_state::transactions::TransactionAction::Call(address) => {
-                            (Some(address), None)
-                        }
-                        evm_state::transactions::TransactionAction::Create => (
-                            None,
-                            Some(
-                                evm_state::transactions::TransactionAction::Create
-                                    .address(from, nonce),
-                            ),
+                    ),
+                };
+                (
+                    to,
+                    creates,
+                    from,
+                    gas_limit,
+                    gas_price,
+                    input,
+                    value,
+                    nonce,
+                    tx.signature.v,
+                    tx.signature.r.as_bytes().into(),
+                    tx.signature.s.as_bytes().into(),
+                )
+            }
+            TransactionInReceipt::Unsigned(tx) => {
+                let from = tx.caller;
+                let gas_limit = tx.unsigned_tx.gas_limit;
+                let gas_price = tx.unsigned_tx.gas_price;
+                let input = tx.unsigned_tx.input;
+                let value = tx.unsigned_tx.value;
+                let nonce = tx.unsigned_tx.nonce;
+                let (to, creates) = match tx.unsigned_tx.action {
+                    evm_state::transactions::TransactionAction::Call(address) => {
+                        (Some(address), None)
+                    }
+                    evm_state::transactions::TransactionAction::Create => (
+                        None,
+                        Some(
+                            evm_state::transactions::TransactionAction::Create.address(from, nonce),
                         ),
-                    };
-                    let v = chain_id * 2 + 35;
-                    (
-                        to,
-                        creates,
-                        hash,
-                        from,
-                        gas_limit,
-                        gas_price,
-                        input,
-                        value,
-                        nonce,
-                        v,
-                        U256::zero(),
-                        U256::zero(),
-                    )
-                }
-            };
+                    ),
+                };
+                let v = chain_id * 2 + 35;
+                (
+                    to,
+                    creates,
+                    from,
+                    gas_limit,
+                    gas_price,
+                    input,
+                    value,
+                    nonce,
+                    v,
+                    U256::zero(),
+                    U256::zero(),
+                )
+            }
+        };
         Ok(RPCTransaction {
             from: Some(from.into()),
             to: to.map(Hex),
@@ -663,7 +689,7 @@ impl RPCTransaction {
             value: Some(value.into()),
             input: Some(input.into()),
             nonce: Some(nonce.into()),
-            hash: Some(hash.into()),
+            hash: Some(tx_hash.into()),
             transaction_index: Some((receipt.index as usize).into()),
             block_hash: Some(block_hash.into()),
             block_number: Some(Hex(receipt.block_number.into())),
@@ -677,9 +703,10 @@ impl RPCTransaction {
 impl RPCReceipt {
     pub fn new_from_receipt(
         receipt: evm_state::transactions::TransactionReceipt,
+        tx_hash: H256,
         block_hash: H256,
     ) -> Result<Self, crate::Error> {
-        let (from, to, contract_address, tx_hash) = match receipt.transaction {
+        let (from, to, contract_address) = match receipt.transaction {
             TransactionInReceipt::Signed(tx) => {
                 let from = tx.caller().with_context(|| EvmStateError)?;
                 let nonce = tx.nonce;
@@ -694,9 +721,7 @@ impl RPCReceipt {
                         ),
                     ),
                 };
-
-                let hash = tx.signing_hash();
-                (from, to, creates, hash)
+                (from, to, creates)
             }
             TransactionInReceipt::Unsigned(tx) => {
                 let from = tx.caller;
@@ -713,8 +738,7 @@ impl RPCReceipt {
                     ),
                 };
 
-                let hash = tx.unsigned_tx.signing_hash(tx.chain_id);
-                (from, to, creates, hash)
+                (from, to, creates)
             }
         };
 
