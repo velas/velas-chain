@@ -4,8 +4,9 @@
 pub use crate::{blockstore_db::BlockstoreError, blockstore_meta::SlotMeta};
 use crate::{
     blockstore_db::{
-        columns as cf, AccessType, BlockstoreRecoveryMode, Column, Database, IteratorDirection,
-        IteratorMode, LedgerColumn, Result, WriteBatch,
+        columns as cf, AccessType, BlockstoreRecoveryMode, Column, Database,
+        EvmTransactionReceiptsIndex, IteratorDirection, IteratorMode, LedgerColumn, Result,
+        WriteBatch,
     },
     blockstore_meta::*,
     entry::{create_ticks, Entry},
@@ -1892,7 +1893,11 @@ impl Blockstore {
 
         let mut txs = Vec::new();
         for hash in &block_header.transactions {
-            let tx = self.read_evm_transaction((*hash, block_header.block_number))?;
+            let tx = self.read_evm_transaction((
+                *hash,
+                block_header.block_number,
+                Some(block_header.native_chain_slot),
+            ))?;
             if let Some(tx) = tx {
                 txs.push((*hash, tx))
             } else {
@@ -2561,22 +2566,37 @@ impl Blockstore {
         }
     }
 
+    /// Try to search for evm transaction in next indexes:
+    /// 1. When primary index = 0 and slot is Some,
+    /// 2. When primary index = 1 and slot is Some,
+    /// 3. When primary index = 0 and slot is None,
+    /// 4. When primary index = 1 and slot is None
+
     pub fn read_evm_transaction(
         &self,
-        index: (H256, Slot),
+        index: (H256, evm::BlockNum, Option<Slot>),
     ) -> Result<Option<evm::TransactionReceipt>> {
-        let (signature, slot) = index;
-        let result = self
-            .evm_transactions_cf
-            .get_protobuf_or_bincode::<evm::TransactionReceipt>((0, signature, slot))?;
-        if result.is_none() {
-            Ok(self
-                .evm_transactions_cf
-                .get_protobuf_or_bincode::<evm::TransactionReceipt>((1, signature, slot))?
-                .and_then(|meta| meta.try_into().ok()))
-        } else {
-            Ok(result.and_then(|meta| meta.try_into().ok()))
+        let (hash, block_num, slot) = index;
+        // search transaction in 0 | 1 primary indexes, with and without slot.
+        for slot in slot.map(Some).into_iter().chain(Some(None)) {
+            for primary_index in 0..=1 {
+                if let Some(tx) = self
+                    .evm_transactions_cf
+                    .get_protobuf_or_bincode::<evm::TransactionReceipt>(
+                        EvmTransactionReceiptsIndex {
+                            index: primary_index,
+                            hash,
+                            block_num,
+                            slot,
+                        },
+                    )?
+                    .and_then(|meta| meta.try_into().ok())
+                {
+                    return Ok(Some(tx));
+                }
+            }
         }
+        Ok(None)
     }
 
     pub fn filter_logs(&self, filter: evm::LogFilter) -> Result<Vec<evm::LogWithLocation>> {
@@ -2602,7 +2622,11 @@ impl Blockstore {
             }
 
             for (id, hash) in block.transactions.iter().enumerate() {
-                let tx = self.read_evm_transaction((*hash, block.block_number))?;
+                let tx = self.read_evm_transaction((
+                    *hash,
+                    block.block_number,
+                    Some(block.native_chain_slot),
+                ))?;
                 let tx = if let Some(tx) = tx {
                     tx
                 } else {
@@ -2642,36 +2666,86 @@ impl Blockstore {
     }
 
     pub fn find_evm_transaction(&self, hash: H256) -> Result<Option<evm::TransactionReceipt>> {
-        // collect all transactions by hash, from both primary indexes (0 | 1).
+        // collect all transactions by hash, from both primary indexes (0 | 1), for any blocks.
         let mut transactions: Vec<_> = self
             .evm_transactions_cf
-            .iter(IteratorMode::From((0, hash, 0), IteratorDirection::Forward))?
-            .take_while(|((_, found_hash, _block), _data)| *found_hash == hash)
+            .iter(IteratorMode::From(
+                EvmTransactionReceiptsIndex {
+                    index: 0,
+                    hash,
+                    block_num: 0,
+                    slot: None,
+                },
+                IteratorDirection::Forward,
+            ))?
+            .take_while(
+                |(
+                    EvmTransactionReceiptsIndex {
+                        hash: found_hash, ..
+                    },
+                    _data,
+                )| *found_hash == hash,
+            )
             .collect();
         transactions.extend(
             self.evm_transactions_cf
-                .iter(IteratorMode::From((1, hash, 0), IteratorDirection::Forward))?
-                .take_while(|((_, found_hash, _block), _data)| *found_hash == hash),
+                .iter(IteratorMode::From(
+                    EvmTransactionReceiptsIndex {
+                        index: 1,
+                        hash,
+                        block_num: 0,
+                        slot: None,
+                    },
+                    IteratorDirection::Forward,
+                ))?
+                .take_while(
+                    |(
+                        EvmTransactionReceiptsIndex {
+                            hash: found_hash, ..
+                        },
+                        _data,
+                    )| *found_hash == hash,
+                ),
         );
-        let mut confirmed_transaction_data = None;
 
-        // find transactions which blocks are confirmed.
-        for ((_p, found_hash, block_num), data) in &transactions {
-            let blocks = if let Ok(b) = self.evm_blocks_iterator(*block_num) {
-                b
-            } else {
-                continue;
-            };
-            let confirmed_block_found = blocks
-                .take_while(|((block_index, _slot), _block)| block_index == block_num)
-                .any(|(_, header)| {
-                    self.is_root(header.native_chain_slot)
-                        && header.transactions.contains(found_hash)
-                });
+        // find first transaction with confirmed slot
+        let mut confirmed_transaction_data = transactions
+            .iter()
+            .find(|(EvmTransactionReceiptsIndex { slot, .. }, _)| {
+                if let Some(slot) = slot {
+                    if self.is_root(*slot) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .map(|(_, data)| data);
 
-            if confirmed_block_found {
-                confirmed_transaction_data = Some(data);
-                break;
+        if confirmed_transaction_data.is_none() {
+            // find transactions with confirmed blocks. (Old version of db where is no slot for transaction)
+            // need to remove it later.
+            for (
+                EvmTransactionReceiptsIndex {
+                    hash, block_num, ..
+                },
+                data,
+            ) in &transactions
+            {
+                let blocks = if let Ok(b) = self.evm_blocks_iterator(*block_num) {
+                    b
+                } else {
+                    continue;
+                };
+                let confirmed_block_found = blocks
+                    .take_while(|((block_index, _slot), _block)| block_index == block_num)
+                    .any(|(_, header)| {
+                        self.is_root(header.native_chain_slot) && header.transactions.contains(hash)
+                    });
+
+                if confirmed_block_found {
+                    confirmed_transaction_data = Some(data);
+                    break;
+                }
             }
         }
 
@@ -2695,18 +2769,25 @@ impl Blockstore {
 
     pub fn write_evm_transaction(
         &self,
-        block_number: evm_state::BlockNum,
+        block_num: evm_state::BlockNum,
+        slot_index: Slot,
         hash: H256,
         status: evm::TransactionReceipt,
     ) -> Result<()> {
         // reuse mechanism of transaction_status_index_cf gating
         let mut w_active_transaction_status_index =
             self.active_transaction_status_index.write().unwrap();
-        let primary_index =
-            self.get_primary_index(block_number, &mut w_active_transaction_status_index)?;
+        let index = self.get_primary_index(block_num, &mut w_active_transaction_status_index)?;
         let status = status.into();
-        self.evm_transactions_cf
-            .put_protobuf((primary_index, hash, block_number), &status)?;
+        self.evm_transactions_cf.put_protobuf(
+            EvmTransactionReceiptsIndex {
+                index,
+                hash,
+                block_num,
+                slot: Some(slot_index),
+            },
+            &status,
+        )?;
         Ok(())
     }
     /// Returns the entry vector for the slot starting with `shred_start_index`

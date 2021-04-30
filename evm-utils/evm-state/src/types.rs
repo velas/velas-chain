@@ -361,21 +361,19 @@ impl BlockHeader {
                 transaction_roots::transactions_root(transaction_receipts.iter().map(|(_, tx)| tx)),
             ),
         };
-
         BlockHeader {
             parent_hash,
-            gas_limit,
-            block_number,
-            gas_used,
             state_root,
-            timestamp,
-            native_chain_slot,
             native_chain_hash,
             transactions,
-            logs_bloom,
-            // TODO: Add real transaction receipts and transaction list
-            receipts_root,
             transactions_root,
+            receipts_root,
+            logs_bloom,
+            block_number,
+            gas_limit,
+            gas_used,
+            timestamp,
+            native_chain_slot,
             version,
         }
     }

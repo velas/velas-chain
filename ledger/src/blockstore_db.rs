@@ -170,6 +170,14 @@ pub mod columns {
     pub struct EvmTransactionReceipts;
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EvmTransactionReceiptsIndex {
+    pub index: u64,
+    pub hash: H256,
+    pub block_num: evm_state::BlockNum,
+    pub slot: Option<Slot>,
+}
+
 pub enum AccessType {
     PrimaryOnly,
     PrimaryOnlyForMaintenance, // this indicates no compaction
@@ -746,22 +754,25 @@ impl Column for columns::EvmBlockHeader {
     type Index = (evm_state::BlockNum, Option<Slot>);
 
     fn key((block, slot): (evm_state::BlockNum, Option<Slot>)) -> Vec<u8> {
-        if let Some(slot) = slot {
+        let mut key = if let Some(slot) = slot {
             let mut key = vec![0; 16];
-            BigEndian::write_u64(&mut key[..8], block);
             BigEndian::write_u64(&mut key[8..], slot);
             key
         } else {
             // old type of index
-            let mut key = vec![0; 8];
-            BigEndian::write_u64(&mut key[..8], block);
+            let key = vec![0; 8];
             key
-        }
+        };
+        BigEndian::write_u64(&mut key[..8], block);
+        key
     }
 
     fn index(key: &[u8]) -> (evm_state::BlockNum, Option<Slot>) {
+        if key.len() < 8 {
+            return (0, None);
+        }
         let block = BigEndian::read_u64(&key[..8]);
-        if key.len() == 8 {
+        if key.len() < 16 {
             // old type of index, without slots, should be unique.
             return (block, None);
         }
@@ -832,33 +843,66 @@ impl ProtobufColumn for columns::EvmHeaderIndexByHash {
 }
 
 impl Column for columns::EvmTransactionReceipts {
-    type Index = (u64, H256, Slot);
+    type Index = EvmTransactionReceiptsIndex;
 
-    fn key((index, hash, slot): (u64, H256, Slot)) -> Vec<u8> {
-        let mut key = vec![0; 8 + 32 + 8]; // size_of u64 + size_of HASH + size_of Slot
+    fn key(
+        EvmTransactionReceiptsIndex {
+            index,
+            hash,
+            block_num,
+            slot,
+        }: EvmTransactionReceiptsIndex,
+    ) -> Vec<u8> {
+        let mut key = if let Some(slot) = slot {
+            let mut key = vec![0; 8 + 32 + 8 + 8]; // size_of u64 + size_of HASH + size_of BlockNum + size_of Slot
+            BigEndian::write_u64(&mut key[48..56], slot);
+            key
+        } else {
+            let key = vec![0; 8 + 32 + 8]; // size_of u64 + size_of HASH + size_of BlockNum
+            key
+        };
         BigEndian::write_u64(&mut key[0..8], index);
         key[8..40].clone_from_slice(&hash.as_bytes()[0..32]);
-        BigEndian::write_u64(&mut key[40..48], slot);
+        BigEndian::write_u64(&mut key[40..48], block_num);
         key
     }
 
-    fn index(key: &[u8]) -> (u64, H256, Slot) {
-        if key.len() != 48 {
-            Self::as_index(0)
-        } else {
-            let index = BigEndian::read_u64(&key[0..8]);
-            let hash = H256::from_slice(&key[8..40]);
-            let slot = BigEndian::read_u64(&key[40..48]);
-            (index, hash, slot)
+    fn index(key: &[u8]) -> EvmTransactionReceiptsIndex {
+        if key.len() < 48 {
+            return Self::as_index(0);
+        }
+
+        let index = BigEndian::read_u64(&key[0..8]);
+        let hash = H256::from_slice(&key[8..40]);
+        let block_num = BigEndian::read_u64(&key[40..48]);
+        if key.len() < 56 {
+            return EvmTransactionReceiptsIndex {
+                index,
+                hash,
+                block_num,
+                slot: None,
+            };
+        }
+        let slot = BigEndian::read_u64(&key[48..56]);
+        EvmTransactionReceiptsIndex {
+            index,
+            hash,
+            block_num,
+            slot: Some(slot),
         }
     }
 
     fn primary_index(index: Self::Index) -> u64 {
-        index.0
+        index.index
     }
 
     fn as_index(index: u64) -> Self::Index {
-        (index, H256::default(), 0)
+        EvmTransactionReceiptsIndex {
+            index,
+            hash: H256::default(),
+            block_num: 0,
+            slot: None,
+        }
     }
 }
 

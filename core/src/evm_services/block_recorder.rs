@@ -54,7 +54,12 @@ impl EvmRecorderService {
             .expect("Expected database write to succed");
         for (hash, tx) in block.transactions {
             blockstore
-                .write_evm_transaction(block_header.block_number, hash, tx)
+                .write_evm_transaction(
+                    block_header.block_number,
+                    block_header.native_chain_slot,
+                    hash,
+                    tx,
+                )
                 .expect("Expected database write to succed");
         }
         Ok(())
