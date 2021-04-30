@@ -42,7 +42,12 @@ pub fn modify_block(
         .expect("Expected database write to succed");
     for (hash, tx) in block.transactions {
         blockstore
-            .write_evm_transaction(block.header.block_number, hash, tx)
+            .write_evm_transaction(
+                block.header.block_number,
+                block.header.native_chain_slot,
+                hash,
+                tx,
+            )
             .expect("Expected database write to succed");
     }
     Ok(())
