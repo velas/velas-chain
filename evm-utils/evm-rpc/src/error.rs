@@ -52,6 +52,7 @@ pub enum Error {
     NativeRpcError {
         details: String,
         source: anyhow::Error,
+        verbose: bool,
     },
 
     #[snafu(display("Error in evm processing layer"))]
@@ -128,7 +129,15 @@ impl From<Error> for JRpcError {
             Error::NativeRpcError {
                 source: _source,
                 details,
-            } => internal_error_with_details(NATIVE_RPC_ERROR, &err, &details),
+                verbose,
+            } => {
+                if *verbose {
+                    // in verbose mode, print full details in message, and ignore original message.
+                    internal_error_with_details(NATIVE_RPC_ERROR, &details, &"")
+                } else {
+                    internal_error_with_details(NATIVE_RPC_ERROR, &err, &details)
+                }
+            }
             Error::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &err),
             Error::StateNotFoundForBlock { .. } => internal_error(STATE_NOT_FOUND_RPC_ERROR, &err),
             Error::KeyNotFound { .. } => internal_error(KEY_NOT_FOUND_RPC_ERROR, &err),
@@ -142,7 +151,7 @@ impl From<Error> for JRpcError {
 }
 
 pub trait IntoNativeRpcError<T> {
-    fn into_native_error(self) -> Result<T, Error>;
+    fn into_native_error(self, verbose: bool) -> Result<T, Error>;
 }
 
 impl<T, Err> IntoNativeRpcError<T> for Result<T, Err>
@@ -150,7 +159,7 @@ where
     anyhow::Error: From<Err>,
     Err: std::fmt::Debug,
 {
-    fn into_native_error(self) -> Result<T, Error> {
+    fn into_native_error(self, verbose: bool) -> Result<T, Error> {
         match self {
             Ok(ok) => Ok(ok),
             Err(e) => {
@@ -158,6 +167,7 @@ where
                 Err(Error::NativeRpcError {
                     source: anyhow::Error::from(e),
                     details,
+                    verbose,
                 })
             }
         }
