@@ -1,3 +1,11 @@
+use std::{collections::HashMap, convert::TryFrom};
+
+use inflector::Inflector;
+use serde_json::Value;
+use thiserror::Error;
+
+use solana_sdk::{instruction::InstructionError, pubkey::Pubkey, system_program, sysvar};
+
 use crate::{
     parse_bpf_loader::parse_bpf_upgradeable_loader,
     parse_config::parse_config,
@@ -5,18 +13,8 @@ use crate::{
     parse_stake::parse_stake,
     parse_sysvar::parse_sysvar,
     parse_token::{parse_token, spl_token_id_v2_0},
-    parse_velas_account::parse_velas_account,
     parse_vote::parse_vote,
 };
-use inflector::Inflector;
-use serde_json::Value;
-use solana_sdk::{instruction::InstructionError, pubkey::Pubkey, system_program, sysvar};
-use std::collections::HashMap;
-use thiserror::Error;
-
-pub mod velas_account {
-    solana_sdk::declare_id!("VAcccHVjpknkW5N5R9sfRppQxYJrJYVV7QJGKchkQj5");
-}
 
 lazy_static! {
     static ref BPF_UPGRADEABLE_LOADER_PROGRAM_ID: Pubkey = solana_sdk::bpf_loader_upgradeable::id();
@@ -26,8 +24,7 @@ lazy_static! {
     static ref SYSVAR_PROGRAM_ID: Pubkey = sysvar::id();
     static ref TOKEN_PROGRAM_ID: Pubkey = spl_token_id_v2_0();
     static ref VOTE_PROGRAM_ID: Pubkey = solana_vote_program::id();
-    static ref VELAS_ACCOUNT_PROGRAM_ID: Pubkey = velas_account::id();
-
+    static ref VELAS_ACCOUNT_PROGRAM_ID: Pubkey = velas_account_program::id();
     pub static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableAccount> = {
         let mut m = HashMap::new();
         m.insert(
@@ -61,6 +58,16 @@ pub enum ParseAccountError {
 
     #[error("Serde json error")]
     SerdeJsonError(#[from] serde_json::error::Error),
+}
+
+impl From<velas_account_program::ParseError> for ParseAccountError {
+    fn from(err: velas_account_program::ParseError) -> Self {
+        match err {
+            velas_account_program::ParseError::AccountNotParsable => {
+                Self::AccountNotParsable(ParsableAccount::VelasAccount)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -111,7 +118,9 @@ pub fn parse_account_data(
         ParsableAccount::Stake => serde_json::to_value(parse_stake(data)?)?,
         ParsableAccount::Sysvar => serde_json::to_value(parse_sysvar(data, pubkey)?)?,
         ParsableAccount::Vote => serde_json::to_value(parse_vote(data)?)?,
-        ParsableAccount::VelasAccount => serde_json::to_value(parse_velas_account(data)?)?,
+        ParsableAccount::VelasAccount => {
+            serde_json::to_value(velas_account_program::VelasAccountType::try_from(data)?)?
+        }
     };
     Ok(ParsedAccount {
         program: format!("{:?}", program_name).to_kebab_case(),

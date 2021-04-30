@@ -1,0 +1,24 @@
+[package]
+name = "velas-account-program"
+version = "0.0.1"
+edition = "2018"
+
+
+[build-dependencies]
+rustc_version = "0.2"
+
+[lib]
+crate-type = ["lib"]
+name = "velas_account_program"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+
+[dependencies]
+borsh = "0.8.1"
+borsh-derive = "0.8.1"
+serde = { version = "1.0.125", features = ["derive"] }
+
+solana-sdk = { path = "../../sdk", version = "1.5.14" }
+

@@ -58,6 +58,7 @@ members = [
     "programs/stake",
     "programs/vest",
     "programs/vote",
+    "programs/velas-account-program",
     "remote-wallet",
     "ramp-tps",
     "runtime",

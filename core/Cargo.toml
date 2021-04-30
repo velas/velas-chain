@@ -74,6 +74,7 @@ solana-sys-tuner = { path = "../sys-tuner", version = "1.5.14" }
 solana-transaction-status = { path = "../transaction-status", version = "1.5.14" }
 solana-version = { path = "../version" }
 solana-vote-program = { path = "../programs/vote", version = "1.5.14" }
+velas-account-program = { path = "../programs/velas-account-program" }
 spl-token-v2-0 = { package = "spl-token", version = "=3.1.0", features = ["no-entrypoint"] }
 hex = "0.4.2"
 rlp = "0.5"

@@ -1,29 +1,9 @@
-use crate::{
-    contains::Contains,
-    inline_spl_token_v2_0::{self, SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
-    secondary_index::*,
-};
-use dashmap::DashSet;
-use log::*;
-use ouroboros::self_referencing;
-use solana_account_decoder::{
-    parse_account_data::velas_account,
-    parse_velas_account::{
-        parse_velas_account,
-        velas_account::{VAccountInfo, VAccountStorage},
-        VelasAccountType,
-    },
-};
-use solana_measure::measure::Measure;
-use solana_sdk::{
-    clock::Slot,
-    pubkey::{Pubkey, PUBKEY_BYTES},
-};
 use std::{
     collections::{
         btree_map::{self, BTreeMap},
         HashMap, HashSet,
     },
+    convert::TryFrom,
     ops::{
         Bound,
         Bound::{Excluded, Included, Unbounded},
@@ -33,6 +13,25 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, RwLock, RwLockReadGuard, RwLockWriteGuard,
     },
+};
+
+use dashmap::DashSet;
+use log::*;
+use ouroboros::self_referencing;
+
+use {
+    solana_measure::measure::Measure,
+    solana_sdk::{
+        clock::Slot,
+        pubkey::{Pubkey, PUBKEY_BYTES},
+    },
+    velas_account_program::{VAccountInfo, VAccountStorage, VelasAccountType},
+};
+
+use crate::{
+    contains::Contains,
+    inline_spl_token_v2_0::{self, SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
+    secondary_index::*,
 };
 
 pub const ITER_BATCH_SIZE: usize = 1000;
@@ -904,8 +903,8 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
             }
         }
 
-        if *account_owner == velas_account::id() {
-            match parse_velas_account(account_data) {
+        if *account_owner == velas_account_program::id() {
+            match VelasAccountType::try_from(account_data) {
                 Ok(VelasAccountType::Account(VAccountInfo { ref storage, .. })) => {
                     if account_indexes.contains(&AccountIndex::VelasAccountStorage) {
                         self.velas_account_storage_index
