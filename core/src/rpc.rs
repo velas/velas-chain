@@ -14,14 +14,10 @@ use bincode::{config::Options, serialize};
 use jsonrpc_core::{types::error, Error, Metadata, Result};
 use jsonrpc_derive::rpc;
 use solana_account_decoder::{
-    parse_account_data::velas_account,
     parse_account_data::AccountAdditionalData,
     parse_token::{
         get_token_account_mint, spl_token_id_v2_0, spl_token_v2_0_native_mint,
         token_amount_to_ui_amount, UiTokenAmount,
-    },
-    parse_velas_account::{
-        parse_velas_account, VelasAccountType, ACCOUNT_LEN as VELAS_ACCOUNT_SIZE,
     },
     UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig,
 };
@@ -81,6 +77,7 @@ use spl_token_v2_0::{
 use std::{
     cmp::{max, min},
     collections::{HashMap, HashSet},
+    convert::TryFrom,
     net::SocketAddr,
     str::FromStr,
     sync::{
@@ -91,6 +88,7 @@ use std::{
     time::Duration,
 };
 use tokio::runtime;
+use velas_account_program::{VelasAccountType, ACCOUNT_LEN as VELAS_ACCOUNT_SIZE};
 
 pub const MAX_REQUEST_PAYLOAD_SIZE: usize = 50 * (1 << 10); // 50kB
 pub const PERFORMANCE_SAMPLES_LIMIT: usize = 720;
@@ -1635,10 +1633,10 @@ impl JsonRpcRequestProcessor {
         storage_key: Pubkey,
     ) -> Vec<(Pubkey, Account)> {
         let is_target_velas_account = |account: &Account| -> bool {
-            account.owner == velas_account::id()
+            account.owner == velas_account_program::id()
                 && account.data.len() == VELAS_ACCOUNT_SIZE
                 && matches!(
-                    parse_velas_account(account.data.as_slice()),
+                    VelasAccountType::try_from(account.data.as_slice()),
                     Ok(VelasAccountType::Account(account_info)) if account_info.storage == storage_key)
         };
 
@@ -1652,7 +1650,10 @@ impl JsonRpcRequestProcessor {
                 is_target_velas_account,
             )
         } else {
-            bank.get_filtered_program_accounts(&velas_account::id(), is_target_velas_account)
+            bank.get_filtered_program_accounts(
+                &velas_account_program::id(),
+                is_target_velas_account,
+            )
         }
     }
 
@@ -1662,8 +1663,8 @@ impl JsonRpcRequestProcessor {
         owner_key: Pubkey,
     ) -> Vec<(Pubkey, Account)> {
         let is_target_velas_account_storage = |account: &Account| -> bool {
-            account.owner == velas_account::id()
-                && match parse_velas_account(account.data.as_slice()) {
+            account.owner == velas_account_program::id()
+                && match VelasAccountType::try_from(account.data.as_slice()) {
                     Ok(VelasAccountType::Storage(account_storage)) => {
                         account_storage.owners.contains(&owner_key)
                     }
@@ -1682,7 +1683,7 @@ impl JsonRpcRequestProcessor {
             )
         } else {
             bank.get_filtered_program_accounts(
-                &velas_account::id(),
+                &velas_account_program::id(),
                 is_target_velas_account_storage,
             )
         }
@@ -1694,8 +1695,8 @@ impl JsonRpcRequestProcessor {
         operational_key: Pubkey,
     ) -> Vec<(Pubkey, Account)> {
         let is_target_velas_account_storage = |account: &Account| -> bool {
-            account.owner == velas_account::id()
-                && match parse_velas_account(account.data.as_slice()) {
+            account.owner == velas_account_program::id()
+                && match VelasAccountType::try_from(account.data.as_slice()) {
                     Ok(VelasAccountType::Storage(account_storage)) => account_storage
                         .operationals
                         .iter()
@@ -1715,7 +1716,7 @@ impl JsonRpcRequestProcessor {
             )
         } else {
             bank.get_filtered_program_accounts(
-                &velas_account::id(),
+                &velas_account_program::id(),
                 is_target_velas_account_storage,
             )
         }
