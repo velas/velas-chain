@@ -2642,39 +2642,55 @@ impl Blockstore {
     }
 
     pub fn find_evm_transaction(&self, hash: H256) -> Result<Option<evm::TransactionReceipt>> {
-        if let Some(((_p, found_hash, _block), data)) = self
+        // collect all transactions by hash, from both primary indexes (0 | 1).
+        let mut transactions: Vec<_> = self
             .evm_transactions_cf
             .iter(IteratorMode::From((0, hash, 0), IteratorDirection::Forward))?
-            .next()
-        {
-            if found_hash == hash {
-                let tx = self
-                    .evm_transactions_cf
+            .take_while(|((_, found_hash, _block), _data)| *found_hash == hash)
+            .collect();
+        transactions.extend(
+            self.evm_transactions_cf
+                .iter(IteratorMode::From((1, hash, 0), IteratorDirection::Forward))?
+                .take_while(|((_, found_hash, _block), _data)| *found_hash == hash),
+        );
+        let mut confirmed_transaction_data = None;
+
+        // find transactions which blocks are confirmed.
+        for ((_p, found_hash, block_num), data) in &transactions {
+            let blocks = if let Ok(b) = self.evm_blocks_iterator(*block_num) {
+                b
+            } else {
+                continue;
+            };
+            let confirmed_block_found = blocks
+                .take_while(|((block_index, _slot), _block)| block_index == block_num)
+                .any(|(_, header)| {
+                    self.is_root(header.native_chain_slot)
+                        && header.transactions.contains(found_hash)
+                });
+
+            if confirmed_block_found {
+                confirmed_transaction_data = Some(data);
+                break;
+            }
+        }
+
+        // if no confirmed block found for transaction, return any tx.
+        let transaction_data =
+            confirmed_transaction_data.or_else(|| transactions.first().map(|(_, data)| data));
+
+        Ok(if let Some(data) = transaction_data {
+            Some(
+                self.evm_transactions_cf
                     .deserialize_protobuf_or_bincode::<evm::TransactionReceipt>(&data)?
                     .try_into()
                     .map_err(|e| {
                         BlockstoreError::ProtobufDecodeError(prost::DecodeError::new(e))
-                    })?;
-                return Ok(Some(tx));
-            }
-        }
-        if let Some(((_p, found_hash, _block), data)) = self
-            .evm_transactions_cf
-            .iter(IteratorMode::From((1, hash, 0), IteratorDirection::Forward))?
-            .next()
-        {
-            if found_hash == hash {
-                let tx = self
-                    .evm_transactions_cf
-                    .deserialize_protobuf_or_bincode::<evm::TransactionReceipt>(&data)?
-                    .try_into()
-                    .map_err(|e| {
-                        BlockstoreError::ProtobufDecodeError(prost::DecodeError::new(e))
-                    })?;
-                return Ok(Some(tx));
-            }
-        }
-        Ok(None)
+                    })?,
+            )
+        } else {
+            None
+        })
     }
 
     pub fn write_evm_transaction(
