@@ -552,8 +552,8 @@ mod test {
             input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
         };
 
-        let tx_hash = tx_call.signing_hash(Some(CHAIN_ID));
         let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
+        let tx_hash = tx_call.tx_id_hash();
 
         assert!(processor
             .process_instruction(
@@ -836,8 +836,8 @@ mod test {
             input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
         };
 
-        let tx_hash = tx_call.signing_hash(Some(CHAIN_ID));
         let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
+        let tx_hash = tx_call.tx_id_hash();
         {
             let mut executor_orig = evm_state::Executor::default_configs(state);
             let mut executor = Some(&mut executor_orig);
