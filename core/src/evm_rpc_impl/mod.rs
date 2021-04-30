@@ -425,7 +425,7 @@ impl BasicERPC for BasicErpcImpl {
                 debug!("filter_logs error = {:?}", e);
                 e
             })
-            .into_native_error()?;
+            .into_native_error(false)?;
         Ok(logs.into_iter().map(|l| l.into()).collect())
     }
 }

@@ -139,10 +139,17 @@ pub struct EvmBridge {
     key: solana_sdk::signature::Keypair,
     accounts: HashMap<evm_state::Address, evm_state::SecretKey>,
     rpc_client: RpcClient,
+    verbose_errors: bool,
 }
 
 impl EvmBridge {
-    fn new(evm_chain_id: u64, keypath: &str, evm_keys: Vec<SecretKey>, addr: String) -> Self {
+    fn new(
+        evm_chain_id: u64,
+        keypath: &str,
+        evm_keys: Vec<SecretKey>,
+        addr: String,
+        verbose_errors: bool,
+    ) -> Self {
         info!("EVM chain id {}", evm_chain_id);
 
         let accounts = evm_keys
@@ -164,6 +171,7 @@ impl EvmBridge {
             key: solana_sdk::signature::read_keypair_file(&keypath).unwrap(),
             accounts,
             rpc_client,
+            verbose_errors,
         }
     }
 
@@ -174,7 +182,7 @@ impl EvmBridge {
 
         if bytes.len() > evm::TX_MTU {
             debug!("Sending tx = {}, by chunks", hash);
-            match deploy_big_tx(&self.rpc_client, &self.key, &tx) {
+            match self.deploy_big_tx(&self.key, &tx) {
                 Ok(_tx) => return Ok(Hex(hash)),
                 Err(e) => {
                     error!("Error creating big tx = {}", e);
@@ -232,6 +240,7 @@ impl EvmBridge {
                 return Err(Error::NativeRpcError {
                     details: String::from("Failed to get recent blockhash"),
                     source: e.into(),
+                    verbose: self.verbose_errors,
                 })
             }
         };
@@ -248,7 +257,156 @@ impl EvmBridge {
                 },
             )
             .map(|_| Hex(hash))
-            .into_native_error()
+            .into_native_error(self.verbose_errors)
+    }
+
+    fn deploy_big_tx(
+        &self,
+        payer: &solana_sdk::signature::Keypair,
+        tx: &evm::Transaction,
+    ) -> EvmResult<()> {
+        let payer_pubkey = payer.pubkey();
+
+        let storage = solana_sdk::signature::Keypair::new();
+        let storage_pubkey = storage.pubkey();
+
+        let signers = [payer, &storage];
+
+        debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
+
+        let tx_bytes = bincode::serialize(&tx).into_native_error(self.verbose_errors)?;
+        debug!(
+            "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
+            storage_pubkey,
+            tx_bytes.len(),
+            TxChunks::new(tx_bytes.as_slice()).crc(),
+        );
+
+        let balance = self
+            .rpc_client
+            .get_minimum_balance_for_rent_exemption(tx_bytes.len())
+            .into_native_error(self.verbose_errors)?;
+
+        let (blockhash, _, _) = self
+            .rpc_client
+            .get_recent_blockhash_with_commitment(CommitmentConfig::finalized())
+            .into_native_error(self.verbose_errors)?
+            .value;
+
+        let create_storage_ix = system_instruction::create_account(
+            &payer_pubkey,
+            &storage_pubkey,
+            balance,
+            tx_bytes.len() as u64,
+            &solana_evm_loader_program::ID,
+        );
+
+        let allocate_storage_ix =
+            solana_evm_loader_program::big_tx_allocate(&storage_pubkey, tx_bytes.len());
+
+        let create_and_allocate_tx = solana::Transaction::new_signed_with_payer(
+            &[create_storage_ix, allocate_storage_ix],
+            Some(&payer_pubkey),
+            &signers,
+            blockhash,
+        );
+
+        debug!(
+            "Create and allocate tx signatures = {:?}",
+            create_and_allocate_tx.signatures
+        );
+
+        self.rpc_client
+            .send_and_confirm_transaction(&create_and_allocate_tx)
+            .map(|signature| {
+                debug!(
+                    "Create and allocate {} tx was done, signature = {:?}",
+                    storage_pubkey, signature
+                )
+            })
+            .map_err(|e| {
+                error!("Error create and allocate {} tx: {:?}", storage_pubkey, e);
+                e
+            })
+            .into_native_error(self.verbose_errors)?;
+
+        let (blockhash, _) = self
+            .rpc_client
+            .get_new_blockhash(&blockhash)
+            .into_native_error(self.verbose_errors)?;
+
+        let write_data_txs: Vec<solana::Transaction> = tx_bytes
+            // TODO: encapsulate
+            .chunks(evm_state::TX_MTU)
+            .enumerate()
+            .map(|(i, chunk)| {
+                solana_evm_loader_program::big_tx_write(
+                    &storage_pubkey,
+                    (i * evm_state::TX_MTU) as u64,
+                    chunk.to_vec(),
+                )
+            })
+            .map(|instruction| {
+                solana::Transaction::new_signed_with_payer(
+                    &[instruction],
+                    Some(&payer_pubkey),
+                    &signers,
+                    blockhash,
+                )
+            })
+            .collect();
+
+        debug!("Write data txs: {:?}", write_data_txs);
+
+        send_and_confirm_transactions(&self.rpc_client, write_data_txs, &signers)
+            .map(|_| debug!("All write txs for storage {} was done", storage_pubkey))
+            .map_err(|e| {
+                error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
+                e
+            })
+            .into_native_error(self.verbose_errors)?;
+
+        let (blockhash, _, _) = self
+            .rpc_client
+            .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+            .into_native_error(self.verbose_errors)?
+            .value;
+
+        let execute_tx = solana::Transaction::new_signed_with_payer(
+            &[solana_evm_loader_program::big_tx_execute(
+                &storage_pubkey,
+                Some(&payer_pubkey),
+            )],
+            Some(&payer_pubkey),
+            &signers,
+            blockhash,
+        );
+
+        debug!("Execute EVM transaction at storage {} ...", storage_pubkey);
+
+        let rpc_send_cfg = RpcSendTransactionConfig {
+            skip_preflight: false,
+            preflight_commitment: Some(CommitmentLevel::Processed),
+            ..Default::default()
+        };
+
+        self.rpc_client
+            .send_transaction_with_config(&execute_tx, rpc_send_cfg)
+            .map(|signature| {
+                debug!(
+                    "Execute EVM tx at {} was done, signature = {:?}",
+                    storage_pubkey, signature
+                )
+            })
+            .map_err(|e| {
+                error!("Execute EVM tx at {} failed: {:?}", storage_pubkey, e);
+                e
+            })
+            .into_native_error(self.verbose_errors)?;
+
+        // TODO: here we can transfer back lamports and delete storage
+
+        Ok(())
     }
 }
 
@@ -602,6 +760,7 @@ fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
         _ => evm_rpc::Error::NativeRpcError {
             details: format!("{:?}", client_error),
             source: client_error.into(),
+            verbose: false, // don't verbose native errors.
         },
     }
 }
@@ -1131,6 +1290,8 @@ struct Args {
     binding_address: SocketAddr,
     #[structopt(default_value = "57005")] // 0xdead
     evm_chain_id: u64,
+    #[structopt(long = "verbose-errors")]
+    verbose_errors: bool,
 }
 
 use jsonrpc_http_server::jsonrpc_core::*;
@@ -1175,6 +1336,7 @@ fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
         &keyfile_path,
         vec![evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap()],
         server_path,
+        args.verbose_errors,
     );
     let meta = Arc::new(meta);
     let mut io = MetaIoHandler::with_middleware(LoggingMiddleware);
@@ -1293,149 +1455,4 @@ fn send_and_confirm_transactions<T: Signers>(
         }
     }
     Err(anyhow::Error::msg("Transactions failed"))
-}
-
-fn deploy_big_tx(
-    rpc_client: &RpcClient,
-    payer: &solana_sdk::signature::Keypair,
-    tx: &evm::Transaction,
-) -> EvmResult<()> {
-    let payer_pubkey = payer.pubkey();
-
-    let storage = solana_sdk::signature::Keypair::new();
-    let storage_pubkey = storage.pubkey();
-
-    let signers = [payer, &storage];
-
-    debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
-
-    let tx_bytes = bincode::serialize(&tx).into_native_error()?;
-    debug!(
-        "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
-        storage_pubkey,
-        tx_bytes.len(),
-        TxChunks::new(tx_bytes.as_slice()).crc(),
-    );
-
-    let balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(tx_bytes.len())
-        .into_native_error()?;
-
-    let (blockhash, _, _) = rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::finalized())
-        .into_native_error()?
-        .value;
-
-    let create_storage_ix = system_instruction::create_account(
-        &payer_pubkey,
-        &storage_pubkey,
-        balance,
-        tx_bytes.len() as u64,
-        &solana_evm_loader_program::ID,
-    );
-
-    let allocate_storage_ix =
-        solana_evm_loader_program::big_tx_allocate(&storage_pubkey, tx_bytes.len());
-
-    let create_and_allocate_tx = solana::Transaction::new_signed_with_payer(
-        &[create_storage_ix, allocate_storage_ix],
-        Some(&payer_pubkey),
-        &signers,
-        blockhash,
-    );
-
-    debug!(
-        "Create and allocate tx signatures = {:?}",
-        create_and_allocate_tx.signatures
-    );
-
-    rpc_client
-        .send_and_confirm_transaction(&create_and_allocate_tx)
-        .map(|signature| {
-            debug!(
-                "Create and allocate {} tx was done, signature = {:?}",
-                storage_pubkey, signature
-            )
-        })
-        .map_err(|e| {
-            error!("Error create and allocate {} tx: {:?}", storage_pubkey, e);
-            e
-        })
-        .into_native_error()?;
-
-    let (blockhash, _) = rpc_client
-        .get_new_blockhash(&blockhash)
-        .into_native_error()?;
-
-    let write_data_txs: Vec<solana::Transaction> = tx_bytes
-        // TODO: encapsulate
-        .chunks(evm_state::TX_MTU)
-        .enumerate()
-        .map(|(i, chunk)| {
-            solana_evm_loader_program::big_tx_write(
-                &storage_pubkey,
-                (i * evm_state::TX_MTU) as u64,
-                chunk.to_vec(),
-            )
-        })
-        .map(|instruction| {
-            solana::Transaction::new_signed_with_payer(
-                &[instruction],
-                Some(&payer_pubkey),
-                &signers,
-                blockhash,
-            )
-        })
-        .collect();
-
-    debug!("Write data txs: {:?}", write_data_txs);
-
-    send_and_confirm_transactions(&rpc_client, write_data_txs, &signers)
-        .map(|_| debug!("All write txs for storage {} was done", storage_pubkey))
-        .map_err(|e| {
-            error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
-            e
-        })
-        .into_native_error()?;
-
-    let (blockhash, _, _) = rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
-        .into_native_error()?
-        .value;
-
-    let execute_tx = solana::Transaction::new_signed_with_payer(
-        &[solana_evm_loader_program::big_tx_execute(
-            &storage_pubkey,
-            Some(&payer_pubkey),
-        )],
-        Some(&payer_pubkey),
-        &signers,
-        blockhash,
-    );
-
-    debug!("Execute EVM transaction at storage {} ...", storage_pubkey);
-
-    let rpc_send_cfg = RpcSendTransactionConfig {
-        skip_preflight: false,
-        preflight_commitment: Some(CommitmentLevel::Processed),
-        ..Default::default()
-    };
-
-    rpc_client
-        .send_transaction_with_config(&execute_tx, rpc_send_cfg)
-        .map(|signature| {
-            debug!(
-                "Execute EVM tx at {} was done, signature = {:?}",
-                storage_pubkey, signature
-            )
-        })
-        .map_err(|e| {
-            error!("Execute EVM tx at {} failed: {:?}", storage_pubkey, e);
-            e
-        })
-        .into_native_error()?;
-
-    // TODO: here we can transfer back lamports and delete storage
-
-    Ok(())
 }
