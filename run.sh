@@ -113,6 +113,8 @@ args=(
     --snapshot-interval-slots 100
     --require-tower
     --account-index program-id
+    --account-index spl-token-owner
+    --account-index spl-token-mint
     --account-index velas-accounts-storages
     --account-index velas-accounts-owners
     --account-index velas-accounts-operationals
