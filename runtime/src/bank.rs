@@ -8433,7 +8433,7 @@ pub(crate) mod tests {
             }
 
             evm_state
-                .try_commit(bank0.slot(), bank0.last_blockhash().0, false)
+                .try_commit(bank0.slot(), bank0.last_blockhash().0)
                 .unwrap();
         }
         let pubkey: evm_state::H160 = H256::random().into();

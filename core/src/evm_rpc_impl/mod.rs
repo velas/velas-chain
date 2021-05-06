@@ -469,6 +469,7 @@ fn call(
         evm_state::ChainContext::new(last_hashes),
         estimate_config,
     );
+    error!("running evm executor with state = {:?}", executor);
 
     let result = if let Some(address) = tx.to {
         let address = address.0;
