@@ -132,15 +132,20 @@ impl RPCBlock {
         confirmed: bool,
         transactions: Either<Vec<Hex<H256>>, Vec<RPCTransaction>>,
     ) -> Self {
-        let empty_uncle: H256 =
-            H256::from_hex("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")
-                .unwrap();
+        let empty_uncle = evm_state::empty_ommers_hash();
         let block_hash = header.hash();
+        let extra_data = match header.version {
+            evm_state::BlockVersion::InitVersion => {
+                b"Velas EVM compatibility layer...".to_vec().into()
+            }
+            evm_state::BlockVersion::VersionConsistentHashes => {
+                b"Velas EVM compatibility layer...".to_vec().into()
+            }
+        };
         RPCBlock {
             number: U256::from(header.block_number).into(),
             hash: block_hash.into(),
             parent_hash: header.parent_hash.into(),
-            size: 0x100.into(),
             gas_limit: Hex(header.gas_limit.into()),
             gas_used: Hex(header.gas_used.into()),
             timestamp: Hex(header.timestamp),
@@ -151,11 +156,12 @@ impl RPCBlock {
             transactions_root: Hex(header.transactions_root),
             state_root: Hex(header.state_root),
             receipts_root: Hex(header.receipts_root),
+            extra_data,
             is_finalized: confirmed,
+            size: 0x100.into(),
             miner: Address::zero().into(),
             difficulty: U256::zero().into(),
             total_difficulty: U256::zero().into(),
-            extra_data: b"Velas EVM compatibility layer...".to_vec().into(),
             sha3_uncles: Hex(empty_uncle),
             uncles: vec![],
         }
