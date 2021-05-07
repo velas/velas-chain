@@ -112,12 +112,12 @@ impl fmt::Debug for ChainContext {
             .field(
                 "last_hashes", // limit debug hashes to last 5
                 &(
-                    self.last_hashes[0],
-                    self.last_hashes[1],
-                    self.last_hashes[2],
-                    self.last_hashes[3],
-                    self.last_hashes[4],
-                    self.last_hashes[5],
+                    self.last_hashes[255],
+                    self.last_hashes[254],
+                    self.last_hashes[253],
+                    self.last_hashes[252],
+                    self.last_hashes[251],
+                    self.last_hashes[250],
                     "...",
                 ),
             )
@@ -258,13 +258,20 @@ where
         {
             H256::default()
         } else {
-            let index = (current_block - number - U256::one()).as_usize();
+            let index = if self.backend.block_version() >= BlockVersion::VersionConsistentHashes {
+                // Fix bug with block_hash calculation
+                self.chain_context.last_hashes.len() - (current_block - number).as_usize()
+            } else {
+                (current_block - number - U256::one()).as_usize()
+            };
             self.chain_context.last_hashes[index]
         }
     }
+    
     fn block_difficulty(&self) -> U256 {
         self.chain_context.difficulty
     }
+
     fn block_gas_limit(&self) -> U256 {
         self.config.gas_limit.into()
     }

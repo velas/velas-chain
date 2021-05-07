@@ -470,16 +470,25 @@ fn call(
         estimate_config,
     );
     error!("running evm executor with state = {:?}", executor);
-
     let result = if let Some(address) = tx.to {
         let address = address.0;
         debug!(
             "Trying to execute tx = {:?}",
             (caller, address, value, &input, gas_limit)
         );
-        executor.with_executor(|e| e.transact_call(caller, address, value, input, gas_limit))
+        executor.with_executor(
+            solana_evm_loader_program::precompiles::simulation_entrypoint(
+                executor.support_precompile(),
+            ),
+            |e| e.transact_call(caller, address, value, input, gas_limit),
+        )
     } else {
-        executor.with_executor(|e| (e.transact_create(caller, value, input, gas_limit), vec![]))
+        executor.with_executor(
+            solana_evm_loader_program::precompiles::simulation_entrypoint(
+                executor.support_precompile(),
+            ),
+            |e| (e.transact_create(caller, value, input, gas_limit), vec![]),
+        )
     };
 
     let gas_used = executor.deconstruct().state.used_gas;

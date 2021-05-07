@@ -327,6 +327,7 @@ pub trait AccountProvider {
     fn get_storage(&self, address: H160, index: H256) -> Option<H256>;
     fn block_number(&self) -> u64;
     fn timestamp(&self) -> u64;
+    fn block_version(&self) -> BlockVersion;
 }
 
 impl AccountProvider for EvmBackend<Incomming> {
@@ -354,6 +355,10 @@ impl AccountProvider for EvmBackend<Incomming> {
     fn timestamp(&self) -> u64 {
         self.state.timestamp
     }
+
+    fn block_version(&self) -> BlockVersion {
+        self.state.block_version
+    }
 }
 
 impl AccountProvider for EvmBackend<Committed> {
@@ -375,6 +380,10 @@ impl AccountProvider for EvmBackend<Committed> {
 
     fn timestamp(&self) -> u64 {
         self.state.block.timestamp
+    }
+
+    fn block_version(&self) -> BlockVersion {
+        self.state.block.version
     }
 }
 
@@ -411,6 +420,13 @@ impl AccountProvider for EvmState {
         match self {
             Self::Incomming(i) => i.timestamp(),
             Self::Committed(c) => c.timestamp(),
+        }
+    }
+
+    fn block_version(&self) -> BlockVersion {
+        match self {
+            Self::Incomming(i) => i.block_version(),
+            Self::Committed(c) => c.block_version(),
         }
     }
 }

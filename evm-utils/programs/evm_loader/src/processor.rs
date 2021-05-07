@@ -86,7 +86,10 @@ impl EvmProcessor {
         );
         let tx_gas_price = evm_tx.gas_price;
         let result = executor
-            .transaction_execute(evm_tx, precompiles::entrypoint(accounts))
+            .transaction_execute(
+                evm_tx,
+                precompiles::entrypoint(accounts, executor.support_precompile()),
+            )
             .map_err(|e| {
                 ic_msg!(
                     invoke_context,
@@ -174,7 +177,11 @@ impl EvmProcessor {
 
         let tx_gas_price = unsigned_tx.gas_price;
         let result = executor
-            .transaction_execute_unsinged(from, unsigned_tx, precompiles::entrypoint(accounts))
+            .transaction_execute_unsinged(
+                from,
+                unsigned_tx,
+                precompiles::entrypoint(accounts, executor.support_precompile()),
+            )
             .map_err(|e| {
                 ic_msg!(
                     invoke_context,
@@ -372,7 +379,7 @@ impl EvmProcessor {
                 );
                 let tx_gas_price = tx.gas_price;
                 let result = executor
-                    .transaction_execute(tx, precompiles::entrypoint(accounts))
+                    .transaction_execute(tx, precompiles::entrypoint(accounts, executor.support_precompile()))
                     .map_err(|e| {
                         ic_msg!(
                             invoke_context,

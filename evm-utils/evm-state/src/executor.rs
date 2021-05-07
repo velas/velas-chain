@@ -11,7 +11,6 @@ pub use primitive_types::{H256, U256};
 pub use secp256k1::rand;
 use snafu::ensure;
 
-use crate::error::*;
 use crate::types::H160;
 use crate::{
     context::{ChainContext, EvmConfig, ExecutorContext, TransactionContext},
@@ -21,6 +20,7 @@ use crate::{
         UnsignedTransaction, UnsignedTransactionWithCaller,
     },
 };
+use crate::{error::*, BlockVersion};
 
 pub use triedb::empty_trie_hash;
 
@@ -67,6 +67,10 @@ impl Executor {
             chain_context,
             config,
         }
+    }
+
+    pub fn support_precompile(&self) -> bool {
+        self.evm_backend.state.block_version >= BlockVersion::VersionConsistentHashes
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -280,11 +284,13 @@ impl Executor {
     // 1. deposit
     // 2. withdrawal? - currently unused
     // 3. executing transaction without commit
-    pub fn with_executor<'a, F, U>(&'a mut self, func: F) -> U
+    pub fn with_executor<'a, F, U, P>(&'a mut self, mut precompiles: P, func: F) -> U
     where
         F: for<'r> FnOnce(
             &mut StackExecutor<'r, 'r, MemoryStackState<'r, 'r, ExecutorContext<'a, Incomming>>>,
         ) -> U,
+
+        P: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
     {
         let transaction_context = TransactionContext::default();
         let config = self.config.to_evm_params();
@@ -298,7 +304,7 @@ impl Executor {
         let gas_limit = execution_context.gas_left();
         let metadata = StackSubstateMetadata::new(gas_limit, &config);
         let state = MemoryStackState::new(metadata, &execution_context);
-        let mut executor = StackExecutor::new(state, &config);
+        let mut executor = StackExecutor::new_with_precompile(state, &config, &mut precompiles);
         let result = func(&mut executor);
         let used_gas = executor.used_gas();
         let (updates, _logs) = executor.into_state().deconstruct();
@@ -350,7 +356,10 @@ impl Executor {
     ///
     /// After transaction EVM_BURN_ADDRESS will cleanup.
     pub fn deposit(&mut self, recipient: H160, amount: U256) {
-        self.with_executor(|e| e.state_mut().deposit(recipient, amount));
+        self.with_executor(
+            |_, _, _, _| None,
+            |e| e.state_mut().deposit(recipient, amount),
+        );
     }
 
     //  /// Burn some tokens on address:
@@ -943,7 +952,7 @@ mod tests {
             Default::default(),
         );
 
-        let exit_reason = match executor.with_executor(|e| {
+        let exit_reason = match executor.with_executor(noop_precompile, |e| {
             e.create(
                 name_to_key("caller"),
                 CreateScheme::Fixed(name_to_key("contract")),
@@ -961,7 +970,7 @@ mod tests {
             (ExitReason::Succeed(ExitSucceed::Returned), _)
         ));
 
-        let exit_reason = executor.with_executor(|e| {
+        let exit_reason = executor.with_executor(noop_precompile, |e| {
             e.transact_call(
                 name_to_key("caller"),
                 name_to_key("contract"),

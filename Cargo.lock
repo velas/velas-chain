@@ -797,10 +797,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "cpuid-bool"
-version = "0.1.2"
+name = "cpufeatures"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8aebca1129a03dc6dc2b127edd729435bbc4a37e1d5f4d7513165089ceb02634"
+checksum = "dec1028182c380cc45a2e2c5ec841134f2dfd0f8f5f0a5bcd68004f81b5efdf4"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "crc32fast"
@@ -2126,6 +2129,12 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hex-literal"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5af1f635ef1bc545d78392b136bfe1c9809e029023c84a3638a864a10b8819c8"
 
 [[package]]
 name = "hidapi"
@@ -4169,6 +4178,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ripemd160"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eca4ecc81b7f313189bf73ce724400a07da2a6dac19588b03c8bd76a2dcc251"
+dependencies = [
+ "block-buffer 0.9.0",
+ "digest 0.9.0",
+ "opaque-debug 0.3.0",
+]
+
+[[package]]
 name = "rlp"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4545,13 +4565,13 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa827a14b29ab7f44778d14a88d3cb76e949c45083f7dbfa507d0cb699dc12de"
+checksum = "d8f6b75b17576b792bef0db1bcc4b8b8bcdf9506744cf34b974195487af6cff2"
 dependencies = [
  "block-buffer 0.9.0",
  "cfg-if 1.0.0",
- "cpuid-bool",
+ "cpufeatures",
  "digest 0.9.0",
  "opaque-debug 0.3.0",
 ]
@@ -5274,12 +5294,15 @@ dependencies = [
  "ethabi",
  "evm-state",
  "hex",
+ "hex-literal",
  "log 0.4.14",
  "once_cell",
  "primitive-types",
  "quickcheck 1.0.3",
  "quickcheck_macros 1.0.0",
+ "ripemd160",
  "serde",
+ "sha2 0.9.4",
  "sha3 0.9.1",
  "simple_logger",
  "snafu",
@@ -5343,7 +5366,7 @@ dependencies = [
  "rustc_version",
  "serde",
  "serde_derive",
- "sha2 0.9.3",
+ "sha2 0.9.4",
  "solana-frozen-abi-macro 1.5.14",
  "solana-logger 1.5.14",
  "thiserror",
@@ -5363,7 +5386,7 @@ dependencies = [
  "rustc_version",
  "serde",
  "serde_derive",
- "sha2 0.9.3",
+ "sha2 0.9.4",
  "solana-frozen-abi-macro 1.5.15",
  "solana-logger 1.5.15",
  "thiserror",
@@ -5455,7 +5478,7 @@ dependencies = [
  "rustc_version",
  "serde",
  "serde_bytes",
- "sha2 0.9.3",
+ "sha2 0.9.4",
  "solana-account-decoder",
  "solana-bpf-loader-program",
  "solana-budget-program",
@@ -5752,7 +5775,7 @@ dependencies = [
  "serde_bytes",
  "serde_derive",
  "serde_json",
- "sha2 0.9.3",
+ "sha2 0.9.4",
  "solana-frozen-abi 1.5.14",
  "solana-frozen-abi-macro 1.5.14",
  "solana-logger 1.5.14",
@@ -5784,7 +5807,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_derive",
- "sha2 0.9.3",
+ "sha2 0.9.4",
  "solana-frozen-abi 1.5.15",
  "solana-frozen-abi-macro 1.5.15",
  "solana-logger 1.5.15",
@@ -5964,7 +5987,7 @@ dependencies = [
  "serde_bytes",
  "serde_derive",
  "serde_json",
- "sha2 0.9.3",
+ "sha2 0.9.4",
  "sha3 0.9.1",
  "solana-crate-features",
  "solana-frozen-abi 1.5.14",

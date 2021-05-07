@@ -158,9 +158,9 @@ impl BlockHashEvm {
 
     pub fn insert_hash(&mut self, hash: evm_state::H256) {
         let new_hashes = self.hashes;
-        self.hashes[1..MAX_EVM_BLOCKHASHES]
-            .copy_from_slice(&new_hashes[0..MAX_EVM_BLOCKHASHES - 1]);
-        self.hashes[0] = hash
+        self.hashes[0..MAX_EVM_BLOCKHASHES - 1]
+            .copy_from_slice(&new_hashes[1..MAX_EVM_BLOCKHASHES]);
+        self.hashes[MAX_EVM_BLOCKHASHES - 1] = hash
     }
 
     fn deserialize<'de, D>(

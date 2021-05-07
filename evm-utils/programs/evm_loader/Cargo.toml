@@ -22,13 +22,15 @@ ethabi = "13.0"
 once_cell = "1.5.2"
 snafu = "0.6"
 crc32fast = "1.2.1"
-
+sha2 = "0.9.4"
+ripemd160 = "0.9.1"
 
 [lib]
 crate-type = ["lib", "cdylib"]
 name = "solana_evm_loader_program"
 
 [dev-dependencies]
+hex-literal = "0.3.1"
 byteorder = "1.4"
 quickcheck = "1.0.3"
 quickcheck_macros = "1.0.0"

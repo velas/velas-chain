@@ -20,7 +20,7 @@ use std::convert::TryFrom;
 pub type BlockNum = u64; // TODO: re-use existing one from sdk package
 
 /// Blocks versions.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum BlockVersion {
     /// bogous version without transactions roots, ommers = H256::zero, and nonce as scalar.
     InitVersion,
