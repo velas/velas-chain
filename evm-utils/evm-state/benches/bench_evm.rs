@@ -46,9 +46,12 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut executor =
             Executor::with_config(Default::default(), Default::default(), Default::default());
 
-        let exit_reason = executor.with_executor(|executor| {
-            executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
-        });
+        let exit_reason = executor.with_executor(
+            |_, _, _, _| None,
+            |executor| {
+                executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
+            },
+        );
         assert!(matches!(
             exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -57,15 +60,18 @@ fn criterion_benchmark(c: &mut Criterion) {
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
         let mut idx = 0;
         b.iter(|| {
-            let exit_reason = black_box(executor.with_executor(|executor| {
-                executor.transact_call(
-                    accounts[idx % accounts.len()],
-                    contract_address,
-                    U256::zero(),
-                    data.to_vec(),
-                    u64::max_value(),
-                )
-            }));
+            let exit_reason = black_box(executor.with_executor(
+                |_, _, _, _| None,
+                |executor| {
+                    executor.transact_call(
+                        accounts[idx % accounts.len()],
+                        contract_address,
+                        U256::zero(),
+                        data.to_vec(),
+                        u64::max_value(),
+                    )
+                },
+            ));
 
             //hack: Avoid gas limit
             executor.evm_backend.state.used_gas = 0;
@@ -90,9 +96,12 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut executor =
             Executor::with_config(Default::default(), Default::default(), Default::default());
 
-        let exit_reason = executor.with_executor(|executor| {
-            executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
-        });
+        let exit_reason = executor.with_executor(
+            |_, _, _, _| None,
+            |executor| {
+                executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
+            },
+        );
         assert!(matches!(
             exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -112,15 +121,18 @@ fn criterion_benchmark(c: &mut Criterion) {
                 Default::default(),
             );
 
-            let exit_reason = black_box(executor.with_executor(|executor| {
-                executor.transact_call(
-                    accounts[idx % accounts.len()],
-                    contract_address,
-                    U256::zero(),
-                    data.to_vec(),
-                    u64::max_value(),
-                )
-            }));
+            let exit_reason = black_box(executor.with_executor(
+                |_, _, _, _| None,
+                |executor| {
+                    executor.transact_call(
+                        accounts[idx % accounts.len()],
+                        contract_address,
+                        U256::zero(),
+                        data.to_vec(),
+                        u64::max_value(),
+                    )
+                },
+            ));
 
             assert!(matches!(
                 exit_reason.0,
@@ -136,9 +148,12 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut executor =
             Executor::with_config(Default::default(), Default::default(), Default::default());
 
-        let exit_reason = executor.with_executor(|executor| {
-            executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
-        });
+        let exit_reason = executor.with_executor(
+            |_, _, _, _| None,
+            |executor| {
+                executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
+            },
+        );
         assert!(matches!(
             exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -191,9 +206,12 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut executor =
             Executor::with_config(Default::default(), Default::default(), Default::default());
 
-        let exit_reason = executor.with_executor(|executor| {
-            executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
-        });
+        let exit_reason = executor.with_executor(
+            |_, _, _, _| None,
+            |executor| {
+                executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
+            },
+        );
 
         assert!(matches!(
             exit_reason,
@@ -252,7 +270,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
                 let mut executor =
                 Executor::with_config(Default::default(), Default::default(), Default::default());
-                let create_transaction_result = executor.with_executor(|executor| {
+                let create_transaction_result = executor.with_executor(|_,_,_,_| None,|executor| {
                     executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
                 });
                 assert!(matches!(
@@ -286,7 +304,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     for idx in 0..iters {
                         let caller = accounts[idx as usize % accounts.len()];
                         let call_transaction_result =
-                            black_box(executor.with_executor(|executor| {
+                            black_box(executor.with_executor(|_,_,_,_| None,|executor| {
                                 executor.transact_call(
                                     caller,
                                     contract,
@@ -323,7 +341,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut executor =
             Executor::with_config(state, Default::default(), Default::default());
 
-        let exit_reason = executor.with_executor(|executor| {
+        let exit_reason = executor.with_executor(|_,_,_,_| None,|executor| {
             executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
         });
         assert!(matches!(
@@ -340,7 +358,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             let mut executor =
                 Executor::with_config(state.clone(), Default::default(), Default::default());
 
-            let exit_reason = executor.with_executor(|executor| {
+            let exit_reason = executor.with_executor(|_,_,_,_| None,|executor| {
                 executor.transact_call(
                     accounts[idx % accounts.len()],
                     contract_address,

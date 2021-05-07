@@ -184,7 +184,7 @@ pub mod velas_hardfork_pack {
     // 2. transactionRoot, receiptRoot - should calculate, and empty hashes should be setted too
     // 3. nonce is 64bit hash not a number.
     // 4. sha3uncle hash from zero block, not zeros.
-    solana_sdk::declare_id!("BKnQo95oYPsfGXY6at32zqcUfj9ZoKz6e4PmS8RH2Dmq");
+    solana_sdk::declare_id!("91nakVjUc5UmNzLioE6K7HhASmb2m1E7hRuLZS4LzUPV");
 }
 
 lazy_static! {

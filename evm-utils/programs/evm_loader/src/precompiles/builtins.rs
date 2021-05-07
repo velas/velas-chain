@@ -1,5 +1,5 @@
 use snafu::{ensure, ResultExt};
-use std::{collections::HashMap, marker::PhantomData, str::FromStr};
+use std::{marker::PhantomData, str::FromStr};
 
 use ethabi::{Function, Param, ParamType, Token};
 use evm_state::ExitSucceed;
@@ -8,15 +8,15 @@ use primitive_types::H160;
 
 use super::abi_parse::ParseTokens;
 use super::errors::*;
-use super::{CallResult, PrecompileContext, PrecompileOk, Result};
+use super::{PrecompileContext, PrecompileOk, Result};
 use crate::scope::evm::gweis_to_lamports;
 use solana_sdk::pubkey::Pubkey;
 
-pub trait BuiltinFunction<Inputs> {
+pub trait NativeFunction<Inputs> {
     fn call(&self, inputs: Inputs, cx: PrecompileContext<'_>) -> Result<PrecompileOk>;
 }
 
-impl<F, Inputs> BuiltinFunction<Inputs> for F
+impl<F, Inputs> NativeFunction<Inputs> for F
 where
     F: Fn(Inputs, PrecompileContext<'_>) -> Result<PrecompileOk>,
 {
@@ -26,7 +26,7 @@ where
 }
 
 #[derive(Clone)]
-pub struct Builtin<F, I> {
+pub struct NativeContract<F, I> {
     // TODO: Replace by real function hash calculation
     function_hash: [u8; 4],
     pub abi: Function,
@@ -34,9 +34,9 @@ pub struct Builtin<F, I> {
     pd: PhantomData<I>,
 }
 
-impl<F, I> Builtin<F, I>
+impl<F, I> NativeContract<F, I>
 where
-    F: BuiltinFunction<I>,
+    F: NativeFunction<I>,
     I: ParseTokens,
 {
     pub fn new(function_hash: [u8; 4], abi: Function, implementation: F) -> Self {
@@ -93,23 +93,7 @@ where
 }
 
 //
-// Builtins collection.
-//
-
-// Currently only static is allowed (but it can be closure).
-type BuiltinEval = &'static (dyn Fn(&[u8], PrecompileContext) -> CallResult + Sync);
-
-pub static BUILTINS_MAP: Lazy<HashMap<H160, BuiltinEval>> = Lazy::new(|| {
-    let mut builtins = HashMap::new();
-
-    let eth_to_sol: BuiltinEval =
-        &|function_abi_input, cx| (*ETH_TO_VLX_CODE).eval(function_abi_input, cx);
-    assert!(builtins.insert(*ETH_TO_VLX_ADDR, eth_to_sol).is_none());
-    builtins
-});
-
-//
-// Builtins declaration below
+// NativeContracts declaration below
 //
 
 // TODO: Implement some procedural macro to render this in more
@@ -124,7 +108,7 @@ pub static ETH_TO_VLX_ADDR: Lazy<H160> = Lazy::new(|| {
 
 type EthToVlxImp = fn(Pubkey, PrecompileContext) -> Result<PrecompileOk>;
 
-pub static ETH_TO_VLX_CODE: Lazy<Builtin<EthToVlxImp, Pubkey>> = Lazy::new(|| {
+pub static ETH_TO_VLX_CODE: Lazy<NativeContract<EthToVlxImp, Pubkey>> = Lazy::new(|| {
     let abi = Function {
         name: String::from("transferToNative"),
         inputs: vec![Param {
@@ -167,5 +151,5 @@ pub static ETH_TO_VLX_CODE: Lazy<Builtin<EthToVlxImp, Pubkey>> = Lazy::new(|| {
         Ok(PrecompileOk::new(ExitSucceed::Returned, vec![], 0))
     }
 
-    Builtin::new([0xb1, 0xd6, 0x92, 0x7a], abi, implementation)
+    NativeContract::new([0xb1, 0xd6, 0x92, 0x7a], abi, implementation)
 });

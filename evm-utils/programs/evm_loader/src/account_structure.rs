@@ -13,6 +13,7 @@ pub struct AccountStructure<'a> {
     pub users: &'a [KeyedAccount<'a>],
 }
 
+
 impl<'a> AccountStructure<'a> {
     /// Create new account structure, from keyed accounts.
     pub fn new(evm: &'a KeyedAccount<'a>, users: &'a [KeyedAccount<'a>]) -> AccountStructure<'a> {

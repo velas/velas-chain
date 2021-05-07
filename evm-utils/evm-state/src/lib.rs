@@ -6,7 +6,7 @@ pub use evm::{
 };
 
 pub use primitive_types::{H256, U256};
-pub use secp256k1::rand;
+pub use secp256k1::{self, rand};
 
 pub mod error;
 pub mod transactions;
