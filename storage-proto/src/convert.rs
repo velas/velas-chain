@@ -168,11 +168,7 @@ impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlock {
 
 impl From<TransactionWithStatusMeta> for generated::ConfirmedTransaction {
     fn from(value: TransactionWithStatusMeta) -> Self {
-        let meta = if let Some(meta) = value.meta {
-            Some(meta.into())
-        } else {
-            None
-        };
+        let meta = value.meta.map(|meta| meta.into());
         Self {
             transaction: Some(value.transaction.into()),
             meta,
@@ -769,10 +765,7 @@ impl From<TransactionByAddrInfo> for tx_by_addr::TransactionByAddrInfo {
 
         Self {
             signature: <Signature as AsRef<[u8]>>::as_ref(&signature).into(),
-            err: match err {
-                None => None,
-                Some(e) => Some(e.into()),
-            },
+            err: err.map(|e| e.into()),
             index,
             memo: memo.map(|memo| tx_by_addr::Memo { memo }),
             block_time: block_time.map(|timestamp| tx_by_addr::UnixTimestamp { timestamp }),

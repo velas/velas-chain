@@ -218,10 +218,8 @@ impl LeaderScheduleCache {
 
         if epoch_schedule.is_some() {
             epoch_schedule
-        } else if let Some(epoch_schedule) = self.compute_epoch_schedule(epoch, bank) {
-            Some(epoch_schedule)
         } else {
-            None
+            self.compute_epoch_schedule(epoch, bank)
         }
     }
 

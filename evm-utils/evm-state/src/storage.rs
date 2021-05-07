@@ -227,19 +227,14 @@ impl Storage {
         let cf = self.cf::<S>();
         let key_bytes = rlp::encode(&key);
 
-        if let Some(slice) = self
-            .db
+        self.db
             .get_pinned_cf(&cf, key_bytes)
             .expect("Error on reading mapped column")
-        {
-            Some(
+            .map(|slice| {
                 CODER
                     .deserialize(slice.as_ref())
-                    .expect("Unable to decode value"),
-            )
-        } else {
-            None
-        }
+                    .expect("Unable to decode value")
+            })
     }
 
     pub fn set<S: SubStorage>(&self, key: S::Key, value: S::Value) {

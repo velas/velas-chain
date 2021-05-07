@@ -71,9 +71,9 @@ impl Incomming {
     ) -> Self {
         Incomming {
             block_number,
+            timestamp,
             state_root,
             last_block_hash,
-            timestamp,
             ..Default::default()
         }
     }

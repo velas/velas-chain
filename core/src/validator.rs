@@ -705,22 +705,22 @@ impl Validator {
         datapoint_info!("validator-new", ("id", id.to_string(), String));
         Self {
             id,
-            gossip_service,
-            serve_repair_service,
+            validator_exit,
             rpc_service,
             transaction_status_service,
             rewards_recorder_service,
             cache_block_time_service,
             sample_performance_service,
-            snapshot_packager_service,
-            completed_data_sets_service,
             evm_block_recorder_service,
+            gossip_service,
+            serve_repair_service,
+            completed_data_sets_service,
+            snapshot_packager_service,
+            poh_recorder,
+            poh_service,
             tpu,
             tvu,
-            poh_service,
-            poh_recorder,
             ip_echo_server,
-            validator_exit,
         }
     }
 
