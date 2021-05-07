@@ -448,8 +448,8 @@ impl TestValidator {
             preserve_ledger,
             rpc_pubsub_url,
             rpc_url,
-            gossip,
             tpu,
+            gossip,
             validator,
             vote_account_address,
         })

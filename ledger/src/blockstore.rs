@@ -3382,13 +3382,10 @@ fn find_slot_meta_in_cached_state<'a>(
     chained_slots: &'a HashMap<u64, Rc<RefCell<SlotMeta>>>,
     slot: Slot,
 ) -> Option<Rc<RefCell<SlotMeta>>> {
-    if let Some(entry) = working_set.get(&slot) {
-        Some(entry.new_slot_meta.clone())
-    } else if let Some(entry) = chained_slots.get(&slot) {
-        Some(entry.clone())
-    } else {
-        None
-    }
+    working_set
+        .get(&slot)
+        .map(|entry| entry.new_slot_meta.clone())
+        .or_else(|| chained_slots.get(&slot).cloned())
 }
 
 // Chaining based on latest discussion here: https://github.com/solana-labs/solana/pull/2253

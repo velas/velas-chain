@@ -933,7 +933,7 @@ pub fn update(config_file: &str) -> Result<bool, String> {
         let update_manifest = update_manifest.unwrap();
 
         if timestamp_secs()
-            < u64::from_str_radix(crate::build_env::BUILD_SECONDS_SINCE_UNIX_EPOCH, 10).unwrap()
+            < str::parse::<u64>(crate::build_env::BUILD_SECONDS_SINCE_UNIX_EPOCH).unwrap()
         {
             return Err("Unable to update as system time seems unreliable".to_string());
         }

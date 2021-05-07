@@ -215,8 +215,8 @@ impl Instruction {
         let data = serialize(data).unwrap();
         Self {
             program_id,
-            data,
             accounts,
+            data,
         }
     }
 
@@ -228,8 +228,8 @@ impl Instruction {
         let data = data.try_to_vec().unwrap();
         Self {
             program_id,
-            data,
             accounts,
+            data,
         }
     }
 }

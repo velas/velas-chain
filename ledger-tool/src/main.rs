@@ -1391,7 +1391,9 @@ fn main() {
 
     match matches.subcommand() {
         ("bigtable", Some(arg_matches)) => bigtable_process_command(&ledger_path, arg_matches),
-        ("evm_blockstore", Some(arg_matches)) => evm_blockstore_process_command(&ledger_path, arg_matches),
+        ("evm_blockstore", Some(arg_matches)) => {
+            evm_blockstore_process_command(&ledger_path, arg_matches)
+        }
         ("print", Some(arg_matches)) => {
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             let ending_slot = value_t!(arg_matches, "ending_slot", Slot).unwrap_or(Slot::MAX);
@@ -1663,34 +1665,31 @@ fn main() {
             let log_file = PathBuf::from(value_t_or_exit!(arg_matches, "log_path", String));
             let f = BufReader::new(File::open(log_file).unwrap());
             println!("Reading log file");
-            for line in f.lines() {
-                if let Ok(line) = line {
-                    let parse_results = {
-                        if let Some(slot_string) = frozen_regex.captures_iter(&line).next() {
-                            Some((slot_string, &mut frozen))
-                        } else if let Some(slot_string) = full_regex.captures_iter(&line).next() {
-                            Some((slot_string, &mut full))
-                        } else {
-                            None
-                        }
-                    };
+            for line in f.lines().flatten() {
+                let parse_results = frozen_regex
+                    .captures_iter(&line)
+                    .next()
+                    .map(|slot_string| (slot_string, &mut frozen))
+                    .or_else(|| {
+                        full_regex
+                            .captures_iter(&line)
+                            .next()
+                            .map(|slot_string| (slot_string, &mut full))
+                    });
 
-                    if let Some((slot_string, map)) = parse_results {
-                        let slot = slot_string
-                            .get(1)
-                            .expect("Only one match group")
-                            .as_str()
-                            .parse::<u64>()
-                            .unwrap();
-                        if ancestors.contains(&slot) && !map.contains_key(&slot) {
-                            map.insert(slot, line);
-                        }
-                        if slot == ending_slot
-                            && frozen.contains_key(&slot)
-                            && full.contains_key(&slot)
-                        {
-                            break;
-                        }
+                if let Some((slot_string, map)) = parse_results {
+                    let slot = slot_string
+                        .get(1)
+                        .expect("Only one match group")
+                        .as_str()
+                        .parse::<u64>()
+                        .unwrap();
+                    if ancestors.contains(&slot) && !map.contains_key(&slot) {
+                        map.insert(slot, line);
+                    }
+                    if slot == ending_slot && frozen.contains_key(&slot) && full.contains_key(&slot)
+                    {
+                        break;
                     }
                 }
             }
