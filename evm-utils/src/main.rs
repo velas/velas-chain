@@ -173,7 +173,7 @@ fn main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             };
             println!("Reading blockheader from: {}", input);
             let block: evm_rpc::RPCBlock = serde_json::from_reader(file).unwrap();
-            let mut block: evm_state::BlockHeader = block.into_native_block(Default::default());
+            let mut block: evm_state::BlockHeader = block.to_native_block(Default::default());
             let native_slot = block.native_chain_slot;
             debug!("Readed block = {:?}", block);
             for slot in native_slot - range..native_slot + range {
