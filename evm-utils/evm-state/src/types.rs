@@ -67,7 +67,7 @@ impl TryFrom<u64> for BlockVersion {
             BlockVersion::BLOCK_VERSION_CONSISTENT_HASH => BlockVersion::VersionConsistentHashes,
             _ => return Err("Specific blockversion incompatible"),
         };
-        return Ok(version);
+        Ok(version)
     }
 }
 
@@ -333,6 +333,7 @@ pub struct BlockHeader {
 
 // TODO: Add transactions in block
 impl BlockHeader {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<'a>(
         parent_hash: H256,
         gas_limit: u64,

@@ -139,7 +139,7 @@ impl RPCBlock {
                 b"Velas EVM compatibility layer...".to_vec().into()
             }
             evm_state::BlockVersion::VersionConsistentHashes => {
-                b"Velas EVM compatibility layer...".to_vec().into()
+                b"Velas EVM compatibility layer.v2".to_vec().into()
             }
         };
         RPCBlock {
@@ -167,7 +167,7 @@ impl RPCBlock {
         }
     }
 
-    pub fn into_native_block(&self, version: evm_state::BlockVersion) -> evm_state::BlockHeader {
+    pub fn to_native_block(&self, version: evm_state::BlockVersion) -> evm_state::BlockHeader {
         evm_state::BlockHeader {
             state_root: self.state_root.0,
             transactions_root: self.transactions_root.0,
