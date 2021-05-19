@@ -1544,6 +1544,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "derive_more",
+ "ethabi",
  "ethbloom 0.11.0",
  "evm-state",
  "hex",
