@@ -44,9 +44,32 @@ impl<T: FormatHex> std::str::FromStr for Hex<T> {
     }
 }
 
+impl std::str::FromStr for Bytes {
+    type Err = hex::FromHexError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() < 2 || &s[..2] != "0x" {
+            return Err(hex::FromHexError::InvalidStringLength);
+        }
+        if s.len() == 2 {
+            return Ok(Bytes(vec![]));
+        }
+
+        match hex::decode(&s[2..]) {
+            Ok(d) => Ok(Bytes(d)),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 impl<T: FormatHex> std::fmt::Display for Hex<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.format_hex())
+    }
+}
+
+impl std::fmt::Display for Bytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "0x{}", &hex::encode(&self.0))
     }
 }
 
@@ -197,7 +220,7 @@ impl Serialize for Bytes {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&format!("0x{}", &hex::encode(&self.0)))
+        serializer.serialize_str(&self.to_string())
     }
 }
 
@@ -236,17 +259,7 @@ impl<'de> de::Visitor<'de> for BytesVisitor {
     where
         E: de::Error,
     {
-        if s.len() < 2 || &s[..2] != "0x" {
-            return Err(de::Error::invalid_value(de::Unexpected::Str(s), &self));
-        }
-        if s.len() == 2 {
-            return Ok(Bytes(vec![]));
-        }
-
-        match hex::decode(&s[2..]) {
-            Ok(d) if &s[..2] == "0x" => Ok(Bytes(d)),
-            _ => Err(de::Error::invalid_value(de::Unexpected::Str(s), &self)),
-        }
+        Bytes::from_str(s).map_err(|_| de::Error::invalid_value(de::Unexpected::Str(s), &self))
     }
 }
 

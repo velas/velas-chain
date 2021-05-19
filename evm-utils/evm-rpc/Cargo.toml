@@ -25,3 +25,5 @@ uint = "0.9"
 anyhow = "1.0"
 derive_more = "0.99.11"
 ethbloom = "0.11"
+
+ethabi = "13.0"

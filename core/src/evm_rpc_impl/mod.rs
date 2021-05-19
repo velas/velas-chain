@@ -434,7 +434,7 @@ fn call(
     meta: JsonRpcRequestProcessor,
     tx: RPCTransaction,
     _block: Option<String>,
-) -> Result<(evm_state::ExitReason, Vec<u8>, u64), Error> {
+) -> Result<(evm_state::ExitSucceed, Vec<u8>, u64), Error> {
     let caller = tx.from.map(|a| a.0).unwrap_or_default();
 
     let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
@@ -492,5 +492,17 @@ fn call(
     };
 
     let gas_used = executor.deconstruct().state.used_gas;
+    let result = match result.0 {
+        evm_state::ExitReason::Error(error) => Err(Error::CallError {
+            data: result.1.into(),
+            error,
+        }),
+        evm_state::ExitReason::Revert(error) => Err(Error::CallRevert {
+            data: result.1.into(),
+            error,
+        }),
+        evm_state::ExitReason::Fatal(error) => Err(Error::CallFatal { error }),
+        evm_state::ExitReason::Succeed(s) => Ok((s, result.1)),
+    }?;
     Ok((result.0, result.1, gas_used))
 }

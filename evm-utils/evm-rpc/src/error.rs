@@ -1,9 +1,13 @@
 use std::num::ParseIntError;
 
+use evm_state::{ExitError, ExitFatal, ExitRevert};
 use jsonrpc_core::Error as JRpcError;
 use rlp::DecoderError;
 use rustc_hex::FromHexError;
+use serde_json::json;
 use snafu::Snafu;
+
+use crate::Bytes;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility = "pub")]
@@ -69,11 +73,47 @@ pub enum Error {
 
     #[snafu(display("Secret key for account not found, account: {:?}", account))]
     KeyNotFound { account: evm_state::H160 },
+    #[snafu(display("execution error: {}", format_data_with_error(data, error)))]
+    CallError { data: Bytes, error: ExitError },
+    #[snafu(display("execution reverted: {}", format_data(data)))]
+    CallRevert { data: Bytes, error: ExitRevert },
+    #[snafu(display("Fatal evm error: {:?}", error))]
+    CallFatal { error: ExitFatal },
     // InvalidParams {},
     // UnsupportedTrieQuery,
     // NotFound,
     // CallError,
     // UnknownSourceMapJump
+}
+
+fn format_data_with_error<T: std::fmt::Debug>(data: &Bytes, error: &T) -> String {
+    format!("{:?}:{}", error, format_data(data))
+}
+
+fn format_data(data: &Bytes) -> String {
+    let func_decl = ethabi::Function {
+        name: "Error".to_string(),
+        inputs: vec![ethabi::Param {
+            name: "string".to_string(),
+            kind: ethabi::ParamType::String,
+        }],
+        outputs: vec![],
+        constant: false,
+    };
+    if data.0.len() > 4 {
+        let hash = &data.0[0..4];
+        // check that function hash is taken from "Error" function name
+        if dbg!(*hash == [0x08, 0xc3, 0x79, 0xa0]) {
+            if let Ok(input) = dbg!(func_decl.decode_input(&data.0[4..])) {
+                if let Some(ethabi::Token::String(s)) = input.get(0) {
+                    // on success decode return error from reason string.
+                    return s.clone();
+                }
+            }
+        }
+    }
+    // if anything fail, return error from VM
+    String::new()
 }
 
 pub fn internal_error_with_details<T: ToString, U: ToString>(
@@ -101,6 +141,11 @@ const NATIVE_RPC_ERROR: i64 = 1003;
 const BLOCK_NOT_FOUND_RPC_ERROR: i64 = 2001;
 const STATE_NOT_FOUND_RPC_ERROR: i64 = 2002;
 const KEY_NOT_FOUND_RPC_ERROR: i64 = 2003;
+const FATAL_EVM_ERROR: i64 = 2004;
+
+const EVM_EXECUTION_ERROR: i64 = 3; // from geth docs
+const ERROR_EVM_BASE_SUBCODE: i64 = 100; //reserved place for evm errors range: 100 - 200
+const ERROR_EVM_BASE_SUBRANGE: i64 = 100;
 
 impl From<Error> for JRpcError {
     fn from(err: Error) -> Self {
@@ -146,6 +191,43 @@ impl From<Error> for JRpcError {
                 error.message = err.to_string();
                 error
             }
+            Error::CallFatal { error: _ } => internal_error(FATAL_EVM_ERROR, &err),
+            Error::CallError { data, error } => {
+                let error_code = match error {
+                    ExitError::CallTooDeep => 1,
+                    ExitError::CreateCollision => 2,
+                    ExitError::CreateContractLimit => 3,
+                    ExitError::CreateEmpty => 4,
+                    ExitError::DesignatedInvalid => 5,
+                    ExitError::InvalidJump => 6,
+                    ExitError::InvalidRange => 7,
+                    ExitError::OutOfFund => 8,
+                    ExitError::OutOfGas => 9,
+                    ExitError::OutOfOffset => 10,
+                    ExitError::PCUnderflow => 11,
+                    ExitError::StackOverflow => 12,
+                    ExitError::StackUnderflow => 13,
+                    ExitError::Other(_) => 14,
+                };
+                let error_code = ERROR_EVM_BASE_SUBCODE + error_code;
+                assert!(error_code < ERROR_EVM_BASE_SUBCODE + ERROR_EVM_BASE_SUBRANGE);
+                internal_error_with_details(
+                    EVM_EXECUTION_ERROR,
+                    &err,
+                    &json! {
+                        [
+                        {
+                            "code": error_code,
+                            "original_result": data,
+                            "debug_message": format!("{:?}", error)
+                        }
+                        ]
+                    },
+                )
+            }
+            Error::CallRevert { data, error: _ } => {
+                internal_error_with_details(EVM_EXECUTION_ERROR, &err, &data)
+            }
         }
     }
 }
@@ -171,5 +253,30 @@ where
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use std::str::FromStr;
+
+    use super::*;
+    #[test]
+    fn test_decode_revert() {
+        let bytes = Bytes::from_str("0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000d4552525f4e4f545f424f554e4400000000000000000000000000000000000000").unwrap();
+        let result = format_data(&bytes);
+        assert_eq!(&result, "ERR_NOT_BOUND");
+    }
+
+    #[test]
+    fn test_decode_revert_invalid_length() {
+        let bytes = Bytes::from_str("0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000d4552525f4e4f545f424f554e4400000000000000000000000000000000000000").unwrap();
+        let result = format_data(&Bytes(bytes.0[0..3].to_vec()));
+        assert_eq!(&result, "");
+        let result = format_data(&Bytes(bytes.0[0..4].to_vec()));
+        assert_eq!(&result, "");
+        let result = format_data(&Bytes(bytes.0[0..5].to_vec()));
+        assert_eq!(&result, "");
     }
 }
