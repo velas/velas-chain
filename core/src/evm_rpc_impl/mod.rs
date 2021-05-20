@@ -492,6 +492,7 @@ fn call(
     };
 
     let gas_used = executor.deconstruct().state.used_gas;
+
     let result = match result.0 {
         evm_state::ExitReason::Error(error) => Err(Error::CallError {
             data: result.1.into(),
@@ -504,5 +505,6 @@ fn call(
         evm_state::ExitReason::Fatal(error) => Err(Error::CallFatal { error }),
         evm_state::ExitReason::Succeed(s) => Ok((s, result.1)),
     }?;
+
     Ok((result.0, result.1, gas_used))
 }

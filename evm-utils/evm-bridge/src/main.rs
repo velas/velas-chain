@@ -30,10 +30,12 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     epoch_info::EpochInfo,
     epoch_schedule::EpochSchedule,
+    instruction::InstructionError,
     message::Message,
     signature::Signer,
     signers::Signers,
-    system_instruction, transaction,
+    system_instruction,
+    transaction::{self, TransactionError},
 };
 use solana_transaction_status::{
     EncodedConfirmedBlock, EncodedConfirmedTransaction, TransactionStatus, UiTransactionEncoding,
@@ -43,7 +45,7 @@ use solana_client::{
     client_error::{ClientError, ClientErrorKind},
     rpc_client::RpcClient,
     rpc_config::*,
-    rpc_request::RpcRequest,
+    rpc_request::{RpcRequest, RpcResponseErrorData},
     rpc_response::Response as RpcResponse,
     rpc_response::*,
 };
@@ -180,6 +182,18 @@ impl EvmBridge {
         let hash = tx.tx_id_hash();
         let bytes = bincode::serialize(&tx).unwrap();
 
+        let rpc_tx = RPCTransaction::from_transaction(tx.clone())?;
+
+        // Try simulate transaction execution
+        match RpcClient::send::<Bytes>(
+            &self.rpc_client,
+            RpcRequest::EthCall,
+            json!([rpc_tx, "latest"]),
+        ) {
+            Err(e) => return Err(from_client_error(e)),
+            Ok(_o) => {}
+        }
+
         if bytes.len() > evm::TX_MTU {
             debug!("Sending tx = {}, by chunks", hash);
             match self.deploy_big_tx(&self.key, &tx) {
@@ -257,7 +271,7 @@ impl EvmBridge {
                 },
             )
             .map(|_| Hex(hash))
-            .into_native_error(self.verbose_errors)
+            .map_err(from_client_error)
     }
 
     fn deploy_big_tx(
@@ -402,7 +416,7 @@ impl EvmBridge {
                 error!("Execute EVM tx at {} failed: {:?}", storage_pubkey, e);
                 e
             })
-            .into_native_error(self.verbose_errors)?;
+            .map_err(from_client_error)?;
 
         // TODO: here we can transfer back lamports and delete storage
 
@@ -748,15 +762,40 @@ fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
         ClientErrorKind::RpcError(solana_client::rpc_request::RpcError::RpcResponseError {
             code,
             message,
-            data: _data,
+            data,
             original_err,
-        }) => evm_rpc::Error::ProxyRpcError {
-            source: jsonrpc_core::Error {
-                code: (*code).into(),
-                message: message.clone(),
-                data: original_err.clone().into(),
-            },
-        },
+        }) => {
+            match data {
+                // if transaction preflight, try to get last log message, and return it as error.
+                RpcResponseErrorData::SendTransactionPreflightFailure(
+                    RpcSimulateTransactionResult {
+                        err:
+                            Some(TransactionError::InstructionError(
+                                _,
+                                InstructionError::InvalidArgument,
+                            )),
+                        logs: Some(logs),
+                    },
+                ) if !logs.is_empty() => {
+                    let last_log = logs.last().unwrap();
+                    return evm_rpc::Error::ProxyRpcError {
+                        source: jsonrpc_core::Error {
+                            code: (*code).into(),
+                            message: last_log.clone(),
+                            data: original_err.clone().into(),
+                        },
+                    };
+                }
+                _ => {}
+            }
+            evm_rpc::Error::ProxyRpcError {
+                source: jsonrpc_core::Error {
+                    code: (*code).into(),
+                    message: message.clone(),
+                    data: original_err.clone().into(),
+                },
+            }
+        }
         _ => evm_rpc::Error::NativeRpcError {
             details: format!("{:?}", client_error),
             source: client_error.into(),
