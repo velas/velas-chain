@@ -17,7 +17,7 @@ pub enum Error {
     },
 
     #[snafu(display(
-        "Transaction nonce {} differs from state nonce {}",
+        "Transaction nonce {} differs from nonce in state {}",
         tx_nonce,
         state_nonce
     ))]
@@ -63,7 +63,11 @@ pub enum Error {
         backtrace: Backtrace,
     },
 
-    #[snafu(display("Wrong chain id, expected={}, but tx={:?}", chain_id, tx_chain_id,))]
+    #[snafu(display(
+        "Wrong chain id, expected={}, but tx provide={:?}",
+        chain_id,
+        tx_chain_id,
+    ))]
     WrongChainId {
         chain_id: u64,
         tx_chain_id: Option<u64>,
@@ -83,7 +87,7 @@ pub enum Error {
     ))]
     GasPriceOutOfBounds { gas_price: U256 },
 
-    #[snafu(display("Duplicate transaction have found={:?}", tx_hash,))]
+    #[snafu(display("Transaction with this hash already executed, tx_hash={:?}", tx_hash,))]
     DuplicateTx { tx_hash: H256 },
 
     #[snafu(display(

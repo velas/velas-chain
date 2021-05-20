@@ -703,6 +703,40 @@ impl RPCTransaction {
             s: Some(Hex(s)),
         })
     }
+
+    pub fn from_transaction(tx: evm_state::Transaction) -> Result<Self, crate::Error> {
+        let from = tx.caller().with_context(|| EvmStateError)?;
+        let hash = tx.tx_id_hash();
+        let gas_limit = tx.gas_limit;
+        let gas_price = tx.gas_price;
+        let input = tx.input;
+        let value = tx.value;
+        let nonce = tx.nonce;
+        let (to, creates) = match tx.action {
+            evm_state::transactions::TransactionAction::Call(address) => (Some(address), None),
+            evm_state::transactions::TransactionAction::Create => (
+                None,
+                Some(evm_state::transactions::TransactionAction::Create.address(from, nonce)),
+            ),
+        };
+        Ok(RPCTransaction {
+            from: Some(from.into()),
+            to: to.map(Hex),
+            creates: creates.map(Hex),
+            gas: Some(gas_limit.into()),
+            gas_price: Some(gas_price.into()),
+            value: Some(value.into()),
+            input: Some(input.into()),
+            nonce: Some(nonce.into()),
+            hash: Some(hash.into()),
+            transaction_index: None,
+            block_hash: None,
+            block_number: None,
+            v: Some(Hex(tx.signature.v)),
+            r: Some(Hex(tx.signature.r.as_bytes().into())),
+            s: Some(Hex(tx.signature.s.as_bytes().into())),
+        })
+    }
 }
 
 impl RPCReceipt {
