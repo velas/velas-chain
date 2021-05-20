@@ -93,7 +93,7 @@ impl EvmProcessor {
             .map_err(|e| {
                 ic_msg!(
                     invoke_context,
-                    "EvmTransaction: Error processing evm tx: {:?}",
+                    "EvmTransaction: Error processing evm tx: {}",
                     e
                 );
                 InstructionError::InvalidArgument
@@ -185,7 +185,7 @@ impl EvmProcessor {
             .map_err(|e| {
                 ic_msg!(
                     invoke_context,
-                    "EvmAuthorizedTransaction: Error processing evm tx: {:?}",
+                    "EvmAuthorizedTransaction: Error processing evm tx: {}",
                     e
                 );
                 InstructionError::InvalidArgument
@@ -383,7 +383,7 @@ impl EvmProcessor {
                     .map_err(|e| {
                         ic_msg!(
                             invoke_context,
-                            "BigTransaction::EvmTransactionExecute: transaction execution error: {:?}",
+                            "BigTransaction::EvmTransactionExecute: transaction execution error: {}",
                             e
                         );
                         InstructionError::InvalidArgument
