@@ -371,6 +371,7 @@ pub mod basic {
             meta: Self::Metadata,
             tx: RPCTransaction,
             block: Option<String>,
+            meta_keys: Option<Vec<String>>,
         ) -> Result<Bytes, Error>;
 
         #[rpc(meta, name = "eth_estimateGas")]
@@ -379,6 +380,7 @@ pub mod basic {
             meta: Self::Metadata,
             tx: RPCTransaction,
             block: Option<String>,
+            meta_keys: Option<Vec<String>>,
         ) -> Result<Hex<Gas>, Error>;
 
         #[rpc(meta, name = "eth_getLogs")]
@@ -531,11 +533,16 @@ pub mod bridge {
             &self,
             meta: Self::Metadata,
             tx: RPCTransaction,
+            meta_keys: Option<Vec<String>>,
         ) -> Result<Hex<H256>, Error>;
 
         #[rpc(meta, name = "eth_sendRawTransaction")]
-        fn send_raw_transaction(&self, meta: Self::Metadata, tx: Bytes)
-            -> Result<Hex<H256>, Error>;
+        fn send_raw_transaction(
+            &self,
+            meta: Self::Metadata,
+            tx: Bytes,
+            meta_keys: Option<Vec<String>>,
+        ) -> Result<Hex<H256>, Error>;
 
         #[rpc(meta, name = "eth_gasPrice")]
         fn gas_price(&self, meta: Self::Metadata) -> Result<Hex<Gas>, Error>;

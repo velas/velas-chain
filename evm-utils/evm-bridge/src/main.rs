@@ -1,9 +1,13 @@
 use log::*;
 
+use std::str::FromStr;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
-use std::{collections::HashMap, net::SocketAddr};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+};
 
 use evm_rpc::basic::BasicERPC;
 use evm_rpc::bridge::BridgeERPC;
@@ -22,6 +26,7 @@ use solana_evm_loader_program::{scope::*, tx_chunks::TxChunks};
 use solana_sdk::{
     clock::DEFAULT_TICKS_PER_SECOND, commitment_config::CommitmentLevel,
     fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE, instruction::AccountMeta,
+    pubkey::Pubkey,
 };
 
 use solana_runtime::commitment::BlockCommitmentArray;
@@ -178,7 +183,11 @@ impl EvmBridge {
     }
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
-    fn send_tx(&self, tx: evm::Transaction) -> FutureEvmResult<Hex<H256>> {
+    fn send_tx(
+        &self,
+        tx: evm::Transaction,
+        mut meta_keys: HashSet<Pubkey>,
+    ) -> FutureEvmResult<Hex<H256>> {
         let hash = tx.tx_id_hash();
         let bytes = bincode::serialize(&tx).unwrap();
 
@@ -213,8 +222,6 @@ impl EvmBridge {
             tx.signature.chain_id()
         );
 
-        let mut meta_keys = vec![];
-
         // Shortcut for swap tokens to native, will add solana account to transaction.
         if let TransactionAction::Call(addr) = tx.action {
             use solana_evm_loader_program::precompiles::*;
@@ -224,7 +231,7 @@ impl EvmBridge {
                 match ETH_TO_VLX_CODE.parse_abi(&tx.input) {
                     Ok(pk) => {
                         info!("Adding account to meta = {}", pk);
-                        meta_keys.push(pk)
+                        meta_keys.insert(pk);
                     }
                     Err(e) => {
                         error!("Error in parsing abi = {}", e);
@@ -458,10 +465,17 @@ impl BridgeERPC for BridgeErpcImpl {
         &self,
         meta: Self::Metadata,
         tx: RPCTransaction,
+        meta_keys: Option<Vec<String>>,
     ) -> FutureEvmResult<Hex<H256>> {
         let address = tx.from.map(|a| a.0).unwrap_or_default();
 
         debug!("send_transaction from = {}", address);
+
+        let meta_keys: StdResult<HashSet<_>, _> = meta_keys
+            .into_iter()
+            .flatten()
+            .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
+            .collect();
 
         let secret_key = meta
             .accounts
@@ -486,15 +500,21 @@ impl BridgeERPC for BridgeErpcImpl {
 
         let tx = tx_create.sign(&secret_key, Some(meta.evm_chain_id));
 
-        meta.send_tx(tx)
+        meta.send_tx(tx, meta_keys.into_native_error(meta.verbose_errors)?)
     }
 
     fn send_raw_transaction(
         &self,
         meta: Self::Metadata,
         bytes: Bytes,
+        meta_keys: Option<Vec<String>>,
     ) -> FutureEvmResult<Hex<H256>> {
         debug!("send_raw_transaction");
+        let meta_keys: StdResult<HashSet<_>, _> = meta_keys
+            .into_iter()
+            .flatten()
+            .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
+            .collect();
 
         let tx: compatibility::Transaction = rlp::decode(&bytes.0).with_context(|| RlpError {
             struct_name: "RawTransaction".to_string(),
@@ -508,7 +528,7 @@ impl BridgeERPC for BridgeErpcImpl {
         let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
         let hash = unsigned_tx.signing_hash(Some(meta.evm_chain_id));
         debug!("loaded tx_hash = {}", hash);
-        meta.send_tx(tx)
+        meta.send_tx(tx, meta_keys.into_native_error(meta.verbose_errors)?)
     }
 
     fn gas_price(&self, _meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
@@ -738,8 +758,9 @@ impl BasicERPC for BasicErpcProxy {
         meta: Self::Metadata,
         tx: RPCTransaction,
         block: Option<String>,
+        meta_keys: Option<Vec<String>>,
     ) -> EvmResult<Bytes> {
-        proxy_evm_rpc!(meta.rpc_client, EthCall, tx, block)
+        proxy_evm_rpc!(meta.rpc_client, EthCall, tx, block, meta_keys)
     }
 
     fn estimate_gas(
@@ -747,8 +768,9 @@ impl BasicERPC for BasicErpcProxy {
         meta: Self::Metadata,
         tx: RPCTransaction,
         block: Option<String>,
+        meta_keys: Option<Vec<String>>,
     ) -> EvmResult<Hex<Gas>> {
-        proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block)
+        proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block, meta_keys)
     }
 
     fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> EvmResult<Vec<RPCLog>> {
