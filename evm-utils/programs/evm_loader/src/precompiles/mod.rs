@@ -100,13 +100,17 @@ fn entrypoint_static(
 }
 
 // Simulation does not have access to real account structure, so only process immutable entrypoints
-pub fn simulation_entrypoint(
+pub fn simulation_entrypoint<'a>(
     activate_precompile: bool,
-) -> impl FnMut(H160, &[u8], Option<u64>, &Context) -> Option<evm_state::PrecompileCallResult> {
+    evm_state_balance: u64,
+    users_accounts: &'a [KeyedAccount],
+) -> impl FnMut(H160, &[u8], Option<u64>, &Context) -> Option<evm_state::PrecompileCallResult> + 'a
+{
     move |address, function_abi_input, gas_left, cx| {
-        let evm_account = RefCell::new(crate::create_state_account(0));
+        let evm_account = RefCell::new(crate::create_state_account(evm_state_balance));
         let evm_keyed_account = KeyedAccount::new(&solana_sdk::evm_state::ID, false, &evm_account);
-        let accounts = AccountStructure::new(&evm_keyed_account, &[]);
+
+        let accounts = AccountStructure::new(&evm_keyed_account, &users_accounts);
         entrypoint_static(
             address,
             function_abi_input,

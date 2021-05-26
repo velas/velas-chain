@@ -738,8 +738,9 @@ impl BasicERPC for BasicErpcProxy {
         meta: Self::Metadata,
         tx: RPCTransaction,
         block: Option<String>,
+        meta_keys: Option<Vec<String>>,
     ) -> EvmResult<Bytes> {
-        proxy_evm_rpc!(meta.rpc_client, EthCall, tx, block)
+        proxy_evm_rpc!(meta.rpc_client, EthCall, tx, block, meta_keys)
     }
 
     fn estimate_gas(
@@ -747,8 +748,9 @@ impl BasicERPC for BasicErpcProxy {
         meta: Self::Metadata,
         tx: RPCTransaction,
         block: Option<String>,
+        meta_keys: Option<Vec<String>>,
     ) -> EvmResult<Hex<Gas>> {
-        proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block)
+        proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block, meta_keys)
     }
 
     fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> EvmResult<Vec<RPCLog>> {

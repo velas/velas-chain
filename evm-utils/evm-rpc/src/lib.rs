@@ -371,6 +371,7 @@ pub mod basic {
             meta: Self::Metadata,
             tx: RPCTransaction,
             block: Option<String>,
+            meta_keys: Option<Vec<String>>,
         ) -> Result<Bytes, Error>;
 
         #[rpc(meta, name = "eth_estimateGas")]
@@ -379,6 +380,7 @@ pub mod basic {
             meta: Self::Metadata,
             tx: RPCTransaction,
             block: Option<String>,
+            meta_keys: Option<Vec<String>>,
         ) -> Result<Hex<Gas>, Error>;
 
         #[rpc(meta, name = "eth_getLogs")]
