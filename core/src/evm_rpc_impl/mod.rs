@@ -1,7 +1,8 @@
-use std::convert::TryInto;
+use std::{convert::TryInto, str::FromStr};
 
 use sha3::{Digest, Keccak256};
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
+use solana_sdk::keyed_account::KeyedAccount;
 
 use evm_rpc::{
     basic::BasicERPC,
@@ -13,6 +14,7 @@ use evm_state::{AccountProvider, Address, Gas, LogFilter, H256, U256};
 use solana_runtime::bank::Bank;
 
 use crate::rpc::JsonRpcRequestProcessor;
+use std::cell::RefCell;
 use std::sync::Arc;
 
 const DEFAULT_COMITTMENT: Option<CommitmentConfig> = Some(CommitmentConfig {
@@ -372,8 +374,14 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         tx: RPCTransaction,
         block: Option<String>,
+        meta_keys: Option<Vec<String>>,
     ) -> Result<Bytes, Error> {
-        let result = call(meta, tx, block)?;
+        let meta_keys: Result<Vec<_>, _> = meta_keys
+            .into_iter()
+            .flatten()
+            .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
+            .collect();
+        let result = call(meta, tx, block, meta_keys.into_native_error(false)?)?;
         Ok(Bytes(result.1))
     }
 
@@ -382,8 +390,14 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         tx: RPCTransaction,
         block: Option<String>,
+        meta_keys: Option<Vec<String>>,
     ) -> Result<Hex<Gas>, Error> {
-        let result = call(meta, tx, block)?;
+        let meta_keys: Result<Vec<_>, _> = meta_keys
+            .into_iter()
+            .flatten()
+            .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
+            .collect();
+        let result = call(meta, tx, block, meta_keys.into_native_error(false)?)?;
         Ok(Hex(result.2.into()))
     }
 
@@ -434,6 +448,7 @@ fn call(
     meta: JsonRpcRequestProcessor,
     tx: RPCTransaction,
     _block: Option<String>,
+    meta_keys: Vec<solana_sdk::pubkey::Pubkey>,
 ) -> Result<(evm_state::ExitSucceed, Vec<u8>, u64), Error> {
     let caller = tx.from.map(|a| a.0).unwrap_or_default();
 
@@ -469,16 +484,53 @@ fn call(
         evm_state::ChainContext::new(last_hashes),
         estimate_config,
     );
+
+    let evm_state_balance = bank
+        .get_account(&solana_sdk::evm_state::id())
+        .unwrap_or_default()
+        .lamports;
     debug!("running evm executor = {:?}", executor);
     let result = if let Some(address) = tx.to {
+        use solana_evm_loader_program::precompiles::*;
         let address = address.0;
         debug!(
             "Trying to execute tx = {:?}",
             (caller, address, value, &input, gas_limit)
         );
+
+        let mut meta_keys: Vec<_> = meta_keys
+            .into_iter()
+            .map(|pk| {
+                let user_account = RefCell::new(bank.get_account(&pk).unwrap_or_default());
+                (user_account, pk)
+            })
+            .collect();
+
+        // Shortcut for swap tokens to native, will add solana account to transaction.
+        if address == *ETH_TO_VLX_ADDR {
+            debug!("Found transferToNative transaction");
+            match ETH_TO_VLX_CODE.parse_abi(&input) {
+                Ok(pk) => {
+                    info!("Adding account to meta = {}", pk);
+
+                    let user_account = RefCell::new(bank.get_account(&pk).unwrap_or_default());
+                    meta_keys.push((user_account, pk))
+                }
+                Err(e) => {
+                    error!("Error in parsing abi = {}", e);
+                }
+            }
+        }
+        let user_accounts: Vec<_> = meta_keys
+            .iter()
+            .map(|(user_account, pk)| KeyedAccount::new(pk, false, user_account))
+            .collect();
+
         executor.with_executor(
             solana_evm_loader_program::precompiles::simulation_entrypoint(
                 executor.support_precompile(),
+                evm_state_balance,
+                &user_accounts,
             ),
             |e| e.transact_call(caller, address, value, input, gas_limit),
         )
@@ -486,6 +538,8 @@ fn call(
         executor.with_executor(
             solana_evm_loader_program::precompiles::simulation_entrypoint(
                 executor.support_precompile(),
+                evm_state_balance,
+                &[],
             ),
             |e| (e.transact_create(caller, value, input, gas_limit), vec![]),
         )
