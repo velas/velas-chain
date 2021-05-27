@@ -19,7 +19,7 @@ use solana_sdk::{
     account::Account,
     account_utils::StateMut,
     bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-    clock::{Epoch, Slot},
+    clock::{Epoch, Slot, INITIAL_RENT_EPOCH},
     feature_set::{self, FeatureSet},
     fee_calculator::{FeeCalculator, FeeConfig},
     genesis_config::ClusterType,
@@ -31,15 +31,59 @@ use solana_sdk::{
     transaction::{Transaction, TransactionError},
 };
 use std::{
-    collections::{HashMap, HashSet},
+    cmp::Reverse,
+    collections::{hash_map, BinaryHeap, HashMap, HashSet},
     ops::RangeBounds,
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex},
 };
 
 #[derive(Default, Debug, AbiExample)]
 pub(crate) struct ReadonlyLock {
     lock_count: Mutex<u64>,
+}
+
+#[derive(Debug, Default, AbiExample)]
+pub struct AccountLocks {
+    write_locks: HashSet<Pubkey>,
+    readonly_locks: HashMap<Pubkey, u64>,
+}
+
+impl AccountLocks {
+    fn is_locked_readonly(&self, key: &Pubkey) -> bool {
+        self.readonly_locks
+            .get(key)
+            .map_or(false, |count| *count > 0)
+    }
+
+    fn is_locked_write(&self, key: &Pubkey) -> bool {
+        self.write_locks.contains(key)
+    }
+
+    fn insert_new_readonly(&mut self, key: &Pubkey) {
+        assert!(self.readonly_locks.insert(*key, 1).is_none());
+    }
+
+    fn lock_readonly(&mut self, key: &Pubkey) -> bool {
+        self.readonly_locks.get_mut(key).map_or(false, |count| {
+            *count += 1;
+            true
+        })
+    }
+
+    fn unlock_readonly(&mut self, key: &Pubkey) {
+        if let hash_map::Entry::Occupied(mut occupied_entry) = self.readonly_locks.entry(*key) {
+            let count = occupied_entry.get_mut();
+            *count -= 1;
+            if *count == 0 {
+                occupied_entry.remove_entry();
+            }
+        }
+    }
+
+    fn unlock_write(&mut self, key: &Pubkey) {
+        self.write_locks.remove(key);
+    }
 }
 
 /// This structure handles synchronization for db
@@ -54,11 +98,9 @@ pub struct Accounts {
     /// Single global AccountsDb
     pub accounts_db: Arc<AccountsDb>,
 
-    /// set of writable accounts which are currently in the pipeline
-    pub(crate) account_locks: Mutex<HashSet<Pubkey>>,
-
-    /// Set of read-only accounts which are currently in the pipeline, caching number of locks.
-    pub(crate) readonly_locks: Arc<RwLock<Option<HashMap<Pubkey, ReadonlyLock>>>>,
+    /// set of read-only and writable accounts which are currently
+    /// being processed by banking/replay threads
+    pub(crate) account_locks: Mutex<AccountLocks>,
 }
 
 // for the load instructions
@@ -100,8 +142,7 @@ impl Accounts {
                 account_indexes,
                 caching_enabled,
             )),
-            account_locks: Mutex::new(HashSet::new()),
-            readonly_locks: Arc::new(RwLock::new(Some(HashMap::new()))),
+            account_locks: Mutex::new(AccountLocks::default()),
             ..Self::default()
         }
     }
@@ -113,16 +154,14 @@ impl Accounts {
             slot,
             epoch,
             accounts_db,
-            account_locks: Mutex::new(HashSet::new()),
-            readonly_locks: Arc::new(RwLock::new(Some(HashMap::new()))),
+            account_locks: Mutex::new(AccountLocks::default()),
         }
     }
 
     pub(crate) fn new_empty(accounts_db: AccountsDb) -> Self {
         Self {
             accounts_db: Arc::new(accounts_db),
-            account_locks: Mutex::new(HashSet::new()),
-            readonly_locks: Arc::new(RwLock::new(Some(HashMap::new()))),
+            account_locks: Mutex::new(AccountLocks::default()),
             ..Self::default()
         }
     }
@@ -522,34 +561,45 @@ impl Accounts {
         filter_by_address: &HashSet<Pubkey>,
         filter: AccountAddressFilter,
     ) -> Vec<(Pubkey, u64)> {
-        let mut accounts_balances = self.accounts_db.scan_accounts(
+        if num == 0 {
+            return vec![];
+        }
+        let account_balances = self.accounts_db.scan_accounts(
             ancestors,
-            |collector: &mut Vec<(Pubkey, u64)>, option| {
-                if let Some(data) = option
-                    .filter(|(pubkey, account, _)| {
-                        let should_include_pubkey = match filter {
-                            AccountAddressFilter::Exclude => !filter_by_address.contains(&pubkey),
-                            AccountAddressFilter::Include => filter_by_address.contains(&pubkey),
-                        };
-                        should_include_pubkey && account.lamports != 0
-                    })
-                    .map(|(pubkey, account, _slot)| (*pubkey, account.lamports))
-                {
-                    collector.push(data)
+            |collector: &mut BinaryHeap<Reverse<(u64, Pubkey)>>, option| {
+                if let Some((pubkey, account, _slot)) = option {
+                    if account.lamports == 0 {
+                        return;
+                    }
+                    let contains_address = filter_by_address.contains(pubkey);
+                    let collect = match filter {
+                        AccountAddressFilter::Exclude => !contains_address,
+                        AccountAddressFilter::Include => contains_address,
+                    };
+                    if !collect {
+                        return;
+                    }
+                    if collector.len() == num {
+                        let Reverse(entry) = collector
+                            .peek()
+                            .expect("BinaryHeap::peek should succeed when len > 0");
+                        if *entry >= (account.lamports, *pubkey) {
+                            return;
+                        }
+                        collector.pop();
+                    }
+                    collector.push(Reverse((account.lamports, *pubkey)));
                 }
             },
         );
-
-        accounts_balances.sort_by(|a, b| a.1.cmp(&b.1).reverse());
-        accounts_balances.truncate(num);
-        accounts_balances
+        account_balances
+            .into_sorted_vec()
+            .into_iter()
+            .map(|Reverse((balance, pubkey))| (pubkey, balance))
+            .collect()
     }
 
-    pub fn calculate_capitalization(
-        &self,
-        ancestors: &Ancestors,
-        simple_capitalization_enabled: bool,
-    ) -> u64 {
+    pub fn calculate_capitalization(&self, ancestors: &Ancestors) -> u64 {
         self.accounts_db.unchecked_scan_accounts(
             "calculate_capitalization_scan_elapsed",
             ancestors,
@@ -560,7 +610,6 @@ impl Accounts {
                         lamports,
                         &loaded_account.owner(),
                         loaded_account.executable(),
-                        simple_capitalization_enabled,
                     );
 
                     *total_capitalization = AccountsDb::checked_iterative_sum_for_capitalization(
@@ -578,14 +627,11 @@ impl Accounts {
         slot: Slot,
         ancestors: &Ancestors,
         total_lamports: u64,
-        simple_capitalization_enabled: bool,
     ) -> bool {
-        if let Err(err) = self.accounts_db.verify_bank_hash_and_lamports(
-            slot,
-            ancestors,
-            total_lamports,
-            simple_capitalization_enabled,
-        ) {
+        if let Err(err) =
+            self.accounts_db
+                .verify_bank_hash_and_lamports(slot, ancestors, total_lamports)
+        {
             warn!("verify_bank_hash failed: {:?}", err);
             false
         } else {
@@ -697,92 +743,39 @@ impl Accounts {
         self.accounts_db.store_cached(slot, &[(pubkey, account)]);
     }
 
-    fn is_locked_readonly(&self, key: &Pubkey) -> bool {
-        self.readonly_locks
-            .read()
-            .unwrap()
-            .as_ref()
-            .map_or(false, |locks| {
-                locks
-                    .get(key)
-                    .map_or(false, |lock| *lock.lock_count.lock().unwrap() > 0)
-            })
-    }
-
-    fn unlock_readonly(&self, key: &Pubkey) {
-        self.readonly_locks.read().unwrap().as_ref().map(|locks| {
-            locks
-                .get(key)
-                .map(|lock| *lock.lock_count.lock().unwrap() -= 1)
-        });
-    }
-
-    fn lock_readonly(&self, key: &Pubkey) -> bool {
-        self.readonly_locks
-            .read()
-            .unwrap()
-            .as_ref()
-            .map_or(false, |locks| {
-                locks.get(key).map_or(false, |lock| {
-                    *lock.lock_count.lock().unwrap() += 1;
-                    true
-                })
-            })
-    }
-
-    fn insert_readonly(&self, key: &Pubkey, lock: ReadonlyLock) -> bool {
-        self.readonly_locks
-            .write()
-            .unwrap()
-            .as_mut()
-            .map_or(false, |locks| {
-                assert!(locks.get(key).is_none());
-                locks.insert(*key, lock);
-                true
-            })
-    }
-
     fn lock_account(
         &self,
-        locks: &mut HashSet<Pubkey>,
+        account_locks: &mut AccountLocks,
         writable_keys: Vec<&Pubkey>,
         readonly_keys: Vec<&Pubkey>,
     ) -> Result<()> {
         for k in writable_keys.iter() {
-            if locks.contains(k) || self.is_locked_readonly(k) {
-                debug!("CD Account in use: {:?}", k);
+            if account_locks.is_locked_write(k) || account_locks.is_locked_readonly(k) {
+                debug!("Writable account in use: {:?}", k);
                 return Err(TransactionError::AccountInUse);
             }
         }
         for k in readonly_keys.iter() {
-            if locks.contains(k) {
-                debug!("CO Account in use: {:?}", k);
+            if account_locks.is_locked_write(k) {
+                debug!("Read-only account in use: {:?}", k);
                 return Err(TransactionError::AccountInUse);
             }
         }
 
         for k in writable_keys {
-            locks.insert(*k);
+            account_locks.write_locks.insert(*k);
         }
 
-        let readonly_writes: Vec<&&Pubkey> = readonly_keys
-            .iter()
-            .filter(|k| !self.lock_readonly(k))
-            .collect();
-
-        for k in readonly_writes.iter() {
-            self.insert_readonly(
-                *k,
-                ReadonlyLock {
-                    lock_count: Mutex::new(1),
-                },
-            );
+        for k in readonly_keys {
+            if !account_locks.lock_readonly(k) {
+                account_locks.insert_new_readonly(k);
+            }
         }
 
         Ok(())
     }
 
-    fn unlock_account(&self, tx: &Transaction, result: &Result<()>, locks: &mut HashSet<Pubkey>) {
+    fn unlock_account(&self, tx: &Transaction, result: &Result<()>, locks: &mut AccountLocks) {
         match result {
             Err(TransactionError::AccountInUse) => (),
             Err(TransactionError::SanitizeFailure) => (),
@@ -790,10 +783,10 @@ impl Accounts {
             _ => {
                 let (writable_keys, readonly_keys) = &tx.message().get_account_keys_by_lock_type();
                 for k in writable_keys {
-                    locks.remove(k);
+                    locks.unlock_write(k);
                 }
                 for k in readonly_keys {
-                    self.unlock_readonly(k);
+                    locks.unlock_readonly(k);
                 }
             }
         }
@@ -973,7 +966,7 @@ impl Accounts {
                             _ => panic!("unexpected nonce_rollback condition"),
                         }
                     }
-                    if account.rent_epoch == 0 {
+                    if account.rent_epoch == INITIAL_RENT_EPOCH {
                         acc.3 += rent_collector.collect_from_created_account(&key, account);
                     }
                     accounts.push((key, &*account));
@@ -1715,15 +1708,11 @@ mod tests {
         assert!(results0[0].is_ok());
         assert_eq!(
             *accounts
-                .readonly_locks
-                .read()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .get(&keypair1.pubkey())
-                .unwrap()
-                .lock_count
+                .account_locks
                 .lock()
+                .unwrap()
+                .readonly_locks
+                .get(&keypair1.pubkey())
                 .unwrap(),
             1
         );
@@ -1755,15 +1744,11 @@ mod tests {
         assert!(results1[1].is_err()); // Read-only account (keypair1) cannot also be locked as writable
         assert_eq!(
             *accounts
-                .readonly_locks
-                .read()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .get(&keypair1.pubkey())
-                .unwrap()
-                .lock_count
+                .account_locks
                 .lock()
+                .unwrap()
+                .readonly_locks
+                .get(&keypair1.pubkey())
                 .unwrap(),
             2
         );
@@ -1785,12 +1770,14 @@ mod tests {
 
         assert!(results2[0].is_ok()); // Now keypair1 account can be locked as writable
 
-        // Check that read-only locks are still cached in accounts struct
-        let readonly_locks = accounts.readonly_locks.read().unwrap();
-        let readonly_locks = readonly_locks.as_ref().unwrap();
-        let keypair1_lock = readonly_locks.get(&keypair1.pubkey());
-        assert!(keypair1_lock.is_some());
-        assert_eq!(*keypair1_lock.unwrap().lock_count.lock().unwrap(), 0);
+        // Check that read-only lock with zero references is deleted
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .readonly_locks
+            .get(&keypair1.pubkey())
+            .is_none());
     }
 
     #[test]
@@ -1939,14 +1926,11 @@ mod tests {
         let accounts =
             Accounts::new_with_config(Vec::new(), &ClusterType::Development, HashSet::new(), false);
         {
-            let mut readonly_locks = accounts.readonly_locks.write().unwrap();
-            let readonly_locks = readonly_locks.as_mut().unwrap();
-            readonly_locks.insert(
-                pubkey,
-                ReadonlyLock {
-                    lock_count: Mutex::new(1),
-                },
-            );
+            accounts
+                .account_locks
+                .lock()
+                .unwrap()
+                .insert_new_readonly(&pubkey);
         }
         let collected_accounts = accounts.collect_accounts_to_store(
             &txs,
@@ -1966,14 +1950,13 @@ mod tests {
             .any(|(pubkey, _account)| *pubkey == &keypair1.pubkey()));
 
         // Ensure readonly_lock reflects lock
-        let readonly_locks = accounts.readonly_locks.read().unwrap();
-        let readonly_locks = readonly_locks.as_ref().unwrap();
         assert_eq!(
-            *readonly_locks
-                .get(&pubkey)
-                .unwrap()
-                .lock_count
+            *accounts
+                .account_locks
                 .lock()
+                .unwrap()
+                .readonly_locks
+                .get(&pubkey)
                 .unwrap(),
             1
         );
@@ -2445,5 +2428,130 @@ mod tests {
             &collected_nonce_account,
             &next_blockhash
         ));
+    }
+
+    #[test]
+    fn test_load_largest_accounts() {
+        let accounts =
+            Accounts::new_with_config(Vec::new(), &ClusterType::Development, HashSet::new(), false);
+
+        let pubkey0 = Pubkey::new_unique();
+        let account0 = Account::new(42, 0, &Pubkey::default());
+        accounts.store_slow_uncached(0, &pubkey0, &account0);
+        let pubkey1 = Pubkey::new_unique();
+        let account1 = Account::new(42, 0, &Pubkey::default());
+        accounts.store_slow_uncached(0, &pubkey1, &account1);
+        let pubkey2 = Pubkey::new_unique();
+        let account2 = Account::new(41, 0, &Pubkey::default());
+        accounts.store_slow_uncached(0, &pubkey2, &account2);
+
+        let ancestors = vec![(0, 0)].into_iter().collect();
+        let all_pubkeys: HashSet<_> = vec![pubkey0, pubkey1, pubkey2].into_iter().collect();
+
+        // num == 0 should always return empty set
+        assert_eq!(
+            accounts.load_largest_accounts(
+                &ancestors,
+                0,
+                &HashSet::new(),
+                AccountAddressFilter::Exclude
+            ),
+            vec![]
+        );
+        assert_eq!(
+            accounts.load_largest_accounts(
+                &ancestors,
+                0,
+                &all_pubkeys,
+                AccountAddressFilter::Include
+            ),
+            vec![]
+        );
+
+        // list should be sorted by balance, then pubkey, descending
+        assert!(pubkey1 > pubkey0);
+        assert_eq!(
+            accounts.load_largest_accounts(
+                &ancestors,
+                1,
+                &HashSet::new(),
+                AccountAddressFilter::Exclude
+            ),
+            vec![(pubkey1, 42)]
+        );
+        assert_eq!(
+            accounts.load_largest_accounts(
+                &ancestors,
+                2,
+                &HashSet::new(),
+                AccountAddressFilter::Exclude
+            ),
+            vec![(pubkey1, 42), (pubkey0, 42)]
+        );
+        assert_eq!(
+            accounts.load_largest_accounts(
+                &ancestors,
+                3,
+                &HashSet::new(),
+                AccountAddressFilter::Exclude
+            ),
+            vec![(pubkey1, 42), (pubkey0, 42), (pubkey2, 41)]
+        );
+
+        // larger num should not affect results
+        assert_eq!(
+            accounts.load_largest_accounts(
+                &ancestors,
+                6,
+                &HashSet::new(),
+                AccountAddressFilter::Exclude
+            ),
+            vec![(pubkey1, 42), (pubkey0, 42), (pubkey2, 41)]
+        );
+
+        // AccountAddressFilter::Exclude should exclude entry
+        let exclude1: HashSet<_> = vec![pubkey1].into_iter().collect();
+        assert_eq!(
+            accounts.load_largest_accounts(&ancestors, 1, &exclude1, AccountAddressFilter::Exclude),
+            vec![(pubkey0, 42)]
+        );
+        assert_eq!(
+            accounts.load_largest_accounts(&ancestors, 2, &exclude1, AccountAddressFilter::Exclude),
+            vec![(pubkey0, 42), (pubkey2, 41)]
+        );
+        assert_eq!(
+            accounts.load_largest_accounts(&ancestors, 3, &exclude1, AccountAddressFilter::Exclude),
+            vec![(pubkey0, 42), (pubkey2, 41)]
+        );
+
+        // AccountAddressFilter::Include should limit entries
+        let include1_2: HashSet<_> = vec![pubkey1, pubkey2].into_iter().collect();
+        assert_eq!(
+            accounts.load_largest_accounts(
+                &ancestors,
+                1,
+                &include1_2,
+                AccountAddressFilter::Include
+            ),
+            vec![(pubkey1, 42)]
+        );
+        assert_eq!(
+            accounts.load_largest_accounts(
+                &ancestors,
+                2,
+                &include1_2,
+                AccountAddressFilter::Include
+            ),
+            vec![(pubkey1, 42), (pubkey2, 41)]
+        );
+        assert_eq!(
+            accounts.load_largest_accounts(
+                &ancestors,
+                3,
+                &include1_2,
+                AccountAddressFilter::Include
+            ),
+            vec![(pubkey1, 42), (pubkey2, 41)]
+        );
     }
 }

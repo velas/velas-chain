@@ -30,13 +30,17 @@ use solana_client::{
         TokenAccountsFilter, DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_GET_CONFIRMED_BLOCKS_RANGE,
         MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT,
         MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS_SLOT_RANGE, MAX_GET_PROGRAM_ACCOUNT_FILTERS,
-        MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_MULTIPLE_ACCOUNTS, NUM_LARGEST_ACCOUNTS,
+        MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
+        NUM_LARGEST_ACCOUNTS,
     },
     rpc_response::Response as RpcResponse,
     rpc_response::*,
 };
 use solana_faucet::faucet::request_airdrop_transaction;
-use solana_ledger::{blockstore::Blockstore, blockstore_db::BlockstoreError, get_tmp_ledger_path};
+use solana_ledger::{
+    blockstore::Blockstore, blockstore_db::BlockstoreError, get_tmp_ledger_path,
+    leader_schedule_cache::LeaderScheduleCache,
+};
 use solana_metrics::inc_new_counter_info;
 use solana_perf::packet::PACKET_DATA_SIZE;
 use solana_runtime::{
@@ -66,8 +70,8 @@ use solana_sdk::{
 };
 use solana_stake_program::stake_state::StakeState;
 use solana_transaction_status::{
-    EncodedConfirmedBlock, EncodedConfirmedTransaction, TransactionConfirmationStatus,
-    TransactionStatus, UiTransactionEncoding,
+    EncodedConfirmedTransaction, TransactionConfirmationStatus, TransactionStatus,
+    UiConfirmedBlock, UiTransactionEncoding,
 };
 use solana_vote_program::vote_state::{VoteState, MAX_LOCKOUT_HISTORY};
 use spl_token_v2_0::{
@@ -81,7 +85,7 @@ use std::{
     net::SocketAddr,
     str::FromStr,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{channel, Receiver, Sender},
         Arc, Mutex, RwLock,
     },
@@ -98,7 +102,7 @@ fn new_response<T>(bank: &Bank, value: T) -> RpcResponse<T> {
     Response { context, value }
 }
 
-pub fn is_confirmed_rooted(
+fn is_finalized(
     block_commitment_cache: &BlockCommitmentCache,
     bank: &Bank,
     blockstore: &Blockstore,
@@ -142,6 +146,8 @@ pub struct JsonRpcRequestProcessor {
     optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
     max_slots: Arc<MaxSlots>,
+    leader_schedule_cache: Arc<LeaderScheduleCache>,
+    max_complete_transaction_status_slot: Arc<AtomicU64>,
 }
 impl Metadata for JsonRpcRequestProcessor {}
 
@@ -227,6 +233,8 @@ impl JsonRpcRequestProcessor {
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
         max_slots: Arc<MaxSlots>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        max_complete_transaction_status_slot: Arc<AtomicU64>,
     ) -> (Self, Receiver<TransactionInfo>) {
         let (sender, receiver) = channel();
         (
@@ -246,6 +254,8 @@ impl JsonRpcRequestProcessor {
                 optimistically_confirmed_bank,
                 largest_accounts_cache,
                 max_slots,
+                leader_schedule_cache,
+                max_complete_transaction_status_slot,
             },
             receiver,
         )
@@ -287,6 +297,8 @@ impl JsonRpcRequestProcessor {
             })),
             largest_accounts_cache: Arc::new(RwLock::new(LargestAccountsCache::new(30))),
             max_slots: Arc::new(MaxSlots::default()),
+            leader_schedule_cache: Arc::new(LeaderScheduleCache::new_from_bank(bank)),
+            max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
         }
     }
 
@@ -743,37 +755,60 @@ impl JsonRpcRequestProcessor {
     pub fn get_confirmed_block(
         &self,
         slot: Slot,
-        encoding: Option<UiTransactionEncoding>,
-    ) -> Result<Option<EncodedConfirmedBlock>> {
-        let encoding = encoding.unwrap_or(UiTransactionEncoding::Json);
-        if self.config.enable_rpc_transaction_history
-            && slot
+        config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
+    ) -> Result<Option<UiConfirmedBlock>> {
+        if self.config.enable_rpc_transaction_history {
+            let config = config
+                .map(|config| config.convert_to_current())
+                .unwrap_or_default();
+            let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Json);
+            let transaction_details = config.transaction_details.unwrap_or_default();
+            let show_rewards = config.rewards.unwrap_or(true);
+            let commitment = config.commitment.unwrap_or_default();
+            check_is_at_least_confirmed(commitment)?;
+
+            // Block is old enough to be finalized
+            if slot
                 <= self
                     .block_commitment_cache
                     .read()
                     .unwrap()
                     .highest_confirmed_root()
-        {
-            let result = self.blockstore.get_confirmed_block(slot, true);
-            if result.is_err() {
-                if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                    let bigtable_result = self
-                        .runtime_handle
-                        .block_on(bigtable_ledger_storage.get_confirmed_block(slot));
-                    self.check_bigtable_result(&bigtable_result)?;
-                    return Ok(bigtable_result
-                        .ok()
-                        .map(|confirmed_block| confirmed_block.encode(encoding)));
+            {
+                let result = self.blockstore.get_rooted_block(slot, true);
+                if result.is_err() {
+                    if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                        let bigtable_result = self
+                            .runtime_handle
+                            .block_on(bigtable_ledger_storage.get_confirmed_block(slot));
+                        self.check_bigtable_result(&bigtable_result)?;
+                        return Ok(bigtable_result.ok().map(|confirmed_block| {
+                            confirmed_block.configure(encoding, transaction_details, show_rewards)
+                        }));
+                    }
+                }
+                self.check_blockstore_root(&result, slot)?;
+                self.check_slot_cleaned_up(&result, slot)?;
+                return Ok(result.ok().map(|confirmed_block| {
+                    confirmed_block.configure(encoding, transaction_details, show_rewards)
+                }));
+            } else if commitment.is_confirmed() {
+                // Check if block is confirmed
+                let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+                if confirmed_bank.status_cache_ancestors().contains(&slot)
+                    && slot
+                        <= self
+                            .max_complete_transaction_status_slot
+                            .load(Ordering::SeqCst)
+                {
+                    let result = self.blockstore.get_complete_block(slot, true);
+                    return Ok(result.ok().map(|confirmed_block| {
+                        confirmed_block.configure(encoding, transaction_details, show_rewards)
+                    }));
                 }
             }
-            self.check_blockstore_root(&result, slot)?;
-            self.check_slot_cleaned_up(&result, slot)?;
-            Ok(result
-                .ok()
-                .map(|confirmed_block| confirmed_block.encode(encoding)))
-        } else {
-            Err(RpcCustomError::BlockNotAvailable { slot }.into())
         }
+        Err(RpcCustomError::BlockNotAvailable { slot }.into())
     }
 
     pub fn get_confirmed_block_hash(&self, slot: Slot) -> Result<Option<String>> {
@@ -805,13 +840,24 @@ impl JsonRpcRequestProcessor {
         &self,
         start_slot: Slot,
         end_slot: Option<Slot>,
+        commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>> {
+        let commitment = commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
+        let highest_confirmed_root = self
+            .block_commitment_cache
+            .read()
+            .unwrap()
+            .highest_confirmed_root();
+
         let end_slot = min(
-            end_slot.unwrap_or(std::u64::MAX),
-            self.block_commitment_cache
-                .read()
-                .unwrap()
-                .highest_confirmed_root(),
+            end_slot.unwrap_or_else(|| start_slot.saturating_add(MAX_GET_CONFIRMED_BLOCKS_RANGE)),
+            if commitment.is_finalized() {
+                highest_confirmed_root
+            } else {
+                self.bank(Some(CommitmentConfig::confirmed())).slot()
+            },
         );
         if end_slot < start_slot {
             return Ok(vec![]);
@@ -826,7 +872,8 @@ impl JsonRpcRequestProcessor {
         let lowest_blockstore_slot = self.blockstore.lowest_slot();
         if start_slot < lowest_blockstore_slot {
             // If the starting slot is lower than what's available in blockstore assume the entire
-            // [start_slot..end_slot] can be fetched from BigTable.
+            // [start_slot..end_slot] can be fetched from BigTable. This range should not ever run
+            // into unfinalized confirmed blocks due to MAX_GET_CONFIRMED_BLOCKS_RANGE
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
                 return self
                     .runtime_handle
@@ -847,19 +894,38 @@ impl JsonRpcRequestProcessor {
             }
         }
 
-        Ok(self
+        // Finalized blocks
+        let mut blocks: Vec<_> = self
             .blockstore
             .rooted_slot_iterator(max(start_slot, lowest_blockstore_slot))
             .map_err(|_| Error::internal_error())?
-            .filter(|&slot| slot <= end_slot)
-            .collect())
+            .filter(|&slot| slot <= end_slot && slot <= highest_confirmed_root)
+            .collect();
+        let last_element = blocks.last().cloned().unwrap_or_default();
+
+        // Maybe add confirmed blocks
+        if commitment.is_confirmed() && last_element < end_slot {
+            let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+            let mut confirmed_blocks = confirmed_bank
+                .status_cache_ancestors()
+                .into_iter()
+                .filter(|&slot| slot <= end_slot && slot > last_element)
+                .collect();
+            blocks.append(&mut confirmed_blocks);
+        }
+
+        Ok(blocks)
     }
 
     pub fn get_confirmed_blocks_with_limit(
         &self,
         start_slot: Slot,
         limit: usize,
+        commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>> {
+        let commitment = commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
         if limit > MAX_GET_CONFIRMED_BLOCKS_RANGE as usize {
             return Err(Error::invalid_params(format!(
                 "Limit too large; max {}",
@@ -871,7 +937,8 @@ impl JsonRpcRequestProcessor {
 
         if start_slot < lowest_blockstore_slot {
             // If the starting slot is lower than what's available in blockstore assume the entire
-            // range can be fetched from BigTable.
+            // range can be fetched from BigTable. This range should not ever run into unfinalized
+            // confirmed blocks due to MAX_GET_CONFIRMED_BLOCKS_RANGE
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
                 return Ok(self
                     .runtime_handle
@@ -880,12 +947,35 @@ impl JsonRpcRequestProcessor {
             }
         }
 
-        Ok(self
+        let highest_confirmed_root = self
+            .block_commitment_cache
+            .read()
+            .unwrap()
+            .highest_confirmed_root();
+
+        // Finalized blocks
+        let mut blocks: Vec<_> = self
             .blockstore
             .rooted_slot_iterator(max(start_slot, lowest_blockstore_slot))
             .map_err(|_| Error::internal_error())?
             .take(limit)
-            .collect())
+            .filter(|&slot| slot <= highest_confirmed_root)
+            .collect();
+
+        // Maybe add confirmed blocks
+        if commitment.is_confirmed() && blocks.len() < limit {
+            let last_element = blocks.last().cloned().unwrap_or_default();
+            let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+            let mut confirmed_blocks = confirmed_bank
+                .status_cache_ancestors()
+                .into_iter()
+                .filter(|&slot| slot > last_element)
+                .collect();
+            blocks.append(&mut confirmed_blocks);
+            blocks.truncate(limit);
+        }
+
+        Ok(blocks)
     }
 
     pub fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
@@ -912,7 +1002,12 @@ impl JsonRpcRequestProcessor {
             self.check_slot_cleaned_up(&result, slot)?;
             Ok(result.ok().unwrap_or(None))
         } else {
-            Err(RpcCustomError::BlockNotAvailable { slot }.into())
+            let r_bank_forks = self.bank_forks.read().unwrap();
+            if let Some(bank) = r_bank_forks.get(slot) {
+                Ok(Some(bank.clock().unix_timestamp))
+            } else {
+                Err(RpcCustomError::BlockNotAvailable { slot }.into())
+            }
         }
     }
 
@@ -959,7 +1054,7 @@ impl JsonRpcRequestProcessor {
                 Some(status)
             } else if self.config.enable_rpc_transaction_history && search_transaction_history {
                 self.blockstore
-                    .get_transaction_status(signature)
+                    .get_rooted_transaction_status(signature)
                     .map_err(|_| Error::internal_error())?
                     .filter(|(slot, _status_meta)| {
                         slot <= &self
@@ -1009,7 +1104,7 @@ impl JsonRpcRequestProcessor {
             optimistically_confirmed_bank.get_signature_status_slot(&signature);
 
         let confirmations = if r_block_commitment_cache.root() >= slot
-            && is_confirmed_rooted(&r_block_commitment_cache, bank, &self.blockstore, slot)
+            && is_finalized(&r_block_commitment_cache, bank, &self.blockstore, slot)
         {
             None
         } else {
@@ -1036,16 +1131,33 @@ impl JsonRpcRequestProcessor {
     pub fn get_confirmed_transaction(
         &self,
         signature: Signature,
-        encoding: Option<UiTransactionEncoding>,
-    ) -> Option<EncodedConfirmedTransaction> {
-        let encoding = encoding.unwrap_or(UiTransactionEncoding::Json);
+        config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
+    ) -> Result<Option<EncodedConfirmedTransaction>> {
+        let config = config
+            .map(|config| config.convert_to_current())
+            .unwrap_or_default();
+        let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Json);
+        let commitment = config.commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
         if self.config.enable_rpc_transaction_history {
-            match self
-                .blockstore
-                .get_confirmed_transaction(signature)
-                .unwrap_or(None)
-            {
+            let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+            let transaction = if commitment.is_confirmed() {
+                let highest_confirmed_slot = confirmed_bank.slot();
+                self.blockstore
+                    .get_complete_transaction(signature, highest_confirmed_slot)
+            } else {
+                self.blockstore.get_rooted_transaction(signature)
+            };
+            match transaction.unwrap_or(None) {
                 Some(confirmed_transaction) => {
+                    if commitment.is_confirmed()
+                        && confirmed_bank // should be redundant
+                            .status_cache_ancestors()
+                            .contains(&confirmed_transaction.slot)
+                    {
+                        return Ok(Some(confirmed_transaction.encode(encoding)));
+                    }
                     if confirmed_transaction.slot
                         <= self
                             .block_commitment_cache
@@ -1053,21 +1165,21 @@ impl JsonRpcRequestProcessor {
                             .unwrap()
                             .highest_confirmed_root()
                     {
-                        return Some(confirmed_transaction.encode(encoding));
+                        return Ok(Some(confirmed_transaction.encode(encoding)));
                     }
                 }
                 None => {
                     if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                        return self
+                        return Ok(self
                             .runtime_handle
                             .block_on(bigtable_ledger_storage.get_confirmed_transaction(&signature))
                             .unwrap_or(None)
-                            .map(|confirmed| confirmed.encode(encoding));
+                            .map(|confirmed| confirmed.encode(encoding)));
                     }
                 }
             }
         }
-        None
+        Ok(None)
     }
 
     pub fn get_confirmed_signatures_for_address(
@@ -1100,23 +1212,27 @@ impl JsonRpcRequestProcessor {
         mut before: Option<Signature>,
         until: Option<Signature>,
         mut limit: usize,
+        commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<RpcConfirmedTransactionStatusWithSignature>> {
+        let commitment = commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
         if self.config.enable_rpc_transaction_history {
             let highest_confirmed_root = self
                 .block_commitment_cache
                 .read()
                 .unwrap()
                 .highest_confirmed_root();
+            let highest_slot = if commitment.is_confirmed() {
+                let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+                confirmed_bank.slot()
+            } else {
+                highest_confirmed_root
+            };
 
             let mut results = self
                 .blockstore
-                .get_confirmed_signatures_for_address2(
-                    address,
-                    highest_confirmed_root,
-                    before,
-                    until,
-                    limit,
-                )
+                .get_confirmed_signatures_for_address2(address, highest_slot, before, until, limit)
                 .map_err(|err| Error::invalid_params(format!("{}", err)))?;
 
             if results.len() < limit {
@@ -1145,7 +1261,24 @@ impl JsonRpcRequestProcessor {
                 }
             }
 
-            Ok(results.into_iter().map(|x| x.into()).collect())
+            Ok(results
+                .into_iter()
+                .map(|x| {
+                    let mut item: RpcConfirmedTransactionStatusWithSignature = x.into();
+                    if item.slot <= highest_confirmed_root {
+                        item.confirmation_status = Some(TransactionConfirmationStatus::Finalized);
+                    } else {
+                        item.confirmation_status = Some(TransactionConfirmationStatus::Confirmed);
+                        if item.block_time.is_none() {
+                            let r_bank_forks = self.bank_forks.read().unwrap();
+                            item.block_time = r_bank_forks
+                                .get(item.slot)
+                                .map(|bank| bank.clock().unix_timestamp);
+                        }
+                    }
+                    item
+                })
+                .collect())
         } else {
             Ok(vec![])
         }
@@ -1198,9 +1331,25 @@ impl JsonRpcRequestProcessor {
         let stake_state: StakeState = stake_account
             .state()
             .map_err(|_| Error::invalid_params("Invalid param: not a stake account".to_string()))?;
-        let delegation = stake_state.delegation().ok_or_else(|| {
-            Error::invalid_params("Invalid param: stake account has not been delegated".to_string())
-        })?;
+        let delegation = stake_state.delegation();
+        if delegation.is_none() {
+            match stake_state.meta() {
+                None => {
+                    return Err(Error::invalid_params(
+                        "Invalid param: stake account not initialized".to_string(),
+                    ));
+                }
+                Some(meta) => {
+                    let rent_exempt_reserve = meta.rent_exempt_reserve;
+                    return Ok(RpcStakeActivation {
+                        state: StakeActivationState::Inactive,
+                        active: 0,
+                        inactive: stake_account.lamports.saturating_sub(rent_exempt_reserve),
+                    });
+                }
+            }
+        }
+        let delegation = delegation.unwrap();
 
         let stake_history_account = bank
             .get_account(&stake_history::id())
@@ -1768,6 +1917,15 @@ fn verify_token_account_filter(
     }
 }
 
+fn check_is_at_least_confirmed(commitment: CommitmentConfig) -> Result<()> {
+    if !commitment.is_at_least_confirmed() {
+        return Err(Error::invalid_params(
+            "Method does not support commitment below `confirmed`",
+        ));
+    }
+    Ok(())
+}
+
 fn check_slice_and_encoding(encoding: &UiAccountEncoding, data_slice_is_some: bool) -> Result<()> {
     match encoding {
         UiAccountEncoding::JsonParsed => {
@@ -2212,6 +2370,14 @@ pub trait RpcSol {
         commitment: Option<CommitmentConfig>,
     ) -> Result<String>;
 
+    #[rpc(meta, name = "getSlotLeaders")]
+    fn get_slot_leaders(
+        &self,
+        meta: Self::Metadata,
+        start_slot: Slot,
+        end_slot: Slot,
+    ) -> Result<Vec<String>>;
+
     #[rpc(meta, name = "minimumLedgerSlot")]
     fn minimum_ledger_slot(&self, meta: Self::Metadata) -> Result<Slot>;
 
@@ -2239,8 +2405,8 @@ pub trait RpcSol {
         &self,
         meta: Self::Metadata,
         slot: Slot,
-        encoding: Option<UiTransactionEncoding>,
-    ) -> Result<Option<EncodedConfirmedBlock>>;
+        config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
+    ) -> Result<Option<UiConfirmedBlock>>;
 
     #[rpc(meta, name = "getBlockTime")]
     fn get_block_time(&self, meta: Self::Metadata, slot: Slot) -> Result<Option<UnixTimestamp>>;
@@ -2250,7 +2416,8 @@ pub trait RpcSol {
         &self,
         meta: Self::Metadata,
         start_slot: Slot,
-        end_slot: Option<Slot>,
+        config: Option<RpcConfirmedBlocksConfigWrapper>,
+        commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>>;
 
     #[rpc(meta, name = "getConfirmedBlocksWithLimit")]
@@ -2259,6 +2426,7 @@ pub trait RpcSol {
         meta: Self::Metadata,
         start_slot: Slot,
         limit: usize,
+        commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>>;
 
     #[rpc(meta, name = "getConfirmedTransaction")]
@@ -2266,9 +2434,10 @@ pub trait RpcSol {
         &self,
         meta: Self::Metadata,
         signature_str: String,
-        encoding: Option<UiTransactionEncoding>,
+        config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
     ) -> Result<Option<EncodedConfirmedTransaction>>;
 
+    // DEPRECATED
     #[rpc(meta, name = "getConfirmedSignaturesForAddress")]
     fn get_confirmed_signatures_for_address(
         &self,
@@ -2958,6 +3127,56 @@ impl RpcSol for RpcSolImpl {
         Ok(meta.get_slot_leader(commitment))
     }
 
+    fn get_slot_leaders(
+        &self,
+        meta: Self::Metadata,
+        start_slot: Slot,
+        limit: u64,
+    ) -> Result<Vec<String>> {
+        debug!(
+            "get_slot_leaders rpc request received (start: {} limit: {})",
+            start_slot, limit
+        );
+
+        let limit = limit as usize;
+        if limit > MAX_GET_SLOT_LEADERS {
+            return Err(Error::invalid_params(format!(
+                "Invalid limit; max {}",
+                MAX_GET_SLOT_LEADERS
+            )));
+        }
+
+        let bank = meta.bank(None);
+        let (mut epoch, mut slot_index) =
+            bank.epoch_schedule().get_epoch_and_slot_index(start_slot);
+
+        let mut slot_leaders = Vec::with_capacity(limit);
+        while slot_leaders.len() < limit {
+            if let Some(leader_schedule) =
+                meta.leader_schedule_cache.get_epoch_leader_schedule(epoch)
+            {
+                slot_leaders.extend(
+                    leader_schedule
+                        .get_slot_leaders()
+                        .iter()
+                        .skip(slot_index as usize)
+                        .take(limit.saturating_sub(slot_leaders.len()))
+                        .map(|pubkey| pubkey.to_string()),
+                );
+            } else {
+                return Err(Error::invalid_params(format!(
+                    "Invalid slot range: leader schedule for epoch {} is unavailable",
+                    epoch
+                )));
+            }
+
+            epoch += 1;
+            slot_index = 0;
+        }
+
+        Ok(slot_leaders)
+    }
+
     fn minimum_ledger_slot(&self, meta: Self::Metadata) -> Result<Slot> {
         debug!("minimum_ledger_slot rpc request received");
         meta.minimum_ledger_slot()
@@ -3003,23 +3222,25 @@ impl RpcSol for RpcSolImpl {
         &self,
         meta: Self::Metadata,
         slot: Slot,
-        encoding: Option<UiTransactionEncoding>,
-    ) -> Result<Option<EncodedConfirmedBlock>> {
+        config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
+    ) -> Result<Option<UiConfirmedBlock>> {
         debug!("get_confirmed_block rpc request received: {:?}", slot);
-        meta.get_confirmed_block(slot, encoding)
+        meta.get_confirmed_block(slot, config)
     }
 
     fn get_confirmed_blocks(
         &self,
         meta: Self::Metadata,
         start_slot: Slot,
-        end_slot: Option<Slot>,
+        config: Option<RpcConfirmedBlocksConfigWrapper>,
+        commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>> {
+        let (end_slot, maybe_commitment) = config.map(|config| config.unzip()).unwrap_or_default();
         debug!(
             "get_confirmed_blocks rpc request received: {}-{:?}",
             start_slot, end_slot
         );
-        meta.get_confirmed_blocks(start_slot, end_slot)
+        meta.get_confirmed_blocks(start_slot, end_slot, commitment.or(maybe_commitment))
     }
 
     fn get_confirmed_blocks_with_limit(
@@ -3027,12 +3248,13 @@ impl RpcSol for RpcSolImpl {
         meta: Self::Metadata,
         start_slot: Slot,
         limit: usize,
+        commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>> {
         debug!(
             "get_confirmed_blocks_with_limit rpc request received: {}-{}",
             start_slot, limit,
         );
-        meta.get_confirmed_blocks_with_limit(start_slot, limit)
+        meta.get_confirmed_blocks_with_limit(start_slot, limit, commitment)
     }
 
     fn get_block_time(&self, meta: Self::Metadata, slot: Slot) -> Result<Option<UnixTimestamp>> {
@@ -3043,14 +3265,14 @@ impl RpcSol for RpcSolImpl {
         &self,
         meta: Self::Metadata,
         signature_str: String,
-        encoding: Option<UiTransactionEncoding>,
+        config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
     ) -> Result<Option<EncodedConfirmedTransaction>> {
         debug!(
             "get_confirmed_transaction rpc request received: {:?}",
             signature_str
         );
         let signature = verify_signature(&signature_str)?;
-        Ok(meta.get_confirmed_transaction(signature, encoding))
+        meta.get_confirmed_transaction(signature, config)
     }
 
     fn get_confirmed_signatures_for_address(
@@ -3114,7 +3336,7 @@ impl RpcSol for RpcSolImpl {
             )));
         }
 
-        meta.get_confirmed_signatures_for_address2(address, before, until, limit)
+        meta.get_confirmed_signatures_for_address2(address, before, until, limit, config.commitment)
     }
 
     fn get_first_available_block(&self, meta: Self::Metadata) -> Result<Slot> {
@@ -3398,7 +3620,8 @@ pub mod tests {
         transaction::{self, TransactionError},
     };
     use solana_transaction_status::{
-        EncodedTransaction, EncodedTransactionWithStatusMeta, UiMessage,
+        EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
+        TransactionDetails, UiMessage,
     };
     use solana_vote_program::{
         vote_instruction,
@@ -3457,11 +3680,13 @@ pub mod tests {
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
         bank.transfer(4, &alice, &keypair2.pubkey()).unwrap();
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
         let confirmed_block_signatures = create_test_transactions_and_populate_blockstore(
             vec![&alice, &keypair1, &keypair2, &keypair3],
             0,
             bank.clone(),
             blockstore.clone(),
+            max_complete_transaction_status_slot.clone(),
         );
 
         let mut commitment_slot0 = BlockCommitment::default();
@@ -3571,6 +3796,8 @@ pub mod tests {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
             max_slots,
+            Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+            max_complete_transaction_status_slot,
         );
         SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
 
@@ -4066,6 +4293,62 @@ pub mod tests {
             panic!("Expected single response");
         };
         assert_eq!(schedule, None);
+    }
+
+    #[test]
+    fn test_rpc_get_slot_leaders() {
+        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let RpcHandler { io, meta, bank, .. } = start_rpc_handler_with_tx(&bob_pubkey);
+
+        // Test that slot leaders will be returned across epochs
+        let query_start = 0;
+        let query_limit = 2 * bank.epoch_schedule().slots_per_epoch;
+
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getSlotLeaders", "params": [{}, {}]}}"#,
+            query_start, query_limit
+        );
+        let rep = io.handle_request_sync(&req, meta.clone());
+        let res: Response = serde_json::from_str(&rep.expect("actual response"))
+            .expect("actual response deserialization");
+
+        let slot_leaders: Vec<String> = if let Response::Single(res) = res {
+            if let Output::Success(res) = res {
+                serde_json::from_value(res.result).unwrap()
+            } else {
+                panic!("Expected success for {} but received: {:?}", req, res);
+            }
+        } else {
+            panic!("Expected single response");
+        };
+
+        assert_eq!(slot_leaders.len(), query_limit as usize);
+
+        // Test that invalid limit returns an error
+        let query_start = 0;
+        let query_limit = 5001;
+
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getSlotLeaders", "params": [{}, {}]}}"#,
+            query_start, query_limit
+        );
+        let rep = io.handle_request_sync(&req, meta.clone());
+        let res: Value = serde_json::from_str(&rep.expect("actual response"))
+            .expect("actual response deserialization");
+        assert!(res.get("error").is_some());
+
+        // Test that invalid epoch returns an error
+        let query_start = 2 * bank.epoch_schedule().slots_per_epoch;
+        let query_limit = 10;
+
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getSlotLeaders", "params": [{}, {}]}}"#,
+            query_start, query_limit
+        );
+        let rep = io.handle_request_sync(&req, meta);
+        let res: Value = serde_json::from_str(&rep.expect("actual response"))
+            .expect("actual response deserialization");
+        assert!(res.get("error").is_some());
     }
 
     #[test]
@@ -4974,6 +5257,8 @@ pub mod tests {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
             Arc::new(MaxSlots::default()),
+            Arc::new(LeaderScheduleCache::default()),
+            Arc::new(AtomicU64::default()),
         );
         SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
 
@@ -5172,6 +5457,8 @@ pub mod tests {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
             Arc::new(MaxSlots::default()),
+            Arc::new(LeaderScheduleCache::default()),
+            Arc::new(AtomicU64::default()),
         );
         SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
         assert_eq!(request_processor.validator_exit(), false);
@@ -5207,6 +5494,8 @@ pub mod tests {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
             Arc::new(MaxSlots::default()),
+            Arc::new(LeaderScheduleCache::default()),
+            Arc::new(AtomicU64::default()),
         );
         SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
         assert_eq!(request_processor.validator_exit(), true);
@@ -5319,6 +5608,8 @@ pub mod tests {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
             Arc::new(MaxSlots::default()),
+            Arc::new(LeaderScheduleCache::default()),
+            Arc::new(AtomicU64::default()),
         );
         SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
         assert_eq!(
@@ -5417,6 +5708,7 @@ pub mod tests {
             serde_json::from_value(result["result"].clone()).unwrap();
         let confirmed_block = confirmed_block.unwrap();
         assert_eq!(confirmed_block.transactions.len(), 3);
+        assert_eq!(confirmed_block.rewards, vec![]);
 
         for EncodedTransactionWithStatusMeta { transaction, meta } in
             confirmed_block.transactions.into_iter()
@@ -5461,6 +5753,7 @@ pub mod tests {
             serde_json::from_value(result["result"].clone()).unwrap();
         let confirmed_block = confirmed_block.unwrap();
         assert_eq!(confirmed_block.transactions.len(), 3);
+        assert_eq!(confirmed_block.rewards, vec![]);
 
         for EncodedTransactionWithStatusMeta { transaction, meta } in
             confirmed_block.transactions.into_iter()
@@ -5494,6 +5787,57 @@ pub mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_get_confirmed_block_config() {
+        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let RpcHandler {
+            io,
+            meta,
+            confirmed_block_signatures,
+            ..
+        } = start_rpc_handler_with_tx(&bob_pubkey);
+
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getConfirmedBlock","params":[0,{}]}}"#,
+            json!(RpcConfirmedBlockConfig {
+                encoding: None,
+                transaction_details: Some(TransactionDetails::Signatures),
+                rewards: Some(false),
+                commitment: None,
+            })
+        );
+        let res = io.handle_request_sync(&req, meta.clone());
+        let result: Value = serde_json::from_str(&res.expect("actual response"))
+            .expect("actual response deserialization");
+        let confirmed_block: Option<UiConfirmedBlock> =
+            serde_json::from_value(result["result"].clone()).unwrap();
+        let confirmed_block = confirmed_block.unwrap();
+        assert!(confirmed_block.transactions.is_none());
+        assert!(confirmed_block.rewards.is_none());
+        for (i, signature) in confirmed_block.signatures.unwrap()[..2].iter().enumerate() {
+            assert_eq!(*signature, confirmed_block_signatures[i].to_string());
+        }
+
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getConfirmedBlock","params":[0,{}]}}"#,
+            json!(RpcConfirmedBlockConfig {
+                encoding: None,
+                transaction_details: Some(TransactionDetails::None),
+                rewards: Some(true),
+                commitment: None,
+            })
+        );
+        let res = io.handle_request_sync(&req, meta);
+        let result: Value = serde_json::from_str(&res.expect("actual response"))
+            .expect("actual response deserialization");
+        let confirmed_block: Option<UiConfirmedBlock> =
+            serde_json::from_value(result["result"].clone()).unwrap();
+        let confirmed_block = confirmed_block.unwrap();
+        assert!(confirmed_block.transactions.is_none());
+        assert!(confirmed_block.signatures.is_none());
+        assert_eq!(confirmed_block.rewards.unwrap(), vec![]);
     }
 
     #[test]
@@ -5887,7 +6231,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_is_confirmed_rooted() {
+    fn test_is_finalized() {
         let bank = Arc::new(Bank::default());
         let ledger_path = get_tmp_ledger_path!();
         let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
@@ -5915,25 +6259,15 @@ pub mod tests {
             },
         );
 
-        assert!(is_confirmed_rooted(
-            &block_commitment_cache,
-            &bank,
-            &blockstore,
-            0
-        ));
-        assert!(is_confirmed_rooted(
-            &block_commitment_cache,
-            &bank,
-            &blockstore,
-            1
-        ));
-        assert!(!is_confirmed_rooted(
+        assert!(is_finalized(&block_commitment_cache, &bank, &blockstore, 0));
+        assert!(is_finalized(&block_commitment_cache, &bank, &blockstore, 1));
+        assert!(!is_finalized(
             &block_commitment_cache,
             &bank,
             &blockstore,
             2
         ));
-        assert!(!is_confirmed_rooted(
+        assert!(!is_finalized(
             &block_commitment_cache,
             &bank,
             &blockstore,
@@ -6557,6 +6891,8 @@ pub mod tests {
             optimistically_confirmed_bank.clone(),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
             Arc::new(MaxSlots::default()),
+            Arc::new(LeaderScheduleCache::default()),
+            Arc::new(AtomicU64::default()),
         );
 
         let mut io = MetaIoHandler::default();

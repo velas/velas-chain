@@ -99,10 +99,6 @@ pub mod filter_stake_delegation_accounts {
     solana_sdk::declare_id!("GE7fRxmW46K6EmCD9AMZSbnaJ2e3LfqCZzdHi9hmYAgi");
 }
 
-pub mod simple_capitalization {
-    solana_sdk::declare_id!("9r69RnnxABmpcPFfj1yhg4n9YFR2MNaLdKJCC6v3Speb");
-}
-
 pub mod bpf_loader_upgradeable_program {
     solana_sdk::declare_id!("FbhK8HN9qvNHvJcoFVHAEUCNkagHvu7DTWzdnLuVQ5u4");
 }
@@ -186,6 +182,13 @@ pub mod velas_hardfork_pack {
     // 4. sha3uncle hash from zero block, not zeros.
     solana_sdk::declare_id!("91nakVjUc5UmNzLioE6K7HhASmb2m1E7hRuLZS4LzUPV");
 }
+pub mod cpi_data_cost {
+    solana_sdk::declare_id!("Hrg5bXePPGiAVWZfDHbvjqytSeyBDPAGAQ7v6N5i4gCX");
+}
+
+pub mod upgradeable_close_instruction {
+    solana_sdk::declare_id!("FsPaByos3gA9bUEhp3EimQpQPCoSvCEigHod496NmABQ");
+}
 
 lazy_static! {
 
@@ -210,7 +213,6 @@ lazy_static! {
         (stake_program_v2::id(), "solana_stake_program v2"),
         (rewrite_stake::id(), "rewrite stake"),
         (filter_stake_delegation_accounts::id(), "filter stake_delegation_accounts #14062"),
-        (simple_capitalization::id(), "simple capitalization"),
         (bpf_loader_upgradeable_program::id(), "upgradeable bpf loader"),
         (try_find_program_address_syscall_enabled::id(), "add try_find_program_address syscall"),
         (stake_program_v3::id(), "solana_stake_program v3"),
@@ -228,7 +230,7 @@ lazy_static! {
         (warp_timestamp_again::id(), "warp timestamp again, adjust bounding to 25% fast 80% slow #15204"),
         (per_byte_logging_cost::id(), "charge the compute budget per byte for logging"),
         (check_init_vote_data::id(), "check initialized Vote data"),
-        (check_program_owner::id(), "limit programs to operating on accounts owned by itself")
+        (check_program_owner::id(), "limit programs to operating on accounts owned by itself"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
@@ -240,7 +242,9 @@ lazy_static! {
     .chain(
         [
             (test_features::id(), "Test feature used as example how to implement features."),
-            (velas_hardfork_pack::id(), "EVMblockhashes sysvar history, roothashes calculation. Apply old (reconfigure_native_token, unlock_switch_vote).")
+            (velas_hardfork_pack::id(), "EVMblockhashes sysvar history, roothashes calculation. Apply old (reconfigure_native_token, unlock_switch_vote)."),
+            (cpi_data_cost::id(), "charge the compute budget for data passed via CPI"),
+            (upgradeable_close_instruction::id(), "close upgradeable buffer accounts"),
             /*************** ADD NEW FEATURES HERE ***************/
         ]
         .iter()

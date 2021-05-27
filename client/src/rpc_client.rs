@@ -4,9 +4,10 @@ use crate::{
     mock_sender::{MockSender, Mocks},
     rpc_config::RpcAccountInfoConfig,
     rpc_config::{
+        RpcConfirmedBlockConfig, RpcConfirmedTransactionConfig,
         RpcGetConfirmedSignaturesForAddress2Config, RpcLargestAccountsConfig,
         RpcProgramAccountsConfig, RpcSendTransactionConfig, RpcSimulateTransactionConfig,
-        RpcTokenAccountsFilter,
+        RpcStakeConfig, RpcTokenAccountsFilter,
     },
     rpc_request::{RpcError, RpcRequest, RpcResponseErrorData, TokenAccountsFilter},
     rpc_response::*,
@@ -23,7 +24,7 @@ use solana_account_decoder::{
 use solana_sdk::{
     account::Account,
     clock::{
-        Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND, DEFAULT_TICKS_PER_SLOT,
+        Epoch, Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND, DEFAULT_TICKS_PER_SLOT,
         MAX_HASH_AGE_IN_SECONDS,
     },
     commitment_config::{CommitmentConfig, CommitmentLevel},
@@ -36,12 +37,14 @@ use solana_sdk::{
     transaction::{self, uses_durable_nonce, Transaction},
 };
 use solana_transaction_status::{
-    EncodedConfirmedBlock, EncodedConfirmedTransaction, TransactionStatus, UiTransactionEncoding,
+    EncodedConfirmedBlock, EncodedConfirmedTransaction, TransactionStatus, UiConfirmedBlock,
+    UiTransactionEncoding,
 };
 use solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY;
 use std::{
     cmp::min,
     net::SocketAddr,
+    str::FromStr,
     sync::RwLock,
     thread::sleep,
     time::{Duration, Instant},
@@ -400,6 +403,41 @@ impl RpcClient {
         )
     }
 
+    pub fn get_slot_leaders(&self, start_slot: Slot, limit: u64) -> ClientResult<Vec<Pubkey>> {
+        self.send(RpcRequest::GetSlotLeaders, json!([start_slot, limit]))
+            .and_then(|slot_leaders: Vec<String>| {
+                slot_leaders
+                    .iter()
+                    .map(|slot_leader| {
+                        Pubkey::from_str(slot_leader).map_err(|err| {
+                            ClientErrorKind::Custom(format!(
+                                "pubkey deserialization failed: {}",
+                                err
+                            ))
+                            .into()
+                        })
+                    })
+                    .collect()
+            })
+    }
+
+    pub fn get_stake_activation(
+        &self,
+        stake_account: Pubkey,
+        epoch: Option<Epoch>,
+    ) -> ClientResult<RpcStakeActivation> {
+        self.send(
+            RpcRequest::GetStakeActivation,
+            json!([
+                stake_account.to_string(),
+                RpcStakeConfig {
+                    epoch,
+                    commitment: Some(self.commitment_config),
+                }
+            ]),
+        )
+    }
+
     pub fn supply(&self) -> RpcResult<RpcSupply> {
         self.supply_with_commitment(self.commitment_config)
     }
@@ -503,6 +541,14 @@ impl RpcClient {
         self.send(RpcRequest::GetConfirmedBlock, json!([slot, encoding]))
     }
 
+    pub fn get_confirmed_block_with_config(
+        &self,
+        slot: Slot,
+        config: RpcConfirmedBlockConfig,
+    ) -> ClientResult<UiConfirmedBlock> {
+        self.send(RpcRequest::GetConfirmedBlock, json!([slot, config]))
+    }
+
     pub fn get_confirmed_blocks(
         &self,
         start_slot: Slot,
@@ -514,6 +560,24 @@ impl RpcClient {
         )
     }
 
+    pub fn get_confirmed_blocks_with_commitment(
+        &self,
+        start_slot: Slot,
+        end_slot: Option<Slot>,
+        commitment_config: CommitmentConfig,
+    ) -> ClientResult<Vec<Slot>> {
+        let json = if end_slot.is_some() {
+            json!([
+                start_slot,
+                end_slot,
+                self.maybe_map_commitment(commitment_config)?
+            ])
+        } else {
+            json!([start_slot, self.maybe_map_commitment(commitment_config)?])
+        };
+        self.send(RpcRequest::GetConfirmedBlocks, json)
+    }
+
     pub fn get_confirmed_blocks_with_limit(
         &self,
         start_slot: Slot,
@@ -522,6 +586,22 @@ impl RpcClient {
         self.send(
             RpcRequest::GetConfirmedBlocksWithLimit,
             json!([start_slot, limit]),
+        )
+    }
+
+    pub fn get_confirmed_blocks_with_limit_and_commitment(
+        &self,
+        start_slot: Slot,
+        limit: usize,
+        commitment_config: CommitmentConfig,
+    ) -> ClientResult<Vec<Slot>> {
+        self.send(
+            RpcRequest::GetConfirmedBlocksWithLimit,
+            json!([
+                start_slot,
+                limit,
+                self.maybe_map_commitment(commitment_config)?
+            ]),
         )
     }
 
@@ -566,6 +646,7 @@ impl RpcClient {
             before: config.before.map(|signature| signature.to_string()),
             until: config.until.map(|signature| signature.to_string()),
             limit: config.limit,
+            commitment: config.commitment,
         };
 
         let result: Vec<RpcConfirmedTransactionStatusWithSignature> = self.send(
@@ -584,6 +665,17 @@ impl RpcClient {
         self.send(
             RpcRequest::GetConfirmedTransaction,
             json!([signature.to_string(), encoding]),
+        )
+    }
+
+    pub fn get_confirmed_transaction_with_config(
+        &self,
+        signature: &Signature,
+        config: RpcConfirmedTransactionConfig,
+    ) -> ClientResult<EncodedConfirmedTransaction> {
+        self.send(
+            RpcRequest::GetConfirmedTransaction,
+            json!([signature.to_string(), config]),
         )
     }
 
@@ -638,6 +730,13 @@ impl RpcClient {
 
     pub fn get_epoch_schedule(&self) -> ClientResult<EpochSchedule> {
         self.send(RpcRequest::GetEpochSchedule, Value::Null)
+    }
+
+    pub fn get_recent_performance_samples(
+        &self,
+        limit: Option<usize>,
+    ) -> ClientResult<Vec<RpcPerfSample>> {
+        self.send(RpcRequest::GetRecentPerformanceSamples, json!([limit]))
     }
 
     pub fn get_identity(&self) -> ClientResult<Pubkey> {
@@ -1538,6 +1637,7 @@ pub struct GetConfirmedSignaturesForAddress2Config {
     pub before: Option<Signature>,
     pub until: Option<Signature>,
     pub limit: Option<usize>,
+    pub commitment: Option<CommitmentConfig>,
 }
 
 fn new_spinner_progress_bar() -> ProgressBar {

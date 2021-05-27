@@ -1348,7 +1348,9 @@ mod test {
 
     fn account_by_key(pubkey: solana::Address) -> solana_sdk::account::Account {
         match &pubkey {
-            id if id == &crate::ID => native_loader::create_loadable_account("Evm Processor", 1),
+            id if id == &crate::ID => {
+                native_loader::create_loadable_account_for_test("Evm Processor")
+            }
             id if id == &solana_sdk::sysvar::rent::id() => solana_sdk::account::Account {
                 lamports: 10,
                 owner: native_loader::id(),

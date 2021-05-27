@@ -7,7 +7,7 @@ use dashmap::DashMap;
 use rand::Rng;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use solana_runtime::{
-    accounts::{create_test_accounts, Accounts},
+    accounts::{create_test_accounts, AccountAddressFilter, Accounts},
     bank::*,
 };
 use solana_sdk::{
@@ -109,12 +109,8 @@ fn test_accounts_hash_bank_hash(bencher: &mut Bencher) {
     let slot = 0;
     create_test_accounts(&accounts, &mut pubkeys, num_accounts, slot);
     let ancestors = vec![(0, 0)].into_iter().collect();
-    let (_, total_lamports) = accounts
-        .accounts_db
-        .update_accounts_hash(0, &ancestors, true);
-    bencher.iter(|| {
-        assert!(accounts.verify_bank_hash_and_lamports(0, &ancestors, total_lamports, true))
-    });
+    let (_, total_lamports) = accounts.accounts_db.update_accounts_hash(0, &ancestors);
+    bencher.iter(|| assert!(accounts.verify_bank_hash_and_lamports(0, &ancestors, total_lamports)));
 }
 
 #[bench]
@@ -130,9 +126,7 @@ fn test_update_accounts_hash(bencher: &mut Bencher) {
     create_test_accounts(&accounts, &mut pubkeys, 50_000, 0);
     let ancestors = vec![(0, 0)].into_iter().collect();
     bencher.iter(|| {
-        accounts
-            .accounts_db
-            .update_accounts_hash(0, &ancestors, true);
+        accounts.accounts_db.update_accounts_hash(0, &ancestors);
     });
 }
 
@@ -359,5 +353,27 @@ fn bench_dashmap_iter(bencher: &mut Bencher) {
                 .map(|cached_account| (*cached_account.key(), cached_account.value().1))
                 .collect::<Vec<(Pubkey, Hash)>>(),
         );
+    });
+}
+
+#[bench]
+fn bench_load_largest_accounts(b: &mut Bencher) {
+    let accounts =
+        Accounts::new_with_config(Vec::new(), &ClusterType::Development, HashSet::new(), false);
+    let mut rng = rand::thread_rng();
+    for _ in 0..10_000 {
+        let lamports = rng.gen();
+        let pubkey = Pubkey::new_unique();
+        let account = Account::new(lamports, 0, &Pubkey::default());
+        accounts.store_slow_uncached(0, &pubkey, &account);
+    }
+    let ancestors = vec![(0, 0)].into_iter().collect();
+    b.iter(|| {
+        accounts.load_largest_accounts(
+            &ancestors,
+            20,
+            &HashSet::new(),
+            AccountAddressFilter::Exclude,
+        )
     });
 }

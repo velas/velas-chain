@@ -30,7 +30,7 @@ use solana_sdk::{
     entrypoint::SUCCESS,
     feature_set::{
         bpf_compute_budget_balancing, matching_buffer_upgrade_authorities,
-        prevent_upgrade_and_invoke,
+        prevent_upgrade_and_invoke, upgradeable_close_instruction,
     },
     ic_logger_msg, ic_msg,
     instruction::InstructionError,
@@ -665,11 +665,50 @@ fn process_loader_upgradeable_instruction(
                 }
                 _ => {
                     ic_logger_msg!(logger, "Account does not support authorities");
-                    return Err(InstructionError::InvalidAccountData);
+                    return Err(InstructionError::InvalidArgument);
                 }
             }
 
             ic_logger_msg!(logger, "New authority {:?}", new_authority);
+        }
+        UpgradeableLoaderInstruction::Close => {
+            if !invoke_context.is_feature_active(&upgradeable_close_instruction::id()) {
+                return Err(InstructionError::InvalidInstructionData);
+            }
+            let close_account = next_keyed_account(account_iter)?;
+            let recipient_account = next_keyed_account(account_iter)?;
+            let authority = next_keyed_account(account_iter)?;
+
+            if close_account.unsigned_key() == recipient_account.unsigned_key() {
+                ic_logger_msg!(logger, "Recipient is the same as the account being closed");
+                return Err(InstructionError::InvalidArgument);
+            }
+
+            if let UpgradeableLoaderState::Buffer { authority_address } = close_account.state()? {
+                if authority_address.is_none() {
+                    ic_logger_msg!(logger, "Buffer is immutable");
+                    return Err(InstructionError::Immutable);
+                }
+                if authority_address != Some(*authority.unsigned_key()) {
+                    ic_logger_msg!(logger, "Incorrect buffer authority provided");
+                    return Err(InstructionError::IncorrectAuthority);
+                }
+                if authority.signer_key().is_none() {
+                    ic_logger_msg!(logger, "Buffer authority did not sign");
+                    return Err(InstructionError::MissingRequiredSignature);
+                }
+
+                recipient_account.try_account_ref_mut()?.lamports += close_account.lamports()?;
+                close_account.try_account_ref_mut()?.lamports = 0;
+                for i in &mut close_account.try_account_ref_mut()?.data {
+                    *i = 0
+                }
+            } else {
+                ic_logger_msg!(logger, "Account does not support closing");
+                return Err(InstructionError::InvalidArgument);
+            }
+
+            ic_logger_msg!(logger, "Closed {}", close_account.unsigned_key());
         }
     }
 
@@ -858,7 +897,7 @@ mod tests {
         message_processor::{Executors, ThisInvokeContext},
     };
     use solana_sdk::{
-        account::{create_account, Account},
+        account::{create_account_for_test, Account},
         account_utils::StateMut,
         client::SyncClient,
         clock::Clock,
@@ -1119,6 +1158,7 @@ mod tests {
                 stack_frame_size: 4096,
                 log_pubkey_units: 100,
                 max_cpi_instruction_size: usize::MAX,
+                cpi_bytes_per_unit: 250,
             },
             Rc::new(RefCell::new(Executors::default())),
             None,
@@ -2174,15 +2214,12 @@ mod tests {
         file.read_to_end(&mut elf_new).unwrap();
         assert_ne!(elf_orig.len(), elf_new.len());
         let rent = Rent::default();
-        let rent_account = RefCell::new(create_account(&Rent::default(), 1));
+        let rent_account = RefCell::new(create_account_for_test(&Rent::default()));
         let slot = 42;
-        let clock_account = RefCell::new(create_account(
-            &Clock {
-                slot,
-                ..Clock::default()
-            },
-            1,
-        ));
+        let clock_account = RefCell::new(create_account_for_test(&Clock {
+            slot,
+            ..Clock::default()
+        }));
         let min_program_balance =
             1.max(rent.minimum_balance(UpgradeableLoaderState::program_len().unwrap()));
         let min_programdata_balance = 1.max(rent.minimum_balance(
@@ -3008,7 +3045,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            Err(InstructionError::InvalidAccountData),
+            Err(InstructionError::InvalidArgument),
             process_instruction(
                 &bpf_loader_upgradeable::id(),
                 &[
@@ -3181,7 +3218,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            Err(InstructionError::InvalidAccountData),
+            Err(InstructionError::InvalidArgument),
             process_instruction(
                 &bpf_loader_upgradeable::id(),
                 &[
@@ -3207,6 +3244,87 @@ mod tests {
                 &[
                     KeyedAccount::new(&buffer_address, false, &buffer_account),
                     KeyedAccount::new_readonly(&authority_address, true, &authority_account),
+                ],
+                &instruction,
+                &mut MockInvokeContext::default()
+            )
+        );
+    }
+
+    #[test]
+    fn test_bpf_loader_upgradeable_close() {
+        let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
+        let authority_address = Pubkey::new_unique();
+        let authority_account = Account::new_ref(1, 0, &Pubkey::new_unique());
+        let recipient_address = Pubkey::new_unique();
+        let recipient_account = Account::new_ref(1, 0, &Pubkey::new_unique());
+        let buffer_address = Pubkey::new_unique();
+        let buffer_account = Account::new_ref(
+            1,
+            UpgradeableLoaderState::buffer_len(0).unwrap(),
+            &bpf_loader_upgradeable::id(),
+        );
+
+        // Case: close a buffer account
+        buffer_account
+            .borrow_mut()
+            .set_state(&UpgradeableLoaderState::Buffer {
+                authority_address: Some(authority_address),
+            })
+            .unwrap();
+        assert_eq!(
+            Ok(()),
+            process_instruction(
+                &bpf_loader_upgradeable::id(),
+                &[
+                    KeyedAccount::new(&buffer_address, false, &buffer_account),
+                    KeyedAccount::new(&recipient_address, false, &recipient_account),
+                    KeyedAccount::new_readonly(&authority_address, true, &authority_account),
+                ],
+                &instruction,
+                &mut MockInvokeContext::default()
+            )
+        );
+        assert_eq!(0, buffer_account.borrow().lamports);
+        assert_eq!(2, recipient_account.borrow().lamports);
+        assert!(buffer_account.borrow().data.iter().all(|&value| value == 0));
+
+        // Case: close with wrong authority
+        buffer_account
+            .borrow_mut()
+            .set_state(&UpgradeableLoaderState::Buffer {
+                authority_address: Some(authority_address),
+            })
+            .unwrap();
+        assert_eq!(
+            Err(InstructionError::IncorrectAuthority),
+            process_instruction(
+                &bpf_loader_upgradeable::id(),
+                &[
+                    KeyedAccount::new(&buffer_address, false, &buffer_account),
+                    KeyedAccount::new(&recipient_address, false, &recipient_account),
+                    KeyedAccount::new_readonly(&Pubkey::new_unique(), true, &authority_account),
+                ],
+                &instruction,
+                &mut MockInvokeContext::default()
+            )
+        );
+
+        // Case: close but not a buffer account
+        buffer_account
+            .borrow_mut()
+            .set_state(&UpgradeableLoaderState::Program {
+                programdata_address: Pubkey::new_unique(),
+            })
+            .unwrap();
+        assert_eq!(
+            Err(InstructionError::InvalidArgument),
+            process_instruction(
+                &bpf_loader_upgradeable::id(),
+                &[
+                    KeyedAccount::new(&buffer_address, false, &buffer_account),
+                    KeyedAccount::new(&recipient_address, false, &recipient_account),
+                    KeyedAccount::new_readonly(&Pubkey::new_unique(), true, &authority_account),
                 ],
                 &instruction,
                 &mut MockInvokeContext::default()

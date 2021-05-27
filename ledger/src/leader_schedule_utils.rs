@@ -1,10 +1,11 @@
+use std::collections::HashMap;
+
 use crate::leader_schedule::LeaderSchedule;
 use solana_runtime::bank::Bank;
 use solana_sdk::{
     clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     pubkey::Pubkey,
 };
-use std::collections::HashMap;
 
 pub use solana_stake_program::stake_state::{
     MIN_STAKERS_TO_BE_MAJORITY, NUM_MAJOR_STAKERS_FOR_FILTERING,
@@ -32,6 +33,27 @@ fn retain_sort_stakers(stakes: HashMap<Pubkey, u64>) -> Vec<(Pubkey, u64)> {
         retain_major_stakers(&mut stakes)
     }
     stakes
+}
+
+/// Map of leader base58 identity pubkeys to the slot indices relative to the first epoch slot
+pub type LeaderScheduleByIdentity = HashMap<String, Vec<usize>>;
+
+pub fn leader_schedule_by_identity<'a>(
+    upcoming_leaders: impl Iterator<Item = (usize, &'a Pubkey)>,
+) -> LeaderScheduleByIdentity {
+    let mut leader_schedule_by_identity = HashMap::new();
+
+    for (slot_index, identity_pubkey) in upcoming_leaders {
+        leader_schedule_by_identity
+            .entry(identity_pubkey)
+            .or_insert_with(Vec::new)
+            .push(slot_index);
+    }
+
+    leader_schedule_by_identity
+        .into_iter()
+        .map(|(identity_pubkey, slot_indices)| (identity_pubkey.to_string(), slot_indices))
+        .collect()
 }
 
 /// Return the leader for the given slot.

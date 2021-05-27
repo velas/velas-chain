@@ -19,6 +19,7 @@ use crate::{
     rewards_recorder_service::RewardsRecorderSender,
     rpc_subscriptions::RpcSubscriptions,
 };
+use solana_client::rpc_response::SlotUpdate;
 use solana_ledger::{
     block_error::BlockError,
     blockstore::Blockstore,
@@ -1001,6 +1002,7 @@ impl ReplayStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: &ReplayVoteSender,
         verify_recyclers: &VerifyRecyclers,
+        subscriptions: &Arc<RpcSubscriptions>,
     ) -> result::Result<usize, BlockstoreProcessorError> {
         let tx_count_before = bank_progress.replay_progress.num_txs;
         let confirm_result = blockstore_processor::confirm_slot(
@@ -1036,7 +1038,15 @@ impl ReplayStage {
             } else {
                 info!("Slot had too few ticks: {}", slot);
             }
-            Self::mark_dead_slot(blockstore, bank_progress, slot, &err, is_serious);
+            Self::mark_dead_slot(
+                blockstore,
+                bank_progress,
+                slot,
+                &err,
+                is_serious,
+                subscriptions,
+            );
+
             err
         })?;
 
@@ -1049,6 +1059,7 @@ impl ReplayStage {
         slot: Slot,
         err: &BlockstoreProcessorError,
         is_serious: bool,
+        subscriptions: &Arc<RpcSubscriptions>,
     ) {
         if is_serious {
             datapoint_error!(
@@ -1067,6 +1078,11 @@ impl ReplayStage {
         blockstore
             .set_dead_slot(slot)
             .expect("Failed to mark slot as dead in blockstore");
+        subscriptions.notify_slot_update(SlotUpdate::Dead {
+            slot,
+            err: format!("error: {:?}", err),
+            timestamp: timestamp(),
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1366,6 +1382,7 @@ impl ReplayStage {
                     transaction_status_sender.clone(),
                     replay_vote_sender,
                     verify_recyclers,
+                    subscriptions,
                 );
                 match replay_result {
                     Ok(replay_tx_count) => tx_count += replay_tx_count,
@@ -1387,6 +1404,9 @@ impl ReplayStage {
                     );
                     did_complete_bank = true;
                     info!("bank frozen: {}", bank.slot());
+                    if let Some(transaction_status_sender) = transaction_status_sender.clone() {
+                        transaction_status_sender.send_transaction_status_freeze_message(&bank);
+                    }
                     bank.freeze();
                     heaviest_subtree_fork_choice
                         .add_new_leaf_slot(bank.slot(), Some(bank.parent_slot()));
@@ -1407,6 +1427,7 @@ impl ReplayStage {
                         bank.slot(),
                         &BlockstoreProcessorError::InvalidBlock(BlockError::DuplicateBlock),
                         true,
+                        subscriptions,
                     );
                     warn!(
                         "{} duplicate shreds detected, not freezing bank {}",
@@ -2055,7 +2076,7 @@ pub(crate) mod tests {
     use std::{
         fs::remove_dir_all,
         iter,
-        sync::{Arc, RwLock},
+        sync::{atomic::AtomicU64, Arc, RwLock},
     };
     use trees::tr;
 
@@ -2553,7 +2574,8 @@ pub(crate) mod tests {
                 ..
             } = create_genesis_config(1000);
             genesis_config.poh_config.hashes_per_tick = Some(2);
-            let bank0 = Arc::new(Bank::new(&genesis_config));
+            let bank_forks = BankForks::new(Bank::new(&genesis_config));
+            let bank0 = bank_forks.working_bank();
             let mut progress = ProgressMap::default();
             let last_blockhash = bank0.last_blockhash();
             let mut bank0_progress = progress
@@ -2561,6 +2583,9 @@ pub(crate) mod tests {
                 .or_insert_with(|| ForkProgress::new(last_blockhash, None, None, 0, 0));
             let shreds = shred_to_insert(&mint_keypair, bank0.clone());
             blockstore.insert_shreds(shreds, None, false).unwrap();
+            let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
+            let bank_forks = Arc::new(RwLock::new(bank_forks));
+            let exit = Arc::new(AtomicBool::new(false));
             let res = ReplayStage::replay_blockstore_into_bank(
                 &bank0,
                 &blockstore,
@@ -2568,6 +2593,12 @@ pub(crate) mod tests {
                 None,
                 &replay_vote_sender,
                 &&VerifyRecyclers::default(),
+                &Arc::new(RpcSubscriptions::new(
+                    &exit,
+                    bank_forks.clone(),
+                    block_commitment_cache,
+                    OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
+                )),
             );
 
             // Check that the erroring bank was marked as dead in the progress map
@@ -2695,6 +2726,7 @@ pub(crate) mod tests {
         previous_slot: Slot,
         bank: Arc<Bank>,
         blockstore: Arc<Blockstore>,
+        max_complete_transaction_status_slot: Arc<AtomicU64>,
     ) -> Vec<Signature> {
         let mint_keypair = keypairs[0];
         let keypair1 = keypairs[1];
@@ -2728,12 +2760,13 @@ pub(crate) mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let transaction_status_service = TransactionStatusService::new(
             transaction_status_receiver,
+            max_complete_transaction_status_slot,
             blockstore,
             &Arc::new(AtomicBool::new(false)),
         );
 
         // Check that process_entries successfully writes can_commit transactions statuses, and
-        // that they are matched properly by get_confirmed_block
+        // that they are matched properly by get_rooted_block
         let _result = blockstore_processor::process_entries(
             &bank,
             &entries,
@@ -2780,9 +2813,10 @@ pub(crate) mod tests {
                 bank0.slot(),
                 bank1,
                 blockstore.clone(),
+                Arc::new(AtomicU64::default()),
             );
 
-            let confirmed_block = blockstore.get_confirmed_block(slot, false).unwrap();
+            let confirmed_block = blockstore.get_rooted_block(slot, false).unwrap();
             assert_eq!(confirmed_block.transactions.len(), 3);
 
             for TransactionWithStatusMeta { transaction, meta } in

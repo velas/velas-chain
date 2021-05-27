@@ -18,15 +18,18 @@ use solana_clap_utils::{
 };
 use solana_cli_output::{
     display::{build_balance_message, println_name_value},
-    return_signers, CliAccount, CliSignature, CliSignatureVerificationStatus, CliTransaction,
-    CliTransactionConfirmation, OutputFormat,
+    return_signers_with_config, CliAccount, CliSignature, CliSignatureVerificationStatus,
+    CliTransaction, CliTransactionConfirmation, OutputFormat, ReturnSignersConfig,
 };
 use solana_client::{
     blockhash_query::BlockhashQuery,
     client_error::{ClientError, ClientErrorKind, Result as ClientResult},
     nonce_utils,
     rpc_client::RpcClient,
-    rpc_config::{RpcLargestAccountsFilter, RpcSendTransactionConfig, RpcTransactionLogsFilter},
+    rpc_config::{
+        RpcConfirmedTransactionConfig, RpcLargestAccountsFilter, RpcSendTransactionConfig,
+        RpcTransactionLogsFilter,
+    },
     rpc_response::RpcKeyedAccount,
 };
 #[cfg(not(test))]
@@ -197,6 +200,7 @@ pub enum CliCommand {
         lockup: Lockup,
         amount: SpendAmount,
         sign_only: bool,
+        dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
         nonce_account: Option<Pubkey>,
         nonce_authority: SignerIndex,
@@ -207,6 +211,7 @@ pub enum CliCommand {
         stake_account_pubkey: Pubkey,
         stake_authority: SignerIndex,
         sign_only: bool,
+        dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
         nonce_account: Option<Pubkey>,
         nonce_authority: SignerIndex,
@@ -218,6 +223,7 @@ pub enum CliCommand {
         stake_authority: SignerIndex,
         force: bool,
         sign_only: bool,
+        dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
         nonce_account: Option<Pubkey>,
         nonce_authority: SignerIndex,
@@ -227,6 +233,7 @@ pub enum CliCommand {
         stake_account_pubkey: Pubkey,
         stake_authority: SignerIndex,
         sign_only: bool,
+        dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
         nonce_account: Option<Pubkey>,
         nonce_authority: SignerIndex,
@@ -240,6 +247,7 @@ pub enum CliCommand {
         source_stake_account_pubkey: Pubkey,
         stake_authority: SignerIndex,
         sign_only: bool,
+        dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
         nonce_account: Option<Pubkey>,
         nonce_authority: SignerIndex,
@@ -256,6 +264,7 @@ pub enum CliCommand {
         stake_account_pubkey: Pubkey,
         new_authorizations: Vec<(StakeAuthorize, Pubkey, SignerIndex)>,
         sign_only: bool,
+        dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
         nonce_account: Option<Pubkey>,
         nonce_authority: SignerIndex,
@@ -267,6 +276,7 @@ pub enum CliCommand {
         lockup: LockupArgs,
         custodian: SignerIndex,
         sign_only: bool,
+        dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
         nonce_account: Option<Pubkey>,
         nonce_authority: SignerIndex,
@@ -279,6 +289,7 @@ pub enum CliCommand {
         withdraw_authority: SignerIndex,
         custodian: Option<SignerIndex>,
         sign_only: bool,
+        dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
         nonce_account: Option<Pubkey>,
         nonce_authority: SignerIndex,
@@ -350,6 +361,7 @@ pub enum CliCommand {
         to: Pubkey,
         from: SignerIndex,
         sign_only: bool,
+        dump_transaction_message: bool,
         no_wait: bool,
         blockhash_query: BlockhashQuery,
         nonce_account: Option<Pubkey>,
@@ -848,6 +860,7 @@ pub fn parse_command(
             let amount = SpendAmount::new_from_matches(matches, "amount");
             let to = pubkey_of_signer(matches, "to", wallet_manager)?.unwrap();
             let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
+            let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
             let no_wait = matches.is_present("no_wait");
             let blockhash_query = BlockhashQuery::new_from_matches(matches);
             let nonce_account = pubkey_of_signer(matches, NONCE_ARG.name, wallet_manager)?;
@@ -876,6 +889,7 @@ pub fn parse_command(
                     amount,
                     to,
                     sign_only,
+                    dump_transaction_message,
                     no_wait,
                     blockhash_query,
                     nonce_account,
@@ -1014,9 +1028,13 @@ fn process_confirm(
                 let mut transaction = None;
                 let mut get_transaction_error = None;
                 if config.verbose {
-                    match rpc_client
-                        .get_confirmed_transaction(signature, UiTransactionEncoding::Base64)
-                    {
+                    match rpc_client.get_confirmed_transaction_with_config(
+                        signature,
+                        RpcConfirmedTransactionConfig {
+                            encoding: Some(UiTransactionEncoding::Base64),
+                            commitment: Some(CommitmentConfig::confirmed()),
+                        },
+                    ) {
                         Ok(confirmed_transaction) => {
                             let decoded_transaction = confirmed_transaction
                                 .transaction
@@ -1128,6 +1146,7 @@ fn process_transfer(
     to: &Pubkey,
     from: SignerIndex,
     sign_only: bool,
+    dump_transaction_message: bool,
     no_wait: bool,
     blockhash_query: &BlockhashQuery,
     nonce_account: Option<&Pubkey>,
@@ -1194,7 +1213,13 @@ fn process_transfer(
 
     if sign_only {
         tx.try_partial_sign(&config.signers, recent_blockhash)?;
-        return_signers(&tx, &config.output_format)
+        return_signers_with_config(
+            &tx,
+            &config.output_format,
+            &ReturnSignersConfig {
+                dump_transaction_message,
+            },
+        )
     } else {
         if let Some(nonce_account) = &nonce_account {
             let nonce_account = nonce_utils::get_account_with_commitment(
@@ -1446,6 +1471,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             lockup,
             amount,
             sign_only,
+            dump_transaction_message,
             blockhash_query,
             ref nonce_account,
             nonce_authority,
@@ -1461,6 +1487,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             lockup,
             *amount,
             *sign_only,
+            *dump_transaction_message,
             blockhash_query,
             nonce_account.as_ref(),
             *nonce_authority,
@@ -1471,6 +1498,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             stake_account_pubkey,
             stake_authority,
             sign_only,
+            dump_transaction_message,
             blockhash_query,
             nonce_account,
             nonce_authority,
@@ -1481,6 +1509,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             &stake_account_pubkey,
             *stake_authority,
             *sign_only,
+            *dump_transaction_message,
             blockhash_query,
             *nonce_account,
             *nonce_authority,
@@ -1492,6 +1521,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             stake_authority,
             force,
             sign_only,
+            dump_transaction_message,
             blockhash_query,
             nonce_account,
             nonce_authority,
@@ -1504,6 +1534,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *stake_authority,
             *force,
             *sign_only,
+            *dump_transaction_message,
             blockhash_query,
             *nonce_account,
             *nonce_authority,
@@ -1513,6 +1544,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             stake_account_pubkey,
             stake_authority,
             sign_only,
+            dump_transaction_message,
             blockhash_query,
             nonce_account,
             nonce_authority,
@@ -1526,6 +1558,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             &stake_account_pubkey,
             *stake_authority,
             *sign_only,
+            *dump_transaction_message,
             blockhash_query,
             *nonce_account,
             *nonce_authority,
@@ -1539,6 +1572,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             source_stake_account_pubkey,
             stake_authority,
             sign_only,
+            dump_transaction_message,
             blockhash_query,
             nonce_account,
             nonce_authority,
@@ -1550,6 +1584,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             &source_stake_account_pubkey,
             *stake_authority,
             *sign_only,
+            *dump_transaction_message,
             blockhash_query,
             *nonce_account,
             *nonce_authority,
@@ -1571,6 +1606,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             stake_account_pubkey,
             ref new_authorizations,
             sign_only,
+            dump_transaction_message,
             blockhash_query,
             nonce_account,
             nonce_authority,
@@ -1583,6 +1619,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             new_authorizations,
             *custodian,
             *sign_only,
+            *dump_transaction_message,
             blockhash_query,
             *nonce_account,
             *nonce_authority,
@@ -1593,6 +1630,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             mut lockup,
             custodian,
             sign_only,
+            dump_transaction_message,
             blockhash_query,
             nonce_account,
             nonce_authority,
@@ -1604,6 +1642,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             &mut lockup,
             *custodian,
             *sign_only,
+            *dump_transaction_message,
             blockhash_query,
             *nonce_account,
             *nonce_authority,
@@ -1616,6 +1655,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             withdraw_authority,
             custodian,
             sign_only,
+            dump_transaction_message,
             blockhash_query,
             ref nonce_account,
             nonce_authority,
@@ -1629,6 +1669,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *withdraw_authority,
             *custodian,
             *sign_only,
+            *dump_transaction_message,
             blockhash_query,
             nonce_account.as_ref(),
             *nonce_authority,
@@ -1788,6 +1829,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             to,
             from,
             sign_only,
+            dump_transaction_message,
             no_wait,
             ref blockhash_query,
             ref nonce_account,
@@ -1802,6 +1844,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             to,
             *from,
             *sign_only,
+            *dump_transaction_message,
             *no_wait,
             blockhash_query,
             nonce_account.as_ref(),
@@ -2158,6 +2201,12 @@ pub fn app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'ab, '
                         .value_name("PROGRAM_ID")
                         .requires("derived_address_seed")
                         .hidden(true)
+                )
+                .arg(
+                    Arg::with_name("allow_unfunded_recipient")
+                        .long("allow-unfunded-recipient")
+                        .takes_value(false)
+                        .hidden(true) // Forward compatibility with v1.6
                 )
                 .offline_args()
                 .nonce_args(false)
@@ -2603,6 +2652,7 @@ mod tests {
             },
             amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
             sign_only: false,
+            dump_transaction_message: false,
             blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
             nonce_account: None,
             nonce_authority: 0,
@@ -2621,6 +2671,7 @@ mod tests {
             withdraw_authority: 0,
             custodian: None,
             sign_only: false,
+            dump_transaction_message: false,
             blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
             nonce_account: None,
             nonce_authority: 0,
@@ -2634,6 +2685,7 @@ mod tests {
             stake_account_pubkey,
             stake_authority: 0,
             sign_only: false,
+            dump_transaction_message: false,
             blockhash_query: BlockhashQuery::default(),
             nonce_account: None,
             nonce_authority: 0,
@@ -2647,6 +2699,7 @@ mod tests {
             stake_account_pubkey,
             stake_authority: 0,
             sign_only: false,
+            dump_transaction_message: false,
             blockhash_query: BlockhashQuery::default(),
             nonce_account: None,
             nonce_authority: 0,
@@ -2666,6 +2719,7 @@ mod tests {
             source_stake_account_pubkey,
             stake_authority: 1,
             sign_only: false,
+            dump_transaction_message: false,
             blockhash_query: BlockhashQuery::default(),
             nonce_account: None,
             nonce_authority: 0,
@@ -2851,6 +2905,7 @@ mod tests {
                     to: to_pubkey,
                     from: 0,
                     sign_only: false,
+                    dump_transaction_message: false,
                     no_wait: false,
                     blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
                     nonce_account: None,
@@ -2875,6 +2930,7 @@ mod tests {
                     to: to_pubkey,
                     from: 0,
                     sign_only: false,
+                    dump_transaction_message: false,
                     no_wait: false,
                     blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
                     nonce_account: None,
@@ -2903,6 +2959,7 @@ mod tests {
                     to: to_pubkey,
                     from: 0,
                     sign_only: false,
+                    dump_transaction_message: false,
                     no_wait: true,
                     blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
                     nonce_account: None,
@@ -2935,6 +2992,7 @@ mod tests {
                     to: to_pubkey,
                     from: 0,
                     sign_only: true,
+                    dump_transaction_message: false,
                     no_wait: false,
                     blockhash_query: BlockhashQuery::None(blockhash),
                     nonce_account: None,
@@ -2972,6 +3030,7 @@ mod tests {
                     to: to_pubkey,
                     from: 0,
                     sign_only: false,
+                    dump_transaction_message: false,
                     no_wait: false,
                     blockhash_query: BlockhashQuery::FeeCalculator(
                         blockhash_query::Source::Cluster,
@@ -3013,6 +3072,7 @@ mod tests {
                     to: to_pubkey,
                     from: 0,
                     sign_only: false,
+                    dump_transaction_message: false,
                     no_wait: false,
                     blockhash_query: BlockhashQuery::FeeCalculator(
                         blockhash_query::Source::NonceAccount(nonce_address),
@@ -3052,6 +3112,7 @@ mod tests {
                     to: to_pubkey,
                     from: 0,
                     sign_only: false,
+                    dump_transaction_message: false,
                     no_wait: false,
                     blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
                     nonce_account: None,

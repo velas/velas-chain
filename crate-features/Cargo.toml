@@ -1,10 +1,11 @@
 [package]
 name = "solana-crate-features"
-version = "1.5.14"
+version = "1.5.18"
 description = "Solana Crate Features"
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
 repository = "https://github.com/solana-labs/solana"
 homepage = "https://solana.com/"
+documentation = "https://docs.rs/solana-crate-features"
 license = "Apache-2.0"
 edition = "2018"
 

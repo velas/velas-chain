@@ -19,7 +19,7 @@ use jsonrpc_http_server::{
 };
 use regex::Regex;
 use solana_client::rpc_cache::LargestAccountsCache;
-use solana_ledger::blockstore::Blockstore;
+use solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache};
 use solana_metrics::inc_new_counter_info;
 use solana_runtime::{
     bank_forks::{BankForks, SnapshotConfig},
@@ -31,7 +31,7 @@ use std::{
     collections::HashSet,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     sync::{mpsc::channel, Arc, Mutex, RwLock},
     thread::{self, Builder, JoinHandle},
 };
@@ -276,6 +276,8 @@ impl JsonRpcService {
         send_transaction_retry_ms: u64,
         send_transaction_leader_forward_count: u64,
         max_slots: Arc<MaxSlots>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        current_transaction_status_slot: Arc<AtomicU64>,
     ) -> Self {
         info!("rpc bound to {:?}", rpc_addr);
         info!("rpc configuration: {:?}", config);
@@ -353,6 +355,8 @@ impl JsonRpcService {
             optimistically_confirmed_bank,
             largest_accounts_cache,
             max_slots,
+            leader_schedule_cache,
+            current_transaction_status_slot,
         );
 
         let leader_info =
@@ -517,6 +521,8 @@ mod tests {
             1000,
             1,
             Arc::new(MaxSlots::default()),
+            Arc::new(LeaderScheduleCache::default()),
+            Arc::new(AtomicU64::default()),
         );
         let thread = rpc_service.thread_hdl.thread();
         assert_eq!(thread.name().unwrap(), "solana-jsonrpc");

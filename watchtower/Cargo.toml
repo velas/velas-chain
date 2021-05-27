@@ -3,23 +3,24 @@ authors = ["Solana Maintainers <maintainers@solana.foundation>"]
 edition = "2018"
 name = "solana-watchtower"
 description = "Blockchain, Rebuilt for Scale"
-version = "1.5.14"
+version = "1.5.18"
 repository = "https://github.com/solana-labs/solana"
 license = "Apache-2.0"
 homepage = "https://solana.com/"
+documentation = "https://docs.rs/solana-watchtower"
 
 [dependencies]
 clap = "2.33.1"
 log = "0.4.11"
 humantime = "2.0.1"
-solana-clap-utils = { path = "../clap-utils", version = "1.5.14" }
-solana-cli-config = { path = "../cli-config", version = "1.5.14" }
-solana-cli-output = { path = "../cli-output", version = "1.5.14" }
-solana-client = { path = "../client", version = "1.5.14" }
-solana-logger = { path = "../logger", version = "1.5.14" }
-solana-metrics = { path = "../metrics", version = "1.5.14" }
-solana-notifier = { path = "../notifier", version = "1.5.14" }
-solana-sdk = { path = "../sdk", version = "1.5.14" }
+solana-clap-utils = { path = "../clap-utils", version = "=1.5.18" }
+solana-cli-config = { path = "../cli-config", version = "=1.5.18" }
+solana-cli-output = { path = "../cli-output", version = "=1.5.18" }
+solana-client = { path = "../client", version = "=1.5.18" }
+solana-logger = { path = "../logger", version = "=1.5.18" }
+solana-metrics = { path = "../metrics", version = "=1.5.18" }
+solana-notifier = { path = "../notifier", version = "=1.5.18" }
+solana-sdk = { path = "../sdk", version = "=1.5.18" }
 solana-version = { path = "../version" }
 
 [package.metadata.docs.rs]

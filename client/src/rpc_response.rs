@@ -6,7 +6,9 @@ use solana_sdk::{
     inflation::Inflation,
     transaction::{Result, TransactionError},
 };
-use solana_transaction_status::ConfirmedTransactionStatusWithSignature;
+use solana_transaction_status::{
+    ConfirmedTransactionStatusWithSignature, TransactionConfirmationStatus,
+};
 use std::{collections::HashMap, fmt, net::SocketAddr};
 
 pub type RpcResult<T> = client_error::Result<Response<T>>;
@@ -101,13 +103,63 @@ pub struct SlotInfo {
     pub root: Slot,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotTransactionStats {
+    pub num_transaction_entries: u64,
+    pub num_successful_transactions: u64,
+    pub num_failed_transactions: u64,
+    pub max_transactions_per_entry: u64,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum SlotUpdate {
-    OptimisticConfirmation { slot: Slot, timestamp: u64 },
-    FirstShredReceived { slot: Slot, timestamp: u64 },
-    Frozen { slot: Slot, timestamp: u64 },
-    Root { slot: Slot, timestamp: u64 },
+    FirstShredReceived {
+        slot: Slot,
+        timestamp: u64,
+    },
+    Completed {
+        slot: Slot,
+        timestamp: u64,
+    },
+    CreatedBank {
+        slot: Slot,
+        parent: Slot,
+        timestamp: u64,
+    },
+    Frozen {
+        slot: Slot,
+        timestamp: u64,
+        stats: SlotTransactionStats,
+    },
+    Dead {
+        slot: Slot,
+        timestamp: u64,
+        err: String,
+    },
+    OptimisticConfirmation {
+        slot: Slot,
+        timestamp: u64,
+    },
+    Root {
+        slot: Slot,
+        timestamp: u64,
+    },
+}
+
+impl SlotUpdate {
+    pub fn slot(&self) -> Slot {
+        match self {
+            Self::FirstShredReceived { slot, .. } => *slot,
+            Self::Completed { slot, .. } => *slot,
+            Self::CreatedBank { slot, .. } => *slot,
+            Self::Frozen { slot, .. } => *slot,
+            Self::Dead { slot, .. } => *slot,
+            Self::OptimisticConfirmation { slot, .. } => *slot,
+            Self::Root { slot, .. } => *slot,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -263,7 +315,7 @@ pub struct RpcSupply {
     pub non_circulating_accounts: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum StakeActivationState {
     Activating,
@@ -296,6 +348,7 @@ pub struct RpcConfirmedTransactionStatusWithSignature {
     pub err: Option<TransactionError>,
     pub memo: Option<String>,
     pub block_time: Option<UnixTimestamp>,
+    pub confirmation_status: Option<TransactionConfirmationStatus>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -322,6 +375,7 @@ impl From<ConfirmedTransactionStatusWithSignature> for RpcConfirmedTransactionSt
             err,
             memo,
             block_time,
+            confirmation_status: None,
         }
     }
 }

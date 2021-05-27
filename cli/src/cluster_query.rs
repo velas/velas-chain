@@ -24,8 +24,9 @@ use solana_client::{
     pubsub_client::PubsubClient,
     rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
     rpc_config::{
-        RpcAccountInfoConfig, RpcLargestAccountsConfig, RpcLargestAccountsFilter,
-        RpcProgramAccountsConfig, RpcTransactionLogsConfig, RpcTransactionLogsFilter,
+        RpcAccountInfoConfig, RpcConfirmedBlockConfig, RpcConfirmedTransactionConfig,
+        RpcLargestAccountsConfig, RpcLargestAccountsFilter, RpcProgramAccountsConfig,
+        RpcTransactionLogsConfig, RpcTransactionLogsFilter,
     },
     rpc_filter,
     rpc_response::SlotInfo,
@@ -742,6 +743,10 @@ pub fn process_catchup(
         }
     };
 
+    let start_node_slot = get_slot_while_retrying(&node_client)?;
+    let start_rpc_slot = get_slot_while_retrying(rpc_client)?;
+    let start_slot_distance = start_rpc_slot as i64 - start_node_slot as i64;
+    let mut total_sleep_interval = 0;
     loop {
         // humbly retry; the reference node (rpc_client) could be spotty,
         // especially if pointing to api.meinnet-beta.solana.com at times
@@ -758,14 +763,37 @@ pub fn process_catchup(
         let slot_distance = rpc_slot as i64 - node_slot as i64;
         let slots_per_second =
             (previous_slot_distance - slot_distance) as f64 / f64::from(sleep_interval);
-        let time_remaining = (slot_distance as f64 / slots_per_second).round();
-        let time_remaining = if !time_remaining.is_normal() || time_remaining <= 0.0 {
+
+        let average_time_remaining = if slot_distance == 0 || total_sleep_interval == 0 {
             "".to_string()
         } else {
-            format!(
-                ". Time remaining: {}",
-                humantime::format_duration(Duration::from_secs_f64(time_remaining))
-            )
+            let distance_delta = start_slot_distance as i64 - slot_distance as i64;
+            let average_catchup_slots_per_second =
+                distance_delta as f64 / f64::from(total_sleep_interval);
+            let average_time_remaining =
+                (slot_distance as f64 / average_catchup_slots_per_second).round();
+            if !average_time_remaining.is_normal() {
+                "".to_string()
+            } else if average_time_remaining < 0.0 {
+                format!(
+                    " (AVG: {:.1} slots/second (falling))",
+                    average_catchup_slots_per_second
+                )
+            } else {
+                // important not to miss next scheduled lead slots
+                let total_node_slot_delta = node_slot as i64 - start_node_slot as i64;
+                let average_node_slots_per_second =
+                    total_node_slot_delta as f64 / f64::from(total_sleep_interval);
+                let expected_finish_slot = (node_slot as f64
+                    + average_time_remaining as f64 * average_node_slots_per_second as f64)
+                    .round();
+                format!(
+                    " (AVG: {:.1} slots/second, ETA: slot {} in {})",
+                    average_catchup_slots_per_second,
+                    expected_finish_slot,
+                    humantime::format_duration(Duration::from_secs_f64(average_time_remaining))
+                )
+            }
         };
 
         progress_bar.set_message(&format!(
@@ -790,7 +818,7 @@ pub fn process_catchup(
                         "gaining"
                     },
                     slots_per_second,
-                    time_remaining
+                    average_time_remaining
                 )
             },
         ));
@@ -801,6 +829,7 @@ pub fn process_catchup(
         sleep(Duration::from_secs(sleep_interval as u64));
         previous_rpc_slot = rpc_slot;
         previous_slot_distance = slot_distance;
+        total_sleep_interval += sleep_interval;
     }
 }
 
@@ -935,8 +964,16 @@ pub fn process_get_block(
         rpc_client.get_slot_with_commitment(CommitmentConfig::finalized())?
     };
 
-    let encoded_confirmed_block =
-        rpc_client.get_confirmed_block_with_encoding(slot, UiTransactionEncoding::Base64)?;
+    let encoded_confirmed_block = rpc_client
+        .get_confirmed_block_with_config(
+            slot,
+            RpcConfirmedBlockConfig {
+                encoding: Some(UiTransactionEncoding::Base64),
+                commitment: Some(CommitmentConfig::confirmed()),
+                ..RpcConfirmedBlockConfig::default()
+            },
+        )?
+        .into();
     let cli_block = CliBlock {
         encoded_confirmed_block,
         slot,
@@ -965,7 +1002,21 @@ pub fn process_get_epoch(rpc_client: &RpcClient, _config: &CliConfig) -> Process
 }
 
 pub fn process_get_epoch_info(rpc_client: &RpcClient, config: &CliConfig) -> ProcessResult {
-    let epoch_info: CliEpochInfo = rpc_client.get_epoch_info()?.into();
+    let epoch_info = rpc_client.get_epoch_info()?;
+    let average_slot_time_ms = rpc_client
+        .get_recent_performance_samples(Some(60))
+        .ok()
+        .and_then(|samples| {
+            let (slots, secs) = samples.iter().fold((0, 0), |(slots, secs), sample| {
+                (slots + sample.num_slots, secs + sample.sample_period_secs)
+            });
+            (secs as u64).saturating_mul(1000).checked_div(slots)
+        })
+        .unwrap_or(clock::DEFAULT_MS_PER_SLOT);
+    let epoch_info = CliEpochInfo {
+        epoch_info,
+        average_slot_time_ms,
+    };
     Ok(config.output_format.formatted_string(&epoch_info))
 }
 
@@ -980,8 +1031,8 @@ pub fn process_get_slot(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessR
 }
 
 pub fn process_get_block_height(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {
-    let epoch_info: CliEpochInfo = rpc_client.get_epoch_info()?.into();
-    Ok(epoch_info.epoch_info.block_height.to_string())
+    let epoch_info = rpc_client.get_epoch_info()?;
+    Ok(epoch_info.block_height.to_string())
 }
 
 pub fn parse_show_block_production(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
@@ -1785,6 +1836,7 @@ pub fn process_transaction_history(
             before,
             until,
             limit: Some(limit),
+            commitment: Some(CommitmentConfig::confirmed()),
         },
     )?;
 
@@ -1801,9 +1853,13 @@ pub fn process_transaction_history(
                     Some(block_time) =>
                         format!("timestamp={} ", unix_timestamp_to_string(block_time)),
                 },
-                match result.err {
-                    None => "Confirmed".to_string(),
-                    Some(err) => format!("Failed: {:?}", err),
+                if let Some(err) = result.err {
+                    format!("Failed: {:?}", err)
+                } else {
+                    match result.confirmation_status {
+                        None => "Finalized".to_string(),
+                        Some(status) => format!("{:?}", status),
+                    }
                 },
                 result.memo.unwrap_or_else(|| "".to_string()),
             );
@@ -1813,9 +1869,13 @@ pub fn process_transaction_history(
 
         if show_transactions {
             if let Ok(signature) = result.signature.parse::<Signature>() {
-                match rpc_client
-                    .get_confirmed_transaction(&signature, UiTransactionEncoding::Base64)
-                {
+                match rpc_client.get_confirmed_transaction_with_config(
+                    &signature,
+                    RpcConfirmedTransactionConfig {
+                        encoding: Some(UiTransactionEncoding::Base64),
+                        commitment: Some(CommitmentConfig::confirmed()),
+                    },
+                ) {
                     Ok(confirmed_transaction) => {
                         println_transaction(
                             &confirmed_transaction

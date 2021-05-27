@@ -19,7 +19,7 @@ use {
         RpcVoteAccountInfo,
     },
     solana_sdk::{
-        clock::{self, Epoch, Slot, UnixTimestamp},
+        clock::{Epoch, Slot, UnixTimestamp},
         epoch_info::EpochInfo,
         hash::Hash,
         native_token::lamports_to_sol,
@@ -231,12 +231,8 @@ pub struct CliSlotStatus {
 pub struct CliEpochInfo {
     #[serde(flatten)]
     pub epoch_info: EpochInfo,
-}
-
-impl From<EpochInfo> for CliEpochInfo {
-    fn from(epoch_info: EpochInfo) -> Self {
-        Self { epoch_info }
-    }
+    #[serde(skip)]
+    pub average_slot_time_ms: u64,
 }
 
 impl QuietDisplay for CliEpochInfo {}
@@ -286,19 +282,16 @@ impl fmt::Display for CliEpochInfo {
             "Epoch Completed Time:",
             &format!(
                 "{}/{} ({} remaining)",
-                slot_to_human_time(self.epoch_info.slot_index),
-                slot_to_human_time(self.epoch_info.slots_in_epoch),
-                slot_to_human_time(remaining_slots_in_epoch)
+                slot_to_human_time(self.epoch_info.slot_index, self.average_slot_time_ms),
+                slot_to_human_time(self.epoch_info.slots_in_epoch, self.average_slot_time_ms),
+                slot_to_human_time(remaining_slots_in_epoch, self.average_slot_time_ms)
             ),
         )
     }
 }
 
-fn slot_to_human_time(slot: Slot) -> String {
-    humantime::format_duration(Duration::from_secs(
-        slot * clock::DEFAULT_TICKS_PER_SLOT / clock::DEFAULT_TICKS_PER_SECOND,
-    ))
-    .to_string()
+fn slot_to_human_time(slot: Slot, slot_time_ms: u64) -> String {
+    humantime::format_duration(Duration::from_secs((slot * slot_time_ms) / 1000)).to_string()
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -1280,6 +1273,8 @@ impl fmt::Display for CliInflation {
 #[serde(rename_all = "camelCase")]
 pub struct CliSignOnlyData {
     pub blockhash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub signers: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -1295,6 +1290,9 @@ impl fmt::Display for CliSignOnlyData {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f)?;
         writeln_name_value(f, "Blockhash:", &self.blockhash)?;
+        if let Some(message) = self.message.as_ref() {
+            writeln_name_value(f, "Transaction Message:", message)?;
+        }
         if !self.signers.is_empty() {
             writeln!(f, "{}", style("Signers (Pubkey=Signature):").bold())?;
             for signer in self.signers.iter() {
@@ -1348,7 +1346,7 @@ impl fmt::Display for CliAccountBalances {
         writeln!(
             f,
             "{}",
-            style(format!("{:<44}  {}", "Address", "Balance",)).bold()
+            style(format!("{:<44}  {}", "Address", "Balance")).bold()
         )?;
         for account in &self.accounts {
             writeln!(
@@ -1640,6 +1638,9 @@ pub struct CliUpgradeableBuffer {
     pub address: String,
     pub authority: String,
     pub data_len: usize,
+    pub lamports: u64,
+    #[serde(skip_serializing)]
+    pub use_lamports_unit: bool,
 }
 impl QuietDisplay for CliUpgradeableBuffer {}
 impl VerboseDisplay for CliUpgradeableBuffer {}
@@ -1650,16 +1651,72 @@ impl fmt::Display for CliUpgradeableBuffer {
         writeln_name_value(f, "Authority:", &self.authority)?;
         writeln_name_value(
             f,
+            "Balance:",
+            &build_balance_message(self.lamports, self.use_lamports_unit, true),
+        )?;
+        writeln_name_value(
+            f,
             "Data Length:",
             &format!("{:?} ({:#x?}) bytes", self.data_len, self.data_len),
         )?;
+
         Ok(())
     }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliUpgradeableBuffers {
+    pub buffers: Vec<CliUpgradeableBuffer>,
+    #[serde(skip_serializing)]
+    pub use_lamports_unit: bool,
+}
+impl QuietDisplay for CliUpgradeableBuffers {}
+impl VerboseDisplay for CliUpgradeableBuffers {}
+impl fmt::Display for CliUpgradeableBuffers {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f)?;
+        writeln!(
+            f,
+            "{}",
+            style(format!(
+                "{:<44} | {:<44} | {}",
+                "Buffer Address", "Authority", "Balance"
+            ))
+            .bold()
+        )?;
+        for buffer in self.buffers.iter() {
+            writeln!(
+                f,
+                "{}",
+                &format!(
+                    "{:<44} | {:<44} | {}",
+                    buffer.address,
+                    buffer.authority,
+                    build_balance_message(buffer.lamports, self.use_lamports_unit, true)
+                )
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ReturnSignersConfig {
+    pub dump_transaction_message: bool,
 }
 
 pub fn return_signers(
     tx: &Transaction,
     output_format: &OutputFormat,
+) -> Result<String, Box<dyn std::error::Error>> {
+    return_signers_with_config(tx, output_format, &ReturnSignersConfig::default())
+}
+
+pub fn return_signers_with_config(
+    tx: &Transaction,
+    output_format: &OutputFormat,
+    config: &ReturnSignersConfig,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let verify_results = tx.verify_with_results();
     let mut signers = Vec::new();
@@ -1678,9 +1735,16 @@ pub fn return_signers(
                 bad_sig.push(key.to_string());
             }
         });
+    let message = if config.dump_transaction_message {
+        let message_data = tx.message_data();
+        Some(base64::encode(&message_data))
+    } else {
+        None
+    };
 
     let cli_command = CliSignOnlyData {
         blockhash: tx.message.recent_blockhash.to_string(),
+        message,
         signers,
         absent,
         bad_sig,
@@ -1735,8 +1799,14 @@ pub fn parse_sign_only_reply_string(reply: &str) -> SignOnly {
             .collect();
     }
 
+    let message = object
+        .get("message")
+        .and_then(|o| o.as_str())
+        .map(|m| m.to_string());
+
     SignOnly {
         blockhash,
+        message,
         present_signers,
         absent_signers,
         bad_signers,
@@ -2015,6 +2085,25 @@ mod tests {
         let res = return_signers(&tx, &OutputFormat::JsonCompact).unwrap();
         let sign_only = parse_sign_only_reply_string(&res);
         assert_eq!(sign_only.blockhash, blockhash);
+        assert_eq!(sign_only.message, None);
+        assert_eq!(sign_only.present_signers[0].0, present.pubkey());
+        assert_eq!(sign_only.absent_signers[0], absent.pubkey());
+        assert_eq!(sign_only.bad_signers[0], bad.pubkey());
+
+        let expected_msg = "AwECBwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDgTl3Dqh9\
+            F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5QEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\
+            BAQEBAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQUFBQUFBQUFBQUFBQUFBQUF\
+            BQUFBQUFBQUFBQUFBQUGp9UXGSxWjuCKhF9z0peIzwNcMUWyGrNE2AYuqUAAAAAAAAAAAAAA\
+            AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH\
+            BwcCBgMDBQIEBAAAAAYCAQQMAgAAACoAAAAAAAAA"
+            .to_string();
+        let config = ReturnSignersConfig {
+            dump_transaction_message: true,
+        };
+        let res = return_signers_with_config(&tx, &OutputFormat::JsonCompact, &config).unwrap();
+        let sign_only = parse_sign_only_reply_string(&res);
+        assert_eq!(sign_only.blockhash, blockhash);
+        assert_eq!(sign_only.message, Some(expected_msg));
         assert_eq!(sign_only.present_signers[0].0, present.pubkey());
         assert_eq!(sign_only.absent_signers[0], absent.pubkey());
         assert_eq!(sign_only.bad_signers[0], bad.pubkey());

@@ -42,9 +42,7 @@ use solana_sdk::{
     system_instruction,
     transaction::{self, TransactionError},
 };
-use solana_transaction_status::{
-    EncodedConfirmedBlock, EncodedConfirmedTransaction, TransactionStatus, UiTransactionEncoding,
-};
+use solana_transaction_status::{EncodedConfirmedTransaction, TransactionStatus, UiConfirmedBlock};
 
 use solana_client::{
     client_error::{ClientError, ClientErrorKind},
@@ -1139,18 +1137,25 @@ impl RpcSol for RpcSolProxy {
         &self,
         meta: Self::Metadata,
         slot: Slot,
-        encoding: Option<UiTransactionEncoding>,
-    ) -> Result<Option<EncodedConfirmedBlock>> {
-        proxy_sol_rpc!(meta.rpc_client, GetConfirmedBlock, slot, encoding)
+        config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
+    ) -> Result<Option<UiConfirmedBlock>> {
+        proxy_sol_rpc!(meta.rpc_client, GetConfirmedBlock, slot, config)
     }
 
     fn get_confirmed_blocks(
         &self,
         meta: Self::Metadata,
         start_slot: Slot,
-        end_slot: Option<Slot>,
+        config: Option<RpcConfirmedBlocksConfigWrapper>,
+        commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>> {
-        proxy_sol_rpc!(meta.rpc_client, GetConfirmedBlocks, start_slot, end_slot)
+        proxy_sol_rpc!(
+            meta.rpc_client,
+            GetConfirmedBlocks,
+            start_slot,
+            config,
+            commitment
+        )
     }
 
     fn get_block_time(&self, meta: Self::Metadata, slot: Slot) -> Result<Option<UnixTimestamp>> {
@@ -1161,13 +1166,13 @@ impl RpcSol for RpcSolProxy {
         &self,
         meta: Self::Metadata,
         signature_str: String,
-        encoding: Option<UiTransactionEncoding>,
+        config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
     ) -> Result<Option<EncodedConfirmedTransaction>> {
         proxy_sol_rpc!(
             meta.rpc_client,
             GetConfirmedTransaction,
             signature_str,
-            encoding
+            config
         )
     }
 
@@ -1316,13 +1321,24 @@ impl RpcSol for RpcSolProxy {
         meta: Self::Metadata,
         start_slot: Slot,
         limit: usize,
+        commitment: Option<CommitmentConfig>,
     ) -> Result<Vec<Slot>> {
         proxy_sol_rpc!(
             meta.rpc_client,
             GetConfirmedBlocksWithLimit,
             start_slot,
-            limit
+            limit,
+            commitment
         )
+    }
+
+    fn get_slot_leaders(
+        &self,
+        meta: Self::Metadata,
+        start_slot: Slot,
+        end_slot: Slot,
+    ) -> Result<Vec<String>> {
+        proxy_sol_rpc!(meta.rpc_client, GetSlotLeaders, start_slot, end_slot)
     }
 
     fn get_health(&self, meta: Self::Metadata) -> Result<String> {

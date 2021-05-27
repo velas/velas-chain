@@ -81,6 +81,7 @@ pub enum BlockstoreError {
     ProtobufEncodeError(#[from] prost::EncodeError),
     ProtobufDecodeError(#[from] prost::DecodeError),
     ParentEntriesUnavailable,
+    SlotUnavailable,
 }
 pub type Result<T> = std::result::Result<T, BlockstoreError>;
 

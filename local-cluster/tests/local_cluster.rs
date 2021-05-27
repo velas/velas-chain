@@ -64,11 +64,14 @@ use std::{
 };
 use tempfile::TempDir;
 
+const RUST_LOG_FILTER: &str =
+    "error,solana_core::replay_stage=warn,solana_local_cluster=info,local_cluster=info";
+
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_ledger_cleanup_service() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_ledger_cleanup_service");
     let num_nodes = 3;
     let validator_config = ValidatorConfig {
@@ -109,7 +112,7 @@ fn test_ledger_cleanup_service() {
 #[test]
 #[serial]
 fn test_spend_and_verify_all_nodes_1() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_spend_and_verify_all_nodes_1");
     let num_nodes = 1;
     let local = LocalCluster::new_with_equal_stakes(num_nodes, 10_000, 100);
@@ -125,7 +128,7 @@ fn test_spend_and_verify_all_nodes_1() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_spend_and_verify_all_nodes_2() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_spend_and_verify_all_nodes_2");
     let num_nodes = 2;
     let local = LocalCluster::new_with_equal_stakes(num_nodes, 10_000, 100);
@@ -141,7 +144,7 @@ fn test_spend_and_verify_all_nodes_2() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_spend_and_verify_all_nodes_3() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_spend_and_verify_all_nodes_3");
     let num_nodes = 3;
     let local = LocalCluster::new_with_equal_stakes(num_nodes, 10_000, 100);
@@ -157,7 +160,7 @@ fn test_spend_and_verify_all_nodes_3() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_local_cluster_signature_subscribe() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     let num_nodes = 2;
     let cluster = LocalCluster::new_with_equal_stakes(num_nodes, 10_000, 100);
     let nodes = cluster.get_node_pubkeys();
@@ -231,7 +234,7 @@ fn test_local_cluster_signature_subscribe() {
 #[allow(unused_attributes)]
 #[ignore]
 fn test_spend_and_verify_all_nodes_env_num_nodes() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     let num_nodes: usize = std::env::var("NUM_NODES")
         .expect("please set environment variable NUM_NODES")
         .parse()
@@ -282,7 +285,7 @@ fn test_validator_exit_2() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_leader_failure_4() {
-    solana_logger::setup_with("debug");
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_leader_failure_4");
     let num_nodes = 4;
     let mut validator_config = ValidatorConfig::default();
@@ -322,7 +325,7 @@ fn run_cluster_partition<E, F>(
     E: FnOnce(&mut LocalCluster),
     F: FnOnce(&mut LocalCluster),
 {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     info!("PARTITION_TEST!");
     let num_nodes = partitions.len();
     let node_stakes: Vec<_> = partitions
@@ -403,7 +406,6 @@ fn run_cluster_partition<E, F>(
     for node in &cluster_nodes {
         let node_client = RpcClient::new_socket(node.rpc);
         let epoch_info = node_client.get_epoch_info().unwrap();
-        info!("slots_per_epoch: {:?}", epoch_info);
         assert_eq!(epoch_info.slots_in_epoch, slots_per_epoch);
     }
 
@@ -446,8 +448,6 @@ fn test_cluster_partition_1_2() {
     run_cluster_partition(&[&[1], &[1, 1]], None, empty, on_partition_resolved, vec![])
 }
 
-#[allow(unused_attributes)]
-#[ignore]
 #[test]
 #[serial]
 fn test_cluster_partition_1_1() {
@@ -656,7 +656,7 @@ fn test_kill_partition_switch_threshold_progress() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_two_unbalanced_stakes() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_two_unbalanced_stakes");
     let mut validator_config = ValidatorConfig::default();
     let num_ticks_per_second = 100;
@@ -718,7 +718,7 @@ fn test_forwarding() {
 #[test]
 #[serial]
 fn test_restart_node() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_restart_node");
     let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH * 2;
     let ticks_per_slot = 16;
@@ -774,7 +774,7 @@ fn test_listener_startup() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_mainnet_beta_cluster_type() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
 
     let mut config = ClusterConfig {
         cluster_type: ClusterType::MainnetBeta,
@@ -881,7 +881,7 @@ fn generate_frozen_account_panic(mut cluster: LocalCluster, frozen_account: Arc<
 #[test]
 #[serial]
 fn test_frozen_account_from_genesis() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     let validator_identity =
         Arc::new(solana_sdk::signature::keypair_from_seed(&[0u8; 32]).unwrap());
 
@@ -906,7 +906,7 @@ fn test_frozen_account_from_genesis() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_frozen_account_from_snapshot() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     let validator_identity =
         Arc::new(solana_sdk::signature::keypair_from_seed(&[0u8; 32]).unwrap());
 
@@ -947,7 +947,7 @@ fn test_frozen_account_from_snapshot() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_consistency_halt() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     let snapshot_interval_slots = 20;
     let num_account_paths = 1;
 
@@ -1037,7 +1037,7 @@ fn test_consistency_halt() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_snapshot_download() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 1 node
     let snapshot_interval_slots = 50;
     let num_account_paths = 3;
@@ -1101,7 +1101,7 @@ fn test_snapshot_download() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_snapshot_restart_tower() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 2 nodes
     let snapshot_interval_slots = 10;
     let num_account_paths = 2;
@@ -1174,7 +1174,7 @@ fn test_snapshot_restart_tower() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_snapshots_blockstore_floor() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 1 snapshotting leader
     let snapshot_interval_slots = 10;
     let num_account_paths = 4;
@@ -1275,7 +1275,7 @@ fn test_snapshots_blockstore_floor() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_snapshots_restart_validity() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     let snapshot_interval_slots = 10;
     let num_account_paths = 1;
     let mut snapshot_test_config =
@@ -1365,7 +1365,7 @@ fn test_fake_shreds_broadcast_leader() {
 }
 
 fn test_faulty_node(faulty_node_type: BroadcastStageType) {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     let num_nodes = 2;
     let error_validator_config = ValidatorConfig {
         broadcast_stage_type: faulty_node_type,
@@ -1396,7 +1396,7 @@ fn test_faulty_node(faulty_node_type: BroadcastStageType) {
 #[test]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_wait_for_max_stake() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     let mut validator_config = ValidatorConfig::default();
     validator_config.rpc_config.enable_validator_exit = true;
     let mut config = ClusterConfig {
@@ -1418,7 +1418,7 @@ fn test_wait_for_max_stake() {
 // Test that when a leader is leader for banks B_i..B_{i+n}, and B_i is not
 // votable, then B_{i+1} still chains to B_i
 fn test_no_voting() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     let mut validator_config = ValidatorConfig::default();
     validator_config.rpc_config.enable_validator_exit = true;
     validator_config.voting_disabled = true;
@@ -1458,10 +1458,7 @@ fn test_no_voting() {
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_optimistic_confirmation_violation_detection() {
-    solana_logger::setup();
-    let buf = std::env::var("OPTIMISTIC_CONF_TEST_DUMP_LOG")
-        .err()
-        .map(|_| BufferRedirect::stderr().unwrap());
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 2 nodes
     let slots_per_epoch = 2048;
     let node_stakes = vec![51, 50];
@@ -1523,20 +1520,42 @@ fn test_optimistic_confirmation_violation_detection() {
         // ancestor in bank forks).
         blockstore.set_dead_slot(prev_voted_slot).unwrap();
     }
-    cluster.restart_node(&entry_point_id, exited_validator_info);
 
-    // Wait for a root > prev_voted_slot to be set. Because the root is on a
-    // different fork than `prev_voted_slot`, then optimistic confirmation is
-    // violated
-    let client = cluster.get_validator_client(&entry_point_id).unwrap();
-    loop {
-        let last_root = client
-            .get_slot_with_commitment(CommitmentConfig::finalized())
-            .unwrap();
-        if last_root > prev_voted_slot {
-            break;
+    {
+        // Buffer stderr to detect optimistic slot violation log
+        let buf = std::env::var("OPTIMISTIC_CONF_TEST_DUMP_LOG")
+            .err()
+            .map(|_| BufferRedirect::stderr().unwrap());
+        cluster.restart_node(&entry_point_id, exited_validator_info);
+
+        // Wait for a root > prev_voted_slot to be set. Because the root is on a
+        // different fork than `prev_voted_slot`, then optimistic confirmation is
+        // violated
+        let client = cluster.get_validator_client(&entry_point_id).unwrap();
+        loop {
+            let last_root = client
+                .get_slot_with_commitment(CommitmentConfig::finalized())
+                .unwrap();
+            if last_root > prev_voted_slot {
+                break;
+            }
+            sleep(Duration::from_millis(100));
         }
-        sleep(Duration::from_millis(100));
+
+        // Check to see that validator detected optimistic confirmation for
+        // `prev_voted_slot` failed
+        let expected_log =
+            OptimisticConfirmationVerifier::format_optimistic_confirmed_slot_violation_log(
+                prev_voted_slot,
+            );
+        if let Some(mut buf) = buf {
+            let mut output = String::new();
+            buf.read_to_string(&mut output).unwrap();
+            assert!(output.contains(&expected_log));
+            print!("{}", output);
+        } else {
+            panic!("dumped log and disabled testing");
+        }
     }
 
     // Make sure validator still makes progress
@@ -1545,27 +1564,13 @@ fn test_optimistic_confirmation_violation_detection() {
         &[cluster.get_contact_info(&entry_point_id).unwrap().clone()],
         "test_optimistic_confirmation_violation",
     );
-
-    // Check to see that validator detected optimistic confirmation for
-    // `prev_voted_slot` failed
-    let expected_log =
-        OptimisticConfirmationVerifier::format_optimistic_confirmd_slot_violation_log(
-            prev_voted_slot,
-        );
-    if let Some(mut buf) = buf {
-        let mut output = String::new();
-        buf.read_to_string(&mut output).unwrap();
-        assert!(output.contains(&expected_log));
-    } else {
-        panic!("dumped log and disaled testing");
-    }
 }
 
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn test_validator_saves_tower() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
 
     let validator_config = ValidatorConfig {
         require_tower: true,
@@ -1775,7 +1780,7 @@ fn remove_tower(ledger_path: &Path, node_pubkey: &Pubkey) {
 //    `A` should not be able to generate a switching proof.
 //
 fn do_test_optimistic_confirmation_violation_with_or_without_tower(with_tower: bool) {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
 
     // First set up the cluster with 4 nodes
     let slots_per_epoch = 2048;
@@ -1965,7 +1970,7 @@ enum ClusterMode {
 }
 
 fn do_test_future_tower(cluster_mode: ClusterMode) {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
 
     // First set up the cluster with 4 nodes
     let slots_per_epoch = 2048;
@@ -2075,7 +2080,7 @@ fn test_future_tower_master_slave() {
 
 #[test]
 fn test_hard_fork_invalidates_tower() {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
 
     // First set up the cluster with 2 nodes
     let slots_per_epoch = 2048;
@@ -2368,7 +2373,7 @@ fn setup_transfer_scan_threads(
 }
 
 fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
-    solana_logger::setup();
+    solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 2 nodes
     let slots_per_epoch = 2048;
     let node_stakes = vec![51, 50];

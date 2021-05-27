@@ -3,10 +3,11 @@ authors = ["Solana Maintainers <maintainers@solana.foundation>"]
 edition = "2018"
 name = "solana-local-cluster"
 description = "Blockchain, Rebuilt for Scale"
-version = "1.5.14"
+version = "1.5.18"
 repository = "https://github.com/solana-labs/solana"
 license = "Apache-2.0"
 homepage = "https://solana.com/"
+documentation = "https://docs.rs/solana-local-cluster"
 
 [dependencies]
 crossbeam-channel = "0.4"
@@ -15,21 +16,22 @@ gag = "0.1.10"
 fs_extra = "1.2.0"
 log = "0.4.11"
 rand = "0.7.0"
-solana-config-program = { path = "../programs/config", version = "1.5.14" }
-solana-core = { path = "../core", version = "1.5.14" }
-solana-client = { path = "../client", version = "1.5.14" }
-solana-download-utils = { path = "../download-utils", version = "1.5.14" }
-solana-faucet = { path = "../faucet", version = "1.5.14" }
-solana-exchange-program = { path = "../programs/exchange", version = "1.5.14" }
-solana-ledger = { path = "../ledger", version = "1.5.14" }
-solana-logger = { path = "../logger", version = "1.5.14" }
-solana-runtime = { path = "../runtime", version = "1.5.14" }
-solana-sdk = { path = "../sdk", version = "1.5.14" }
-solana-stake-program = { path = "../programs/stake", version = "1.5.14" }
-solana-vest-program = { path = "../programs/vest", version = "1.5.14" }
-solana-vote-program = { path = "../programs/vote", version = "1.5.14" }
+rayon = "1.5.0"
+solana-config-program = { path = "../programs/config", version = "=1.5.18" }
+solana-core = { path = "../core", version = "=1.5.18" }
+solana-client = { path = "../client", version = "=1.5.18" }
+solana-download-utils = { path = "../download-utils", version = "=1.5.18" }
+solana-faucet = { path = "../faucet", version = "=1.5.18" }
+solana-exchange-program = { path = "../programs/exchange", version = "=1.5.18" }
+solana-ledger = { path = "../ledger", version = "=1.5.18" }
+solana-logger = { path = "../logger", version = "=1.5.18" }
+solana-runtime = { path = "../runtime", version = "=1.5.18" }
+solana-sdk = { path = "../sdk", version = "=1.5.18" }
+solana-stake-program = { path = "../programs/stake", version = "=1.5.18" }
+solana-vest-program = { path = "../programs/vest", version = "=1.5.18" }
+solana-vote-program = { path = "../programs/vote", version = "=1.5.18" }
 tempfile = "3.1.0"
-solana-rayon-threadlimit = { path = "../rayon-threadlimit", version = "1.5.14" }
+solana-rayon-threadlimit = { path = "../rayon-threadlimit", version = "=1.5.18" }
 
 [dev-dependencies]
 assert_matches = "1.3.0"
