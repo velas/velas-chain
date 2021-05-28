@@ -10,6 +10,11 @@
 # shellcheck source=net/common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. || exit 1; pwd)"/net/common.sh
 
+prebuild=
+if [[ $1 = "--prebuild" ]]; then
+    prebuild=true
+fi
+
 if [[ $(uname) != Linux ]]; then
     # Protect against unsupported configurations to prevent non-obvious errors
     # later. Arguably these should be fatal errors but for now prefer tolerance.
@@ -58,6 +63,7 @@ else
         declare manifest_path="--manifest-path=$SOLANA_ROOT/$crate/Cargo.toml"
         printf "cargo $CARGO_TOOLCHAIN run $manifest_path $maybe_release $maybe_package --bin %s %s -- " "$program"
     }
+    
 fi
 
 velas_bench_tps=$(velas_program bench-tps)

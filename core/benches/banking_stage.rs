@@ -7,7 +7,7 @@ use crossbeam_channel::unbounded;
 use log::*;
 use rand::{thread_rng, Rng};
 use rayon::prelude::*;
-use solana_core::banking_stage::{create_test_recorder, BankingStage};
+use solana_core::banking_stage::{create_test_recorder, BankingStage, BankingStageStats};
 use solana_core::cluster_info::ClusterInfo;
 use solana_core::cluster_info::Node;
 use solana_core::poh_recorder::WorkingBankEntry;
@@ -87,7 +87,7 @@ fn bench_consume_buffered(bencher: &mut Bencher) {
                 None,
                 &s,
                 None::<Box<dyn Fn()>>,
-                None,
+                &BankingStageStats::default(),
             );
         });
 
@@ -299,7 +299,7 @@ fn simulate_process_entries(
         hash: next_hash(&bank.last_blockhash(), 1, &tx_vector),
         transactions: tx_vector,
     };
-    process_entries(&bank, &[entry], randomize_txs, None, None).unwrap();
+    process_entries(&bank, &mut [entry], randomize_txs, None, None).unwrap();
 }
 
 #[allow(clippy::same_item_push)]

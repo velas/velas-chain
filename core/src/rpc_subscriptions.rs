@@ -652,9 +652,7 @@ impl RpcSubscriptions {
         subscriber: Subscriber<Response<UiAccount>>,
     ) {
         let config = config.unwrap_or_default();
-        let commitment = config
-            .commitment
-            .unwrap_or_else(CommitmentConfig::confirmed);
+        let commitment = config.commitment.unwrap_or_default();
 
         let slot = if commitment.is_finalized() {
             self.block_commitment_cache
@@ -725,10 +723,7 @@ impl RpcSubscriptions {
         subscriber: Subscriber<Response<RpcKeyedAccount>>,
     ) {
         let config = config.unwrap_or_default();
-        let commitment = config
-            .account_config
-            .commitment
-            .unwrap_or_else(CommitmentConfig::confirmed);
+        let commitment = config.account_config.commitment.unwrap_or_default();
 
         let mut subscriptions = if commitment.is_confirmed() {
             self.subscriptions
@@ -775,7 +770,7 @@ impl RpcSubscriptions {
         sub_id: SubscriptionId,
         subscriber: Subscriber<Response<RpcLogsResponse>>,
     ) {
-        let commitment = commitment.unwrap_or_else(CommitmentConfig::confirmed);
+        let commitment = commitment.unwrap_or_default();
 
         {
             let mut subscriptions = if commitment.is_confirmed() {
@@ -886,7 +881,7 @@ impl RpcSubscriptions {
             .map(|config| (config.commitment, config.enable_received_notification))
             .unwrap_or_default();
 
-        let commitment = commitment.unwrap_or_else(CommitmentConfig::confirmed);
+        let commitment = commitment.unwrap_or_default();
 
         let mut subscriptions = if commitment.is_confirmed() {
             self.subscriptions

@@ -26,8 +26,9 @@ use solana_stake_program::{
 #[test]
 fn test_stake_delegation_force() {
     let mint_keypair = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(mint_keypair.pubkey());
+    let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr));
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -39,10 +40,9 @@ fn test_stake_delegation_force() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config,
         &config.signers[0].pubkey(),
         MIN_DELEGATE_STAKE_AMOUNT + 400 + 50_000,
-        &config,
     )
     .unwrap();
 
@@ -116,8 +116,9 @@ fn test_seed_stake_delegation_and_deactivation() {
     solana_logger::setup();
 
     let mint_keypair = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(mint_keypair.pubkey());
+    let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr));
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -129,10 +130,9 @@ fn test_seed_stake_delegation_and_deactivation() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config_validator,
         &config_validator.signers[0].pubkey(),
         MIN_DELEGATE_STAKE_AMOUNT + 1_000,
-        &config_validator,
     )
     .unwrap();
     check_recent_balance(
@@ -201,8 +201,9 @@ fn test_stake_delegation_and_deactivation() {
     solana_logger::setup();
 
     let mint_keypair = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(mint_keypair.pubkey());
+    let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr));
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -216,10 +217,9 @@ fn test_stake_delegation_and_deactivation() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config_validator,
         &config_validator.signers[0].pubkey(),
         MIN_DELEGATE_STAKE_AMOUNT + 1_000,
-        &config_validator,
     )
     .unwrap();
     check_recent_balance(
@@ -283,8 +283,9 @@ fn test_offline_stake_delegation_and_deactivation() {
 
     let aproximate_min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let mint_keypair = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(mint_keypair.pubkey());
+    let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr));
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -309,10 +310,9 @@ fn test_offline_stake_delegation_and_deactivation() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config_validator,
         &config_validator.signers[0].pubkey(),
         aproximate_min_stake * 2,
-        &config_offline,
     )
     .unwrap();
     check_recent_balance(
@@ -323,10 +323,9 @@ fn test_offline_stake_delegation_and_deactivation() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config_offline,
         &config_offline.signers[0].pubkey(),
         aproximate_min_stake * 2,
-        &config_validator,
     )
     .unwrap();
     check_recent_balance(
@@ -428,8 +427,9 @@ fn test_nonced_stake_delegation_and_deactivation() {
 
     let aproximate_min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let mint_keypair = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(mint_keypair.pubkey());
+    let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr));
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -445,10 +445,9 @@ fn test_nonced_stake_delegation_and_deactivation() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config,
         &config.signers[0].pubkey(),
         aproximate_min_stake * 2,
-        &config,
     )
     .unwrap();
 
@@ -545,8 +544,9 @@ fn test_stake_authorize() {
     solana_logger::setup();
 
     let mint_keypair = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(mint_keypair.pubkey());
+    let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr));
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -558,10 +558,9 @@ fn test_stake_authorize() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config,
         &config.signers[0].pubkey(),
         MIN_DELEGATE_STAKE_AMOUNT + 1_000,
-        &config,
     )
     .unwrap();
 
@@ -576,10 +575,9 @@ fn test_stake_authorize() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config_offline,
         &config_offline.signers[0].pubkey(),
         MIN_DELEGATE_STAKE_AMOUNT + 1_000,
-        &config,
     )
     .unwrap();
 
@@ -808,8 +806,9 @@ fn test_stake_authorize_with_fee_payer() {
     const SIG_FEE: u64 = 42;
 
     let mint_keypair = Keypair::new();
-    let test_validator = TestValidator::with_custom_fees(mint_keypair.pubkey(), SIG_FEE);
+    let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidator::with_custom_fees(mint_pubkey, SIG_FEE, Some(faucet_addr));
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -837,10 +836,9 @@ fn test_stake_authorize_with_fee_payer() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config,
         &default_pubkey,
         MIN_DELEGATE_STAKE_AMOUNT + 10_000,
-        &config,
     )
     .unwrap();
     check_recent_balance(
@@ -849,11 +847,10 @@ fn test_stake_authorize_with_fee_payer() {
         &config.signers[0].pubkey(),
     );
 
-    request_and_confirm_airdrop(&rpc_client, &faucet_addr, &payer_pubkey, 50_000, &config).unwrap();
+    request_and_confirm_airdrop(&rpc_client, &config, &payer_pubkey, 50_000).unwrap();
     check_recent_balance(50_000, &rpc_client, &payer_pubkey);
 
-    request_and_confirm_airdrop(&rpc_client, &faucet_addr, &offline_pubkey, 50_000, &config)
-        .unwrap();
+    request_and_confirm_airdrop(&rpc_client, &config, &offline_pubkey, 50_000).unwrap();
     check_recent_balance(50_000, &rpc_client, &offline_pubkey);
 
     check_ready(&rpc_client);
@@ -949,8 +946,9 @@ fn test_stake_split() {
 
     const SIG_FEE: u64 = 42;
     let mint_keypair = Keypair::new();
-    let test_validator = TestValidator::with_custom_fees(mint_keypair.pubkey(), 1);
+    let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidator::with_custom_fees(mint_pubkey, 1, Some(faucet_addr));
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -986,10 +984,9 @@ fn test_stake_split() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config,
         &config.signers[0].pubkey(),
         minimum_stake_request_with_nonce,
-        &config,
     )
     .unwrap();
     check_recent_balance(
@@ -1000,10 +997,9 @@ fn test_stake_split() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config,
         &offline_pubkey,
         minimum_stake_balance_request,
-        &config,
     )
     .unwrap();
     check_recent_balance(minimum_stake_balance_request, &rpc_client, &offline_pubkey);
@@ -1105,8 +1101,9 @@ fn test_stake_set_lockup() {
 
     let aproximate_min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let mint_keypair = Keypair::new();
-    let test_validator = TestValidator::with_custom_fees(mint_keypair.pubkey(), 1);
+    let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidator::with_custom_fees(mint_pubkey, 1, Some(faucet_addr));
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -1127,10 +1124,9 @@ fn test_stake_set_lockup() {
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config,
         &config.signers[0].pubkey(),
         20 * aproximate_min_stake,
-        &config,
     )
     .unwrap();
     check_recent_balance(
@@ -1139,8 +1135,7 @@ fn test_stake_set_lockup() {
         &config.signers[0].pubkey(),
     );
 
-    request_and_confirm_airdrop(&rpc_client, &faucet_addr, &offline_pubkey, 100_000, &config)
-        .unwrap();
+    request_and_confirm_airdrop(&rpc_client, &config_offline, &offline_pubkey, 100_000).unwrap();
     check_recent_balance(100_000, &rpc_client, &offline_pubkey);
 
     // Create stake account, identity is authority
@@ -1367,8 +1362,9 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
     solana_logger::setup();
 
     let mint_keypair = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(mint_keypair.pubkey());
+    let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr));
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -1386,22 +1382,15 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
     // Verify that we cannot reach the cluster
     process_command(&config_offline).unwrap_err();
 
-    request_and_confirm_airdrop(
-        &rpc_client,
-        &faucet_addr,
-        &config.signers[0].pubkey(),
-        200_000,
-        &config,
-    )
-    .unwrap();
+    request_and_confirm_airdrop(&rpc_client, &config, &config.signers[0].pubkey(), 200_000)
+        .unwrap();
     check_recent_balance(200_000, &rpc_client, &config.signers[0].pubkey());
 
     request_and_confirm_airdrop(
         &rpc_client,
-        &faucet_addr,
+        &config,
         &offline_pubkey,
         2 * MIN_DELEGATE_STAKE_AMOUNT + 100_000,
-        &config,
     )
     .unwrap();
     check_recent_balance(

@@ -12,6 +12,7 @@ use crate::{
     blockhash_queue::{BlockHashEvm, BlockhashQueue},
     builtins::{self, ActivationType},
     epoch_stakes::{EpochStakes, NodeVoteAccounts},
+    hashed_transaction::{HashedTransaction, HashedTransactionSlice},
     inline_spl_token_v2_0,
     instruction_recorder::InstructionRecorder,
     log_collector::LogCollector,
@@ -21,7 +22,6 @@ use crate::{
     status_cache::{SlotDelta, StatusCache},
     system_instruction_processor::{get_system_account_kind, SystemAccountKind},
     transaction_batch::TransactionBatch,
-    transaction_utils::OrderedIterator,
     vote_account::ArcVoteAccount,
 };
 use byteorder::{ByteOrder, LittleEndian};
@@ -79,6 +79,7 @@ use solana_stake_program::stake_state::{
 };
 use solana_vote_program::vote_instruction::VoteInstruction;
 use std::{
+    borrow::Cow,
     cell::RefCell,
     collections::{HashMap, HashSet},
     convert::{TryFrom, TryInto},
@@ -101,6 +102,7 @@ pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 
 #[derive(Default)]
 pub struct ExecuteTimings {
+    pub check_us: u64,
     pub load_us: u64,
     pub execute_us: u64,
     pub store_us: u64,
@@ -108,6 +110,7 @@ pub struct ExecuteTimings {
 
 impl ExecuteTimings {
     pub fn accumulate(&mut self, other: &ExecuteTimings) {
+        self.check_us += other.check_us;
         self.load_us += other.load_us;
         self.execute_us += other.execute_us;
         self.store_us += other.store_us;
@@ -115,7 +118,7 @@ impl ExecuteTimings {
 }
 
 type BankStatusCache = StatusCache<Result<()>>;
-#[frozen_abi(digest = "3ZaEt781qwhfQSE4DZPBHhng2S6MuimchRjkR9ZWzDFs")]
+#[frozen_abi(digest = "7WxTa4GdrBkjZCrHZ6xCpNA5b9LWMFnAt3fTyauYEurS")]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 type TransactionAccountRefCells = Vec<Rc<RefCell<Account>>>;
 type TransactionAccountDepRefCells = Vec<(Pubkey, RefCell<Account>)>;
@@ -2455,7 +2458,7 @@ impl Bank {
 
     /// Forget all signatures. Useful for benchmarking.
     pub fn clear_signatures(&self) {
-        self.src.status_cache.write().unwrap().clear_signatures();
+        self.src.status_cache.write().unwrap().clear();
     }
 
     pub fn clear_slot_signatures(&self, slot: Slot) {
@@ -2463,7 +2466,7 @@ impl Bank {
             .status_cache
             .write()
             .unwrap()
-            .clear_slot_signatures(slot);
+            .clear_slot_entries(slot);
     }
 
     pub fn can_commit(result: &Result<()>) -> bool {
@@ -2476,17 +2479,23 @@ impl Bank {
 
     fn update_transaction_statuses(
         &self,
-        txs: &[Transaction],
-        iteration_order: Option<&[usize]>,
+        hashed_txs: &[HashedTransaction],
         res: &[TransactionExecutionResult],
     ) {
         let mut status_cache = self.src.status_cache.write().unwrap();
-        for (i, (_, tx)) in OrderedIterator::new(txs, iteration_order).enumerate() {
-            let (res, _nonce_rollback) = &res[i];
+        assert_eq!(hashed_txs.len(), res.len());
+        for (hashed_tx, (res, _nonce_rollback)) in hashed_txs.iter().zip(res) {
+            let tx = hashed_tx.transaction();
             if Self::can_commit(res) && !tx.signatures.is_empty() {
                 status_cache.insert(
                     &tx.message().recent_blockhash,
                     &tx.signatures[0],
+                    self.slot(),
+                    res.clone(),
+                );
+                status_cache.insert(
+                    &tx.message().recent_blockhash,
+                    &hashed_tx.message_hash,
                     self.slot(),
                     res.clone(),
                 );
@@ -2528,26 +2537,27 @@ impl Bank {
         tick_height % self.ticks_per_slot == 0
     }
 
-    /// Process a Transaction. This is used for unit tests and simply calls the vector
-    /// Bank::process_transactions method
-    pub fn process_transaction(&self, tx: &Transaction) -> Result<()> {
-        let txs = vec![tx.clone()];
-        self.process_transactions(&txs)[0].clone()?;
-        tx.signatures
-            .get(0)
-            .map_or(Ok(()), |sig| self.get_signature_status(sig).unwrap())
-    }
-
     pub fn prepare_batch<'a, 'b>(
         &'a self,
-        txs: &'b [Transaction],
-        iteration_order: Option<Vec<usize>>,
+        txs: impl Iterator<Item = &'b Transaction>,
     ) -> TransactionBatch<'a, 'b> {
-        let results = self
+        let hashed_txs: Vec<HashedTransaction> = txs.map(HashedTransaction::from).collect();
+        let lock_results = self
             .rc
             .accounts
-            .lock_accounts(txs, iteration_order.as_deref());
-        TransactionBatch::new(results, &self, txs, iteration_order)
+            .lock_accounts(hashed_txs.as_transactions_iter());
+        TransactionBatch::new(lock_results, &self, Cow::Owned(hashed_txs))
+    }
+
+    pub fn prepare_hashed_batch<'a, 'b>(
+        &'a self,
+        hashed_txs: &'b [HashedTransaction],
+    ) -> TransactionBatch<'a, 'b> {
+        let lock_results = self
+            .rc
+            .accounts
+            .lock_accounts(hashed_txs.as_transactions_iter());
+        TransactionBatch::new(lock_results, &self, Cow::Borrowed(hashed_txs))
     }
 
     pub fn prepare_simulation_batch<'a, 'b>(
@@ -2558,7 +2568,8 @@ impl Bank {
             .iter()
             .map(|tx| tx.sanitize().map_err(|e| e.into()))
             .collect();
-        let mut batch = TransactionBatch::new(lock_results, &self, txs, None);
+        let hashed_txs = txs.iter().map(HashedTransaction::from).collect();
+        let mut batch = TransactionBatch::new(lock_results, &self, hashed_txs);
         batch.needs_unlock = false;
         batch
     }
@@ -2634,11 +2645,9 @@ impl Bank {
     pub fn unlock_accounts(&self, batch: &mut TransactionBatch) {
         if batch.needs_unlock {
             batch.needs_unlock = false;
-            self.rc.accounts.unlock_accounts(
-                batch.transactions(),
-                batch.iteration_order(),
-                batch.lock_results(),
-            )
+            self.rc
+                .accounts
+                .unlock_accounts(batch.transactions_iter(), batch.lock_results())
         }
     }
 
@@ -2650,37 +2659,16 @@ impl Bank {
         self.rc.accounts.accounts_db.set_shrink_paths(paths);
     }
 
-    fn load_accounts(
+    fn check_age<'a>(
         &self,
-        txs: &[Transaction],
-        iteration_order: Option<&[usize]>,
-        results: Vec<TransactionCheckResult>,
-        error_counters: &mut ErrorCounters,
-    ) -> Vec<TransactionLoadResult> {
-        self.rc.accounts.load_accounts(
-            &self.ancestors,
-            txs,
-            iteration_order,
-            results,
-            &self.blockhash_queue.read().unwrap(),
-            error_counters,
-            &self.rent_collector,
-            &self.feature_set,
-        )
-    }
-
-    fn check_age(
-        &self,
-        txs: &[Transaction],
-        iteration_order: Option<&[usize]>,
+        txs: impl Iterator<Item = &'a Transaction>,
         lock_results: Vec<Result<()>>,
         max_age: usize,
         error_counters: &mut ErrorCounters,
     ) -> Vec<TransactionCheckResult> {
         let hash_queue = self.blockhash_queue.read().unwrap();
-        OrderedIterator::new(txs, iteration_order)
-            .zip(lock_results.into_iter())
-            .map(|((_, tx), lock_res)| match lock_res {
+        txs.zip(lock_results)
+            .map(|(tx, lock_res)| match lock_res {
                 Ok(()) => {
                     let message = tx.message();
                     let hash_age = hash_queue.check_hash_age(&message.recent_blockhash, max_age);
@@ -2701,50 +2689,61 @@ impl Bank {
             .collect()
     }
 
-    fn check_signatures(
+    fn is_tx_already_processed(
         &self,
-        txs: &[Transaction],
-        iteration_order: Option<&[usize]>,
+        hashed_tx: &HashedTransaction,
+        status_cache: &StatusCache<Result<()>>,
+        check_duplicates_by_hash_enabled: bool,
+    ) -> bool {
+        let tx = hashed_tx.transaction();
+        let status_cache_key: Option<&[u8]> = if check_duplicates_by_hash_enabled {
+            Some(hashed_tx.message_hash.as_ref())
+        } else {
+            tx.signatures.get(0).map(|sig0| sig0.as_ref())
+        };
+        status_cache_key
+            .and_then(|key| {
+                status_cache.get_status(key, &tx.message().recent_blockhash, &self.ancestors)
+            })
+            .is_some()
+    }
+
+    fn check_status_cache(
+        &self,
+        hashed_txs: &[HashedTransaction],
         lock_results: Vec<TransactionCheckResult>,
         error_counters: &mut ErrorCounters,
     ) -> Vec<TransactionCheckResult> {
         let rcache = self.src.status_cache.read().unwrap();
-        OrderedIterator::new(txs, iteration_order)
-            .zip(lock_results.into_iter())
-            .map(|((_, tx), lock_res)| {
-                if tx.signatures.is_empty() {
-                    return lock_res;
-                }
+        let check_duplicates_by_hash_enabled = self.check_duplicates_by_hash_enabled();
+        hashed_txs
+            .iter()
+            .zip(lock_results)
+            .map(|(hashed_tx, (lock_res, nonce_rollback))| {
+                if lock_res.is_ok()
+                    && self.is_tx_already_processed(
+                        hashed_tx,
+                        &rcache,
+                        check_duplicates_by_hash_enabled,
+                    )
                 {
-                    let (lock_res, _nonce_rollback) = &lock_res;
-                    if lock_res.is_ok()
-                        && rcache
-                            .get_signature_status(
-                                &tx.signatures[0],
-                                &tx.message().recent_blockhash,
-                                &self.ancestors,
-                            )
-                            .is_some()
-                    {
-                        error_counters.duplicate_signature += 1;
-                        return (Err(TransactionError::DuplicateSignature), None);
-                    }
+                    error_counters.already_processed += 1;
+                    return (Err(TransactionError::AlreadyProcessed), None);
                 }
-                lock_res
+
+                (lock_res, nonce_rollback)
             })
             .collect()
     }
 
-    fn filter_by_vote_transactions(
+    fn filter_by_vote_transactions<'a>(
         &self,
-        txs: &[Transaction],
-        iteration_order: Option<&[usize]>,
+        txs: impl Iterator<Item = &'a Transaction>,
         lock_results: Vec<TransactionCheckResult>,
         error_counters: &mut ErrorCounters,
     ) -> Vec<TransactionCheckResult> {
-        OrderedIterator::new(txs, iteration_order)
-            .zip(lock_results.into_iter())
-            .map(|((_, tx), lock_res)| {
+        txs.zip(lock_results)
+            .map(|(tx, lock_res)| {
                 if lock_res.0.is_ok() {
                     if is_simple_vote_transaction(tx) {
                         return lock_res;
@@ -2792,38 +2791,33 @@ impl Bank {
 
     pub fn check_transactions(
         &self,
-        txs: &[Transaction],
-        iteration_order: Option<&[usize]>,
+        hashed_txs: &[HashedTransaction],
         lock_results: &[Result<()>],
         max_age: usize,
         mut error_counters: &mut ErrorCounters,
     ) -> Vec<TransactionCheckResult> {
         let age_results = self.check_age(
-            txs,
-            iteration_order,
+            hashed_txs.as_transactions_iter(),
             lock_results.to_vec(),
             max_age,
             &mut error_counters,
         );
-        let sigcheck_results =
-            self.check_signatures(txs, iteration_order, age_results, &mut error_counters);
+        let cache_results = self.check_status_cache(hashed_txs, age_results, &mut error_counters);
         if self.upgrade_epoch() {
             // Reject all non-vote transactions
             self.filter_by_vote_transactions(
-                txs,
-                iteration_order,
-                sigcheck_results,
+                hashed_txs.as_transactions_iter(),
+                cache_results,
                 &mut error_counters,
             )
         } else {
-            sigcheck_results
+            cache_results
         }
     }
 
     pub fn collect_balances(&self, batch: &TransactionBatch) -> TransactionBalances {
         let mut balances: TransactionBalances = vec![];
-        for (_, transaction) in OrderedIterator::new(batch.transactions(), batch.iteration_order())
-        {
+        for transaction in batch.transactions_iter() {
             let mut transaction_balances: Vec<u64> = vec![];
             for account_key in transaction.message.account_keys.iter() {
                 transaction_balances.push(self.get_balance(account_key));
@@ -2895,10 +2889,10 @@ impl Bank {
                 error_counters.instruction_error
             );
         }
-        if 0 != error_counters.duplicate_signature {
+        if 0 != error_counters.already_processed {
             inc_new_counter_info!(
-                "bank-process_transactions-error-duplicate_signature",
-                error_counters.duplicate_signature
+                "bank-process_transactions-error-already_processed",
+                error_counters.already_processed
             );
         }
         if 0 != error_counters.not_allowed_during_cluster_maintenance {
@@ -3051,37 +3045,43 @@ impl Bank {
         u64,
         Option<evm_state::EvmBackend<evm_state::Incomming>>,
     ) {
-        let txs = batch.transactions();
-        debug!("processing transactions: {}", txs.len());
-        inc_new_counter_info!("bank-process_transactions", txs.len());
+        let hashed_txs = batch.hashed_transactions();
+        debug!("processing transactions: {}", hashed_txs.len());
+        inc_new_counter_info!("bank-process_transactions", hashed_txs.len());
         let mut error_counters = ErrorCounters::default();
-        let mut load_time = Measure::start("accounts_load");
 
-        let retryable_txs: Vec<_> =
-            OrderedIterator::new(batch.lock_results(), batch.iteration_order())
-                .enumerate()
-                .filter_map(|(index, (_, res))| match res {
-                    Err(TransactionError::AccountInUse) => {
-                        error_counters.account_in_use += 1;
-                        Some(index)
-                    }
-                    Ok(_) => None,
-                    Err(_) => None,
-                })
-                .collect();
+        let retryable_txs: Vec<_> = batch
+            .lock_results()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, res)| match res {
+                Err(TransactionError::AccountInUse) => {
+                    error_counters.account_in_use += 1;
+                    Some(index)
+                }
+                Err(_) => None,
+                Ok(_) => None,
+            })
+            .collect();
 
-        let sig_results = self.check_transactions(
-            txs,
-            batch.iteration_order(),
+        let mut check_time = Measure::start("check_transactions");
+        let check_results = self.check_transactions(
+            hashed_txs,
             batch.lock_results(),
             max_age,
             &mut error_counters,
         );
-        let mut loaded_accounts = self.load_accounts(
-            txs,
-            batch.iteration_order(),
-            sig_results,
+        check_time.stop();
+
+        let mut load_time = Measure::start("accounts_load");
+        let mut loaded_accounts = self.rc.accounts.load_accounts(
+            &self.ancestors,
+            hashed_txs.as_transactions_iter(),
+            check_results,
+            &self.blockhash_queue.read().unwrap(),
             &mut error_counters,
+            &self.rent_collector,
+            &self.feature_set,
         );
         load_time.stop();
 
@@ -3091,22 +3091,21 @@ impl Bank {
 
         let mut signature_count: u64 = 0;
         let mut inner_instructions: Vec<Option<InnerInstructionsList>> =
-            Vec::with_capacity(txs.len());
-        let mut transaction_log_messages = Vec::with_capacity(txs.len());
+            Vec::with_capacity(hashed_txs.len());
+        let mut transaction_log_messages = Vec::with_capacity(hashed_txs.len());
         let bpf_compute_budget = self
             .bpf_compute_budget
             .unwrap_or_else(|| BpfComputeBudget::new(&self.feature_set));
 
         let executed: Vec<TransactionExecutionResult> = loaded_accounts
             .iter_mut()
-            .zip(OrderedIterator::new(txs, batch.iteration_order()))
-            .map(|(accs, (_, tx))| match accs {
+            .zip(hashed_txs.as_transactions_iter())
+            .map(|(accs, tx)| match accs {
                 (Err(e), _nonce_rollback) => (Err(e.clone()), None),
                 (Ok((accounts, account_deps, loaders, _rents)), nonce_rollback) => {
                     signature_count += u64::from(tx.message().header.num_required_signatures);
 
                     let executors = self.get_executors(&tx.message, &loaders);
-
                     let (account_refcells, account_dep_refcells, loader_refcells) =
                         Self::accounts_to_refcells(accounts, account_deps, loaders);
 
@@ -3205,11 +3204,13 @@ impl Bank {
         execution_time.stop();
 
         debug!(
-            "load: {}us execute: {}us txs_len={}",
+            "check: {}us load: {}us execute: {}us txs_len={}",
+            check_time.as_us(),
             load_time.as_us(),
             execution_time.as_us(),
-            txs.len(),
+            hashed_txs.len(),
         );
+        timings.check_us += check_time.as_us();
         timings.load_us += load_time.as_us();
         timings.execute_us += execution_time.as_us();
 
@@ -3218,11 +3219,8 @@ impl Bank {
         let transaction_log_collector_config =
             self.transaction_log_collector_config.read().unwrap();
 
-        for (i, ((r, _nonce_rollback), (_, tx))) in executed
-            .iter()
-            .zip(OrderedIterator::new(txs, batch.iteration_order()))
-            .enumerate()
-        {
+        for (i, ((r, _nonce_rollback), hashed_tx)) in executed.iter().zip(hashed_txs).enumerate() {
+            let tx = hashed_tx.transaction();
             if let Some(debug_keys) = &self.transaction_debug_keys {
                 for key in &tx.message.account_keys {
                     if debug_keys.contains(key) {
@@ -3231,7 +3229,10 @@ impl Bank {
                     }
                 }
             }
-            if transaction_log_collector_config.filter != TransactionLogCollectorFilter::None {
+
+            if Self::can_commit(r) // Skip log collection for unprocessed transactions
+                && transaction_log_collector_config.filter != TransactionLogCollectorFilter::None
+            {
                 let mut transaction_log_collector = self.transaction_log_collector.write().unwrap();
                 let transaction_log_index = transaction_log_collector.logs.len();
 
@@ -3303,10 +3304,9 @@ impl Bank {
         )
     }
 
-    fn filter_program_errors_and_collect_fee(
+    fn filter_program_errors_and_collect_fee<'a>(
         &self,
-        txs: &[Transaction],
-        iteration_order: Option<&[usize]>,
+        txs: impl Iterator<Item = &'a Transaction>,
         executed: &[TransactionExecutionResult],
     ) -> Vec<Result<()>> {
         let hash_queue = self.blockhash_queue.read().unwrap();
@@ -3316,9 +3316,9 @@ impl Bank {
             secp256k1_program_enabled: self.secp256k1_program_enabled(),
         };
 
-        let results = OrderedIterator::new(txs, iteration_order)
-            .zip(executed.iter())
-            .map(|((_, tx), (res, nonce_rollback))| {
+        let results = txs
+            .zip(executed)
+            .map(|(tx, (res, nonce_rollback))| {
                 let (fee_calculator, is_durable_nonce) = nonce_rollback
                     .as_ref()
                     .map(|nonce_rollback| nonce_rollback.fee_calculator())
@@ -3365,8 +3365,7 @@ impl Bank {
 
     pub fn commit_transactions(
         &self,
-        txs: &[Transaction],
-        iteration_order: Option<&[usize]>,
+        hashed_txs: &[HashedTransaction],
         loaded_accounts: &mut [TransactionLoadResult],
         executed: &[TransactionExecutionResult],
         tx_count: u64,
@@ -3385,8 +3384,8 @@ impl Bank {
         inc_new_counter_info!("bank-process_transactions-txs", tx_count as usize);
         inc_new_counter_info!("bank-process_transactions-sigs", signature_count as usize);
 
-        if !txs.is_empty() {
-            let processed_tx_count = txs.len() as u64;
+        if !hashed_txs.is_empty() {
+            let processed_tx_count = hashed_txs.len() as u64;
             let failed_tx_count = processed_tx_count.saturating_sub(tx_count);
             self.transaction_error_count
                 .fetch_add(failed_tx_count, Relaxed);
@@ -3405,8 +3404,7 @@ impl Bank {
         let mut write_time = Measure::start("write_time");
         self.rc.accounts.store_cached(
             self.slot(),
-            txs,
-            iteration_order,
+            hashed_txs.as_transactions_iter(),
             executed,
             loaded_accounts,
             &self.rent_collector,
@@ -3415,8 +3413,12 @@ impl Bank {
         );
         self.collect_rent(executed, loaded_accounts);
 
-        let overwritten_vote_accounts =
-            self.update_cached_accounts(txs, iteration_order, executed, loaded_accounts);
+        let overwritten_vote_accounts = self.update_cached_accounts(
+            hashed_txs.as_transactions_iter(),
+            executed,
+            loaded_accounts,
+        );
+
         if let Some(patch) = patch {
             let mut evm_state = self.evm_state.write().expect("bank evm state was poisoned");
             trace!("Updating evm state, before = {:?}", *evm_state);
@@ -3425,11 +3427,15 @@ impl Bank {
         }
         // once committed there is no way to unroll
         write_time.stop();
-        debug!("store: {}us txs_len={}", write_time.as_us(), txs.len(),);
+        debug!(
+            "store: {}us txs_len={}",
+            write_time.as_us(),
+            hashed_txs.len()
+        );
         timings.store_us += write_time.as_us();
-        self.update_transaction_statuses(txs, iteration_order, &executed);
+        self.update_transaction_statuses(hashed_txs, &executed);
         let fee_collection_results =
-            self.filter_program_errors_and_collect_fee(txs, iteration_order, executed);
+            self.filter_program_errors_and_collect_fee(hashed_txs.as_transactions_iter(), executed);
 
         // TODO: add evm transaction statuses progess
 
@@ -4031,8 +4037,7 @@ impl Bank {
         );
 
         let results = self.commit_transactions(
-            batch.transactions(),
-            batch.iteration_order(),
+            batch.hashed_transactions(),
             &mut loaded_accounts,
             &executed,
             tx_count,
@@ -4053,11 +4058,26 @@ impl Bank {
         )
     }
 
+    /// Process a Transaction. This is used for unit tests and simply calls the vector
+    /// Bank::process_transactions method
+    pub fn process_transaction(&self, tx: &Transaction) -> Result<()> {
+        let batch = self.prepare_batch(std::iter::once(tx));
+        self.process_transaction_batch(&batch)[0].clone()?;
+        tx.signatures
+            .get(0)
+            .map_or(Ok(()), |sig| self.get_signature_status(sig).unwrap())
+    }
+
     #[must_use]
     pub fn process_transactions(&self, txs: &[Transaction]) -> Vec<Result<()>> {
-        let batch = self.prepare_batch(txs, None);
+        let batch = self.prepare_batch(txs.iter());
+        self.process_transaction_batch(&batch)
+    }
+
+    #[must_use]
+    fn process_transaction_batch(&self, batch: &TransactionBatch) -> Vec<Result<()>> {
         self.load_execute_and_commit_transactions(
-            &batch,
+            batch,
             MAX_PROCESSING_AGE,
             false,
             false,
@@ -4428,13 +4448,13 @@ impl Bank {
     ) -> Option<Result<()>> {
         let rcache = self.src.status_cache.read().unwrap();
         rcache
-            .get_signature_status(signature, blockhash, &self.ancestors)
+            .get_status(signature, blockhash, &self.ancestors)
             .map(|v| v.1)
     }
 
     pub fn get_signature_status_slot(&self, signature: &Signature) -> Option<(Slot, Result<()>)> {
         let rcache = self.src.status_cache.read().unwrap();
-        rcache.get_signature_slot(signature, &self.ancestors)
+        rcache.get_status_any_blockhash(signature, &self.ancestors)
     }
 
     pub fn get_signature_status(&self, signature: &Signature) -> Option<Result<()>> {
@@ -4652,19 +4672,14 @@ impl Bank {
     }
 
     /// a bank-level cache of vote accounts
-    fn update_cached_accounts(
+    fn update_cached_accounts<'a>(
         &self,
-        txs: &[Transaction],
-        iteration_order: Option<&[usize]>,
+        txs: impl Iterator<Item = &'a Transaction>,
         res: &[TransactionExecutionResult],
         loaded: &[TransactionLoadResult],
     ) -> Vec<OverwrittenVoteAccount> {
         let mut overwritten_vote_accounts = vec![];
-        for (i, ((raccs, _load_nonce_rollback), (transaction_index, tx))) in loaded
-            .iter()
-            .zip(OrderedIterator::new(txs, iteration_order))
-            .enumerate()
-        {
+        for (i, ((raccs, _load_nonce_rollback), tx)) in loaded.iter().zip(txs).enumerate() {
             let (res, _res_nonce_rollback) = &res[i];
             if res.is_err() || raccs.is_err() {
                 continue;
@@ -4686,9 +4701,10 @@ impl Bank {
                         self.stake_program_v2_enabled(),
                         self.check_init_vote_data_enabled(),
                     ) {
+                        // TODO: one of the indices is redundant.
                         overwritten_vote_accounts.push(OverwrittenVoteAccount {
                             account: old_vote_account,
-                            transaction_index,
+                            transaction_index: i,
                             transaction_result_index: i,
                         });
                     }
@@ -4913,6 +4929,11 @@ impl Bank {
     pub fn check_init_vote_data_enabled(&self) -> bool {
         self.feature_set
             .is_active(&feature_set::check_init_vote_data::id())
+    }
+
+    pub fn check_duplicates_by_hash_enabled(&self) -> bool {
+        self.feature_set
+            .is_active(&feature_set::check_duplicates_by_hash::id())
     }
 
     // Check if the wallclock time from bank creation to now has exceeded the allotted
@@ -5492,7 +5513,7 @@ pub(crate) mod tests {
             cluster_type: ClusterType::MainnetBeta,
             ..GenesisConfig::default()
         }));
-        let sysvar_and_native_proram_delta0 = 10;
+        let sysvar_and_native_proram_delta0 = 12;
         assert_eq!(
             bank0.capitalization(),
             42 * 42 + sysvar_and_native_proram_delta0
@@ -7864,7 +7885,7 @@ pub(crate) mod tests {
         ];
         let initial_balance = bank.get_balance(&leader);
 
-        let results = bank.filter_program_errors_and_collect_fee(&[tx1, tx2], None, &results);
+        let results = bank.filter_program_errors_and_collect_fee([tx1, tx2].iter(), &results);
         bank.freeze();
         assert_eq!(
             bank.get_balance(&leader),
@@ -7990,7 +8011,7 @@ pub(crate) mod tests {
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 1, genesis_config.hash());
         let pay_alice = vec![tx1];
 
-        let lock_result = bank.prepare_batch(&pay_alice, None);
+        let lock_result = bank.prepare_batch(pay_alice.iter());
         let results_alice = bank
             .load_execute_and_commit_transactions(
                 &lock_result,
@@ -8062,7 +8083,7 @@ pub(crate) mod tests {
         let tx1 = create_tx(&alice, genesis_config.hash(), 0);
         let first_call = vec![tx1];
 
-        let lock_result = bank.prepare_batch(&first_call, None);
+        let lock_result = bank.prepare_batch(first_call.iter());
         let results_alice = bank
             .load_execute_and_commit_transactions(
                 &lock_result,
@@ -8223,7 +8244,7 @@ pub(crate) mod tests {
         let tx = Transaction::new(&[&key0], message, genesis_config.hash());
         let txs = vec![tx];
 
-        let batch0 = bank.prepare_batch(&txs, None);
+        let batch0 = bank.prepare_batch(txs.iter());
         assert!(batch0.lock_results()[0].is_ok());
 
         // Try locking accounts, locking a previously read-only account as writable
@@ -8241,7 +8262,7 @@ pub(crate) mod tests {
         let tx = Transaction::new(&[&key1], message, genesis_config.hash());
         let txs = vec![tx];
 
-        let batch1 = bank.prepare_batch(&txs, None);
+        let batch1 = bank.prepare_batch(txs.iter());
         assert!(batch1.lock_results()[0].is_err());
 
         // Try locking a previously read-only account a 2nd time; should succeed
@@ -8258,7 +8279,7 @@ pub(crate) mod tests {
         let tx = Transaction::new(&[&key2], message, genesis_config.hash());
         let txs = vec![tx];
 
-        let batch2 = bank.prepare_batch(&txs, None);
+        let batch2 = bank.prepare_batch(txs.iter());
         assert!(batch2.lock_results()[0].is_ok());
     }
 
@@ -8321,9 +8342,42 @@ pub(crate) mod tests {
         assert!(Arc::ptr_eq(&bank.parents()[0], &parent));
     }
 
+    /// Verifies that transactions are dropped if they have already been processed
+    #[test]
+    fn test_tx_already_processed() {
+        let (genesis_config, mint_keypair) = create_genesis_config(2);
+        let mut bank = Bank::new(&genesis_config);
+        assert!(!bank.check_duplicates_by_hash_enabled());
+
+        let key1 = Keypair::new();
+        let mut tx =
+            system_transaction::transfer(&mint_keypair, &key1.pubkey(), 1, genesis_config.hash());
+
+        // First process `tx` so that the status cache is updated
+        assert_eq!(bank.process_transaction(&tx), Ok(()));
+
+        // Ensure that signature check works
+        assert_eq!(
+            bank.process_transaction(&tx),
+            Err(TransactionError::AlreadyProcessed)
+        );
+
+        // Clear transaction signature
+        tx.signatures[0] = Signature::default();
+
+        // Enable duplicate check by message hash
+        bank.feature_set = Arc::new(FeatureSet::all_enabled());
+
+        // Ensure that message hash check works
+        assert_eq!(
+            bank.process_transaction(&tx),
+            Err(TransactionError::AlreadyProcessed)
+        );
+    }
+
     /// Verifies that last ids and status cache are correctly referenced from parent
     #[test]
-    fn test_bank_parent_duplicate_signature() {
+    fn test_bank_parent_already_processed() {
         let (genesis_config, mint_keypair) = create_genesis_config(2);
         let key1 = Keypair::new();
         let parent = Arc::new(Bank::new(&genesis_config));
@@ -8334,7 +8388,7 @@ pub(crate) mod tests {
         let bank = new_from_parent(&parent);
         assert_eq!(
             bank.process_transaction(&tx),
-            Err(TransactionError::DuplicateSignature)
+            Err(TransactionError::AlreadyProcessed)
         );
     }
 
@@ -10158,15 +10212,14 @@ pub(crate) mod tests {
             instructions,
         );
         let txs = vec![tx0, tx1];
-        let iteration_order: Vec<usize> = vec![0, 1];
-        let batch = bank0.prepare_batch(&txs, Some(iteration_order));
+        let batch = bank0.prepare_batch(txs.iter());
         let balances = bank0.collect_balances(&batch);
         assert_eq!(balances.len(), 2);
         assert_eq!(balances[0], vec![8, 11, 1]);
         assert_eq!(balances[1], vec![8, 0, 1]);
 
-        let iteration_order: Vec<usize> = vec![1, 0];
-        let batch = bank0.prepare_batch(&txs, Some(iteration_order));
+        let txs: Vec<_> = txs.iter().rev().cloned().collect();
+        let batch = bank0.prepare_batch(txs.iter());
         let balances = bank0.collect_balances(&batch);
         assert_eq!(balances.len(), 2);
         assert_eq!(balances[0], vec![8, 0, 1]);
@@ -10200,7 +10253,7 @@ pub(crate) mod tests {
         let tx2 = system_transaction::transfer(&keypair1, &pubkey2, 12, blockhash);
         let txs = vec![tx0, tx1, tx2];
 
-        let lock_result = bank0.prepare_batch(&txs, None);
+        let lock_result = bank0.prepare_batch(txs.iter());
         let (transaction_results, transaction_balances_set, inner_instructions, transaction_logs) =
             bank0.load_execute_and_commit_transactions(
                 &lock_result,
@@ -11304,20 +11357,6 @@ pub(crate) mod tests {
             bank.get_balance(&inline_spl_token_v2_0::native_mint::id()),
             0
         );
-        let bank0 = Bank::new(&genesis_config);
-        // because capitalization has been reset with bogus capitalization calculation allowing overflows,
-        // deliberately substract 1 lamport to simulate it
-        bank0.capitalization.fetch_sub(1, Relaxed);
-        let bank0 = Arc::new(bank0);
-        assert_eq!(bank0.get_balance(&reward_pubkey), u64::MAX,);
-
-        // assert that everything gets in order....
-        assert!(bank1.get_account(&reward_pubkey).is_none());
-        let sysvar_and_native_proram_delta = 1;
-        assert_eq!(
-            bank0.capitalization() + 1 + 1_000_000_000 + sysvar_and_native_proram_delta,
-            bank1.capitalization()
-        );
 
         bank.deposit(&inline_spl_token_v2_0::native_mint::id(), 4200000000);
 
@@ -11358,6 +11397,56 @@ pub(crate) mod tests {
         assert_eq!(native_mint_account.owner, inline_spl_token_v2_0::id());
     }
 
+    #[test]
+    fn test_ensure_no_storage_rewards_pool() {
+        solana_logger::setup();
+
+        let mut genesis_config =
+            create_genesis_config_with_leader(5, &solana_sdk::pubkey::new_rand(), 0).genesis_config;
+
+        // Testnet - Storage rewards pool is purged at epoch 93
+        // Also this is with bad capitalization
+        genesis_config.cluster_type = ClusterType::Testnet;
+        genesis_config.inflation = Inflation::default();
+        let reward_pubkey = solana_sdk::pubkey::new_rand();
+        genesis_config.rewards_pools.insert(
+            reward_pubkey,
+            Account::new(u64::MAX, 0, &solana_sdk::pubkey::new_rand()),
+        );
+        let bank0 = Bank::new(&genesis_config);
+        // because capitalization has been reset with bogus capitalization calculation allowing overflows,
+        // deliberately substract 1 lamport to simulate it
+        bank0.capitalization.fetch_sub(1, Relaxed);
+        let bank0 = Arc::new(bank0);
+        assert_eq!(bank0.get_balance(&reward_pubkey), u64::MAX,);
+
+        let bank1 = Bank::new_from_parent(
+            &bank0,
+            &Pubkey::default(),
+            genesis_config.epoch_schedule.get_first_slot_in_epoch(93),
+        );
+
+        // assert that everything gets in order....
+        assert!(bank1.get_account(&reward_pubkey).is_none());
+        let sysvar_and_native_proram_delta = 1;
+        assert_eq!(
+            bank0.capitalization() + 1 + 1_000_000_000 + sysvar_and_native_proram_delta,
+            bank1.capitalization()
+        );
+        assert_eq!(bank1.capitalization(), bank1.calculate_capitalization());
+
+        // Depending on RUSTFLAGS, this test exposes rust's checked math behavior or not...
+        // So do some convolted setup; anyway this test itself will just be temporary
+        let bank0 = std::panic::AssertUnwindSafe(bank0);
+        let overflowing_capitalization =
+            std::panic::catch_unwind(|| bank0.calculate_capitalization());
+        if let Ok(overflowing_capitalization) = overflowing_capitalization {
+            info!("asserting overflowing capitalization for bank0");
+            assert_eq!(overflowing_capitalization, bank0.capitalization());
+        } else {
+            info!("NOT-asserting overflowing capitalization for bank0");
+        }
+    }
     #[derive(Debug)]
     struct TestExecutor {}
     impl Executor for TestExecutor {
@@ -12554,10 +12643,8 @@ pub(crate) mod tests {
         let success_sig = tx0.signatures[0];
         let tx1 = system_transaction::transfer(&sender1, &recipient1, 110, blockhash); // Should produce insufficient funds log
         let failure_sig = tx1.signatures[0];
-        let txs = vec![tx0, tx1];
-
-        // Use non-sequential batch ordering
-        let batch = bank.prepare_batch(&txs, Some(vec![1, 0]));
+        let txs = vec![tx1, tx0];
+        let batch = bank.prepare_batch(txs.iter());
 
         let log_results = bank
             .load_execute_and_commit_transactions(

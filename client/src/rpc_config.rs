@@ -31,6 +31,14 @@ pub struct RpcSimulateTransactionConfig {
     pub encoding: Option<UiTransactionEncoding>,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcRequestAirdropConfig {
+    pub recent_blockhash: Option<String>, // base-58 encoded blockhash
+    #[serde(flatten)]
+    pub commitment: Option<CommitmentConfig>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RpcLargestAccountsFilter {
@@ -48,7 +56,7 @@ pub struct RpcLargestAccountsConfig {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RpcStakeConfig {
+pub struct RpcEpochConfig {
     pub epoch: Option<Epoch>,
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
@@ -156,6 +164,20 @@ impl RpcConfirmedBlockConfig {
             transaction_details: Some(TransactionDetails::None),
             ..Self::default()
         }
+    }
+
+    pub fn rewards_with_commitment(commitment: Option<CommitmentConfig>) -> Self {
+        Self {
+            transaction_details: Some(TransactionDetails::None),
+            commitment,
+            ..Self::default()
+        }
+    }
+}
+
+impl From<RpcConfirmedBlockConfig> for RpcEncodingConfigWrapper<RpcConfirmedBlockConfig> {
+    fn from(config: RpcConfirmedBlockConfig) -> Self {
+        RpcEncodingConfigWrapper::Current(Some(config))
     }
 }
 

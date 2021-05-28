@@ -4,10 +4,10 @@ use crate::{
     mock_sender::{MockSender, Mocks},
     rpc_config::RpcAccountInfoConfig,
     rpc_config::{
-        RpcConfirmedBlockConfig, RpcConfirmedTransactionConfig,
+        RpcConfirmedBlockConfig, RpcConfirmedTransactionConfig, RpcEpochConfig,
         RpcGetConfirmedSignaturesForAddress2Config, RpcLargestAccountsConfig,
-        RpcProgramAccountsConfig, RpcSendTransactionConfig, RpcSimulateTransactionConfig,
-        RpcStakeConfig, RpcTokenAccountsFilter,
+        RpcProgramAccountsConfig, RpcRequestAirdropConfig, RpcSendTransactionConfig,
+        RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
     },
     rpc_request::{RpcError, RpcRequest, RpcResponseErrorData, TokenAccountsFilter},
     rpc_response::*,
@@ -430,7 +430,7 @@ impl RpcClient {
             RpcRequest::GetStakeActivation,
             json!([
                 stake_account.to_string(),
-                RpcStakeConfig {
+                RpcEpochConfig {
                     epoch,
                     commitment: Some(self.commitment_config),
                 }
@@ -452,10 +452,17 @@ impl RpcClient {
         )
     }
 
+    #[deprecated(since = "1.5.19", note = "Please use RpcClient::supply() instead")]
+    #[allow(deprecated)]
     pub fn total_supply(&self) -> ClientResult<u64> {
         self.total_supply_with_commitment(self.commitment_config)
     }
 
+    #[deprecated(
+        since = "1.5.19",
+        note = "Please use RpcClient::supply_with_commitment() instead"
+    )]
+    #[allow(deprecated)]
     pub fn total_supply_with_commitment(
         &self,
         commitment_config: CommitmentConfig,
@@ -605,6 +612,11 @@ impl RpcClient {
         )
     }
 
+    #[deprecated(
+        since = "1.5.19",
+        note = "Please use RpcClient::get_confirmed_signatures_for_address2() instead"
+    )]
+    #[allow(deprecated)]
     pub fn get_confirmed_signatures_for_address(
         &self,
         address: &Pubkey,
@@ -756,6 +768,27 @@ impl RpcClient {
 
     pub fn get_inflation_rate(&self) -> ClientResult<RpcInflationRate> {
         self.send(RpcRequest::GetInflationRate, Value::Null)
+    }
+
+    pub fn get_inflation_reward(
+        &self,
+        addresses: &[Pubkey],
+        epoch: Option<Epoch>,
+    ) -> ClientResult<Vec<Option<RpcInflationReward>>> {
+        let addresses: Vec<_> = addresses
+            .iter()
+            .map(|address| address.to_string())
+            .collect();
+        self.send(
+            RpcRequest::GetInflationReward,
+            json!([
+                addresses,
+                RpcEpochConfig {
+                    epoch,
+                    commitment: Some(self.commitment_config),
+                }
+            ]),
+        )
     }
 
     pub fn get_version(&self) -> ClientResult<RpcVersionInfo> {
@@ -1303,6 +1336,64 @@ impl RpcClient {
         )
     }
 
+    pub fn request_airdrop(&self, pubkey: &Pubkey, lamports: u64) -> ClientResult<Signature> {
+        self.request_airdrop_with_config(
+            pubkey,
+            lamports,
+            RpcRequestAirdropConfig {
+                commitment: Some(self.commitment_config),
+                ..RpcRequestAirdropConfig::default()
+            },
+        )
+    }
+
+    pub fn request_airdrop_with_blockhash(
+        &self,
+        pubkey: &Pubkey,
+        lamports: u64,
+        recent_blockhash: &Hash,
+    ) -> ClientResult<Signature> {
+        self.request_airdrop_with_config(
+            pubkey,
+            lamports,
+            RpcRequestAirdropConfig {
+                commitment: Some(self.commitment_config),
+                recent_blockhash: Some(recent_blockhash.to_string()),
+            },
+        )
+    }
+
+    pub fn request_airdrop_with_config(
+        &self,
+        pubkey: &Pubkey,
+        lamports: u64,
+        config: RpcRequestAirdropConfig,
+    ) -> ClientResult<Signature> {
+        let commitment = config.commitment.unwrap_or_default();
+        let commitment = self.maybe_map_commitment(commitment)?;
+        let config = RpcRequestAirdropConfig {
+            commitment: Some(commitment),
+            ..config
+        };
+        self.send(
+            RpcRequest::RequestAirdrop,
+            json!([pubkey.to_string(), lamports, config]),
+        )
+        .and_then(|signature: String| {
+            Signature::from_str(&signature).map_err(|err| {
+                ClientErrorKind::Custom(format!("signature deserialization failed: {}", err)).into()
+            })
+        })
+        .map_err(|_| {
+            RpcError::ForUser(
+                "airdrop request failed. \
+                This can happen when the rate limit is reached."
+                    .to_string(),
+            )
+            .into()
+        })
+    }
+
     fn poll_balance_with_timeout_and_commitment(
         &self,
         pubkey: &Pubkey,
@@ -1504,6 +1595,24 @@ impl RpcClient {
         commitment: CommitmentConfig,
         config: RpcSendTransactionConfig,
     ) -> ClientResult<Signature> {
+        let recent_blockhash = if uses_durable_nonce(transaction).is_some() {
+            self.get_recent_blockhash_with_commitment(CommitmentConfig::processed())?
+                .value
+                .0
+        } else {
+            transaction.message.recent_blockhash
+        };
+        let signature = self.send_transaction_with_config(transaction, config)?;
+        self.confirm_transaction_with_spinner(&signature, &recent_blockhash, commitment)?;
+        Ok(signature)
+    }
+
+    pub fn confirm_transaction_with_spinner(
+        &self,
+        signature: &Signature,
+        recent_blockhash: &Hash,
+        commitment: CommitmentConfig,
+    ) -> ClientResult<()> {
         let desired_confirmations = if commitment.is_finalized() {
             MAX_LOCKOUT_HISTORY + 1
         } else {
@@ -1515,16 +1624,8 @@ impl RpcClient {
 
         progress_bar.set_message(&format!(
             "[{}/{}] Finalizing transaction {}",
-            confirmations, desired_confirmations, transaction.signatures[0],
+            confirmations, desired_confirmations, signature,
         ));
-        let recent_blockhash = if uses_durable_nonce(transaction).is_some() {
-            self.get_recent_blockhash_with_commitment(CommitmentConfig::processed())?
-                .value
-                .0
-        } else {
-            transaction.message.recent_blockhash
-        };
-        let signature = self.send_transaction_with_config(transaction, config)?;
         let (signature, status) = loop {
             // Get recent commitment in order to count confirmations for successful transactions
             let status = self
@@ -1571,7 +1672,7 @@ impl RpcClient {
             {
                 progress_bar.set_message("Transaction confirmed");
                 progress_bar.finish_and_clear();
-                return Ok(signature);
+                return Ok(());
             }
 
             progress_bar.set_message(&format!(

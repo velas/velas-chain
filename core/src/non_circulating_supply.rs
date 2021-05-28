@@ -152,7 +152,7 @@ mod tests {
     fn test_calculate_non_circulating_supply() {
         let mut accounts: BTreeMap<Pubkey, Account> = BTreeMap::new();
         let balance = 10;
-        let num_genesis_accounts = 10;
+        let num_genesis_accounts = 12;
         for _ in 0..num_genesis_accounts {
             accounts.insert(
                 solana_sdk::pubkey::new_rand(),

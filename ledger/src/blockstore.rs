@@ -2199,9 +2199,10 @@ impl Blockstore {
             "blockstore-rpc-api",
             ("method", "get_complete_transaction".to_string(), String)
         );
+        let last_root = self.last_root();
         let confirmed_unrooted_slots: Vec<_> =
             AncestorIterator::new_inclusive(highest_confirmed_slot, self)
-                .filter(|&slot| slot > self.last_root())
+                .take_while(|&slot| slot > last_root)
                 .collect();
         self.get_transaction_with_status(signature, &confirmed_unrooted_slots)
     }
@@ -2359,8 +2360,9 @@ impl Blockstore {
                 String
             )
         );
+        let last_root = self.last_root();
         let confirmed_unrooted_slots: Vec<_> = AncestorIterator::new_inclusive(highest_slot, self)
-            .filter(|&slot| slot > self.last_root())
+            .take_while(|&slot| slot > last_root)
             .collect();
 
         // Figure the `slot` to start listing signatures at, based on the ledger location of the
@@ -2568,10 +2570,7 @@ impl Blockstore {
         for (slot, signature) in address_signatures.into_iter() {
             let transaction_status =
                 self.get_transaction_status(signature, &confirmed_unrooted_slots)?;
-            let err = match transaction_status {
-                None => None,
-                Some((_slot, status)) => status.status.err(),
-            };
+            let err = transaction_status.and_then(|(_slot, status)| status.status.err());
             let block_time = self.get_block_time(slot)?;
             infos.push(ConfirmedTransactionStatusWithSignature {
                 signature,
@@ -3595,10 +3594,11 @@ fn find_slot_meta_in_cached_state<'a>(
     chained_slots: &'a HashMap<u64, Rc<RefCell<SlotMeta>>>,
     slot: Slot,
 ) -> Option<Rc<RefCell<SlotMeta>>> {
-    working_set
-        .get(&slot)
-        .map(|entry| entry.new_slot_meta.clone())
-        .or_else(|| chained_slots.get(&slot).cloned())
+    if let Some(entry) = working_set.get(&slot) {
+        Some(entry.new_slot_meta.clone())
+    } else {
+        chained_slots.get(&slot).cloned()
+    }
 }
 
 // Chaining based on latest discussion here: https://github.com/solana-labs/solana/pull/2253
@@ -8454,8 +8454,8 @@ pub mod tests {
         let ledger_path = get_tmp_ledger_path!();
         let ledger = Blockstore::open(&ledger_path).unwrap();
 
-        let coding1 = Shredder::generate_coding_shreds(slot, 0.5f32, &shreds, 0x42, usize::MAX);
-        let coding2 = Shredder::generate_coding_shreds(slot, 1.0f32, &shreds, 0x42, usize::MAX);
+        let coding1 = Shredder::generate_coding_shreds(0.5f32, &shreds, usize::MAX);
+        let coding2 = Shredder::generate_coding_shreds(1.0f32, &shreds, usize::MAX);
         for shred in &shreds {
             info!("shred {:?}", shred);
         }

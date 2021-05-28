@@ -828,6 +828,9 @@ macro_rules! proxy_sol_rpc {
     ($rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
         {
             debug!("proxy received {}", stringify!($rpc_call));
+
+            #[allow(deprecated)]
+            // some methods can be deprecated, but because we are proxy, we should support them.
             match RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*])) {
                 Err(e) => Err(from_client_error(e).into()),
                 Ok(o) => Ok(o)
@@ -1068,15 +1071,24 @@ impl RpcSol for RpcSolProxy {
         meta: Self::Metadata,
         pubkey_str: String,
         lamports: u64,
-        commitment: Option<CommitmentConfig>,
+        config: Option<RpcRequestAirdropConfig>,
     ) -> Result<String> {
         proxy_sol_rpc!(
             meta.rpc_client,
             RequestAirdrop,
             pubkey_str,
             lamports,
-            commitment
+            config
         )
+    }
+
+    fn get_inflation_reward(
+        &self,
+        meta: Self::Metadata,
+        address_strs: Vec<String>,
+        config: Option<RpcEpochConfig>,
+    ) -> Result<Vec<Option<RpcInflationReward>>> {
+        proxy_sol_rpc!(meta.rpc_client, GetInflationReward, address_strs, config)
     }
 
     fn send_transaction(
@@ -1214,7 +1226,7 @@ impl RpcSol for RpcSolProxy {
         &self,
         meta: Self::Metadata,
         pubkey_str: String,
-        config: Option<RpcStakeConfig>,
+        config: Option<RpcEpochConfig>,
     ) -> Result<RpcStakeActivation> {
         proxy_sol_rpc!(meta.rpc_client, GetStakeActivation, pubkey_str, config)
     }

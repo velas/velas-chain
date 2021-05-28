@@ -17,7 +17,13 @@ pub enum RpcRequest {
     GetConfirmedBlock,
     GetConfirmedBlocks,
     GetConfirmedBlocksWithLimit,
+
+    #[deprecated(
+        since = "1.5.19",
+        note = "Please use RpcRequest::GetConfirmedSignaturesForAddress2 instead"
+    )]
     GetConfirmedSignaturesForAddress,
+
     GetConfirmedSignaturesForAddress2,
     GetConfirmedTransaction,
     GetEpochInfo,
@@ -31,6 +37,7 @@ pub enum RpcRequest {
     GetIdentity,
     GetInflationGovernor,
     GetInflationRate,
+    GetInflationReward,
     GetLargestAccounts,
     GetLeaderSchedule,
     GetMinimumBalanceForRentExemption,
@@ -57,8 +64,12 @@ pub enum RpcRequest {
     GetTokenAccountsByDelegate,
     GetTokenAccountsByOwner,
     GetTokenSupply,
+
     GetTokenLargestAccounts,
+
+    #[deprecated(since = "1.5.19", note = "Please use RpcRequest::GetSupply instead")]
     GetTotalSupply,
+
     GetTransactionCount,
     GetVersion,
     GetVoteAccounts,
@@ -91,6 +102,7 @@ pub enum RpcRequest {
     GetVelasAccountsByOwnerKey,
 }
 
+#[allow(deprecated)]
 impl fmt::Display for RpcRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let method = match self {
@@ -118,6 +130,7 @@ impl fmt::Display for RpcRequest {
             RpcRequest::GetIdentity => "getIdentity",
             RpcRequest::GetInflationGovernor => "getInflationGovernor",
             RpcRequest::GetInflationRate => "getInflationRate",
+            RpcRequest::GetInflationReward => "getInflationReward",
             RpcRequest::GetLargestAccounts => "getLargestAccounts",
             RpcRequest::GetLeaderSchedule => "getLeaderSchedule",
             RpcRequest::GetMinimumBalanceForRentExemption => "getMinimumBalanceForRentExemption",

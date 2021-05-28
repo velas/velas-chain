@@ -14,7 +14,7 @@ usage() {
         echo "Error: $*"
     fi
   cat <<EOF
-usage: $0 [+<cargo version>] [--debug] <install directory>
+usage: $0 [+<cargo version>] [--debug] [--validator-only] <install directory>
 EOF
     exit $exitcode
 }
@@ -23,6 +23,7 @@ maybeRustVersion=
 installDir=
 buildVariant=release
 maybeReleaseFlag=--release
+validatorOnly=
 
 while [[ -n $1 ]]; do
     if [[ ${1:0:1} = - ]]; then

@@ -70,8 +70,8 @@ use solana_sdk::{
 };
 use solana_stake_program::stake_state::StakeState;
 use solana_transaction_status::{
-    EncodedConfirmedTransaction, TransactionConfirmationStatus, TransactionStatus,
-    UiConfirmedBlock, UiTransactionEncoding,
+    EncodedConfirmedTransaction, Reward, RewardType, TransactionConfirmationStatus,
+    TransactionStatus, UiConfirmedBlock, UiTransactionEncoding,
 };
 use solana_vote_program::vote_state::{VoteState, MAX_LOCKOUT_HISTORY};
 use spl_token_v2_0::{
@@ -384,6 +384,96 @@ impl JsonRpcRequestProcessor {
                     .collect()
             };
         Ok(result)
+    }
+
+    pub fn get_inflation_reward(
+        &self,
+        addresses: Vec<Pubkey>,
+        config: Option<RpcEpochConfig>,
+    ) -> Result<Vec<Option<RpcInflationReward>>> {
+        let config = config.unwrap_or_default();
+        let epoch_schedule = self.get_epoch_schedule();
+        let first_available_block = self.get_first_available_block();
+        let epoch = config.epoch.unwrap_or_else(|| {
+            epoch_schedule
+                .get_epoch(self.get_slot(config.commitment))
+                .saturating_sub(1)
+        });
+
+        // Rewards for this epoch are found in the first confirmed block of the next epoch
+        let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch.saturating_add(1));
+        if first_slot_in_epoch < first_available_block {
+            if self.bigtable_ledger_storage.is_some() {
+                return Err(RpcCustomError::LongTermStorageSlotSkipped {
+                    slot: first_slot_in_epoch,
+                }
+                .into());
+            } else {
+                return Err(RpcCustomError::BlockCleanedUp {
+                    slot: first_slot_in_epoch,
+                    first_available_block,
+                }
+                .into());
+            }
+        }
+
+        let first_confirmed_block_in_epoch = *self
+            .get_confirmed_blocks_with_limit(first_slot_in_epoch, 1, config.commitment)?
+            .get(0)
+            .ok_or(RpcCustomError::BlockNotAvailable {
+                slot: first_slot_in_epoch,
+            })?;
+
+        let first_confirmed_block = if let Ok(Some(first_confirmed_block)) = self
+            .get_confirmed_block(
+                first_confirmed_block_in_epoch,
+                Some(RpcConfirmedBlockConfig::rewards_with_commitment(config.commitment).into()),
+            ) {
+            first_confirmed_block
+        } else {
+            return Err(RpcCustomError::BlockNotAvailable {
+                slot: first_confirmed_block_in_epoch,
+            }
+            .into());
+        };
+
+        let addresses: Vec<String> = addresses
+            .into_iter()
+            .map(|pubkey| pubkey.to_string())
+            .collect();
+
+        let reward_hash: HashMap<String, Reward> = first_confirmed_block
+            .rewards
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|reward| match reward.reward_type? {
+                RewardType::Staking | RewardType::Voting => {
+                    if addresses.contains(&reward.pubkey) {
+                        Some((reward.clone().pubkey, reward))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+
+        let rewards = addresses
+            .iter()
+            .map(|address| {
+                if let Some(reward) = reward_hash.get(address) {
+                    return Some(RpcInflationReward {
+                        epoch,
+                        effective_slot: first_confirmed_block_in_epoch,
+                        amount: reward.lamports.abs() as u64,
+                        post_balance: reward.post_balance,
+                    });
+                }
+                None
+            })
+            .collect();
+
+        Ok(rewards)
     }
 
     pub fn get_inflation_governor(
@@ -964,7 +1054,10 @@ impl JsonRpcRequestProcessor {
 
         // Maybe add confirmed blocks
         if commitment.is_confirmed() && blocks.len() < limit {
-            let last_element = blocks.last().cloned().unwrap_or_default();
+            let last_element = blocks
+                .last()
+                .cloned()
+                .unwrap_or_else(|| start_slot.saturating_sub(1));
             let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
             let mut confirmed_blocks = confirmed_bank
                 .status_cache_ancestors()
@@ -1150,12 +1243,18 @@ impl JsonRpcRequestProcessor {
                 self.blockstore.get_rooted_transaction(signature)
             };
             match transaction.unwrap_or(None) {
-                Some(confirmed_transaction) => {
+                Some(mut confirmed_transaction) => {
                     if commitment.is_confirmed()
                         && confirmed_bank // should be redundant
                             .status_cache_ancestors()
                             .contains(&confirmed_transaction.slot)
                     {
+                        if confirmed_transaction.block_time.is_none() {
+                            let r_bank_forks = self.bank_forks.read().unwrap();
+                            confirmed_transaction.block_time = r_bank_forks
+                                .get(confirmed_transaction.slot)
+                                .map(|bank| bank.clock().unix_timestamp);
+                        }
                         return Ok(Some(confirmed_transaction.encode(encoding)));
                     }
                     if confirmed_transaction.slot
@@ -1307,7 +1406,7 @@ impl JsonRpcRequestProcessor {
     pub fn get_stake_activation(
         &self,
         pubkey: &Pubkey,
-        config: Option<RpcStakeConfig>,
+        config: Option<RpcEpochConfig>,
     ) -> Result<RpcStakeActivation> {
         let config = config.unwrap_or_default();
         let bank = self.bank(config.commitment);
@@ -1896,6 +1995,12 @@ fn verify_pubkey(input: String) -> Result<Pubkey> {
         .map_err(|e| Error::invalid_params(format!("Invalid param: {:?}", e)))
 }
 
+fn verify_hash(input: String) -> Result<Hash> {
+    input
+        .parse()
+        .map_err(|e| Error::invalid_params(format!("Invalid param: {:?}", e)))
+}
+
 fn verify_signature(input: &str) -> Result<Signature> {
     input
         .parse()
@@ -2344,7 +2449,7 @@ pub trait RpcSol {
         meta: Self::Metadata,
         pubkey_str: String,
         lamports: u64,
-        commitment: Option<CommitmentConfig>,
+        config: Option<RpcRequestAirdropConfig>,
     ) -> Result<String>;
 
     #[rpc(meta, name = "sendTransaction")]
@@ -2463,8 +2568,16 @@ pub trait RpcSol {
         &self,
         meta: Self::Metadata,
         pubkey_str: String,
-        config: Option<RpcStakeConfig>,
+        config: Option<RpcEpochConfig>,
     ) -> Result<RpcStakeActivation>;
+
+    #[rpc(meta, name = "getInflationReward")]
+    fn get_inflation_reward(
+        &self,
+        meta: Self::Metadata,
+        address_strs: Vec<String>,
+        config: Option<RpcEpochConfig>,
+    ) -> Result<Vec<Option<RpcInflationReward>>>;
 
     // SPL Token-specific RPC endpoints
     // See https://github.com/solana-labs/solana-program-library/releases/tag/token-v2.0.0 for
@@ -2983,28 +3096,28 @@ impl RpcSol for RpcSolImpl {
         meta: Self::Metadata,
         pubkey_str: String,
         lamports: u64,
-        commitment: Option<CommitmentConfig>,
+        config: Option<RpcRequestAirdropConfig>,
     ) -> Result<String> {
         debug!("request_airdrop rpc request received");
         trace!(
-            "request_airdrop id={} lamports={} commitment: {:?}",
+            "request_airdrop id={} lamports={} config: {:?}",
             pubkey_str,
             lamports,
-            &commitment
+            &config
         );
 
         let faucet_addr = meta.config.faucet_addr.ok_or_else(Error::invalid_request)?;
         let pubkey = verify_pubkey(pubkey_str)?;
 
-        let (blockhash, last_valid_slot) = {
-            let bank = meta.bank(commitment);
+        let config = config.unwrap_or_default();
+        let bank = meta.bank(config.commitment);
 
-            let blockhash = bank.confirmed_last_blockhash().0;
-            (
-                blockhash,
-                bank.get_blockhash_last_valid_slot(&blockhash).unwrap_or(0),
-            )
+        let blockhash = if let Some(blockhash) = config.recent_blockhash {
+            verify_hash(blockhash)?
+        } else {
+            bank.confirmed_last_blockhash().0
         };
+        let last_valid_slot = bank.get_blockhash_last_valid_slot(&blockhash).unwrap_or(0);
 
         let transaction = request_airdrop_transaction(&faucet_addr, &pubkey, lamports, blockhash)
             .map_err(|err| {
@@ -3315,16 +3428,14 @@ impl RpcSol for RpcSolImpl {
         let address = verify_pubkey(address)?;
 
         let config = config.unwrap_or_default();
-        let before = if let Some(before) = config.before {
-            Some(verify_signature(&before)?)
-        } else {
-            None
-        };
-        let until = if let Some(until) = config.until {
-            Some(verify_signature(&until)?)
-        } else {
-            None
-        };
+        let before = config
+            .before
+            .map(|ref before| verify_signature(before))
+            .transpose()?;
+        let until = config
+            .until
+            .map(|ref until| verify_signature(until))
+            .transpose()?;
         let limit = config
             .limit
             .unwrap_or(MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT);
@@ -3348,7 +3459,7 @@ impl RpcSol for RpcSolImpl {
         &self,
         meta: Self::Metadata,
         pubkey_str: String,
-        config: Option<RpcStakeConfig>,
+        config: Option<RpcEpochConfig>,
     ) -> Result<RpcStakeActivation> {
         debug!(
             "get_stake_activation rpc request received: {:?}",
@@ -3356,6 +3467,25 @@ impl RpcSol for RpcSolImpl {
         );
         let pubkey = verify_pubkey(pubkey_str)?;
         meta.get_stake_activation(&pubkey, config)
+    }
+
+    fn get_inflation_reward(
+        &self,
+        meta: Self::Metadata,
+        address_strs: Vec<String>,
+        config: Option<RpcEpochConfig>,
+    ) -> Result<Vec<Option<RpcInflationReward>>> {
+        debug!(
+            "get_inflation_reward rpc request received: {:?}",
+            address_strs.len()
+        );
+
+        let mut addresses: Vec<Pubkey> = vec![];
+        for address_str in address_strs {
+            addresses.push(verify_pubkey(address_str)?);
+        }
+
+        meta.get_inflation_reward(addresses, config)
     }
 
     fn get_token_account_balance(

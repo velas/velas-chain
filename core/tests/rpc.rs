@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use solana_account_decoder::UiAccount;
 use solana_client::{
     rpc_client::RpcClient,
+    rpc_config::{RpcAccountInfoConfig, RpcSignatureSubscribeConfig},
     rpc_response::{Response, RpcSignatureResult, SlotUpdate},
 };
 use solana_core::{rpc_pubsub::gen_client::Client as PubsubClient, test_validator::TestValidator};
@@ -57,7 +58,7 @@ fn test_rpc_send_tx() {
     solana_logger::setup();
 
     let alice = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(alice.pubkey());
+    let test_validator = TestValidator::with_no_fees(alice.pubkey(), None);
     let rpc_url = test_validator.rpc_url();
 
     let bob_pubkey = solana_sdk::pubkey::new_rand();
@@ -117,7 +118,7 @@ fn test_rpc_invalid_requests() {
     solana_logger::setup();
 
     let alice = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(alice.pubkey());
+    let test_validator = TestValidator::with_no_fees(alice.pubkey(), None);
     let rpc_url = test_validator.rpc_url();
 
     let bob_pubkey = solana_sdk::pubkey::new_rand();
@@ -148,7 +149,7 @@ fn test_rpc_invalid_requests() {
 fn test_rpc_slot_updates() {
     solana_logger::setup();
 
-    let test_validator = TestValidator::with_no_fees(Pubkey::new_unique());
+    let test_validator = TestValidator::with_no_fees(Pubkey::new_unique(), None);
 
     // Create the pub sub runtime
     let mut rt = Runtime::new().unwrap();
@@ -224,7 +225,7 @@ fn test_rpc_subscriptions() {
     solana_logger::setup();
 
     let alice = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(alice.pubkey());
+    let test_validator = TestValidator::with_no_fees(alice.pubkey(), None);
 
     let transactions_socket = UdpSocket::bind("0.0.0.0:0").unwrap();
     transactions_socket.connect(test_validator.tpu()).unwrap();
@@ -272,7 +273,13 @@ fn test_rpc_subscriptions() {
                     let status_sender = status_sender.clone();
                     tokio_01::spawn(
                         client
-                            .signature_subscribe(sig.clone(), None)
+                            .signature_subscribe(
+                                sig.clone(),
+                                Some(RpcSignatureSubscribeConfig {
+                                    commitment: Some(CommitmentConfig::confirmed()),
+                                    ..RpcSignatureSubscribeConfig::default()
+                                }),
+                            )
                             .and_then(move |sig_stream| {
                                 sig_stream.for_each(move |result| {
                                     status_sender.send((sig.clone(), result)).unwrap();
@@ -301,7 +308,13 @@ fn test_rpc_subscriptions() {
                     let account_sender = account_sender.clone();
                     tokio_01::spawn(
                         client
-                            .account_subscribe(pubkey, None)
+                            .account_subscribe(
+                                pubkey,
+                                Some(RpcAccountInfoConfig {
+                                    commitment: Some(CommitmentConfig::confirmed()),
+                                    ..RpcAccountInfoConfig::default()
+                                }),
+                            )
                             .and_then(move |account_stream| {
                                 account_stream.for_each(move |result| {
                                     account_sender.send(result).unwrap();

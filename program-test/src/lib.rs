@@ -303,13 +303,13 @@ impl program_stubs::SyscallStubs for SyscallStubs {
         .map_err(|err| ProgramError::try_from(err).unwrap_or_else(|err| panic!("{}", err)))?;
 
         // Copy writeable account modifications back into the caller's AccountInfos
-        for (i, instruction_account) in instruction.accounts.iter().enumerate() {
-            if !instruction_account.is_writable {
+        for (i, account_pubkey) in message.account_keys.iter().enumerate() {
+            if !message.is_writable(i) {
                 continue;
             }
 
             for account_info in account_infos {
-                if *account_info.unsigned_key() == instruction_account.pubkey {
+                if account_info.unsigned_key() == account_pubkey {
                     let account = &accounts[i];
                     **account_info.try_borrow_mut_lamports().unwrap() = account.borrow().lamports;
 
@@ -379,12 +379,11 @@ fn setup_fee_calculator(bank: Bank) -> Bank {
     // initialized with a non-zero fee.
     assert_eq!(bank.signature_count(), 0);
     bank.commit_transactions(
-        &[],
-        None,
-        &mut [],
-        &[],
-        0,
-        1,
+        &[],     // transactions
+        &mut [], // loaded accounts
+        &[],     // transaction execution results
+        0,       // tx count
+        1,       // signature count
         &mut ExecuteTimings::default(),
         None,
     );
