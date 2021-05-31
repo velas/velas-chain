@@ -1,0 +1,22 @@
+FROM ubuntu:20.04 as builder
+RUN apt-get -y update
+ENV TZ=Europe/Stockholm
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+RUN apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang
+
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup component add rustfmt && rustup update
+
+COPY . /solana
+WORKDIR /solana
+RUN cargo doc --release
+RUN rm /solana/target/release/deps -rf
+RUN rm /solana/target/release/build -rf
+
+
+FROM nginx as dest
+
+COPY --from=builder /solana/target/doc/ /usr/share/nginx/html
+
+# CMD /bin/bash
