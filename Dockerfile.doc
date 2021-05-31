@@ -6,12 +6,12 @@ RUN apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-de
 
 RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
-RUN rustup component add rustfmt && rustup update
 RUN rustup toolchain install nightly
-
+RUN rustup default nightly
+RUN rustup component add rustfmt && rustup update
 COPY . /solana
 WORKDIR /solana
-RUN RUSTDOCFLAGS="--enable-index-page -Zunstable-options" cargo +nightly doc --release
+RUN RUSTDOCFLAGS="--enable-index-page -Zunstable-options" cargo  doc --release
 RUN rm /solana/target/release/deps -rf
 RUN rm /solana/target/release/build -rf
 
