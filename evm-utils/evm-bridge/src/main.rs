@@ -604,8 +604,13 @@ impl ChainMockERPC for ChainMockErpcProxy {
         block_hash: Hex<H256>,
         full: bool,
     ) -> EvmResult<Option<RPCBlock>> {
+        if block_hash == Hex(H256::zero()) {
+            Ok(Some(RPCBlock::default()))
+        }
+        else {
         proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
             .map(|o: Option<_>| o.map(compatibility::patch_block))
+        }
     }
 
     fn block_by_number(
