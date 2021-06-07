@@ -54,13 +54,14 @@ $ cargo test --no-fail-fast
 ```
 
 ### EVM integration
-Info about EVM integration is at our [docs](https://docs.next.velas.com/evm).
+Info about EVM integration is at our [docs](https://docs.velas.com/evm).
 
-### Starting a local devnet
-Start your own devnet locally, instructions are in the [online docs](https://docs.next.velas.com/cluster/bench-tps).
+### Starting a local testnet
+Start your own devnet locally, instructions are in the [online docs](https://docs.velas.com/cluster/bench-tps).
 
-### Accessing the remote devnet
-* `devnet` - public devnet accessible via bootstrap.next.velas.com.
+### Accessing the remote testnet and mainnet
+* `testnet` - public devnet accessible via bootstrap.testnet.veladev.net.
+* `mainnet` - public devnet accessible via bootstrap.velas.com.
 
 # Benchmarking
 
