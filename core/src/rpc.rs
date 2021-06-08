@@ -3984,6 +3984,7 @@ pub mod rpc_full {
                     .collect(),
             ))
         }
+
         fn get_velas_relying_parties_by_owner_key(
             &self,
             meta: Self::Metadata,

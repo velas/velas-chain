@@ -74,7 +74,7 @@ solana-storage-bigtable = { path = "../storage-bigtable", version = "=1.6.14" }
 solana-streamer = { path = "../streamer", version = "=1.6.14" }
 solana-sys-tuner = { path = "../sys-tuner", version = "=1.6.14" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.6.14" }
-solana-version = { path = "../version", version = "=0.4.0" }
+solana-version = { path = "../version" }
 solana-vote-program = { path = "../programs/vote", version = "=1.6.14" }
 spl-token-v2-0 = { package = "spl-token", version = "=3.1.1", features = ["no-entrypoint"] }
 tempfile = "3.1.0"

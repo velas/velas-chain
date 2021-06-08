@@ -1,3 +1,5 @@
+# -*- mode: conf-toml; -*-
+
 [toolchain]
 channel = "1.53.0"
 profile = "minimal"
