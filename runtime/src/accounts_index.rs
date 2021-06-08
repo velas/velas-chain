@@ -26,6 +26,7 @@ use {
         pubkey::{Pubkey, PUBKEY_BYTES},
     },
     velas_account_program::{VAccountInfo, VAccountStorage, VelasAccountType},
+    velas_relying_party_program::RelyingPartyData,
 };
 
 use crate::{
@@ -74,6 +75,7 @@ pub enum IndexKey {
     VelasAccountStorage(Pubkey),
     VelasAccountOwner(Pubkey),
     VelasAccountOperational(Pubkey),
+    VelasRelyingOwner(Pubkey),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -84,6 +86,7 @@ pub enum AccountIndex {
     VelasAccountStorage,
     VelasAccountOwner,
     VelasAccountOperational,
+    VelasRelyingOwner,
 }
 
 #[derive(Debug)]
@@ -278,6 +281,7 @@ pub struct AccountsIndex<T> {
     spl_token_owner_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     velas_account_storage_index: SecondaryIndex<DashMapSecondaryIndexEntry>,
     velas_account_owner_index: SecondaryIndex<DashMapSecondaryIndexEntry>,
+    velas_relying_party_owner_index: SecondaryIndex<DashMapSecondaryIndexEntry>,
     velas_account_operational_index: SecondaryIndex<DashMapSecondaryIndexEntry>,
     roots_tracker: RwLock<RootsTracker>,
     ongoing_scan_roots: RwLock<BTreeMap<Slot, u64>>,
@@ -491,6 +495,14 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
                     func,
                     &self.velas_account_operational_index,
                     &va_operational_key,
+                    Some(max_root),
+                ),
+            ScanTypes::Indexed(IndexKey::VelasRelyingOwner(va_owner_key)) => self
+                .do_scan_secondary_index(
+                    ancestors,
+                    func,
+                    &self.velas_relying_party_owner_index,
+                    &va_owner_key,
                     Some(max_root),
                 ),
         }
@@ -900,6 +912,17 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
                         ..SPL_TOKEN_ACCOUNT_MINT_OFFSET + PUBKEY_BYTES],
                 );
                 self.spl_token_mint_index.insert(&mint_key, pubkey, slot);
+            }
+        }
+        if *account_owner == velas_relying_party_program::id() {
+            match RelyingPartyData::try_from(account_data) {
+                Ok(acc) => {
+                    if account_indexes.contains(&AccountIndex::VelasRelyingOwner) {
+                        self.velas_relying_party_owner_index
+                            .insert(&acc.authority, pubkey, slot);
+                    }
+                }
+                Err(err) => warn!("Unable to parse Velas Account: {:?}", err),
             }
         }
 
