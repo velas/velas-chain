@@ -25,6 +25,7 @@ lazy_static! {
     static ref TOKEN_PROGRAM_ID: Pubkey = spl_token_id_v2_0();
     static ref VOTE_PROGRAM_ID: Pubkey = solana_vote_program::id();
     static ref VELAS_ACCOUNT_PROGRAM_ID: Pubkey = velas_account_program::id();
+    static ref VELAS_RELYING_PARTY_PROGRAM_ID: Pubkey = velas_relying_party_program::id();
     pub static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableAccount> = {
         let mut m = HashMap::new();
         m.insert(
@@ -38,6 +39,10 @@ lazy_static! {
         m.insert(*SYSVAR_PROGRAM_ID, ParsableAccount::Sysvar);
         m.insert(*VOTE_PROGRAM_ID, ParsableAccount::Vote);
         m.insert(*VELAS_ACCOUNT_PROGRAM_ID, ParsableAccount::VelasAccount);
+        m.insert(
+            *VELAS_RELYING_PARTY_PROGRAM_ID,
+            ParsableAccount::VelasRelyingParty,
+        );
         m
     };
 }
@@ -70,6 +75,16 @@ impl From<velas_account_program::ParseError> for ParseAccountError {
     }
 }
 
+impl From<velas_relying_party_program::ParseError> for ParseAccountError {
+    fn from(err: velas_relying_party_program::ParseError) -> Self {
+        match err {
+            velas_relying_party_program::ParseError::AccountNotParsable => {
+                Self::AccountNotParsable(ParsableAccount::VelasRelyingParty)
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ParsedAccount {
@@ -89,6 +104,7 @@ pub enum ParsableAccount {
     Sysvar,
     Vote,
     VelasAccount,
+    VelasRelyingParty,
 }
 
 #[derive(Default)]
@@ -121,6 +137,9 @@ pub fn parse_account_data(
         ParsableAccount::VelasAccount => {
             serde_json::to_value(velas_account_program::VelasAccountType::try_from(data)?)?
         }
+        ParsableAccount::VelasRelyingParty => serde_json::to_value(
+            velas_relying_party_program::RelyingPartyData::try_from(data)?,
+        )?,
     };
     Ok(ParsedAccount {
         program: format!("{:?}", program_name).to_kebab_case(),

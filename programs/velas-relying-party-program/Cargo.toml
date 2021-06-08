@@ -1,15 +1,15 @@
 [package]
-name = "velas-account-program"
+name = "velas-relying-party-program"
 version = "0.0.1"
 edition = "2018"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
-
 [dependencies]
 borsh = "0.8.1"
 borsh-derive = "0.8.1"
 serde = { version = "1.0.125", features = ["derive"] }
+serde_with = "1.9"
 
-solana-sdk = { path = "../../sdk", version = "1.5.14" }
+solana-program = { path = "../../sdk/program", version = "1.5.14" }

@@ -1448,6 +1448,7 @@ pub fn main() {
                     "velas-accounts-storages",
                     "velas-accounts-owners",
                     "velas-accounts-operationals",
+                    "velas-relying-party-owners",
                 ])
                 .value_name("INDEX")
                 .help("Enable an accounts index, indexed by the selected account field"),
@@ -1588,6 +1589,7 @@ pub fn main() {
             "velas-accounts-storages" => AccountIndex::VelasAccountStorage,
             "velas-accounts-owners" => AccountIndex::VelasAccountOwner,
             "velas-accounts-operationals" => AccountIndex::VelasAccountOperational,
+            "velas-relying-party-owners" => AccountIndex::VelasRelyingOwner,
             unexpected => panic!("Unable to handle 'account_indexes' flag {}", unexpected),
         })
         .collect();
