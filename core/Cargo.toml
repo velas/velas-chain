@@ -93,6 +93,7 @@ evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
 solana-evm-loader-program = { path = "../evm-utils/programs/evm_loader" }
 velas-account-program = { path = "../programs/velas-account-program" }
+velas-relying-party-program = { path = "../programs/velas-relying-party-program" }
 
 trees = "0.2.1"
 snafu = "0.6"

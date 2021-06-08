@@ -2114,7 +2114,8 @@ impl AccountsDb {
             | IndexKey::SplTokenOwner(key)
             | IndexKey::VelasAccountStorage(key)
             | IndexKey::VelasAccountOwner(key)
-            | IndexKey::VelasAccountOperational(key) => key,
+            | IndexKey::VelasAccountOperational(key)
+            | IndexKey::VelasRelyingOwner(key) => key,
         };
 
         if !self.account_indexes.include_key(key) {

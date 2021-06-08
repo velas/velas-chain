@@ -94,6 +94,7 @@ use std::{
 };
 use tokio::runtime::Runtime;
 use velas_account_program::{VelasAccountType, ACCOUNT_LEN as VELAS_ACCOUNT_SIZE};
+use velas_relying_party_program::RelyingPartyData;
 
 pub const MAX_REQUEST_PAYLOAD_SIZE: usize = 50 * (1 << 10); // 50kB
 pub const PERFORMANCE_SAMPLES_LIMIT: usize = 720;
@@ -2027,6 +2028,36 @@ impl JsonRpcRequestProcessor {
         }
     }
 
+    fn get_velas_relying_party_by_owner_key(
+        &self,
+        bank: &Arc<Bank>,
+        owner_key: Pubkey,
+    ) -> Vec<(Pubkey, AccountSharedData)> {
+        let is_target_velas_account_storage = |account: &AccountSharedData| -> bool {
+            account.owner == velas_relying_party_program::id()
+                && match RelyingPartyData::try_from(account.data.as_slice()) {
+                    Ok(acc) => acc.authority == owner_key,
+                    _ => false,
+                }
+        };
+
+        if self
+            .config
+            .account_indexes
+            .contains(&AccountIndex::VelasRelyingOwner)
+        {
+            bank.get_filtered_indexed_accounts(
+                &IndexKey::VelasRelyingOwner(owner_key),
+                is_target_velas_account_storage,
+            )
+        } else {
+            bank.get_filtered_program_accounts(
+                &velas_relying_party_program::id(),
+                is_target_velas_account_storage,
+            )
+        }
+    }
+
     fn get_velas_accounts_storages_by_operational_key(
         &self,
         bank: &Arc<Bank>,
@@ -2899,13 +2930,12 @@ pub mod rpc_full {
             pubkey_str: String,
         ) -> Result<RpcResponse<Vec<String>>>;
 
-        // TODO(velas): post-merge rebase from develop
-        // #[rpc(meta, name = "getVelasRelyingPartiesByOwnerKey")]
-        // fn get_velas_relying_parties_by_owner_key(
-        //     &self,
-        //     meta: Self::Metadata,
-        //     pubkey_str: String,
-        // ) -> Result<RpcResponse<Vec<String>>>;
+        #[rpc(meta, name = "getVelasRelyingPartiesByOwnerKey")]
+        fn get_velas_relying_parties_by_owner_key(
+            &self,
+            meta: Self::Metadata,
+            pubkey_str: String,
+        ) -> Result<RpcResponse<Vec<String>>>;
     }
 
     pub struct FullImpl;
@@ -3800,6 +3830,33 @@ pub mod rpc_full {
                 .flat_map(|(storage, _)| meta.get_velas_accounts_by_storage_key(&bank, storage));
             debug!(
                 "get_velas_accounts_by_owner_key velas accounts {:?}",
+                accounts
+            );
+
+            Ok(new_response(
+                &bank,
+                accounts
+                    .into_iter()
+                    .map(|(pubkey, _account)| pubkey.to_string())
+                    .collect(),
+            ))
+        }
+        fn get_velas_relying_parties_by_owner_key(
+            &self,
+            meta: Self::Metadata,
+            pubkey_str: String,
+        ) -> Result<RpcResponse<Vec<String>>> {
+            debug!(
+                "get_velas_relying_parties_by_owner_key rpc request received: {:?}",
+                pubkey_str
+            );
+
+            let owner_key = verify_pubkey(&pubkey_str)?;
+            let bank = meta.bank(None);
+
+            let accounts = meta.get_velas_relying_party_by_owner_key(&bank, owner_key);
+            debug!(
+                "get_velas_relying_parties_by_owner_key velas accounts storages {:?}",
                 accounts
             );
 

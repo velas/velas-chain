@@ -100,6 +100,7 @@ pub enum RpcRequest {
     /// Velas Account scope
     GetVelasAccountsByOperationalKey,
     GetVelasAccountsByOwnerKey,
+    GetVelasRelyingPartiesByOwnerKey,
 }
 
 #[allow(deprecated)]
@@ -181,8 +182,9 @@ impl fmt::Display for RpcRequest {
             RpcRequest::EthCall => "eth_call",
             RpcRequest::EthEstimateGas => "eth_estimateGas",
             RpcRequest::EthGetLogs => "eth_getLogs",
-            Self::GetVelasAccountsByOperationalKey => "getVelasAccountsByOperationalKey",
-            Self::GetVelasAccountsByOwnerKey => "getVelasAccountsByOwnerKey",
+            RpcRequest::GetVelasAccountsByOperationalKey => "getVelasAccountsByOperationalKey",
+            RpcRequest::GetVelasAccountsByOwnerKey => "getVelasAccountsByOwnerKey",
+            RpcRequest::GetVelasRelyingPartiesByOwnerKey => "getVelasRelyingPartiesByOwnerKey",
         };
 
         write!(f, "{}", method)

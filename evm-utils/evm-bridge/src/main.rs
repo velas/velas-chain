@@ -1310,6 +1310,15 @@ impl rpc::rpc_full::Full for RpcSolProxy {
         proxy_sol_rpc!(meta.rpc_client, GetVelasAccountsByOwnerKey, pubkey_str)
     }
 
+    fn get_velas_relying_parties_by_owner_key(
+        &self,
+        meta: Self::Metadata,
+        pubkey_str: String,
+    ) -> Result<RpcResponse<Vec<String>>> {
+        proxy_sol_rpc!(meta.rpc_client, GetVelasRelyingPartiesByOwnerKey, pubkey_str)
+    }
+
+    
     fn get_recent_performance_samples(
         &self,
         meta: Self::Metadata,
