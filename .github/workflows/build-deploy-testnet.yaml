@@ -1,0 +1,75 @@
+name: Build-Deploy
+on:
+  workflow_dispatch:
+  push:
+    branches: [testbuild]
+
+jobs:
+  docker-build-push:
+    # Name the Job
+    name: Build and push
+    runs-on: build
+    outputs:
+      repository: ${{ steps.build.outputs.repository }}
+      image_tag: ${{ steps.build.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Configure AWS credentials
+        id: checkout
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Build, tag, and push image to AWS ECR
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: velas-solana
+          IMAGE_TAG: ${{github.sha}}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG --no-cache .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "::set-output name=repository::$ECR_REPOSITORY"
+          echo "::set-output name=image_tag::$IMAGE_TAG"
+
+  deploy:
+    name: Deploy via Helmfile
+    runs-on: deploy
+    needs: docker-build-push
+    steps:
+      - name: Configure AWS credentials
+        id: checkout
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Setup helmfile
+        uses: mamezou-tech/setup-helmfile@v0.6.0
+        with:
+          helmfile-version: "v0.131.0"
+      - name: Check out velas-infra
+        uses: actions/checkout@master
+        with:
+          repository: velas/velas-infra
+          ssh-key: ${{ secrets.INFRA_SSH_KEY }}
+      - name: Deploy via helmfile
+        id: deploy
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ needs.docker-build-push.outputs.repository }}
+          IMAGE_TAG: ${{ needs.docker-build-push.outputs.image_tag }}
+          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+        run: |
+          if [ `helm plugin list|grep diff|wc -l` -eq '0' ]; then helm plugin install https://github.com/databus23/helm-diff ; fi
+          mkdir -p ~/.kube && echo $KUBE_CONFIG_DATA|base64 --decode > ~/.kube/config
+          cd deploy
+          helmfile -e default -l namespace=testnet,name=velas-solana-gateway apply  --set image.tag=$IMAGE_TAG,image.repository=$ECR_REGISTRY/$ECR_REPOSITORY --skip-deps
+          helmfile -e default -l namespace=testnet,name=velas-solana-bridge apply  --set image.tag=$IMAGE_TAG,image.repository=$ECR_REGISTRY/$ECR_REPOSITORY --skip-deps
