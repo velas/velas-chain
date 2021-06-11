@@ -2772,70 +2772,50 @@ impl Blockstore {
         Ok(None)
     }
 
-    pub fn filter_logs(&self, filter: evm::LogFilter) -> Result<Vec<evm::LogWithLocation>> {
+    pub fn filter_block_logs(
+        block: &evm::Block,
+        masks: &[evm::Bloom],
+        filter: &evm::LogFilter,
+    ) -> Result<Vec<evm::LogWithLocation>> {
+        // First filterout all blocks that not contain ALL topic + addresses
+        if !masks
+            .iter()
+            .any(|mask| block.header.logs_bloom.contains_bloom(mask))
+        {
+            trace!(
+                "Blocks not matching bloom filter blocks_bloom = {:?}, blooms={:?}",
+                block.header.logs_bloom,
+                masks
+            );
+            return Ok(vec![]);
+        }
         let mut logs = Vec::new();
-        let masks = filter.bloom_possibilities();
-        info!("Starting search for logs with filter = {:?}", filter);
-        for ((block_num, slot), block) in self.evm_blocks_iterator(filter.from_block)? {
-            trace!("Searching block = {}, slot({:?})", block_num, slot);
-            if block_num > filter.to_block {
-                break;
-            }
-            // First filterout all blocks that not contain ALL topic + addresses
-            if !masks
-                .iter()
-                .any(|mask| block.logs_bloom.contains_bloom(mask))
-            {
+        for (id, (hash, tx)) in block.transactions.iter().enumerate() {
+            // Second filterout all transactions that not contain ALL topic + addresses
+            if !masks.iter().any(|mask| tx.logs_bloom.contains_bloom(mask)) {
                 trace!(
-                    "Blocks not matching bloom filter blocks_bloom = {:?}, blooms={:?}",
-                    block.logs_bloom,
+                    "tx not matching bloom filter blocks_bloom = {:?}, blooms={:?}",
+                    tx.logs_bloom,
                     masks
                 );
                 continue;
             }
-
-            for (id, hash) in block.transactions.iter().enumerate() {
-                let tx = self.read_evm_transaction((
-                    *hash,
-                    block.block_number,
-                    Some(block.native_chain_slot),
-                ))?;
-                let tx = if let Some(tx) = tx {
-                    tx
-                } else {
-                    warn!(
-                        "Evm transaction = {}, was cleanedup, while block still exist",
-                        hash
-                    );
-                    continue;
-                };
-
-                // Second filterout all transactions that not contain ALL topic + addresses
-                if !masks.iter().any(|mask| tx.logs_bloom.contains_bloom(mask)) {
-                    trace!(
-                        "tx not matching bloom filter blocks_bloom = {:?}, blooms={:?}",
-                        tx.logs_bloom,
-                        masks
-                    );
-                    continue;
+            // Then match precisely
+            tx.logs.iter().for_each(|log| {
+                if filter.is_log_match(&log) {
+                    trace!("Adding transaction log to result = {:?}", log);
+                    logs.push(evm::LogWithLocation {
+                        transaction_hash: *hash,
+                        transaction_id: id as u64,
+                        block_num: block.header.block_number,
+                        data: log.data.clone(),
+                        topics: log.topics.clone(),
+                        address: log.address,
+                    })
                 }
-                // Then match precisely
-                tx.logs.into_iter().for_each(|log| {
-                    if filter.is_log_match(&log) {
-                        trace!("Adding transaction log to result = {:?}", log);
-                        logs.push(evm::LogWithLocation {
-                            transaction_hash: *hash,
-                            transaction_id: id as u64,
-                            block_num: block.block_number,
-                            data: log.data,
-                            topics: log.topics,
-                            address: log.address,
-                        })
-                    }
-                });
-            }
+            });
         }
-        Ok(logs)
+        return Ok(logs);
     }
 
     pub fn find_evm_transaction(&self, hash: H256) -> Result<Option<evm::TransactionReceipt>> {
