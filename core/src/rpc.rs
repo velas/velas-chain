@@ -1539,6 +1539,20 @@ impl JsonRpcRequestProcessor {
     // Evm scope
     //
 
+    pub fn filter_logs(
+        &self,
+        filter: evm_state::LogFilter,
+    ) -> solana_ledger::blockstore_db::Result<Vec<evm_state::LogWithLocation>> {
+        let mut logs = Vec::new();
+        let masks = filter.bloom_possibilities();
+        info!("Starting search for logs with filter = {:?}", filter);
+        for block_num in filter.from_block..=filter.to_block {
+            let (block, _) = self.blockstore.get_evm_block(block_num)?;
+            logs.extend(Blockstore::filter_block_logs(&block, &masks, &filter)?);
+        }
+        Ok(logs)
+    }
+
     pub fn get_frist_available_evm_block(&self) -> u64 {
         let block = self
             .blockstore

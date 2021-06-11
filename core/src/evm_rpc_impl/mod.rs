@@ -416,7 +416,7 @@ impl BasicERPC for BasicErpcImpl {
                 "Log filter, block range is too big, reducing, to={}, from={}",
                 to, from
             );
-            to = from + MAX_NUM_BLOCKS
+            return Err("")
         }
 
         let filter = LogFilter {
@@ -430,10 +430,10 @@ impl BasicERPC for BasicErpcImpl {
             from_block: from,
             to_block: to,
         };
+        
         debug!("filter = {:?}", filter);
 
         let logs = meta
-            .blockstore
             .filter_logs(filter)
             .map_err(|e| {
                 debug!("filter_logs error = {:?}", e);
