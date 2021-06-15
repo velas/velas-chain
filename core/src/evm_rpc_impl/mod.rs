@@ -402,7 +402,7 @@ impl BasicERPC for BasicErpcImpl {
     }
 
     fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
-        const MAX_NUM_BLOCKS: u64 = 2000;
+        const MAX_NUM_BLOCKS: u64 = 500;
         let bank = meta.bank(None);
 
         let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
