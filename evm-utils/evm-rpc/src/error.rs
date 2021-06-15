@@ -64,6 +64,8 @@ pub enum Error {
 
     #[snafu(display("Method unimplemented"))]
     Unimplemented {},
+    #[snafu(display("ServerError(-32005)"))]
+    ServerError {},
 
     #[snafu(display("Wrong EVM chain id, expected={}, but tx={:?}", chain_id, tx_chain_id))]
     WrongChainId {
@@ -146,6 +148,7 @@ const FATAL_EVM_ERROR: i64 = 2004;
 const EVM_EXECUTION_ERROR: i64 = 3; // from geth docs
 const ERROR_EVM_BASE_SUBCODE: i64 = 100; //reserved place for evm errors range: 100 - 200
 const ERROR_EVM_BASE_SUBRANGE: i64 = 100;
+const SERVER_ERROR: i64 = -32005;
 
 impl From<Error> for JRpcError {
     fn from(err: Error) -> Self {
@@ -228,6 +231,7 @@ impl From<Error> for JRpcError {
             Error::CallRevert { data, error: _ } => {
                 internal_error_with_details(EVM_EXECUTION_ERROR, &err, &data)
             }
+            Error::ServerError {} => internal_error(SERVER_ERROR, &err),
         }
     }
 }
