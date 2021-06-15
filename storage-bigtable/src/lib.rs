@@ -59,7 +59,6 @@ impl std::convert::From<std::io::Error> for Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
-const MAX_GET_CONFIRMED_BLOCKS_RANGE: i64 = 5000;
 
 // Convert a slot to its bucket representation whereby lower slots are always lexically ordered
 // before higher slots
@@ -726,8 +725,8 @@ impl LedgerStorage {
             .get_row_data(
                 "evm-full-blocks",
                 Some(slot_to_key(first_block)),
-                Some(slot_to_key(last_block)),
-                MAX_GET_CONFIRMED_BLOCKS_RANGE,
+                None,
+                (last_block + 1 - first_block) as i64,
             )
             .await?;
         let deserialized_blocks: Result<Vec<_>> = evm_full_blocks
