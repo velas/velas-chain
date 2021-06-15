@@ -85,7 +85,7 @@ use std::{
         mpsc::{channel, Receiver, Sender},
         Arc, Mutex, RwLock,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::runtime;
 use velas_account_program::{VelasAccountType, ACCOUNT_LEN as VELAS_ACCOUNT_SIZE};
@@ -1565,17 +1565,29 @@ impl JsonRpcRequestProcessor {
         starting_block: evm_state::BlockNum,
         ending_block: evm_state::BlockNum,
     ) -> solana_ledger::blockstore_db::Result<Vec<evm_state::Block>> {
+        let mut bigtable_request_time = Duration::from_millis(0);
+        let mut blockstore_request_time = Duration::from_millis(0);
+        let mut blockstore_request = Instant::now();
+
         let iter = self.blockstore.evm_blocks_iterator(starting_block)?;
         let blocks_from_db: Vec<_> = iter
             .take_while(|((block_num, _slot), _header)| *block_num <= ending_block)
             .map(|((block_num, _slot), _header)| block_num)
             .collect();
-        let mut missing_block = starting_block;
 
         if blocks_from_db.is_empty() {
-            return self.get_evm_blocks_from_bigtable(starting_block, ending_block);
+            blockstore_request_time += blockstore_request.elapsed();
+            let bigtable_request = Instant::now();
+            let blocks = self.get_evm_blocks_from_bigtable(starting_block, ending_block);
+            bigtable_request_time += bigtable_request.elapsed();
+            info!(
+                "Get evm blocks by ids, bigtable_time = {:?}, blockstore_time = {:?}",
+                bigtable_request_time, blockstore_request_time
+            );
+            return blocks;
         }
 
+        let mut missing_block = starting_block;
         let mut blocks = Vec::new();
         for block_num in &blocks_from_db {
             let block = self.blockstore.get_evm_block(*block_num).ok();
@@ -1588,8 +1600,16 @@ impl JsonRpcRequestProcessor {
                 );
                 continue;
             }
-            blocks.extend(self.get_evm_blocks_from_bigtable(missing_block, block_num - 1)?)
+            blockstore_request_time += blockstore_request.elapsed();
+            let bigtable_request = Instant::now();
+            blocks.extend(self.get_evm_blocks_from_bigtable(missing_block, block_num - 1)?);
+            bigtable_request_time += bigtable_request.elapsed();
+            blockstore_request = Instant::now();
         }
+        info!(
+            "Get evm blocks by ids, bigtable_time = {:?}, blockstore_time = {:?}",
+            bigtable_request_time, blockstore_request_time
+        );
         Ok(blocks)
     }
 
@@ -1597,12 +1617,21 @@ impl JsonRpcRequestProcessor {
         &self,
         filter: evm_state::LogFilter,
     ) -> solana_ledger::blockstore_db::Result<Vec<evm_state::LogWithLocation>> {
-        let mut logs = Vec::new();
-        let masks = filter.bloom_possibilities();
         info!("Starting search for logs with filter = {:?}", filter);
+        let mut filter_request_time = Duration::from_millis(0);
+        let filter_request = Instant::now();
+        let masks = filter.bloom_possibilities();
+
+        filter_request_time += filter_request.elapsed();
+
+        let mut logs = Vec::new();
         for block in self.get_evm_blocks_by_ids(filter.from_block, filter.to_block)? {
+            let filter_request = Instant::now();
             logs.extend(Blockstore::filter_block_logs(&block, &masks, &filter)?);
+            filter_request_time += filter_request.elapsed();
         }
+        info!("Filter evm logs, filter_time = {:?}", filter_request_time);
+
         Ok(logs)
     }
 
