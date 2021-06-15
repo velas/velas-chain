@@ -199,6 +199,8 @@ pub struct LogWithLocation {
     pub transaction_hash: H256,
     pub transaction_id: u64,
     pub block_num: u64,
+    pub block_hash: H256,
+    pub log_index: usize,
     pub address: H160,
     pub data: Vec<u8>,
     pub topics: Vec<H256>,
