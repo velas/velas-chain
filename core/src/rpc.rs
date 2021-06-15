@@ -1908,10 +1908,11 @@ impl JsonRpcRequestProcessor {
         let mut blockstore_request = Instant::now();
 
         let iter = self.blockstore.evm_blocks_iterator(starting_block)?;
-        let blocks_from_db: Vec<_> = iter
+        let mut blocks_from_db: Vec<_> = iter
             .take_while(|((block_num, _slot), _header)| *block_num <= ending_block)
             .map(|((block_num, _slot), _header)| block_num)
             .collect();
+        blocks_from_db.dedup();
 
         if blocks_from_db.is_empty() {
             blockstore_request_time += blockstore_request.elapsed();
@@ -1938,9 +1939,19 @@ impl JsonRpcRequestProcessor {
                 );
                 continue;
             }
+            let ending_block = if missing_block == *block_num && block.is_none() {
+                // confirmed block is missing, just request single block
+                warn!(
+                    "Found EVM block that exist only in unconfirmed case block_id:{}",
+                    block_num
+                );
+                *block_num
+            } else {
+                block_num - 1
+            };
             blockstore_request_time += blockstore_request.elapsed();
             let bigtable_request = Instant::now();
-            blocks.extend(self.get_evm_blocks_from_bigtable(missing_block, block_num - 1)?);
+            blocks.extend(self.get_evm_blocks_from_bigtable(missing_block, ending_block)?);
             bigtable_request_time += bigtable_request.elapsed();
             blockstore_request = Instant::now();
         }
