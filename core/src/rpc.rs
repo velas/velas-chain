@@ -1560,11 +1560,22 @@ impl JsonRpcRequestProcessor {
 
         Err(BlockstoreError::BigtableNotEnabled)
     }
+    ///
+    /// Get range of blocks from blockstore.
+    /// Request blocks from bigtable if no confirmed block found in local db.
+    /// Returns error if any gaps found.
+    ///
     pub fn get_evm_blocks_by_ids(
         &self,
         starting_block: evm_state::BlockNum,
         ending_block: evm_state::BlockNum,
     ) -> solana_ledger::blockstore_db::Result<Vec<evm_state::Block>> {
+        if ending_block < starting_block {
+            return Err(BlockstoreError::InvalidBlocksRange {
+                starting_block,
+                ending_block,
+            });
+        }
         let mut bigtable_request_time = Duration::from_millis(0);
         let mut blockstore_request_time = Duration::from_millis(0);
         let mut blockstore_request = Instant::now();
@@ -1592,6 +1603,8 @@ impl JsonRpcRequestProcessor {
         let mut blocks = Vec::new();
         for block_num in &blocks_from_db {
             let block = self.blockstore.get_evm_block(*block_num).ok();
+
+            // shortcut for case where we got all items in local db.
             if missing_block == *block_num && block.is_some() {
                 missing_block += 1;
                 blocks.push(
@@ -1601,7 +1614,8 @@ impl JsonRpcRequestProcessor {
                 );
                 continue;
             }
-            let ending_block = if missing_block == *block_num && block.is_none() {
+
+            let ending_block = if block.is_none() {
                 // confirmed block is missing, just request single block
                 warn!(
                     "Found EVM block that exist only in unconfirmed case block_id:{}",
@@ -1616,6 +1630,12 @@ impl JsonRpcRequestProcessor {
             blocks.extend(self.get_evm_blocks_from_bigtable(missing_block, ending_block)?);
             bigtable_request_time += bigtable_request.elapsed();
             blockstore_request = Instant::now();
+
+            // we requested blocks in range missing_block..block_num,
+            // not including block_num, because it is already found in db.
+            if let Some(block) = block {
+                blocks.push(block.0)
+            }
         }
         info!(
             "Get evm blocks by ids, bigtable_time = {:?}, blockstore_time = {:?}",
