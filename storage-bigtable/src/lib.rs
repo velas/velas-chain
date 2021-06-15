@@ -59,6 +59,7 @@ impl std::convert::From<std::io::Error> for Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+const MAX_GET_CONFIRMED_BLOCKS_RANGE: i64 = 5000;
 
 // Convert a slot to its bucket representation whereby lower slots are always lexically ordered
 // before higher slots
@@ -713,6 +714,43 @@ impl LedgerStorage {
                 bigtable::Error::ObjectCorrupt(format!("evm-blocks/{}", slot_to_key(block_num)))
             })?,
         })
+    }
+    pub async fn get_evm_confirmed_full_blocks(
+        &self,
+        first_block: evm_state::BlockNum,
+        last_block: evm_state::BlockNum,
+    ) -> Result<Vec<evm_state::Block>> {
+        let mut bigtable = self.connection.client();
+
+        let evm_full_blocks = bigtable
+            .get_row_data(
+                "evm-full-blocks",
+                Some(slot_to_key(first_block)),
+                Some(slot_to_key(last_block)),
+                MAX_GET_CONFIRMED_BLOCKS_RANGE,
+            )
+            .await?;
+        let deserialized_blocks: Result<Vec<_>> = evm_full_blocks
+            .into_iter()
+            .map(|(key, row_data)| {
+                let deserialized_block =
+                    bigtable::deserialize_protobuf_or_bincode_cell_data::<
+                        evm_state::Block,
+                        generated_evm::EvmFullBlock,
+                    >(&row_data, "evm-full-blocks", key.clone());
+                (key, deserialized_block)
+            })
+            .map(|(key, block_cell_data)| {
+                let block = match block_cell_data? {
+                    bigtable::CellData::Bincode(block) => block,
+                    bigtable::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
+                        bigtable::Error::ObjectCorrupt(format!("evm-full-blocks/{}", key))
+                    })?,
+                };
+                Ok(block)
+            })
+            .collect();
+        Ok(deserialized_blocks?)
     }
 
     pub async fn get_evm_confirmed_full_block(

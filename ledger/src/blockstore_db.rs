@@ -83,6 +83,7 @@ const EVM_TRANSACTIONS: &str = "evm_transactions";
 
 #[derive(Error, Debug)]
 pub enum BlockstoreError {
+    BigtableNotEnabled,
     ShredForIndexExists,
     InvalidShredData(Box<bincode::ErrorKind>),
     RocksDb(#[from] rocksdb::Error),

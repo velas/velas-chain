@@ -1877,6 +1877,60 @@ impl JsonRpcRequestProcessor {
     // Evm scope
     //
 
+    pub fn get_evm_blocks_from_bigtable(
+        &self,
+        starting_block: evm_state::BlockNum,
+        ending_block: evm_state::BlockNum,
+    ) -> solana_ledger::blockstore_db::Result<Vec<evm_state::Block>> {
+        if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+            let bigtable_blocks = self
+                .runtime_handle
+                .block_on(
+                    bigtable_ledger_storage
+                        .get_evm_confirmed_full_blocks(starting_block, ending_block),
+                )
+                .map_err(|e| {
+                    warn!("Bigtable return error: {}", e);
+                    BlockstoreError::SlotCleanedUp
+                })?;
+            return Ok(bigtable_blocks);
+        }
+
+        Err(BlockstoreError::BigtableNotEnabled)
+    }
+    pub fn get_evm_blocks_by_ids(
+        &self,
+        starting_block: evm_state::BlockNum,
+        ending_block: evm_state::BlockNum,
+    ) -> solana_ledger::blockstore_db::Result<Vec<evm_state::Block>> {
+        let iter = self.blockstore.evm_blocks_iterator(starting_block)?;
+        let blocks_from_db: Vec<_> = iter
+            .take_while(|((block_num, _slot), _header)| *block_num <= ending_block)
+            .map(|((block_num, _slot), _header)| block_num)
+            .collect();
+        let mut missing_block = starting_block;
+
+        if blocks_from_db.is_empty() {
+            return self.get_evm_blocks_from_bigtable(starting_block, ending_block);
+        }
+
+        let mut blocks = Vec::new();
+        for block_num in &blocks_from_db {
+            let block = self.blockstore.get_evm_block(*block_num).ok();
+            if missing_block == *block_num && block.is_some() {
+                missing_block += 1;
+                blocks.push(
+                    block
+                        .expect("This should not panic beacause we check that option is some")
+                        .0,
+                );
+                continue;
+            }
+            blocks.extend(self.get_evm_blocks_from_bigtable(missing_block, block_num - 1)?)
+        }
+        Ok(blocks)
+    }
+
     pub fn filter_logs(
         &self,
         filter: evm_state::LogFilter,
@@ -1884,8 +1938,7 @@ impl JsonRpcRequestProcessor {
         let mut logs = Vec::new();
         let masks = filter.bloom_possibilities();
         info!("Starting search for logs with filter = {:?}", filter);
-        for block_num in filter.from_block..=filter.to_block {
-            let (block, _) = self.blockstore.get_evm_block(block_num)?;
+        for block in self.get_evm_blocks_by_ids(filter.from_block, filter.to_block)? {
             logs.extend(Blockstore::filter_block_logs(&block, &masks, &filter)?);
         }
         Ok(logs)

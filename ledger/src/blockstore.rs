@@ -2801,21 +2801,23 @@ impl Blockstore {
                 continue;
             }
             // Then match precisely
-            tx.logs.iter().for_each(|log| {
+            tx.logs.iter().enumerate().for_each(|(idx, log)| {
                 if filter.is_log_match(&log) {
                     trace!("Adding transaction log to result = {:?}", log);
                     logs.push(evm::LogWithLocation {
                         transaction_hash: *hash,
                         transaction_id: id as u64,
                         block_num: block.header.block_number,
+                        block_hash: block.header.hash(),
                         data: log.data.clone(),
+                        log_index: idx,
                         topics: log.topics.clone(),
                         address: log.address,
                     })
                 }
             });
         }
-        return Ok(logs);
+        Ok(logs)
     }
 
     pub fn find_evm_transaction(&self, hash: H256) -> Result<Option<evm::TransactionReceipt>> {
