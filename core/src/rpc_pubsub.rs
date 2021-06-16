@@ -909,6 +909,9 @@ mod tests {
             .get_account(&stake_account.pubkey())
             .unwrap()
             .data;
+
+        let lamports = 51 + MIN_DELEGATE_STAKE_AMOUNT;
+
         let expected = json!({
            "jsonrpc": "2.0",
            "method": "accountNotification",
@@ -917,7 +920,8 @@ mod tests {
                    "context": { "slot": 1 },
                    "value": {
                        "owner": stake_program_id.to_string(),
-                       "lamports": 51 + MIN_DELEGATE_STAKE_AMOUNT,
+                       "lamports": lamports,
+                       "lamportsStr": lamports.to_string(),
                        "data": bs58::encode(expected_data).into_string(),
                        "executable": false,
                        "rentEpoch": 0,
@@ -1030,6 +1034,7 @@ mod tests {
                    "value": {
                        "owner": system_program::id().to_string(),
                        "lamports": 100,
+                       "lamportsStr": "100",
                        "data": expected_data,
                        "executable": false,
                        "rentEpoch": 0,
@@ -1200,6 +1205,7 @@ mod tests {
                    "value": {
                        "owner": system_program::id().to_string(),
                        "lamports": 100,
+                       "lamportsStr": "100",
                        "data": "",
                        "executable": false,
                        "rentEpoch": 0,

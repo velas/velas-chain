@@ -606,10 +606,9 @@ impl ChainMockERPC for ChainMockErpcProxy {
     ) -> EvmResult<Option<RPCBlock>> {
         if block_hash == Hex(H256::zero()) {
             Ok(Some(RPCBlock::default()))
-        }
-        else {
-        proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
-            .map(|o: Option<_>| o.map(compatibility::patch_block))
+        } else {
+            proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
+                .map(|o: Option<_>| o.map(compatibility::patch_block))
         }
     }
 
@@ -917,9 +916,9 @@ impl RpcSol for RpcSolProxy {
         &self,
         meta: Self::Metadata,
         pubkey_str: String,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<RpcResponse<u64>> {
-        proxy_sol_rpc!(meta.rpc_client, GetBalance, pubkey_str, commitment)
+        config: Option<RpcGetBalanceConfig>,
+    ) -> Result<RpcResponse<UiLamports>> {
+        proxy_sol_rpc!(meta.rpc_client, GetBalance, pubkey_str, config)
     }
 
     fn get_cluster_nodes(&self, meta: Self::Metadata) -> Result<Vec<RpcContactInfo>> {
@@ -1313,10 +1312,13 @@ impl RpcSol for RpcSolProxy {
         meta: Self::Metadata,
         pubkey_str: String,
     ) -> Result<RpcResponse<Vec<String>>> {
-        proxy_sol_rpc!(meta.rpc_client, GetVelasRelyingPartiesByOwnerKey, pubkey_str)
+        proxy_sol_rpc!(
+            meta.rpc_client,
+            GetVelasRelyingPartiesByOwnerKey,
+            pubkey_str
+        )
     }
 
-    
     fn get_recent_performance_samples(
         &self,
         meta: Self::Metadata,

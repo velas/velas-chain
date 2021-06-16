@@ -108,3 +108,17 @@ pub struct RpcGetConfirmedSignaturesForAddress2Config {
     pub until: Option<String>,  // Signature as base-58 string
     pub limit: Option<usize>,
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcGetBalanceConfig {
+    #[serde(flatten)]
+    pub commitment: Option<CommitmentConfig>,
+    pub balance_format: Option<RpcBalanceFormat>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum RpcBalanceFormat {
+    Plain,
+    String,
+}
