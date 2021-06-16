@@ -274,3 +274,17 @@ impl RpcConfirmedBlocksConfigWrapper {
         }
     }
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcGetBalanceConfig {
+    #[serde(flatten)]
+    pub commitment: Option<CommitmentConfig>,
+    pub balance_format: Option<RpcBalanceFormat>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum RpcBalanceFormat {
+    Plain,
+    String,
+}

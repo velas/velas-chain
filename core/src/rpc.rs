@@ -34,8 +34,7 @@ use solana_client::{
         MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
         NUM_LARGEST_ACCOUNTS,
     },
-    rpc_response::Response as RpcResponse,
-    rpc_response::*,
+    rpc_response::{Response as RpcResponse, *},
 };
 use solana_faucet::faucet::request_airdrop_transaction;
 use solana_ledger::{
@@ -818,6 +817,7 @@ impl JsonRpcRequestProcessor {
                     vote_pubkey: vote_pubkey.to_string(),
                     node_pubkey: vote_state.node_pubkey.to_string(),
                     activated_stake: *activated_stake,
+                    activated_stake_str: UiLamports::String(activated_stake.to_string()),
                     commission: vote_state.commission,
                     root_slot: vote_state.root_slot.unwrap_or(0),
                     epoch_credits,
@@ -1884,7 +1884,7 @@ impl JsonRpcRequestProcessor {
     ) -> solana_ledger::blockstore_db::Result<Vec<evm_state::Block>> {
         if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
             let bigtable_blocks = self
-                .runtime_handle
+                .runtime
                 .block_on(
                     bigtable_ledger_storage
                         .get_evm_confirmed_full_blocks(starting_block, ending_block),
@@ -2530,8 +2530,8 @@ pub mod rpc_minimal {
             &self,
             meta: Self::Metadata,
             pubkey_str: String,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<u64>>;
+            config: Option<RpcGetBalanceConfig>,
+        ) -> Result<RpcResponse<UiLamports>>;
 
         #[rpc(meta, name = "getEpochInfo")]
         fn get_epoch_info(
@@ -2601,11 +2601,27 @@ pub mod rpc_minimal {
             &self,
             meta: Self::Metadata,
             pubkey_str: String,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<u64>> {
+            config: Option<RpcGetBalanceConfig>,
+        ) -> Result<RpcResponse<UiLamports>> {
             debug!("get_balance rpc request received: {:?}", pubkey_str);
             let pubkey = verify_pubkey(&pubkey_str)?;
-            Ok(meta.get_balance(&pubkey, commitment))
+
+            let commitment = config.as_ref().and_then(|cfg| cfg.commitment);
+            let balance_format = config.as_ref().and_then(|cfg| cfg.balance_format);
+
+            let rs = meta.get_balance(&pubkey, commitment);
+            let balance = rs.value;
+            let balance = match balance_format {
+                Some(RpcBalanceFormat::Plain) | None => UiLamports::Plain(balance),
+                Some(RpcBalanceFormat::String) => UiLamports::String(balance.to_string()),
+            };
+
+            let response = RpcResponse {
+                context: rs.context,
+                value: balance,
+            };
+
+            Ok(response)
         }
 
         fn get_epoch_info(
@@ -4423,7 +4439,7 @@ pub mod tests {
             futures::join!(client, server)
         };
         let (response, _) = futures::executor::block_on(fut);
-        assert_eq!(response, 20);
+        assert_eq!(response.value, UiLamports::Plain(20));
     }
 
     #[test]
@@ -4940,6 +4956,7 @@ pub mod tests {
                 "value":{
                     "owner": "11111111111111111111111111111111",
                     "lamports": 20,
+                    "lamportsStr": "20",
                     "data": "",
                     "executable": false,
                     "rentEpoch": 0
@@ -5031,6 +5048,7 @@ pub mod tests {
                 "value":[{
                     "owner": "11111111111111111111111111111111",
                     "lamports": 20,
+                    "lamportsStr": "20",
                     "data": ["", "base64"],
                     "executable": false,
                     "rentEpoch": 0
@@ -5039,6 +5057,7 @@ pub mod tests {
                 {
                     "owner": "11111111111111111111111111111111",
                     "lamports": 42,
+                    "lamportsStr": "42",
                     "data": [base64::encode(&data), "base64"],
                     "executable": false,
                     "rentEpoch": 0
@@ -5151,6 +5170,7 @@ pub mod tests {
                         "account": {{
                             "owner": "{}",
                             "lamports": 20,
+                            "lamportsStr": "20",
                             "data": "",
                             "executable": false,
                             "rentEpoch": 0

@@ -288,6 +288,7 @@ pub struct RpcVoteAccountInfo {
 
     /// The current stake, in lamports, delegated to this vote account
     pub activated_stake: u64,
+    pub activated_stake_str: UiLamports,
 
     /// An 8-bit integer used as a fraction (commission/MAX_U8) for rewards payout
     pub commission: u8,
@@ -416,4 +417,11 @@ impl From<ConfirmedTransactionStatusWithSignature> for RpcConfirmedTransactionSt
             confirmation_status: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum UiLamports {
+    Plain(u64),
+    String(String),
 }
