@@ -32,8 +32,7 @@ use solana_client::{
         MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS_SLOT_RANGE, MAX_GET_PROGRAM_ACCOUNT_FILTERS,
         MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_MULTIPLE_ACCOUNTS, NUM_LARGEST_ACCOUNTS,
     },
-    rpc_response::Response as RpcResponse,
-    rpc_response::*,
+    rpc_response::{Response as RpcResponse, *},
 };
 use solana_faucet::faucet::request_airdrop_transaction;
 use solana_ledger::{blockstore::Blockstore, blockstore_db::BlockstoreError, get_tmp_ledger_path};
@@ -630,6 +629,7 @@ impl JsonRpcRequestProcessor {
                     vote_pubkey: (pubkey).to_string(),
                     node_pubkey: vote_state.node_pubkey.to_string(),
                     activated_stake: *activated_stake,
+                    activated_stake_str: UiLamports::String(activated_stake.to_string()),
                     commission: vote_state.commission,
                     root_slot: vote_state.root_slot.unwrap_or(0),
                     epoch_credits: vote_state.epoch_credits().clone(),
@@ -2220,8 +2220,8 @@ pub trait RpcSol {
         &self,
         meta: Self::Metadata,
         pubkey_str: String,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<RpcResponse<u64>>;
+        config: Option<RpcGetBalanceConfig>,
+    ) -> Result<RpcResponse<UiLamports>>;
 
     #[rpc(meta, name = "getClusterNodes")]
     fn get_cluster_nodes(&self, meta: Self::Metadata) -> Result<Vec<RpcContactInfo>>;
@@ -2673,11 +2673,27 @@ impl RpcSol for RpcSolImpl {
         &self,
         meta: Self::Metadata,
         pubkey_str: String,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<RpcResponse<u64>> {
+        config: Option<RpcGetBalanceConfig>,
+    ) -> Result<RpcResponse<UiLamports>> {
         debug!("get_balance rpc request received: {:?}", pubkey_str);
         let pubkey = verify_pubkey(pubkey_str)?;
-        Ok(meta.get_balance(&pubkey, commitment))
+
+        let commitment = config.as_ref().and_then(|cfg| cfg.commitment);
+        let balance_format = config.as_ref().and_then(|cfg| cfg.balance_format);
+
+        let rs = meta.get_balance(&pubkey, commitment);
+        let balance = rs.value;
+        let balance = match balance_format {
+            Some(RpcBalanceFormat::Plain) | None => UiLamports::Plain(balance),
+            Some(RpcBalanceFormat::String) => UiLamports::String(balance.to_string()),
+        };
+
+        let response = RpcResponse {
+            context: rs.context,
+            value: balance,
+        };
+
+        Ok(response)
     }
 
     fn get_recent_performance_samples(
@@ -3846,7 +3862,7 @@ pub mod tests {
                 .join(server)
         };
         let (response, _) = fut.wait().unwrap();
-        assert_eq!(response.value, 20);
+        assert_eq!(response.value, UiLamports::Plain(20));
     }
 
     #[test]
@@ -4278,6 +4294,7 @@ pub mod tests {
                 "value":{
                     "owner": "11111111111111111111111111111111",
                     "lamports": 20,
+                    "lamportsStr": "20",
                     "data": "",
                     "executable": false,
                     "rentEpoch": 0
@@ -4369,6 +4386,7 @@ pub mod tests {
                 "value":[{
                     "owner": "11111111111111111111111111111111",
                     "lamports": 20,
+                    "lamportsStr": "20",
                     "data": ["", "base64"],
                     "executable": false,
                     "rentEpoch": 0
@@ -4377,6 +4395,7 @@ pub mod tests {
                 {
                     "owner": "11111111111111111111111111111111",
                     "lamports": 42,
+                    "lamportsStr": "42",
                     "data": [base64::encode(&data), "base64"],
                     "executable": false,
                     "rentEpoch": 0
@@ -4489,6 +4508,7 @@ pub mod tests {
                         "account": {{
                             "owner": "{}",
                             "lamports": 20,
+                            "lamportsStr": "20",
                             "data": "",
                             "executable": false,
                             "rentEpoch": 0

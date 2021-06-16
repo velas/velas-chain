@@ -31,6 +31,7 @@ pub type StringDecimals = String;
 #[serde(rename_all = "camelCase")]
 pub struct UiAccount {
     pub lamports: u64,
+    pub lamports_str: StringAmount,
     pub data: UiAccountData,
     pub owner: String,
     pub executable: bool,
@@ -99,8 +100,13 @@ impl UiAccount {
                 }
             }
         };
+
+        let lamports = account.lamports;
+        let lamports_str = lamports.to_string();
+
         UiAccount {
-            lamports: account.lamports,
+            lamports,
+            lamports_str,
             data,
             owner: account.owner.to_string(),
             executable: account.executable,
@@ -128,8 +134,11 @@ impl UiAccount {
                 UiAccountEncoding::Binary | UiAccountEncoding::JsonParsed => None,
             },
         }?;
+
+        let lamports = self.lamports_str.parse().unwrap_or(self.lamports);
+
         Some(Account {
-            lamports: self.lamports,
+            lamports,
             data,
             owner: Pubkey::from_str(&self.owner).ok()?,
             executable: self.executable,
