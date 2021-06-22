@@ -1,6 +1,6 @@
 use std::num::ParseIntError;
 
-use evm_state::{ExitError, ExitFatal, ExitRevert};
+use evm_state::{ExitError, ExitFatal, ExitRevert, H256};
 use jsonrpc_core::Error as JRpcError;
 use rlp::DecoderError;
 use rustc_hex::FromHexError;
@@ -63,6 +63,9 @@ pub enum Error {
     #[snafu(display("Failed to find state for block {}", block))]
     StateNotFoundForBlock { block: String },
 
+    #[snafu(display("Failed to find state root {}", state))]
+    StateRootNotFound { state: H256 },
+
     #[snafu(display("Failed to process native chain request: {}", source))]
     ProxyRpcError { source: JRpcError },
 
@@ -106,7 +109,7 @@ fn format_data_with_error<T: std::fmt::Debug>(data: &Bytes, error: &T) -> String
     format!("{:?}:{}", error, format_data(data))
 }
 
-fn format_data(data: &Bytes) -> String {
+pub(crate) fn format_data(data: &Bytes) -> String {
     let func_decl = ethabi::Function {
         name: "Error".to_string(),
         inputs: vec![ethabi::Param {
@@ -202,6 +205,7 @@ impl From<Error> for JRpcError {
             }
             Error::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &err),
             Error::StateNotFoundForBlock { .. } => internal_error(STATE_NOT_FOUND_RPC_ERROR, &err),
+            Error::StateRootNotFound { .. } => internal_error(STATE_NOT_FOUND_RPC_ERROR, &err),
             Error::KeyNotFound { .. } => internal_error(KEY_NOT_FOUND_RPC_ERROR, &err),
             Error::Unimplemented {} => {
                 let mut error = Self::invalid_request();

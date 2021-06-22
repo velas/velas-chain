@@ -1,8 +1,8 @@
 pub use evm::{
     backend::{Apply, ApplyBackend, Backend, Log, MemoryAccount, MemoryVicinity},
     executor::StackExecutor,
-    Config, Context, Handler, Transfer,
-    {ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed},
+    CallScheme, Config, Context, CreateScheme, ExitError, ExitFatal, ExitReason, ExitRevert,
+    ExitSucceed, Handler, Transfer,
 };
 
 pub use primitive_types::{H256, U256};
@@ -10,12 +10,15 @@ pub use secp256k1::{self, rand};
 
 pub mod error;
 pub mod storage;
+pub mod traces;
 pub mod transactions;
 pub mod types;
 
 pub use ethbloom::Bloom;
+pub use traces::*;
 pub use transactions::*;
 pub use types::*;
+
 pub use {
     context::{ChainContext, EvmConfig},
     state::{
@@ -32,7 +35,7 @@ pub use executor::{
 pub use triedb::empty_trie_hash;
 
 mod context;
-mod executor;
+pub mod executor;
 mod state;
 
 // Cannot link to solana-sdk, because solana_sdk already linked to evm-state

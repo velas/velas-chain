@@ -14,6 +14,7 @@ use evm_rpc::basic::BasicERPC;
 use evm_rpc::bridge::BridgeERPC;
 use evm_rpc::chain_mock::ChainMockERPC;
 use evm_rpc::error::{Error, *};
+use evm_rpc::trace::TraceMeta;
 use evm_rpc::*;
 use evm_state::*;
 use sha3::{Digest, Keccak256};
@@ -617,34 +618,6 @@ impl ChainMockERPC for ChainMockErpcProxy {
         Ok(String::from("0x00"))
     }
 
-    fn block_by_hash(
-        &self,
-        meta: Self::Metadata,
-        block_hash: Hex<H256>,
-        full: bool,
-    ) -> EvmResult<Option<RPCBlock>> {
-        if block_hash == Hex(H256::zero()) {
-            Ok(Some(RPCBlock::default()))
-        } else {
-            proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
-                .map(|o: Option<_>| o.map(compatibility::patch_block))
-        }
-    }
-
-    fn block_by_number(
-        &self,
-        meta: Self::Metadata,
-        block: String,
-        full: bool,
-    ) -> EvmResult<Option<RPCBlock>> {
-        if block == "0x0" {
-            Ok(Some(RPCBlock::default()))
-        } else {
-            proxy_evm_rpc!(meta.rpc_client, EthGetBlockByNumber, block, full)
-                .map(|o: Option<_>| o.map(compatibility::patch_block))
-        }
-    }
-
     fn block_transaction_count_by_number(
         &self,
         _meta: Self::Metadata,
@@ -760,6 +733,34 @@ impl BasicERPC for BasicErpcProxy {
         proxy_evm_rpc!(meta.rpc_client, EthGetCode, address, block)
     }
 
+    fn block_by_hash(
+        &self,
+        meta: Self::Metadata,
+        block_hash: Hex<H256>,
+        full: bool,
+    ) -> EvmResult<Option<RPCBlock>> {
+        if block_hash == Hex(H256::zero()) {
+            Ok(Some(RPCBlock::default()))
+        } else {
+            proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
+                .map(|o: Option<_>| o.map(compatibility::patch_block))
+        }
+    }
+
+    fn block_by_number(
+        &self,
+        meta: Self::Metadata,
+        block: String,
+        full: bool,
+    ) -> EvmResult<Option<RPCBlock>> {
+        if block == "0x0" {
+            Ok(Some(RPCBlock::default()))
+        } else {
+            proxy_evm_rpc!(meta.rpc_client, EthGetBlockByNumber, block, full)
+                .map(|o: Option<_>| o.map(compatibility::patch_block))
+        }
+    }
+
     fn transaction_by_hash(
         &self,
         meta: Self::Metadata,
@@ -785,6 +786,58 @@ impl BasicERPC for BasicErpcProxy {
         meta_keys: Option<Vec<String>>,
     ) -> EvmResult<Bytes> {
         proxy_evm_rpc!(meta.rpc_client, EthCall, tx, block, meta_keys)
+    }
+
+    fn trace_call(
+        &self,
+        meta: Self::Metadata,
+        tx: RPCTransaction,
+        traces: Vec<String>,
+        block: Option<String>,
+        meta_info: Option<TraceMeta>,
+    ) -> EvmResult<evm_rpc::trace::TraceResultsWithTransactionHash> {
+        proxy_evm_rpc!(meta.rpc_client, EthTraceCall, tx, traces, block, meta_info)
+    }
+
+    fn trace_call_many(
+        &self,
+        meta: Self::Metadata,
+        tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
+        block: Option<String>,
+    ) -> EvmResult<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>> {
+        proxy_evm_rpc!(meta.rpc_client, EthTraceCallMany, tx_traces, block)
+    }
+
+    fn trace_replay_transaction(
+        &self,
+        meta: Self::Metadata,
+        tx_hash: Hex<H256>,
+        traces: Vec<String>,
+        meta_info: Option<TraceMeta>,
+    ) -> EvmResult<Option<trace::TraceResultsWithTransactionHash>> {
+        proxy_evm_rpc!(
+            meta.rpc_client,
+            EthTraceReplayTransaction,
+            tx_hash,
+            traces,
+            meta_info
+        )
+    }
+
+    fn trace_replay_block(
+        &self,
+        meta: Self::Metadata,
+        block: String,
+        traces: Vec<String>,
+        meta_info: Option<TraceMeta>,
+    ) -> EvmResult<Vec<trace::TraceResultsWithTransactionHash>> {
+        proxy_evm_rpc!(
+            meta.rpc_client,
+            EthTraceReplayBlock,
+            block,
+            traces,
+            meta_info
+        )
     }
 
     fn estimate_gas(

@@ -345,6 +345,14 @@ impl EvmBackend<Incomming> {
         self.flush_changes()
     }
 
+    pub fn new_incomming_for_root(mut self, root: H256) -> Option<Self> {
+        if !self.kvs().check_root_exist(root) || self.state.is_active_changes() {
+            return None;
+        }
+        self.state.state_root = root;
+        Some(self)
+    }
+
     fn take(&mut self) -> Self {
         Self {
             kvs: self.kvs.clone(),

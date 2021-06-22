@@ -1,4 +1,5 @@
 use std::cell::RefMut;
+use std::fmt::Write;
 use std::ops::DerefMut;
 
 use super::account_structure::AccountStructure;
@@ -578,12 +579,12 @@ impl EvmProcessor {
             EvmError::InternalExecutorError
         })?;
 
-        ic_msg!(
-            invoke_context,
-            "Transaction execution status = {:?}",
+        write!(
+            crate::solana_extension::MultilineLogger::new(&*invoke_context.get_logger().borrow()),
+            "{}",
             result
-        );
-        ic_msg!(invoke_context, "Native EVM TXID:{:?}", result.tx_id);
+        )
+        .expect("no error during writes");
         if matches!(
             result.exit_reason,
             ExitReason::Fatal(_) | ExitReason::Error(_)
