@@ -96,6 +96,10 @@ pub enum RpcRequest {
     EthCall,
     EthEstimateGas,
     EthGetLogs,
+    EthTraceCall,
+    EthTraceCallMany,
+    EthTraceReplayTransaction,
+    EthTraceReplayBlock,
 
     /// Velas Account scope
     GetVelasAccountsByOperationalKey,
@@ -180,6 +184,10 @@ impl fmt::Display for RpcRequest {
             RpcRequest::EthGetTransactionByHash => "eth_getTransactionByHash",
             RpcRequest::EthGetTransactionReceipt => "eth_getTransactionReceipt",
             RpcRequest::EthCall => "eth_call",
+            RpcRequest::EthTraceCall => "trace_call",
+            RpcRequest::EthTraceCallMany => "trace_callMany",
+            RpcRequest::EthTraceReplayTransaction => "trace_replayTransaction",
+            RpcRequest::EthTraceReplayBlock => "trace_replayBlock",
             RpcRequest::EthEstimateGas => "eth_estimateGas",
             RpcRequest::EthGetLogs => "eth_getLogs",
             RpcRequest::GetVelasAccountsByOperationalKey => "getVelasAccountsByOperationalKey",
