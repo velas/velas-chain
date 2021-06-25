@@ -191,6 +191,7 @@ fn parse_gossip_host(matches: &ArgMatches, entrypoint_addr: Option<SocketAddr>) 
         })
 }
 
+#[allow(clippy::search_is_some)]
 fn process_spy_results(
     timeout: Option<u64>,
     validators: Vec<ContactInfo>,

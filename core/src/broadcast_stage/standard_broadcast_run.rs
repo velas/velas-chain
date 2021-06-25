@@ -153,6 +153,7 @@ impl StandardBroadcastRun {
         Ok(())
     }
 
+    #[allow(clippy::clone_on_copy)]
     fn process_receive_results(
         &mut self,
         blockstore: &Arc<Blockstore>,

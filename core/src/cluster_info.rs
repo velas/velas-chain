@@ -3806,6 +3806,7 @@ mod tests {
     //test that all cluster_info objects only generate signed messages
     //when constructed with keypairs
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_gossip_signature_verification() {
         let thread_pool = ThreadPoolBuilder::new().build().unwrap();
         //create new cluster info, leader, and peer

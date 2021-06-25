@@ -1168,6 +1168,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_is_zeroed() {
         const ZEROS_LEN: usize = 1024;
         let mut buf = [0; ZEROS_LEN];

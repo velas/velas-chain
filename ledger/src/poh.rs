@@ -125,6 +125,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_poh_verify() {
         let zero = Hash::default();
         let one = hash(&zero.as_ref());

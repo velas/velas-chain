@@ -73,6 +73,7 @@ mod tests {
     use solana_perf::packet::{Meta, Packet};
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_get_latest_votes() {
         let pubkey = solana_sdk::pubkey::new_rand();
         let label1 = CrdsValueLabel::Vote(0, pubkey);
