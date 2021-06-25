@@ -1173,6 +1173,7 @@ impl Blockstore {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::map_entry)]
     fn check_insert_data_shred<F>(
         &self,
         shred: Shred,
@@ -5201,6 +5202,7 @@ pub mod tests {
 
     #[test]
     #[allow(clippy::cognitive_complexity)]
+    #[allow(clippy::branches_sharing_code)]
     pub fn test_forward_chaining_is_connected() {
         let blockstore_path = get_tmp_ledger_path!();
         {
@@ -5778,6 +5780,7 @@ pub mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     pub fn test_should_insert_data_shred() {
         solana_logger::setup();
         let (mut shreds, _) = make_slot_entries(0, 0, 200);

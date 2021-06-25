@@ -84,7 +84,7 @@ impl EvmConfig {
             ..Default::default()
         }
     }
-    pub(crate) fn to_evm_params(&self) -> evm::Config {
+    pub(crate) fn to_evm_params(self) -> evm::Config {
         evm::Config {
             estimate: self.estimate,
             has_chain_id: true,
@@ -267,7 +267,7 @@ where
             self.chain_context.last_hashes[index]
         }
     }
-    
+
     fn block_difficulty(&self) -> U256 {
         self.chain_context.difficulty
     }

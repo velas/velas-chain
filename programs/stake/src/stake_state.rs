@@ -1980,6 +1980,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_stake_is_bootstrap() {
         assert_eq!(
             Delegation {
@@ -2680,6 +2681,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::branches_sharing_code)]
     fn test_stop_activating_after_deactivation() {
         solana_logger::setup();
         let stake = Delegation {
@@ -6109,6 +6111,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_lockup_is_expired() {
         let custodian = solana_sdk::pubkey::new_rand();
         let lockup = Lockup {

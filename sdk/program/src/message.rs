@@ -854,6 +854,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_is_writable() {
         let key0 = Pubkey::new_unique();
         let key1 = Pubkey::new_unique();

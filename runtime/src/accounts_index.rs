@@ -1990,6 +1990,7 @@ pub mod tests {
         );
     }
 
+    #[allow(clippy::clone_on_copy)]
     fn run_test_purge_exact_secondary_index<
         SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send,
     >(
@@ -2166,6 +2167,7 @@ pub mod tests {
         );
     }
 
+    #[allow(clippy::clone_on_copy)]
     fn run_test_secondary_indexes<
         SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send,
     >(
@@ -2296,6 +2298,7 @@ pub mod tests {
         );
     }
 
+    #[allow(clippy::clone_on_copy)]
     fn run_test_secondary_indexes_same_slot_and_forks<
         SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send,
     >(

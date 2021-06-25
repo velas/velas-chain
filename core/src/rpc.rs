@@ -4423,7 +4423,10 @@ pub mod tests {
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
 
-        async fn use_client(client: rpc_minimal::gen_client::Client, mint_pubkey: Pubkey) -> u64 {
+        async fn use_client(
+            client: rpc_minimal::gen_client::Client,
+            mint_pubkey: Pubkey,
+        ) -> UiLamports {
             client
                 .get_balance(mint_pubkey.to_string(), None)
                 .await
@@ -4439,7 +4442,7 @@ pub mod tests {
             futures::join!(client, server)
         };
         let (response, _) = futures::executor::block_on(fut);
-        assert_eq!(response.value, UiLamports::Plain(20));
+        assert_eq!(response, UiLamports::Plain(20));
     }
 
     #[test]
@@ -5416,6 +5419,7 @@ pub mod tests {
                             "executable": false,
                             "owner": "11111111111111111111111111111111",
                             "lamports": 1234,
+                            "lamportsStr": "1234",
                             "rentEpoch": 0
                         }
                     ],

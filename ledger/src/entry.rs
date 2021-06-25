@@ -870,6 +870,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_verify_slice1() {
         solana_logger::setup();
         let zero = Hash::default();
@@ -888,6 +889,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_verify_slice_with_hashes1() {
         solana_logger::setup();
         let zero = Hash::default();
@@ -908,6 +910,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_verify_slice_with_hashes_and_transactions() {
         solana_logger::setup();
         let zero = Hash::default();

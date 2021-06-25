@@ -116,6 +116,7 @@ impl Blockstore {
     }
 
     // Returns whether or not all columns successfully purged the slot range
+    #[allow(clippy::manual_saturating_arithmetic)]
     pub(crate) fn run_purge_with_stats(
         &self,
         from_slot: Slot,

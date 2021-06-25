@@ -375,6 +375,7 @@ fn poll_all_nodes_for_signature(
     Ok(())
 }
 
+#[allow(clippy::bool_assert_comparison)]
 fn get_and_verify_slot_entries(
     blockstore: &Blockstore,
     slot: Slot,

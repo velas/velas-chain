@@ -1872,6 +1872,7 @@ mod tests {
     use std::{io, sync::mpsc::channel, thread};
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_send() {
         _test_send();
     }

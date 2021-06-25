@@ -163,6 +163,7 @@ impl AccountsCache {
         }
     }
 
+    #[allow(clippy::mem_replace_with_default)]
     pub fn clear_roots(&self, max_root: Option<Slot>) -> BTreeSet<Slot> {
         let mut w_maybe_unflushed_roots = self.maybe_unflushed_roots.write().unwrap();
         if let Some(max_root) = max_root {

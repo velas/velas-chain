@@ -198,6 +198,7 @@ mod tests {
     use solana_sdk::pubkey::Pubkey;
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_process_notification() {
         let exit = Arc::new(AtomicBool::new(false));
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);

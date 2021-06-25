@@ -234,7 +234,7 @@ impl TransactionSignature {
         }
     }
 
-    pub fn to_recoverable_signature(&self) -> Result<RecoverableSignature, secp256k1::Error> {
+    pub fn to_recoverable_signature(self) -> Result<RecoverableSignature, secp256k1::Error> {
         let mut sig = [0u8; 64];
         sig[0..32].copy_from_slice(self.r.as_bytes());
         sig[32..64].copy_from_slice(self.s.as_bytes());

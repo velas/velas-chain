@@ -358,6 +358,7 @@ impl RemoteWallet for LedgerWallet {
         "Ledger hardware wallet"
     }
 
+    #[allow(clippy::clone_on_copy)]
     fn read_device(
         &mut self,
         dev_info: &hidapi::DeviceInfo,

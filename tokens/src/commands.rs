@@ -690,6 +690,7 @@ fn log_transaction_confirmations(
     Ok(())
 }
 
+#[allow(clippy::branches_sharing_code)]
 fn check_payer_balances(
     num_signatures: usize,
     allocations: &[Allocation],

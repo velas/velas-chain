@@ -12,6 +12,7 @@ use solana_sdk::{
     pubkey::Pubkey,
 };
 
+#[allow(clippy::search_is_some)]
 pub fn process_instruction(
     _program_id: &Pubkey,
     keyed_accounts: &[KeyedAccount],

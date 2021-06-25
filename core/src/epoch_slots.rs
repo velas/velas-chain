@@ -376,6 +376,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_epoch_slots_uncompressed_add_3c() {
         let mut slots = Uncompressed::new(2);
         assert_eq!(slots.add(&[1, 10, 2]), 3);
@@ -445,6 +446,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_epoch_slots_fill_range() {
         let range: Vec<Slot> = (0..5000).collect();
         let mut slots = EpochSlots::default();

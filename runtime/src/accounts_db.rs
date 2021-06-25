@@ -1990,6 +1990,7 @@ impl AccountsDb {
         self.accounts_index.all_roots()
     }
 
+    #[allow(clippy::mem_replace_with_default)]
     pub fn shrink_candidate_slots(&self) -> usize {
         let shrink_slots = std::mem::take(&mut *self.shrink_candidate_slots.lock().unwrap());
         let num_candidates = shrink_slots.len();
@@ -5683,6 +5684,7 @@ pub mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_account_update() {
         let accounts = AccountsDb::new_single();
         let mut pubkeys: Vec<Pubkey> = vec![];
@@ -6018,6 +6020,7 @@ pub mod tests {
     }
 
     #[test]
+    #[allow(clippy::clone_on_copy)]
     fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
         solana_logger::setup();
 
@@ -6210,6 +6213,7 @@ pub mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_accounts_db_serialize1() {
         solana_logger::setup();
         let accounts = AccountsDb::new_single();

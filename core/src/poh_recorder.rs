@@ -1387,6 +1387,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_reached_leader_tick() {
         solana_logger::setup();
 
@@ -1451,6 +1452,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_reached_leader_slot() {
         solana_logger::setup();
 
@@ -1583,6 +1585,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_would_be_leader_soon() {
         let ledger_path = get_tmp_ledger_path!();
         {
