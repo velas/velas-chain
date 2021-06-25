@@ -9018,6 +9018,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_is_delta_true() {
         let (genesis_config, mint_keypair) = create_genesis_config(500);
         let bank = Arc::new(Bank::new(&genesis_config));
@@ -9038,6 +9039,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_is_empty() {
         let (genesis_config, mint_keypair) = create_genesis_config(500);
         let bank0 = Arc::new(Bank::new(&genesis_config));

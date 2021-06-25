@@ -249,6 +249,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_is_upgrade_instruction() {
         assert_eq!(
             false,

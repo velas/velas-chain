@@ -1995,6 +1995,7 @@ pub(crate) mod tests {
 
     #[test]
     #[serial]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_add_and_remove_subscription() {
         let mut subscriptions: HashMap<u64, HashMap<SubscriptionId, SubscriptionData<(), ()>>> =
             HashMap::new();

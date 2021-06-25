@@ -1522,6 +1522,7 @@ mod test {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_stray_restored_slot() {
         let forks = tr(0) / (tr(1) / tr(2));
         let heaviest_subtree_fork_choice = HeaviestSubtreeForkChoice::new_from_tree(forks);

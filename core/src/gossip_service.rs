@@ -328,6 +328,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_gossip_services_spy() {
         let keypair = Keypair::new();
         let peer0 = solana_sdk::pubkey::new_rand();

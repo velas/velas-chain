@@ -1362,6 +1362,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_banking_stage_tick() {
         solana_logger::setup();
         let GenesisConfigInfo {
@@ -1429,6 +1430,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_banking_stage_entries_only() {
         solana_logger::setup();
         let GenesisConfigInfo {
@@ -1988,6 +1990,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_bank_process_and_record_transactions() {
         solana_logger::setup();
         let GenesisConfigInfo {

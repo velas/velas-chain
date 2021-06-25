@@ -668,6 +668,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_skip_repair() {
         solana_logger::setup();
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(123);

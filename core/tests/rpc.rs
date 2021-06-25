@@ -52,6 +52,7 @@ fn post_rpc(request: Value, rpc_url: &str) -> Value {
 }
 
 #[test]
+#[allow(clippy::bool_assert_comparison)]
 fn test_rpc_send_tx() {
     solana_logger::setup();
 

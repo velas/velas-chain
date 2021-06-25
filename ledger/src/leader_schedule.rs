@@ -19,6 +19,7 @@ pub struct LeaderSchedule {
 
 impl LeaderSchedule {
     // Note: passing in zero stakers will cause a panic.
+    #[allow(clippy::branches_sharing_code)]
     pub fn new(ids_and_stakes: &[(Pubkey, u64)], seed: [u8; 32], len: u64, repeat: u64) -> Self {
         let (ids, stakes): (Vec<_>, Vec<_>) = ids_and_stakes.iter().cloned().unzip();
         let rng = &mut ChaChaRng::from_seed(seed);

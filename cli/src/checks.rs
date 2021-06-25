@@ -220,6 +220,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_check_account_for_balance() {
         let account_balance = MIN_DELEGATE_STAKE_AMOUNT + 400;
         let account_balance_response = json!(Response {

@@ -1900,6 +1900,7 @@ pub mod tests {
         );
     }
 
+    #[allow(clippy::clone_on_copy)]
     fn run_test_purge_exact_secondary_index<
         SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send,
     >(
@@ -2101,6 +2102,7 @@ pub mod tests {
         assert_eq!(slot_list, vec![(5, true), (9, true)]);
     }
 
+    #[allow(clippy::clone_on_copy)]
     fn check_secondary_index_unique<SecondaryIndexEntryType>(
         secondary_index: &SecondaryIndex<SecondaryIndexEntryType>,
         slot: Slot,
@@ -2127,6 +2129,7 @@ pub mod tests {
         assert_eq!(slots_map.value().read().unwrap().get(&slot).unwrap(), key);
     }
 
+    #[allow(clippy::clone_on_copy)]
     fn run_test_secondary_indexes<
         SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send,
     >(
@@ -2217,6 +2220,7 @@ pub mod tests {
         );
     }
 
+    #[allow(clippy::clone_on_copy)]
     fn run_test_secondary_indexes_same_slot_and_forks<
         SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send,
     >(

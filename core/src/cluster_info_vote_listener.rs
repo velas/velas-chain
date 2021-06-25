@@ -1279,6 +1279,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::branches_sharing_code)]
     fn run_test_process_votes3(switch_proof_hash: Option<Hash>) {
         let (votes_sender, votes_receiver) = unbounded();
         let (verified_vote_sender, _verified_vote_receiver) = unbounded();

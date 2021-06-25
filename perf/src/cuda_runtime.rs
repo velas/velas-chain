@@ -370,6 +370,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_pinned_vec() {
         let mut mem = PinnedVec::with_capacity(10);
         mem.set_pinnable();

@@ -52,6 +52,7 @@ mod tests {
     use solana_perf::packet::Packet;
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn test_mark_disabled() {
         let mut batch = Packets::default();
         batch.packets.push(Packet::default());

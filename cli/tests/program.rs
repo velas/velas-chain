@@ -18,6 +18,7 @@ use solana_sdk::{
 use std::{env, fs::File, io::Read, path::PathBuf, str::FromStr};
 
 #[test]
+#[allow(clippy::bool_assert_comparison)]
 fn test_cli_program_deploy_non_upgradeable() {
     solana_logger::setup();
 
@@ -219,6 +220,7 @@ fn test_cli_program_deploy_no_authority() {
 }
 
 #[test]
+#[allow(clippy::bool_assert_comparison)]
 fn test_cli_program_deploy_with_authority() {
     solana_logger::setup();
 

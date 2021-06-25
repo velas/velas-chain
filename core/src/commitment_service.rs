@@ -296,6 +296,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::branches_sharing_code)]
     fn test_aggregate_commitment_for_vote_account_2() {
         let ancestors = vec![3, 4, 5, 7, 9, 11];
         let mut commitment = HashMap::new();

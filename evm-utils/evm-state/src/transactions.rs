@@ -234,7 +234,7 @@ impl TransactionSignature {
         }
     }
 
-    pub fn to_recoverable_signature(&self) -> Result<RecoverableSignature, secp256k1::Error> {
+    pub fn to_recoverable_signature(self) -> Result<RecoverableSignature, secp256k1::Error> {
         let mut sig = [0u8; 64];
         sig[0..32].copy_from_slice(self.r.as_bytes());
         sig[32..64].copy_from_slice(self.s.as_bytes());
@@ -539,7 +539,7 @@ mod test {
         test_vector("f864808504a817c800825208943535353535353535353535353535353535353535808025a0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116da0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116d", "0xb1e2188bc490908a78184e4818dca53684167507417fdb4c09c2d64d32a9896a");
         test_vector("f867088504a817c8088302e2489435353535353535353535353535353535353535358202008025a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c12a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c10", "0x588df025c4c2d757d3e314bd3dfbfe352687324e6b8557ad1731585e96928aed");
     }
-    
+
     //
     #[test]
     fn test_of_generic_tx() {
