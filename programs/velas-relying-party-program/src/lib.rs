@@ -8,7 +8,7 @@ use {
     borsh::{BorshDeserialize, BorshSchema, BorshSerialize},
     solana_program::{program_pack::IsInitialized, pubkey::Pubkey},
 };
-solana_program::declare_id!("9fH5EdMT9ovEGvvd8NUhxT1XfyotiQvz3aHWNgWxyHZd");
+solana_program::declare_id!("VRPLtk4k31bDL99mn1A5mE96CUUzQ9PnftEwf2LvMiG");
 
 /// Struct provided metadata of the related program
 #[serde_as]
