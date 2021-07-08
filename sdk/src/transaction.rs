@@ -94,6 +94,10 @@ pub enum TransactionError {
 
     #[error("Transactions are currently disabled due to cluster maintenance")]
     ClusterMaintenance,
+
+    /// Transaction processing left an account with an outstanding borrowed reference
+    #[error("Transaction processing left an account with an outstanding borrowed reference")]
+    AccountBorrowOutstanding,
 }
 
 pub type Result<T> = result::Result<T, TransactionError>;
@@ -143,6 +147,11 @@ impl Transaction {
         Self::new_unsigned(message)
     }
 
+    /// Create a signed transaction with the given payer.
+    ///
+    /// # Panics
+    ///
+    /// Panics when signing fails.
     pub fn new_signed_with_payer<T: Signers>(
         instructions: &[Instruction],
         payer: Option<&Pubkey>,
@@ -153,6 +162,11 @@ impl Transaction {
         Self::new(signing_keypairs, message, recent_blockhash)
     }
 
+    /// Create a signed transaction.
+    ///
+    /// # Panics
+    ///
+    /// Panics when signing fails.
     pub fn new<T: Signers>(
         from_keypairs: &T,
         message: Message,
@@ -170,6 +184,10 @@ impl Transaction {
     /// * `recent_blockhash` - The PoH hash.
     /// * `program_ids` - The keys that identify programs used in the `instruction` vector.
     /// * `instructions` - Instructions that will be executed atomically.
+    ///
+    /// # Panics
+    ///
+    /// Panics when signing fails.
     pub fn new_with_compiled_instructions<T: Signers>(
         from_keypairs: &T,
         keys: &[Pubkey],
@@ -230,6 +248,10 @@ impl Transaction {
     }
 
     /// Check keys and keypair lengths, then sign this transaction.
+    ///
+    /// # Panics
+    ///
+    /// Panics when signing fails, use [`Transaction::try_sign`] to handle the error.
     pub fn sign<T: Signers>(&mut self, keypairs: &T, recent_blockhash: Hash) {
         if let Err(e) = self.try_sign(keypairs, recent_blockhash) {
             panic!("Transaction::sign failed with error {:?}", e);
@@ -239,6 +261,10 @@ impl Transaction {
     /// Sign using some subset of required keys
     ///  if recent_blockhash is not the same as currently in the transaction,
     ///  clear any prior signatures and update recent_blockhash
+    ///
+    /// # Panics
+    ///
+    /// Panics when signing fails, use [`Transaction::try_partial_sign`] to handle the error.
     pub fn partial_sign<T: Signers>(&mut self, keypairs: &T, recent_blockhash: Hash) {
         if let Err(e) = self.try_partial_sign(keypairs, recent_blockhash) {
             panic!("Transaction::partial_sign failed with error {:?}", e);
@@ -247,6 +273,10 @@ impl Transaction {
 
     /// Sign the transaction and place the signatures in their associated positions in `signatures`
     /// without checking that the positions are correct.
+    ///
+    /// # Panics
+    ///
+    /// Panics when signing fails, use [`Transaction::try_partial_sign_unchecked`] to handle the error.
     pub fn partial_sign_unchecked<T: Signers>(
         &mut self,
         keypairs: &T,
@@ -538,7 +568,7 @@ mod tests {
         let key = Keypair::new();
         let id0 = Pubkey::default();
         let program_id = solana_sdk::pubkey::new_rand();
-        let ix = Instruction::new(
+        let ix = Instruction::new_with_bincode(
             program_id,
             &0,
             vec![
@@ -615,7 +645,8 @@ mod tests {
             AccountMeta::new(keypair.pubkey(), true),
             AccountMeta::new(to, false),
         ];
-        let instruction = Instruction::new(program_id, &(1u8, 2u8, 3u8), account_metas);
+        let instruction =
+            Instruction::new_with_bincode(program_id, &(1u8, 2u8, 3u8), account_metas);
         let message = Message::new(&[instruction], Some(&keypair.pubkey()));
         Transaction::new(&[&keypair], message, Hash::default())
     }
@@ -712,7 +743,7 @@ mod tests {
     fn test_partial_sign_mismatched_key() {
         let keypair = Keypair::new();
         let fee_payer = solana_sdk::pubkey::new_rand();
-        let ix = Instruction::new(
+        let ix = Instruction::new_with_bincode(
             Pubkey::default(),
             &0,
             vec![AccountMeta::new(fee_payer, true)],
@@ -726,7 +757,7 @@ mod tests {
         let keypair0 = Keypair::new();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
-        let ix = Instruction::new(
+        let ix = Instruction::new_with_bincode(
             Pubkey::default(),
             &0,
             vec![
@@ -756,7 +787,7 @@ mod tests {
         let program_id = Pubkey::default();
         let keypair0 = Keypair::new();
         let id0 = keypair0.pubkey();
-        let ix = Instruction::new(program_id, &0, vec![AccountMeta::new(id0, true)]);
+        let ix = Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]);
         let message = Message::new(&[ix], Some(&id0));
         Transaction::new_unsigned(message).sign(&Vec::<&Keypair>::new(), Hash::default());
     }
@@ -767,7 +798,8 @@ mod tests {
         let program_id = Pubkey::default();
         let keypair0 = Keypair::new();
         let wrong_id = Pubkey::default();
-        let ix = Instruction::new(program_id, &0, vec![AccountMeta::new(wrong_id, true)]);
+        let ix =
+            Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(wrong_id, true)]);
         let message = Message::new(&[ix], Some(&wrong_id));
         Transaction::new_unsigned(message).sign(&[&keypair0], Hash::default());
     }
@@ -777,7 +809,7 @@ mod tests {
         let program_id = Pubkey::default();
         let keypair0 = Keypair::new();
         let id0 = keypair0.pubkey();
-        let ix = Instruction::new(program_id, &0, vec![AccountMeta::new(id0, true)]);
+        let ix = Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]);
         let message = Message::new(&[ix], Some(&id0));
         let mut tx = Transaction::new_unsigned(message);
         tx.sign(&[&keypair0], Hash::default());
@@ -794,7 +826,7 @@ mod tests {
         let keypair0 = Keypair::new();
         let id0 = keypair0.pubkey();
         let id1 = solana_sdk::pubkey::new_rand();
-        let ix = Instruction::new(
+        let ix = Instruction::new_with_bincode(
             program_id,
             &0,
             vec![
@@ -822,7 +854,7 @@ mod tests {
         let presigner_keypair = Keypair::new();
         let presigner_pubkey = presigner_keypair.pubkey();
 
-        let ix = Instruction::new(
+        let ix = Instruction::new_with_bincode(
             program_id,
             &0,
             vec![
@@ -845,7 +877,7 @@ mod tests {
 
         // Wrong key should error, not panic
         let another_pubkey = solana_sdk::pubkey::new_rand();
-        let ix = Instruction::new(
+        let ix = Instruction::new_with_bincode(
             program_id,
             &0,
             vec![

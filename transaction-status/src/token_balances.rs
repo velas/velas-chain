@@ -3,7 +3,7 @@ use solana_account_decoder::parse_token::{
     spl_token_id_v2_0, spl_token_v2_0_native_mint, token_amount_to_ui_amount, UiTokenAmount,
 };
 use solana_runtime::{bank::Bank, transaction_batch::TransactionBatch};
-use solana_sdk::pubkey::Pubkey;
+use solana_sdk::{account::ReadableAccount, pubkey::Pubkey};
 use spl_token_v2_0::{
     solana_program::program_pack::Pack,
     state::{Account as TokenAccount, Mint},
@@ -40,7 +40,7 @@ fn get_mint_decimals(bank: &Bank, mint: &Pubkey) -> Option<u8> {
     } else {
         let mint_account = bank.get_account(mint)?;
 
-        let decimals = Mint::unpack(&mint_account.data)
+        let decimals = Mint::unpack(&mint_account.data())
             .map(|mint| mint.decimals)
             .ok()?;
 
@@ -91,7 +91,7 @@ pub fn collect_token_balance_from_account(
 ) -> Option<(String, UiTokenAmount)> {
     let account = bank.get_account(account_id)?;
 
-    let token_account = TokenAccount::unpack(&account.data).ok()?;
+    let token_account = TokenAccount::unpack(&account.data()).ok()?;
     let mint_string = &token_account.mint.to_string();
     let mint = &Pubkey::from_str(&mint_string).unwrap_or_default();
 

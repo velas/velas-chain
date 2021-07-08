@@ -10,7 +10,7 @@ use crate::{
 };
 use serde_derive::{Deserialize, Serialize};
 use solana_sdk::{
-    account::Account,
+    account::{AccountSharedData, ReadableAccount},
     account_utils::{State, StateMut},
     clock::{Clock, Epoch, UnixTimestamp},
     ic_msg,
@@ -25,12 +25,12 @@ use solana_vote_program::vote_state::{VoteState, VoteStateVersions};
 use std::{collections::HashSet, convert::TryFrom};
 
 /// Minimal amount for delegate to create stake account. = 10k
-// Removed requirement of having 10k to create stake account. 14.04.2021, keeping constant, to allow more smooth future changes.
-pub const MIN_DELEGATE_STAKE_AMOUNT: u64 = solana_sdk::native_token::sol_to_lamports_u64(0);
+// Removed requirement of having 10k to create stake account.
+// 14.04.2021, keeping constant, to allow more smooth future changes.
+pub const MIN_DELEGATE_STAKE_AMOUNT: u64 = 0;
 
 /// Amount of stake to be in majority = 1M
-pub const MIN_STAKERS_TO_BE_MAJORITY: u64 =
-    solana_sdk::native_token::sol_to_lamports_u64(1_000_000);
+pub const MIN_STAKERS_TO_BE_MAJORITY: u64 = 1_000_000 * solana_sdk::native_token::LAMPORTS_PER_VLX;
 
 /// Number of stakers with lamports more than 1M, to start filtering = 19
 pub const NUM_MAJOR_STAKERS_FOR_FILTERING: usize = 19;
@@ -87,11 +87,11 @@ impl StakeState {
     }
 
     // utility function, used by Stakes, tests
-    pub fn from(account: &Account) -> Option<StakeState> {
+    pub fn from<T: ReadableAccount + StateMut<StakeState>>(account: &T) -> Option<StakeState> {
         account.state().ok()
     }
 
-    pub fn stake_from(account: &Account) -> Option<Stake> {
+    pub fn stake_from<T: ReadableAccount + StateMut<StakeState>>(account: &T) -> Option<Stake> {
         Self::from(account).and_then(|state: Self| state.stake())
     }
     pub fn stake(&self) -> Option<Stake> {
@@ -101,7 +101,7 @@ impl StakeState {
         }
     }
 
-    pub fn delegation_from(account: &Account) -> Option<Delegation> {
+    pub fn delegation_from(account: &AccountSharedData) -> Option<Delegation> {
         Self::from(account).and_then(|state: Self| state.delegation())
     }
     pub fn delegation(&self) -> Option<Delegation> {
@@ -111,7 +111,7 @@ impl StakeState {
         }
     }
 
-    pub fn authorized_from(account: &Account) -> Option<Authorized> {
+    pub fn authorized_from(account: &AccountSharedData) -> Option<Authorized> {
         Self::from(account).and_then(|state: Self| state.authorized())
     }
 
@@ -123,7 +123,7 @@ impl StakeState {
         }
     }
 
-    pub fn lockup_from(account: &Account) -> Option<Lockup> {
+    pub fn lockup_from<T: ReadableAccount + StateMut<StakeState>>(account: &T) -> Option<Lockup> {
         Self::from(account).and_then(|state: Self| state.lockup())
     }
 
@@ -131,7 +131,7 @@ impl StakeState {
         self.meta().map(|meta| meta.lockup)
     }
 
-    pub fn meta_from(account: &Account) -> Option<Meta> {
+    pub fn meta_from(account: &AccountSharedData) -> Option<Meta> {
         Self::from(account).and_then(|state: Self| state.meta())
     }
 
@@ -190,9 +190,28 @@ impl Meta {
         &mut self,
         lockup: &LockupArgs,
         signers: &HashSet<Pubkey>,
+        clock: Option<&Clock>,
     ) -> Result<(), InstructionError> {
-        if !signers.contains(&self.lockup.custodian) {
-            return Err(InstructionError::MissingRequiredSignature);
+        match clock {
+            None => {
+                // pre-stake_program_v4 behavior: custodian can set lockups at any time
+                if !signers.contains(&self.lockup.custodian) {
+                    return Err(InstructionError::MissingRequiredSignature);
+                }
+            }
+            Some(clock) => {
+                // post-stake_program_v4 behavior:
+                // * custodian can update the lockup while in force
+                // * withdraw authority can set a new lockup
+                //
+                if self.lockup.is_in_force(clock, None) {
+                    if !signers.contains(&self.lockup.custodian) {
+                        return Err(InstructionError::MissingRequiredSignature);
+                    }
+                } else if !signers.contains(&self.authorized.withdrawer) {
+                    return Err(InstructionError::MissingRequiredSignature);
+                }
+            }
         }
         if let Some(unix_timestamp) = lockup.unix_timestamp {
             self.lockup.unix_timestamp = unix_timestamp;
@@ -766,13 +785,28 @@ impl Stake {
         clock: &Clock,
         stake_history: &StakeHistory,
         config: &Config,
+        can_reverse_deactivation: bool,
     ) -> Result<(), StakeError> {
-        // can't redelegate if stake is active.  either the stake
-        //  is freshly activated or has fully de-activated.  redelegation
-        //  implies re-activation
+        // If stake is currently active:
         if self.stake(clock.epoch, Some(stake_history), true) != 0 {
-            return Err(StakeError::TooSoonToRedelegate);
+            // If pubkey of new voter is the same as current,
+            // and we are scheduled to start deactivating this epoch,
+            // we rescind deactivation
+            if self.delegation.voter_pubkey == *voter_pubkey
+                && clock.epoch == self.delegation.deactivation_epoch
+                && can_reverse_deactivation
+            {
+                self.delegation.deactivation_epoch = std::u64::MAX;
+                return Ok(());
+            } else {
+                // can't redelegate to another pubkey if stake is active.
+                return Err(StakeError::TooSoonToRedelegate);
+            }
         }
+        // Either the stake is freshly activated, is active but has been
+        // deactivated this epoch, or has fully de-activated.
+        // Redelegation implies either re-activation or un-deactivation
+
         self.delegation.stake = stake_lamports;
         self.delegation.activation_epoch = clock.epoch;
         self.delegation.deactivation_epoch = std::u64::MAX;
@@ -863,12 +897,14 @@ pub trait StakeAccount {
         stake_history: &StakeHistory,
         config: &Config,
         signers: &HashSet<Pubkey>,
+        can_reverse_deactivation: bool,
     ) -> Result<(), InstructionError>;
     fn deactivate(&self, clock: &Clock, signers: &HashSet<Pubkey>) -> Result<(), InstructionError>;
     fn set_lockup(
         &self,
         lockup: &LockupArgs,
         signers: &HashSet<Pubkey>,
+        clock: Option<&Clock>,
     ) -> Result<(), InstructionError>;
     fn split(
         &self,
@@ -883,6 +919,7 @@ pub trait StakeAccount {
         clock: &Clock,
         stake_history: &StakeHistory,
         signers: &HashSet<Pubkey>,
+        can_merge_expired_lockups: bool,
     ) -> Result<(), InstructionError>;
     fn withdraw(
         &self,
@@ -892,6 +929,7 @@ pub trait StakeAccount {
         stake_history: &StakeHistory,
         withdraw_authority: &KeyedAccount,
         custodian: Option<&KeyedAccount>,
+        prevent_withdraw_to_zero: bool,
     ) -> Result<(), InstructionError>;
 }
 
@@ -999,6 +1037,7 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
         stake_history: &StakeHistory,
         config: &Config,
         signers: &HashSet<Pubkey>,
+        can_reverse_deactivation: bool,
     ) -> Result<(), InstructionError> {
         if vote_account.owner()? != solana_vote_program::id() {
             return Err(InstructionError::IncorrectProgramId);
@@ -1025,6 +1064,7 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
                     clock,
                     stake_history,
                     config,
+                    can_reverse_deactivation,
                 )?;
                 self.set_state(&StakeState::Stake(meta, stake))
             }
@@ -1045,14 +1085,15 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
         &self,
         lockup: &LockupArgs,
         signers: &HashSet<Pubkey>,
+        clock: Option<&Clock>,
     ) -> Result<(), InstructionError> {
         match self.state()? {
             StakeState::Initialized(mut meta) => {
-                meta.set_lockup(lockup, signers)?;
+                meta.set_lockup(lockup, signers, clock)?;
                 self.set_state(&StakeState::Initialized(meta))
             }
             StakeState::Stake(mut meta, stake) => {
-                meta.set_lockup(lockup, signers)?;
+                meta.set_lockup(lockup, signers, clock)?;
                 self.set_state(&StakeState::Stake(meta, stake))
             }
             _ => Err(InstructionError::InvalidAccountData),
@@ -1067,6 +1108,9 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
     ) -> Result<(), InstructionError> {
         if split.owner()? != id() {
             return Err(InstructionError::IncorrectProgramId);
+        }
+        if split.data_len()? != std::mem::size_of::<StakeState>() {
+            return Err(InstructionError::InvalidAccountData);
         }
 
         if let StakeState::Uninitialized = split.state()? {
@@ -1083,17 +1127,19 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
                         self.data_len()? as u64,
                         split.data_len()? as u64,
                     );
+
+                    // TODO(velas): check if we can revert updates below to solana upstream
                     let self_min_balance = meta.rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT;
                     let split_min_balance = split_rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT;
 
                     let split_needs = split_min_balance.saturating_sub(split.lamports()?);
                     let retain_self = lamports != self.lamports()?;
-                    // enough lamports for rent in new stake
-                    if lamports < split_needs
-                    // if not full withdrawal
-                    || (retain_self
-                        // verify more than MIN_DELEGATE_STAKE_AMOUNT stake left in previous stake
-                        && self.lamports()? < lamports + self_min_balance)
+                    // verify enough lamports for rent and more than 0 stake in new split account
+                    if lamports <= split_needs
+                        // if not full withdrawal
+                        || (retain_self
+                            // verify more than MIN_DELEGATE_STAKE_AMOUNT stake left in previous stake
+                            && checked_add(lamports, self_min_balance)? >= self.lamports()?)
                     {
                         return Err(InstructionError::InsufficientFunds);
                     }
@@ -1143,17 +1189,19 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
                         self.data_len()? as u64,
                         split.data_len()? as u64,
                     );
+
+                    // TODO(velas): check if we can revert updates below to solana upstream
                     let self_min_balance = meta.rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT;
                     let split_min_balance = split_rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT;
 
                     let split_needs = split_min_balance.saturating_sub(split.lamports()?);
                     let retain_self = lamports != self.lamports()?;
-                    // enough lamports for rent in new stake
-                    if lamports < split_needs
-                    // if not full withdrawal
-                    || (retain_self
-                        // verify more than MIN_DELEGATE_STAKE_AMOUNT stake left in previous stake
-                        && self.lamports()? < lamports + self_min_balance)
+                    // enough lamports for rent and more than 0 stake in new split account
+                    if lamports <= split_needs
+                        // if not full withdrawal
+                        || (retain_self
+                            // verify more than 0 stake left in previous stake
+                            && checked_add(lamports, self_min_balance)? >= self.lamports()?)
                     {
                         return Err(InstructionError::InsufficientFunds);
                     }
@@ -1190,6 +1238,7 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
         clock: &Clock,
         stake_history: &StakeHistory,
         signers: &HashSet<Pubkey>,
+        can_merge_expired_lockups: bool,
     ) -> Result<(), InstructionError> {
         // Ensure source isn't spoofed
         if source_account.owner()? != id() {
@@ -1212,8 +1261,16 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
         let source_merge_kind =
             MergeKind::get_if_mergeable(invoke_context, source_account, clock, stake_history)?;
 
+        let clock = if can_merge_expired_lockups {
+            Some(clock)
+        } else {
+            None
+        };
+
         ic_msg!(invoke_context, "Merging stake accounts");
-        if let Some(merged_state) = stake_merge_kind.merge(invoke_context, source_merge_kind)? {
+        if let Some(merged_state) =
+            stake_merge_kind.merge(invoke_context, source_merge_kind, clock)?
+        {
             self.set_state(&merged_state)?;
         }
 
@@ -1235,6 +1292,7 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
         stake_history: &StakeHistory,
         withdraw_authority: &KeyedAccount,
         custodian: Option<&KeyedAccount>,
+        prevent_withdraw_to_zero: bool,
     ) -> Result<(), InstructionError> {
         let mut signers = HashSet::new();
         let withdraw_authority_pubkey = withdraw_authority
@@ -1264,6 +1322,11 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
             StakeState::Initialized(meta) => {
                 meta.authorized
                     .check(&signers, StakeAuthorize::Withdrawer)?;
+                let reserve = if prevent_withdraw_to_zero {
+                    checked_add(meta.rent_exempt_reserve, 1)? // stake accounts must have a balance > rent_exempt_reserve
+                } else {
+                    meta.rent_exempt_reserve
+                };
 
                 (
                     meta.lockup,
@@ -1386,13 +1449,24 @@ impl MergeKind {
         invoke_context: &dyn InvokeContext,
         stake: &Meta,
         source: &Meta,
+        clock: Option<&Clock>,
     ) -> Result<(), InstructionError> {
+        let can_merge_lockups = match clock {
+            // pre-v4 behavior. lockups must match, even when expired
+            None => stake.lockup == source.lockup,
+            // v4 behavior. lockups may mismatch so long as both have expired
+            Some(clock) => {
+                stake.lockup == source.lockup
+                    || (!stake.lockup.is_in_force(clock, None)
+                        && !source.lockup.is_in_force(clock, None))
+            }
+        };
         // `rent_exempt_reserve` has no bearing on the mergeability of accounts,
         // as the source account will be culled by runtime once the operation
         // succeeds. Considering it here would needlessly prevent merging stake
         // accounts with differing data lengths, which already exist in the wild
         // due to an SDK bug
-        if stake.authorized == source.authorized && stake.lockup == source.lockup {
+        if stake.authorized == source.authorized && can_merge_lockups {
             Ok(())
         } else {
             ic_msg!(invoke_context, "Unable to merge due to metadata mismatch");
@@ -1445,8 +1519,9 @@ impl MergeKind {
         self,
         invoke_context: &dyn InvokeContext,
         source: Self,
+        clock: Option<&Clock>,
     ) -> Result<Option<StakeState>, InstructionError> {
-        Self::metas_can_merge(invoke_context, self.meta(), source.meta())?;
+        Self::metas_can_merge(invoke_context, self.meta(), source.meta(), clock)?;
         self.active_stake()
             .zip(source.active_stake())
             .map(|(stake, source)| Self::active_stakes_can_merge(invoke_context, stake, source))
@@ -1488,8 +1563,8 @@ impl MergeKind {
 // returns a tuple of (stakers_reward,voters_reward)
 pub fn redeem_rewards(
     rewarded_epoch: Epoch,
-    stake_account: &mut Account,
-    vote_account: &mut Account,
+    stake_account: &mut AccountSharedData,
+    vote_account: &mut AccountSharedData,
     point_value: &PointValue,
     stake_history: Option<&StakeHistory>,
     inflation_point_calc_tracer: &mut Option<impl FnMut(&InflationPointCalculationEvent)>,
@@ -1537,8 +1612,8 @@ pub fn redeem_rewards(
 
 // utility function, used by runtime
 pub fn calculate_points(
-    stake_account: &Account,
-    vote_account: &Account,
+    stake_account: &AccountSharedData,
+    vote_account: &AccountSharedData,
     stake_history: Option<&StakeHistory>,
     fix_stake_deactivate: bool,
 ) -> Result<u128, InstructionError> {
@@ -1573,12 +1648,12 @@ fn calculate_split_rent_exempt_reserve(
 pub type RewriteStakeStatus = (&'static str, (u64, u64), (u64, u64));
 
 pub fn rewrite_stakes(
-    stake_account: &mut Account,
+    stake_account: &mut AccountSharedData,
     rent: &Rent,
 ) -> Result<RewriteStakeStatus, InstructionError> {
     match stake_account.state()? {
         StakeState::Initialized(mut meta) => {
-            let meta_status = meta.rewrite_rent_exempt_reserve(rent, stake_account.data.len());
+            let meta_status = meta.rewrite_rent_exempt_reserve(rent, stake_account.data().len());
 
             if meta_status.is_none() {
                 return Err(InstructionError::InvalidAccountData);
@@ -1588,7 +1663,7 @@ pub fn rewrite_stakes(
             Ok(("initialized", meta_status.unwrap_or_default(), (0, 0)))
         }
         StakeState::Stake(mut meta, mut stake) => {
-            let meta_status = meta.rewrite_rent_exempt_reserve(rent, stake_account.data.len());
+            let meta_status = meta.rewrite_rent_exempt_reserve(rent, stake_account.data().len());
             let stake_status = stake
                 .delegation
                 .rewrite_stake(stake_account.lamports, meta.rent_exempt_reserve);
@@ -1643,10 +1718,11 @@ pub fn create_lockup_stake_account(
     lockup: &Lockup,
     rent: &Rent,
     lamports: u64,
-) -> Account {
-    let mut stake_account = Account::new(lamports, std::mem::size_of::<StakeState>(), &id());
+) -> AccountSharedData {
+    let mut stake_account =
+        AccountSharedData::new(lamports, std::mem::size_of::<StakeState>(), &id());
 
-    let rent_exempt_reserve = rent.minimum_balance(stake_account.data.len());
+    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
     assert!(
         lamports >= rent_exempt_reserve,
         "lamports: {} is less than rent_exempt_reserve {}",
@@ -1669,10 +1745,10 @@ pub fn create_lockup_stake_account(
 pub fn create_account(
     authorized: &Pubkey,
     voter_pubkey: &Pubkey,
-    vote_account: &Account,
+    vote_account: &AccountSharedData,
     rent: &Rent,
     lamports: u64,
-) -> Account {
+) -> AccountSharedData {
     do_create_account(
         authorized,
         voter_pubkey,
@@ -1687,11 +1763,11 @@ pub fn create_account(
 pub fn create_account_with_activation_epoch(
     authorized: &Pubkey,
     voter_pubkey: &Pubkey,
-    vote_account: &Account,
+    vote_account: &AccountSharedData,
     rent: &Rent,
     lamports: u64,
     activation_epoch: Epoch,
-) -> Account {
+) -> AccountSharedData {
     do_create_account(
         authorized,
         voter_pubkey,
@@ -1705,16 +1781,17 @@ pub fn create_account_with_activation_epoch(
 fn do_create_account(
     authorized: &Pubkey,
     voter_pubkey: &Pubkey,
-    vote_account: &Account,
+    vote_account: &AccountSharedData,
     rent: &Rent,
     lamports: u64,
     activation_epoch: Epoch,
-) -> Account {
-    let mut stake_account = Account::new(lamports, std::mem::size_of::<StakeState>(), &id());
+) -> AccountSharedData {
+    let mut stake_account =
+        AccountSharedData::new(lamports, std::mem::size_of::<StakeState>(), &id());
 
     let vote_state = VoteState::from(vote_account).expect("vote_state");
 
-    let rent_exempt_reserve = rent.minimum_balance(stake_account.data.len());
+    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
 
     stake_account
         .set_state(&StakeState::Stake(
@@ -1741,8 +1818,8 @@ mod tests {
     use super::*;
     use crate::id;
     use solana_sdk::{
-        account::Account, native_token, process_instruction::MockInvokeContext, pubkey::Pubkey,
-        system_program,
+        account::AccountSharedData, native_token, process_instruction::MockInvokeContext,
+        pubkey::Pubkey, system_program,
     };
     use solana_vote_program::vote_state;
     use std::{cell::RefCell, iter::FromIterator};
@@ -1896,7 +1973,7 @@ mod tests {
 
     #[test]
     fn test_stake_state_stake_from_fail() {
-        let mut stake_account = Account::new(0, std::mem::size_of::<StakeState>(), &id());
+        let mut stake_account = AccountSharedData::new(0, std::mem::size_of::<StakeState>(), &id());
 
         stake_account
             .set_state(&StakeState::default())
@@ -1933,9 +2010,15 @@ mod tests {
         };
 
         let vote_pubkey = solana_sdk::pubkey::new_rand();
+        let vote_pubkey_2 = solana_sdk::pubkey::new_rand();
+
         let mut vote_state = VoteState::default();
         for i in 0..1000 {
             vote_state.process_slot_vote_unchecked(i);
+        }
+        let mut vote_state_2 = VoteState::default();
+        for i in 0..1000 {
+            vote_state_2.process_slot_vote_unchecked(i);
         }
 
         let vote_account = RefCell::new(vote_state::create_account(
@@ -1944,15 +2027,27 @@ mod tests {
             0,
             100,
         ));
+        let vote_account_2 = RefCell::new(vote_state::create_account(
+            &vote_pubkey_2,
+            &solana_sdk::pubkey::new_rand(),
+            0,
+            100,
+        ));
         let vote_keyed_account = KeyedAccount::new(&vote_pubkey, false, &vote_account);
+        let vote_keyed_account_2 = KeyedAccount::new(&vote_pubkey_2, false, &vote_account_2);
+
         let vote_state_credits = vote_state.credits();
         vote_keyed_account
             .set_state(&VoteStateVersions::new_current(vote_state))
             .unwrap();
+        let vote_state_credits_2 = vote_state_2.credits();
+        vote_keyed_account_2
+            .set_state(&VoteStateVersions::new_current(vote_state_2))
+            .unwrap();
 
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = 42;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Initialized(Meta {
                 authorized: Authorized {
@@ -1977,6 +2072,7 @@ mod tests {
                 &StakeHistory::default(),
                 &Config::default(),
                 &signers,
+                true,
             ),
             Err(InstructionError::MissingRequiredSignature)
         );
@@ -1991,6 +2087,7 @@ mod tests {
                 &StakeHistory::default(),
                 &Config::default(),
                 &signers,
+                true,
             )
             .is_ok());
 
@@ -2012,14 +2109,63 @@ mod tests {
 
         clock.epoch += 1;
 
-        // verify that delegate fails if stake is still active
+        // verify that delegate fails as stake is active and not deactivating
         assert_eq!(
             stake_keyed_account.delegate(
                 &vote_keyed_account,
                 &clock,
                 &StakeHistory::default(),
                 &Config::default(),
-                &signers
+                &signers,
+                true
+            ),
+            Err(StakeError::TooSoonToRedelegate.into())
+        );
+
+        // deactivate
+        stake_keyed_account.deactivate(&clock, &signers).unwrap();
+
+        // verify that delegate to a different vote account fails
+        // during deactivation
+        assert_eq!(
+            stake_keyed_account.delegate(
+                &vote_keyed_account_2,
+                &clock,
+                &StakeHistory::default(),
+                &Config::default(),
+                &signers,
+                true,
+            ),
+            Err(StakeError::TooSoonToRedelegate.into())
+        );
+
+        // verify that delegate succeeds to same vote account
+        // when stake is deactivating
+        stake_keyed_account
+            .delegate(
+                &vote_keyed_account,
+                &clock,
+                &StakeHistory::default(),
+                &Config::default(),
+                &signers,
+                true,
+            )
+            .unwrap();
+
+        // verify that deactivation has been cleared
+        let stake = StakeState::stake_from(&stake_keyed_account.account.borrow()).unwrap();
+        assert_eq!(stake.delegation.deactivation_epoch, std::u64::MAX);
+
+        // verify that delegate to a different vote account fails
+        // if stake is still active
+        assert_eq!(
+            stake_keyed_account.delegate(
+                &vote_keyed_account_2,
+                &clock,
+                &StakeHistory::default(),
+                &Config::default(),
+                &signers,
+                true,
             ),
             Err(StakeError::TooSoonToRedelegate.into())
         );
@@ -2030,21 +2176,23 @@ mod tests {
         // without stake history, cool down is instantaneous
         clock.epoch += 1;
 
-        // verify that delegate can be called twice, 2nd is redelegate
+        // verify that delegate can be called to new vote account, 2nd is redelegate
         assert!(stake_keyed_account
             .delegate(
-                &vote_keyed_account,
+                &vote_keyed_account_2,
                 &clock,
                 &StakeHistory::default(),
                 &Config::default(),
-                &signers
+                &signers,
+                true,
             )
             .is_ok());
 
         // signed but faked vote account
-        let faked_vote_account = vote_account.clone();
+        let faked_vote_account = vote_account_2.clone();
         faked_vote_account.borrow_mut().owner = solana_sdk::pubkey::new_rand();
-        let faked_vote_keyed_account = KeyedAccount::new(&vote_pubkey, false, &faked_vote_account);
+        let faked_vote_keyed_account =
+            KeyedAccount::new(&vote_pubkey_2, false, &faked_vote_account);
         assert_eq!(
             stake_keyed_account.delegate(
                 &faked_vote_keyed_account,
@@ -2052,6 +2200,7 @@ mod tests {
                 &StakeHistory::default(),
                 &Config::default(),
                 &signers,
+                true,
             ),
             Err(solana_sdk::instruction::InstructionError::IncorrectProgramId)
         );
@@ -2062,13 +2211,13 @@ mod tests {
             stake,
             Stake {
                 delegation: Delegation {
-                    voter_pubkey: vote_pubkey,
+                    voter_pubkey: vote_pubkey_2,
                     stake: stake_lamports,
                     activation_epoch: clock.epoch,
                     deactivation_epoch: std::u64::MAX,
                     ..Delegation::default()
                 },
-                credits_observed: vote_state_credits,
+                credits_observed: vote_state_credits_2,
             }
         );
 
@@ -2082,7 +2231,8 @@ mod tests {
                 &clock,
                 &StakeHistory::default(),
                 &Config::default(),
-                &signers
+                &signers,
+                true,
             )
             .is_err());
     }
@@ -2569,13 +2719,12 @@ mod tests {
                 },
             );
 
+            let effective_rate_limited = (effective as f64 * stake.warmup_cooldown_rate) as u64;
             if epoch < stake.deactivation_epoch {
-                let increase = (effective as f64 * stake.warmup_cooldown_rate) as u64;
-                effective += increase.min(activating);
+                effective += effective_rate_limited.min(activating);
                 other_activations.push(0);
             } else {
-                let decrease = (effective as f64 * stake.warmup_cooldown_rate) as u64;
-                effective -= decrease.min(deactivating);
+                effective -= effective_rate_limited.min(deactivating);
                 effective += other_activation;
                 other_activations.push(other_activation);
             }
@@ -2714,7 +2863,7 @@ mod tests {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = MIN_DELEGATE_STAKE_AMOUNT;
         let stake_account =
-            Account::new_ref(stake_lamports, std::mem::size_of::<StakeState>(), &id());
+            AccountSharedData::new_ref(stake_lamports, std::mem::size_of::<StakeState>(), &id());
 
         // unsigned keyed account
         let stake_keyed_account = KeyedAccount::new(&stake_pubkey, false, &stake_account);
@@ -2777,8 +2926,11 @@ mod tests {
     fn test_initialize_incorrect_account_sizes() {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = 42;
-        let stake_account =
-            Account::new_ref(stake_lamports, std::mem::size_of::<StakeState>() + 1, &id());
+        let stake_account = AccountSharedData::new_ref(
+            stake_lamports,
+            std::mem::size_of::<StakeState>() + 1,
+            &id(),
+        );
         let stake_keyed_account = KeyedAccount::new(&stake_pubkey, false, &stake_account);
 
         assert_eq!(
@@ -2793,8 +2945,11 @@ mod tests {
             Err(InstructionError::InvalidAccountData)
         );
 
-        let stake_account =
-            Account::new_ref(stake_lamports, std::mem::size_of::<StakeState>() - 1, &id());
+        let stake_account = AccountSharedData::new_ref(
+            stake_lamports,
+            std::mem::size_of::<StakeState>() - 1,
+            &id(),
+        );
         let stake_keyed_account = KeyedAccount::new(&stake_pubkey, false, &stake_account);
 
         assert_eq!(
@@ -2814,7 +2969,7 @@ mod tests {
     fn test_deactivate() {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = 42;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Initialized(Meta::auto(&stake_pubkey)),
             std::mem::size_of::<StakeState>(),
@@ -2853,7 +3008,8 @@ mod tests {
                 &clock,
                 &StakeHistory::default(),
                 &Config::default(),
-                &signers
+                &signers,
+                true,
             ),
             Ok(())
         );
@@ -2880,7 +3036,7 @@ mod tests {
     fn test_set_lockup() {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = MIN_DELEGATE_STAKE_AMOUNT;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Uninitialized,
             std::mem::size_of::<StakeState>(),
@@ -2891,7 +3047,7 @@ mod tests {
         // wrong state, should fail
         let stake_keyed_account = KeyedAccount::new(&stake_pubkey, false, &stake_account);
         assert_eq!(
-            stake_keyed_account.set_lockup(&LockupArgs::default(), &HashSet::default()),
+            stake_keyed_account.set_lockup(&LockupArgs::default(), &HashSet::default(), None),
             Err(InstructionError::InvalidAccountData)
         );
 
@@ -2910,7 +3066,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            stake_keyed_account.set_lockup(&LockupArgs::default(), &HashSet::default()),
+            stake_keyed_account.set_lockup(&LockupArgs::default(), &HashSet::default(), None),
             Err(InstructionError::MissingRequiredSignature)
         );
 
@@ -2921,7 +3077,8 @@ mod tests {
                     epoch: Some(1),
                     custodian: Some(custodian),
                 },
-                &vec![custodian].into_iter().collect()
+                &vec![custodian].into_iter().collect(),
+                None
             ),
             Ok(())
         );
@@ -2946,6 +3103,7 @@ mod tests {
                 &StakeHistory::default(),
                 &Config::default(),
                 &vec![stake_pubkey].into_iter().collect(),
+                true,
             )
             .unwrap();
 
@@ -2957,6 +3115,7 @@ mod tests {
                     custodian: Some(custodian),
                 },
                 &HashSet::default(),
+                None
             ),
             Err(InstructionError::MissingRequiredSignature)
         );
@@ -2967,17 +3126,18 @@ mod tests {
                     epoch: Some(1),
                     custodian: Some(custodian),
                 },
-                &vec![custodian].into_iter().collect()
+                &vec![custodian].into_iter().collect(),
+                None
             ),
             Ok(())
         );
     }
 
     #[test]
-    fn test_optional_lockup() {
+    fn test_optional_lockup_for_stake_program_v3_and_earlier() {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = MIN_DELEGATE_STAKE_AMOUNT;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Uninitialized,
             std::mem::size_of::<StakeState>(),
@@ -3006,7 +3166,8 @@ mod tests {
                     epoch: None,
                     custodian: None,
                 },
-                &vec![custodian].into_iter().collect()
+                &vec![custodian].into_iter().collect(),
+                None
             ),
             Ok(())
         );
@@ -3018,7 +3179,8 @@ mod tests {
                     epoch: None,
                     custodian: None,
                 },
-                &vec![custodian].into_iter().collect()
+                &vec![custodian].into_iter().collect(),
+                None
             ),
             Ok(())
         );
@@ -3040,7 +3202,8 @@ mod tests {
                     epoch: Some(3),
                     custodian: None,
                 },
-                &vec![custodian].into_iter().collect()
+                &vec![custodian].into_iter().collect(),
+                None
             ),
             Ok(())
         );
@@ -3063,7 +3226,8 @@ mod tests {
                     epoch: None,
                     custodian: Some(new_custodian),
                 },
-                &vec![custodian].into_iter().collect()
+                &vec![custodian].into_iter().collect(),
+                None
             ),
             Ok(())
         );
@@ -3081,17 +3245,109 @@ mod tests {
         assert_eq!(
             stake_keyed_account.set_lockup(
                 &LockupArgs::default(),
-                &vec![custodian].into_iter().collect()
+                &vec![custodian].into_iter().collect(),
+                None
             ),
             Err(InstructionError::MissingRequiredSignature)
         );
     }
 
     #[test]
-    fn test_withdraw_stake() {
+    fn test_optional_lockup_for_stake_program_v4() {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = MIN_DELEGATE_STAKE_AMOUNT + 400;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
+            stake_lamports,
+            &StakeState::Uninitialized,
+            std::mem::size_of::<StakeState>(),
+            &id(),
+        )
+        .expect("stake_account");
+        let stake_keyed_account = KeyedAccount::new(&stake_pubkey, false, &stake_account);
+
+        let custodian = solana_sdk::pubkey::new_rand();
+        stake_keyed_account
+            .initialize(
+                &Authorized::auto(&stake_pubkey),
+                &Lockup {
+                    unix_timestamp: 1,
+                    epoch: 1,
+                    custodian,
+                },
+                &Rent::free(),
+            )
+            .unwrap();
+
+        // Lockup in force: authorized withdrawer cannot change it
+        assert_eq!(
+            stake_keyed_account.set_lockup(
+                &LockupArgs {
+                    unix_timestamp: Some(2),
+                    epoch: None,
+                    custodian: None
+                },
+                &vec![stake_pubkey].into_iter().collect(),
+                Some(&Clock::default())
+            ),
+            Err(InstructionError::MissingRequiredSignature)
+        );
+
+        // Lockup in force: custodian can change it
+        assert_eq!(
+            stake_keyed_account.set_lockup(
+                &LockupArgs {
+                    unix_timestamp: Some(2),
+                    epoch: None,
+                    custodian: None
+                },
+                &vec![custodian].into_iter().collect(),
+                Some(&Clock::default())
+            ),
+            Ok(())
+        );
+
+        // Lockup expired: custodian cannot change it
+        assert_eq!(
+            stake_keyed_account.set_lockup(
+                &LockupArgs {
+                    unix_timestamp: Some(3),
+                    epoch: None,
+                    custodian: None,
+                },
+                &vec![custodian].into_iter().collect(),
+                Some(&Clock {
+                    unix_timestamp: UnixTimestamp::MAX,
+                    epoch: Epoch::MAX,
+                    ..Clock::default()
+                })
+            ),
+            Err(InstructionError::MissingRequiredSignature)
+        );
+
+        // Lockup expired: authorized withdrawer can change it
+        assert_eq!(
+            stake_keyed_account.set_lockup(
+                &LockupArgs {
+                    unix_timestamp: Some(3),
+                    epoch: None,
+                    custodian: None,
+                },
+                &vec![stake_pubkey].into_iter().collect(),
+                Some(&Clock {
+                    unix_timestamp: UnixTimestamp::MAX,
+                    epoch: Epoch::MAX,
+                    ..Clock::default()
+                })
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn test_withdraw_stake() {
+        let stake_pubkey = solana_sdk::pubkey::new_rand();
+        let stake_lamports = 42;
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Uninitialized,
             std::mem::size_of::<StakeState>(),
@@ -3102,7 +3358,7 @@ mod tests {
         let mut clock = Clock::default();
 
         let to = solana_sdk::pubkey::new_rand();
-        let to_account = Account::new_ref(1, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(1, 0, &system_program::id());
         let to_keyed_account = KeyedAccount::new(&to, false, &to_account);
 
         // no signers, should fail
@@ -3115,6 +3371,7 @@ mod tests {
                 &StakeHistory::default(),
                 &to_keyed_account, // unsigned account as withdraw authority
                 None,
+                true,
             ),
             Err(InstructionError::MissingRequiredSignature)
         );
@@ -3130,6 +3387,7 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account,
                 None,
+                true,
             ),
             Ok(())
         );
@@ -3165,6 +3423,7 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account,
                 None,
+                true,
             ),
             Err(InstructionError::InsufficientFunds)
         );
@@ -3189,6 +3448,7 @@ mod tests {
                 &StakeHistory::default(),
                 &Config::default(),
                 &signers,
+                true,
             ),
             Ok(())
         );
@@ -3206,6 +3466,7 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account,
                 None,
+                true,
             ),
             Ok(())
         );
@@ -3223,6 +3484,7 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account,
                 None,
+                true,
             ),
             Err(InstructionError::InsufficientFunds)
         );
@@ -3242,6 +3504,7 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account,
                 None,
+                true,
             ),
             Err(InstructionError::InsufficientFunds)
         );
@@ -3256,6 +3519,7 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account,
                 None,
+                true,
             ),
             Ok(())
         );
@@ -3267,7 +3531,7 @@ mod tests {
         let rent_exempt_reserve = rent.minimum_balance(std::mem::size_of::<StakeState>());
         let authority_pubkey = Pubkey::new_unique();
         let stake_pubkey = Pubkey::new_unique();
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             1_000_000_000,
             &StakeState::Initialized(Meta {
                 rent_exempt_reserve,
@@ -3283,7 +3547,7 @@ mod tests {
         .expect("stake_account");
 
         let stake2_pubkey = Pubkey::new_unique();
-        let stake2_account = Account::new_ref_data_with_space(
+        let stake2_account = AccountSharedData::new_ref_data_with_space(
             1_000_000_000,
             &StakeState::Initialized(Meta {
                 rent_exempt_reserve,
@@ -3300,7 +3564,7 @@ mod tests {
 
         let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
         let stake2_keyed_account = KeyedAccount::new(&stake2_pubkey, false, &stake2_account);
-        let authority_account = Account::new_ref(42, 0, &system_program::id());
+        let authority_account = AccountSharedData::new_ref(42, 0, &system_program::id());
         let authority_keyed_account =
             KeyedAccount::new(&authority_pubkey, true, &authority_account);
 
@@ -3312,6 +3576,7 @@ mod tests {
                 &StakeHistory::default(),
                 &authority_keyed_account,
                 None,
+                true,
             ),
             Err(InstructionError::InsufficientFunds),
         );
@@ -3322,7 +3587,7 @@ mod tests {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let total_lamports = 100;
         let stake_lamports = 42;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             total_lamports,
             &StakeState::Initialized(Meta::auto(&stake_pubkey)),
             std::mem::size_of::<StakeState>(),
@@ -3335,7 +3600,7 @@ mod tests {
         future.epoch += 16;
 
         let to = solana_sdk::pubkey::new_rand();
-        let to_account = Account::new_ref(1, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(1, 0, &system_program::id());
         let to_keyed_account = KeyedAccount::new(&to, false, &to_account);
 
         let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
@@ -3360,6 +3625,7 @@ mod tests {
                 &StakeHistory::default(),
                 &Config::default(),
                 &signers,
+                true,
             ),
             Ok(())
         );
@@ -3383,6 +3649,7 @@ mod tests {
                 &stake_history,
                 &stake_keyed_account,
                 None,
+                true,
             ),
             Err(InstructionError::InsufficientFunds)
         );
@@ -3392,7 +3659,7 @@ mod tests {
     fn test_withdraw_stake_invalid_state() {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let total_lamports = 100;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             total_lamports,
             &StakeState::RewardsPool,
             std::mem::size_of::<StakeState>(),
@@ -3401,7 +3668,7 @@ mod tests {
         .expect("stake_account");
 
         let to = solana_sdk::pubkey::new_rand();
-        let to_account = Account::new_ref(1, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(1, 0, &system_program::id());
         let to_keyed_account = KeyedAccount::new(&to, false, &to_account);
         let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
         assert_eq!(
@@ -3412,6 +3679,7 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account,
                 None,
+                true,
             ),
             Err(InstructionError::InvalidAccountData)
         );
@@ -3422,7 +3690,7 @@ mod tests {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let custodian = solana_sdk::pubkey::new_rand();
         let total_lamports = 100;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             total_lamports,
             &StakeState::Initialized(Meta {
                 lockup: Lockup {
@@ -3438,7 +3706,7 @@ mod tests {
         .expect("stake_account");
 
         let to = solana_sdk::pubkey::new_rand();
-        let to_account = Account::new_ref(1, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(1, 0, &system_program::id());
         let to_keyed_account = KeyedAccount::new(&to, false, &to_account);
 
         let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
@@ -3454,12 +3722,13 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account,
                 None,
+                true,
             ),
             Err(StakeError::LockupInForce.into())
         );
 
         {
-            let custodian_account = Account::new_ref(1, 0, &system_program::id());
+            let custodian_account = AccountSharedData::new_ref(1, 0, &system_program::id());
             let custodian_keyed_account = KeyedAccount::new(&custodian, true, &custodian_account);
             assert_eq!(
                 stake_keyed_account.withdraw(
@@ -3469,6 +3738,7 @@ mod tests {
                     &StakeHistory::default(),
                     &stake_keyed_account,
                     Some(&custodian_keyed_account),
+                    true,
                 ),
                 Ok(())
             );
@@ -3487,6 +3757,7 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account,
                 None,
+                true,
             ),
             Ok(())
         );
@@ -3498,7 +3769,7 @@ mod tests {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let custodian = stake_pubkey;
         let total_lamports = 100;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             total_lamports,
             &StakeState::Initialized(Meta {
                 lockup: Lockup {
@@ -3514,7 +3785,7 @@ mod tests {
         .expect("stake_account");
 
         let to = solana_sdk::pubkey::new_rand();
-        let to_account = Account::new_ref(1, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(1, 0, &system_program::id());
         let to_keyed_account = KeyedAccount::new(&to, false, &to_account);
 
         let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
@@ -3530,6 +3801,7 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account,
                 None,
+                true,
             ),
             Err(StakeError::LockupInForce.into())
         );
@@ -3544,11 +3816,108 @@ mod tests {
                     &StakeHistory::default(),
                     &stake_keyed_account,
                     Some(&custodian_keyed_account),
+                    true,
                 ),
                 Ok(())
             );
             assert_eq!(stake_keyed_account.state(), Ok(StakeState::Uninitialized));
         }
+    }
+
+    #[test]
+    fn test_withdraw_rent_exempt() {
+        let stake_pubkey = solana_sdk::pubkey::new_rand();
+        let clock = Clock::default();
+        let rent = Rent::default();
+        let rent_exempt_reserve = rent.minimum_balance(std::mem::size_of::<StakeState>());
+        let stake = 42;
+        let stake_account = AccountSharedData::new_ref_data_with_space(
+            stake + rent_exempt_reserve,
+            &StakeState::Initialized(Meta {
+                rent_exempt_reserve,
+                ..Meta::auto(&stake_pubkey)
+            }),
+            std::mem::size_of::<StakeState>(),
+            &id(),
+        )
+        .expect("stake_account");
+
+        let to = solana_sdk::pubkey::new_rand();
+        let to_account = AccountSharedData::new_ref(1, 0, &system_program::id());
+        let to_keyed_account = KeyedAccount::new(&to, false, &to_account);
+
+        // Withdrawing account down to only rent-exempt reserve should succeed before feature, and
+        // fail after
+        let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
+        assert_eq!(
+            stake_keyed_account.withdraw(
+                stake,
+                &to_keyed_account,
+                &clock,
+                &StakeHistory::default(),
+                &stake_keyed_account,
+                None,
+                false,
+            ),
+            Ok(())
+        );
+        stake_account.borrow_mut().lamports += stake; // top up account
+        let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
+        assert_eq!(
+            stake_keyed_account.withdraw(
+                stake,
+                &to_keyed_account,
+                &clock,
+                &StakeHistory::default(),
+                &stake_keyed_account,
+                None,
+                true,
+            ),
+            Err(InstructionError::InsufficientFunds)
+        );
+
+        // Withdrawal that would leave less than rent-exempt reserve should fail
+        let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
+        assert_eq!(
+            stake_keyed_account.withdraw(
+                stake + 1,
+                &to_keyed_account,
+                &clock,
+                &StakeHistory::default(),
+                &stake_keyed_account,
+                None,
+                false,
+            ),
+            Err(InstructionError::InsufficientFunds)
+        );
+        let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
+        assert_eq!(
+            stake_keyed_account.withdraw(
+                stake + 1,
+                &to_keyed_account,
+                &clock,
+                &StakeHistory::default(),
+                &stake_keyed_account,
+                None,
+                true,
+            ),
+            Err(InstructionError::InsufficientFunds)
+        );
+
+        // Withdrawal of complete account should succeed
+        let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
+        assert_eq!(
+            stake_keyed_account.withdraw(
+                stake + rent_exempt_reserve,
+                &to_keyed_account,
+                &clock,
+                &StakeHistory::default(),
+                &stake_keyed_account,
+                None,
+                true,
+            ),
+            Ok(())
+        );
     }
 
     #[test]
@@ -3851,7 +4220,7 @@ mod tests {
     fn test_authorize_uninit() {
         let new_authority = solana_sdk::pubkey::new_rand();
         let stake_lamports = 42;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::default(),
             std::mem::size_of::<StakeState>(),
@@ -3878,7 +4247,7 @@ mod tests {
     fn test_authorize_lockup() {
         let stake_authority = solana_sdk::pubkey::new_rand();
         let stake_lamports = 42;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Initialized(Meta::auto(&stake_authority)),
             std::mem::size_of::<StakeState>(),
@@ -3887,7 +4256,7 @@ mod tests {
         .expect("stake_account");
 
         let to = solana_sdk::pubkey::new_rand();
-        let to_account = Account::new_ref(1, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(1, 0, &system_program::id());
         let to_keyed_account = KeyedAccount::new(&to, false, &to_account);
 
         let clock = Clock::default();
@@ -3987,6 +4356,7 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account, // old signer
                 None,
+                true,
             ),
             Err(InstructionError::MissingRequiredSignature)
         );
@@ -4003,6 +4373,7 @@ mod tests {
                 &StakeHistory::default(),
                 &stake_keyed_account2,
                 None,
+                true,
             ),
             Ok(())
         );
@@ -4015,7 +4386,7 @@ mod tests {
         let seed = "42";
         let withdrawer_pubkey = Pubkey::create_with_seed(&base_pubkey, &seed, &id()).unwrap();
         let stake_lamports = 42;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Initialized(Meta::auto(&withdrawer_pubkey)),
             std::mem::size_of::<StakeState>(),
@@ -4023,7 +4394,7 @@ mod tests {
         )
         .expect("stake_account");
 
-        let base_account = Account::new_ref(1, 0, &id());
+        let base_account = AccountSharedData::new_ref(1, 0, &id());
         let base_keyed_account = KeyedAccount::new(&base_pubkey, true, &base_account);
 
         let stake_keyed_account = KeyedAccount::new(&withdrawer_pubkey, true, &stake_account);
@@ -4110,7 +4481,7 @@ mod tests {
     fn test_authorize_override() {
         let withdrawer_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = 42;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Initialized(Meta::auto(&withdrawer_pubkey)),
             std::mem::size_of::<StakeState>(),
@@ -4197,7 +4568,7 @@ mod tests {
     fn test_split_source_uninitialized() {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = MIN_DELEGATE_STAKE_AMOUNT * 2;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Uninitialized,
             std::mem::size_of::<StakeState>(),
@@ -4206,7 +4577,7 @@ mod tests {
         .expect("stake_account");
 
         let split_stake_pubkey = solana_sdk::pubkey::new_rand();
-        let split_stake_account = Account::new_ref_data_with_space(
+        let split_stake_account = AccountSharedData::new_ref_data_with_space(
             0,
             &StakeState::Uninitialized,
             std::mem::size_of::<StakeState>(),
@@ -4244,7 +4615,7 @@ mod tests {
     fn test_split_split_not_uninitialized() {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = MIN_DELEGATE_STAKE_AMOUNT * 2;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Stake(Meta::auto(&stake_pubkey), Stake::just_stake(stake_lamports)),
             std::mem::size_of::<StakeState>(),
@@ -4253,7 +4624,7 @@ mod tests {
         .expect("stake_account");
 
         let split_stake_pubkey = solana_sdk::pubkey::new_rand();
-        let split_stake_account = Account::new_ref_data_with_space(
+        let split_stake_account = AccountSharedData::new_ref_data_with_space(
             0,
             &StakeState::Initialized(Meta::auto(&stake_pubkey)),
             std::mem::size_of::<StakeState>(),
@@ -4286,7 +4657,7 @@ mod tests {
     fn test_split_more_than_staked() {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = 42 + MIN_DELEGATE_STAKE_AMOUNT * 2;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Stake(
                 Meta::auto(&stake_pubkey),
@@ -4298,7 +4669,7 @@ mod tests {
         .expect("stake_account");
 
         let split_stake_pubkey = solana_sdk::pubkey::new_rand();
-        let split_stake_account = Account::new_ref_data_with_space(
+        let split_stake_account = AccountSharedData::new_ref_data_with_space(
             0,
             &StakeState::Uninitialized,
             std::mem::size_of::<StakeState>(),
@@ -4344,7 +4715,7 @@ mod tests {
                 Stake::just_stake(stake_lamports - rent_exempt_reserve),
             ),
         ] {
-            let stake_account = Account::new_ref_data_with_space(
+            let stake_account = AccountSharedData::new_ref_data_with_space(
                 stake_lamports,
                 state,
                 std::mem::size_of::<StakeState>(),
@@ -4354,7 +4725,7 @@ mod tests {
 
             let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
 
-            let split_stake_account = Account::new_ref_data_with_space(
+            let split_stake_account = AccountSharedData::new_ref_data_with_space(
                 0,
                 &StakeState::Uninitialized,
                 std::mem::size_of::<StakeState>(),
@@ -4439,7 +4810,7 @@ mod tests {
             StakeState::Initialized(Meta::auto(&stake_pubkey)),
             StakeState::Stake(Meta::auto(&stake_pubkey), Stake::just_stake(stake_lamports)),
         ] {
-            let split_stake_account = Account::new_ref_data_with_space(
+            let split_stake_account = AccountSharedData::new_ref_data_with_space(
                 0,
                 &StakeState::Uninitialized,
                 std::mem::size_of::<StakeState>(),
@@ -4450,7 +4821,7 @@ mod tests {
             let split_stake_keyed_account =
                 KeyedAccount::new(&split_stake_pubkey, true, &split_stake_account);
 
-            let stake_account = Account::new_ref_data_with_space(
+            let stake_account = AccountSharedData::new_ref_data_with_space(
                 stake_lamports,
                 state,
                 std::mem::size_of::<StakeState>(),
@@ -4526,7 +4897,7 @@ mod tests {
         let split_stake_pubkey = solana_sdk::pubkey::new_rand();
         let signers = vec![stake_pubkey].into_iter().collect();
 
-        let split_stake_account = Account::new_ref_data_with_space(
+        let split_stake_account = AccountSharedData::new_ref_data_with_space(
             0,
             &StakeState::Uninitialized,
             std::mem::size_of::<StakeState>(),
@@ -4537,7 +4908,7 @@ mod tests {
         let split_stake_keyed_account =
             KeyedAccount::new(&split_stake_pubkey, true, &split_stake_account);
 
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Stake(Meta::auto(&stake_pubkey), Stake::just_stake(stake_lamports)),
             std::mem::size_of::<StakeState>(),
@@ -4577,7 +4948,7 @@ mod tests {
         // test_split, since that test uses a Meta with rent_exempt_reserve = 0
         let split_lamport_balances = vec![0, 1, rent_exempt_reserve, rent_exempt_reserve + 1];
         for initial_balance in split_lamport_balances {
-            let split_stake_account = Account::new_ref_data_with_space(
+            let split_stake_account = AccountSharedData::new_ref_data_with_space(
                 initial_balance,
                 &StakeState::Uninitialized,
                 std::mem::size_of::<StakeState>(),
@@ -4588,7 +4959,7 @@ mod tests {
             let split_stake_keyed_account =
                 KeyedAccount::new(&split_stake_pubkey, true, &split_stake_account);
 
-            let stake_account = Account::new_ref_data_with_space(
+            let stake_account = AccountSharedData::new_ref_data_with_space(
                 stake_lamports,
                 &state,
                 std::mem::size_of::<StakeState>(),
@@ -4692,7 +5063,7 @@ mod tests {
             expected_rent_exempt_reserve + 1,
         ];
         for initial_balance in split_lamport_balances {
-            let split_stake_account = Account::new_ref_data_with_space(
+            let split_stake_account = AccountSharedData::new_ref_data_with_space(
                 initial_balance,
                 &StakeState::Uninitialized,
                 std::mem::size_of::<StakeState>(),
@@ -4703,7 +5074,7 @@ mod tests {
             let split_stake_keyed_account =
                 KeyedAccount::new(&split_stake_pubkey, true, &split_stake_account);
 
-            let stake_account = Account::new_ref_data_with_space(
+            let stake_account = AccountSharedData::new_ref_data_with_space(
                 stake_lamports,
                 &state,
                 std::mem::size_of::<StakeState>() + 100,
@@ -4811,7 +5182,7 @@ mod tests {
             MIN_DELEGATE_STAKE_AMOUNT + expected_rent_exempt_reserve + 1,
         ];
         for initial_balance in split_lamport_balances {
-            let split_stake_account = Account::new_ref_data_with_space(
+            let split_stake_account = AccountSharedData::new_ref_data_with_space(
                 initial_balance,
                 &StakeState::Uninitialized,
                 std::mem::size_of::<StakeState>() + 100,
@@ -4822,7 +5193,7 @@ mod tests {
             let split_stake_keyed_account =
                 KeyedAccount::new(&split_stake_pubkey, true, &split_stake_account);
 
-            let stake_account = Account::new_ref_data_with_space(
+            let stake_account = AccountSharedData::new_ref_data_with_space(
                 stake_lamports,
                 &state,
                 std::mem::size_of::<StakeState>(),
@@ -4840,6 +5211,11 @@ mod tests {
             } else {
                 assert_eq!(split_result, Ok(()));
             }
+
+            // Splitting 100% of source should not make a difference
+            let split_result =
+                stake_keyed_account.split(stake_lamports, &split_stake_keyed_account, &signers);
+            assert_eq!(split_result, Err(InstructionError::InvalidAccountData));
         }
     }
 
@@ -4867,7 +5243,7 @@ mod tests {
                 Stake::just_stake(stake_lamports - rent_exempt_reserve),
             ),
         ] {
-            let split_stake_account = Account::new_ref_data_with_space(
+            let split_stake_account = AccountSharedData::new_ref_data_with_space(
                 0,
                 &StakeState::Uninitialized,
                 std::mem::size_of::<StakeState>(),
@@ -4878,7 +5254,7 @@ mod tests {
             let split_stake_keyed_account =
                 KeyedAccount::new(&split_stake_pubkey, true, &split_stake_account);
 
-            let stake_account = Account::new_ref_data_with_space(
+            let stake_account = AccountSharedData::new_ref_data_with_space(
                 stake_lamports,
                 state,
                 std::mem::size_of::<StakeState>(),
@@ -4954,7 +5330,7 @@ mod tests {
         // covered in test_split_100_percent_of_source, but included here as well for readability
         let split_lamport_balances = vec![0, 1, rent_exempt_reserve, rent_exempt_reserve + 1];
         for initial_balance in split_lamport_balances {
-            let split_stake_account = Account::new_ref_data_with_space(
+            let split_stake_account = AccountSharedData::new_ref_data_with_space(
                 initial_balance,
                 &StakeState::Uninitialized,
                 std::mem::size_of::<StakeState>(),
@@ -4965,7 +5341,7 @@ mod tests {
             let split_stake_keyed_account =
                 KeyedAccount::new(&split_stake_pubkey, true, &split_stake_account);
 
-            let stake_account = Account::new_ref_data_with_space(
+            let stake_account = AccountSharedData::new_ref_data_with_space(
                 stake_lamports,
                 &state,
                 std::mem::size_of::<StakeState>(),
@@ -5030,7 +5406,7 @@ mod tests {
             ),
         ] {
             // Test that splitting to a larger account fails, because of rent exempt
-            let split_stake_account = Account::new_ref_data_with_space(
+            let split_stake_account = AccountSharedData::new_ref_data_with_space(
                 0,
                 &StakeState::Uninitialized,
                 std::mem::size_of::<StakeState>() + 10000,
@@ -5040,7 +5416,7 @@ mod tests {
             let split_stake_keyed_account =
                 KeyedAccount::new(&split_stake_pubkey, true, &split_stake_account);
 
-            let stake_account = Account::new_ref_data_with_space(
+            let stake_account = AccountSharedData::new_ref_data_with_space(
                 stake_lamports,
                 &state,
                 std::mem::size_of::<StakeState>(),
@@ -5051,12 +5427,12 @@ mod tests {
 
             assert_eq!(
                 stake_keyed_account.split(stake_lamports, &split_stake_keyed_account, &signers),
-                Err(InstructionError::InsufficientFunds)
+                Err(InstructionError::InvalidAccountData)
             );
 
             // Test that splitting from a larger account to a smaller one works.
             // Split amount should not matter, assuming other fund criteria are met
-            let split_stake_account = Account::new_ref_data_with_space(
+            let split_stake_account = AccountSharedData::new_ref_data_with_space(
                 0,
                 &StakeState::Uninitialized,
                 std::mem::size_of::<StakeState>(),
@@ -5066,7 +5442,7 @@ mod tests {
             let split_stake_keyed_account =
                 KeyedAccount::new(&split_stake_pubkey, true, &split_stake_account);
 
-            let stake_account = Account::new_ref_data_with_space(
+            let stake_account = AccountSharedData::new_ref_data_with_space(
                 stake_lamports,
                 &state,
                 std::mem::size_of::<StakeState>() + 100,
@@ -5159,7 +5535,7 @@ mod tests {
                     Stake::just_stake(stake_lamports),
                 ),
             ] {
-                let stake_account = Account::new_ref_data_with_space(
+                let stake_account = AccountSharedData::new_ref_data_with_space(
                     stake_lamports,
                     state,
                     std::mem::size_of::<StakeState>(),
@@ -5168,7 +5544,7 @@ mod tests {
                 .expect("stake_account");
                 let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
 
-                let source_stake_account = Account::new_ref_data_with_space(
+                let source_stake_account = AccountSharedData::new_ref_data_with_space(
                     stake_lamports,
                     source_state,
                     std::mem::size_of::<StakeState>(),
@@ -5185,7 +5561,8 @@ mod tests {
                         &source_stake_keyed_account,
                         &Clock::default(),
                         &StakeHistory::default(),
-                        &HashSet::new()
+                        &HashSet::new(),
+                        false,
                     ),
                     Err(InstructionError::MissingRequiredSignature)
                 );
@@ -5196,7 +5573,8 @@ mod tests {
                         &source_stake_keyed_account,
                         &Clock::default(),
                         &StakeHistory::default(),
-                        &signers
+                        &signers,
+                        false,
                     ),
                     Ok(())
                 );
@@ -5272,7 +5650,7 @@ mod tests {
             },
             ..Stake::default()
         };
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Stake(meta, stake),
             std::mem::size_of::<StakeState>(),
@@ -5288,6 +5666,7 @@ mod tests {
                 &Clock::default(),
                 &StakeHistory::default(),
                 &signers,
+                false,
             ),
             Err(InstructionError::InvalidArgument),
         );
@@ -5319,7 +5698,7 @@ mod tests {
                     Stake::just_stake(stake_lamports),
                 ),
             ] {
-                let stake_account = Account::new_ref_data_with_space(
+                let stake_account = AccountSharedData::new_ref_data_with_space(
                     stake_lamports,
                     state,
                     std::mem::size_of::<StakeState>(),
@@ -5328,7 +5707,7 @@ mod tests {
                 .expect("stake_account");
                 let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
 
-                let source_stake_account = Account::new_ref_data_with_space(
+                let source_stake_account = AccountSharedData::new_ref_data_with_space(
                     stake_lamports,
                     source_state,
                     std::mem::size_of::<StakeState>(),
@@ -5345,6 +5724,7 @@ mod tests {
                         &Clock::default(),
                         &StakeHistory::default(),
                         &wrong_signers,
+                        false,
                     ),
                     Err(InstructionError::MissingRequiredSignature)
                 );
@@ -5356,6 +5736,7 @@ mod tests {
                         &Clock::default(),
                         &StakeHistory::default(),
                         &signers,
+                        false,
                     ),
                     Err(StakeError::MergeMismatch.into())
                 );
@@ -5382,7 +5763,7 @@ mod tests {
             ),
         ] {
             for source_state in &[StakeState::Uninitialized, StakeState::RewardsPool] {
-                let stake_account = Account::new_ref_data_with_space(
+                let stake_account = AccountSharedData::new_ref_data_with_space(
                     stake_lamports,
                     state,
                     std::mem::size_of::<StakeState>(),
@@ -5391,7 +5772,7 @@ mod tests {
                 .expect("stake_account");
                 let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
 
-                let source_stake_account = Account::new_ref_data_with_space(
+                let source_stake_account = AccountSharedData::new_ref_data_with_space(
                     stake_lamports,
                     source_state,
                     std::mem::size_of::<StakeState>(),
@@ -5408,6 +5789,7 @@ mod tests {
                         &Clock::default(),
                         &StakeHistory::default(),
                         &signers,
+                        false,
                     ),
                     Err(InstructionError::InvalidAccountData)
                 );
@@ -5425,7 +5807,7 @@ mod tests {
 
         let signers = vec![authorized_pubkey].into_iter().collect();
 
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Stake(
                 Meta::auto(&authorized_pubkey),
@@ -5437,7 +5819,7 @@ mod tests {
         .expect("stake_account");
         let stake_keyed_account = KeyedAccount::new(&stake_pubkey, true, &stake_account);
 
-        let source_stake_account = Account::new_ref_data_with_space(
+        let source_stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Stake(
                 Meta::auto(&authorized_pubkey),
@@ -5456,7 +5838,8 @@ mod tests {
                 &source_stake_keyed_account,
                 &Clock::default(),
                 &StakeHistory::default(),
-                &signers
+                &signers,
+                false,
             ),
             Err(InstructionError::IncorrectProgramId)
         );
@@ -5489,7 +5872,7 @@ mod tests {
             },
             ..Stake::default()
         };
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Stake(meta, stake),
             std::mem::size_of::<StakeState>(),
@@ -5507,7 +5890,7 @@ mod tests {
             },
             ..stake
         };
-        let source_account = Account::new_ref_data_with_space(
+        let source_account = AccountSharedData::new_ref_data_with_space(
             source_lamports,
             &StakeState::Stake(meta, source_stake),
             std::mem::size_of::<StakeState>(),
@@ -5553,6 +5936,7 @@ mod tests {
                 clock,
                 stake_history,
                 signers,
+                false,
             );
             if result.is_ok() {
                 assert_eq!(test_source_keyed.state(), Ok(StakeState::Uninitialized),);
@@ -5813,7 +6197,7 @@ mod tests {
     fn test_authorize_delegated_stake() {
         let stake_pubkey = solana_sdk::pubkey::new_rand();
         let stake_lamports = 42;
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Initialized(Meta::auto(&stake_pubkey)),
             std::mem::size_of::<StakeState>(),
@@ -5841,6 +6225,7 @@ mod tests {
                 &StakeHistory::default(),
                 &Config::default(),
                 &signers,
+                true,
             )
             .unwrap();
 
@@ -5888,6 +6273,7 @@ mod tests {
                 &StakeHistory::default(),
                 &Config::default(),
                 &other_signers,
+                true,
             ),
             Err(InstructionError::MissingRequiredSignature)
         );
@@ -5900,7 +6286,8 @@ mod tests {
                 &clock,
                 &StakeHistory::default(),
                 &Config::default(),
-                &new_signers
+                &new_signers,
+                true,
             ),
             Ok(())
         );
@@ -5924,7 +6311,7 @@ mod tests {
             rent_exempt_reserve,
             ..Meta::auto(&withdrawer_pubkey)
         };
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Initialized(meta),
             std::mem::size_of::<StakeState>(),
@@ -5953,6 +6340,7 @@ mod tests {
                 &stake_history,
                 &config,
                 &signers,
+                true,
             )
             .unwrap();
 
@@ -5960,8 +6348,9 @@ mod tests {
         stake_keyed_account.deactivate(&clock, &signers).unwrap();
 
         clock.epoch += 1;
+        // Once deactivated, we withdraw stake to new keyed account
         let to = Pubkey::new_unique();
-        let to_account = Account::new_ref(1, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(1, 0, &system_program::id());
         let to_keyed_account = KeyedAccount::new(&to, false, &to_account);
         let withdraw_lamports = initial_lamports / 2;
         stake_keyed_account
@@ -5972,6 +6361,7 @@ mod tests {
                 &stake_history,
                 &stake_keyed_account,
                 None,
+                true,
             )
             .unwrap();
         let expected_balance = rent_exempt_reserve + initial_lamports - withdraw_lamports;
@@ -5985,6 +6375,7 @@ mod tests {
                 &stake_history,
                 &config,
                 &signers,
+                true,
             )
             .unwrap();
         let stake = StakeState::stake_from(&stake_account.borrow()).unwrap();
@@ -6007,6 +6398,7 @@ mod tests {
                 &stake_history,
                 &config,
                 &signers,
+                true,
             )
             .unwrap();
         let stake = StakeState::stake_from(&stake_account.borrow()).unwrap();
@@ -6097,7 +6489,7 @@ mod tests {
                 rent_exempt_reserve: rent_exempt_reserve + offset,
                 ..Meta::default()
             };
-            let mut account = Account::new(account_balance, right_data_len, &id());
+            let mut account = AccountSharedData::new(account_balance, right_data_len, &id());
             account.set_state(&StakeState::Initialized(meta)).unwrap();
             let result = rewrite_stakes(&mut account, &rent);
             match expected_rewrite {
@@ -6133,7 +6525,7 @@ mod tests {
                 }),
                 ..Stake::default()
             };
-            let mut account = Account::new(account_balance, right_data_len, &id());
+            let mut account = AccountSharedData::new(account_balance, right_data_len, &id());
             account.set_state(&StakeState::Stake(meta, stake)).unwrap();
             let result = rewrite_stakes(&mut account, &rent);
             match expected_rewrite {
@@ -6276,11 +6668,19 @@ mod tests {
             &good_delegation
         )
         .is_err());
+    }
 
+    #[test]
+    fn test_metas_can_merge_pre_v4() {
+        let invoke_context = MockInvokeContext::default();
         // Identical Metas can merge
-        assert!(
-            MergeKind::metas_can_merge(&invoke_context, &Meta::default(), &Meta::default()).is_ok()
-        );
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &Meta::default(),
+            &Meta::default(),
+            None,
+        )
+        .is_ok());
 
         let mismatched_rent_exempt_reserve_ok = Meta {
             rent_exempt_reserve: 42,
@@ -6293,13 +6693,15 @@ mod tests {
         assert!(MergeKind::metas_can_merge(
             &invoke_context,
             &Meta::default(),
-            &mismatched_rent_exempt_reserve_ok
+            &mismatched_rent_exempt_reserve_ok,
+            None,
         )
         .is_ok());
         assert!(MergeKind::metas_can_merge(
             &invoke_context,
             &mismatched_rent_exempt_reserve_ok,
-            &Meta::default()
+            &Meta::default(),
+            None,
         )
         .is_ok());
 
@@ -6317,13 +6719,15 @@ mod tests {
         assert!(MergeKind::metas_can_merge(
             &invoke_context,
             &Meta::default(),
-            &mismatched_authorized_fails
+            &mismatched_authorized_fails,
+            None,
         )
         .is_err());
         assert!(MergeKind::metas_can_merge(
             &invoke_context,
             &mismatched_authorized_fails,
-            &Meta::default()
+            &Meta::default(),
+            None,
         )
         .is_err());
 
@@ -6339,15 +6743,163 @@ mod tests {
         assert!(MergeKind::metas_can_merge(
             &invoke_context,
             &Meta::default(),
-            &mismatched_lockup_fails
+            &mismatched_lockup_fails,
+            None,
         )
         .is_err());
         assert!(MergeKind::metas_can_merge(
             &invoke_context,
             &mismatched_lockup_fails,
-            &Meta::default()
+            &Meta::default(),
+            None,
         )
         .is_err());
+    }
+
+    #[test]
+    fn test_metas_can_merge_v4() {
+        let invoke_context = MockInvokeContext::default();
+        // Identical Metas can merge
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &Meta::default(),
+            &Meta::default(),
+            Some(&Clock::default())
+        )
+        .is_ok());
+
+        let mismatched_rent_exempt_reserve_ok = Meta {
+            rent_exempt_reserve: 42,
+            ..Meta::default()
+        };
+        assert_ne!(
+            mismatched_rent_exempt_reserve_ok.rent_exempt_reserve,
+            Meta::default().rent_exempt_reserve,
+        );
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &Meta::default(),
+            &mismatched_rent_exempt_reserve_ok,
+            Some(&Clock::default())
+        )
+        .is_ok());
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &mismatched_rent_exempt_reserve_ok,
+            &Meta::default(),
+            Some(&Clock::default())
+        )
+        .is_ok());
+
+        let mismatched_authorized_fails = Meta {
+            authorized: Authorized {
+                staker: Pubkey::new_unique(),
+                withdrawer: Pubkey::new_unique(),
+            },
+            ..Meta::default()
+        };
+        assert_ne!(
+            mismatched_authorized_fails.authorized,
+            Meta::default().authorized,
+        );
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &Meta::default(),
+            &mismatched_authorized_fails,
+            Some(&Clock::default())
+        )
+        .is_err());
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &mismatched_authorized_fails,
+            &Meta::default(),
+            Some(&Clock::default())
+        )
+        .is_err());
+
+        let lockup1_timestamp = 42;
+        let lockup2_timestamp = 4242;
+        let lockup1_epoch = 4;
+        let lockup2_epoch = 42;
+        let metas_with_lockup1 = Meta {
+            lockup: Lockup {
+                unix_timestamp: lockup1_timestamp,
+                epoch: lockup1_epoch,
+                custodian: Pubkey::new_unique(),
+            },
+            ..Meta::default()
+        };
+        let metas_with_lockup2 = Meta {
+            lockup: Lockup {
+                unix_timestamp: lockup2_timestamp,
+                epoch: lockup2_epoch,
+                custodian: Pubkey::new_unique(),
+            },
+            ..Meta::default()
+        };
+
+        // Mismatched lockups fail when both in force
+        assert_ne!(metas_with_lockup1.lockup, Meta::default().lockup);
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &metas_with_lockup1,
+            &metas_with_lockup2,
+            Some(&Clock::default())
+        )
+        .is_err());
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &metas_with_lockup2,
+            &metas_with_lockup1,
+            Some(&Clock::default())
+        )
+        .is_err());
+
+        let clock = Clock {
+            epoch: lockup1_epoch + 1,
+            unix_timestamp: lockup1_timestamp + 1,
+            ..Clock::default()
+        };
+
+        // Mismatched lockups fail when either in force
+        assert_ne!(metas_with_lockup1.lockup, Meta::default().lockup);
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &metas_with_lockup1,
+            &metas_with_lockup2,
+            Some(&clock)
+        )
+        .is_err());
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &metas_with_lockup2,
+            &metas_with_lockup1,
+            Some(&clock)
+        )
+        .is_err());
+
+        let clock = Clock {
+            epoch: lockup2_epoch + 1,
+            unix_timestamp: lockup2_timestamp + 1,
+            ..Clock::default()
+        };
+
+        // Mismatched lockups succeed when both expired
+        assert_ne!(metas_with_lockup1.lockup, Meta::default().lockup);
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &metas_with_lockup1,
+            &metas_with_lockup2,
+            Some(&clock)
+        )
+        .is_ok());
+        assert!(MergeKind::metas_can_merge(
+            &invoke_context,
+            &metas_with_lockup2,
+            &metas_with_lockup1,
+            Some(&clock)
+        )
+        .is_ok());
     }
 
     #[test]
@@ -6363,7 +6915,7 @@ mod tests {
             rent_exempt_reserve,
             ..Meta::auto(&authority_pubkey)
         };
-        let stake_account = Account::new_ref_data_with_space(
+        let stake_account = AccountSharedData::new_ref_data_with_space(
             stake_lamports,
             &StakeState::Uninitialized,
             std::mem::size_of::<StakeState>(),
@@ -6605,37 +7157,37 @@ mod tests {
         assert_eq!(
             inactive
                 .clone()
-                .merge(&invoke_context, inactive.clone())
+                .merge(&invoke_context, inactive.clone(), None)
                 .unwrap(),
             None
         );
         assert_eq!(
             inactive
                 .clone()
-                .merge(&invoke_context, activation_epoch.clone())
+                .merge(&invoke_context, activation_epoch.clone(), None)
                 .unwrap(),
             None
         );
         assert!(inactive
             .clone()
-            .merge(&invoke_context, fully_active.clone())
+            .merge(&invoke_context, fully_active.clone(), None)
             .is_err());
         assert!(activation_epoch
             .clone()
-            .merge(&invoke_context, fully_active.clone())
+            .merge(&invoke_context, fully_active.clone(), None)
             .is_err());
         assert!(fully_active
             .clone()
-            .merge(&invoke_context, inactive.clone())
+            .merge(&invoke_context, inactive.clone(), None)
             .is_err());
         assert!(fully_active
             .clone()
-            .merge(&invoke_context, activation_epoch.clone())
+            .merge(&invoke_context, activation_epoch.clone(), None)
             .is_err());
 
         let new_state = activation_epoch
             .clone()
-            .merge(&invoke_context, inactive)
+            .merge(&invoke_context, inactive, None)
             .unwrap()
             .unwrap();
         let delegation = new_state.delegation().unwrap();
@@ -6643,7 +7195,7 @@ mod tests {
 
         let new_state = activation_epoch
             .clone()
-            .merge(&invoke_context, activation_epoch)
+            .merge(&invoke_context, activation_epoch, None)
             .unwrap()
             .unwrap();
         let delegation = new_state.delegation().unwrap();
@@ -6654,7 +7206,7 @@ mod tests {
 
         let new_state = fully_active
             .clone()
-            .merge(&invoke_context, fully_active)
+            .merge(&invoke_context, fully_active, None)
             .unwrap()
             .unwrap();
         let delegation = new_state.delegation().unwrap();

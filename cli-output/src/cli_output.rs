@@ -15,8 +15,8 @@ use {
     solana_account_decoder::parse_token::UiTokenAccount,
     solana_clap_utils::keypair::SignOnly,
     solana_client::rpc_response::{
-        RpcAccountBalance, RpcInflationGovernor, RpcInflationRate, RpcKeyedAccount, RpcSupply,
-        RpcVoteAccountInfo,
+        RpcAccountBalance, RpcContactInfo, RpcInflationGovernor, RpcInflationRate, RpcKeyedAccount,
+        RpcSupply, RpcVoteAccountInfo,
     },
     solana_sdk::{
         clock::{Epoch, Slot, UnixTimestamp},
@@ -35,7 +35,7 @@ use {
     },
     solana_vote_program::{
         authorized_voters::AuthorizedVoters,
-        vote_state::{BlockTimestamp, Lockout},
+        vote_state::{BlockTimestamp, Lockout, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
     },
     std::{
         collections::{BTreeMap, HashMap},
@@ -303,6 +303,19 @@ pub struct CliValidatorsStakeByVersion {
     pub delinquent_active_stake: u64,
 }
 
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
+pub enum CliValidatorsSortOrder {
+    Delinquent,
+    Commission,
+    EpochCredits,
+    Identity,
+    LastVote,
+    Root,
+    SkipRate,
+    Stake,
+    VoteAccount,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliValidators {
@@ -310,8 +323,13 @@ pub struct CliValidators {
     pub total_active_stake: u64,
     pub total_current_stake: u64,
     pub total_delinquent_stake: u64,
-    pub current_validators: Vec<CliValidator>,
-    pub delinquent_validators: Vec<CliValidator>,
+    pub validators: Vec<CliValidator>,
+    #[serde(skip_serializing)]
+    pub validators_sort_order: CliValidatorsSortOrder,
+    #[serde(skip_serializing)]
+    pub validators_reverse_sort: bool,
+    #[serde(skip_serializing)]
+    pub number_validators: bool,
     pub stake_by_version: BTreeMap<String, CliValidatorsStakeByVersion>,
     #[serde(skip_serializing)]
     pub use_lamports_unit: bool,
@@ -327,30 +345,40 @@ impl fmt::Display for CliValidators {
             validator: &CliValidator,
             total_active_stake: u64,
             use_lamports_unit: bool,
-            delinquent: bool,
+            highest_last_vote: u64,
+            highest_root: u64,
         ) -> fmt::Result {
-            fn non_zero_or_dash(v: u64) -> String {
+            fn non_zero_or_dash(v: u64, max_v: u64) -> String {
                 if v == 0 {
-                    "-".into()
+                    "-         ".into()
+                } else if v == max_v {
+                    format!("{:>8} (  0)", v)
+                } else if v > max_v.saturating_sub(100) {
+                    format!("{:>8} ({:>3})", v, -(max_v.saturating_sub(v) as isize))
                 } else {
-                    format!("{}", v)
+                    format!("{:>8}      ", v)
                 }
             }
 
             writeln!(
                 f,
-                "{} {:<44}  {:<44}  {:>3}%   {:>8}  {:>10}  {:>10}  {:>8}  {}",
-                if delinquent {
+                "{} {:<44}  {:<44}  {:>3}%  {:>14}  {:>14} {:>7} {:>8}  {:>7}  {}",
+                if validator.delinquent {
                     WARNING.to_string()
                 } else {
-                    " ".to_string()
+                    "\u{a0}".to_string()
                 },
                 validator.identity_pubkey,
                 validator.vote_account_pubkey,
                 validator.commission,
-                non_zero_or_dash(validator.last_vote),
-                non_zero_or_dash(validator.root_slot),
-                validator.credits,
+                non_zero_or_dash(validator.last_vote, highest_last_vote),
+                non_zero_or_dash(validator.root_slot, highest_root),
+                if let Some(skip_rate) = validator.skip_rate {
+                    format!("{:.2}%", skip_rate)
+                } else {
+                    "- ".to_string()
+                },
+                validator.epoch_credits,
                 validator.version,
                 if validator.activated_stake > 0 {
                     format!(
@@ -364,45 +392,99 @@ impl fmt::Display for CliValidators {
             )
         }
 
-        writeln_name_value(
-            f,
-            "Validators majority count:",
-            &self.majority_count.to_string(),
-        )?;
+        let padding = if self.number_validators {
+            ((self.validators.len() + 1) as f64).log10().floor() as usize + 1
+        } else {
+            0
+        };
+        let header = style(format!(
+            "{:padding$} {:<44}  {:<38}  {}  {}  {} {}  {}  {}  {}",
+            " ",
+            "Identity",
+            "Vote Account",
+            "Commission",
+            "Last Vote     ",
+            "Root Slot   ",
+            "Skip Rate",
+            "Credits",
+            "Version",
+            "Active Stake",
+            padding = padding + 1
+        ))
+        .bold();
+        writeln!(f, "{}", header)?;
 
-        writeln!(
-            f,
-            "{}",
-            style(format!(
-                "  {:<44}  {:<38}  {}  {}  {}  {:>10}  {:^8}  {}",
-                "Identity",
-                "Vote Account",
-                "Commission",
-                "Last Vote",
-                "Root Block",
-                "Credits",
-                "Version",
-                "Active Stake",
-            ))
-            .bold()
-        )?;
-        for validator in &self.current_validators {
+        let mut sorted_validators = self.validators.clone();
+        match self.validators_sort_order {
+            CliValidatorsSortOrder::Delinquent => {
+                sorted_validators.sort_by_key(|a| a.delinquent);
+            }
+            CliValidatorsSortOrder::Commission => {
+                sorted_validators.sort_by_key(|a| a.commission);
+            }
+            CliValidatorsSortOrder::EpochCredits => {
+                sorted_validators.sort_by_key(|a| a.epoch_credits);
+            }
+            CliValidatorsSortOrder::Identity => {
+                sorted_validators.sort_by(|a, b| a.identity_pubkey.cmp(&b.identity_pubkey));
+            }
+            CliValidatorsSortOrder::LastVote => {
+                sorted_validators.sort_by_key(|a| a.last_vote);
+            }
+            CliValidatorsSortOrder::Root => {
+                sorted_validators.sort_by_key(|a| a.root_slot);
+            }
+            CliValidatorsSortOrder::VoteAccount => {
+                sorted_validators.sort_by(|a, b| a.vote_account_pubkey.cmp(&b.vote_account_pubkey));
+            }
+            CliValidatorsSortOrder::SkipRate => {
+                sorted_validators.sort_by(|a, b| {
+                    use std::cmp::Ordering;
+                    match (a.skip_rate, b.skip_rate) {
+                        (None, None) => Ordering::Equal,
+                        (None, Some(_)) => Ordering::Greater,
+                        (Some(_), None) => Ordering::Less,
+                        (Some(a), Some(b)) => a.partial_cmp(&b).unwrap_or(Ordering::Equal),
+                    }
+                });
+            }
+            CliValidatorsSortOrder::Stake => {
+                sorted_validators.sort_by_key(|a| a.activated_stake);
+            }
+        }
+
+        if self.validators_reverse_sort {
+            sorted_validators.reverse();
+        }
+
+        let highest_root = sorted_validators
+            .iter()
+            .map(|v| v.root_slot)
+            .max()
+            .unwrap_or_default();
+        let highest_last_vote = sorted_validators
+            .iter()
+            .map(|v| v.last_vote)
+            .max()
+            .unwrap_or_default();
+
+        for (i, validator) in sorted_validators.iter().enumerate() {
+            if padding > 0 {
+                write!(f, "{:padding$}", i + 1, padding = padding)?;
+            }
             write_vote_account(
                 f,
                 validator,
                 self.total_active_stake,
                 self.use_lamports_unit,
-                false,
+                highest_last_vote,
+                highest_root,
             )?;
         }
-        for validator in &self.delinquent_validators {
-            write_vote_account(
-                f,
-                validator,
-                self.total_active_stake,
-                self.use_lamports_unit,
-                true,
-            )?;
+
+        // The actual header has long scrolled away.  Print the header once more as a footer
+        if self.validators.len() > 100 {
+            writeln!(f, "{}", header)?;
         }
 
         writeln!(f)?;
@@ -461,7 +543,7 @@ impl fmt::Display for CliValidators {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CliValidator {
     pub identity_pubkey: String,
@@ -469,9 +551,12 @@ pub struct CliValidator {
     pub commission: u8,
     pub last_vote: u64,
     pub root_slot: u64,
-    pub credits: u64,
+    pub credits: u64,       // lifetime credits
+    pub epoch_credits: u64, // credits earned in the current epoch
     pub activated_stake: u64,
     pub version: String,
+    pub delinquent: bool,
+    pub skip_rate: Option<f64>,
 }
 
 impl CliValidator {
@@ -479,27 +564,67 @@ impl CliValidator {
         vote_account: &RpcVoteAccountInfo,
         current_epoch: Epoch,
         version: String,
+        skip_rate: Option<f64>,
         address_labels: &HashMap<String, String>,
     ) -> Self {
+        Self::_new(
+            vote_account,
+            current_epoch,
+            version,
+            skip_rate,
+            address_labels,
+            false,
+        )
+    }
+
+    pub fn new_delinquent(
+        vote_account: &RpcVoteAccountInfo,
+        current_epoch: Epoch,
+        version: String,
+        skip_rate: Option<f64>,
+        address_labels: &HashMap<String, String>,
+    ) -> Self {
+        Self::_new(
+            vote_account,
+            current_epoch,
+            version,
+            skip_rate,
+            address_labels,
+            true,
+        )
+    }
+
+    fn _new(
+        vote_account: &RpcVoteAccountInfo,
+        current_epoch: Epoch,
+        version: String,
+        skip_rate: Option<f64>,
+        address_labels: &HashMap<String, String>,
+        delinquent: bool,
+    ) -> Self {
+        let (credits, epoch_credits) = vote_account
+            .epoch_credits
+            .iter()
+            .find_map(|(epoch, credits, pre_credits)| {
+                if *epoch == current_epoch {
+                    Some((*credits, credits.saturating_sub(*pre_credits)))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or((0, 0));
         Self {
             identity_pubkey: format_labeled_address(&vote_account.node_pubkey, address_labels),
             vote_account_pubkey: format_labeled_address(&vote_account.vote_pubkey, address_labels),
             commission: vote_account.commission,
             last_vote: vote_account.last_vote,
             root_slot: vote_account.root_slot,
-            credits: vote_account
-                .epoch_credits
-                .iter()
-                .find_map(|(epoch, credits, _)| {
-                    if *epoch == current_epoch {
-                        Some(*credits)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(0),
+            credits,
+            epoch_credits,
             activated_stake: vote_account.activated_stake,
             version,
+            delinquent,
+            skip_rate,
         }
     }
 }
@@ -690,17 +815,55 @@ fn show_votes_and_credits(
         return Ok(());
     }
 
-    writeln!(f, "Recent Votes:")?;
-    for vote in votes {
-        writeln!(f, "- slot: {}", vote.slot)?;
-        writeln!(f, "  confirmation count: {}", vote.confirmation_count)?;
-    }
-    writeln!(f, "Epoch Voting History:")?;
+    // Existence of this should guarantee the occurrence of vote truncation
+    let newest_history_entry = epoch_voting_history.iter().rev().next();
+
     writeln!(
         f,
-        "* missed credits include slots unavailable to vote on due to delinquent leaders",
+        "{} Votes (using {}/{} entries):",
+        (if newest_history_entry.is_none() {
+            "All"
+        } else {
+            "Recent"
+        }),
+        votes.len(),
+        MAX_LOCKOUT_HISTORY
     )?;
-    for entry in epoch_voting_history {
+
+    for vote in votes.iter().rev() {
+        writeln!(
+            f,
+            "- slot: {} (confirmation count: {})",
+            vote.slot, vote.confirmation_count
+        )?;
+    }
+    if let Some(newest) = newest_history_entry {
+        writeln!(
+            f,
+            "- ... (truncated {} rooted votes, which have been credited)",
+            newest.credits
+        )?;
+    }
+
+    if !epoch_voting_history.is_empty() {
+        writeln!(
+            f,
+            "{} Epoch Voting History (using {}/{} entries):",
+            (if epoch_voting_history.len() < MAX_EPOCH_CREDITS_HISTORY {
+                "All"
+            } else {
+                "Recent"
+            }),
+            epoch_voting_history.len(),
+            MAX_EPOCH_CREDITS_HISTORY
+        )?;
+        writeln!(
+            f,
+            "* missed credits include slots unavailable to vote on due to delinquent leaders",
+        )?;
+    }
+
+    for entry in epoch_voting_history.iter().rev() {
         writeln!(
             f, // tame fmt so that this will be folded like following
             "- epoch: {}",
@@ -708,7 +871,7 @@ fn show_votes_and_credits(
         )?;
         writeln!(
             f,
-            "  credits range: [{}..{})",
+            "  credits range: ({}..{}]",
             entry.prev_credits, entry.credits
         )?;
         writeln!(
@@ -717,6 +880,22 @@ fn show_votes_and_credits(
             entry.credits_earned, entry.slots_in_epoch
         )?;
     }
+    if let Some(oldest) = epoch_voting_history.iter().next() {
+        if oldest.prev_credits > 0 {
+            // Oldest entry doesn't start with 0. so history must be truncated...
+
+            // count of this combined pseudo credits range: (0..=oldest.prev_credits] like the above
+            // (or this is just [1..=oldest.prev_credits] for human's simpler minds)
+            let count = oldest.prev_credits;
+
+            writeln!(
+                f,
+                "- ... (omitting {} past rooted votes, which have already been credited)",
+                count
+            )?;
+        }
+    }
+
     Ok(())
 }
 
@@ -1283,24 +1462,28 @@ impl fmt::Display for CliInflation {
         if (self.governor.initial - self.governor.terminal).abs() < f64::EPSILON {
             writeln!(
                 f,
-                "Fixed APR:               {:>5.2}%",
+                "Fixed rate:              {:>5.2}%",
                 self.governor.terminal * 100.
             )?;
         } else {
             writeln!(
                 f,
-                "Initial APR:             {:>5.2}%",
+                "Initial rate:            {:>5.2}%",
                 self.governor.initial * 100.
             )?;
             writeln!(
                 f,
-                "Terminal APR:            {:>5.2}%",
+                "Terminal rate:           {:>5.2}%",
                 self.governor.terminal * 100.
             )?;
             writeln!(
                 f,
                 "Rate reduction per year: {:>5.2}%",
                 self.governor.taper * 100.
+            )?;
+            writeln!(
+                f,
+                "* Rate reduction is derived using the target slot time in genesis config"
             )?;
         }
         if self.governor.foundation_term > 0. {
@@ -1323,17 +1506,17 @@ impl fmt::Display for CliInflation {
         )?;
         writeln!(
             f,
-            "Total APR:               {:>5.2}%",
+            "Total rate:              {:>5.2}%",
             self.current_rate.total * 100.
         )?;
         writeln!(
             f,
-            "Staking APR:             {:>5.2}%",
+            "Staking rate:            {:>5.2}%",
             self.current_rate.validator * 100.
         )?;
         writeln!(
             f,
-            "Foundation APR:          {:>5.2}%",
+            "Foundation rate:         {:>5.2}%",
             self.current_rate.foundation * 100.
         )
     }
@@ -1944,6 +2127,9 @@ impl fmt::Display for CliBlock {
         if let Some(block_time) = self.encoded_confirmed_block.block_time {
             writeln!(f, "Block Time: {:?}", Local.timestamp(block_time, 0))?;
         }
+        if let Some(block_height) = self.encoded_confirmed_block.block_height {
+            writeln!(f, "Block Height: {:?}", block_height)?;
+        }
         if !self.encoded_confirmed_block.rewards.is_empty() {
             let mut rewards = self.encoded_confirmed_block.rewards.clone();
             rewards.sort_by(|a, b| a.pubkey.cmp(&b.pubkey));
@@ -2100,6 +2286,97 @@ impl fmt::Display for CliTransactionConfirmation {
         }
     }
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliGossipNode {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ip_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_label: Option<String>,
+    pub identity_pubkey: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gossip_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tpu_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpc_host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+impl CliGossipNode {
+    pub fn new(info: RpcContactInfo, labels: &HashMap<String, String>) -> Self {
+        Self {
+            ip_address: info.gossip.map(|addr| addr.ip().to_string()),
+            identity_label: labels.get(&info.pubkey).cloned(),
+            identity_pubkey: info.pubkey,
+            gossip_port: info.gossip.map(|addr| addr.port()),
+            tpu_port: info.tpu.map(|addr| addr.port()),
+            rpc_host: info.rpc.map(|addr| addr.to_string()),
+            version: info.version,
+        }
+    }
+}
+
+fn unwrap_to_string_or_none<T>(option: Option<T>) -> String
+where
+    T: std::string::ToString,
+{
+    unwrap_to_string_or_default(option, "none")
+}
+
+fn unwrap_to_string_or_default<T>(option: Option<T>, default: &str) -> String
+where
+    T: std::string::ToString,
+{
+    option
+        .as_ref()
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| default.to_string())
+}
+
+impl fmt::Display for CliGossipNode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{:15} | {:44} | {:6} | {:5} | {:21} | {}",
+            unwrap_to_string_or_none(self.ip_address.as_ref()),
+            self.identity_label
+                .as_ref()
+                .unwrap_or(&self.identity_pubkey),
+            unwrap_to_string_or_none(self.gossip_port.as_ref()),
+            unwrap_to_string_or_none(self.tpu_port.as_ref()),
+            unwrap_to_string_or_none(self.rpc_host.as_ref()),
+            unwrap_to_string_or_default(self.version.as_ref(), "unknown"),
+        )
+    }
+}
+
+impl QuietDisplay for CliGossipNode {}
+impl VerboseDisplay for CliGossipNode {}
+
+#[derive(Serialize, Deserialize)]
+pub struct CliGossipNodes(pub Vec<CliGossipNode>);
+
+impl fmt::Display for CliGossipNodes {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(
+            f,
+            "IP Address      | Node identifier                              \
+             | Gossip | TPU   | RPC Address           | Version\n\
+             ----------------+----------------------------------------------+\
+             --------+-------+-----------------------+----------------",
+        )?;
+        for node in self.0.iter() {
+            writeln!(f, "{}", node)?;
+        }
+        writeln!(f, "Nodes: {}", self.0.len())
+    }
+}
+
+impl QuietDisplay for CliGossipNodes {}
+impl VerboseDisplay for CliGossipNodes {}
 
 #[cfg(test)]
 mod tests {

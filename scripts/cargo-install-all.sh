@@ -26,17 +26,14 @@ maybeReleaseFlag=--release
 validatorOnly=
 
 while [[ -n $1 ]]; do
-    if [[ ${1:0:1} = - ]]; then
-        if [[ $1 = --debug ]]; then
-            maybeReleaseFlag=
-            buildVariant=debug
-            shift
-        else
-            usage "Unknown option: $1"
-        fi
-        elif [[ ${1:0:1} = \+ ]]; then
-        maybeRustVersion=$1
-        shift
+  if [[ ${1:0:1} = - ]]; then
+    if [[ $1 = --debug ]]; then
+      maybeReleaseFlag=
+      buildVariant=debug
+      shift
+    elif [[ $1 = --validator-only ]]; then
+      validatorOnly=true
+      shift
     else
         installDir=$1
         shift
@@ -105,11 +102,15 @@ done
 mkdir -p "$installDir/bin"
 
 (
-    set -x
-    # shellcheck disable=SC2086 # Don't want to double quote $rust_version
-    "$cargo" $maybeRustVersion build $maybeReleaseFlag "${binArgs[@]}"
+  set -x
+  # shellcheck disable=SC2086 # Don't want to double quote $rust_version
+  "$cargo" $maybeRustVersion build $maybeReleaseFlag "${binArgs[@]}"
+
+  # Exclude `spl-token` binary for net.sh builds
+  if [[ -z "$validatorOnly" ]]; then
     # shellcheck disable=SC2086 # Don't want to double quote $rust_version
     "$cargo" $maybeRustVersion install spl-token-cli --root "$installDir"
+  fi
 )
 
 for bin in "${BINS[@]}"; do

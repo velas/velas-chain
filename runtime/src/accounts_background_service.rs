@@ -12,7 +12,7 @@ use crossbeam_channel::{Receiver, SendError, Sender};
 use log::*;
 use rand::{thread_rng, Rng};
 use solana_measure::measure::Measure;
-use solana_sdk::clock::Slot;
+use solana_sdk::{clock::Slot, hash::Hash};
 use std::{
     boxed::Box,
     fmt::{Debug, Formatter},
@@ -99,6 +99,14 @@ impl SnapshotRequestHandler {
                     status_cache_slot_deltas,
                 } = snapshot_request;
 
+                let previous_hash = if test_hash_calculation {
+                    // We have to use the index version here.
+                    // We cannot calculate the non-index way because cache has not been flushed and stores don't match reality.
+                    snapshot_root_bank.update_accounts_hash_with_index_option(true, false)
+                } else {
+                    Hash::default()
+                };
+
                 let mut shrink_time = Measure::start("shrink_time");
                 if !accounts_db_caching_enabled {
                     snapshot_root_bank
@@ -129,11 +137,12 @@ impl SnapshotRequestHandler {
                 flush_accounts_cache_time.stop();
 
                 let mut hash_time = Measure::start("hash_time");
-                snapshot_root_bank.update_accounts_hash_with_index_option(
+                let this_hash = snapshot_root_bank.update_accounts_hash_with_index_option(
                     use_index_hash_calculation,
                     test_hash_calculation,
                 );
                 let hash_for_testing = if test_hash_calculation {
+                    assert_eq!(previous_hash, this_hash);
                     Some(snapshot_root_bank.get_accounts_hash())
                 } else {
                     None
@@ -345,7 +354,7 @@ impl AccountsBackgroundService {
                     } else {
                         // under sustained writes, shrink can lag behind so cap to
                         // SHRUNKEN_ACCOUNT_PER_INTERVAL (which is based on INTERVAL_MS,
-                        // which in turn roughly asscociated block time)
+                        // which in turn roughly associated block time)
                         consumed_budget = bank
                             .process_stale_slot_with_budget(
                                 consumed_budget,
@@ -415,7 +424,7 @@ mod test {
     use super::*;
     use crate::genesis_utils::create_genesis_config;
     use crossbeam_channel::unbounded;
-    use solana_sdk::{account::Account, pubkey::Pubkey};
+    use solana_sdk::{account::AccountSharedData, pubkey::Pubkey};
 
     #[test]
     fn test_accounts_background_service_remove_dead_slots() {
@@ -429,7 +438,10 @@ mod test {
 
         // Store an account in slot 0
         let account_key = Pubkey::new_unique();
-        bank0.store_account(&account_key, &Account::new(264, 0, &Pubkey::default()));
+        bank0.store_account(
+            &account_key,
+            &AccountSharedData::new(264, 0, &Pubkey::default()),
+        );
         assert!(bank0.get_account(&account_key).is_some());
         pruned_banks_sender.send(0).unwrap();
         AccountsBackgroundService::remove_dead_slots(&bank0, &request_handler, &mut 0, &mut 0);

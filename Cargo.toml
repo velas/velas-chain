@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "accounts-cluster-bench",
     "bench-exchange",
     "bench-streamer",
     "bench-tps",
@@ -81,4 +82,9 @@ members = [
     "watchtower",
 ]
 
-exclude = ["programs/bpf"]
+exclude = [
+    "programs/bpf",
+]
+
+[profile.dev]
+split-debuginfo = "unpacked"

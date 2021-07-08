@@ -73,9 +73,9 @@ else
     --hashes-per-tick sleep \
     --faucet-lamports 500000000000000000 \
     --bootstrap-validator \
-    "$dataDir"/validator-identity.json \
-    "$dataDir"/validator-vote-account.json \
-    "$dataDir"/validator-stake-account.json \
+      "$validator_identity" \
+      "$validator_vote_account" \
+      "$validator_stake_account" \
     --ledger "$ledgerDir" \
     --cluster-type "$SOLANA_RUN_SH_CLUSTER_TYPE" \
     $SPL_GENESIS_ARGS \
@@ -104,14 +104,14 @@ args=(
     --rpc-port 8899
     --rpc-faucet-address 127.0.0.1:9900
     --log -
-    --enable-rpc-exit
     --enable-rpc-transaction-history
     --enable-cpi-and-log-storage
     --init-complete-file "$dataDir"/init-completed
-    --snapshot-compression gzip
+    --snapshot-compression none
     --accounts-db-caching-enabled
     --snapshot-interval-slots 100
     --require-tower
+    --no-wait-for-vote-to-start-leader
     --account-index program-id
     --account-index spl-token-owner
     --account-index spl-token-mint

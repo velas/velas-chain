@@ -1,11 +1,11 @@
 use {
     solana_banks_client::BanksClient,
-    solana_program::{
-        account_info::AccountInfo, entrypoint::ProgramResult, hash::Hash, instruction::Instruction,
-        msg, pubkey::Pubkey, rent::Rent, system_instruction,
-    },
     solana_program_test::{processor, ProgramTest},
-    solana_sdk::{signature::Keypair, signature::Signer, transaction::Transaction},
+    solana_sdk::{
+        account_info::AccountInfo, entrypoint::ProgramResult, hash::Hash, instruction::Instruction,
+        msg, pubkey::Pubkey, rent::Rent, signature::Keypair, signature::Signer, system_instruction,
+        transaction::Transaction,
+    },
 };
 
 #[allow(clippy::unnecessary_wraps)]
@@ -19,7 +19,6 @@ fn process_instruction(
 }
 
 #[test]
-#[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn simulate_fuzz() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let program_id = Pubkey::new_unique();
@@ -48,7 +47,6 @@ fn simulate_fuzz() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
 fn simulate_fuzz_with_context() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let program_id = Pubkey::new_unique();
@@ -59,16 +57,16 @@ fn simulate_fuzz_with_context() {
         processor!(process_instruction),
     );
 
-    let mut test_state = rt.block_on(async { program_test.start_with_context().await });
+    let mut context = rt.block_on(async { program_test.start_with_context().await });
 
     // the honggfuzz `fuzz!` macro does not allow for async closures,
     // so we have to use the runtime directly to run async functions
     rt.block_on(async {
         run_fuzz_instructions(
             &[1, 2, 3, 4, 5],
-            &mut test_state.banks_client,
-            &test_state.payer,
-            test_state.last_blockhash,
+            &mut context.banks_client,
+            &context.payer,
+            context.last_blockhash,
             &program_id,
         )
         .await
@@ -94,7 +92,7 @@ async fn run_fuzz_instructions(
             program_id,
         );
         instructions.push(instruction);
-        instructions.push(Instruction::new(*program_id, &[0], vec![]));
+        instructions.push(Instruction::new_with_bincode(*program_id, &[0], vec![]));
         signer_keypairs.push(keypair);
     }
     // Process transaction on test network

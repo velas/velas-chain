@@ -5,13 +5,34 @@ use crate::serialize_utils::{
     append_slice, append_u16, append_u8, read_pubkey, read_slice, read_u16, read_u8,
 };
 use crate::{
+    bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
     hash::Hash,
     instruction::{AccountMeta, CompiledInstruction, Instruction},
     pubkey::Pubkey,
-    short_vec, system_instruction,
+    short_vec, system_instruction, system_program, sysvar,
 };
 use itertools::Itertools;
-use std::convert::TryFrom;
+use lazy_static::lazy_static;
+use std::{convert::TryFrom, str::FromStr};
+
+lazy_static! {
+    // Copied keys over since direct references create cyclical dependency.
+    static ref BUILTIN_PROGRAMS_KEYS: [Pubkey; 10] = {
+        let parse = |s| Pubkey::from_str(s).unwrap();
+        [
+            parse("Config1111111111111111111111111111111111111"),
+            parse("Feature111111111111111111111111111111111111"),
+            parse("NativeLoader1111111111111111111111111111111"),
+            parse("Stake11111111111111111111111111111111111111"),
+            parse("StakeConfig11111111111111111111111111111111"),
+            parse("Vote111111111111111111111111111111111111111"),
+            system_program::id(),
+            bpf_loader::id(),
+            bpf_loader_deprecated::id(),
+            bpf_loader_upgradeable::id(),
+        ]
+    };
+}
 
 fn position(keys: &[Pubkey], key: &Pubkey) -> u8 {
     keys.iter().position(|k| k == key).unwrap() as u8
@@ -318,10 +339,11 @@ impl Message {
 
     /// Return true if message borrow mutably evm_state account.
     pub fn is_modify_evm_state(&self) -> bool {
-        self.account_keys
-            .iter()
-            .enumerate()
-            .any(|(num, key)| *key == crate::evm_state::id() && self.is_writable(num))
+        self.account_keys.iter().enumerate().any(|(num, key)| {
+            *key == crate::evm_state::id()
+                 // NOTE: 'true' as 'demote_sysvar_write_locks' makes no shortcuts in flow
+                 && self.is_writable(num, true)
+        })
     }
 
     pub fn is_key_passed_to_program(&self, index: usize) -> bool {
@@ -346,23 +368,35 @@ impl Message {
             .position(|&&pubkey| pubkey == self.account_keys[index])
     }
 
-    pub fn is_writable(&self, i: usize) -> bool {
-        i < (self.header.num_required_signatures - self.header.num_readonly_signed_accounts)
+    pub fn maybe_executable(&self, i: usize) -> bool {
+        self.program_position(i).is_some()
+    }
+
+    pub fn is_writable(&self, i: usize, demote_sysvar_write_locks: bool) -> bool {
+        (i < (self.header.num_required_signatures - self.header.num_readonly_signed_accounts)
             as usize
             || (i >= self.header.num_required_signatures as usize
                 && i < self.account_keys.len()
-                    - self.header.num_readonly_unsigned_accounts as usize)
+                    - self.header.num_readonly_unsigned_accounts as usize))
+            && !{
+                let key = self.account_keys[i];
+                demote_sysvar_write_locks
+                    && (sysvar::is_sysvar_id(&key) || BUILTIN_PROGRAMS_KEYS.contains(&key))
+            }
     }
 
     pub fn is_signer(&self, i: usize) -> bool {
         i < self.header.num_required_signatures as usize
     }
 
-    pub fn get_account_keys_by_lock_type(&self) -> (Vec<&Pubkey>, Vec<&Pubkey>) {
+    pub fn get_account_keys_by_lock_type(
+        &self,
+        demote_sysvar_write_locks: bool,
+    ) -> (Vec<&Pubkey>, Vec<&Pubkey>) {
         let mut writable_keys = vec![];
         let mut readonly_keys = vec![];
         for (i, key) in self.account_keys.iter().enumerate() {
-            if self.is_writable(i) {
+            if self.is_writable(i, demote_sysvar_write_locks) {
                 writable_keys.push(key);
             } else {
                 readonly_keys.push(key);
@@ -375,16 +409,16 @@ impl Message {
     // [0..2 - num_instructions
     //
     // Then a table of offsets of where to find them in the data
-    //  3..2*num_instructions table of instruction offsets
+    //  3..2 * num_instructions table of instruction offsets
     //
     // Each instruction is then encoded as:
     //   0..2 - num_accounts
-    //   3 - meta_byte -> (bit 0 signer, bit 1 is_writable)
-    //   4..36 - pubkey - 32 bytes
-    //   36..64 - program_id
-    //     33..34 - data len - u16
-    //     35..data_len - data
-    pub fn serialize_instructions(&self) -> Vec<u8> {
+    //   2 - meta_byte -> (bit 0 signer, bit 1 is_writable)
+    //   3..35 - pubkey - 32 bytes
+    //   35..67 - program_id
+    //   67..69 - data len - u16
+    //   69..data_len - data
+    pub fn serialize_instructions(&self, demote_sysvar_write_locks: bool) -> Vec<u8> {
         // 64 bytes is a reasonable guess, calculating exactly is slower in benchmarks
         let mut data = Vec::with_capacity(self.instructions.len() * (32 * 2));
         append_u16(&mut data, self.instructions.len() as u16);
@@ -399,7 +433,7 @@ impl Message {
             for account_index in &instruction.accounts {
                 let account_index = *account_index as usize;
                 let is_signer = self.is_signer(account_index);
-                let is_writable = self.is_writable(account_index);
+                let is_writable = self.is_writable(account_index, demote_sysvar_write_locks);
                 let mut meta_byte = 0;
                 if is_signer {
                     meta_byte |= 1 << Self::IS_SIGNER_BIT;
@@ -479,17 +513,38 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instruction::AccountMeta;
-    use std::str::FromStr;
+    use crate::{hash, instruction::AccountMeta};
+    use std::collections::HashSet;
 
     #[test]
     fn test_message_unique_program_ids() {
         let program_id0 = Pubkey::default();
         let program_ids = get_program_ids(&[
-            Instruction::new(program_id0, &0, vec![]),
-            Instruction::new(program_id0, &0, vec![]),
+            Instruction::new_with_bincode(program_id0, &0, vec![]),
+            Instruction::new_with_bincode(program_id0, &0, vec![]),
         ]);
         assert_eq!(program_ids, vec![program_id0]);
+    }
+
+    #[test]
+    fn test_builtin_program_keys() {
+        let keys: HashSet<Pubkey> = BUILTIN_PROGRAMS_KEYS.iter().copied().collect();
+        assert_eq!(keys.len(), 10);
+        for k in keys {
+            let k = format!("{}", k);
+            assert!(k.ends_with("11111111111111111111111"));
+        }
+    }
+
+    #[test]
+    fn test_builtin_program_keys_abi_freeze() {
+        // Once the feature is flipped on, we can't further modify
+        // BUILTIN_PROGRAMS_KEYS without the risk of breaking consensus.
+        let builtins = format!("{:?}", *BUILTIN_PROGRAMS_KEYS);
+        assert_eq!(
+            format!("{}", hash::hash(builtins.as_bytes())),
+            "ACqmMkYbo9eqK6QrRSrB3HLyR6uHhLf31SCfGUAJjiWj"
+        );
     }
 
     #[test]
@@ -497,9 +552,9 @@ mod tests {
         let program_id0 = Pubkey::default();
         let program_id1 = Pubkey::new_unique();
         let program_ids = get_program_ids(&[
-            Instruction::new(program_id0, &0, vec![]),
-            Instruction::new(program_id1, &0, vec![]),
-            Instruction::new(program_id0, &0, vec![]),
+            Instruction::new_with_bincode(program_id0, &0, vec![]),
+            Instruction::new_with_bincode(program_id1, &0, vec![]),
+            Instruction::new_with_bincode(program_id0, &0, vec![]),
         ]);
         assert_eq!(program_ids, vec![program_id0, program_id1]);
     }
@@ -509,9 +564,9 @@ mod tests {
         let program_id0 = Pubkey::new_unique();
         let program_id1 = Pubkey::default(); // Key less than program_id0
         let program_ids = get_program_ids(&[
-            Instruction::new(program_id0, &0, vec![]),
-            Instruction::new(program_id1, &0, vec![]),
-            Instruction::new(program_id0, &0, vec![]),
+            Instruction::new_with_bincode(program_id0, &0, vec![]),
+            Instruction::new_with_bincode(program_id1, &0, vec![]),
+            Instruction::new_with_bincode(program_id0, &0, vec![]),
         ]);
         assert_eq!(program_ids, vec![program_id0, program_id1]);
     }
@@ -522,8 +577,8 @@ mod tests {
         let id0 = Pubkey::default();
         let keys = get_keys(
             &[
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id0, true)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id0, true)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]),
             ],
             None,
         );
@@ -535,7 +590,7 @@ mod tests {
         let program_id = Pubkey::default();
         let id0 = Pubkey::default();
         let keys = get_keys(
-            &[Instruction::new(
+            &[Instruction::new_with_bincode(
                 program_id,
                 &0,
                 vec![AccountMeta::new(id0, true)],
@@ -550,7 +605,7 @@ mod tests {
         let program_id = Pubkey::default();
         let id0 = Pubkey::default();
         let keys = get_keys(
-            &[Instruction::new(
+            &[Instruction::new_with_bincode(
                 program_id,
                 &0,
                 vec![AccountMeta::new(id0, false)],
@@ -566,8 +621,8 @@ mod tests {
         let id0 = Pubkey::default();
         let keys = get_keys(
             &[
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id0, false)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id0, true)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]),
             ],
             None,
         );
@@ -580,8 +635,12 @@ mod tests {
         let id0 = Pubkey::default();
         let keys = get_keys(
             &[
-                Instruction::new(program_id, &0, vec![AccountMeta::new_readonly(id0, true)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id0, true)]),
+                Instruction::new_with_bincode(
+                    program_id,
+                    &0,
+                    vec![AccountMeta::new_readonly(id0, true)],
+                ),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]),
             ],
             None,
         );
@@ -596,8 +655,12 @@ mod tests {
         let id0 = Pubkey::default();
         let keys = get_keys(
             &[
-                Instruction::new(program_id, &0, vec![AccountMeta::new_readonly(id0, false)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id0, false)]),
+                Instruction::new_with_bincode(
+                    program_id,
+                    &0,
+                    vec![AccountMeta::new_readonly(id0, false)],
+                ),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]),
             ],
             None,
         );
@@ -613,8 +676,8 @@ mod tests {
         let id1 = Pubkey::default(); // Key less than id0
         let keys = get_keys(
             &[
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id0, false)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id1, false)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id1, false)]),
             ],
             None,
         );
@@ -628,9 +691,9 @@ mod tests {
         let id1 = Pubkey::new_unique();
         let keys = get_keys(
             &[
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id0, false)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id1, false)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id0, true)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id1, false)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]),
             ],
             None,
         );
@@ -644,8 +707,8 @@ mod tests {
         let id1 = Pubkey::new_unique();
         let keys = get_keys(
             &[
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id0, false)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id1, true)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id1, true)]),
             ],
             None,
         );
@@ -657,11 +720,11 @@ mod tests {
     fn test_message_signed_keys_len() {
         let program_id = Pubkey::default();
         let id0 = Pubkey::default();
-        let ix = Instruction::new(program_id, &0, vec![AccountMeta::new(id0, false)]);
+        let ix = Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]);
         let message = Message::new(&[ix], None);
         assert_eq!(message.header.num_required_signatures, 0);
 
-        let ix = Instruction::new(program_id, &0, vec![AccountMeta::new(id0, true)]);
+        let ix = Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]);
         let message = Message::new(&[ix], Some(&id0));
         assert_eq!(message.header.num_required_signatures, 1);
     }
@@ -675,10 +738,18 @@ mod tests {
         let id3 = Pubkey::new_unique();
         let keys = get_keys(
             &[
-                Instruction::new(program_id, &0, vec![AccountMeta::new_readonly(id0, false)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new_readonly(id1, true)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id2, false)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id3, true)]),
+                Instruction::new_with_bincode(
+                    program_id,
+                    &0,
+                    vec![AccountMeta::new_readonly(id0, false)],
+                ),
+                Instruction::new_with_bincode(
+                    program_id,
+                    &0,
+                    vec![AccountMeta::new_readonly(id1, true)],
+                ),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id2, false)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id3, true)]),
             ],
             None,
         );
@@ -696,9 +767,9 @@ mod tests {
         let id1 = Pubkey::new_unique();
         let message = Message::new(
             &[
-                Instruction::new(program_id0, &0, vec![AccountMeta::new(id0, false)]),
-                Instruction::new(program_id1, &0, vec![AccountMeta::new(id1, true)]),
-                Instruction::new(program_id0, &0, vec![AccountMeta::new(id1, false)]),
+                Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id0, false)]),
+                Instruction::new_with_bincode(program_id1, &0, vec![AccountMeta::new(id1, true)]),
+                Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id1, false)]),
             ],
             Some(&id1),
         );
@@ -722,15 +793,15 @@ mod tests {
         let payer = Pubkey::new_unique();
         let id0 = Pubkey::default();
 
-        let ix = Instruction::new(program_id, &0, vec![AccountMeta::new(id0, false)]);
+        let ix = Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]);
         let message = Message::new(&[ix], Some(&payer));
         assert_eq!(message.header.num_required_signatures, 1);
 
-        let ix = Instruction::new(program_id, &0, vec![AccountMeta::new(id0, true)]);
+        let ix = Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]);
         let message = Message::new(&[ix], Some(&payer));
         assert_eq!(message.header.num_required_signatures, 2);
 
-        let ix = Instruction::new(
+        let ix = Instruction::new_with_bincode(
             program_id,
             &0,
             vec![AccountMeta::new(payer, true), AccountMeta::new(id0, true)],
@@ -746,8 +817,16 @@ mod tests {
         let id1 = Pubkey::new_unique();
         let keys = get_keys(
             &[
-                Instruction::new(program_id, &0, vec![AccountMeta::new_readonly(id0, false)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new_readonly(id1, true)]),
+                Instruction::new_with_bincode(
+                    program_id,
+                    &0,
+                    vec![AccountMeta::new_readonly(id0, false)],
+                ),
+                Instruction::new_with_bincode(
+                    program_id,
+                    &0,
+                    vec![AccountMeta::new_readonly(id1, true)],
+                ),
             ],
             None,
         );
@@ -764,8 +843,8 @@ mod tests {
         let id = Pubkey::new_unique();
         let message = Message::new(
             &[
-                Instruction::new(program_id0, &0, vec![AccountMeta::new(id, false)]),
-                Instruction::new(program_id1, &0, vec![AccountMeta::new(id, true)]),
+                Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id, false)]),
+                Instruction::new_with_bincode(program_id1, &0, vec![AccountMeta::new(id, true)]),
             ],
             Some(&id),
         );
@@ -793,12 +872,13 @@ mod tests {
             recent_blockhash: Hash::default(),
             instructions: vec![],
         };
-        assert_eq!(message.is_writable(0), true);
-        assert_eq!(message.is_writable(1), false);
-        assert_eq!(message.is_writable(2), false);
-        assert_eq!(message.is_writable(3), true);
-        assert_eq!(message.is_writable(4), true);
-        assert_eq!(message.is_writable(5), false);
+        let demote_sysvar_write_locks = true;
+        assert_eq!(message.is_writable(0, demote_sysvar_write_locks), true);
+        assert_eq!(message.is_writable(1, demote_sysvar_write_locks), false);
+        assert_eq!(message.is_writable(2, demote_sysvar_write_locks), false);
+        assert_eq!(message.is_writable(3, demote_sysvar_write_locks), true);
+        assert_eq!(message.is_writable(4, demote_sysvar_write_locks), true);
+        assert_eq!(message.is_writable(5, demote_sysvar_write_locks), false);
     }
 
     #[test]
@@ -810,15 +890,25 @@ mod tests {
         let id3 = Pubkey::new_unique();
         let message = Message::new(
             &[
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id0, false)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new(id1, true)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new_readonly(id2, false)]),
-                Instruction::new(program_id, &0, vec![AccountMeta::new_readonly(id3, true)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]),
+                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id1, true)]),
+                Instruction::new_with_bincode(
+                    program_id,
+                    &0,
+                    vec![AccountMeta::new_readonly(id2, false)],
+                ),
+                Instruction::new_with_bincode(
+                    program_id,
+                    &0,
+                    vec![AccountMeta::new_readonly(id3, true)],
+                ),
             ],
             Some(&id1),
         );
         assert_eq!(
-            message.get_account_keys_by_lock_type(),
+            message.get_account_keys_by_lock_type(
+                true, // demote_sysvar_write_locks
+            ),
             (vec![&id1, &id0], vec![&id3, &id2, &program_id])
         );
     }
@@ -833,14 +923,24 @@ mod tests {
         let id2 = Pubkey::new_unique();
         let id3 = Pubkey::new_unique();
         let instructions = vec![
-            Instruction::new(program_id0, &0, vec![AccountMeta::new(id0, false)]),
-            Instruction::new(program_id0, &0, vec![AccountMeta::new(id1, true)]),
-            Instruction::new(program_id1, &0, vec![AccountMeta::new_readonly(id2, false)]),
-            Instruction::new(program_id1, &0, vec![AccountMeta::new_readonly(id3, true)]),
+            Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id0, false)]),
+            Instruction::new_with_bincode(program_id0, &0, vec![AccountMeta::new(id1, true)]),
+            Instruction::new_with_bincode(
+                program_id1,
+                &0,
+                vec![AccountMeta::new_readonly(id2, false)],
+            ),
+            Instruction::new_with_bincode(
+                program_id1,
+                &0,
+                vec![AccountMeta::new_readonly(id3, true)],
+            ),
         ];
 
         let message = Message::new(&instructions, Some(&id1));
-        let serialized = message.serialize_instructions();
+        let serialized = message.serialize_instructions(
+            true, // demote_sysvar_write_locks
+        );
         for (i, instruction) in instructions.iter().enumerate() {
             assert_eq!(
                 Message::deserialize_instruction(i, &serialized).unwrap(),
@@ -861,7 +961,9 @@ mod tests {
         ];
 
         let message = Message::new(&instructions, Some(&id1));
-        let serialized = message.serialize_instructions();
+        let serialized = message.serialize_instructions(
+            true, // demote_sysvar_write_locks
+        );
         assert_eq!(
             Message::deserialize_instruction(instructions.len(), &serialized).unwrap_err(),
             SanitizeError::IndexOutOfBounds,
@@ -926,6 +1028,14 @@ mod tests {
     }
 
     #[test]
+    fn test_message_header_len_constant() {
+        assert_eq!(
+            bincode::serialized_size(&MessageHeader::default()).unwrap() as usize,
+            MESSAGE_HEADER_LENGTH
+        );
+    }
+
+    #[test]
     fn test_message_hash() {
         // when this test fails, it's most likely due to a new serialized format of a message.
         // in this case, the domain prefix `solana-tx-message-v1` should be updated.
@@ -955,13 +1065,5 @@ mod tests {
             message.hash(),
             Hash::from_str("CXRH7GHLieaQZRUjH1mpnNnUZQtU4V4RpJpAFgy77i3z").unwrap()
         )
-    }
-
-    #[test]
-    fn test_message_header_len_constant() {
-        assert_eq!(
-            bincode::serialized_size(&MessageHeader::default()).unwrap() as usize,
-            MESSAGE_HEADER_LENGTH
-        );
     }
 }

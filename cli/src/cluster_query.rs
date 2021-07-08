@@ -46,9 +46,10 @@ use solana_sdk::{
     rent::Rent,
     rpc_port::DEFAULT_RPC_PORT_STR,
     signature::Signature,
-    system_instruction, system_program,
+    slot_history, system_instruction, system_program,
     sysvar::{
         self,
+        slot_history::SlotHistory,
         stake_history::{self},
     },
     timing,
@@ -60,7 +61,6 @@ use solana_vote_program::vote_state::VoteState;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     fmt,
-    net::SocketAddr,
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -349,6 +349,38 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .long("lamports")
                         .takes_value(false)
                         .help("Display balance in lamports instead of VLX"),
+                )
+                .arg(
+                    Arg::with_name("number")
+                        .long("number")
+                        .short("n")
+                        .takes_value(false)
+                        .help("Number the validators"),
+                )
+                .arg(
+                    Arg::with_name("reverse")
+                        .long("reverse")
+                        .short("r")
+                        .takes_value(false)
+                        .help("Reverse order while sorting"),
+                )
+                .arg(
+                    Arg::with_name("sort")
+                        .long("sort")
+                        .takes_value(true)
+                        .possible_values(&[
+                            "delinquent",
+                            "commission",
+                            "credits",
+                            "identity",
+                            "last-vote",
+                            "root",
+                            "skip-rate",
+                            "stake",
+                            "vote-account",
+                        ])
+                        .default_value("stake")
+                        .help("Sort order (does not affect JSON output)"),
                 ),
         )
         .subcommand(
@@ -582,9 +614,29 @@ pub fn parse_show_stakes(
 
 pub fn parse_show_validators(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     let use_lamports_unit = matches.is_present("lamports");
+    let number_validators = matches.is_present("number");
+    let reverse_sort = matches.is_present("reverse");
+
+    let sort_order = match value_t_or_exit!(matches, "sort", String).as_str() {
+        "delinquent" => CliValidatorsSortOrder::Delinquent,
+        "commission" => CliValidatorsSortOrder::Commission,
+        "credits" => CliValidatorsSortOrder::EpochCredits,
+        "identity" => CliValidatorsSortOrder::Identity,
+        "last-vote" => CliValidatorsSortOrder::LastVote,
+        "root" => CliValidatorsSortOrder::Root,
+        "skip-rate" => CliValidatorsSortOrder::SkipRate,
+        "stake" => CliValidatorsSortOrder::Stake,
+        "vote-account" => CliValidatorsSortOrder::VoteAccount,
+        _ => unreachable!(),
+    };
 
     Ok(CliCommandInfo {
-        command: CliCommand::ShowValidators { use_lamports_unit },
+        command: CliCommand::ShowValidators {
+            use_lamports_unit,
+            sort_order,
+            reverse_sort,
+            number_validators,
+        },
         signers: vec![],
     })
 }
@@ -1041,8 +1093,8 @@ pub fn process_get_slot(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessR
 }
 
 pub fn process_get_block_height(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {
-    let epoch_info = rpc_client.get_epoch_info()?;
-    Ok(epoch_info.block_height.to_string())
+    let block_height = rpc_client.get_block_height()?;
+    Ok(block_height.to_string())
 }
 
 pub fn parse_show_block_production(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
@@ -1069,8 +1121,6 @@ pub fn process_show_block_production(
         return Err(format!("Epoch {} is in the future", epoch).into());
     }
 
-    let minimum_ledger_slot = rpc_client.minimum_ledger_slot()?;
-
     let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
     let end_slot = std::cmp::min(
         epoch_info.absolute_slot,
@@ -1083,32 +1133,60 @@ pub fn process_show_block_production(
         first_slot_in_epoch
     };
 
-    if minimum_ledger_slot > end_slot {
-        return Err(format!(
-            "Ledger data not available for slots {} to {} (minimum ledger slot is {})",
-            start_slot, end_slot, minimum_ledger_slot
-        )
-        .into());
-    }
-
-    if minimum_ledger_slot > start_slot {
-        println!(
-            "\n{}",
-            style(format!(
-                "Note: Requested start slot was {} but minimum ledger slot is {}",
-                start_slot, minimum_ledger_slot
-            ))
-            .italic(),
-        );
-        start_slot = minimum_ledger_slot;
-    }
-
     let progress_bar = new_spinner_progress_bar();
     progress_bar.set_message(&format!(
         "Fetching confirmed blocks between slots {} and {}...",
         start_slot, end_slot
     ));
-    let confirmed_blocks = rpc_client.get_confirmed_blocks(start_slot, Some(end_slot))?;
+
+    let slot_history_account = rpc_client
+        .get_account_with_commitment(&sysvar::slot_history::id(), CommitmentConfig::finalized())?
+        .value
+        .unwrap();
+
+    let slot_history: SlotHistory = from_account(&slot_history_account).ok_or_else(|| {
+        CliError::RpcRequestError("Failed to deserialize slot history".to_string())
+    })?;
+
+    let (confirmed_blocks, start_slot) =
+        if start_slot >= slot_history.oldest() && end_slot <= slot_history.newest() {
+            // Fast, more reliable path using the SlotHistory sysvar
+
+            let confirmed_blocks: Vec<_> = (start_slot..=end_slot)
+                .filter(|slot| slot_history.check(*slot) == slot_history::Check::Found)
+                .collect();
+            (confirmed_blocks, start_slot)
+        } else {
+            // Slow, less reliable path using `getBlocks`.
+            //
+            // "less reliable" because if the RPC node has holds in its ledger then the block production data will be
+            // incorrect.  This condition currently can't be detected over RPC
+            //
+
+            let minimum_ledger_slot = rpc_client.minimum_ledger_slot()?;
+            if minimum_ledger_slot > end_slot {
+                return Err(format!(
+                    "Ledger data not available for slots {} to {} (minimum ledger slot is {})",
+                    start_slot, end_slot, minimum_ledger_slot
+                )
+                .into());
+            }
+
+            if minimum_ledger_slot > start_slot {
+                progress_bar.println(format!(
+                    "{}",
+                    style(format!(
+                        "Note: Requested start slot was {} but minimum ledger slot is {}",
+                        start_slot, minimum_ledger_slot
+                    ))
+                    .italic(),
+                ));
+                start_slot = minimum_ledger_slot;
+            }
+
+            let confirmed_blocks = rpc_client.get_confirmed_blocks(start_slot, Some(end_slot))?;
+            (confirmed_blocks, start_slot)
+        };
 
     let start_slot_index = (start_slot - first_slot_in_epoch) as usize;
     let end_slot_index = (end_slot - first_slot_in_epoch) as usize;
@@ -1371,9 +1449,7 @@ pub fn process_ping(
 
                     // Sleep for half a slot
                     if signal_receiver
-                        .recv_timeout(Duration::from_millis(
-                            500 * clock::DEFAULT_TICKS_PER_SLOT / clock::DEFAULT_TICKS_PER_SECOND,
-                        ))
+                        .recv_timeout(Duration::from_millis(clock::DEFAULT_MS_PER_SLOT / 2))
                         .is_ok()
                     {
                         break 'mainloop;
@@ -1578,40 +1654,14 @@ pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
 pub fn process_show_gossip(rpc_client: &RpcClient, config: &CliConfig) -> ProcessResult {
     let cluster_nodes = rpc_client.get_cluster_nodes()?;
 
-    fn format_port(addr: Option<SocketAddr>) -> String {
-        addr.map(|addr| addr.port().to_string())
-            .unwrap_or_else(|| "none".to_string())
-    }
-
-    let s: Vec<_> = cluster_nodes
+    let nodes: Vec<_> = cluster_nodes
         .into_iter()
-        .map(|node| {
-            format!(
-                "{:15} | {:44} | {:6} | {:5} | {:21} | {}",
-                node.gossip
-                    .map(|addr| addr.ip().to_string())
-                    .unwrap_or_else(|| "none".to_string()),
-                format_labeled_address(&node.pubkey, &config.address_labels),
-                format_port(node.gossip),
-                format_port(node.tpu),
-                node.rpc
-                    .map(|addr| addr.to_string())
-                    .unwrap_or_else(|| "none".to_string()),
-                node.version.unwrap_or_else(|| "unknown".to_string()),
-            )
-        })
+        .map(|node| CliGossipNode::new(node, &config.address_labels))
         .collect();
 
-    Ok(format!(
-        "IP Address      | Node identifier                              \
-         | Gossip | TPU   | RPC Address           | Version\n\
-         ----------------+----------------------------------------------+\
-         --------+-------+-----------------------+----------------\n\
-         {}\n\
-         Nodes: {}",
-        s.join("\n"),
-        s.len(),
-    ))
+    Ok(config
+        .output_format
+        .formatted_string(&CliGossipNodes(nodes)))
 }
 
 pub fn process_show_stakes(
@@ -1626,11 +1676,11 @@ pub fn process_show_stakes(
     progress_bar.set_message("Fetching stake accounts...");
 
     let mut program_accounts_config = RpcProgramAccountsConfig {
-        filters: None,
         account_config: RpcAccountInfoConfig {
             encoding: Some(solana_account_decoder::UiAccountEncoding::Base64),
             ..RpcAccountInfoConfig::default()
         },
+        ..RpcProgramAccountsConfig::default()
     };
 
     if let Some(vote_account_pubkeys) = vote_account_pubkeys {
@@ -1732,10 +1782,36 @@ pub fn process_show_validators(
     rpc_client: &RpcClient,
     config: &CliConfig,
     use_lamports_unit: bool,
+    validators_sort_order: CliValidatorsSortOrder,
+    validators_reverse_sort: bool,
+    number_validators: bool,
 ) -> ProcessResult {
+    let progress_bar = new_spinner_progress_bar();
+    progress_bar.set_message("Fetching vote accounts...");
     let epoch_info = rpc_client.get_epoch_info()?;
     let vote_accounts = rpc_client.get_vote_accounts()?;
 
+    progress_bar.set_message("Fetching block production...");
+    let skip_rate: HashMap<_, _> = rpc_client
+        .get_block_production()
+        .ok()
+        .map(|result| {
+            result
+                .value
+                .by_identity
+                .into_iter()
+                .map(|(identity, (leader_slots, blocks_produced))| {
+                    (
+                        identity,
+                        100. * (leader_slots.saturating_sub(blocks_produced)) as f64
+                            / leader_slots as f64,
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    progress_bar.set_message("Fetching version information...");
     let mut node_version = HashMap::new();
     let unknown_version = "unknown".to_string();
     for contact_info in rpc_client.get_cluster_nodes()? {
@@ -1754,6 +1830,8 @@ pub fn process_show_validators(
         })
         .count() as u64;
 
+    progress_bar.finish_and_clear();
+
     let total_active_stake = vote_accounts
         .current
         .iter()
@@ -1768,9 +1846,8 @@ pub fn process_show_validators(
         .sum();
     let total_current_stake = total_active_stake - total_delinquent_stake;
 
-    let mut current = vote_accounts.current;
-    current.sort_by(|a, b| b.activated_stake.cmp(&a.activated_stake));
-    let current_validators: Vec<CliValidator> = current
+    let current_validators: Vec<CliValidator> = vote_accounts
+        .current
         .iter()
         .map(|vote_account| {
             CliValidator::new(
@@ -1780,22 +1857,23 @@ pub fn process_show_validators(
                     .get(&vote_account.node_pubkey)
                     .unwrap_or(&unknown_version)
                     .clone(),
+                skip_rate.get(&vote_account.node_pubkey).cloned(),
                 &config.address_labels,
             )
         })
         .collect();
-    let mut delinquent = vote_accounts.delinquent;
-    delinquent.sort_by(|a, b| b.activated_stake.cmp(&a.activated_stake));
-    let delinquent_validators: Vec<CliValidator> = delinquent
+    let delinquent_validators: Vec<CliValidator> = vote_accounts
+        .delinquent
         .iter()
         .map(|vote_account| {
-            CliValidator::new(
+            CliValidator::new_delinquent(
                 vote_account,
                 epoch_info.epoch,
                 node_version
                     .get(&vote_account.node_pubkey)
                     .unwrap_or(&unknown_version)
                     .clone(),
+                skip_rate.get(&vote_account.node_pubkey).cloned(),
                 &config.address_labels,
             )
         })
@@ -1822,8 +1900,13 @@ pub fn process_show_validators(
         total_active_stake,
         total_current_stake,
         total_delinquent_stake,
-        current_validators,
-        delinquent_validators,
+        validators: current_validators
+            .into_iter()
+            .chain(delinquent_validators.into_iter())
+            .collect(),
+        validators_sort_order,
+        validators_reverse_sort,
+        number_validators,
         stake_by_version,
         use_lamports_unit,
     };
@@ -2023,10 +2106,7 @@ mod tests {
         let default_keypair = Keypair::new();
         let (default_keypair_file, mut tmp_file) = make_tmp_file();
         write_keypair(&default_keypair, tmp_file.as_file_mut()).unwrap();
-        let default_signer = DefaultSigner {
-            path: default_keypair_file,
-            arg_name: String::new(),
-        };
+        let default_signer = DefaultSigner::new("", &default_keypair_file);
 
         let test_cluster_version = test_commands
             .clone()

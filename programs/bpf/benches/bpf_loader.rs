@@ -19,7 +19,7 @@ use solana_runtime::{
     loader_utils::load_program,
 };
 use solana_sdk::{
-    account::Account,
+    account::AccountSharedData,
     bpf_loader,
     client::SyncClient,
     entrypoint::SUCCESS,
@@ -75,9 +75,12 @@ fn bench_program_create_executable(bencher: &mut Bencher) {
     let elf = load_elf("bench_alu").unwrap();
 
     bencher.iter(|| {
-        let _ =
-            Executable::<BpfError, ThisInstructionMeter>::from_elf(&elf, None, Config::default())
-                .unwrap();
+        let _ = <dyn Executable<BpfError, ThisInstructionMeter>>::from_elf(
+            &elf,
+            None,
+            Config::default(),
+        )
+        .unwrap();
     });
 }
 
@@ -95,7 +98,7 @@ fn bench_program_alu(bencher: &mut Bencher) {
 
     let elf = load_elf("bench_alu").unwrap();
     let mut executable =
-        Executable::<BpfError, ThisInstructionMeter>::from_elf(&elf, None, Config::default())
+        <dyn Executable<BpfError, ThisInstructionMeter>>::from_elf(&elf, None, Config::default())
             .unwrap();
     executable.set_syscall_registry(register_syscalls(&mut invoke_context).unwrap());
     executable.jit_compile().unwrap();
@@ -175,7 +178,8 @@ fn bench_program_execute_noop(bencher: &mut Bencher) {
     let mint_pubkey = mint_keypair.pubkey();
     let account_metas = vec![AccountMeta::new(mint_pubkey, true)];
 
-    let instruction = Instruction::new(invoke_program_id, &[u8::MAX, 0, 0, 0], account_metas);
+    let instruction =
+        Instruction::new_with_bincode(invoke_program_id, &[u8::MAX, 0, 0, 0], account_metas);
     let message = Message::new(&[instruction], Some(&mint_pubkey));
 
     bank_client
@@ -197,7 +201,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
     let mut invoke_context = MockInvokeContext::default();
     invoke_context.compute_meter.remaining = BUDGET;
 
-    let accounts = [RefCell::new(Account::new(
+    let accounts = [RefCell::new(AccountSharedData::new(
         1,
         10000001,
         &solana_sdk::pubkey::new_rand(),
@@ -221,7 +225,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
 
     let elf = load_elf("tuner").unwrap();
     let mut executable =
-        Executable::<BpfError, ThisInstructionMeter>::from_elf(&elf, None, Config::default())
+        <dyn Executable<BpfError, ThisInstructionMeter>>::from_elf(&elf, None, Config::default())
             .unwrap();
     executable.set_syscall_registry(register_syscalls(&mut invoke_context).unwrap());
     let compute_meter = invoke_context.get_compute_meter();
@@ -229,7 +233,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
     let mut vm = create_vm(
         &loader_id,
         executable.as_ref(),
-        &mut serialized,
+        serialized.as_slice_mut(),
         &[],
         &mut invoke_context,
     )

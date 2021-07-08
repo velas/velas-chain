@@ -1,15 +1,17 @@
-use crate::client_error;
-use solana_account_decoder::{parse_token::UiTokenAmount, UiAccount};
-use solana_sdk::{
-    clock::{Epoch, Slot, UnixTimestamp},
-    fee_calculator::{FeeCalculator, FeeRateGovernor},
-    inflation::Inflation,
-    transaction::{Result, TransactionError},
+use {
+    crate::client_error,
+    solana_account_decoder::{parse_token::UiTokenAmount, UiAccount},
+    solana_sdk::{
+        clock::{Epoch, Slot, UnixTimestamp},
+        fee_calculator::{FeeCalculator, FeeRateGovernor},
+        inflation::Inflation,
+        transaction::{Result, TransactionError},
+    },
+    solana_transaction_status::{
+        ConfirmedTransactionStatusWithSignature, TransactionConfirmationStatus,
+    },
+    std::{collections::HashMap, fmt, net::SocketAddr},
 };
-use solana_transaction_status::{
-    ConfirmedTransactionStatusWithSignature, TransactionConfirmationStatus,
-};
-use std::{collections::HashMap, fmt, net::SocketAddr};
 
 pub type RpcResult<T> = client_error::Result<Response<T>>;
 
@@ -41,6 +43,15 @@ pub struct RpcBlockhashFeeCalculator {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcFees {
+    pub blockhash: String,
+    pub fee_calculator: FeeCalculator,
+    pub last_valid_slot: Slot,
+    pub last_valid_block_height: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DeprecatedRpcFees {
     pub blockhash: String,
     pub fee_calculator: FeeCalculator,
     pub last_valid_slot: Slot,
@@ -204,10 +215,27 @@ pub struct RpcContactInfo {
     pub version: Option<String>,
     /// First 4 bytes of the FeatureSet identifier
     pub feature_set: Option<u32>,
+    /// Shred version
+    pub shred_version: Option<u16>,
 }
 
 /// Map of leader base58 identity pubkeys to the slot indices relative to the first epoch slot
 pub type RpcLeaderSchedule = HashMap<String, Vec<usize>>;
+
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcBlockProductionRange {
+    pub first_slot: Slot,
+    pub last_slot: Slot,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcBlockProduction {
+    /// Map of leader base58 identity pubkeys to a tuple of `(number of leader slots, number of blocks produced)`
+    pub by_identity: HashMap<String, (usize, usize)>,
+    pub range: RpcBlockProductionRange,
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "kebab-case")]
@@ -252,10 +280,10 @@ pub struct RpcVoteAccountStatus {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcVoteAccountInfo {
-    /// Vote account pubkey as base-58 encoded string
+    /// Vote account address, as base-58 encoded string
     pub vote_pubkey: String,
 
-    /// The pubkey of the node that votes using this account
+    /// The validator identity, as base-58 encoded string
     pub node_pubkey: String,
 
     /// The current stake, in lamports, delegated to this vote account
@@ -290,6 +318,7 @@ pub struct RpcSignatureConfirmation {
 pub struct RpcSimulateTransactionResult {
     pub err: Option<TransactionError>,
     pub logs: Option<Vec<String>>,
+    pub accounts: Option<Vec<Option<UiAccount>>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -324,7 +353,7 @@ pub enum StakeActivationState {
     Inactive,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcStakeActivation {
     pub state: StakeActivationState,

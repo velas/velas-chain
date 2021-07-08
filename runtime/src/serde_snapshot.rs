@@ -2,11 +2,12 @@ use {
     crate::{
         accounts::Accounts,
         accounts_db::{AccountStorageEntry, AccountsDb, AppendVecId, BankHashInfo},
-        accounts_index::{AccountIndex, Ancestors},
+        accounts_index::{AccountSecondaryIndexes, Ancestors},
         append_vec::AppendVec,
         bank::{Bank, BankFieldsToDeserialize, BankRc, Builtins},
         blockhash_queue::{BlockHashEvm, BlockhashQueue},
         epoch_stakes::EpochStakes,
+        hardened_unpack::UnpackedAppendVecMap,
         message_processor::MessageProcessor,
         rent_collector::RentCollector,
         serde_snapshot::future::SerializableStorage,
@@ -14,9 +15,7 @@ use {
     },
     bincode,
     bincode::{config::Options, Error},
-    fs_extra::dir::CopyOptions,
-    log::{info, warn},
-    rand::{thread_rng, Rng},
+    log::*,
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     solana_sdk::{
         clock::{Epoch, Slot, UnixTimestamp},
@@ -31,7 +30,7 @@ use {
     },
     std::{
         collections::{HashMap, HashSet},
-        io::{BufReader, BufWriter, Read, Write},
+        io::{self, BufReader, BufWriter, Read, Write},
         path::{Path, PathBuf},
         result::Result,
         sync::{atomic::Ordering, Arc, RwLock},
@@ -49,7 +48,6 @@ mod tests;
 mod utils;
 
 use future::Context as TypeContextFuture;
-use future_legacy::Context as TypeContextFutureLegacy;
 #[allow(unused_imports)]
 use utils::{serialize_iter_as_map, serialize_iter_as_seq, serialize_iter_as_tuple};
 
@@ -59,9 +57,11 @@ pub(crate) use self::tests::reconstruct_accounts_db_via_serialization;
 
 pub(crate) use crate::accounts_db::{SnapshotStorage, SnapshotStorages};
 
+// NOTE(velas):
+// - old enum `SerdeStyle` was removed as single variant enum
+// - this enum should be treated as new, EVM only related enum without any previous history
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum EvmStateVersion {
-    V1_3_0,
     V1_4_0,
 }
 
@@ -122,22 +122,21 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn bank_from_stream<R, P>(
+pub(crate) fn bank_from_stream<R>(
+    evm_state_path: &Path,
     evm_state_version: EvmStateVersion,
     stream: &mut BufReader<R>,
-    append_vecs_path: P,
-    evm_state_path: &Path,
     account_paths: &[PathBuf],
+    unpacked_append_vec_map: UnpackedAppendVecMap,
     genesis_config: &GenesisConfig,
     frozen_account_pubkeys: &[Pubkey],
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     additional_builtins: Option<&Builtins>,
-    account_indexes: HashSet<AccountIndex>,
+    account_indexes: AccountSecondaryIndexes,
     caching_enabled: bool,
 ) -> std::result::Result<Bank, Error>
 where
     R: Read,
-    P: AsRef<Path>,
 {
     macro_rules! INTO {
         ($x:ident) => {{
@@ -150,7 +149,7 @@ where
                 frozen_account_pubkeys,
                 evm_state_path,
                 account_paths,
-                append_vecs_path,
+                unpacked_append_vec_map,
                 debug_keys,
                 additional_builtins,
                 account_indexes,
@@ -160,7 +159,6 @@ where
         }};
     }
     match evm_state_version {
-        EvmStateVersion::V1_3_0 => INTO!(TypeContextFutureLegacy),
         EvmStateVersion::V1_4_0 => INTO!(TypeContextFuture),
     }
     .map_err(|err| {
@@ -191,7 +189,6 @@ where
         };
     }
     match evm_version {
-        EvmStateVersion::V1_3_0 => INTO!(TypeContextFutureLegacy),
         EvmStateVersion::V1_4_0 => INTO!(TypeContextFuture),
     }
     .map_err(|err| {
@@ -235,27 +232,26 @@ impl<'a, C: TypeContext<'a>> Serialize for SerializableAccountsDb<'a, C> {
 impl<'a, C> IgnoreAsHelper for SerializableAccountsDb<'a, C> {}
 
 #[allow(clippy::too_many_arguments)]
-fn reconstruct_bank_from_fields<E, P>(
+fn reconstruct_bank_from_fields<E>(
     bank_fields: BankFieldsToDeserialize,
     accounts_db_fields: AccountsDbFields<E>,
     genesis_config: &GenesisConfig,
     frozen_account_pubkeys: &[Pubkey],
     evm_state_path: &Path,
     account_paths: &[PathBuf],
-    append_vecs_path: P,
+    unpacked_append_vec_map: UnpackedAppendVecMap,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     additional_builtins: Option<&Builtins>,
-    account_indexes: HashSet<AccountIndex>,
+    account_indexes: AccountSecondaryIndexes,
     caching_enabled: bool,
 ) -> Result<Bank, Error>
 where
     E: SerializableStorage,
-    P: AsRef<Path>,
 {
     let mut accounts_db = reconstruct_accountsdb_from_fields(
         accounts_db_fields,
         account_paths,
-        append_vecs_path,
+        unpacked_append_vec_map,
         &genesis_config.cluster_type,
         account_indexes,
         caching_enabled,
@@ -278,17 +274,16 @@ where
     Ok(bank)
 }
 
-fn reconstruct_accountsdb_from_fields<E, P>(
+fn reconstruct_accountsdb_from_fields<E>(
     accounts_db_fields: AccountsDbFields<E>,
     account_paths: &[PathBuf],
-    stream_append_vecs_path: P,
+    unpacked_append_vec_map: UnpackedAppendVecMap,
     cluster_type: &ClusterType,
-    account_indexes: HashSet<AccountIndex>,
+    account_indexes: AccountSecondaryIndexes,
     caching_enabled: bool,
 ) -> Result<AccountsDb, Error>
 where
     E: SerializableStorage,
-    P: AsRef<Path>,
 {
     let mut accounts_db = AccountsDb::new_with_config(
         account_paths.to_vec(),
@@ -320,30 +315,17 @@ where
 
             let mut new_slot_storage = HashMap::new();
             for storage_entry in slot_storage.drain(..) {
-                let path_index = thread_rng().gen_range(0, accounts_db.paths.len());
-                let local_dir = &accounts_db.paths[path_index];
+                let file_name = AppendVec::file_name(slot, storage_entry.id());
 
-                // Move the corresponding AppendVec from the snapshot into the directory pointed
-                // at by `local_dir`
-                let append_vec_relative_path =
-                    AppendVec::new_relative_path(slot, storage_entry.id());
-                let append_vec_abs_path = stream_append_vecs_path
-                    .as_ref()
-                    .join(&append_vec_relative_path);
-                let target = local_dir.join(append_vec_abs_path.file_name().unwrap());
-                std::fs::rename(append_vec_abs_path.clone(), target).or_else(|_| {
-                    let mut copy_options = CopyOptions::new();
-                    copy_options.overwrite = true;
-                    fs_extra::move_items(&[&append_vec_abs_path], &local_dir, &copy_options)
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-                        .and(Ok(()))
+                let append_vec_path = unpacked_append_vec_map.get(&file_name).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("{} not found in unpacked append vecs", file_name),
+                    )
                 })?;
 
-                // Notify the AppendVec of the new file location
-                let local_path = local_dir.join(append_vec_relative_path);
-
                 let (accounts, num_accounts) =
-                    AppendVec::new_from_file(&local_path, storage_entry.current_len())?;
+                    AppendVec::new_from_file(append_vec_path, storage_entry.current_len())?;
                 let u_storage_entry = AccountStorageEntry::new_existing(
                     slot,
                     storage_entry.id(),

@@ -524,7 +524,7 @@ prepareDeploy() {
     if [[ -n $releaseChannel ]]; then
       echo "Downloading release from channel: $releaseChannel"
       rm -f "$SOLANA_ROOT"/solana-release.tar.bz2
-      declare updateDownloadUrl=http://release.solana.com/"$releaseChannel"/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+      declare updateDownloadUrl=https://release.solana.com/"$releaseChannel"/solana-release-x86_64-unknown-linux-gnu.tar.bz2
       (
         set -x
         curl -L -I "$updateDownloadUrl"
@@ -835,8 +835,8 @@ while [[ -n $1 ]]; do
       doBuild=false
       shift 1
     elif [[ $1 = --limit-ledger-size ]]; then
-      maybeLimitLedgerSize="$1"
-      shift 1
+      maybeLimitLedgerSize="$1 $2"
+      shift 2
     elif [[ $1 = --skip-poh-verify ]]; then
       maybeSkipLedgerVerify="$1"
       shift 1

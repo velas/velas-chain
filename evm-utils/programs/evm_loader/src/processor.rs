@@ -586,7 +586,7 @@ mod test {
         let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
         let user_id = Pubkey::new_unique();
-        let first_user_account = RefCell::new(solana_sdk::account::Account {
+        let first_user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 0,
             data: vec![],
             owner: crate::ID,
@@ -885,7 +885,7 @@ mod test {
         let mut executor_orig = evm_state::Executor::testing();
         let mut executor = Some(&mut executor_orig);
         let processor = EvmProcessor::default();
-        let user_account = RefCell::new(solana_sdk::account::Account {
+        let user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 1000,
             data: vec![],
             owner: crate::ID,
@@ -952,7 +952,7 @@ mod test {
         let mut executor_orig = evm_state::Executor::testing();
         let mut executor = Some(&mut executor_orig);
         let processor = EvmProcessor::default();
-        let first_user_account = RefCell::new(solana_sdk::account::Account {
+        let first_user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 1000,
             data: vec![],
             owner: crate::ID,
@@ -1005,7 +1005,7 @@ mod test {
 
         // Transfer back
 
-        let second_user_account = RefCell::new(solana_sdk::account::Account {
+        let second_user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 0,
             data: vec![],
             owner: crate::ID,
@@ -1079,7 +1079,7 @@ mod test {
         let mut executor_orig = evm_state::Executor::testing();
         let mut executor = Some(&mut executor_orig);
         let processor = EvmProcessor::default();
-        let first_user_account = RefCell::new(solana_sdk::account::Account {
+        let first_user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 1000,
             data: vec![],
             owner: crate::ID,
@@ -1135,7 +1135,7 @@ mod test {
 
         // Transfer back
 
-        let second_user_account = RefCell::new(solana_sdk::account::Account {
+        let second_user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 0,
             data: vec![],
             owner: crate::ID,
@@ -1213,7 +1213,7 @@ mod test {
         let mut executor_orig = evm_state::Executor::testing();
         let mut executor = Some(&mut executor_orig);
         let processor = EvmProcessor::default();
-        let first_user_account = RefCell::new(solana_sdk::account::Account {
+        let first_user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 1000,
             data: vec![],
             owner: crate::ID,
@@ -1269,7 +1269,7 @@ mod test {
 
         // Transfer back
 
-        let second_user_account = RefCell::new(solana_sdk::account::Account {
+        let second_user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 0,
             data: vec![],
             owner: crate::ID,
@@ -1346,19 +1346,19 @@ mod test {
         ]
     }
 
-    fn account_by_key(pubkey: solana::Address) -> solana_sdk::account::Account {
+    fn account_by_key(pubkey: solana::Address) -> solana_sdk::account::AccountSharedData {
         match &pubkey {
             id if id == &crate::ID => {
-                native_loader::create_loadable_account_for_test("Evm Processor")
+                native_loader::create_loadable_account_for_test("EVM Processor")
             }
-            id if id == &solana_sdk::sysvar::rent::id() => solana_sdk::account::Account {
+            id if id == &solana_sdk::sysvar::rent::id() => solana_sdk::account::AccountSharedData {
                 lamports: 10,
                 owner: native_loader::id(),
                 data: bincode::serialize(&Rent::default()).unwrap(),
                 executable: false,
                 rent_epoch: 0,
             },
-            _rest => solana_sdk::account::Account {
+            _rest => solana_sdk::account::AccountSharedData {
                 lamports: 20000000,
                 owner: crate::ID, // EVM should only operate with accounts that it owns.
                 data: vec![0u8],
@@ -1473,7 +1473,7 @@ mod test {
 
         let processor = EvmProcessor::default();
 
-        let first_user_account = RefCell::new(solana_sdk::account::Account {
+        let first_user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 1000,
             data: vec![],
             owner: crate::ID,
@@ -1554,7 +1554,7 @@ mod test {
         let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
 
-        let user_account = RefCell::new(solana_sdk::account::Account {
+        let user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 1000,
             data: vec![0; evm_state::MAX_TX_LEN as usize],
             owner: crate::ID,
@@ -1608,7 +1608,7 @@ mod test {
 
         let batch_size: u64 = 500;
 
-        let user_account = RefCell::new(solana_sdk::account::Account {
+        let user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 1000,
             data: vec![0; batch_size as usize],
             owner: crate::ID,
@@ -1711,7 +1711,7 @@ mod test {
         let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
 
-        let user_account = RefCell::new(solana_sdk::account::Account {
+        let user_account = RefCell::new(solana_sdk::account::AccountSharedData {
             lamports: 1000,
             data: vec![],
             owner: crate::ID,

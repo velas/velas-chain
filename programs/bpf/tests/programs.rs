@@ -4,6 +4,9 @@
 extern crate solana_bpf_loader_program;
 
 use itertools::izip;
+use solana_account_decoder::parse_bpf_loader::{
+    parse_bpf_upgradeable_loader, BpfUpgradeableLoaderAccountType,
+};
 use solana_bpf_loader_program::{
     create_vm,
     serialization::{deserialize_parameters, serialize_parameters},
@@ -22,12 +25,11 @@ use solana_runtime::{
     },
 };
 use solana_sdk::{
-    account::Account,
+    account::AccountSharedData,
     bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
     client::SyncClient,
     clock::{DEFAULT_SLOTS_PER_EPOCH, MAX_PROCESSING_AGE},
     entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
-    feature_set::try_find_program_address_syscall_enabled,
     instruction::{AccountMeta, CompiledInstruction, Instruction, InstructionError},
     keyed_account::KeyedAccount,
     message::Message,
@@ -35,14 +37,20 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{keypair_from_seed, Keypair, Signer},
     system_instruction,
-    sysvar::{clock, fees, rent, slot_hashes, stake_history},
+    sysvar::{
+        clock, epoch_schedule, fees, instructions, recent_blockhashes, rent, slot_hashes,
+        slot_history, stake_history,
+    },
     transaction::{Transaction, TransactionError},
 };
 use solana_transaction_status::{
     token_balances::collect_token_balances, ConfirmedTransaction, InnerInstructions,
     TransactionStatusMeta, TransactionWithStatusMeta, UiTransactionEncoding,
 };
-use std::{cell::RefCell, collections::HashMap, env, fs::File, io::Read, path::PathBuf, sync::Arc};
+use std::{
+    cell::RefCell, collections::HashMap, env, fs::File, io::Read, path::PathBuf, str::FromStr,
+    sync::Arc,
+};
 
 /// BPF program file extension
 const PLATFORM_FILE_EXTENSION_BPF: &str = "so";
@@ -216,7 +224,7 @@ fn run_program(
         let mut vm = create_vm(
             &loader_id,
             executable.as_ref(),
-            &mut parameter_bytes,
+            parameter_bytes.as_slice_mut(),
             parameter_accounts,
             &mut invoke_context,
         )
@@ -227,7 +235,13 @@ fn run_program(
             vm.execute_program_jit(&mut instruction_meter)
         };
         assert_eq!(SUCCESS, result.unwrap());
-        deserialize_parameters(&bpf_loader::id(), parameter_accounts, &parameter_bytes).unwrap();
+        deserialize_parameters(
+            &bpf_loader::id(),
+            parameter_accounts,
+            parameter_bytes.as_slice(),
+            true,
+        )
+        .unwrap();
         if i == 1 {
             assert_eq!(instruction_count, vm.get_total_instruction_count());
         }
@@ -368,6 +382,7 @@ fn execute_transactions(bank: &Bank, txs: &[Transaction]) -> Vec<ConfirmedTransa
                 post_token_balances: Some(post_token_balances),
                 inner_instructions,
                 log_messages: Some(log_messages),
+                rewards: None,
             };
 
             ConfirmedTransaction {
@@ -409,7 +424,7 @@ fn test_program_bpf_sanity() {
             ("relative_call", true),
             ("sanity", true),
             ("sanity++", true),
-            ("sha256", true),
+            ("sha", true),
             ("struct_pass", true),
             ("struct_ret", true),
         ]);
@@ -429,10 +444,8 @@ fn test_program_bpf_sanity() {
             ("solana_bpf_rust_panic", false),
             ("solana_bpf_rust_param_passing", true),
             ("solana_bpf_rust_rand", true),
-            ("solana_bpf_rust_ristretto", true),
             ("solana_bpf_rust_sanity", true),
-            ("solana_bpf_rust_sha256", true),
-            ("solana_bpf_rust_sysval", true),
+            ("solana_bpf_rust_sha", true),
         ]);
     }
 
@@ -459,13 +472,17 @@ fn test_program_bpf_sanity() {
         let account_metas = vec![
             AccountMeta::new(mint_keypair.pubkey(), true),
             AccountMeta::new(Keypair::new().pubkey(), false),
-            AccountMeta::new(clock::id(), false),
-            AccountMeta::new(fees::id(), false),
-            AccountMeta::new(slot_hashes::id(), false),
-            AccountMeta::new(stake_history::id(), false),
-            AccountMeta::new(rent::id(), false),
+            AccountMeta::new_readonly(clock::id(), false),
+            AccountMeta::new_readonly(epoch_schedule::id(), false),
+            AccountMeta::new_readonly(fees::id(), false),
+            AccountMeta::new_readonly(instructions::id(), false),
+            AccountMeta::new_readonly(recent_blockhashes::id(), false),
+            AccountMeta::new_readonly(rent::id(), false),
+            AccountMeta::new_readonly(slot_hashes::id(), false),
+            AccountMeta::new_readonly(slot_history::id(), false),
+            AccountMeta::new_readonly(stake_history::id(), false),
         ];
-        let instruction = Instruction::new(program_id, &1u8, account_metas);
+        let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas);
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         if program.1 {
             assert!(result.is_ok());
@@ -510,7 +527,7 @@ fn test_program_bpf_loader_deprecated() {
             program,
         );
         let account_metas = vec![AccountMeta::new(mint_keypair.pubkey(), true)];
-        let instruction = Instruction::new(program_id, &1u8, account_metas);
+        let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas);
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert!(result.is_ok());
     }
@@ -544,11 +561,11 @@ fn test_program_bpf_duplicate_accounts() {
         let bank = Arc::new(bank);
         let bank_client = BankClient::new_shared(&bank);
         let program_id = load_bpf_program(&bank_client, &bpf_loader::id(), &mint_keypair, program);
-        let payee_account = Account::new(10, 1, &program_id);
+        let payee_account = AccountSharedData::new(10, 1, &program_id);
         let payee_pubkey = solana_sdk::pubkey::new_rand();
         bank.store_account(&payee_pubkey, &payee_account);
+        let account = AccountSharedData::new(10, 1, &program_id);
 
-        let account = Account::new(10, 1, &program_id);
         let pubkey = solana_sdk::pubkey::new_rand();
         let account_metas = vec![
             AccountMeta::new(mint_keypair.pubkey(), true),
@@ -558,46 +575,61 @@ fn test_program_bpf_duplicate_accounts() {
         ];
 
         bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new(program_id, &1u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
         assert!(result.is_ok());
         assert_eq!(data[0], 1);
 
         bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new(program_id, &2u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[2], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
         assert!(result.is_ok());
         assert_eq!(data[0], 2);
 
         bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new(program_id, &3u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[3], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
         assert!(result.is_ok());
         assert_eq!(data[0], 3);
 
         bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new(program_id, &4u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[4], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         let lamports = bank_client.get_balance(&pubkey).unwrap();
         assert!(result.is_ok());
         assert_eq!(lamports, 11);
 
         bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new(program_id, &5u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[5], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         let lamports = bank_client.get_balance(&pubkey).unwrap();
         assert!(result.is_ok());
         assert_eq!(lamports, 12);
 
         bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new(program_id, &6u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[6], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         let lamports = bank_client.get_balance(&pubkey).unwrap();
         assert!(result.is_ok());
         assert_eq!(lamports, 13);
+
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+        let account_metas = vec![
+            AccountMeta::new(mint_keypair.pubkey(), true),
+            AccountMeta::new(payee_pubkey, false),
+            AccountMeta::new(pubkey, false),
+            AccountMeta::new_readonly(pubkey, true),
+            AccountMeta::new_readonly(program_id, false),
+        ];
+        bank.store_account(&pubkey, &account);
+        let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas.clone());
+        let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+        let result = bank_client.send_and_confirm_message(&[&mint_keypair, &keypair], message);
+        assert!(result.is_ok());
     }
 }
 
@@ -630,32 +662,32 @@ fn test_program_bpf_error_handling() {
         let program_id = load_bpf_program(&bank_client, &bpf_loader::id(), &mint_keypair, program);
         let account_metas = vec![AccountMeta::new(mint_keypair.pubkey(), true)];
 
-        let instruction = Instruction::new(program_id, &1u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert!(result.is_ok());
 
-        let instruction = Instruction::new(program_id, &2u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[2], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
             TransactionError::InstructionError(0, InstructionError::InvalidAccountData)
         );
 
-        let instruction = Instruction::new(program_id, &3u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[3], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
             TransactionError::InstructionError(0, InstructionError::Custom(0))
         );
 
-        let instruction = Instruction::new(program_id, &4u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[4], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
             TransactionError::InstructionError(0, InstructionError::Custom(42))
         );
 
-        let instruction = Instruction::new(program_id, &5u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[5], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         let result = result.unwrap_err().unwrap();
         if TransactionError::InstructionError(0, InstructionError::InvalidInstructionData) != result
@@ -666,7 +698,7 @@ fn test_program_bpf_error_handling() {
             );
         }
 
-        let instruction = Instruction::new(program_id, &6u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[6], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         let result = result.unwrap_err().unwrap();
         if TransactionError::InstructionError(0, InstructionError::InvalidInstructionData) != result
@@ -677,7 +709,7 @@ fn test_program_bpf_error_handling() {
             );
         }
 
-        let instruction = Instruction::new(program_id, &7u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         let result = result.unwrap_err().unwrap();
         if TransactionError::InstructionError(0, InstructionError::InvalidInstructionData) != result
@@ -688,14 +720,14 @@ fn test_program_bpf_error_handling() {
             );
         }
 
-        let instruction = Instruction::new(program_id, &8u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[8], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
             TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
         );
 
-        let instruction = Instruction::new(program_id, &9u8, account_metas.clone());
+        let instruction = Instruction::new_with_bytes(program_id, &[9], account_metas.clone());
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
@@ -721,7 +753,8 @@ fn test_program_bpf_invoke_sanity() {
     const TEST_RETURN_ERROR: u8 = 11;
     const TEST_PRIVILEGE_DEESCALATION_ESCALATION_SIGNER: u8 = 12;
     const TEST_PRIVILEGE_DEESCALATION_ESCALATION_WRITABLE: u8 = 13;
-    const TEST_WRITE_DEESCALATION: u8 = 14;
+    const TEST_WRITABLE_DEESCALATION_WRITABLE: u8 = 14;
+    const TEST_NESTED_INVOKE_TOO_DEEP: u8 = 15;
 
     #[allow(dead_code)]
     #[derive(Debug)]
@@ -765,15 +798,15 @@ fn test_program_bpf_invoke_sanity() {
             load_bpf_program(&bank_client, &bpf_loader::id(), &mint_keypair, program.3);
 
         let argument_keypair = Keypair::new();
-        let account = Account::new(42, 100, &invoke_program_id);
+        let account = AccountSharedData::new(42, 100, &invoke_program_id);
         bank.store_account(&argument_keypair.pubkey(), &account);
 
         let invoked_argument_keypair = Keypair::new();
-        let account = Account::new(10, 10, &invoked_program_id);
+        let account = AccountSharedData::new(10, 10, &invoked_program_id);
         bank.store_account(&invoked_argument_keypair.pubkey(), &account);
 
         let from_keypair = Keypair::new();
-        let account = Account::new(84, 0, &solana_sdk::system_program::id());
+        let account = AccountSharedData::new(84, 0, &solana_sdk::system_program::id());
         bank.store_account(&from_keypair.pubkey(), &account);
 
         let (derived_key1, bump_seed1) =
@@ -800,12 +833,12 @@ fn test_program_bpf_invoke_sanity() {
 
         // success cases
 
-        let instruction = Instruction::new(
+        let instruction = Instruction::new_with_bytes(
             invoke_program_id,
             &[TEST_SUCCESS, bump_seed1, bump_seed2, bump_seed3],
             account_metas.clone(),
         );
-        let noop_instruction = Instruction::new(noop_program_id, &(), vec![]);
+        let noop_instruction = Instruction::new_with_bytes(noop_program_id, &[], vec![]);
         let message = Message::new(&[instruction, noop_instruction], Some(&mint_pubkey));
         let tx = Transaction::new(
             &[
@@ -839,6 +872,10 @@ fn test_program_bpf_invoke_sanity() {
                 invoked_program_id.clone(),
                 invoked_program_id.clone(),
                 invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
             ],
             Languages::Rust => vec![
                 solana_sdk::system_program::id(),
@@ -857,6 +894,12 @@ fn test_program_bpf_invoke_sanity() {
                 invoked_program_id.clone(),
                 invoked_program_id.clone(),
                 invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                solana_sdk::system_program::id(),
             ],
         };
         assert_eq!(invoked_programs.len(), expected_invoked_programs.len());
@@ -879,8 +922,11 @@ fn test_program_bpf_invoke_sanity() {
                     &invoked_argument_keypair,
                     &from_keypair,
                 ];
-                let instruction =
-                    Instruction::new(invoke_program_id, instruction_data, account_metas.clone());
+                let instruction = Instruction::new_with_bytes(
+                    invoke_program_id,
+                    instruction_data,
+                    account_metas.clone(),
+                );
                 let message = Message::new(&[instruction], Some(&mint_pubkey));
                 let tx = Transaction::new(&signers, message.clone(), bank.last_blockhash());
                 let (result, inner_instructions) = process_transaction_and_record_inner(&bank, tx);
@@ -959,9 +1005,21 @@ fn test_program_bpf_invoke_sanity() {
         );
 
         do_invoke_failure_test_local(
-            TEST_WRITE_DEESCALATION,
+            TEST_WRITABLE_DEESCALATION_WRITABLE,
             TransactionError::InstructionError(0, InstructionError::ReadonlyDataModified),
             &[invoked_program_id.clone()],
+        );
+
+        do_invoke_failure_test_local(
+            TEST_NESTED_INVOKE_TOO_DEEP,
+            TransactionError::InstructionError(0, InstructionError::CallDepth),
+            &[
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+            ],
         );
 
         // Check resulting state
@@ -978,10 +1036,10 @@ fn test_program_bpf_invoke_sanity() {
         }
 
         // Attempt to realloc into unauthorized address space
-        let account = Account::new(84, 0, &solana_sdk::system_program::id());
+        let account = AccountSharedData::new(84, 0, &solana_sdk::system_program::id());
         bank.store_account(&from_keypair.pubkey(), &account);
-        bank.store_account(&derived_key1, &Account::default());
-        let instruction = Instruction::new(
+        bank.store_account(&derived_key1, &AccountSharedData::default());
+        let instruction = Instruction::new_with_bytes(
             invoke_program_id,
             &[
                 TEST_ALLOC_ACCESS_VIOLATION,
@@ -1043,11 +1101,11 @@ fn test_program_bpf_program_id_spoofing() {
     );
 
     let from_pubkey = Pubkey::new_unique();
-    let account = Account::new(10, 0, &solana_sdk::system_program::id());
+    let account = AccountSharedData::new(10, 0, &solana_sdk::system_program::id());
     bank.store_account(&from_pubkey, &account);
 
     let to_pubkey = Pubkey::new_unique();
-    let account = Account::new(0, 0, &solana_sdk::system_program::id());
+    let account = AccountSharedData::new(0, 0, &solana_sdk::system_program::id());
     bank.store_account(&to_pubkey, &account);
 
     let account_metas = vec![
@@ -1057,7 +1115,8 @@ fn test_program_bpf_program_id_spoofing() {
         AccountMeta::new(to_pubkey, false),
     ];
 
-    let instruction = Instruction::new(malicious_swap_pubkey, &(), account_metas.clone());
+    let instruction =
+        Instruction::new_with_bytes(malicious_swap_pubkey, &[], account_metas.clone());
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
     assert_eq!(
         result.unwrap_err().unwrap(),
@@ -1097,7 +1156,7 @@ fn test_program_bpf_caller_has_access_to_cpi_program() {
         AccountMeta::new_readonly(caller_pubkey, false),
         AccountMeta::new_readonly(caller2_pubkey, false),
     ];
-    let instruction = Instruction::new(caller_pubkey, &[1_u8], account_metas.clone());
+    let instruction = Instruction::new_with_bytes(caller_pubkey, &[1], account_metas.clone());
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
     assert_eq!(
         result.unwrap_err().unwrap(),
@@ -1129,7 +1188,7 @@ fn test_program_bpf_ro_modify() {
     );
 
     let test_keypair = Keypair::new();
-    let account = Account::new(10, 0, &solana_sdk::system_program::id());
+    let account = AccountSharedData::new(10, 0, &solana_sdk::system_program::id());
     bank.store_account(&test_keypair.pubkey(), &account);
 
     let account_metas = vec![
@@ -1137,7 +1196,7 @@ fn test_program_bpf_ro_modify() {
         AccountMeta::new(test_keypair.pubkey(), true),
     ];
 
-    let instruction = Instruction::new(program_pubkey, &[1_u8], account_metas.clone());
+    let instruction = Instruction::new_with_bytes(program_pubkey, &[1], account_metas.clone());
     let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
     let result = bank_client.send_and_confirm_message(&[&mint_keypair, &test_keypair], message);
     assert_eq!(
@@ -1145,7 +1204,7 @@ fn test_program_bpf_ro_modify() {
         TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
     );
 
-    let instruction = Instruction::new(program_pubkey, &[3_u8], account_metas.clone());
+    let instruction = Instruction::new_with_bytes(program_pubkey, &[3], account_metas.clone());
     let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
     let result = bank_client.send_and_confirm_message(&[&mint_keypair, &test_keypair], message);
     assert_eq!(
@@ -1153,7 +1212,7 @@ fn test_program_bpf_ro_modify() {
         TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
     );
 
-    let instruction = Instruction::new(program_pubkey, &[4_u8], account_metas.clone());
+    let instruction = Instruction::new_with_bytes(program_pubkey, &[4], account_metas.clone());
     let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
     let result = bank_client.send_and_confirm_message(&[&mint_keypair, &test_keypair], message);
     assert_eq!(
@@ -1187,7 +1246,7 @@ fn test_program_bpf_call_depth() {
         "solana_bpf_rust_call_depth",
     );
 
-    let instruction = Instruction::new(
+    let instruction = Instruction::new_with_bincode(
         program_id,
         &(BpfComputeBudget::default().max_call_depth - 1),
         vec![],
@@ -1195,7 +1254,7 @@ fn test_program_bpf_call_depth() {
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
     assert!(result.is_ok());
 
-    let instruction = Instruction::new(
+    let instruction = Instruction::new_with_bincode(
         program_id,
         &BpfComputeBudget::default().max_call_depth,
         vec![],
@@ -1214,10 +1273,11 @@ fn assert_instruction_count() {
         programs.extend_from_slice(&[
             ("bpf_to_bpf", 13),
             ("multiple_static", 8),
-            ("noop", 57),
+            ("noop", 45),
             ("relative_call", 10),
-            ("sanity", 176),
-            ("sanity++", 176),
+            ("sanity", 175),
+            ("sanity++", 177),
+            ("sha", 694),
             ("struct_pass", 8),
             ("struct_ret", 22),
         ]);
@@ -1226,28 +1286,33 @@ fn assert_instruction_count() {
     {
         programs.extend_from_slice(&[
             ("solana_bpf_rust_128bit", 572),
-            ("solana_bpf_rust_alloc", 12919),
+            ("solana_bpf_rust_alloc", 8906),
             ("solana_bpf_rust_dep_crate", 2),
-            ("solana_bpf_rust_external_spend", 514),
+            ("solana_bpf_rust_external_spend", 521),
             ("solana_bpf_rust_iter", 724),
             ("solana_bpf_rust_many_args", 237),
-            ("solana_bpf_rust_noop", 488),
-            ("solana_bpf_rust_param_passing", 48),
-            ("solana_bpf_rust_ristretto", 19409),
-            ("solana_bpf_rust_sanity", 938),
+            ("solana_bpf_rust_noop", 495),
+            ("solana_bpf_rust_param_passing", 46),
+            ("solana_bpf_rust_sanity", 917),
+            ("solana_bpf_rust_sha", 29099),
         ]);
     }
 
+    let mut passed = true;
+    println!("\n  {:30} expected actual diff", "BPF program");
     for program in programs.iter() {
-        println!("Test program: {:?}", program.0);
         let program_id = solana_sdk::pubkey::new_rand();
         let key = solana_sdk::pubkey::new_rand();
-        let mut account = RefCell::new(Account::default());
+        let mut account = RefCell::new(AccountSharedData::default());
         let parameter_accounts = vec![KeyedAccount::new(&key, false, &mut account)];
         let count = run_program(program.0, &program_id, &parameter_accounts[..], &[]).unwrap();
-        println!("  {} : {:?} ({:?})", program.0, count, program.1,);
-        assert!(count <= program.1);
+        let diff: i64 = count as i64 - program.1 as i64;
+        println!("  {:30} {:8} {:6} {:+4}", program.0, program.1, count, diff);
+        if count > program.1 {
+            passed = false;
+        }
     }
+    assert!(passed);
 }
 
 #[cfg(any(feature = "bpf_rust"))]
@@ -1279,9 +1344,9 @@ fn test_program_bpf_instruction_introspection() {
         solana_sdk::sysvar::instructions::id(),
         false,
     )];
-    let instruction0 = Instruction::new(program_id, &[0u8, 0u8], account_metas.clone());
-    let instruction1 = Instruction::new(program_id, &[0u8, 1u8], account_metas.clone());
-    let instruction2 = Instruction::new(program_id, &[0u8, 2u8], account_metas);
+    let instruction0 = Instruction::new_with_bytes(program_id, &[0u8, 0u8], account_metas.clone());
+    let instruction1 = Instruction::new_with_bytes(program_id, &[0u8, 1u8], account_metas.clone());
+    let instruction2 = Instruction::new_with_bytes(program_id, &[0u8, 2u8], account_metas);
     let message = Message::new(
         &[instruction0, instruction1, instruction2],
         Some(&mint_keypair.pubkey()),
@@ -1294,15 +1359,17 @@ fn test_program_bpf_instruction_introspection() {
         solana_sdk::sysvar::instructions::id(),
         false,
     )];
-    let instruction = Instruction::new(program_id, &0u8, account_metas);
+    let instruction = Instruction::new_with_bytes(program_id, &[0], account_metas);
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
     assert_eq!(
         result.unwrap_err().unwrap(),
-        TransactionError::InvalidAccountIndex
+        // sysvar write locks are demoted to read only. So this will no longer
+        // cause InvalidAccountIndex error.
+        TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
     );
 
     // No accounts, should error
-    let instruction = Instruction::new(program_id, &0u8, vec![]);
+    let instruction = Instruction::new_with_bytes(program_id, &[0], vec![]);
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
     assert!(result.is_err());
     assert_eq!(
@@ -1369,7 +1436,7 @@ fn test_program_bpf_test_use_latest_executor() {
     let message = Message::new(
         &[
             loader_instruction::finalize(&program_keypair.pubkey(), &bpf_loader::id()),
-            Instruction::new(panic_id, &0u8, vec![]),
+            Instruction::new_with_bytes(panic_id, &[0], vec![]),
         ],
         Some(&mint_keypair.pubkey()),
     );
@@ -1401,7 +1468,11 @@ fn test_program_bpf_test_use_latest_executor() {
 
     // Call the noop program, should get noop not panic
     let message = Message::new(
-        &[Instruction::new(program_keypair.pubkey(), &0u8, vec![])],
+        &[Instruction::new_with_bytes(
+            program_keypair.pubkey(),
+            &[0],
+            vec![],
+        )],
         Some(&mint_keypair.pubkey()),
     );
     assert!(bank_client
@@ -1491,7 +1562,11 @@ fn test_program_bpf_test_use_latest_executor2() {
 
     // invoke program, verify not found
     let message = Message::new(
-        &[Instruction::new(program_keypair.pubkey(), &0u8, vec![])],
+        &[Instruction::new_with_bytes(
+            program_keypair.pubkey(),
+            &[0],
+            vec![],
+        )],
         Some(&mint_keypair.pubkey()),
     );
     assert_eq!(
@@ -1526,7 +1601,11 @@ fn test_program_bpf_test_use_latest_executor2() {
 
     // Call the program, should get noop, not panic
     let message = Message::new(
-        &[Instruction::new(program_keypair.pubkey(), &0u8, vec![])],
+        &[Instruction::new_with_bytes(
+            program_keypair.pubkey(),
+            &[0],
+            vec![],
+        )],
         Some(&mint_keypair.pubkey()),
     );
     assert!(bank_client
@@ -1563,7 +1642,7 @@ fn test_program_bpf_upgrade() {
         "solana_bpf_rust_upgradeable",
     );
 
-    let mut instruction = Instruction::new(
+    let mut instruction = Instruction::new_with_bytes(
         program_id,
         &[0],
         vec![
@@ -1659,7 +1738,7 @@ fn test_program_bpf_upgrade_and_invoke_in_same_tx() {
         "solana_bpf_rust_noop",
     );
 
-    let invoke_instruction = Instruction::new(
+    let invoke_instruction = Instruction::new_with_bytes(
         program_id,
         &[0],
         vec![
@@ -1747,7 +1826,7 @@ fn test_program_bpf_invoke_upgradeable_via_cpi() {
         "solana_bpf_rust_upgradeable",
     );
 
-    let mut instruction = Instruction::new(
+    let mut instruction = Instruction::new_with_bytes(
         invoke_and_return,
         &[0],
         vec![
@@ -1848,13 +1927,46 @@ fn test_program_bpf_disguised_as_bpf_loader() {
             program,
         );
         let account_metas = vec![AccountMeta::new_readonly(program_id, false)];
-        let instruction = Instruction::new(bpf_loader_deprecated::id(), &1u8, account_metas);
+        let instruction =
+            Instruction::new_with_bytes(bpf_loader_deprecated::id(), &[1], account_metas);
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
             TransactionError::InstructionError(0, InstructionError::IncorrectProgramId)
         );
     }
+}
+
+#[test]
+#[cfg(feature = "bpf_c")]
+fn test_program_bpf_c_dup() {
+    solana_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+    let mut bank = Bank::new(&genesis_config);
+    let (name, id, entrypoint) = solana_bpf_loader_program!();
+    bank.add_builtin(&name, id, entrypoint);
+
+    let account_address = Pubkey::new_unique();
+    let account =
+        AccountSharedData::new_data(42, &[1_u8, 2, 3], &solana_sdk::system_program::id()).unwrap();
+    bank.store_account(&account_address, &account);
+
+    let bank_client = BankClient::new(bank);
+
+    let program_id = load_bpf_program(&bank_client, &bpf_loader::id(), &mint_keypair, "ser");
+    let account_metas = vec![
+        AccountMeta::new_readonly(account_address, false),
+        AccountMeta::new_readonly(account_address, false),
+    ];
+    let instruction = Instruction::new_with_bytes(program_id, &[4, 5, 6, 7], account_metas);
+    bank_client
+        .send_and_confirm_instruction(&mint_keypair, instruction)
+        .unwrap();
 }
 
 #[cfg(feature = "bpf_rust")]
@@ -1894,7 +2006,7 @@ fn test_program_bpf_upgrade_via_cpi() {
         "solana_bpf_rust_upgradeable",
     );
 
-    let mut instruction = Instruction::new(
+    let mut instruction = Instruction::new_with_bytes(
         invoke_and_return,
         &[0],
         vec![
@@ -1992,7 +2104,7 @@ fn test_program_bpf_upgrade_self_via_cpi() {
         "solana_bpf_rust_invoke_and_return",
     );
 
-    let mut invoke_instruction = Instruction::new(
+    let mut invoke_instruction = Instruction::new_with_bytes(
         program_id,
         &[0],
         vec![
@@ -2043,6 +2155,94 @@ fn test_program_bpf_upgrade_self_via_cpi() {
         result.unwrap_err(),
         TransactionError::InstructionError(2, InstructionError::ProgramFailedToComplete)
     );
+}
+
+#[cfg(feature = "bpf_rust")]
+#[test]
+fn test_program_bpf_set_upgrade_authority_via_cpi() {
+    solana_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+    let mut bank = Bank::new(&genesis_config);
+    let (name, id, entrypoint) = solana_bpf_loader_program!();
+    bank.add_builtin(&name, id, entrypoint);
+    let (name, id, entrypoint) = solana_bpf_loader_upgradeable_program!();
+    bank.add_builtin(&name, id, entrypoint);
+    let bank_client = BankClient::new(bank);
+
+    // Deploy CPI invoker program
+    let invoke_and_return = load_bpf_program(
+        &bank_client,
+        &bpf_loader::id(),
+        &mint_keypair,
+        "solana_bpf_rust_invoke_and_return",
+    );
+
+    // Deploy upgradeable program
+    let buffer_keypair = Keypair::new();
+    let program_keypair = Keypair::new();
+    let program_id = program_keypair.pubkey();
+    let authority_keypair = Keypair::new();
+    load_upgradeable_bpf_program(
+        &bank_client,
+        &mint_keypair,
+        &buffer_keypair,
+        &program_keypair,
+        &authority_keypair,
+        "solana_bpf_rust_upgradeable",
+    );
+
+    // Set program upgrade authority instruction to invoke via CPI
+    let new_upgrade_authority_key = Keypair::new().pubkey();
+    let mut set_upgrade_authority_instruction = bpf_loader_upgradeable::set_upgrade_authority(
+        &program_id,
+        &authority_keypair.pubkey(),
+        Some(&new_upgrade_authority_key),
+    );
+
+    // Invoke set_upgrade_authority via CPI invoker program
+    set_upgrade_authority_instruction.program_id = invoke_and_return;
+    set_upgrade_authority_instruction
+        .accounts
+        .insert(0, AccountMeta::new(bpf_loader_upgradeable::id(), false));
+
+    let message = Message::new(
+        &[set_upgrade_authority_instruction],
+        Some(&mint_keypair.pubkey()),
+    );
+    bank_client
+        .send_and_confirm_message(&[&mint_keypair, &authority_keypair], message)
+        .unwrap();
+
+    // Assert upgrade authority was changed
+    let program_account_data = bank_client.get_account_data(&program_id).unwrap().unwrap();
+    let program_account = parse_bpf_upgradeable_loader(&program_account_data).unwrap();
+
+    let upgrade_authority_key = match program_account {
+        BpfUpgradeableLoaderAccountType::Program(ui_program) => {
+            let program_data_account_key = Pubkey::from_str(&ui_program.program_data).unwrap();
+            let program_data_account_data = bank_client
+                .get_account_data(&program_data_account_key)
+                .unwrap()
+                .unwrap();
+            let program_data_account =
+                parse_bpf_upgradeable_loader(&program_data_account_data).unwrap();
+
+            match program_data_account {
+                BpfUpgradeableLoaderAccountType::ProgramData(ui_program_data) => ui_program_data
+                    .authority
+                    .map(|a| Pubkey::from_str(&a).unwrap()),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+
+    assert_eq!(Some(new_upgrade_authority_key), upgrade_authority_key);
 }
 
 #[cfg(feature = "bpf_rust")]
@@ -2104,9 +2304,9 @@ fn test_program_upgradeable_locks() {
         let invoke_tx = Transaction::new(
             &[payer_keypair],
             Message::new(
-                &[Instruction::new(
+                &[Instruction::new_with_bytes(
                     program_keypair.pubkey(),
-                    &[0u8; 0],
+                    &[0; 0],
                     vec![],
                 )],
                 Some(&payer_keypair.pubkey()),
@@ -2187,7 +2387,7 @@ fn test_program_upgradeable_locks() {
 
 #[cfg(feature = "bpf_rust")]
 #[test]
-fn test_program_bpf_syscall_feature_activation() {
+fn test_program_bpf_finalize() {
     solana_logger::setup();
 
     let GenesisConfigInfo {
@@ -2196,29 +2396,53 @@ fn test_program_bpf_syscall_feature_activation() {
         ..
     } = create_genesis_config(50);
     let mut bank = Bank::new(&genesis_config);
-    bank.deactivate_feature(&try_find_program_address_syscall_enabled::id());
     let (name, id, entrypoint) = solana_bpf_loader_program!();
     bank.add_builtin(&name, id, entrypoint);
     let bank = Arc::new(bank);
     let bank_client = BankClient::new_shared(&bank);
 
-    let program_id = load_bpf_program(
+    let program_pubkey = load_bpf_program(
         &bank_client,
         &bpf_loader::id(),
         &mint_keypair,
-        "solana_bpf_rust_noop",
+        "solana_bpf_rust_finalize",
     );
-    let instruction = Instruction::new(program_id, &0u8, vec![]);
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert!(result.is_ok());
 
-    let mut bank = Bank::new_from_parent(&bank, &Pubkey::default(), 1);
-    bank.activate_feature(&try_find_program_address_syscall_enabled::id());
+    let noop_keypair = Keypair::new();
 
-    let bank = Arc::new(bank);
-    let bank_client = BankClient::new_shared(&bank);
-    let instruction = Instruction::new(program_id, &1u8, vec![]);
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    println!("result: {:?}", result);
-    assert!(result.is_ok());
+    // Write the noop program into the same program account
+    let elf = read_bpf_program("solana_bpf_rust_noop");
+    let message = Message::new(
+        &[system_instruction::create_account(
+            &mint_keypair.pubkey(),
+            &noop_keypair.pubkey(),
+            1,
+            elf.len() as u64 * 2,
+            &bpf_loader::id(),
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    assert!(bank_client
+        .send_and_confirm_message(&[&mint_keypair, &noop_keypair], message)
+        .is_ok());
+    write_bpf_program(
+        &bank_client,
+        &bpf_loader::id(),
+        &mint_keypair,
+        &noop_keypair,
+        &elf,
+    );
+
+    let account_metas = vec![
+        AccountMeta::new(noop_keypair.pubkey(), true),
+        AccountMeta::new_readonly(bpf_loader::id(), false),
+        AccountMeta::new(rent::id(), false),
+    ];
+    let instruction = Instruction::new_with_bytes(program_pubkey, &[], account_metas.clone());
+    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let result = bank_client.send_and_confirm_message(&[&mint_keypair, &noop_keypair], message);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
+    );
 }

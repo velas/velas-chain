@@ -1,10 +1,12 @@
-use crate::rpc_filter::RpcFilterType;
-use solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig};
-use solana_sdk::{
-    clock::{Epoch, Slot},
-    commitment_config::{CommitmentConfig, CommitmentLevel},
+use {
+    crate::rpc_filter::RpcFilterType,
+    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
+    solana_sdk::{
+        clock::{Epoch, Slot},
+        commitment_config::{CommitmentConfig, CommitmentLevel},
+    },
+    solana_transaction_status::{TransactionDetails, UiTransactionEncoding},
 };
-use solana_transaction_status::{TransactionDetails, UiTransactionEncoding};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,14 +23,24 @@ pub struct RpcSendTransactionConfig {
     pub encoding: Option<UiTransactionEncoding>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcSimulateTransactionAccountsConfig {
+    pub encoding: Option<UiAccountEncoding>,
+    pub addresses: Vec<String>,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcSimulateTransactionConfig {
     #[serde(default)]
     pub sig_verify: bool,
+    #[serde(default)]
+    pub replace_recent_blockhash: bool,
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
     pub encoding: Option<UiTransactionEncoding>,
+    pub accounts: Option<RpcSimulateTransactionAccountsConfig>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
@@ -37,6 +49,54 @@ pub struct RpcRequestAirdropConfig {
     pub recent_blockhash: Option<String>, // base-58 encoded blockhash
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcLeaderScheduleConfig {
+    pub identity: Option<String>, // validator identity, as a base-58 encoded string
+    #[serde(flatten)]
+    pub commitment: Option<CommitmentConfig>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcBlockProductionConfigRange {
+    pub first_slot: Slot,
+    pub last_slot: Option<Slot>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcBlockProductionConfig {
+    pub identity: Option<String>, // validator identity, as a base-58 encoded string
+    pub range: Option<RpcBlockProductionConfigRange>, // current epoch if `None`
+    #[serde(flatten)]
+    pub commitment: Option<CommitmentConfig>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcGetVoteAccountsConfig {
+    pub vote_pubkey: Option<String>, // validator vote address, as a base-58 encoded string
+    #[serde(flatten)]
+    pub commitment: Option<CommitmentConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RpcLeaderScheduleConfigWrapper {
+    SlotOnly(Option<Slot>),
+    ConfigOnly(Option<RpcLeaderScheduleConfig>),
+}
+
+impl RpcLeaderScheduleConfigWrapper {
+    pub fn unzip(&self) -> (Option<Slot>, Option<RpcLeaderScheduleConfig>) {
+        match &self {
+            RpcLeaderScheduleConfigWrapper::SlotOnly(slot) => (*slot, None),
+            RpcLeaderScheduleConfigWrapper::ConfigOnly(config) => (None, config.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -77,6 +137,7 @@ pub struct RpcProgramAccountsConfig {
     pub filters: Option<Vec<RpcFilterType>>,
     #[serde(flatten)]
     pub account_config: RpcAccountInfoConfig,
+    pub with_context: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

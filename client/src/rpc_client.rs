@@ -1,53 +1,47 @@
-use crate::{
-    client_error::{ClientError, ClientErrorKind, Result as ClientResult},
-    http_sender::HttpSender,
-    mock_sender::{MockSender, Mocks},
-    rpc_config::RpcAccountInfoConfig,
-    rpc_config::{
-        RpcConfirmedBlockConfig, RpcConfirmedTransactionConfig, RpcEpochConfig,
-        RpcGetConfirmedSignaturesForAddress2Config, RpcLargestAccountsConfig,
-        RpcProgramAccountsConfig, RpcRequestAirdropConfig, RpcSendTransactionConfig,
-        RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
+use {
+    crate::{
+        client_error::{ClientError, ClientErrorKind, Result as ClientResult},
+        http_sender::HttpSender,
+        mock_sender::{MockSender, Mocks},
+        rpc_config::RpcAccountInfoConfig,
+        rpc_config::*,
+        rpc_request::{RpcError, RpcRequest, RpcResponseErrorData, TokenAccountsFilter},
+        rpc_response::*,
+        rpc_sender::RpcSender,
     },
-    rpc_request::{RpcError, RpcRequest, RpcResponseErrorData, TokenAccountsFilter},
-    rpc_response::*,
-    rpc_sender::RpcSender,
-};
-use bincode::serialize;
-use indicatif::{ProgressBar, ProgressStyle};
-use log::*;
-use serde_json::{json, Value};
-use solana_account_decoder::{
-    parse_token::{TokenAccountType, UiTokenAccount, UiTokenAmount},
-    UiAccount, UiAccountData, UiAccountEncoding,
-};
-use solana_sdk::{
-    account::Account,
-    clock::{
-        Epoch, Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND, DEFAULT_TICKS_PER_SLOT,
-        MAX_HASH_AGE_IN_SECONDS,
+    bincode::serialize,
+    indicatif::{ProgressBar, ProgressStyle},
+    log::*,
+    serde_json::{json, Value},
+    solana_account_decoder::{
+        parse_token::{TokenAccountType, UiTokenAccount, UiTokenAmount},
+        UiAccount, UiAccountData, UiAccountEncoding,
     },
-    commitment_config::{CommitmentConfig, CommitmentLevel},
-    epoch_info::EpochInfo,
-    epoch_schedule::EpochSchedule,
-    fee_calculator::{FeeCalculator, FeeRateGovernor},
-    hash::Hash,
-    pubkey::Pubkey,
-    signature::Signature,
-    transaction::{self, uses_durable_nonce, Transaction},
-};
-use solana_transaction_status::{
-    EncodedConfirmedBlock, EncodedConfirmedTransaction, TransactionStatus, UiConfirmedBlock,
-    UiTransactionEncoding,
-};
-use solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY;
-use std::{
-    cmp::min,
-    net::SocketAddr,
-    str::FromStr,
-    sync::RwLock,
-    thread::sleep,
-    time::{Duration, Instant},
+    solana_sdk::{
+        account::Account,
+        clock::{Epoch, Slot, UnixTimestamp, DEFAULT_MS_PER_SLOT, MAX_HASH_AGE_IN_SECONDS},
+        commitment_config::{CommitmentConfig, CommitmentLevel},
+        epoch_info::EpochInfo,
+        epoch_schedule::EpochSchedule,
+        fee_calculator::{FeeCalculator, FeeRateGovernor},
+        hash::Hash,
+        pubkey::Pubkey,
+        signature::Signature,
+        transaction::{self, uses_durable_nonce, Transaction},
+    },
+    solana_transaction_status::{
+        EncodedConfirmedBlock, EncodedConfirmedTransaction, TransactionStatus, UiConfirmedBlock,
+        UiTransactionEncoding,
+    },
+    solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
+    std::{
+        cmp::min,
+        net::SocketAddr,
+        str::FromStr,
+        sync::RwLock,
+        thread::sleep,
+        time::{Duration, Instant},
+    },
 };
 
 pub struct RpcClient {
@@ -129,12 +123,18 @@ impl RpcClient {
         Self::new(get_rpc_request_str(addr, false))
     }
 
+    pub fn new_socket_with_commitment(
+        addr: SocketAddr,
+        commitment_config: CommitmentConfig,
+    ) -> Self {
+        Self::new_with_commitment(get_rpc_request_str(addr, false), commitment_config)
+    }
+
     pub fn new_socket_with_timeout(addr: SocketAddr, timeout: Duration) -> Self {
         let url = get_rpc_request_str(addr, false);
         Self::new_with_timeout(url, timeout)
     }
 
-    #[allow(dead_code)]
     fn get_node_version(&self) -> Result<semver::Version, RpcError> {
         let r_node_version = self.node_version.read().unwrap();
         if let Some(version) = &*r_node_version {
@@ -157,9 +157,8 @@ impl RpcClient {
         self.commitment_config
     }
 
-    #[allow(clippy::unnecessary_wraps)] // to keep interface compatible with solana
     fn use_deprecated_commitment(&self) -> Result<bool, RpcError> {
-        Ok(false)
+        Ok(self.get_node_version()? < semver::Version::new(1, 5, 5))
     }
 
     fn maybe_map_commitment(
@@ -216,7 +215,11 @@ impl RpcClient {
 
     #[allow(clippy::unnecessary_wraps)] // to keep interface compatible with solana
     fn default_cluster_transaction_encoding(&self) -> Result<UiTransactionEncoding, RpcError> {
-        Ok(UiTransactionEncoding::Base64)
+        if self.get_node_version()? < semver::Version::new(1, 3, 16) {
+            Ok(UiTransactionEncoding::Base58)
+        } else {
+            Ok(UiTransactionEncoding::Base64)
+        }
     }
 
     pub fn send_transaction_with_config(
@@ -403,6 +406,20 @@ impl RpcClient {
         )
     }
 
+    pub fn get_block_height(&self) -> ClientResult<u64> {
+        self.get_block_height_with_commitment(self.commitment_config)
+    }
+
+    pub fn get_block_height_with_commitment(
+        &self,
+        commitment_config: CommitmentConfig,
+    ) -> ClientResult<u64> {
+        self.send(
+            RpcRequest::GetBlockHeight,
+            json!([self.maybe_map_commitment(commitment_config)?]),
+        )
+    }
+
     pub fn get_slot_leaders(&self, start_slot: Slot, limit: u64) -> ClientResult<Vec<Pubkey>> {
         self.send(RpcRequest::GetSlotLeaders, json!([start_slot, limit]))
             .and_then(|slot_leaders: Vec<String>| {
@@ -419,6 +436,18 @@ impl RpcClient {
                     })
                     .collect()
             })
+    }
+
+    /// Get block production for the current epoch
+    pub fn get_block_production(&self) -> RpcResult<RpcBlockProduction> {
+        self.send(RpcRequest::GetBlockProduction, Value::Null)
+    }
+
+    pub fn get_block_production_with_config(
+        &self,
+        config: RpcBlockProductionConfig,
+    ) -> RpcResult<RpcBlockProduction> {
+        self.send(RpcRequest::GetBlockProduction, json!(config))
     }
 
     pub fn get_stake_activation(
@@ -494,10 +523,17 @@ impl RpcClient {
         &self,
         commitment_config: CommitmentConfig,
     ) -> ClientResult<RpcVoteAccountStatus> {
-        self.send(
-            RpcRequest::GetVoteAccounts,
-            json!([self.maybe_map_commitment(commitment_config)?]),
-        )
+        self.get_vote_accounts_with_config(RpcGetVoteAccountsConfig {
+            commitment: Some(self.maybe_map_commitment(commitment_config)?),
+            ..RpcGetVoteAccountsConfig::default()
+        })
+    }
+
+    pub fn get_vote_accounts_with_config(
+        &self,
+        config: RpcGetVoteAccountsConfig,
+    ) -> ClientResult<RpcVoteAccountStatus> {
+        self.send(RpcRequest::GetVoteAccounts, json!([config]))
     }
 
     pub fn wait_for_max_stake(
@@ -734,10 +770,21 @@ impl RpcClient {
         slot: Option<Slot>,
         commitment_config: CommitmentConfig,
     ) -> ClientResult<Option<RpcLeaderSchedule>> {
-        self.send(
-            RpcRequest::GetLeaderSchedule,
-            json!([slot, self.maybe_map_commitment(commitment_config)?]),
+        self.get_leader_schedule_with_config(
+            slot,
+            RpcLeaderScheduleConfig {
+                commitment: Some(self.maybe_map_commitment(commitment_config)?),
+                ..RpcLeaderScheduleConfig::default()
+            },
         )
+    }
+
+    pub fn get_leader_schedule_with_config(
+        &self,
+        slot: Option<Slot>,
+        config: RpcLeaderScheduleConfig,
+    ) -> ClientResult<Option<RpcLeaderSchedule>> {
+        self.send(RpcRequest::GetLeaderSchedule, json!([slot, config]))
     }
 
     pub fn get_epoch_schedule(&self) -> ClientResult<EpochSchedule> {
@@ -803,38 +850,52 @@ impl RpcClient {
         &self,
         transaction: &Transaction,
     ) -> ClientResult<Signature> {
-        const SEND_RETRIES: usize = 20;
-        const STATUS_RETRIES: usize = 40;
+        const SEND_RETRIES: usize = usize::MAX;
+        const GET_STATUS_RETRIES: usize = usize::MAX;
 
-        for _ in 0..SEND_RETRIES {
+        'sending: for _ in 0..SEND_RETRIES {
             let signature = self.send_transaction(transaction)?;
-            // TODO(velas): sync with solana codebase or rewrite this function into new one
-            let _recent_blockhash = if uses_durable_nonce(transaction).is_some() {
-                self.get_recent_blockhash_with_commitment(CommitmentConfig::processed())?
-                    .value
-                    .0
+
+            let recent_blockhash = if uses_durable_nonce(transaction).is_some() {
+                let (recent_blockhash, ..) = self
+                    .get_recent_blockhash_with_commitment(CommitmentConfig::processed())?
+                    .value;
+                recent_blockhash
             } else {
                 transaction.message.recent_blockhash
             };
 
-            for status_retry in 0..STATUS_RETRIES {
-                if let Some(v) = self.get_signature_status(&signature)? {
-                    return Ok(v.map(|_| signature)?);
-                }
-
-                if cfg!(not(test)) && status_retry < STATUS_RETRIES
-                // Ignore sleep at last step.
-                {
-                    // Retry twice a second
-                    sleep(Duration::from_millis(500));
+            for status_retry in 0..GET_STATUS_RETRIES {
+                match self.get_signature_status(&signature)? {
+                    Some(Ok(_)) => return Ok(signature),
+                    Some(Err(e)) => return Err(e.into()),
+                    None => {
+                        let fee_calculator = self
+                            .get_fee_calculator_for_blockhash_with_commitment(
+                                &recent_blockhash,
+                                CommitmentConfig::processed(),
+                            )?
+                            .value;
+                        if fee_calculator.is_none() {
+                            // Block hash is not found by some reason
+                            break 'sending;
+                        } else if cfg!(not(test))
+                            // Ignore sleep at last step.
+                            && status_retry < GET_STATUS_RETRIES
+                        {
+                            // Retry twice a second
+                            sleep(Duration::from_millis(500));
+                            continue;
+                        }
+                    }
                 }
             }
         }
 
         Err(RpcError::ForUser(
             "unable to confirm transaction. \
-                                This can happen in situations such as transaction expiration \
-                                and insufficient fee-payer funds"
+             This can happen in situations such as transaction expiration \
+             and insufficient fee-payer funds"
                 .to_string(),
         )
         .into())
@@ -887,6 +948,14 @@ impl RpcClient {
                     pubkey, err
                 )))
             })?
+    }
+
+    pub fn get_max_retransmit_slot(&self) -> ClientResult<Slot> {
+        self.send(RpcRequest::GetMaxRetransmitSlot, Value::Null)
+    }
+
+    pub fn get_max_shred_insert_slot(&self) -> ClientResult<Slot> {
+        self.send(RpcRequest::GetMaxShredInsertSlot, Value::Null)
     }
 
     pub fn get_multiple_accounts(&self, pubkeys: &[Pubkey]) -> ClientResult<Vec<Option<Account>>> {
@@ -967,12 +1036,11 @@ impl RpcClient {
         self.get_program_accounts_with_config(
             pubkey,
             RpcProgramAccountsConfig {
-                filters: None,
                 account_config: RpcAccountInfoConfig {
-                    encoding: Some(UiAccountEncoding::Base64),
-                    commitment: Some(self.commitment_config),
+                    encoding: Some(UiAccountEncoding::Base64Zstd),
                     ..RpcAccountInfoConfig::default()
                 },
+                ..RpcProgramAccountsConfig::default()
             },
         )
     }
@@ -982,7 +1050,10 @@ impl RpcClient {
         pubkey: &Pubkey,
         config: RpcProgramAccountsConfig,
     ) -> ClientResult<Vec<(Pubkey, Account)>> {
-        let commitment = config.account_config.commitment.unwrap_or_default();
+        let commitment = config
+            .account_config
+            .commitment
+            .unwrap_or_else(|| self.commitment());
         let commitment = self.maybe_map_commitment(commitment)?;
         let account_config = RpcAccountInfoConfig {
             commitment: Some(commitment),
@@ -1032,12 +1103,26 @@ impl RpcClient {
                     blockhash,
                     fee_calculator,
                     last_valid_slot,
+                    ..
                 },
         }) = self
             .send::<Response<RpcFees>>(
                 RpcRequest::GetFees,
                 json!([self.maybe_map_commitment(commitment_config)?]),
             ) {
+            (context, blockhash, fee_calculator, last_valid_slot)
+        } else if let Ok(Response {
+            context,
+            value:
+                DeprecatedRpcFees {
+                    blockhash,
+                    fee_calculator,
+                    last_valid_slot,
+                },
+        }) = self.send::<Response<DeprecatedRpcFees>>(
+            RpcRequest::GetFees,
+            json!([self.maybe_map_commitment(commitment_config)?]),
+        ) {
             (context, blockhash, fee_calculator, last_valid_slot)
         } else if let Ok(Response {
             context,
@@ -1123,9 +1208,7 @@ impl RpcClient {
             debug!("Got same blockhash ({:?}), will retry...", blockhash);
 
             // Retry ~twice during a slot
-            sleep(Duration::from_millis(
-                500 * DEFAULT_TICKS_PER_SLOT / DEFAULT_TICKS_PER_SECOND,
-            ));
+            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2));
             num_retries += 1;
         }
         Err(RpcError::ForUser(format!(
@@ -1695,10 +1778,6 @@ impl RpcClient {
         }
     }
 
-    pub fn validator_exit(&self) -> ClientResult<bool> {
-        self.send(RpcRequest::ValidatorExit, Value::Null)
-    }
-
     // EVM scope.
     pub fn get_evm_transaction_count(
         &self,
@@ -1787,7 +1866,7 @@ mod tests {
     use super::*;
     use crate::{client_error::ClientErrorKind, mock_sender::PUBKEY};
     use assert_matches::assert_matches;
-    use jsonrpc_core::{Error, IoHandler, Params};
+    use jsonrpc_core::{futures::prelude::*, Error, IoHandler, Params};
     use jsonrpc_http_server::{AccessControlAllowOrigin, DomainsValidation, ServerBuilder};
     use serde_json::Number;
     use solana_sdk::{
@@ -1798,20 +1877,35 @@ mod tests {
 
     #[test]
     fn test_send() {
+        _test_send();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[should_panic(expected = "can call blocking only when running on the multi-threaded runtime")]
+    async fn test_send_async_current_thread_should_panic() {
+        _test_send();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_send_async_multi_thread() {
+        _test_send();
+    }
+
+    fn _test_send() {
         let (sender, receiver) = channel();
         thread::spawn(move || {
             let rpc_addr = "0.0.0.0:0".parse().unwrap();
             let mut io = IoHandler::default();
             // Successful request
             io.add_method("getBalance", |_params: Params| {
-                Ok(Value::Number(Number::from(50)))
+                future::ok(Value::Number(Number::from(50)))
             });
             // Failed request
             io.add_method("getRecentBlockhash", |params: Params| {
                 if params != Params::None {
-                    Err(Error::invalid_request())
+                    future::err(Error::invalid_request())
                 } else {
-                    Ok(Value::String(
+                    future::ok(Value::String(
                         "deadbeefXjn8o3yroDHxUtKsZZgoy4GPkPPXfouKNHhx".to_string(),
                     ))
                 }

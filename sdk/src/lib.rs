@@ -6,10 +6,13 @@
 // Allows macro expansion of `use ::solana_sdk::*` to work within this crate
 extern crate self as solana_sdk;
 
+#[cfg(feature = "full")]
+pub use signer::signers;
 pub use solana_program::*;
 
 pub mod account;
 pub mod account_utils;
+pub mod arithmetic;
 pub mod builtins;
 pub mod client;
 pub mod commitment_config;
@@ -42,7 +45,7 @@ pub mod rpc_port;
 pub mod secp256k1_instruction;
 pub mod shred_version;
 pub mod signature;
-pub mod signers;
+pub mod signer;
 pub mod stake_weighted_timestamp;
 pub mod system_transaction;
 pub mod timing;

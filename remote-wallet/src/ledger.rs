@@ -1,6 +1,7 @@
 use {
     crate::{
         ledger_error::LedgerError,
+        locator::Manufacturer,
         remote_wallet::{RemoteWallet, RemoteWalletError, RemoteWalletInfo, RemoteWalletManager},
     },
     console::Emoji,
@@ -9,7 +10,7 @@ use {
     num_traits::FromPrimitive,
     semver::Version as FirmwareVersion,
     solana_sdk::{derivation_path::DerivationPath, pubkey::Pubkey, signature::Signature},
-    std::{cmp::min, fmt, sync::Arc},
+    std::{cmp::min, convert::TryFrom, fmt, sync::Arc},
 };
 
 static CHECK_MARK: Emoji = Emoji("✅ ", "");
@@ -33,8 +34,6 @@ const P2_MORE: u8 = 0x02;
 const MAX_CHUNK_SIZE: usize = 255;
 
 const APDU_SUCCESS_CODE: usize = 0x9000;
-
-const SOL_DERIVATION_PATH_BE: [u8; 8] = [0x80, 0, 0, 44, 0x80, 0, 0x01, 0xF5]; // 44'/501', Solana
 
 /// Ledger vendor ID
 const LEDGER_VID: u16 = 0x2c97;
@@ -365,21 +364,14 @@ impl RemoteWallet for LedgerWallet {
     ) -> Result<RemoteWalletInfo, RemoteWalletError> {
         let manufacturer = dev_info
             .manufacturer_string()
-            .clone()
-            .unwrap_or("Unknown")
-            .to_lowercase()
-            .replace(" ", "-");
+            .and_then(|s| Manufacturer::try_from(s).ok())
+            .unwrap_or_default();
         let model = dev_info
             .product_string()
-            .clone()
             .unwrap_or("Unknown")
             .to_lowercase()
             .replace(" ", "-");
-        let serial = dev_info
-            .serial_number()
-            .clone()
-            .unwrap_or("Unknown")
-            .to_string();
+        let serial = dev_info.serial_number().unwrap_or("Unknown").to_string();
         let host_device_path = dev_info.path().to_string_lossy().to_string();
         let version = self.get_firmware_version()?;
         self.version = version;
@@ -519,20 +511,16 @@ pub fn is_valid_ledger(vendor_id: u16, product_id: u16) -> bool {
 
 /// Build the derivation path byte array from a DerivationPath selection
 fn extend_and_serialize(derivation_path: &DerivationPath) -> Vec<u8> {
-    let byte = if derivation_path.change.is_some() {
+    let byte = if derivation_path.change().is_some() {
         4
-    } else if derivation_path.account.is_some() {
+    } else if derivation_path.account().is_some() {
         3
     } else {
         2
     };
     let mut concat_derivation = vec![byte];
-    concat_derivation.extend_from_slice(&SOL_DERIVATION_PATH_BE);
-    if let Some(account) = &derivation_path.account {
-        concat_derivation.extend_from_slice(&account.as_u32().to_be_bytes());
-        if let Some(change) = &derivation_path.change {
-            concat_derivation.extend_from_slice(&change.as_u32().to_be_bytes());
-        }
+    for index in derivation_path.path() {
+        concat_derivation.extend_from_slice(&index.to_bits().to_be_bytes());
     }
     concat_derivation
 }

@@ -1,5 +1,6 @@
 use log::*;
 
+use std::future::Future;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::thread::sleep;
@@ -17,11 +18,13 @@ use evm_rpc::*;
 use evm_state::*;
 use sha3::{Digest, Keccak256};
 
+use futures_util::future::Either;
 use jsonrpc_core::Result;
 use serde_json::json;
 use snafu::ResultExt;
 
 use solana_account_decoder::{parse_token::UiTokenAmount, UiAccount};
+use solana_core::rpc::{self, OptionalContext};
 use solana_evm_loader_program::{scope::*, tx_chunks::TxChunks};
 use solana_sdk::{
     clock::DEFAULT_TICKS_PER_SECOND, commitment_config::CommitmentLevel,
@@ -52,8 +55,6 @@ use solana_client::{
     rpc_response::Response as RpcResponse,
     rpc_response::*,
 };
-
-use solana_core::rpc::RpcSol;
 
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
@@ -795,6 +796,7 @@ fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
                                 InstructionError::InvalidArgument,
                             )),
                         logs: Some(logs),
+                        ..
                     },
                 ) if !logs.is_empty() => {
                     let last_log = logs.last().unwrap();
@@ -840,7 +842,81 @@ macro_rules! proxy_sol_rpc {
 }
 
 pub struct RpcSolProxy;
-impl RpcSol for RpcSolProxy {
+
+impl rpc::rpc_minimal::Minimal for RpcSolProxy {
+    type Metadata = Arc<EvmBridge>;
+
+    fn get_balance(
+        &self,
+        meta: Self::Metadata,
+        pubkey_str: String,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<RpcResponse<u64>> {
+        proxy_sol_rpc!(meta.rpc_client, GetBalance, pubkey_str, commitment)
+    }
+
+    fn get_epoch_info(
+        &self,
+        meta: Self::Metadata,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<EpochInfo> {
+        proxy_sol_rpc!(meta.rpc_client, GetEpochInfo, commitment)
+    }
+
+    fn get_health(&self, meta: Self::Metadata) -> Result<String> {
+        proxy_sol_rpc!(meta.rpc_client, GetHealth)
+    }
+
+    fn get_identity(&self, meta: Self::Metadata) -> Result<RpcIdentity> {
+        proxy_sol_rpc!(meta.rpc_client, GetMinimumBalanceForRentExemption)
+    }
+
+    fn get_slot(&self, meta: Self::Metadata, commitment: Option<CommitmentConfig>) -> Result<u64> {
+        proxy_sol_rpc!(meta.rpc_client, GetSlot, commitment)
+    }
+
+    fn get_block_height(
+        &self,
+        meta: Self::Metadata,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<u64> {
+        proxy_sol_rpc!(meta.rpc_client, GetBlockHeight, commitment)
+    }
+
+    fn get_snapshot_slot(&self, meta: Self::Metadata) -> Result<Slot> {
+        proxy_sol_rpc!(meta.rpc_client, GetSnapshotSlot)
+    }
+    fn get_transaction_count(
+        &self,
+        meta: Self::Metadata,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<u64> {
+        proxy_sol_rpc!(meta.rpc_client, GetTransactionCount, commitment)
+    }
+
+    fn get_version(&self, meta: Self::Metadata) -> Result<RpcVersionInfo> {
+        proxy_sol_rpc!(meta.rpc_client, GetVersion)
+    }
+
+    fn get_vote_accounts(
+        &self,
+        meta: Self::Metadata,
+        commitment: Option<RpcGetVoteAccountsConfig>,
+    ) -> Result<RpcVoteAccountStatus> {
+        proxy_sol_rpc!(meta.rpc_client, GetVoteAccounts, commitment)
+    }
+
+    fn get_leader_schedule(
+        &self,
+        meta: Self::Metadata,
+        options: Option<RpcLeaderScheduleConfigWrapper>,
+        config: Option<RpcLeaderScheduleConfig>,
+    ) -> Result<Option<RpcLeaderSchedule>> {
+        proxy_sol_rpc!(meta.rpc_client, GetLeaderSchedule, options, config)
+    }
+}
+
+impl rpc::rpc_full::Full for RpcSolProxy {
     type Metadata = Arc<EvmBridge>;
 
     fn confirm_transaction(
@@ -889,7 +965,7 @@ impl RpcSol for RpcSolProxy {
         meta: Self::Metadata,
         program_id_str: String,
         config: Option<RpcProgramAccountsConfig>,
-    ) -> Result<Vec<RpcKeyedAccount>> {
+    ) -> Result<OptionalContext<Vec<RpcKeyedAccount>>> {
         proxy_sol_rpc!(meta.rpc_client, GetProgramAccounts, program_id_str, config)
     }
 
@@ -909,25 +985,8 @@ impl RpcSol for RpcSolProxy {
         proxy_sol_rpc!(meta.rpc_client, GetEpochSchedule)
     }
 
-    fn get_balance(
-        &self,
-        meta: Self::Metadata,
-        pubkey_str: String,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<RpcResponse<u64>> {
-        proxy_sol_rpc!(meta.rpc_client, GetBalance, pubkey_str, commitment)
-    }
-
     fn get_cluster_nodes(&self, meta: Self::Metadata) -> Result<Vec<RpcContactInfo>> {
         proxy_sol_rpc!(meta.rpc_client, GetClusterNodes)
-    }
-
-    fn get_epoch_info(
-        &self,
-        meta: Self::Metadata,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<EpochInfo> {
-        proxy_sol_rpc!(meta.rpc_client, GetEpochInfo, commitment)
     }
 
     fn get_block_commitment(
@@ -940,15 +999,6 @@ impl RpcSol for RpcSolProxy {
 
     fn get_genesis_hash(&self, meta: Self::Metadata) -> Result<String> {
         proxy_sol_rpc!(meta.rpc_client, GetGenesisHash)
-    }
-
-    fn get_leader_schedule(
-        &self,
-        meta: Self::Metadata,
-        slot: Option<Slot>,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<Option<RpcLeaderSchedule>> {
-        proxy_sol_rpc!(meta.rpc_client, GetLeaderSchedule, slot, commitment)
     }
 
     fn get_recent_blockhash(
@@ -988,33 +1038,19 @@ impl RpcSol for RpcSolProxy {
         proxy_sol_rpc!(meta.rpc_client, GetFeeRateGovernor)
     }
 
-    fn get_signature_confirmation(
-        &self,
-        meta: Self::Metadata,
-        signature_str: String,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<Option<RpcSignatureConfirmation>> {
-        proxy_sol_rpc!(
-            meta.rpc_client,
-            GetSignatureConfirmation,
-            signature_str,
-            commitment
-        )
-    }
-
-    fn get_signature_status(
-        &self,
-        meta: Self::Metadata,
-        signature_str: String,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<Option<transaction::Result<()>>> {
-        proxy_sol_rpc!(
-            meta.rpc_client,
-            GetSignatureStatus,
-            signature_str,
-            commitment
-        )
-    }
+    // fn get_signature_confirmation(
+    //     &self,
+    //     meta: Self::Metadata,
+    //     signature_str: String,
+    //     commitment: Option<CommitmentConfig>,
+    // ) -> Result<Option<RpcSignatureConfirmation>> {
+    //     proxy_sol_rpc!(
+    //         meta.rpc_client,
+    //         GetSignatureConfirmation,
+    //         signature_str,
+    //         commitment
+    //     )
+    // }
 
     fn get_signature_statuses(
         &self,
@@ -1028,18 +1064,6 @@ impl RpcSol for RpcSolProxy {
             signature_strs,
             config
         )
-    }
-
-    fn get_slot(&self, meta: Self::Metadata, commitment: Option<CommitmentConfig>) -> Result<u64> {
-        proxy_sol_rpc!(meta.rpc_client, GetSlot, commitment)
-    }
-
-    fn get_transaction_count(
-        &self,
-        meta: Self::Metadata,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<u64> {
-        proxy_sol_rpc!(meta.rpc_client, GetTransactionCount, commitment)
     }
 
     fn get_total_supply(
@@ -1119,30 +1143,6 @@ impl RpcSol for RpcSolProxy {
 
     fn minimum_ledger_slot(&self, meta: Self::Metadata) -> Result<Slot> {
         proxy_sol_rpc!(meta.rpc_client, MinimumLedgerSlot)
-    }
-
-    fn get_vote_accounts(
-        &self,
-        meta: Self::Metadata,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<RpcVoteAccountStatus> {
-        proxy_sol_rpc!(meta.rpc_client, GetVoteAccounts, commitment)
-    }
-
-    fn validator_exit(&self, meta: Self::Metadata) -> Result<bool> {
-        proxy_sol_rpc!(meta.rpc_client, ValidatorExit)
-    }
-
-    fn get_identity(&self, meta: Self::Metadata) -> Result<RpcIdentity> {
-        proxy_sol_rpc!(meta.rpc_client, GetMinimumBalanceForRentExemption)
-    }
-
-    fn get_version(&self, meta: Self::Metadata) -> Result<RpcVersionInfo> {
-        proxy_sol_rpc!(meta.rpc_client, GetVersion)
-    }
-
-    fn set_log_filter(&self, meta: Self::Metadata, filter: String) -> Result<()> {
-        proxy_sol_rpc!(meta.rpc_client, SetLogFilter, filter)
     }
 
     fn get_confirmed_block(
@@ -1229,6 +1229,14 @@ impl RpcSol for RpcSolProxy {
         config: Option<RpcEpochConfig>,
     ) -> Result<RpcStakeActivation> {
         proxy_sol_rpc!(meta.rpc_client, GetStakeActivation, pubkey_str, config)
+    }
+
+    fn get_block_production(
+        &self,
+        meta: Self::Metadata,
+        config: Option<RpcBlockProductionConfig>,
+    ) -> Result<RpcResponse<RpcBlockProduction>> {
+        proxy_sol_rpc!(meta.rpc_client, GetBlockProduction, config)
     }
 
     fn get_token_account_balance(
@@ -1353,14 +1361,6 @@ impl RpcSol for RpcSolProxy {
         proxy_sol_rpc!(meta.rpc_client, GetSlotLeaders, start_slot, end_slot)
     }
 
-    fn get_health(&self, meta: Self::Metadata) -> Result<String> {
-        proxy_sol_rpc!(meta.rpc_client, GetHealth)
-    }
-
-    fn get_snapshot_slot(&self, meta: Self::Metadata) -> Result<Slot> {
-        proxy_sol_rpc!(meta.rpc_client, GetSnapshotSlot)
-    }
-
     fn get_max_retransmit_slot(&self, meta: Self::Metadata) -> Result<Slot> {
         proxy_sol_rpc!(meta.rpc_client, GetMaxRetransmitSlot)
     }
@@ -1396,18 +1396,13 @@ struct LoggingMiddleware;
 impl<M: jsonrpc_core::Metadata> Middleware<M> for LoggingMiddleware {
     type Future = NoopFuture;
     type CallFuture = NoopCallFuture;
-    fn on_call<F, X>(
-        &self,
-        call: Call,
-        meta: M,
-        next: F,
-    ) -> futures::future::Either<Self::CallFuture, X>
+    fn on_call<F, X>(&self, call: Call, meta: M, next: F) -> Either<Self::CallFuture, X>
     where
         F: Fn(Call, M) -> X + Send + Sync,
-        X: futures::Future<Item = Option<Output>> + Send + 'static,
+        X: Future<Output = Option<Output>> + Send + 'static,
     {
         debug!(target: "jsonrpc_core", "On Request = {:?}", call);
-        futures::future::Either::B(next(call, meta))
+        Either::Right(next(call, meta))
     }
 }
 
@@ -1430,8 +1425,11 @@ fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let meta = Arc::new(meta);
     let mut io = MetaIoHandler::with_middleware(LoggingMiddleware);
 
-    let sol_rpc = RpcSolProxy;
-    io.extend_with(sol_rpc.to_delegate());
+    {
+        use rpc::rpc_full::Full;
+        let sol_rpc = RpcSolProxy;
+        io.extend_with(sol_rpc.to_delegate());
+    }
     let ether_bridge = BridgeErpcImpl;
     io.extend_with(ether_bridge.to_delegate());
     let ether_basic = BasicErpcProxy;

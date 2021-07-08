@@ -175,8 +175,8 @@ pub fn transfer_native_to_eth_ixs(
 }
 
 /// Create an account that represent evm locked lamports count.
-pub fn create_state_account(lamports: u64) -> solana_sdk::account::Account {
-    solana_sdk::account::Account {
+pub fn create_state_account(lamports: u64) -> solana_sdk::account::AccountSharedData {
+    solana_sdk::account::AccountSharedData {
         lamports: lamports + 1,
         owner: crate::ID,
         data: b"Evm state".to_vec(),

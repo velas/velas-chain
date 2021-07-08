@@ -6,7 +6,6 @@ use crate::{
 };
 use core::hash::Hash;
 use evm_rpc::Hex;
-use jsonrpc_core::futures::Future;
 use jsonrpc_pubsub::{
     typed::{Sink, Subscriber},
     SubscriptionId,
@@ -30,7 +29,7 @@ use solana_runtime::{
     commitment::{BlockCommitmentCache, CommitmentSlots},
 };
 use solana_sdk::{
-    account::Account,
+    account::{AccountSharedData, ReadableAccount},
     clock::{Slot, UnixTimestamp},
     commitment_config::CommitmentConfig,
     pubkey::Pubkey,
@@ -50,9 +49,6 @@ use std::{
     thread::{Builder, JoinHandle},
     time::Duration,
 };
-
-// Stuck on tokio 0.1 until the jsonrpc-pubsub crate upgrades to tokio 0.2
-use tokio_01::runtime::{Builder as RuntimeBuilder, Runtime, TaskExecutor};
 
 const RECEIVE_DELAY_MILLIS: u64 = 100;
 
@@ -273,20 +269,19 @@ where
     notified_set
 }
 
-struct RpcNotifier(TaskExecutor);
+struct RpcNotifier;
 
 impl RpcNotifier {
     fn notify<T>(&self, value: T, sink: &Sink<T>)
     where
         T: serde::Serialize,
     {
-        self.0
-            .spawn(sink.notify(Ok(value)).map(|_| ()).map_err(|_| ()));
+        let _ = sink.notify(Ok(value));
     }
 }
 
 fn filter_account_result(
-    result: Option<(Account, Slot)>,
+    result: Option<(AccountSharedData, Slot)>,
     pubkey: &Pubkey,
     last_notified_slot: Slot,
     encoding: Option<UiAccountEncoding>,
@@ -304,7 +299,7 @@ fn filter_account_result(
             Box::new(iter::once(get_parsed_token_account(bank, pubkey, account)))
         } else {
             Box::new(iter::once(UiAccount::encode(
-                pubkey, account, encoding, None, None,
+                pubkey, &account, encoding, None, None,
             )))
         }
     } else {
@@ -330,7 +325,7 @@ fn filter_signature_result(
 }
 
 fn filter_program_results(
-    accounts: Vec<(Pubkey, Account)>,
+    accounts: Vec<(Pubkey, AccountSharedData)>,
     program_id: &Pubkey,
     last_notified_slot: Slot,
     config: Option<ProgramConfig>,
@@ -342,8 +337,8 @@ fn filter_program_results(
     let accounts_is_empty = accounts.is_empty();
     let keyed_accounts = accounts.into_iter().filter(move |(_, account)| {
         filters.iter().all(|filter_type| match filter_type {
-            RpcFilterType::DataSize(size) => account.data.len() as u64 == *size,
-            RpcFilterType::Memcmp(compare) => compare.bytes_match(&account.data),
+            RpcFilterType::DataSize(size) => account.data().len() as u64 == *size,
+            RpcFilterType::Memcmp(compare) => compare.bytes_match(&account.data()),
         })
     });
     let accounts: Box<dyn Iterator<Item = RpcKeyedAccount>> = if program_id == &spl_token_id_v2_0()
@@ -355,7 +350,7 @@ fn filter_program_results(
         Box::new(
             keyed_accounts.map(move |(pubkey, account)| RpcKeyedAccount {
                 pubkey: pubkey.to_string(),
-                account: UiAccount::encode(&pubkey, account, encoding.clone(), None, None),
+                account: UiAccount::encode(&pubkey, &account, encoding, None, None),
             }),
         )
     };
@@ -432,7 +427,6 @@ pub struct RpcSubscriptions {
     subscriptions: Subscriptions,
     notification_sender: Arc<Mutex<Sender<NotificationEntry>>>,
     t_cleanup: Option<JoinHandle<()>>,
-    notifier_runtime: Option<Runtime>,
     bank_forks: Arc<RwLock<BankForks>>,
     block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
     optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
@@ -511,13 +505,7 @@ impl RpcSubscriptions {
         };
         let _subscriptions = subscriptions.clone();
 
-        let notifier_runtime = RuntimeBuilder::new()
-            .core_threads(1)
-            .name_prefix("solana-rpc-notifier-")
-            .build()
-            .unwrap();
-
-        let notifier = RpcNotifier(notifier_runtime.executor());
+        let notifier = RpcNotifier {};
         let t_cleanup = Builder::new()
             .name("solana-rpc-notifications".to_string())
             .spawn(move || {
@@ -534,7 +522,6 @@ impl RpcSubscriptions {
         Self {
             subscriptions,
             notification_sender,
-            notifier_runtime: Some(notifier_runtime),
             t_cleanup: Some(t_cleanup),
             bank_forks,
             block_commitment_cache,
@@ -1377,12 +1364,6 @@ impl RpcSubscriptions {
     }
 
     fn shutdown(&mut self) -> std::thread::Result<()> {
-        if let Some(runtime) = self.notifier_runtime.take() {
-            info!("RPC Notifier runtime - shutting down");
-            let _ = runtime.shutdown_now().wait();
-            info!("RPC Notifier runtime - shut down");
-        }
-
         if self.t_cleanup.is_some() {
             info!("RPC Notification thread - shutting down");
             self.exit.store(true, Ordering::Relaxed);
@@ -1402,9 +1383,9 @@ pub(crate) mod tests {
     use crate::optimistically_confirmed_bank_tracker::{
         BankNotification, OptimisticallyConfirmedBank, OptimisticallyConfirmedBankTracker,
     };
-    use jsonrpc_core::futures::{self, stream::Stream};
+    use jsonrpc_core::futures::StreamExt;
     use jsonrpc_pubsub::typed::Subscriber;
-    use serial_test_derive::serial;
+    use serial_test::serial;
     use solana_runtime::{
         commitment::BlockCommitment,
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
@@ -1415,31 +1396,37 @@ pub(crate) mod tests {
         system_instruction, system_program, system_transaction,
         transaction::Transaction,
     };
-    use std::{fmt::Debug, sync::mpsc::channel, time::Instant};
-    use tokio_01::{prelude::FutureExt, runtime::Runtime, timer::Delay};
+    use std::{fmt::Debug, sync::mpsc::channel};
+    use tokio::{
+        runtime::Runtime,
+        time::{sleep, timeout},
+    };
 
     pub(crate) fn robust_poll_or_panic<T: Debug + Send + 'static>(
-        receiver: futures::sync::mpsc::Receiver<T>,
-    ) -> (T, futures::sync::mpsc::Receiver<T>) {
+        receiver: jsonrpc_core::futures::channel::mpsc::UnboundedReceiver<T>,
+    ) -> (
+        T,
+        jsonrpc_core::futures::channel::mpsc::UnboundedReceiver<T>,
+    ) {
         let (inner_sender, inner_receiver) = channel();
-        let mut rt = Runtime::new().unwrap();
-        rt.spawn(futures::lazy(|| {
-            let recv_timeout = receiver
-                .into_future()
-                .timeout(Duration::from_millis(RECEIVE_DELAY_MILLIS))
-                .map(move |result| match result {
-                    (Some(value), receiver) => {
-                        inner_sender.send((value, receiver)).expect("send error")
-                    }
-                    (None, _) => panic!("unexpected end of stream"),
-                })
-                .map_err(|err| panic!("stream error {:?}", err));
+        let rt = Runtime::new().unwrap();
+        rt.spawn(async move {
+            let result = timeout(
+                Duration::from_millis(RECEIVE_DELAY_MILLIS),
+                receiver.into_future(),
+            )
+            .await
+            .unwrap_or_else(|err| panic!("stream error {:?}", err));
 
-            const INITIAL_DELAY_MS: u64 = RECEIVE_DELAY_MILLIS * 2;
-            Delay::new(Instant::now() + Duration::from_millis(INITIAL_DELAY_MS))
-                .and_then(|_| recv_timeout)
-                .map_err(|err| panic!("timer error {:?}", err))
-        }));
+            match result {
+                (Some(value), receiver) => {
+                    inner_sender.send((value, receiver)).expect("send error")
+                }
+                (None, _) => panic!("unexpected end of stream"),
+            }
+
+            sleep(Duration::from_millis(RECEIVE_DELAY_MILLIS * 2)).await;
+        });
         inner_receiver.recv().expect("recv error")
     }
 

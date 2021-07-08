@@ -1,16 +1,19 @@
-use crate::rpc_response::RpcSimulateTransactionResult;
-use derivative::Derivative;
-use serde_json::{json, Value};
-use solana_sdk::{clock::Slot, pubkey::Pubkey};
-use std::fmt;
-use thiserror::Error;
+use {
+    crate::rpc_response::RpcSimulateTransactionResult,
+    derivative::Derivative,
+    serde_json::{json, Value},
+    solana_sdk::{clock::Slot, pubkey::Pubkey},
+    std::fmt,
+    thiserror::Error,
+};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum RpcRequest {
     DeregisterNode,
-    ValidatorExit,
     GetAccountInfo,
     GetBalance,
+    GetBlockHeight,
+    GetBlockProduction,
     GetBlockTime,
     GetBlockCommitment,
     GetClusterNodes,
@@ -53,19 +56,17 @@ pub enum RpcRequest {
     GetMaxShredInsertSlot,
     GetSlotLeader,
     GetSlotLeaders,
-    GetSignatureConfirmation,
     GetStorageTurn,
     GetStorageTurnRate,
     GetSlotsPerSegment,
     GetStakeActivation,
     GetStoragePubkeysForSlot,
     GetSupply,
+    GetTokenLargestAccounts,
     GetTokenAccountBalance,
     GetTokenAccountsByDelegate,
     GetTokenAccountsByOwner,
     GetTokenSupply,
-
-    GetTokenLargestAccounts,
 
     #[deprecated(since = "1.5.19", note = "Please use RpcRequest::GetSupply instead")]
     GetTotalSupply,
@@ -107,11 +108,12 @@ impl fmt::Display for RpcRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let method = match self {
             RpcRequest::DeregisterNode => "deregisterNode",
-            RpcRequest::ValidatorExit => "validatorExit",
             RpcRequest::GetAccountInfo => "getAccountInfo",
             RpcRequest::GetBalance => "getBalance",
-            RpcRequest::GetBlockCommitment => "getBlockCommitment",
+            RpcRequest::GetBlockHeight => "getBlockHeight",
+            RpcRequest::GetBlockProduction => "getBlockProduction",
             RpcRequest::GetBlockTime => "getBlockTime",
+            RpcRequest::GetBlockCommitment => "getBlockCommitment",
             RpcRequest::GetClusterNodes => "getClusterNodes",
             RpcRequest::GetConfirmedBlock => "getConfirmedBlock",
             RpcRequest::GetConfirmedBlocks => "getConfirmedBlocks",
@@ -133,6 +135,8 @@ impl fmt::Display for RpcRequest {
             RpcRequest::GetInflationReward => "getInflationReward",
             RpcRequest::GetLargestAccounts => "getLargestAccounts",
             RpcRequest::GetLeaderSchedule => "getLeaderSchedule",
+            RpcRequest::GetMaxRetransmitSlot => "getMaxRetransmitSlot",
+            RpcRequest::GetMaxShredInsertSlot => "getMaxShredInsertSlot",
             RpcRequest::GetMinimumBalanceForRentExemption => "getMinimumBalanceForRentExemption",
             RpcRequest::GetMultipleAccounts => "getMultipleAccounts",
             RpcRequest::GetProgramAccounts => "getProgramAccounts",
@@ -142,23 +146,20 @@ impl fmt::Display for RpcRequest {
             RpcRequest::GetSignatureStatuses => "getSignatureStatuses",
             RpcRequest::GetSignatureStatus => "getSignatureStatus",
             RpcRequest::GetSlot => "getSlot",
-            RpcRequest::GetMaxRetransmitSlot => "getMaxRetransmitSlot",
-            RpcRequest::GetMaxShredInsertSlot => "getMaxShredInsertSlot",
             RpcRequest::GetSlotLeader => "getSlotLeader",
             RpcRequest::GetSlotLeaders => "getSlotLeaders",
-            RpcRequest::GetSignatureConfirmation => "getSignatureConfirmation",
             RpcRequest::GetStakeActivation => "getStakeActivation",
             RpcRequest::GetStorageTurn => "getStorageTurn",
             RpcRequest::GetStorageTurnRate => "getStorageTurnRate",
             RpcRequest::GetSlotsPerSegment => "getSlotsPerSegment",
             RpcRequest::GetStoragePubkeysForSlot => "getStoragePubkeysForSlot",
             RpcRequest::GetSupply => "getSupply",
+            RpcRequest::GetTokenLargestAccounts => "getTokenLargestAccounts",
             RpcRequest::GetTokenAccountBalance => "getTokenAccountBalance",
             RpcRequest::GetTokenAccountsByDelegate => "getTokenAccountsByDelegate",
             RpcRequest::GetTokenAccountsByOwner => "getTokenAccountsByOwner",
             RpcRequest::GetTokenSupply => "getTokenSupply",
             RpcRequest::GetTotalSupply => "getTotalSupply",
-            RpcRequest::GetTokenLargestAccounts => "getTokenLargestAccounts",
             RpcRequest::GetTransactionCount => "getTransactionCount",
             RpcRequest::GetVersion => "getVersion",
             RpcRequest::GetVoteAccounts => "getVoteAccounts",

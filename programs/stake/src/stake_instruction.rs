@@ -11,7 +11,7 @@ use solana_sdk::{
     feature_set,
     instruction::{AccountMeta, Instruction, InstructionError},
     keyed_account::{from_keyed_account, get_signers, next_keyed_account, KeyedAccount},
-    process_instruction::InvokeContext,
+    process_instruction::{get_sysvar, InvokeContext},
     program_utils::limited_deserialize,
     pubkey::Pubkey,
     system_instruction,
@@ -126,9 +126,12 @@ pub enum StakeInstruction {
 
     /// Set stake lockup
     ///
+    /// If a lockup is not active, the withdraw authority may set a new lockup
+    /// If a lockup is active, the lockup custodian may update the lockup parameters
+    ///
     /// # Account references
     ///   0. [WRITE] Initialized stake account
-    ///   1. [SIGNER] Lockup authority
+    ///   1. [SIGNER] Lockup authority or withdraw authority
     SetLockup(LockupArgs),
 
     /// Merge two stake accounts.
@@ -183,8 +186,8 @@ pub struct AuthorizeWithSeedArgs {
     pub authority_owner: Pubkey,
 }
 
-fn initialize(stake_pubkey: &Pubkey, authorized: &Authorized, lockup: &Lockup) -> Instruction {
-    Instruction::new(
+pub fn initialize(stake_pubkey: &Pubkey, authorized: &Authorized, lockup: &Lockup) -> Instruction {
+    Instruction::new_with_bincode(
         id(),
         &StakeInstruction::Initialize(*authorized, *lockup),
         vec![
@@ -248,7 +251,7 @@ fn _split(
         AccountMeta::new_readonly(*authorized_pubkey, true),
     ];
 
-    Instruction::new(id(), &StakeInstruction::Split(lamports), account_metas)
+    Instruction::new_with_bincode(id(), &StakeInstruction::Split(lamports), account_metas)
 }
 
 pub fn split(
@@ -258,13 +261,8 @@ pub fn split(
     split_stake_pubkey: &Pubkey,
 ) -> Vec<Instruction> {
     vec![
-        system_instruction::create_account(
-            authorized_pubkey, // Sending 0, so any signer will suffice
-            split_stake_pubkey,
-            0,
-            std::mem::size_of::<StakeState>() as u64,
-            &id(),
-        ),
+        system_instruction::allocate(split_stake_pubkey, std::mem::size_of::<StakeState>() as u64),
+        system_instruction::assign(split_stake_pubkey, &id()),
         _split(
             stake_pubkey,
             authorized_pubkey,
@@ -283,12 +281,10 @@ pub fn split_with_seed(
     seed: &str,                  // seed
 ) -> Vec<Instruction> {
     vec![
-        system_instruction::create_account_with_seed(
-            authorized_pubkey, // Sending 0, so any signer will suffice
+        system_instruction::allocate_with_seed(
             split_stake_pubkey,
             base,
             seed,
-            0,
             std::mem::size_of::<StakeState>() as u64,
             &id(),
         ),
@@ -314,7 +310,7 @@ pub fn merge(
         AccountMeta::new_readonly(*authorized_pubkey, true),
     ];
 
-    vec![Instruction::new(
+    vec![Instruction::new_with_bincode(
         id(),
         &StakeInstruction::Merge,
         account_metas,
@@ -382,7 +378,7 @@ pub fn authorize(
         account_metas.push(AccountMeta::new_readonly(*custodian_pubkey, true));
     }
 
-    Instruction::new(
+    Instruction::new_with_bincode(
         id(),
         &StakeInstruction::Authorize(*new_authorized_pubkey, stake_authorize),
         account_metas,
@@ -415,7 +411,7 @@ pub fn authorize_with_seed(
         authority_owner: *authority_owner,
     };
 
-    Instruction::new(
+    Instruction::new_with_bincode(
         id(),
         &StakeInstruction::AuthorizeWithSeed(args),
         account_metas,
@@ -435,7 +431,7 @@ pub fn delegate_stake(
         AccountMeta::new_readonly(crate::config::id(), false),
         AccountMeta::new_readonly(*authorized_pubkey, true),
     ];
-    Instruction::new(id(), &StakeInstruction::DelegateStake, account_metas)
+    Instruction::new_with_bincode(id(), &StakeInstruction::DelegateStake, account_metas)
 }
 
 pub fn withdraw(
@@ -457,7 +453,7 @@ pub fn withdraw(
         account_metas.push(AccountMeta::new_readonly(*custodian_pubkey, true));
     }
 
-    Instruction::new(id(), &StakeInstruction::Withdraw(lamports), account_metas)
+    Instruction::new_with_bincode(id(), &StakeInstruction::Withdraw(lamports), account_metas)
 }
 
 pub fn deactivate_stake(stake_pubkey: &Pubkey, authorized_pubkey: &Pubkey) -> Instruction {
@@ -466,7 +462,7 @@ pub fn deactivate_stake(stake_pubkey: &Pubkey, authorized_pubkey: &Pubkey) -> In
         AccountMeta::new_readonly(sysvar::clock::id(), false),
         AccountMeta::new_readonly(*authorized_pubkey, true),
     ];
-    Instruction::new(id(), &StakeInstruction::Deactivate, account_metas)
+    Instruction::new_with_bincode(id(), &StakeInstruction::Deactivate, account_metas)
 }
 
 pub fn set_lockup(
@@ -478,7 +474,7 @@ pub fn set_lockup(
         AccountMeta::new(*stake_pubkey, false),
         AccountMeta::new_readonly(*custodian_pubkey, true),
     ];
-    Instruction::new(id(), &StakeInstruction::SetLockup(*lockup), account_metas)
+    Instruction::new_with_bincode(id(), &StakeInstruction::SetLockup(*lockup), account_metas)
 }
 
 pub fn process_instruction(
@@ -572,6 +568,8 @@ pub fn process_instruction(
             }
         }
         StakeInstruction::DelegateStake => {
+            let can_reverse_deactivation =
+                invoke_context.is_feature_active(&feature_set::stake_program_v4::id());
             let vote = next_keyed_account(keyed_accounts)?;
 
             me.delegate(
@@ -580,6 +578,7 @@ pub fn process_instruction(
                 &from_keyed_account::<StakeHistory>(next_keyed_account(keyed_accounts)?)?,
                 &config::from_keyed_account(next_keyed_account(keyed_accounts)?)?,
                 &signers,
+                can_reverse_deactivation,
             )
         }
         StakeInstruction::Split(lamports) => {
@@ -588,12 +587,15 @@ pub fn process_instruction(
         }
         StakeInstruction::Merge => {
             let source_stake = &next_keyed_account(keyed_accounts)?;
+            let can_merge_expired_lockups =
+                invoke_context.is_feature_active(&feature_set::stake_program_v4::id());
             me.merge(
                 invoke_context,
                 source_stake,
                 &from_keyed_account::<Clock>(next_keyed_account(keyed_accounts)?)?,
                 &from_keyed_account::<StakeHistory>(next_keyed_account(keyed_accounts)?)?,
                 &signers,
+                can_merge_expired_lockups,
             )
         }
 
@@ -606,6 +608,7 @@ pub fn process_instruction(
                 &from_keyed_account::<StakeHistory>(next_keyed_account(keyed_accounts)?)?,
                 next_keyed_account(keyed_accounts)?,
                 keyed_accounts.next(),
+                invoke_context.is_feature_active(&feature_set::stake_program_v4::id()),
             )
         }
         StakeInstruction::Deactivate => me.deactivate(
@@ -613,7 +616,14 @@ pub fn process_instruction(
             &signers,
         ),
 
-        StakeInstruction::SetLockup(lockup) => me.set_lockup(&lockup, &signers),
+        StakeInstruction::SetLockup(lockup) => {
+            let clock = if invoke_context.is_feature_active(&feature_set::stake_program_v4::id()) {
+                Some(get_sysvar::<Clock>(invoke_context, &sysvar::clock::id())?)
+            } else {
+                None
+            };
+            me.set_lockup(&lockup, &signers, clock.as_ref())
+        }
     }
 }
 
@@ -622,23 +632,23 @@ mod tests {
     use super::*;
     use bincode::serialize;
     use solana_sdk::{
-        account::{self, Account},
-        process_instruction::MockInvokeContext,
+        account::{self, Account, AccountSharedData},
+        process_instruction::{mock_set_sysvar, MockInvokeContext},
         rent::Rent,
         sysvar::stake_history::StakeHistory,
     };
     use std::cell::RefCell;
     use std::str::FromStr;
 
-    fn create_default_account() -> RefCell<Account> {
-        RefCell::new(Account::default())
+    fn create_default_account() -> RefCell<AccountSharedData> {
+        RefCell::new(AccountSharedData::default())
     }
 
-    fn create_default_stake_account() -> RefCell<Account> {
-        RefCell::new(Account {
+    fn create_default_stake_account() -> RefCell<AccountSharedData> {
+        RefCell::new(AccountSharedData::from(Account {
             owner: id(),
             ..Account::default()
-        })
+        }))
     }
 
     fn invalid_stake_state_pubkey() -> Pubkey {
@@ -663,35 +673,37 @@ mod tests {
             .iter()
             .map(|meta| {
                 RefCell::new(if sysvar::clock::check_id(&meta.pubkey) {
-                    account::create_account_for_test(&sysvar::clock::Clock::default())
+                    account::create_account_shared_data_for_test(&sysvar::clock::Clock::default())
                 } else if sysvar::rewards::check_id(&meta.pubkey) {
-                    account::create_account_for_test(&sysvar::rewards::Rewards::new(0.0))
+                    account::create_account_shared_data_for_test(&sysvar::rewards::Rewards::new(
+                        0.0,
+                    ))
                 } else if sysvar::stake_history::check_id(&meta.pubkey) {
-                    account::create_account_for_test(&StakeHistory::default())
+                    account::create_account_shared_data_for_test(&StakeHistory::default())
                 } else if config::check_id(&meta.pubkey) {
                     config::create_account(0, &config::Config::default())
                 } else if sysvar::rent::check_id(&meta.pubkey) {
-                    account::create_account_for_test(&Rent::default())
+                    account::create_account_shared_data_for_test(&Rent::default())
                 } else if meta.pubkey == invalid_stake_state_pubkey() {
-                    Account {
+                    AccountSharedData::from(Account {
                         owner: id(),
                         ..Account::default()
-                    }
+                    })
                 } else if meta.pubkey == invalid_vote_state_pubkey() {
-                    Account {
+                    AccountSharedData::from(Account {
                         owner: solana_vote_program::id(),
                         ..Account::default()
-                    }
+                    })
                 } else if meta.pubkey == spoofed_stake_state_pubkey() {
-                    Account {
+                    AccountSharedData::from(Account {
                         owner: spoofed_stake_program_id(),
                         ..Account::default()
-                    }
+                    })
                 } else {
-                    Account {
+                    AccountSharedData::from(Account {
                         owner: id(),
                         ..Account::default()
-                    }
+                    })
                 })
             })
             .collect();
@@ -703,11 +715,19 @@ mod tests {
                 .zip(accounts.iter())
                 .map(|(meta, account)| KeyedAccount::new(&meta.pubkey, meta.is_signer, account))
                 .collect();
+
+            let mut invoke_context = MockInvokeContext::default();
+            mock_set_sysvar(
+                &mut invoke_context,
+                sysvar::clock::id(),
+                sysvar::clock::Clock::default(),
+            )
+            .unwrap();
             super::process_instruction(
                 &Pubkey::default(),
                 &keyed_accounts,
                 &instruction.data,
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
             )
         }
     }
@@ -739,7 +759,7 @@ mod tests {
                     &Pubkey::default(),
                     100,
                     &invalid_stake_state_pubkey(),
-                )[1]
+                )[2]
             ),
             Err(InstructionError::InvalidAccountData),
         );
@@ -825,7 +845,7 @@ mod tests {
                     &Pubkey::default(),
                     100,
                     &Pubkey::default(),
-                )[1]
+                )[2]
             ),
             Err(InstructionError::InvalidAccountOwner),
         );
@@ -836,7 +856,7 @@ mod tests {
                     &Pubkey::default(),
                     100,
                     &spoofed_stake_state_pubkey(),
-                )[1]
+                )[2]
             ),
             Err(InstructionError::IncorrectProgramId),
         );
@@ -973,7 +993,9 @@ mod tests {
                     KeyedAccount::new(
                         &sysvar::rent::id(),
                         false,
-                        &RefCell::new(account::create_account_for_test(&Rent::default()))
+                        &RefCell::new(account::create_account_shared_data_for_test(
+                            &Rent::default()
+                        ))
                     )
                 ],
                 &serialize(&StakeInstruction::Initialize(
@@ -1028,14 +1050,14 @@ mod tests {
                     KeyedAccount::new(
                         &sysvar::clock::id(),
                         false,
-                        &RefCell::new(account::create_account_for_test(
-                            &sysvar::clock::Clock::default()
+                        &RefCell::new(account::create_account_shared_data_for_test(
+                            &sysvar::clock::Clock::default(),
                         ))
                     ),
                     KeyedAccount::new(
                         &sysvar::stake_history::id(),
                         false,
-                        &RefCell::new(account::create_account_for_test(
+                        &RefCell::new(account::create_account_shared_data_for_test(
                             &sysvar::stake_history::StakeHistory::default(),
                         ))
                     ),
@@ -1061,14 +1083,16 @@ mod tests {
                     KeyedAccount::new(
                         &sysvar::rewards::id(),
                         false,
-                        &RefCell::new(account::create_account_for_test(
+                        &RefCell::new(account::create_account_shared_data_for_test(
                             &sysvar::rewards::Rewards::new(0.0),
                         ))
                     ),
                     KeyedAccount::new(
                         &sysvar::stake_history::id(),
                         false,
-                        &RefCell::new(account::create_account_for_test(&StakeHistory::default()))
+                        &RefCell::new(account::create_account_shared_data_for_test(
+                            &StakeHistory::default(),
+                        ))
                     ),
                 ],
                 &serialize(&StakeInstruction::Withdraw(42)).unwrap(),
@@ -1101,7 +1125,7 @@ mod tests {
                     KeyedAccount::new(
                         &sysvar::rewards::id(),
                         false,
-                        &RefCell::new(account::create_account_for_test(
+                        &RefCell::new(account::create_account_shared_data_for_test(
                             &sysvar::rewards::Rewards::new(0.0),
                         ))
                     ),

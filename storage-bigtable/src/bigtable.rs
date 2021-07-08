@@ -214,12 +214,11 @@ impl BigTableConnection {
     where
         T: serde::ser::Serialize,
     {
-        use backoff::{future::FutureOperation as _, ExponentialBackoff};
-        (|| async {
+        use backoff::{future::retry, ExponentialBackoff};
+        retry(ExponentialBackoff::default(), || async {
             let mut client = self.client();
             Ok(client.put_bincode_cells(table, cells).await?)
         })
-        .retry(ExponentialBackoff::default())
         .await
     }
 
@@ -231,12 +230,11 @@ impl BigTableConnection {
     where
         T: prost::Message,
     {
-        use backoff::{future::FutureOperation as _, ExponentialBackoff};
-        (|| async {
+        use backoff::{future::retry, ExponentialBackoff};
+        retry(ExponentialBackoff::default(), || async {
             let mut client = self.client();
             Ok(client.put_protobuf_cells(table, cells).await?)
         })
-        .retry(ExponentialBackoff::default())
         .await
     }
 }
@@ -686,6 +684,7 @@ mod tests {
                 log_messages: Some(vec![]),
                 pre_token_balances: Some(vec![]),
                 post_token_balances: Some(vec![]),
+                rewards: Some(vec![]),
             }),
         };
         let block = ConfirmedBlock {
@@ -695,6 +694,7 @@ mod tests {
             previous_blockhash: Hash::default().to_string(),
             rewards: vec![],
             block_time: Some(1_234_567_890),
+            block_height: Some(1),
         };
         let bincode_block = compress_best(
             &bincode::serialize::<StoredConfirmedBlock>(&block.clone().into()).unwrap(),
@@ -737,6 +737,7 @@ mod tests {
                 meta.log_messages = None; // Legacy bincode implementation does not support log_messages
                 meta.pre_token_balances = None; // Legacy bincode implementation does not support token balances
                 meta.post_token_balances = None; // Legacy bincode implementation does not support token balances
+                meta.rewards = None; // Legacy bincode implementation does not support rewards
             }
             assert_eq!(block, bincode_block.into());
         } else {

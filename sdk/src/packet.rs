@@ -73,6 +73,7 @@ impl fmt::Debug for Packet {
 }
 
 impl Default for Packet {
+    #[allow(clippy::uninit_assumed_init)]
     fn default() -> Packet {
         Packet {
             data: unsafe { std::mem::MaybeUninit::uninit().assume_init() },

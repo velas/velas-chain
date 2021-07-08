@@ -7,27 +7,39 @@ use {
     log::*,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
-    solana_program::{
-        account_info::AccountInfo, entrypoint::ProgramResult, fee_calculator::FeeCalculator,
-        hash::Hash, instruction::Instruction, instruction::InstructionError, message::Message,
-        native_token::sol_to_lamports, program_error::ProgramError, program_stubs, pubkey::Pubkey,
-        rent::Rent,
-    },
     solana_runtime::{
         bank::{Bank, Builtin, ExecuteTimings},
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
-        genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
+        genesis_utils::{create_genesis_config_with_leader_ex, GenesisConfigInfo},
     },
     solana_sdk::{
-        account::Account,
-        clock::Slot,
-        genesis_config::GenesisConfig,
+        account::{Account, AccountSharedData, ReadableAccount},
+        account_info::AccountInfo,
+        clock::{Clock, Slot},
+        entrypoint::{ProgramResult, SUCCESS},
+        epoch_schedule::EpochSchedule,
+        feature_set::demote_sysvar_write_locks,
+        fee_calculator::{FeeCalculator, FeeRateGovernor},
+        genesis_config::{ClusterType, GenesisConfig},
+        hash::Hash,
+        instruction::Instruction,
+        instruction::InstructionError,
         keyed_account::KeyedAccount,
+        message::Message,
+        native_token::sol_to_lamports,
         process_instruction::{
             stable_log, BpfComputeBudget, InvokeContext, ProcessInstructionWithContext,
         },
+        program_error::{ProgramError, ACCOUNT_BORROW_FAILED, UNSUPPORTED_SYSVAR},
+        pubkey::Pubkey,
+        rent::Rent,
         signature::{Keypair, Signer},
+        sysvar::{
+            clock, epoch_schedule,
+            fees::{self, Fees},
+            rent, Sysvar,
+        },
     },
     solana_vote_program::vote_state::{VoteState, VoteStateVersions},
     std::{
@@ -60,27 +72,6 @@ pub mod programs;
 #[macro_use]
 extern crate solana_bpf_loader_program;
 
-pub fn to_instruction_error(error: ProgramError) -> InstructionError {
-    match error {
-        ProgramError::Custom(err) => InstructionError::Custom(err),
-        ProgramError::InvalidArgument => InstructionError::InvalidArgument,
-        ProgramError::InvalidInstructionData => InstructionError::InvalidInstructionData,
-        ProgramError::InvalidAccountData => InstructionError::InvalidAccountData,
-        ProgramError::AccountDataTooSmall => InstructionError::AccountDataTooSmall,
-        ProgramError::InsufficientFunds => InstructionError::InsufficientFunds,
-        ProgramError::IncorrectProgramId => InstructionError::IncorrectProgramId,
-        ProgramError::MissingRequiredSignature => InstructionError::MissingRequiredSignature,
-        ProgramError::AccountAlreadyInitialized => InstructionError::AccountAlreadyInitialized,
-        ProgramError::UninitializedAccount => InstructionError::UninitializedAccount,
-        ProgramError::NotEnoughAccountKeys => InstructionError::NotEnoughAccountKeys,
-        ProgramError::AccountBorrowFailed => InstructionError::AccountBorrowFailed,
-        ProgramError::MaxSeedLengthExceeded => InstructionError::MaxSeedLengthExceeded,
-        ProgramError::InvalidSeeds => InstructionError::InvalidSeeds,
-        ProgramError::BorshIoError(err) => InstructionError::BorshIoError(err),
-        ProgramError::AccountNotRentExempt => InstructionError::AccountNotRentExempt,
-    }
-}
-
 /// Errors from the program test environment
 #[derive(Error, Debug, PartialEq)]
 pub enum ProgramTestError {
@@ -106,7 +97,7 @@ fn get_invoke_context<'a>() -> &'a mut dyn InvokeContext {
 }
 
 pub fn builtin_process_instruction(
-    process_instruction: solana_program::entrypoint::ProcessInstruction,
+    process_instruction: solana_sdk::entrypoint::ProcessInstruction,
     program_id: &Pubkey,
     keyed_accounts: &[KeyedAccount],
     input: &[u8],
@@ -115,7 +106,7 @@ pub fn builtin_process_instruction(
     set_invoke_context(invoke_context);
 
     // Copy all the accounts into a HashMap to ensure there are no duplicates
-    let mut accounts: HashMap<Pubkey, Account> = keyed_accounts
+    let mut accounts: HashMap<Pubkey, AccountSharedData> = keyed_accounts
         .iter()
         .map(|ka| (*ka.unsigned_key(), ka.account.borrow().clone()))
         .collect();
@@ -155,21 +146,18 @@ pub fn builtin_process_instruction(
         .collect();
 
     // Execute the program
-    let result =
-        process_instruction(program_id, &account_infos, input).map_err(to_instruction_error);
+    process_instruction(program_id, &account_infos, input).map_err(u64::from)?;
 
-    if result.is_ok() {
-        // Commit AccountInfo changes back into KeyedAccounts
-        for keyed_account in keyed_accounts {
-            let mut account = keyed_account.account.borrow_mut();
-            let key = keyed_account.unsigned_key();
-            let (lamports, data, _owner) = &account_refs[key];
-            account.lamports = **lamports.borrow();
-            account.data = data.borrow().to_vec();
-        }
+    // Commit AccountInfo changes back into KeyedAccounts
+    for keyed_account in keyed_accounts {
+        let mut account = keyed_account.account.borrow_mut();
+        let key = keyed_account.unsigned_key();
+        let (lamports, data, _owner) = &account_refs[key];
+        account.lamports = **lamports.borrow();
+        account.set_data(data.borrow().to_vec());
     }
 
-    result
+    Ok(())
 }
 
 /// Converts a `solana-program`-style entrypoint into the runtime's entrypoint style, for
@@ -194,8 +182,45 @@ macro_rules! processor {
     };
 }
 
+fn get_sysvar<T: Default + Sysvar + Sized + serde::de::DeserializeOwned>(
+    id: &Pubkey,
+    var_addr: *mut u8,
+) -> u64 {
+    let invoke_context = get_invoke_context();
+
+    let sysvar_data = match invoke_context.get_sysvar_data(id).ok_or_else(|| {
+        ic_msg!(invoke_context, "Unable to get Sysvar {}", id);
+        UNSUPPORTED_SYSVAR
+    }) {
+        Ok(sysvar_data) => sysvar_data,
+        Err(err) => return err,
+    };
+
+    let var: T = match bincode::deserialize(&sysvar_data) {
+        Ok(sysvar_data) => sysvar_data,
+        Err(_) => return UNSUPPORTED_SYSVAR,
+    };
+
+    unsafe {
+        *(var_addr as *mut _ as *mut T) = var;
+    }
+
+    if invoke_context
+        .get_compute_meter()
+        .try_borrow_mut()
+        .map_err(|_| ACCOUNT_BORROW_FAILED)
+        .unwrap()
+        .consume(invoke_context.get_bpf_compute_budget().sysvar_base_cost + T::size_of() as u64)
+        .is_err()
+    {
+        panic!("Exceeded compute budget");
+    }
+
+    SUCCESS
+}
+
 struct SyscallStubs {}
-impl program_stubs::SyscallStubs for SyscallStubs {
+impl solana_sdk::program_stubs::SyscallStubs for SyscallStubs {
     fn sol_log(&self, message: &str) {
         let invoke_context = get_invoke_context();
         let logger = invoke_context.get_logger();
@@ -231,26 +256,31 @@ impl program_stubs::SyscallStubs for SyscallStubs {
             }
             panic!("Program id {} wasn't found in account_infos", program_id);
         };
+        let demote_sysvar_write_locks =
+            invoke_context.is_feature_active(&demote_sysvar_write_locks::id());
         // TODO don't have the caller's keyed_accounts so can't validate writer or signer escalation or deescalation yet
         let caller_privileges = message
             .account_keys
             .iter()
             .enumerate()
-            .map(|(i, _)| message.is_writable(i))
+            .map(|(i, _)| message.is_writable(i, demote_sysvar_write_locks))
             .collect::<Vec<bool>>();
 
         stable_log::program_invoke(&logger, &program_id, invoke_context.invoke_depth());
 
-        fn ai_to_a(ai: &AccountInfo) -> Account {
-            Account {
+        fn ai_to_a(ai: &AccountInfo) -> AccountSharedData {
+            AccountSharedData::from(Account {
                 lamports: ai.lamports(),
                 data: ai.try_borrow_data().unwrap().to_vec(),
                 owner: *ai.owner,
                 executable: ai.executable,
                 rent_epoch: ai.rent_epoch,
-            }
+            })
         }
-        let executables = vec![(program_id, RefCell::new(ai_to_a(program_account_info())))];
+        let executables = vec![(
+            program_id,
+            Rc::new(RefCell::new(ai_to_a(program_account_info()))),
+        )];
 
         // Convert AccountInfos into Accounts
         let mut accounts = vec![];
@@ -304,7 +334,7 @@ impl program_stubs::SyscallStubs for SyscallStubs {
 
         // Copy writeable account modifications back into the caller's AccountInfos
         for (i, account_pubkey) in message.account_keys.iter().enumerate() {
-            if !message.is_writable(i) {
+            if !message.is_writable(i, true) {
                 continue;
             }
 
@@ -314,7 +344,8 @@ impl program_stubs::SyscallStubs for SyscallStubs {
                     **account_info.try_borrow_mut_lamports().unwrap() = account.borrow().lamports;
 
                     let mut data = account_info.try_borrow_mut_data()?;
-                    let new_data = &account.borrow().data;
+                    let account_borrow = account.borrow();
+                    let new_data = account_borrow.data();
                     if *account_info.owner != account.borrow().owner {
                         // TODO Figure out a better way to allow the System Program to set the account owner
                         #[allow(clippy::transmute_ptr_to_ptr)]
@@ -340,9 +371,35 @@ impl program_stubs::SyscallStubs for SyscallStubs {
         stable_log::program_success(&logger, &program_id);
         Ok(())
     }
+
+    fn sol_get_clock_sysvar(&self, var_addr: *mut u8) -> u64 {
+        get_sysvar::<Clock>(&clock::id(), var_addr)
+    }
+
+    fn sol_get_epoch_schedule_sysvar(&self, var_addr: *mut u8) -> u64 {
+        get_sysvar::<EpochSchedule>(&epoch_schedule::id(), var_addr)
+    }
+
+    fn sol_get_fees_sysvar(&self, var_addr: *mut u8) -> u64 {
+        get_sysvar::<Fees>(&fees::id(), var_addr)
+    }
+
+    fn sol_get_rent_sysvar(&self, var_addr: *mut u8) -> u64 {
+        get_sysvar::<Rent>(&rent::id(), var_addr)
+    }
 }
 
 pub fn find_file(filename: &str) -> Option<PathBuf> {
+    for dir in default_shared_object_dirs() {
+        let candidate = dir.join(&filename);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn default_shared_object_dirs() -> Vec<PathBuf> {
     let mut search_path = vec![];
     if let Ok(bpf_out_dir) = std::env::var("BPF_OUT_DIR") {
         search_path.push(PathBuf::from(bpf_out_dir));
@@ -351,15 +408,8 @@ pub fn find_file(filename: &str) -> Option<PathBuf> {
     if let Ok(dir) = std::env::current_dir() {
         search_path.push(dir);
     }
-    trace!("search path: {:?}", search_path);
-
-    for path in search_path {
-        let candidate = path.join(&filename);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    trace!("BPF .so search path: {:?}", search_path);
+    search_path
 }
 
 pub fn read_file<P: AsRef<Path>>(path: P) -> Vec<u8> {
@@ -413,7 +463,7 @@ fn setup_fee_calculator(bank: Bank) -> Bank {
 }
 
 pub struct ProgramTest {
-    accounts: Vec<(Pubkey, Account)>,
+    accounts: Vec<(Pubkey, AccountSharedData)>,
     builtins: Vec<Builtin>,
     bpf_compute_max_units: Option<u64>,
     prefer_bpf: bool,
@@ -451,6 +501,13 @@ impl Default for ProgramTest {
 }
 
 impl ProgramTest {
+    /// Create a `ProgramTest`.
+    ///
+    /// This is a wrapper around [`default`] and [`add_program`]. See their documentation for more
+    /// details.
+    ///
+    /// [`default`]: #method.default
+    /// [`add_program`]: #method.add_program
     pub fn new(
         program_name: &str,
         program_id: Pubkey,
@@ -473,7 +530,8 @@ impl ProgramTest {
 
     /// Add an account to the test environment
     pub fn add_account(&mut self, address: Pubkey, account: Account) {
-        self.accounts.push((address, account));
+        self.accounts
+            .push((address, AccountSharedData::from(account)));
     }
 
     /// Add an account to the test environment with the account data in the provided `filename`
@@ -522,7 +580,7 @@ impl ProgramTest {
 
     /// Add a BPF program to the test environment.
     ///
-    /// `program_name` will also used to locate the BPF shared object in the current or fixtures
+    /// `program_name` will also be used to locate the BPF shared object in the current or fixtures
     /// directory.
     ///
     /// If `process_instruction` is provided, the natively built-program may be used instead of the
@@ -533,20 +591,7 @@ impl ProgramTest {
         program_id: Pubkey,
         process_instruction: Option<ProcessInstructionWithContext>,
     ) {
-        let loader = solana_program::bpf_loader::id();
-        let program_file = find_file(&format!("{}.so", program_name));
-
-        if process_instruction.is_none() && program_file.is_none() {
-            panic!("Unable to add program {} ({})", program_name, program_id);
-        }
-
-        if (program_file.is_some() && self.prefer_bpf) || process_instruction.is_none() {
-            let program_file = program_file.unwrap_or_else(|| {
-                panic!(
-                    "Program file data not available for {} ({})",
-                    program_name, program_id
-                );
-            });
+        let add_bpf = |this: &mut ProgramTest, program_file: PathBuf| {
             let data = read_file(&program_file);
             info!(
                 "\"{}\" BPF program from {}{}",
@@ -570,28 +615,87 @@ impl ProgramTest {
                     .unwrap_or_else(|| "".to_string())
             );
 
-            self.add_account(
+            this.add_account(
                 program_id,
                 Account {
                     lamports: Rent::default().minimum_balance(data.len()).min(1),
                     data,
-                    owner: loader,
+                    owner: solana_sdk::bpf_loader::id(),
                     executable: true,
                     rent_epoch: 0,
                 },
             );
-        } else {
+        };
+
+        let add_native = |this: &mut ProgramTest, process_fn: ProcessInstructionWithContext| {
             info!("\"{}\" program loaded as native code", program_name);
-            self.builtins.push(Builtin::new(
+            this.builtins
+                .push(Builtin::new(program_name, program_id, process_fn));
+        };
+
+        let warn_invalid_program_name = || {
+            let valid_program_names = default_shared_object_dirs()
+                .iter()
+                .filter_map(|dir| dir.read_dir().ok())
+                .flat_map(|read_dir| {
+                    read_dir.filter_map(|entry| {
+                        let path = entry.ok()?.path();
+                        if !path.is_file() {
+                            return None;
+                        }
+                        match path.extension()?.to_str()? {
+                            "so" => Some(path.file_stem()?.to_os_string()),
+                            _ => None,
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            if valid_program_names.is_empty() {
+                // This should be unreachable as `test-bpf` should guarantee at least one shared
+                // object exists somewhere.
+                warn!("No BPF shared objects found.");
+                return;
+            }
+
+            warn!(
+                "Possible bogus program name. Ensure the program name ({}) \
+                matches one of the following recognizable program names:",
                 program_name,
-                program_id,
-                process_instruction.unwrap_or_else(|| {
-                    panic!(
-                        "Program processor not available for {} ({})",
-                        program_name, program_id
-                    );
-                }),
-            ));
+            );
+            for name in valid_program_names {
+                warn!(" - {}", name.to_str().unwrap());
+            }
+        };
+
+        let program_file = find_file(&format!("{}.so", program_name));
+        match (self.prefer_bpf, program_file, process_instruction) {
+            // If BPF is preferred (i.e., `test-bpf` is invoked) and a BPF shared object exists,
+            // use that as the program data.
+            (true, Some(file), _) => add_bpf(self, file),
+
+            // If BPF is not required (i.e., we were invoked with `test`), use the provided
+            // processor function as is.
+            //
+            // TODO: figure out why tests hang if a processor panics when running native code.
+            (false, _, Some(process)) => add_native(self, process),
+
+            // Invalid: `test-bpf` invocation with no matching BPF shared object.
+            (true, None, _) => {
+                warn_invalid_program_name();
+                panic!(
+                    "Program file data not available for {} ({})",
+                    program_name, program_id
+                );
+            }
+
+            // Invalid: regular `test` invocation without a processor.
+            (false, _, None) => {
+                panic!(
+                    "Program processor not available for {} ({})",
+                    program_name, program_id
+                );
+            }
         }
     }
 
@@ -608,24 +712,33 @@ impl ProgramTest {
             static ONCE: Once = Once::new();
 
             ONCE.call_once(|| {
-                program_stubs::set_syscall_stubs(Box::new(SyscallStubs {}));
+                solana_sdk::program_stubs::set_syscall_stubs(Box::new(SyscallStubs {}));
             });
         }
 
         let rent = Rent::default();
+        let fee_rate_governor = FeeRateGovernor::default();
         let bootstrap_validator_pubkey = Pubkey::new_unique();
-        let bootstrap_validator_lamports = rent.minimum_balance(VoteState::size_of());
+        let bootstrap_validator_stake_lamports =
+            rent.minimum_balance(VoteState::size_of()) + sol_to_lamports(1_000_000.0);
 
-        let mut gci = create_genesis_config_with_leader(
+        let mint_keypair = Keypair::new();
+        let voting_keypair = Keypair::new();
+
+        let genesis_config = create_genesis_config_with_leader_ex(
             sol_to_lamports(1_000_000.0),
+            &mint_keypair.pubkey(),
             &bootstrap_validator_pubkey,
-            bootstrap_validator_lamports,
+            &voting_keypair.pubkey(),
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports,
+            42,
+            fee_rate_governor,
+            rent,
+            ClusterType::Development,
+            vec![],
         );
-        let genesis_config = &mut gci.genesis_config;
-        genesis_config.rent = rent;
-        genesis_config.fee_rate_governor =
-            solana_program::fee_calculator::FeeRateGovernor::default();
-        debug!("Payer address: {}", gci.mint_keypair.pubkey());
+        debug!("Payer address: {}", mint_keypair.pubkey());
         debug!("Genesis config: {}", genesis_config);
 
         let mut bank = Bank::new(&genesis_config);
@@ -633,6 +746,7 @@ impl ProgramTest {
         for loader in &[
             solana_bpf_loader_deprecated_program!(),
             solana_bpf_loader_program!(),
+            solana_bpf_loader_upgradeable_program!(),
         ] {
             bank.add_builtin(&loader.0, loader.1, loader.2);
         }
@@ -672,7 +786,16 @@ impl ProgramTest {
             BlockCommitmentCache::new_for_tests_with_slots(slot, slot),
         ));
 
-        (bank_forks, block_commitment_cache, last_blockhash, gci)
+        (
+            bank_forks,
+            block_commitment_cache,
+            last_blockhash,
+            GenesisConfigInfo {
+                genesis_config,
+                mint_keypair,
+                voting_keypair,
+            },
+        )
     }
 
     pub async fn start(self) -> (BanksClient, Keypair, Hash) {

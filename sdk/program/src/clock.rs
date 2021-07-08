@@ -29,6 +29,7 @@ pub const DEFAULT_SLOTS_PER_EPOCH: u64 = 2 * TICKS_PER_DAY / DEFAULT_TICKS_PER_S
 // leader schedule is governed by this
 pub const NUM_CONSECUTIVE_LEADER_SLOTS: u64 = 4;
 
+pub const DEFAULT_S_PER_SLOT: f64 = DEFAULT_TICKS_PER_SLOT as f64 / DEFAULT_TICKS_PER_SECOND as f64;
 pub const DEFAULT_MS_PER_SLOT: u64 = 1_000 * DEFAULT_TICKS_PER_SLOT / DEFAULT_TICKS_PER_SECOND;
 
 /// The time window of recent block hash values that the bank will track the signatures
@@ -38,9 +39,6 @@ pub const DEFAULT_MS_PER_SLOT: u64 = 1_000 * DEFAULT_TICKS_PER_SLOT / DEFAULT_TI
 /// lengthens the time a client must wait to be certain a missing transaction will
 /// not be processed by the network.
 pub const MAX_HASH_AGE_IN_SECONDS: usize = 120;
-
-// Number of max evm blockhashes to save;
-pub const MAX_EVM_BLOCKHASHES: usize = 256;
 
 // Number of maximum recent blockhashes (one blockhash per slot)
 pub const MAX_RECENT_BLOCKHASHES: usize =
@@ -84,7 +82,7 @@ pub type UnixTimestamp = i64;
 ///  as the network progresses).
 ///
 #[repr(C)]
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq)]
+#[derive(Serialize, Clone, Deserialize, Debug, Default, PartialEq)]
 pub struct Clock {
     /// the current network/bank Slot
     pub slot: Slot,

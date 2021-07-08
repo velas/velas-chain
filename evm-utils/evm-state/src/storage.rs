@@ -228,7 +228,7 @@ impl Storage {
         let key_bytes = rlp::encode(&key);
 
         self.db
-            .get_pinned_cf(&cf, key_bytes)
+            .get_pinned_cf(cf, key_bytes)
             .expect("Error on reading mapped column")
             .map(|slice| {
                 CODER
@@ -242,7 +242,7 @@ impl Storage {
         let key_bytes = rlp::encode(&key);
         let value_bytes = CODER.serialize(&value).expect("Unable to serialize value");
         self.db
-            .put_cf(&cf, key_bytes, value_bytes)
+            .put_cf(cf, key_bytes, value_bytes)
             .expect("Error when put value into database");
     }
 

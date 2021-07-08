@@ -33,12 +33,10 @@ cargo_audit_ignores=(
   # Blocked on predicates v1.0.6 removing its dependency on `difference`
   --ignore RUSTSEC-2020-0095
 
-  # hyper is upgraded on master/v1.6 but not for v1.5
-  --ignore RUSTSEC-2021-0020
-
   # generic-array: arr! macro erases lifetimes
   #
-  # ed25519-dalek and libsecp256k1 not upgraded for v1.5
+  # Blocked on libsecp256k1 releasing with upgraded dependencies
+  # https://github.com/paritytech/libsecp256k1/issues/66
   --ignore RUSTSEC-2020-0146
 
 )

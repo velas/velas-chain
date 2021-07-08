@@ -1,6 +1,6 @@
 use solana_sdk::{keyed_account::KeyedAccount, pubkey::Pubkey};
 
-/// Helper structure that wrap all solana accounts, that is needed for evm loader.
+/// Helper structure that wrap all solana accounts, that is needed for evm loader.l47
 /// It will restrict and provide access to needed solana accounts in:
 /// 1. Instruction handlers (ExecuteTx, SwapToEvm, FreeOwnership) - full access to evm state.
 /// 2. Builtin contracts (SwapToNative) - Full access to evm state.
@@ -12,7 +12,6 @@ pub struct AccountStructure<'a> {
     pub evm: &'a KeyedAccount<'a>,
     pub users: &'a [KeyedAccount<'a>],
 }
-
 
 impl<'a> AccountStructure<'a> {
     /// Create new account structure, from keyed accounts.
@@ -36,7 +35,7 @@ impl<'a> AccountStructure<'a> {
     where
         F: for<'r> Fn(AccountStructure<'r>) -> U,
     {
-        use solana_sdk::account::Account;
+        use solana_sdk::account::AccountSharedData;
         use std::cell::RefCell;
 
         let evm_key = Pubkey::new_unique();
@@ -45,7 +44,7 @@ impl<'a> AccountStructure<'a> {
 
         let keys: Vec<_> = std::iter::repeat_with(|| {
             let user_key = Pubkey::new_unique();
-            let user_account = RefCell::new(Account {
+            let user_account = RefCell::new(AccountSharedData {
                 lamports: 1000,
                 data: vec![],
                 owner: crate::ID,

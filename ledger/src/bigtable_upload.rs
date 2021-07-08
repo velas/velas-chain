@@ -11,7 +11,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 // Attempt to upload this many blocks in parallel
 const NUM_BLOCKS_TO_UPLOAD_IN_PARALLEL: usize = 32;
@@ -82,7 +82,7 @@ pub async fn upload_confirmed_blocks(
                     Err(err) => {
                         error!("get_confirmed_blocks for {} failed: {:?}", start_slot, err);
                         // Consider exponential backoff...
-                        delay_for(Duration::from_secs(2)).await;
+                        tokio::time::sleep(Duration::from_secs(2)).await;
                     }
                 }
             };
@@ -169,7 +169,7 @@ pub async fn upload_confirmed_blocks(
     use futures::stream::StreamExt;
 
     let mut stream =
-        tokio::stream::iter(receiver.into_iter()).chunks(NUM_BLOCKS_TO_UPLOAD_IN_PARALLEL);
+        tokio_stream::iter(receiver.into_iter()).chunks(NUM_BLOCKS_TO_UPLOAD_IN_PARALLEL);
 
     while let Some(blocks) = stream.next().await {
         if exit.load(Ordering::Relaxed) {
@@ -293,7 +293,7 @@ pub async fn upload_evm_confirmed_blocks(
                             start_block, err
                         );
                         // Consider exponential backoff...
-                        delay_for(Duration::from_secs(2)).await;
+                        sleep(Duration::from_secs(2)).await;
                     }
                 }
             };
@@ -381,7 +381,7 @@ pub async fn upload_evm_confirmed_blocks(
     use futures::stream::StreamExt;
 
     let mut stream =
-        tokio::stream::iter(receiver.into_iter()).chunks(NUM_BLOCKS_TO_UPLOAD_IN_PARALLEL);
+        tokio_stream::iter(receiver.into_iter()).chunks(NUM_BLOCKS_TO_UPLOAD_IN_PARALLEL);
 
     while let Some(blocks) = stream.next().await {
         if exit.load(Ordering::Relaxed) {

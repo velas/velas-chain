@@ -1,6 +1,6 @@
 use crate::account::{
-    create_account_with_fields, to_account, Account, InheritableAccountFields,
-    DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+    create_account_shared_data_with_fields, to_account, AccountSharedData,
+    InheritableAccountFields, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
 };
 use crate::clock::INITIAL_RENT_EPOCH;
 use solana_program::sysvar::recent_blockhashes::{
@@ -8,7 +8,10 @@ use solana_program::sysvar::recent_blockhashes::{
 };
 use std::{collections::BinaryHeap, iter::FromIterator};
 
-pub fn update_account<'a, I>(account: &mut Account, recent_blockhash_iter: I) -> Option<()>
+pub fn update_account<'a, I>(
+    account: &mut AccountSharedData,
+    recent_blockhash_iter: I,
+) -> Option<()>
 where
     I: IntoIterator<Item = IterItem<'a>>,
 {
@@ -23,7 +26,7 @@ where
     since = "1.5.17",
     note = "Please use `create_account_with_data_for_test` instead"
 )]
-pub fn create_account_with_data<'a, I>(lamports: u64, recent_blockhash_iter: I) -> Account
+pub fn create_account_with_data<'a, I>(lamports: u64, recent_blockhash_iter: I) -> AccountSharedData
 where
     I: IntoIterator<Item = IterItem<'a>>,
 {
@@ -33,17 +36,19 @@ where
 pub fn create_account_with_data_and_fields<'a, I>(
     recent_blockhash_iter: I,
     fields: InheritableAccountFields,
-) -> Account
+) -> AccountSharedData
 where
     I: IntoIterator<Item = IterItem<'a>>,
 {
-    let mut account =
-        create_account_with_fields::<RecentBlockhashes>(&RecentBlockhashes::default(), fields);
+    let mut account = create_account_shared_data_with_fields::<RecentBlockhashes>(
+        &RecentBlockhashes::default(),
+        fields,
+    );
     update_account(&mut account, recent_blockhash_iter).unwrap();
     account
 }
 
-pub fn create_account_with_data_for_test<'a, I>(recent_blockhash_iter: I) -> Account
+pub fn create_account_with_data_for_test<'a, I>(recent_blockhash_iter: I) -> AccountSharedData
 where
     I: IntoIterator<Item = IterItem<'a>>,
 {
@@ -64,7 +69,7 @@ mod tests {
     #[test]
     fn test_create_account_empty() {
         let account = create_account_with_data_for_test(vec![].into_iter());
-        let recent_blockhashes = from_account::<RecentBlockhashes>(&account).unwrap();
+        let recent_blockhashes = from_account::<RecentBlockhashes, _>(&account).unwrap();
         assert_eq!(recent_blockhashes, RecentBlockhashes::default());
     }
 
@@ -75,7 +80,7 @@ mod tests {
         let account = create_account_with_data_for_test(
             vec![IterItem(0u64, &def_hash, &def_fees); MAX_ENTRIES].into_iter(),
         );
-        let recent_blockhashes = from_account::<RecentBlockhashes>(&account).unwrap();
+        let recent_blockhashes = from_account::<RecentBlockhashes, _>(&account).unwrap();
         assert_eq!(recent_blockhashes.len(), MAX_ENTRIES);
     }
 
@@ -86,7 +91,7 @@ mod tests {
         let account = create_account_with_data_for_test(
             vec![IterItem(0u64, &def_hash, &def_fees); MAX_ENTRIES + 1].into_iter(),
         );
-        let recent_blockhashes = from_account::<RecentBlockhashes>(&account).unwrap();
+        let recent_blockhashes = from_account::<RecentBlockhashes, _>(&account).unwrap();
         assert_eq!(recent_blockhashes.len(), MAX_ENTRIES);
     }
 
@@ -110,7 +115,7 @@ mod tests {
                 .iter()
                 .map(|(i, hash)| IterItem(*i, hash, &def_fees)),
         );
-        let recent_blockhashes = from_account::<RecentBlockhashes>(&account).unwrap();
+        let recent_blockhashes = from_account::<RecentBlockhashes, _>(&account).unwrap();
 
         let mut unsorted_recent_blockhashes: Vec<_> = unsorted_blocks
             .iter()

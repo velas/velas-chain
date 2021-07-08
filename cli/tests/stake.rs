@@ -20,7 +20,7 @@ use solana_sdk::{
 };
 use solana_stake_program::{
     stake_instruction::LockupArgs,
-    stake_state::{Lockup, StakeAuthorize, StakeState, MIN_DELEGATE_STAKE_AMOUNT},
+    stake_state::{Lockup, StakeAuthorize, StakeState},
 };
 
 #[test]
@@ -38,13 +38,8 @@ fn test_stake_delegation_force() {
     config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&default_signer];
 
-    request_and_confirm_airdrop(
-        &rpc_client,
-        &config,
-        &config.signers[0].pubkey(),
-        MIN_DELEGATE_STAKE_AMOUNT + 400 + 50_000,
-    )
-    .unwrap();
+    request_and_confirm_airdrop(&rpc_client, &config, &config.signers[0].pubkey(), 100_000)
+        .unwrap();
 
     // Create vote account
     let vote_keypair = Keypair::new();
@@ -56,6 +51,7 @@ fn test_stake_delegation_force() {
         authorized_voter: None,
         authorized_withdrawer: None,
         commission: 0,
+        memo: None,
     };
     process_command(&config).unwrap();
 
@@ -68,12 +64,13 @@ fn test_stake_delegation_force() {
         staker: None,
         withdrawer: None,
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
+        amount: SpendAmount::Some(50_000),
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
@@ -91,6 +88,7 @@ fn test_stake_delegation_force() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     process_command(&config).unwrap_err();
@@ -106,6 +104,7 @@ fn test_stake_delegation_force() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     process_command(&config).unwrap();
@@ -132,14 +131,10 @@ fn test_seed_stake_delegation_and_deactivation() {
         &rpc_client,
         &config_validator,
         &config_validator.signers[0].pubkey(),
-        MIN_DELEGATE_STAKE_AMOUNT + 1_000,
+        100_000,
     )
     .unwrap();
-    check_recent_balance(
-        MIN_DELEGATE_STAKE_AMOUNT + 1_000,
-        &rpc_client,
-        &config_validator.signers[0].pubkey(),
-    );
+    check_recent_balance(100_000, &rpc_client, &config_validator.signers[0].pubkey());
 
     let stake_address = Pubkey::create_with_seed(
         &config_validator.signers[0].pubkey(),
@@ -156,12 +151,13 @@ fn test_seed_stake_delegation_and_deactivation() {
         staker: None,
         withdrawer: None,
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
+        amount: SpendAmount::Some(50_000),
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
@@ -178,6 +174,7 @@ fn test_seed_stake_delegation_and_deactivation() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     process_command(&config_validator).unwrap();
@@ -191,6 +188,8 @@ fn test_seed_stake_delegation_and_deactivation() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
+        seed: None,
         fee_payer: 0,
     };
     process_command(&config_validator).unwrap();
@@ -219,14 +218,10 @@ fn test_stake_delegation_and_deactivation() {
         &rpc_client,
         &config_validator,
         &config_validator.signers[0].pubkey(),
-        MIN_DELEGATE_STAKE_AMOUNT + 1_000,
+        100_000,
     )
     .unwrap();
-    check_recent_balance(
-        MIN_DELEGATE_STAKE_AMOUNT + 1_000,
-        &rpc_client,
-        &config_validator.signers[0].pubkey(),
-    );
+    check_recent_balance(100_000, &rpc_client, &config_validator.signers[0].pubkey());
 
     // Create stake account
     config_validator.signers.push(&stake_keypair);
@@ -236,12 +231,13 @@ fn test_stake_delegation_and_deactivation() {
         staker: None,
         withdrawer: None,
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
+        amount: SpendAmount::Some(50_000),
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
@@ -259,6 +255,7 @@ fn test_stake_delegation_and_deactivation() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     process_command(&config_validator).unwrap();
@@ -272,6 +269,8 @@ fn test_stake_delegation_and_deactivation() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
+        seed: None,
         fee_payer: 0,
     };
     process_command(&config_validator).unwrap();
@@ -281,7 +280,6 @@ fn test_stake_delegation_and_deactivation() {
 fn test_offline_stake_delegation_and_deactivation() {
     solana_logger::setup();
 
-    let aproximate_min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
@@ -312,27 +310,19 @@ fn test_offline_stake_delegation_and_deactivation() {
         &rpc_client,
         &config_validator,
         &config_validator.signers[0].pubkey(),
-        aproximate_min_stake * 2,
+        100_000,
     )
     .unwrap();
-    check_recent_balance(
-        aproximate_min_stake * 2,
-        &rpc_client,
-        &config_validator.signers[0].pubkey(),
-    );
+    check_recent_balance(100_000, &rpc_client, &config_validator.signers[0].pubkey());
 
     request_and_confirm_airdrop(
         &rpc_client,
         &config_offline,
         &config_offline.signers[0].pubkey(),
-        aproximate_min_stake * 2,
+        100_000,
     )
     .unwrap();
-    check_recent_balance(
-        aproximate_min_stake * 2,
-        &rpc_client,
-        &config_offline.signers[0].pubkey(),
-    );
+    check_recent_balance(100_000, &rpc_client, &config_offline.signers[0].pubkey());
 
     // Create stake account
     config_validator.signers.push(&stake_keypair);
@@ -342,12 +332,13 @@ fn test_offline_stake_delegation_and_deactivation() {
         staker: Some(config_offline.signers[0].pubkey()),
         withdrawer: None,
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(aproximate_min_stake),
+        amount: SpendAmount::Some(50_000),
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
@@ -365,6 +356,7 @@ fn test_offline_stake_delegation_and_deactivation() {
         blockhash_query: BlockhashQuery::None(blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     config_offline.output_format = OutputFormat::JsonCompact;
@@ -385,6 +377,7 @@ fn test_offline_stake_delegation_and_deactivation() {
         blockhash_query: BlockhashQuery::FeeCalculator(blockhash_query::Source::Cluster, blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     process_command(&config_payer).unwrap();
@@ -399,6 +392,8 @@ fn test_offline_stake_delegation_and_deactivation() {
         blockhash_query: BlockhashQuery::None(blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
+        seed: None,
         fee_payer: 0,
     };
     let sig_response = process_command(&config_offline).unwrap();
@@ -416,6 +411,8 @@ fn test_offline_stake_delegation_and_deactivation() {
         blockhash_query: BlockhashQuery::FeeCalculator(blockhash_query::Source::Cluster, blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
+        seed: None,
         fee_payer: 0,
     };
     process_command(&config_payer).unwrap();
@@ -425,7 +422,6 @@ fn test_offline_stake_delegation_and_deactivation() {
 fn test_nonced_stake_delegation_and_deactivation() {
     solana_logger::setup();
 
-    let aproximate_min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
@@ -443,13 +439,8 @@ fn test_nonced_stake_delegation_and_deactivation() {
         .get_minimum_balance_for_rent_exemption(NonceState::size())
         .unwrap();
 
-    request_and_confirm_airdrop(
-        &rpc_client,
-        &config,
-        &config.signers[0].pubkey(),
-        aproximate_min_stake * 2,
-    )
-    .unwrap();
+    request_and_confirm_airdrop(&rpc_client, &config, &config.signers[0].pubkey(), 100_000)
+        .unwrap();
 
     // Create stake account
     let stake_keypair = Keypair::new();
@@ -460,13 +451,13 @@ fn test_nonced_stake_delegation_and_deactivation() {
         staker: None,
         withdrawer: None,
         lockup: Lockup::default(),
-        // Minumum plus add some lamports for rent
-        amount: SpendAmount::Some(aproximate_min_stake),
+        amount: SpendAmount::Some(50_000),
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
@@ -479,6 +470,7 @@ fn test_nonced_stake_delegation_and_deactivation() {
         nonce_account: 1,
         seed: None,
         nonce_authority: Some(config.signers[0].pubkey()),
+        memo: None,
         amount: SpendAmount::Some(minimum_nonce_balance),
     };
     process_command(&config).unwrap();
@@ -508,6 +500,7 @@ fn test_nonced_stake_delegation_and_deactivation() {
         ),
         nonce_account: Some(nonce_account.pubkey()),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     process_command(&config).unwrap();
@@ -534,6 +527,8 @@ fn test_nonced_stake_delegation_and_deactivation() {
         ),
         nonce_account: Some(nonce_account.pubkey()),
         nonce_authority: 0,
+        memo: None,
+        seed: None,
         fee_payer: 0,
     };
     process_command(&config).unwrap();
@@ -556,13 +551,8 @@ fn test_stake_authorize() {
     config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&default_signer];
 
-    request_and_confirm_airdrop(
-        &rpc_client,
-        &config,
-        &config.signers[0].pubkey(),
-        MIN_DELEGATE_STAKE_AMOUNT + 1_000,
-    )
-    .unwrap();
+    request_and_confirm_airdrop(&rpc_client, &config, &config.signers[0].pubkey(), 100_000)
+        .unwrap();
 
     let offline_keypair = keypair_from_seed(&[0u8; 32]).unwrap();
     let mut config_offline = CliConfig::recent_for_tests();
@@ -577,7 +567,7 @@ fn test_stake_authorize() {
         &rpc_client,
         &config_offline,
         &config_offline.signers[0].pubkey(),
-        MIN_DELEGATE_STAKE_AMOUNT + 1_000,
+        100_000,
     )
     .unwrap();
 
@@ -591,12 +581,13 @@ fn test_stake_authorize() {
         staker: None,
         withdrawer: None,
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
+        amount: SpendAmount::Some(50_000),
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
@@ -614,6 +605,7 @@ fn test_stake_authorize() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         custodian: None,
     };
@@ -643,6 +635,7 @@ fn test_stake_authorize() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         custodian: None,
     };
@@ -667,6 +660,7 @@ fn test_stake_authorize() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         custodian: None,
     };
@@ -691,6 +685,7 @@ fn test_stake_authorize() {
         blockhash_query: BlockhashQuery::None(blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         custodian: None,
     };
@@ -708,6 +703,7 @@ fn test_stake_authorize() {
         blockhash_query: BlockhashQuery::FeeCalculator(blockhash_query::Source::Cluster, blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         custodian: None,
     };
@@ -730,6 +726,7 @@ fn test_stake_authorize() {
         nonce_account: 1,
         seed: None,
         nonce_authority: Some(offline_authority_pubkey),
+        memo: None,
         amount: SpendAmount::Some(minimum_nonce_balance),
     };
     process_command(&config).unwrap();
@@ -756,6 +753,7 @@ fn test_stake_authorize() {
         blockhash_query: BlockhashQuery::None(nonce_hash),
         nonce_account: Some(nonce_account.pubkey()),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         custodian: None,
     };
@@ -777,6 +775,7 @@ fn test_stake_authorize() {
         ),
         nonce_account: Some(nonce_account.pubkey()),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         custodian: None,
     };
@@ -834,24 +833,14 @@ fn test_stake_authorize_with_fee_payer() {
     config_offline.command = CliCommand::ClusterVersion;
     process_command(&config_offline).unwrap_err();
 
-    request_and_confirm_airdrop(
-        &rpc_client,
-        &config,
-        &default_pubkey,
-        MIN_DELEGATE_STAKE_AMOUNT + 10_000,
-    )
-    .unwrap();
-    check_recent_balance(
-        MIN_DELEGATE_STAKE_AMOUNT + 10_000,
-        &rpc_client,
-        &config.signers[0].pubkey(),
-    );
+    request_and_confirm_airdrop(&rpc_client, &config, &default_pubkey, 100_000).unwrap();
+    check_recent_balance(100_000, &rpc_client, &config.signers[0].pubkey());
 
-    request_and_confirm_airdrop(&rpc_client, &config, &payer_pubkey, 50_000).unwrap();
-    check_recent_balance(50_000, &rpc_client, &payer_pubkey);
+    request_and_confirm_airdrop(&rpc_client, &config_payer, &payer_pubkey, 100_000).unwrap();
+    check_recent_balance(100_000, &rpc_client, &payer_pubkey);
 
-    request_and_confirm_airdrop(&rpc_client, &config, &offline_pubkey, 50_000).unwrap();
-    check_recent_balance(50_000, &rpc_client, &offline_pubkey);
+    request_and_confirm_airdrop(&rpc_client, &config_offline, &offline_pubkey, 100_000).unwrap();
+    check_recent_balance(100_000, &rpc_client, &offline_pubkey);
 
     check_ready(&rpc_client);
 
@@ -865,22 +854,19 @@ fn test_stake_authorize_with_fee_payer() {
         staker: None,
         withdrawer: None,
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
+        amount: SpendAmount::Some(50_000),
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
     process_command(&config).unwrap();
-    // `config` balance should be 10_000 - 1 stake account sig - 1 fee sig - rent exempt (400)
-    check_recent_balance(
-        10_000 - SIG_FEE - SIG_FEE - 400,
-        &rpc_client,
-        &default_pubkey,
-    );
+    // `config` balance should be 50,000 - 1 stake account sig - 1 fee sig
+    check_recent_balance(50_000 - SIG_FEE - SIG_FEE, &rpc_client, &default_pubkey);
 
     // Assign authority with separate fee payer
     config.signers = vec![&default_signer, &payer_keypair];
@@ -892,15 +878,16 @@ fn test_stake_authorize_with_fee_payer() {
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 1,
         custodian: None,
     };
     process_command(&config).unwrap();
     // `config` balance has not changed, despite submitting the TX
-    check_recent_balance(10_000 - 2 * SIG_FEE - 400, &rpc_client, &default_pubkey);
+    check_recent_balance(50_000 - SIG_FEE - SIG_FEE, &rpc_client, &default_pubkey);
     // `config_payer` however has paid `config`'s authority sig
     // and `config_payer`'s fee sig
-    check_recent_balance(50_000 - SIG_FEE - SIG_FEE, &rpc_client, &payer_pubkey);
+    check_recent_balance(100_000 - SIG_FEE - SIG_FEE, &rpc_client, &payer_pubkey);
 
     // Assign authority with offline fee payer
     let (blockhash, _) = rpc_client.get_recent_blockhash().unwrap();
@@ -912,6 +899,7 @@ fn test_stake_authorize_with_fee_payer() {
         blockhash_query: BlockhashQuery::None(blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         custodian: None,
     };
@@ -929,22 +917,22 @@ fn test_stake_authorize_with_fee_payer() {
         blockhash_query: BlockhashQuery::FeeCalculator(blockhash_query::Source::Cluster, blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         custodian: None,
     };
     process_command(&config).unwrap();
     // `config`'s balance again has not changed
-    check_recent_balance(10_000 - 2 * SIG_FEE - 400, &rpc_client, &default_pubkey);
+    check_recent_balance(50_000 - SIG_FEE - SIG_FEE, &rpc_client, &default_pubkey);
     // `config_offline` however has paid 1 sig due to being both authority
     // and fee payer
-    check_recent_balance(50_000 - SIG_FEE, &rpc_client, &offline_pubkey);
+    check_recent_balance(100_000 - SIG_FEE, &rpc_client, &offline_pubkey);
 }
 
 #[test]
 fn test_stake_split() {
     solana_logger::setup();
 
-    const SIG_FEE: u64 = 42;
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
@@ -967,43 +955,17 @@ fn test_stake_split() {
     config_offline.command = CliCommand::ClusterVersion;
     process_command(&config_offline).unwrap_err();
 
-    // Create stake account, identity is authority
-    let minimum_stake_balance = MIN_DELEGATE_STAKE_AMOUNT
-        + rpc_client
-            .get_minimum_balance_for_rent_exemption(std::mem::size_of::<StakeState>())
-            .unwrap();
-
-    // Create nonce account
-    let minimum_nonce_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(NonceState::size())
+    request_and_confirm_airdrop(&rpc_client, &config, &config.signers[0].pubkey(), 500_000)
         .unwrap();
+    check_recent_balance(500_000, &rpc_client, &config.signers[0].pubkey());
 
-    let minimum_stake_balance_request = minimum_stake_balance + 2 * SIG_FEE;
+    request_and_confirm_airdrop(&rpc_client, &config_offline, &offline_pubkey, 100_000).unwrap();
+    check_recent_balance(100_000, &rpc_client, &offline_pubkey);
 
-    let minimum_stake_request_with_nonce = minimum_stake_balance_request + minimum_nonce_balance;
-
-    request_and_confirm_airdrop(
-        &rpc_client,
-        &config,
-        &config.signers[0].pubkey(),
-        minimum_stake_request_with_nonce,
-    )
-    .unwrap();
-    check_recent_balance(
-        minimum_stake_request_with_nonce,
-        &rpc_client,
-        &config.signers[0].pubkey(),
-    );
-
-    request_and_confirm_airdrop(
-        &rpc_client,
-        &config,
-        &offline_pubkey,
-        minimum_stake_balance_request,
-    )
-    .unwrap();
-    check_recent_balance(minimum_stake_balance_request, &rpc_client, &offline_pubkey);
-
+    // Create stake account, identity is authority
+    let minimum_stake_balance = rpc_client
+        .get_minimum_balance_for_rent_exemption(std::mem::size_of::<StakeState>())
+        .unwrap();
     let stake_keypair = keypair_from_seed(&[0u8; 32]).unwrap();
     let stake_account_pubkey = stake_keypair.pubkey();
     config.signers.push(&stake_keypair);
@@ -1013,24 +975,34 @@ fn test_stake_split() {
         staker: Some(offline_pubkey),
         withdrawer: Some(offline_pubkey),
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(minimum_stake_balance),
+        amount: SpendAmount::Some(10 * minimum_stake_balance),
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
     process_command(&config).unwrap();
-    check_recent_balance(minimum_stake_balance, &rpc_client, &stake_account_pubkey);
+    check_recent_balance(
+        10 * minimum_stake_balance,
+        &rpc_client,
+        &stake_account_pubkey,
+    );
 
+    // Create nonce account
+    let minimum_nonce_balance = rpc_client
+        .get_minimum_balance_for_rent_exemption(NonceState::size())
+        .unwrap();
     let nonce_account = keypair_from_seed(&[1u8; 32]).unwrap();
     config.signers = vec![&default_signer, &nonce_account];
     config.command = CliCommand::CreateNonceAccount {
         nonce_account: 1,
         seed: None,
         nonce_authority: Some(offline_pubkey),
+        memo: None,
         amount: SpendAmount::Some(minimum_nonce_balance),
     };
     process_command(&config).unwrap();
@@ -1049,7 +1021,6 @@ fn test_stake_split() {
     // Nonced offline split
     let split_account = keypair_from_seed(&[2u8; 32]).unwrap();
     check_recent_balance(0, &rpc_client, &split_account.pubkey());
-
     config_offline.signers.push(&split_account);
     config_offline.command = CliCommand::SplitStake {
         stake_account_pubkey,
@@ -1059,9 +1030,10 @@ fn test_stake_split() {
         blockhash_query: BlockhashQuery::None(nonce_hash),
         nonce_account: Some(nonce_account.pubkey()),
         nonce_authority: 0,
+        memo: None,
         split_stake_account: 1,
         seed: None,
-        lamports: minimum_stake_balance,
+        lamports: 2 * minimum_stake_balance,
         fee_payer: 0,
     };
     config_offline.output_format = OutputFormat::JsonCompact;
@@ -1069,10 +1041,6 @@ fn test_stake_split() {
     let sign_only = parse_sign_only_reply_string(&sig_response);
     assert!(sign_only.has_all_signers());
     let offline_presigner = sign_only.presigner_of(&offline_pubkey).unwrap();
-
-    check_recent_balance(minimum_stake_balance_request, &rpc_client, &offline_pubkey);
-    check_recent_balance(minimum_stake_balance, &rpc_client, &stake_account_pubkey);
-
     config.signers = vec![&offline_presigner, &split_account];
     config.command = CliCommand::SplitStake {
         stake_account_pubkey,
@@ -1085,21 +1053,29 @@ fn test_stake_split() {
         ),
         nonce_account: Some(nonce_account.pubkey()),
         nonce_authority: 0,
+        memo: None,
         split_stake_account: 1,
         seed: None,
-        lamports: minimum_stake_balance,
+        lamports: 2 * minimum_stake_balance,
         fee_payer: 0,
     };
     process_command(&config).unwrap();
-    check_recent_balance(0, &rpc_client, &stake_account_pubkey);
-    check_recent_balance(minimum_stake_balance, &rpc_client, &split_account.pubkey());
+    check_recent_balance(
+        8 * minimum_stake_balance,
+        &rpc_client,
+        &stake_account_pubkey,
+    );
+    check_recent_balance(
+        2 * minimum_stake_balance,
+        &rpc_client,
+        &split_account.pubkey(),
+    );
 }
 
 #[test]
 fn test_stake_set_lockup() {
     solana_logger::setup();
 
-    let aproximate_min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
@@ -1122,27 +1098,17 @@ fn test_stake_set_lockup() {
     config_offline.command = CliCommand::ClusterVersion;
     process_command(&config_offline).unwrap_err();
 
-    request_and_confirm_airdrop(
-        &rpc_client,
-        &config,
-        &config.signers[0].pubkey(),
-        20 * aproximate_min_stake,
-    )
-    .unwrap();
-    check_recent_balance(
-        20 * aproximate_min_stake,
-        &rpc_client,
-        &config.signers[0].pubkey(),
-    );
+    request_and_confirm_airdrop(&rpc_client, &config, &config.signers[0].pubkey(), 500_000)
+        .unwrap();
+    check_recent_balance(500_000, &rpc_client, &config.signers[0].pubkey());
 
     request_and_confirm_airdrop(&rpc_client, &config_offline, &offline_pubkey, 100_000).unwrap();
     check_recent_balance(100_000, &rpc_client, &offline_pubkey);
 
     // Create stake account, identity is authority
-    let minimum_stake_balance = aproximate_min_stake
-        + rpc_client
-            .get_minimum_balance_for_rent_exemption(std::mem::size_of::<StakeState>())
-            .unwrap();
+    let minimum_stake_balance = rpc_client
+        .get_minimum_balance_for_rent_exemption(std::mem::size_of::<StakeState>())
+        .unwrap();
 
     let stake_keypair = keypair_from_seed(&[0u8; 32]).unwrap();
     let stake_account_pubkey = stake_keypair.pubkey();
@@ -1157,7 +1123,7 @@ fn test_stake_set_lockup() {
         stake_account: 1,
         seed: None,
         staker: Some(offline_pubkey),
-        withdrawer: Some(offline_pubkey),
+        withdrawer: Some(config.signers[0].pubkey()),
         lockup,
         amount: SpendAmount::Some(10 * minimum_stake_balance),
         sign_only: false,
@@ -1165,6 +1131,7 @@ fn test_stake_set_lockup() {
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
@@ -1191,6 +1158,7 @@ fn test_stake_set_lockup() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     process_command(&config).unwrap();
@@ -1225,6 +1193,7 @@ fn test_stake_set_lockup() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     process_command(&config).unwrap();
@@ -1244,6 +1213,7 @@ fn test_stake_set_lockup() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     process_command(&config).unwrap();
@@ -1275,6 +1245,7 @@ fn test_stake_set_lockup() {
         blockhash_query: BlockhashQuery::default(),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     process_command(&config).unwrap();
@@ -1290,6 +1261,7 @@ fn test_stake_set_lockup() {
         nonce_account: 1,
         seed: None,
         nonce_authority: Some(offline_pubkey),
+        memo: None,
         amount: SpendAmount::Some(minimum_nonce_balance),
     };
     process_command(&config).unwrap();
@@ -1320,6 +1292,7 @@ fn test_stake_set_lockup() {
         blockhash_query: BlockhashQuery::None(nonce_hash),
         nonce_account: Some(nonce_account_pubkey),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     config_offline.output_format = OutputFormat::JsonCompact;
@@ -1340,6 +1313,7 @@ fn test_stake_set_lockup() {
         ),
         nonce_account: Some(nonce_account_pubkey),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
     };
     process_command(&config).unwrap();
@@ -1386,18 +1360,8 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
         .unwrap();
     check_recent_balance(200_000, &rpc_client, &config.signers[0].pubkey());
 
-    request_and_confirm_airdrop(
-        &rpc_client,
-        &config,
-        &offline_pubkey,
-        2 * MIN_DELEGATE_STAKE_AMOUNT + 100_000,
-    )
-    .unwrap();
-    check_recent_balance(
-        2 * MIN_DELEGATE_STAKE_AMOUNT + 100_000,
-        &rpc_client,
-        &offline_pubkey,
-    );
+    request_and_confirm_airdrop(&rpc_client, &config_offline, &offline_pubkey, 100_000).unwrap();
+    check_recent_balance(100_000, &rpc_client, &offline_pubkey);
 
     // Create nonce account
     let minimum_nonce_balance = rpc_client
@@ -1410,6 +1374,7 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
         nonce_account: 1,
         seed: None,
         nonce_authority: Some(offline_pubkey),
+        memo: None,
         amount: SpendAmount::Some(minimum_nonce_balance),
     };
     process_command(&config).unwrap();
@@ -1434,12 +1399,13 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
         staker: None,
         withdrawer: None,
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
+        amount: SpendAmount::Some(50_000),
         sign_only: true,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::None(nonce_hash),
         nonce_account: Some(nonce_pubkey),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
@@ -1456,7 +1422,7 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
         staker: Some(offline_pubkey),
         withdrawer: None,
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
+        amount: SpendAmount::Some(50_000),
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::FeeCalculator(
@@ -1465,11 +1431,12 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
         ),
         nonce_account: Some(nonce_pubkey),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
     process_command(&config).unwrap();
-    check_recent_balance(MIN_DELEGATE_STAKE_AMOUNT + 400, &rpc_client, &stake_pubkey);
+    check_recent_balance(50_000, &rpc_client, &stake_pubkey);
 
     // Fetch nonce hash
     let nonce_hash = nonce_utils::get_account_with_commitment(
@@ -1488,7 +1455,7 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
     config_offline.command = CliCommand::WithdrawStake {
         stake_account_pubkey: stake_pubkey,
         destination_account_pubkey: recipient_pubkey,
-        lamports: 42,
+        amount: SpendAmount::Some(42),
         withdraw_authority: 0,
         custodian: None,
         sign_only: true,
@@ -1496,6 +1463,8 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
         blockhash_query: BlockhashQuery::None(nonce_hash),
         nonce_account: Some(nonce_pubkey),
         nonce_authority: 0,
+        memo: None,
+        seed: None,
         fee_payer: 0,
     };
     let sig_response = process_command(&config_offline).unwrap();
@@ -1505,7 +1474,7 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
     config.command = CliCommand::WithdrawStake {
         stake_account_pubkey: stake_pubkey,
         destination_account_pubkey: recipient_pubkey,
-        lamports: 42,
+        amount: SpendAmount::Some(42),
         withdraw_authority: 0,
         custodian: None,
         sign_only: false,
@@ -1516,6 +1485,8 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
         ),
         nonce_account: Some(nonce_pubkey),
         nonce_authority: 0,
+        memo: None,
+        seed: None,
         fee_payer: 0,
     };
     process_command(&config).unwrap();
@@ -1540,12 +1511,13 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
         staker: None,
         withdrawer: None,
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
+        amount: SpendAmount::Some(50_000),
         sign_only: true,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::None(nonce_hash),
         nonce_account: Some(nonce_pubkey),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
@@ -1560,7 +1532,7 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
         staker: Some(offline_pubkey),
         withdrawer: Some(offline_pubkey),
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(MIN_DELEGATE_STAKE_AMOUNT + 400),
+        amount: SpendAmount::Some(50_000),
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::FeeCalculator(
@@ -1569,11 +1541,12 @@ fn test_offline_nonced_create_stake_account_and_withdraw() {
         ),
         nonce_account: Some(nonce_pubkey),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         from: 0,
     };
     process_command(&config).unwrap();
     let seed_address =
         Pubkey::create_with_seed(&stake_pubkey, seed, &solana_stake_program::id()).unwrap();
-    check_recent_balance(MIN_DELEGATE_STAKE_AMOUNT + 400, &rpc_client, &seed_address);
+    check_recent_balance(50_000, &rpc_client, &seed_address);
 }

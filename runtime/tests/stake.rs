@@ -11,9 +11,7 @@ use solana_sdk::{
     message::Message,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
-    system_instruction::SystemError,
     sysvar::{self, stake_history::StakeHistory},
-    transaction::TransactionError,
 };
 use solana_stake_program::{
     stake_instruction::{self},
@@ -23,7 +21,6 @@ use solana_vote_program::{
     vote_instruction,
     vote_state::{Vote, VoteInit, VoteState, VoteStateVersions},
 };
-use stake_state::MIN_DELEGATE_STAKE_AMOUNT;
 use std::sync::Arc;
 
 fn next_epoch(bank: &Arc<Bank>) -> Arc<Bank> {
@@ -78,7 +75,7 @@ fn warmed_up(bank: &Bank, stake_pubkey: &Pubkey) -> bool {
         == stake.stake(
             bank.epoch(),
             Some(
-                &from_account::<StakeHistory>(
+                &from_account::<StakeHistory, _>(
                     &bank.get_account(&sysvar::stake_history::id()).unwrap(),
                 )
                 .unwrap(),
@@ -93,7 +90,7 @@ fn get_staked(bank: &Bank, stake_pubkey: &Pubkey) -> u64 {
         .stake(
             bank.epoch(),
             Some(
-                &from_account::<StakeHistory>(
+                &from_account::<StakeHistory, _>(
                     &bank.get_account(&sysvar::stake_history::id()).unwrap(),
                 )
                 .unwrap(),
@@ -106,15 +103,14 @@ fn get_staked(bank: &Bank, stake_pubkey: &Pubkey) -> u64 {
 fn test_stake_create_and_split_single_signature() {
     solana_logger::setup();
 
-    let min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair: staker_keypair,
         ..
     } = create_genesis_config_with_leader(
-        2 * min_stake + 100_000_000_000,
+        100_000_000_000,
         &solana_sdk::pubkey::new_rand(),
-        2 * min_stake,
+        1_000_000,
     );
 
     let staker_pubkey = staker_keypair.pubkey();
@@ -126,7 +122,7 @@ fn test_stake_create_and_split_single_signature() {
 
     let authorized = stake_state::Authorized::auto(&staker_pubkey);
 
-    let lamports = 2 * min_stake;
+    let lamports = 1_000_000;
 
     // Create stake account with seed
     let message = Message::new(
@@ -173,22 +169,19 @@ fn test_stake_create_and_split_single_signature() {
 
 #[test]
 fn test_stake_create_and_split_to_existing_system_account() {
-    // Ensure stake-split does not allow the user to promote an existing system account into
+    // Ensure stake-split allows the user to promote an existing system account into
     // a stake account.
 
     solana_logger::setup();
-
-    let min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
-    let lamports = 2 * min_stake;
 
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair: staker_keypair,
         ..
     } = create_genesis_config_with_leader(
-        lamports + 100_000_000_000,
+        100_000_000_000,
         &solana_sdk::pubkey::new_rand(),
-        lamports,
+        1_000_000,
     );
 
     let staker_pubkey = staker_keypair.pubkey();
@@ -199,6 +192,8 @@ fn test_stake_create_and_split_to_existing_system_account() {
         Pubkey::create_with_seed(&staker_pubkey, "stake", &solana_stake_program::id()).unwrap();
 
     let authorized = stake_state::Authorized::auto(&staker_pubkey);
+
+    let lamports = 1_000_000;
 
     // Create stake account with seed
     let message = Message::new(
@@ -232,7 +227,7 @@ fn test_stake_create_and_split_to_existing_system_account() {
         existing_lamports
     );
 
-    // Verify the split fails because the account is already in use
+    // Verify the split succeeds with lamports in the destination account
     let message = Message::new(
         &stake_instruction::split_with_seed(
             &stake_address, // original
@@ -244,16 +239,12 @@ fn test_stake_create_and_split_to_existing_system_account() {
         ),
         Some(&staker_keypair.pubkey()),
     );
-    assert_eq!(
-        bank_client
-            .send_and_confirm_message(&[&staker_keypair], message)
-            .unwrap_err()
-            .unwrap(),
-        TransactionError::InstructionError(0, SystemError::AccountAlreadyInUse.into())
-    );
+    bank_client
+        .send_and_confirm_message(&[&staker_keypair], message)
+        .expect("failed to split into account with lamports");
     assert_eq!(
         bank_client.get_balance(&split_stake_address).unwrap(),
-        existing_lamports
+        existing_lamports + lamports / 2
     );
 }
 
@@ -266,16 +257,14 @@ fn test_stake_account_lifetime() {
     let identity_keypair = Keypair::new();
     let identity_pubkey = identity_keypair.pubkey();
 
-    let min_stake = 100 + MIN_DELEGATE_STAKE_AMOUNT + 400;
-
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(
-        min_stake * 5,
+        100_000_000_000,
         &solana_sdk::pubkey::new_rand(),
-        4 * min_stake,
+        1_000_000,
     );
     let bank = Bank::new(&genesis_config);
     let mint_pubkey = mint_keypair.pubkey();
@@ -310,7 +299,7 @@ fn test_stake_account_lifetime() {
             &vote_pubkey,
             &authorized,
             &stake_state::Lockup::default(),
-            4 * min_stake,
+            1_000_000,
         ),
         Some(&mint_pubkey),
     );
@@ -322,7 +311,7 @@ fn test_stake_account_lifetime() {
     let account = bank.get_account(&stake_pubkey).expect("account not found");
     let stake_state = account.state().expect("couldn't unpack account data");
     if let StakeState::Stake(_meta, stake) = stake_state {
-        assert_eq!(stake.delegation.stake, min_stake * 4);
+        assert_eq!(stake.delegation.stake, 1_000_000);
     } else {
         panic!("wrong account type found")
     }
@@ -346,7 +335,7 @@ fn test_stake_account_lifetime() {
     let account = bank.get_account(&stake_pubkey).expect("account not found");
     let stake_state = account.state().expect("couldn't unpack account data");
     if let StakeState::Stake(_meta, stake) = stake_state {
-        assert_eq!(stake.delegation.stake, 4 * min_stake);
+        assert_eq!(stake.delegation.stake, 1_000_000);
     } else {
         panic!("wrong account type found")
     }
@@ -384,7 +373,7 @@ fn test_stake_account_lifetime() {
     let staked = get_staked(&bank, &stake_pubkey);
     let lamports = bank.get_balance(&stake_pubkey);
     assert!(staked > pre_staked);
-    assert!(lamports > 4 * min_stake);
+    assert!(lamports > 1_000_000);
 
     // split the stake
     let split_stake_keypair = Keypair::new();
@@ -421,15 +410,14 @@ fn test_stake_account_lifetime() {
         .is_ok());
 
     let split_staked = get_staked(&bank, &split_stake_pubkey);
-    assert!(split_staked > 0);
-    let unstaked_amount = dbg!(lamports / 2 - split_staked);
+
     // Test that we cannot withdraw above what's staked
     let message = Message::new(
         &[stake_instruction::withdraw(
             &split_stake_pubkey,
             &stake_pubkey,
             &solana_sdk::pubkey::new_rand(),
-            unstaked_amount + 1,
+            lamports / 2 - split_staked + 1,
             None,
         )],
         Some(&mint_pubkey),
@@ -444,7 +432,7 @@ fn test_stake_account_lifetime() {
     // assert we're still cooling down
     let split_staked = get_staked(&bank, &split_stake_pubkey);
     assert!(split_staked > 0);
-    let unstaked_amount = lamports / 2 - split_staked;
+
     // withdrawal in cooldown
     let message = Message::new(
         &[stake_instruction::withdraw(
@@ -461,39 +449,21 @@ fn test_stake_account_lifetime() {
         .send_and_confirm_message(&[&mint_keypair, &stake_keypair], message)
         .is_err());
 
-    assert!(unstaked_amount > lamports / 2 - min_stake);
-    // And we can't left < MIN_DELEGATE_STAKE_AMOUNT on account
+    // but we can withdraw unstaked
     let message = Message::new(
         &[stake_instruction::withdraw(
             &split_stake_pubkey,
             &stake_pubkey,
             &solana_sdk::pubkey::new_rand(),
-            lamports / 2 - MIN_DELEGATE_STAKE_AMOUNT + 1,
+            lamports / 2 - split_staked,
             None,
         )],
         Some(&mint_pubkey),
     );
-
+    // assert we can withdraw unstaked tokens
     assert!(bank_client
         .send_and_confirm_message(&[&mint_keypair, &stake_keypair], message)
-        .is_err());
-
-    // But we can withdraw all unstaked that is less than min_stake
-    let message = Message::new(
-        &[stake_instruction::withdraw(
-            &split_stake_pubkey,
-            &stake_pubkey,
-            &solana_sdk::pubkey::new_rand(),
-            lamports / 2 - min_stake,
-            None,
-        )],
-        Some(&mint_pubkey),
-    );
-
-    // assert we can withdraw unstaked tokens
-    bank_client
-        .send_and_confirm_message(&[&mint_keypair, &stake_keypair], message)
-        .unwrap();
+        .is_ok());
 
     // finish cooldown
     loop {
@@ -504,7 +474,6 @@ fn test_stake_account_lifetime() {
     }
     let bank_client = BankClient::new_shared(&bank);
 
-    let split_staked = bank.get_balance(&split_stake_pubkey);
     // Test that we can withdraw everything else out of the split
     let message = Message::new(
         &[stake_instruction::withdraw(
@@ -532,15 +501,14 @@ fn test_create_stake_account_from_seed() {
     let identity_keypair = Keypair::new();
     let identity_pubkey = identity_keypair.pubkey();
 
-    let min_stake = MIN_DELEGATE_STAKE_AMOUNT + 400;
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(
-        min_stake * 2,
+        100_000_000_000,
         &solana_sdk::pubkey::new_rand(),
-        min_stake,
+        1_000_000,
     );
     let bank = Bank::new(&genesis_config);
     let mint_pubkey = mint_keypair.pubkey();
@@ -581,7 +549,7 @@ fn test_create_stake_account_from_seed() {
             &vote_pubkey,
             &authorized,
             &stake_state::Lockup::default(),
-            min_stake,
+            1_000_000,
         ),
         Some(&mint_pubkey),
     );
@@ -593,7 +561,7 @@ fn test_create_stake_account_from_seed() {
     let account = bank.get_account(&stake_pubkey).expect("account not found");
     let stake_state = account.state().expect("couldn't unpack account data");
     if let StakeState::Stake(_meta, stake) = stake_state {
-        assert_eq!(stake.delegation.stake, min_stake);
+        assert_eq!(stake.delegation.stake, 1_000_000);
     } else {
         panic!("wrong account type found")
     }

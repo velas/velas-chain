@@ -190,7 +190,6 @@ pub unsafe fn deserialize<'a>(input: *mut u8) -> (&'a Pubkey, Vec<AccountInfo<'a
 
             accounts.push(AccountInfo {
                 key,
-
                 is_signer,
                 is_writable,
                 lamports,

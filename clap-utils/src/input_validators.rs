@@ -1,13 +1,15 @@
-use crate::keypair::{parse_signer_source, SignerSource, ASK_KEYWORD};
-use chrono::DateTime;
-use solana_sdk::{
-    clock::{Epoch, Slot},
-    hash::Hash,
-    pubkey::{Pubkey, MAX_SEED_LEN},
-    signature::{read_keypair_file, Signature},
+use {
+    crate::keypair::{parse_signer_source, SignerSourceKind, ASK_KEYWORD},
+    chrono::DateTime,
+    solana_sdk::{
+        clock::{Epoch, Slot},
+        hash::Hash,
+        pubkey::{Pubkey, MAX_SEED_LEN},
+        signature::{read_keypair_file, Signature},
+    },
+    std::fmt::Display,
+    std::str::FromStr,
 };
-use std::fmt::Display;
-use std::str::FromStr;
 
 fn is_parsable_generic<U, T>(string: T) -> Result<(), String>
 where
@@ -94,6 +96,26 @@ where
         .map_err(|err| format!("{}", err))
 }
 
+// Return an error if a `SignerSourceKind::Prompt` cannot be parsed
+pub fn is_prompt_signer_source<T>(string: T) -> Result<(), String>
+where
+    T: AsRef<str> + Display,
+{
+    if string.as_ref() == ASK_KEYWORD {
+        return Ok(());
+    }
+    match parse_signer_source(string.as_ref())
+        .map_err(|err| format!("{}", err))?
+        .kind
+    {
+        SignerSourceKind::Prompt => Ok(()),
+        _ => Err(format!(
+            "Unable to parse input as `prompt:` URI scheme or `ASK` keyword: {}",
+            string
+        )),
+    }
+}
+
 // Return an error if string cannot be parsed as pubkey string or keypair file location
 pub fn is_pubkey_or_keypair<T>(string: T) -> Result<(), String>
 where
@@ -108,8 +130,11 @@ pub fn is_valid_pubkey<T>(string: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
 {
-    match parse_signer_source(string.as_ref()) {
-        SignerSource::Filepath(path) => is_keypair(path),
+    match parse_signer_source(string.as_ref())
+        .map_err(|err| format!("{}", err))?
+        .kind
+    {
+        SignerSourceKind::Filepath(path) => is_keypair(path),
         _ => Ok(()),
     }
 }

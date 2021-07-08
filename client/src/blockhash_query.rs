@@ -1,12 +1,15 @@
-use crate::{nonce_utils, rpc_client::RpcClient};
-use clap::ArgMatches;
-use solana_clap_utils::{
-    input_parsers::{pubkey_of, value_of},
-    nonce::*,
-    offline::*,
-};
-use solana_sdk::{
-    commitment_config::CommitmentConfig, fee_calculator::FeeCalculator, hash::Hash, pubkey::Pubkey,
+use {
+    crate::{nonce_utils, rpc_client::RpcClient},
+    clap::ArgMatches,
+    solana_clap_utils::{
+        input_parsers::{pubkey_of, value_of},
+        nonce::*,
+        offline::*,
+    },
+    solana_sdk::{
+        commitment_config::CommitmentConfig, fee_calculator::FeeCalculator, hash::Hash,
+        pubkey::Pubkey,
+    },
 };
 
 #[derive(Debug, PartialEq)]
@@ -358,7 +361,7 @@ mod tests {
         let nonce_pubkey = Pubkey::new(&[4u8; 32]);
         let rpc_nonce_account = UiAccount::encode(
             &nonce_pubkey,
-            nonce_account,
+            &nonce_account,
             UiAccountEncoding::Base64,
             None,
             None,

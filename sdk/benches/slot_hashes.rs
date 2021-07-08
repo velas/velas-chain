@@ -16,6 +16,6 @@ fn bench_to_from_account(b: &mut Bencher) {
     }
     b.iter(|| {
         let account = create_account_for_test(&slot_hashes);
-        slot_hashes = from_account::<SlotHashes>(&account).unwrap();
+        slot_hashes = from_account::<SlotHashes, _>(&account).unwrap();
     });
 }

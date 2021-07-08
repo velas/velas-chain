@@ -125,6 +125,7 @@ impl From<ConfirmedBlock> for generated::ConfirmedBlock {
             transactions,
             rewards,
             block_time,
+            block_height,
         } = confirmed_block;
 
         Self {
@@ -134,6 +135,7 @@ impl From<ConfirmedBlock> for generated::ConfirmedBlock {
             transactions: transactions.into_iter().map(|tx| tx.into()).collect(),
             rewards: rewards.into_iter().map(|r| r.into()).collect(),
             block_time: block_time.map(|timestamp| generated::UnixTimestamp { timestamp }),
+            block_height: block_height.map(|block_height| generated::BlockHeight { block_height }),
         }
     }
 }
@@ -150,6 +152,7 @@ impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlock {
             transactions,
             rewards,
             block_time,
+            block_height,
         } = confirmed_block;
 
         Ok(Self {
@@ -162,6 +165,7 @@ impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlock {
                 .collect::<std::result::Result<Vec<TransactionWithStatusMeta>, Self::Error>>()?,
             rewards: rewards.into_iter().map(|r| r.into()).collect(),
             block_time: block_time.map(|generated::UnixTimestamp { timestamp }| timestamp),
+            block_height: block_height.map(|generated::BlockHeight { block_height }| block_height),
         })
     }
 }
@@ -274,6 +278,7 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
             log_messages,
             pre_token_balances,
             post_token_balances,
+            rewards,
         } = value;
         let err = match status {
             Ok(()) => None,
@@ -297,6 +302,11 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
             .into_iter()
             .map(|balance| balance.into())
             .collect();
+        let rewards = rewards
+            .unwrap_or_default()
+            .into_iter()
+            .map(|reward| reward.into())
+            .collect();
 
         Self {
             err,
@@ -307,6 +317,7 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
             log_messages,
             pre_token_balances,
             post_token_balances,
+            rewards,
         }
     }
 }
@@ -331,6 +342,7 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             log_messages,
             pre_token_balances,
             post_token_balances,
+            rewards,
         } = value;
         let status = match &err {
             None => Ok(()),
@@ -355,6 +367,7 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
                 .map(|balance| balance.into())
                 .collect(),
         );
+        let rewards = Some(rewards.into_iter().map(|reward| reward.into()).collect());
         Ok(Self {
             status,
             fee,
@@ -364,6 +377,7 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             log_messages,
             pre_token_balances,
             post_token_balances,
+            rewards,
         })
     }
 }
@@ -508,6 +522,8 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
                     44 => InstructionError::BorshIoError(String::new()),
                     45 => InstructionError::AccountNotRentExempt,
                     46 => InstructionError::InvalidAccountOwner,
+                    47 => InstructionError::ArithmeticOverflow,
+                    48 => InstructionError::UnsupportedSysvar,
                     _ => return Err("Invalid InstructionError"),
                 };
 
@@ -534,6 +550,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
             13 => TransactionError::InvalidProgramForExecution,
             14 => TransactionError::SanitizeFailure,
             15 => TransactionError::ClusterMaintenance,
+            16 => TransactionError::AccountBorrowOutstanding,
             _ => return Err("Invalid TransactionError"),
         })
     }
@@ -588,6 +605,9 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 }
                 TransactionError::InstructionError(_, _) => {
                     tx_by_addr::TransactionErrorType::InstructionError
+                }
+                TransactionError::AccountBorrowOutstanding => {
+                    tx_by_addr::TransactionErrorType::AccountBorrowOutstandingTx
                 }
             } as i32,
             instruction_error: match transaction_error {
@@ -733,6 +753,15 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                             }
                             InstructionError::InvalidAccountOwner => {
                                 tx_by_addr::InstructionErrorType::InvalidAccountOwner
+                            }
+                            InstructionError::ArithmeticOverflow => {
+                                tx_by_addr::InstructionErrorType::ArithmeticOverflow
+                            }
+                            InstructionError::UnsupportedSysvar => {
+                                tx_by_addr::InstructionErrorType::UnsupportedSysvar
+                            }
+                            InstructionError::IllegalOwner => {
+                                tx_by_addr::InstructionErrorType::IllegalOwner
                             }
                         } as i32,
                         custom: match instruction_error {
@@ -935,6 +964,7 @@ impl From<evm_state::TransactionReceipt> for generated_evm::TransactionReceipt {
 
 impl TryFrom<generated_evm::TransactionReceipt> for evm_state::TransactionReceipt {
     type Error = &'static str;
+
     fn try_from(tx: generated_evm::TransactionReceipt) -> Result<Self, Self::Error> {
         let logs: Result<Vec<_>, _> = tx.logs.into_iter().map(TryFrom::try_from).collect();
         Ok(Self {

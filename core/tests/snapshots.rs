@@ -11,25 +11,21 @@ macro_rules! DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS {
             const CLUSTER_TYPE: ClusterType = ClusterType::$y;
 
             #[test]
-            #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
             fn test_bank_forks_status_cache_snapshot_n() {
                 run_test_bank_forks_status_cache_snapshot_n(SNAPSHOT_VERSION, CLUSTER_TYPE)
             }
 
             #[test]
-            #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
             fn test_bank_forks_snapshot_n() {
                 run_test_bank_forks_snapshot_n(SNAPSHOT_VERSION, CLUSTER_TYPE)
             }
 
             #[test]
-            #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
             fn test_concurrent_snapshot_packaging() {
                 run_test_concurrent_snapshot_packaging(SNAPSHOT_VERSION, CLUSTER_TYPE)
             }
 
             #[test]
-            #[cfg_attr(not(feature = "multiple-db-in-thread"), ignore)]
             fn test_slots_to_snapshot() {
                 run_test_slots_to_snapshot(SNAPSHOT_VERSION, CLUSTER_TYPE)
             }
@@ -51,6 +47,7 @@ mod tests {
     use solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestHandler},
         accounts_db,
+        accounts_index::AccountSecondaryIndexes,
         bank::{Bank, BankSlotDelta},
         bank_forks::{ArchiveFormat, BankForks, SnapshotConfig},
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
@@ -69,7 +66,7 @@ mod tests {
     use std::{
         collections::HashSet,
         fs,
-        path::{Path, PathBuf},
+        path::PathBuf,
         sync::{
             atomic::{AtomicBool, Ordering},
             mpsc::channel,
@@ -79,18 +76,12 @@ mod tests {
     };
     use tempfile::TempDir;
 
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_3_0, Development, V1_3_0_Development);
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_3_0, Devnet, V1_3_0_Devnet);
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_3_0, Testnet, V1_3_0_Testnet);
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_3_0, MainnetBeta, V1_3_0_MainnetBeta);
+    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_2_0, Development, V1_2_0_Development);
+    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_2_0, Devnet, V1_2_0_Devnet);
+    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_2_0, Testnet, V1_2_0_Testnet);
+    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_2_0, MainnetBeta, V1_2_0_MainnetBeta);
 
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_4_0, Development, V1_4_0_Development);
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_4_0, Devnet, V1_4_0_Devnet);
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_4_0, Testnet, V1_4_0_Testnet);
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_4_0, MainnetBeta, V1_4_0_MainnetBeta);
     struct SnapshotTestConfig {
-        _evm_state_dir: TempDir,
-        _evm_ledger_path: TempDir,
         accounts_dir: TempDir,
         snapshot_dir: TempDir,
         _snapshot_output_path: TempDir,
@@ -105,40 +96,18 @@ mod tests {
             cluster_type: ClusterType,
             snapshot_interval_slots: u64,
         ) -> SnapshotTestConfig {
-            let evm_state_dir = TempDir::new().unwrap();
-            let evm_state_json = TempDir::new().unwrap();
-            let evm_ledger_path = TempDir::new().unwrap();
             let accounts_dir = TempDir::new().unwrap();
             let snapshot_dir = TempDir::new().unwrap();
             let snapshot_output_path = TempDir::new().unwrap();
             let mut genesis_config_info = create_genesis_config(10_000);
-            let evm_state_json_file = evm_state_json
-                .path()
-                .join(solana_sdk::genesis_config::EVM_GENESIS);
-            let root = solana_sdk::genesis_config::evm_genesis::generate_evm_state_json(
-                &evm_state_json_file,
-            )
-            .unwrap();
-            genesis_config_info.genesis_config.evm_root_hash = root;
-            genesis_config_info
-                .genesis_config
-                .generate_evm_state(evm_ledger_path.path(), Some(&evm_state_json_file))
-                .unwrap();
             genesis_config_info.genesis_config.cluster_type = cluster_type;
             let bank0 = Bank::new_with_paths(
                 &genesis_config_info.genesis_config,
-                Some((
-                    evm_state_dir.as_ref(),
-                    evm_ledger_path
-                        .path()
-                        .join(solana_sdk::genesis_config::EVM_GENESIS)
-                        .as_ref(),
-                )),
                 vec![accounts_dir.path().to_path_buf()],
                 &[],
                 None,
                 None,
-                HashSet::new(),
+                AccountSecondaryIndexes::default(),
                 false,
             );
             bank0.freeze();
@@ -154,8 +123,6 @@ mod tests {
             };
             bank_forks.set_snapshot_config(Some(snapshot_config.clone()));
             SnapshotTestConfig {
-                _evm_state_dir: evm_state_dir,
-                _evm_ledger_path: evm_ledger_path,
                 accounts_dir,
                 snapshot_dir,
                 _snapshot_output_path: snapshot_output_path,
@@ -170,7 +137,6 @@ mod tests {
         old_bank_forks: &BankForks,
         old_last_slot: Slot,
         old_genesis_config: &GenesisConfig,
-        evm_state_path: &Path,
         account_paths: &[PathBuf],
     ) {
         let (snapshot_path, snapshot_package_output_path) = old_bank_forks
@@ -182,7 +148,6 @@ mod tests {
         let old_last_bank = old_bank_forks.get(old_last_slot).unwrap();
 
         let deserialized_bank = snapshot_utils::bank_from_archive(
-            evm_state_path,
             &account_paths,
             &[],
             &old_bank_forks
@@ -199,7 +164,7 @@ mod tests {
             old_genesis_config,
             None,
             None,
-            HashSet::new(),
+            AccountSecondaryIndexes::default(),
             false,
         )
         .unwrap();
@@ -286,16 +251,9 @@ mod tests {
         snapshot_utils::archive_snapshot_package(&snapshot_package).unwrap();
 
         // Restore bank from snapshot
-        let evm_state_path = TempDir::new().unwrap();
         let account_paths = &[snapshot_test_config.accounts_dir.path().to_path_buf()];
         let genesis_config = &snapshot_test_config.genesis_config_info.genesis_config;
-        restore_from_snapshot(
-            bank_forks,
-            last_slot,
-            genesis_config,
-            evm_state_path.path(),
-            account_paths,
-        );
+        restore_from_snapshot(bank_forks, last_slot, genesis_config, account_paths);
     }
 
     fn run_test_bank_forks_snapshot_n(

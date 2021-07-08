@@ -12,7 +12,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. || exit 1; pwd)"/net/common.sh
 
 prebuild=
 if [[ $1 = "--prebuild" ]]; then
-    prebuild=true
+  prebuild=true
 fi
 
 if [[ $(uname) != Linux ]]; then
@@ -34,36 +34,31 @@ if [[ -n $USE_INSTALL || ! -f "$SOLANA_ROOT"/Cargo.toml ]]; then
         fi
     }
 else
-    velas_program() {
-        declare program="$1"
-        declare crate="$program"
-        if [[ -z $program ]]; then
-            crate="cli"
-            program="velas"
-        else
-            program="velas-$program"
-        fi
-        
-        declare prefix=$2;
-        if [ "$crate" = "cli" ]; then
-            prefix="solana"
-        fi
-        
-        if [[ -r "$SOLANA_ROOT/$crate"/Cargo.toml ]]; then
-            if [[ "$prefix" == "" ]]; then
-                maybe_package="--package velas-$crate"
-            else
-                maybe_package="--package $prefix-$crate"
-            fi
-        fi
-        
-        if [[ -n $NDEBUG ]]; then
-            maybe_release=--release
-        fi
-        declare manifest_path="--manifest-path=$SOLANA_ROOT/$crate/Cargo.toml"
-        printf "cargo $CARGO_TOOLCHAIN run $manifest_path $maybe_release $maybe_package --bin %s %s -- " "$program"
-    }
-    
+  velas_program() {
+    declare program="$1"
+    declare crate="$program"
+    if [[ -z $program ]]; then
+      crate="cli"
+      program="velas"
+    else
+      program="velas-$program"
+    fi
+
+    if [[ -n $NDEBUG ]]; then
+      maybe_release=--release
+    fi
+
+    # Prebuild binaries so that CI sanity check timeout doesn't include build time
+    if [[ $prebuild ]]; then
+      (
+        set -x
+        # shellcheck disable=SC2086 # Don't want to double quote
+        cargo $CARGO_TOOLCHAIN build $maybe_release --bin $program
+      )
+    fi
+
+    printf "cargo $CARGO_TOOLCHAIN run $maybe_release  --bin %s %s -- " "$program"
+  }
 fi
 
 velas_bench_tps=$(velas_program bench-tps)

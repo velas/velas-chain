@@ -4,6 +4,7 @@ use crate::{
         log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
         ProcessResult,
     },
+    memo::WithMemo,
     spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
 };
 use clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand};
@@ -11,6 +12,7 @@ use solana_clap_utils::{
     input_parsers::*,
     input_validators::*,
     keypair::{DefaultSigner, SignerIndex},
+    memo::{memo_arg, MEMO_ARG},
 };
 use solana_cli_output::{CliEpochVotingHistory, CliLockout, CliVoteAccount};
 use solana_client::rpc_client::RpcClient;
@@ -79,7 +81,8 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("STRING")
                         .takes_value(true)
                         .help("Seed for address generation; if specified, the resulting account will be at a derived address of the VOTE ACCOUNT pubkey")
-                ),
+                )
+		.arg(memo_arg())
         )
         .subcommand(
             SubCommand::with_name("vote-authorize-voter")
@@ -105,7 +108,8 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("NEW_AUTHORIZED_PUBKEY")
                         .required(true),
                         "New authorized vote signer. "),
-                ),
+                )
+		.arg(memo_arg())
         )
         .subcommand(
             SubCommand::with_name("vote-authorize-withdrawer")
@@ -131,7 +135,8 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("AUTHORIZED_PUBKEY")
                         .required(true),
                         "New authorized withdrawer. "),
-                ),
+                )
+		.arg(memo_arg())
         )
         .subcommand(
             SubCommand::with_name("vote-update-validator")
@@ -161,6 +166,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .validator(is_valid_signer)
                         .help("Authorized withdrawer keypair"),
                 )
+		.arg(memo_arg())
         )
         .subcommand(
             SubCommand::with_name("vote-update-commission")
@@ -190,6 +196,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .validator(is_valid_signer)
                         .help("Authorized withdrawer keypair"),
                 )
+		.arg(memo_arg())
         )
         .subcommand(
             SubCommand::with_name("vote-account")
@@ -259,6 +266,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .validator(is_valid_signer)
                         .help("Authorized withdrawer [default: cli config keypair]"),
                 )
+		.arg(memo_arg())
         )
     }
 }
@@ -275,6 +283,7 @@ pub fn parse_create_vote_account(
     let commission = value_t_or_exit!(matches, "commission", u8);
     let authorized_voter = pubkey_of_signer(matches, "authorized_voter", wallet_manager)?;
     let authorized_withdrawer = pubkey_of_signer(matches, "authorized_withdrawer", wallet_manager)?;
+    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
 
     let payer_provided = None;
     let signer_info = default_signer.generate_unique_signers(
@@ -291,6 +300,7 @@ pub fn parse_create_vote_account(
             authorized_voter,
             authorized_withdrawer,
             commission,
+            memo,
         },
         signers: signer_info.signers,
     })
@@ -314,12 +324,14 @@ pub fn parse_vote_authorize(
         matches,
         wallet_manager,
     )?;
+    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
 
     Ok(CliCommandInfo {
         command: CliCommand::VoteAuthorize {
             vote_account_pubkey,
             new_authorized_pubkey,
             vote_authorize,
+            memo,
         },
         signers: signer_info.signers,
     })
@@ -343,12 +355,14 @@ pub fn parse_vote_update_validator(
         matches,
         wallet_manager,
     )?;
+    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
 
     Ok(CliCommandInfo {
         command: CliCommand::VoteUpdateValidator {
             vote_account_pubkey,
             new_identity_account: signer_info.index_of(new_identity_pubkey).unwrap(),
             withdraw_authority: signer_info.index_of(authorized_withdrawer_pubkey).unwrap(),
+            memo,
         },
         signers: signer_info.signers,
     })
@@ -371,12 +385,14 @@ pub fn parse_vote_update_commission(
         matches,
         wallet_manager,
     )?;
+    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
 
     Ok(CliCommandInfo {
         command: CliCommand::VoteUpdateCommission {
             vote_account_pubkey,
             commission,
             withdraw_authority: signer_info.index_of(authorized_withdrawer_pubkey).unwrap(),
+            memo,
         },
         signers: signer_info.signers,
     })
@@ -424,6 +440,7 @@ pub fn parse_withdraw_from_vote_account(
         matches,
         wallet_manager,
     )?;
+    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
 
     Ok(CliCommandInfo {
         command: CliCommand::WithdrawFromVoteAccount {
@@ -431,6 +448,7 @@ pub fn parse_withdraw_from_vote_account(
             destination_account_pubkey,
             withdraw_authority: signer_info.index_of(withdraw_authority_pubkey).unwrap(),
             withdraw_amount,
+            memo,
         },
         signers: signer_info.signers,
     })
@@ -445,6 +463,7 @@ pub fn process_create_vote_account(
     authorized_voter: &Option<Pubkey>,
     authorized_withdrawer: &Option<Pubkey>,
     commission: u8,
+    memo: Option<&String>,
 ) -> ProcessResult {
     let vote_account = config.signers[vote_account];
     let vote_account_pubkey = vote_account.pubkey();
@@ -487,6 +506,7 @@ pub fn process_create_vote_account(
                 &vote_init,
                 lamports,
             )
+            .with_memo(memo)
         } else {
             vote_instruction::create_account(
                 &config.signers[0].pubkey(),
@@ -494,6 +514,7 @@ pub fn process_create_vote_account(
                 &vote_init,
                 lamports,
             )
+            .with_memo(memo)
         };
         Message::new(&ixs, Some(&config.signers[0].pubkey()))
     };
@@ -537,6 +558,7 @@ pub fn process_vote_authorize(
     vote_account_pubkey: &Pubkey,
     new_authorized_pubkey: &Pubkey,
     vote_authorize: VoteAuthorize,
+    memo: Option<&String>,
 ) -> ProcessResult {
     // If the `authorized_account` is also the fee payer, `config.signers` will only have one
     // keypair in it
@@ -556,7 +578,8 @@ pub fn process_vote_authorize(
         &authorized.pubkey(),  // current authorized
         new_authorized_pubkey, // new vote signer/withdrawer
         vote_authorize,        // vote or withdraw
-    )];
+    )]
+    .with_memo(memo);
 
     let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
     let mut tx = Transaction::new_unsigned(message);
@@ -578,6 +601,7 @@ pub fn process_vote_update_validator(
     vote_account_pubkey: &Pubkey,
     new_identity_account: SignerIndex,
     withdraw_authority: SignerIndex,
+    memo: Option<&String>,
 ) -> ProcessResult {
     let authorized_withdrawer = config.signers[withdraw_authority];
     let new_identity_account = config.signers[new_identity_account];
@@ -591,7 +615,8 @@ pub fn process_vote_update_validator(
         vote_account_pubkey,
         &authorized_withdrawer.pubkey(),
         &new_identity_pubkey,
-    )];
+    )]
+    .with_memo(memo);
 
     let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
     let mut tx = Transaction::new_unsigned(message);
@@ -613,6 +638,7 @@ pub fn process_vote_update_commission(
     vote_account_pubkey: &Pubkey,
     commission: u8,
     withdraw_authority: SignerIndex,
+    memo: Option<&String>,
 ) -> ProcessResult {
     let authorized_withdrawer = config.signers[withdraw_authority];
     let (recent_blockhash, fee_calculator) = rpc_client.get_recent_blockhash()?;
@@ -620,7 +646,8 @@ pub fn process_vote_update_commission(
         vote_account_pubkey,
         &authorized_withdrawer.pubkey(),
         commission,
-    )];
+    )]
+    .with_memo(memo);
 
     let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
     let mut tx = Transaction::new_unsigned(message);
@@ -731,6 +758,7 @@ pub fn process_withdraw_from_vote_account(
     withdraw_authority: SignerIndex,
     withdraw_amount: SpendAmount,
     destination_account_pubkey: &Pubkey,
+    memo: Option<&String>,
 ) -> ProcessResult {
     let (recent_blockhash, fee_calculator) = rpc_client.get_recent_blockhash()?;
     let withdraw_authority = config.signers[withdraw_authority];
@@ -751,14 +779,15 @@ pub fn process_withdraw_from_vote_account(
         }
     };
 
-    let ix = withdraw(
+    let ixs = vec![withdraw(
         vote_account_pubkey,
         &withdraw_authority.pubkey(),
         lamports,
         destination_account_pubkey,
-    );
+    )]
+    .with_memo(memo);
 
-    let message = Message::new(&[ix], Some(&config.signers[0].pubkey()));
+    let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
     let mut transaction = Transaction::new_unsigned(message);
     transaction.try_sign(&config.signers, recent_blockhash)?;
     check_account_for_fee_with_commitment(
@@ -797,10 +826,7 @@ mod tests {
         let default_keypair = Keypair::new();
         let (default_keypair_file, mut tmp_file) = make_tmp_file();
         write_keypair(&default_keypair, tmp_file.as_file_mut()).unwrap();
-        let default_signer = DefaultSigner {
-            path: default_keypair_file.clone(),
-            arg_name: String::new(),
-        };
+        let default_signer = DefaultSigner::new("", &default_keypair_file);
 
         let test_authorize_voter = test_commands.clone().get_matches_from(vec![
             "test",
@@ -815,7 +841,8 @@ mod tests {
                 command: CliCommand::VoteAuthorize {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: pubkey2,
-                    vote_authorize: VoteAuthorize::Voter
+                    vote_authorize: VoteAuthorize::Voter,
+                    memo: None,
                 },
                 signers: vec![read_keypair_file(&default_keypair_file).unwrap().into()],
             }
@@ -838,7 +865,8 @@ mod tests {
                 command: CliCommand::VoteAuthorize {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: pubkey2,
-                    vote_authorize: VoteAuthorize::Voter
+                    vote_authorize: VoteAuthorize::Voter,
+                    memo: None,
                 },
                 signers: vec![
                     read_keypair_file(&default_keypair_file).unwrap().into(),
@@ -872,6 +900,7 @@ mod tests {
                     authorized_voter: None,
                     authorized_withdrawer: None,
                     commission: 10,
+                    memo: None,
                 },
                 signers: vec![
                     read_keypair_file(&default_keypair_file).unwrap().into(),
@@ -901,6 +930,7 @@ mod tests {
                     authorized_voter: None,
                     authorized_withdrawer: None,
                     commission: 100,
+                    memo: None,
                 },
                 signers: vec![
                     read_keypair_file(&default_keypair_file).unwrap().into(),
@@ -933,7 +963,8 @@ mod tests {
                     identity_account: 2,
                     authorized_voter: Some(authed),
                     authorized_withdrawer: None,
-                    commission: 100
+                    commission: 100,
+                    memo: None,
                 },
                 signers: vec![
                     read_keypair_file(&default_keypair_file).unwrap().into(),
@@ -964,7 +995,8 @@ mod tests {
                     identity_account: 2,
                     authorized_voter: None,
                     authorized_withdrawer: Some(authed),
-                    commission: 100
+                    commission: 100,
+                    memo: None,
                 },
                 signers: vec![
                     read_keypair_file(&default_keypair_file).unwrap().into(),
@@ -988,6 +1020,7 @@ mod tests {
                     vote_account_pubkey: pubkey,
                     new_identity_account: 2,
                     withdraw_authority: 1,
+                    memo: None,
                 },
                 signers: vec![
                     read_keypair_file(&default_keypair_file).unwrap().into(),
@@ -1011,6 +1044,7 @@ mod tests {
                     vote_account_pubkey: pubkey,
                     commission: 42,
                     withdraw_authority: 1,
+                    memo: None,
                 },
                 signers: vec![
                     read_keypair_file(&default_keypair_file).unwrap().into(),
@@ -1035,6 +1069,7 @@ mod tests {
                     destination_account_pubkey: pubkey,
                     withdraw_authority: 0,
                     withdraw_amount: SpendAmount::Some(42_000_000_000),
+                    memo: None,
                 },
                 signers: vec![read_keypair_file(&default_keypair_file).unwrap().into()],
             }
@@ -1056,6 +1091,7 @@ mod tests {
                     destination_account_pubkey: pubkey,
                     withdraw_authority: 0,
                     withdraw_amount: SpendAmount::All,
+                    memo: None,
                 },
                 signers: vec![read_keypair_file(&default_keypair_file).unwrap().into()],
             }
@@ -1082,6 +1118,7 @@ mod tests {
                     destination_account_pubkey: pubkey,
                     withdraw_authority: 1,
                     withdraw_amount: SpendAmount::Some(42_000_000_000),
+                    memo: None,
                 },
                 signers: vec![
                     read_keypair_file(&default_keypair_file).unwrap().into(),

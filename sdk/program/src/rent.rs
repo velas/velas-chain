@@ -14,8 +14,8 @@ pub struct Rent {
 }
 
 /// default rental rate in lamports/byte-year, based on:
-///  10^9 lamports per VLX
-///  $1 per VLX
+///  10^9 lamports per SOL
+///  $1 per SOL
 ///  $0.01 per megabyte day
 ///  $3.65 per megabyte year
 pub const DEFAULT_LAMPORTS_PER_BYTE_YEAR: u64 = 1_000_000_000 / 100 * 365 / (1024 * 1024);
@@ -142,8 +142,7 @@ mod tests {
         use crate::{clock::*, sysvar::Sysvar};
 
         const SECONDS_PER_YEAR: f64 = 365.242_199 * 24.0 * 60.0 * 60.0;
-        const SLOTS_PER_YEAR: f64 =
-            SECONDS_PER_YEAR / (DEFAULT_TICKS_PER_SLOT as f64 / DEFAULT_TICKS_PER_SECOND as f64);
+        const SLOTS_PER_YEAR: f64 = SECONDS_PER_YEAR / DEFAULT_S_PER_SLOT;
 
         let rent = Rent::default();
         panic!(

@@ -37,6 +37,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         poh_verify: config.poh_verify,
         cuda: config.cuda,
         require_tower: config.require_tower,
+        tower_path: config.tower_path.clone(),
         debug_keys: config.debug_keys.clone(),
         contact_debug_interval: config.contact_debug_interval,
         contact_save_interval: config.contact_save_interval,
@@ -53,6 +54,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         tpu_coalesce_ms: config.tpu_coalesce_ms,
         validator_exit: Arc::new(RwLock::new(ValidatorExit::default())),
         poh_hashes_per_batch: config.poh_hashes_per_batch,
+        no_wait_for_vote_to_start_leader: config.no_wait_for_vote_to_start_leader,
     }
 }
 

@@ -1054,7 +1054,9 @@ pub fn init_or_update(config_file: &str, is_init: bool, check_only: bool) -> Res
         print_update_manifest(&update_manifest);
 
         if timestamp_secs()
-            < str::parse::<u64>(crate::build_env::BUILD_SECONDS_SINCE_UNIX_EPOCH).unwrap()
+            < crate::build_env::BUILD_SECONDS_SINCE_UNIX_EPOCH
+                .parse::<u64>()
+                .unwrap()
         {
             return Err("Unable to update as system time seems unreliable".to_string());
         }

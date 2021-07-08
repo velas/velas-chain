@@ -1,8 +1,10 @@
 //! Implementation defined RPC server errors
 
-use crate::rpc_response::RpcSimulateTransactionResult;
-use jsonrpc_core::{Error, ErrorCode};
-use solana_sdk::clock::Slot;
+use {
+    crate::rpc_response::RpcSimulateTransactionResult,
+    jsonrpc_core::{Error, ErrorCode},
+    solana_sdk::clock::Slot,
+};
 
 pub const JSON_RPC_SERVER_ERROR_BLOCK_CLEANED_UP: i64 = -32001;
 pub const JSON_RPC_SERVER_ERROR_SEND_TRANSACTION_PREFLIGHT_FAILURE: i64 = -32002;
@@ -13,6 +15,8 @@ pub const JSON_RPC_SERVER_ERROR_TRANSACTION_PRECOMPILE_VERIFICATION_FAILURE: i64
 pub const JSON_RPC_SERVER_ERROR_SLOT_SKIPPED: i64 = -32007;
 pub const JSON_RPC_SERVER_ERROR_NO_SNAPSHOT: i64 = -32008;
 pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_SLOT_SKIPPED: i64 = -32009;
+pub const JSON_RPC_SERVER_ERROR_KEY_EXCLUDED_FROM_SECONDARY_INDEX: i64 = -32010;
+pub const JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE: i64 = -32011;
 
 pub enum RpcCustomError {
     BlockCleanedUp {
@@ -38,6 +42,10 @@ pub enum RpcCustomError {
     LongTermStorageSlotSkipped {
         slot: Slot,
     },
+    KeyExcludedFromSecondaryIndex {
+        index_key: String,
+    },
+    TransactionHistoryNotAvailable,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -113,6 +121,24 @@ impl From<RpcCustomError> for Error {
             RpcCustomError::LongTermStorageSlotSkipped { slot } => Self {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_SLOT_SKIPPED),
                 message: format!("Slot {} was skipped, or missing in long-term storage", slot),
+                data: None,
+            },
+            RpcCustomError::KeyExcludedFromSecondaryIndex { index_key } => Self {
+                code: ErrorCode::ServerError(
+                    JSON_RPC_SERVER_ERROR_KEY_EXCLUDED_FROM_SECONDARY_INDEX,
+                ),
+                message: format!(
+                    "{} excluded from account secondary indexes; \
+                    this RPC method unavailable for key",
+                    index_key
+                ),
+                data: None,
+            },
+            RpcCustomError::TransactionHistoryNotAvailable => Self {
+                code: ErrorCode::ServerError(
+                    JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
+                ),
+                message: "Transaction history is not available from this node".to_string(),
                 data: None,
             },
         }

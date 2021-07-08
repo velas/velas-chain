@@ -1,6 +1,6 @@
 [package]
 name = "solana-account-decoder"
-version = "1.5.19"
+version = "1.6.14"
 description = "Solana account decoder"
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
 repository = "https://github.com/solana-labs/solana"
@@ -19,14 +19,16 @@ bs58 = "0.3.1"
 bv = "0.11.1"
 Inflector = "0.11.4"
 lazy_static = "1.4.0"
-serde = "1.0.118"
+serde = "1.0.122"
 serde_derive = "1.0.103"
 serde_json = "1.0.56"
 thiserror = "1.0"
 zstd = "0.5.1"
-solana-config-program = { path = "../programs/config", version = "=1.5.19" }
-solana-sdk = { path = "../sdk", version = "=1.5.19" }
-solana-stake-program = { path = "../programs/stake", version = "=1.5.19" }
-solana-vote-program = { path = "../programs/vote", version = "=1.5.19" }
-spl-token-v2-0 = { package = "spl-token", version = "=3.1.0", features = ["no-entrypoint"] }
+
+solana-config-program = { path = "../programs/config", version = "=1.6.14" }
+solana-sdk = { path = "../sdk", version = "=1.6.14" }
+solana-stake-program = { path = "../programs/stake", version = "=1.6.14" }
+solana-vote-program = { path = "../programs/vote", version = "=1.6.14" }
+spl-token-v2-0 = { package = "spl-token", version = "=3.1.1", features = ["no-entrypoint"] }
+
 velas-account-program = { path = "../programs/velas-account-program" }

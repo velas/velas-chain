@@ -22,6 +22,7 @@ pub mod fee_calculator;
 pub mod hash;
 pub mod incinerator;
 pub mod instruction;
+pub mod keccak;
 pub mod loader_instruction;
 pub mod loader_upgradeable_instruction;
 pub mod log;
@@ -46,6 +47,27 @@ pub mod system_instruction;
 pub mod system_program;
 pub mod sysvar;
 
+pub mod config {
+    pub mod program {
+        crate::declare_id!("Config1111111111111111111111111111111111111");
+    }
+}
+
+pub mod vote {
+    pub mod program {
+        crate::declare_id!("Vote111111111111111111111111111111111111111");
+    }
+}
+
+pub mod stake {
+    pub mod config {
+        crate::declare_id!("StakeConfig11111111111111111111111111111111");
+    }
+
+    pub mod program {
+        crate::declare_id!("Stake11111111111111111111111111111111111111");
+    }
+}
 /// Convenience macro to declare a static public key and functions to interact with it
 ///
 /// Input: a single literal base58 string representation of a program's id

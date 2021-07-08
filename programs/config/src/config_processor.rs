@@ -3,6 +3,7 @@
 use crate::ConfigKeys;
 use bincode::deserialize;
 use solana_sdk::{
+    account::{ReadableAccount, WritableAccount},
     feature_set, ic_msg,
     instruction::InstructionError,
     keyed_account::{next_keyed_account, KeyedAccount},
@@ -29,7 +30,7 @@ pub fn process_instruction(
             return Err(InstructionError::InvalidAccountOwner);
         }
 
-        deserialize(&config_account.data).map_err(|err| {
+        deserialize(&config_account.data()).map_err(|err| {
             ic_msg!(
                 invoke_context,
                 "Unable to deserialize config account: {}",
@@ -85,10 +86,7 @@ pub fn process_instruction(
             }
             // If Config account is already initialized, update signatures must match Config data
             if !current_data.keys.is_empty()
-                && current_signer_keys
-                    .iter()
-                    .find(|&pubkey| pubkey == signer)
-                    .is_none()
+                && !current_signer_keys.iter().any(|pubkey| pubkey == signer)
             {
                 ic_msg!(
                     invoke_context,
@@ -119,7 +117,10 @@ pub fn process_instruction(
         return Err(InstructionError::InvalidInstructionData);
     }
 
-    config_keyed_account.try_account_ref_mut()?.data[..data.len()].copy_from_slice(&data);
+    config_keyed_account
+        .try_account_ref_mut()?
+        .data_as_mut_slice()[..data.len()]
+        .copy_from_slice(&data);
     Ok(())
 }
 
@@ -130,7 +131,7 @@ mod tests {
     use bincode::serialized_size;
     use serde_derive::{Deserialize, Serialize};
     use solana_sdk::{
-        account::Account,
+        account::{Account, AccountSharedData},
         keyed_account::create_keyed_is_signer_accounts,
         process_instruction::MockInvokeContext,
         signature::{Keypair, Signer},
@@ -162,7 +163,7 @@ mod tests {
         }
     }
 
-    fn create_config_account(keys: Vec<(Pubkey, bool)>) -> (Keypair, RefCell<Account>) {
+    fn create_config_account(keys: Vec<(Pubkey, bool)>) -> (Keypair, RefCell<AccountSharedData>) {
         let from_pubkey = solana_sdk::pubkey::new_rand();
         let config_keypair = Keypair::new();
         let config_pubkey = config_keypair.pubkey();
@@ -179,11 +180,11 @@ mod tests {
             } => space,
             _ => panic!("Not a CreateAccount system instruction"),
         };
-        let config_account = RefCell::new(Account {
+        let config_account = RefCell::new(AccountSharedData::from(Account {
             data: vec![0; space as usize],
             owner: id(),
             ..Account::default()
-        });
+        }));
         let accounts = vec![(&config_pubkey, true, &config_account)];
         let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
         assert_eq!(
@@ -206,7 +207,7 @@ mod tests {
         let (_, config_account) = create_config_account(keys);
         assert_eq!(
             Some(MyConfig::default()),
-            deserialize(get_config_data(&config_account.borrow().data).unwrap()).ok()
+            deserialize(get_config_data(&config_account.borrow().data()).unwrap()).ok()
         );
     }
 
@@ -232,7 +233,7 @@ mod tests {
         );
         assert_eq!(
             Some(my_config),
-            deserialize(get_config_data(&config_account.borrow().data).unwrap()).ok()
+            deserialize(get_config_data(&config_account.borrow().data()).unwrap()).ok()
         );
     }
 
@@ -298,8 +299,8 @@ mod tests {
         let my_config = MyConfig::new(42);
 
         let instruction = config_instruction::store(&config_pubkey, true, keys.clone(), &my_config);
-        let signer0_account = RefCell::new(Account::default());
-        let signer1_account = RefCell::new(Account::default());
+        let signer0_account = RefCell::new(AccountSharedData::default());
+        let signer1_account = RefCell::new(AccountSharedData::default());
         let accounts = vec![
             (&config_pubkey, true, &config_account),
             (&signer0_pubkey, true, &signer0_account),
@@ -315,11 +316,11 @@ mod tests {
             ),
             Ok(())
         );
-        let meta_data: ConfigKeys = deserialize(&config_account.borrow().data).unwrap();
+        let meta_data: ConfigKeys = deserialize(&config_account.borrow().data()).unwrap();
         assert_eq!(meta_data.keys, keys);
         assert_eq!(
             Some(my_config),
-            deserialize(get_config_data(&config_account.borrow().data).unwrap()).ok()
+            deserialize(get_config_data(&config_account.borrow().data()).unwrap()).ok()
         );
     }
 
@@ -334,10 +335,10 @@ mod tests {
         let my_config = MyConfig::new(42);
 
         let instruction = config_instruction::store(&config_pubkey, false, keys, &my_config);
-        let signer0_account = RefCell::new(Account {
+        let signer0_account = RefCell::new(AccountSharedData::from(Account {
             owner: id(),
             ..Account::default()
-        });
+        }));
         let accounts = vec![(&signer0_pubkey, true, &signer0_account)];
         let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
         assert_eq!(
@@ -356,8 +357,8 @@ mod tests {
         solana_logger::setup();
         let signer0_pubkey = solana_sdk::pubkey::new_rand();
         let signer1_pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_account = RefCell::new(Account::default());
-        let signer1_account = RefCell::new(Account::default());
+        let signer0_account = RefCell::new(AccountSharedData::default());
+        let signer1_account = RefCell::new(AccountSharedData::default());
         let keys = vec![(signer0_pubkey, true)];
         let (config_keypair, config_account) = create_config_account(keys.clone());
         let config_pubkey = config_keypair.pubkey();
@@ -405,9 +406,9 @@ mod tests {
         let signer0_pubkey = solana_sdk::pubkey::new_rand();
         let signer1_pubkey = solana_sdk::pubkey::new_rand();
         let signer2_pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_account = RefCell::new(Account::default());
-        let signer1_account = RefCell::new(Account::default());
-        let signer2_account = RefCell::new(Account::default());
+        let signer0_account = RefCell::new(AccountSharedData::default());
+        let signer1_account = RefCell::new(AccountSharedData::default());
+        let signer2_account = RefCell::new(AccountSharedData::default());
         let keys = vec![
             (pubkey, false),
             (signer0_pubkey, true),
@@ -453,11 +454,12 @@ mod tests {
             ),
             Ok(())
         );
-        let meta_data: ConfigKeys = deserialize(&config_account.borrow().data).unwrap();
+        let meta_data: ConfigKeys = deserialize(&config_account.borrow().data()).unwrap();
         assert_eq!(meta_data.keys, keys);
         assert_eq!(
             new_config,
-            MyConfig::deserialize(get_config_data(&config_account.borrow().data).unwrap()).unwrap()
+            MyConfig::deserialize(get_config_data(&config_account.borrow().data()).unwrap())
+                .unwrap()
         );
 
         // Attempt update with incomplete signatures
@@ -508,7 +510,7 @@ mod tests {
         solana_logger::setup();
         let pubkey = solana_sdk::pubkey::new_rand();
         let signer0_pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_account = RefCell::new(Account::default());
+        let signer0_account = RefCell::new(AccountSharedData::default());
         let keys = vec![
             (pubkey, false),
             (signer0_pubkey, true),
@@ -558,11 +560,12 @@ mod tests {
             ),
             Ok(())
         );
-        let meta_data: ConfigKeys = deserialize(&config_account.borrow().data).unwrap();
+        let meta_data: ConfigKeys = deserialize(&config_account.borrow().data()).unwrap();
         assert_eq!(meta_data.keys, keys);
         assert_eq!(
             new_config,
-            MyConfig::deserialize(get_config_data(&config_account.borrow().data).unwrap()).unwrap()
+            MyConfig::deserialize(get_config_data(&config_account.borrow().data()).unwrap())
+                .unwrap()
         );
 
         // Attempt update with incomplete signatures
@@ -606,8 +609,8 @@ mod tests {
         let config_pubkey = solana_sdk::pubkey::new_rand();
         let new_config = MyConfig::new(84);
         let signer0_pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_account = RefCell::new(Account::default());
-        let config_account = RefCell::new(Account::default());
+        let signer0_account = RefCell::new(AccountSharedData::default());
+        let config_account = RefCell::new(AccountSharedData::default());
         let keys = vec![
             (from_pubkey, false),
             (signer0_pubkey, true),

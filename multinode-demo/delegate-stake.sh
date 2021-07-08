@@ -131,4 +131,49 @@ get_program_account_balance_totals SYSTEM
 get_program_account_balance_totals VOTE
 get_program_account_balance_totals CONFIG
 
-sum_account_balances_totals
+common_args+=(--url "$url")
+
+if [[ ${#positional_args[@]} -gt 1 ]]; then
+  usage "$@"
+fi
+if [[ -n ${positional_args[0]} ]]; then
+  stake_sol=${positional_args[0]}
+fi
+
+VALIDATOR_KEYS_DIR=$SOLANA_CONFIG_DIR/validator$label
+vote_account="${vote_account:-$VALIDATOR_KEYS_DIR/vote-account.json}"
+stake_account="${stake_account:-$VALIDATOR_KEYS_DIR/stake-account.json}"
+
+if [[ ! -f $vote_account ]]; then
+  echo "Error: $vote_account not found"
+  exit 1
+fi
+
+if ((airdrops_enabled)); then
+  if [[ -z $keypair ]]; then
+    echo "--keypair argument must be provided"
+    exit 1
+  fi
+  $solana_cli \
+    "${common_args[@]}" --keypair "$SOLANA_CONFIG_DIR/faucet.json" \
+    transfer --allow-unfunded-recipient "$keypair" "$stake_sol"
+fi
+
+if [[ -n $keypair ]]; then
+  common_args+=(--keypair "$keypair")
+fi
+
+if ! [[ -f "$stake_account" ]]; then
+  $solana_keygen new --no-passphrase -so "$stake_account"
+else
+  echo "$stake_account already exists! Using it"
+fi
+
+set -x
+$solana_cli "${common_args[@]}" \
+  vote-account "$vote_account"
+$solana_cli "${common_args[@]}" \
+  create-stake-account "$stake_account" "$stake_sol"
+$solana_cli "${common_args[@]}" \
+  delegate-stake $maybe_force "$stake_account" "$vote_account"
+$solana_cli "${common_args[@]}" stakes "$stake_account"

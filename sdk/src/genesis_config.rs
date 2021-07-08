@@ -4,6 +4,7 @@
 
 use crate::{
     account::Account,
+    account::AccountSharedData,
     clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
     epoch_schedule::EpochSchedule,
     fee_calculator::FeeRateGovernor,
@@ -113,7 +114,7 @@ pub fn create_genesis_config(lamports: u64) -> (GenesisConfig, Keypair) {
         GenesisConfig::new(
             &[(
                 faucet_keypair.pubkey(),
-                Account::new(lamports, 0, &system_program::id()),
+                AccountSharedData::new(lamports, 0, &system_program::id()),
             )],
             &[],
         ),
@@ -148,13 +149,14 @@ impl Default for GenesisConfig {
 
 impl GenesisConfig {
     pub fn new(
-        accounts: &[(Pubkey, Account)],
+        accounts: &[(Pubkey, AccountSharedData)],
         native_instruction_processors: &[(String, Pubkey)],
     ) -> Self {
         Self {
             accounts: accounts
                 .iter()
                 .cloned()
+                .map(|(key, account)| (key, Account::from(account)))
                 .collect::<BTreeMap<Pubkey, Account>>(),
             native_instruction_processors: native_instruction_processors.to_vec(),
             ..GenesisConfig::default()
@@ -261,7 +263,9 @@ impl GenesisConfig {
             .make_backup()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
         std::fs::create_dir_all(ledger_path)?;
-        evm_genesis::copy_dir(tmp_backup, evm_backup).unwrap(); // use copy instead of move, to work with cross device-links (backup makes hardlink and is immovable between devices).
+
+        // use copy instead of move, to work with cross device-links (backup makes hardlink and is immovable between devices).
+        evm_genesis::copy_dir(tmp_backup, evm_backup).unwrap();
         Ok(())
     }
 
@@ -269,8 +273,8 @@ impl GenesisConfig {
         self.evm_root_hash = root_hash;
     }
 
-    pub fn add_account(&mut self, pubkey: Pubkey, account: Account) {
-        self.accounts.insert(pubkey, account);
+    pub fn add_account(&mut self, pubkey: Pubkey, account: AccountSharedData) {
+        self.accounts.insert(pubkey, Account::from(account));
     }
 
     pub fn add_native_instruction_processor(&mut self, name: String, program_id: Pubkey) {
@@ -286,7 +290,10 @@ impl GenesisConfig {
     }
 
     pub fn ns_per_slot(&self) -> u128 {
-        self.poh_config.target_tick_duration.as_nanos() * self.ticks_per_slot() as u128
+        self.poh_config
+            .target_tick_duration
+            .as_nanos()
+            .saturating_mul(self.ticks_per_slot() as u128)
     }
 
     pub fn slots_per_year(&self) -> f64 {
@@ -309,8 +316,10 @@ impl fmt::Display for GenesisConfig {
              Shred version: {}\n\
              Ticks per slot: {:?}\n\
              Hashes per tick: {:?}\n\
+             Target tick duration: {:?}\n\
              Slots per epoch: {}\n\
              Warmup epochs: {}abled\n\
+             Slots per year: {}\n\
              {:?}\n\
              {:?}\n\
              {:?}\n\
@@ -325,12 +334,14 @@ impl fmt::Display for GenesisConfig {
             compute_shred_version(&self.hash(), None),
             self.ticks_per_slot,
             self.poh_config.hashes_per_tick,
+            self.poh_config.target_tick_duration,
             self.epoch_schedule.slots_per_epoch,
             if self.epoch_schedule.warmup {
                 "en"
             } else {
                 "dis"
             },
+            self.slots_per_year(),
             self.inflation,
             self.rent,
             self.fee_rate_governor,
@@ -672,11 +683,11 @@ mod tests {
         let mut config = GenesisConfig::default();
         config.add_account(
             faucet_keypair.pubkey(),
-            Account::new(10_000, 0, &Pubkey::default()),
+            AccountSharedData::new(10_000, 0, &Pubkey::default()),
         );
         config.add_account(
             solana_sdk::pubkey::new_rand(),
-            Account::new(1, 0, &Pubkey::default()),
+            AccountSharedData::new(1, 0, &Pubkey::default()),
         );
         config.add_native_instruction_processor("hi".to_string(), solana_sdk::pubkey::new_rand());
 
@@ -709,11 +720,11 @@ mod tests {
         let mut config = GenesisConfig::default();
         config.add_account(
             faucet_keypair.pubkey(),
-            Account::new(10_000, 0, &Pubkey::default()),
+            AccountSharedData::new(10_000, 0, &Pubkey::default()),
         );
         config.add_account(
             solana_sdk::pubkey::new_rand(),
-            Account::new(1, 0, &Pubkey::default()),
+            AccountSharedData::new(1, 0, &Pubkey::default()),
         );
         config.add_native_instruction_processor("hi".to_string(), solana_sdk::pubkey::new_rand());
         config.evm_chain_id = 0x42;

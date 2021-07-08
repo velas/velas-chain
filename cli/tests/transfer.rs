@@ -52,10 +52,12 @@ fn test_transfer() {
         from: 0,
         sign_only: false,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -71,10 +73,12 @@ fn test_transfer() {
         from: 0,
         sign_only: false,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -102,10 +106,12 @@ fn test_transfer() {
         from: 0,
         sign_only: true,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::None(blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -122,10 +128,12 @@ fn test_transfer() {
         from: 0,
         sign_only: false,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::FeeCalculator(blockhash_query::Source::Cluster, blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -144,6 +152,7 @@ fn test_transfer() {
         nonce_account: 1,
         seed: None,
         nonce_authority: None,
+        memo: None,
         amount: SpendAmount::Some(minimum_nonce_balance),
     };
     process_command(&config).unwrap();
@@ -167,6 +176,7 @@ fn test_transfer() {
         from: 0,
         sign_only: false,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::FeeCalculator(
             blockhash_query::Source::NonceAccount(nonce_account.pubkey()),
@@ -174,6 +184,7 @@ fn test_transfer() {
         ),
         nonce_account: Some(nonce_account.pubkey()),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -196,6 +207,7 @@ fn test_transfer() {
     config.command = CliCommand::AuthorizeNonceAccount {
         nonce_account: nonce_account.pubkey(),
         nonce_authority: 0,
+        memo: None,
         new_authority: offline_pubkey,
     };
     process_command(&config).unwrap();
@@ -219,10 +231,12 @@ fn test_transfer() {
         from: 0,
         sign_only: true,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::None(nonce_hash),
         nonce_account: Some(nonce_account.pubkey()),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -238,6 +252,7 @@ fn test_transfer() {
         from: 0,
         sign_only: false,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::FeeCalculator(
             blockhash_query::Source::NonceAccount(nonce_account.pubkey()),
@@ -245,6 +260,7 @@ fn test_transfer() {
         ),
         nonce_account: Some(nonce_account.pubkey()),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -305,10 +321,12 @@ fn test_transfer_multisession_signing() {
         from: 1,
         sign_only: true,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::None(blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -334,10 +352,12 @@ fn test_transfer_multisession_signing() {
         from: 1,
         sign_only: true,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::None(blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -360,10 +380,12 @@ fn test_transfer_multisession_signing() {
         from: 1,
         sign_only: false,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::FeeCalculator(blockhash_query::Source::Cluster, blockhash),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -408,10 +430,12 @@ fn test_transfer_all() {
         from: 0,
         sign_only: false,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -419,6 +443,54 @@ fn test_transfer_all() {
     process_command(&config).unwrap();
     check_recent_balance(0, &rpc_client, &sender_pubkey);
     check_recent_balance(49_999, &rpc_client, &recipient_pubkey);
+}
+
+#[test]
+fn test_transfer_unfunded_recipient() {
+    solana_logger::setup();
+    let mint_keypair = Keypair::new();
+    let mint_pubkey = mint_keypair.pubkey();
+    let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidator::with_custom_fees(mint_pubkey, 1, Some(faucet_addr));
+
+    let rpc_client =
+        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+
+    let default_signer = Keypair::new();
+
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    config.signers = vec![&default_signer];
+
+    let sender_pubkey = config.signers[0].pubkey();
+    let recipient_pubkey = Pubkey::new(&[1u8; 32]);
+
+    request_and_confirm_airdrop(&rpc_client, &config, &sender_pubkey, 50_000).unwrap();
+    check_recent_balance(50_000, &rpc_client, &sender_pubkey);
+    check_recent_balance(0, &rpc_client, &recipient_pubkey);
+
+    check_ready(&rpc_client);
+
+    // Plain ole transfer
+    config.command = CliCommand::Transfer {
+        amount: SpendAmount::All,
+        to: recipient_pubkey,
+        from: 0,
+        sign_only: false,
+        dump_transaction_message: false,
+        allow_unfunded_recipient: false,
+        no_wait: false,
+        blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
+        nonce_account: None,
+        nonce_authority: 0,
+        memo: None,
+        fee_payer: 0,
+        derived_address_seed: None,
+        derived_address_program_id: None,
+    };
+
+    // Expect failure due to unfunded recipient and the lack of the `allow_unfunded_recipient` flag
+    process_command(&config).unwrap_err();
 }
 
 #[test]
@@ -464,10 +536,12 @@ fn test_transfer_with_seed() {
         from: 0,
         sign_only: false,
         dump_transaction_message: false,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: Some(derived_address_seed),
         derived_address_program_id: Some(derived_address_program_id),

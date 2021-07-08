@@ -58,6 +58,7 @@ fn test_cli_program_deploy_non_upgradeable() {
         use_deprecated_loader: false,
         allow_excessive_balance: false,
     };
+    config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let program_id_str = json
@@ -187,6 +188,7 @@ fn test_cli_program_deploy_no_authority() {
         is_final: true,
         max_len: None,
     });
+    config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let program_id_str = json
@@ -888,6 +890,7 @@ fn test_cli_program_set_buffer_authority() {
         buffer_authority_index: Some(0),
         new_buffer_authority: new_buffer_authority.pubkey(),
     });
+    config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let new_buffer_authority_str = json

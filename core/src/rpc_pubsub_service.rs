@@ -1,7 +1,7 @@
 //! The `pubsub` module implements a threaded subscription service on client RPC request
 
 use crate::{
-    rpc_pubsub::{RpcSolPubSub, RpcSolPubSubImpl},
+    rpc_pubsub::{RpcSolPubSub, RpcSolPubSubImpl, MAX_ACTIVE_SUBSCRIPTIONS},
     rpc_subscriptions::RpcSubscriptions,
 };
 use jsonrpc_pubsub::{PubSubHandler, Session};
@@ -27,6 +27,7 @@ pub struct PubSubConfig {
     pub max_fragment_size: usize,
     pub max_in_buffer_capacity: usize,
     pub max_out_buffer_capacity: usize,
+    pub max_active_subscriptions: usize,
 }
 
 impl Default for PubSubConfig {
@@ -37,6 +38,7 @@ impl Default for PubSubConfig {
             max_fragment_size: 50 * 1024, // 50KB
             max_in_buffer_capacity: 50 * 1024, // 50KB
             max_out_buffer_capacity: 15 * 1024 * 1024, // max account size (10MB), then 5MB extra for base64 encoding overhead/etc
+            max_active_subscriptions: MAX_ACTIVE_SUBSCRIPTIONS,
         }
     }
 }
@@ -53,21 +55,11 @@ impl PubSubService {
         exit: &Arc<AtomicBool>,
     ) -> Self {
         info!("rpc_pubsub bound to {:?}", pubsub_addr);
-        let rpc = RpcSolPubSubImpl::new(subscriptions.clone());
+        let rpc = RpcSolPubSubImpl::new(
+            subscriptions.clone(),
+            pubsub_config.max_active_subscriptions,
+        );
         let exit_ = exit.clone();
-
-        // TODO: Once https://github.com/paritytech/jsonrpc/pull/594 lands, use
-        // `ServerBuilder::max_in_buffer_capacity()` and `Server::max_out_buffer_capacity() methods
-        // instead of only `ServerBuilder::max_payload`
-        let max_payload = *[
-            pubsub_config.max_fragment_size,
-            pubsub_config.max_in_buffer_capacity,
-            pubsub_config.max_out_buffer_capacity,
-        ]
-        .iter()
-        .max()
-        .unwrap();
-        info!("rpc_pubsub max_payload: {}", max_payload);
 
         let thread_hdl = Builder::new()
             .name("solana-pubsub".to_string())
@@ -84,7 +76,9 @@ impl PubSubService {
                     session
                 })
                 .max_connections(pubsub_config.max_connections)
-                .max_payload(max_payload)
+                .max_payload(pubsub_config.max_fragment_size)
+                .max_in_buffer_capacity(pubsub_config.max_in_buffer_capacity)
+                .max_out_buffer_capacity(pubsub_config.max_out_buffer_capacity)
                 .start(&pubsub_addr);
 
                 if let Err(e) = server {

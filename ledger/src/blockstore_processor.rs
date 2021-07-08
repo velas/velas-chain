@@ -16,9 +16,9 @@ use solana_measure::{measure::Measure, thread_mem_usage};
 use solana_metrics::{datapoint_error, inc_new_counter_debug};
 use solana_rayon_threadlimit::get_thread_count;
 use solana_runtime::{
-    accounts_index::AccountIndex,
+    accounts_index::AccountSecondaryIndexes,
     bank::{
-        Bank, ExecuteTimings, InnerInstructionsList, TransactionBalancesSet,
+        Bank, ExecuteTimings, InnerInstructionsList, RentDebits, TransactionBalancesSet,
         TransactionExecutionResult, TransactionLogMessages, TransactionResults,
     },
     bank_forks::BankForks,
@@ -101,7 +101,7 @@ fn get_first_error(
 fn execute_batch(
     batch: &TransactionBatch,
     bank: &Arc<Bank>,
-    transaction_status_sender: Option<TransactionStatusSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timings: &mut ExecuteTimings,
 ) -> Result<()> {
@@ -130,6 +130,7 @@ fn execute_batch(
     let TransactionResults {
         fee_collection_results,
         execution_results,
+        rent_debits,
         ..
     } = tx_results;
 
@@ -152,6 +153,7 @@ fn execute_batch(
             token_balances,
             inner_instructions,
             transaction_logs,
+            rent_debits,
         );
     }
 
@@ -163,7 +165,7 @@ fn execute_batches(
     bank: &Arc<Bank>,
     batches: &[TransactionBatch],
     entry_callback: Option<&ProcessCallback>,
-    transaction_status_sender: Option<TransactionStatusSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timings: &mut ExecuteTimings,
 ) -> Result<()> {
@@ -173,12 +175,12 @@ fn execute_batches(
             thread_pool.borrow().install(|| {
                 batches
                     .into_par_iter()
-                    .map_with(transaction_status_sender, |sender, batch| {
+                    .map(|batch| {
                         let mut timings = ExecuteTimings::default();
                         let result = execute_batch(
                             batch,
                             bank,
-                            sender.clone(),
+                            transaction_status_sender,
                             replay_vote_sender,
                             &mut timings,
                         );
@@ -207,19 +209,23 @@ pub fn process_entries(
     bank: &Arc<Bank>,
     entries: &mut [Entry],
     randomize: bool,
-    transaction_status_sender: Option<TransactionStatusSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
 ) -> Result<()> {
+    let mut timings = ExecuteTimings::default();
     let mut entry_types: Vec<_> = entries.iter().map(EntryType::from).collect();
-    process_entries_with_callback(
+    let result = process_entries_with_callback(
         bank,
         &mut entry_types,
         randomize,
         None,
         transaction_status_sender,
         replay_vote_sender,
-        &mut ExecuteTimings::default(),
-    )
+        &mut timings,
+    );
+
+    debug!("process_entries: {:?}", timings);
+    result
 }
 
 // Note: If randomize is true this will shuffle entries' transactions in-place.
@@ -228,7 +234,7 @@ fn process_entries_with_callback(
     entries: &mut [EntryType],
     randomize: bool,
     entry_callback: Option<&ProcessCallback>,
-    transaction_status_sender: Option<TransactionStatusSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timings: &mut ExecuteTimings,
 ) -> Result<()> {
@@ -249,7 +255,7 @@ fn process_entries_with_callback(
                         bank,
                         &batches,
                         entry_callback,
-                        transaction_status_sender.clone(),
+                        transaction_status_sender,
                         replay_vote_sender,
                         timings,
                     )?;
@@ -300,7 +306,7 @@ fn process_entries_with_callback(
                             bank,
                             &batches,
                             entry_callback,
-                            transaction_status_sender.clone(),
+                            transaction_status_sender,
                             replay_vote_sender,
                             timings,
                         )?;
@@ -362,7 +368,7 @@ pub struct ProcessOptions {
     pub new_hard_forks: Option<Vec<Slot>>,
     pub frozen_accounts: Vec<Pubkey>,
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    pub account_indexes: HashSet<AccountIndex>,
+    pub account_indexes: AccountSecondaryIndexes,
     pub accounts_db_caching_enabled: bool,
     pub allow_dead_slots: bool,
 }
@@ -374,6 +380,7 @@ pub fn process_blockstore(
     evm_genesis_path: impl AsRef<Path>,
     account_paths: Vec<PathBuf>,
     opts: ProcessOptions,
+    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
 ) -> BlockstoreProcessorResult {
     if let Some(num_threads) = opts.override_num_threads {
         PAR_THREAD_POOL.with(|pool| {
@@ -398,8 +405,21 @@ pub fn process_blockstore(
     let bank0 = Arc::new(bank0);
     info!("processing ledger for slot 0...");
     let recyclers = VerifyRecyclers::default();
-    process_bank_0(&bank0, blockstore, &opts, &recyclers);
-    do_process_blockstore_from_root(blockstore, bank0, &opts, &recyclers, None)
+    process_bank_0(
+        &bank0,
+        blockstore,
+        &opts,
+        &recyclers,
+        cache_block_meta_sender,
+    );
+    do_process_blockstore_from_root(
+        blockstore,
+        bank0,
+        &opts,
+        &recyclers,
+        None,
+        cache_block_meta_sender,
+    )
 }
 
 // Process blockstore from a known root bank
@@ -408,7 +428,8 @@ pub(crate) fn process_blockstore_from_root(
     bank: Bank,
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
-    transaction_status_sender: Option<TransactionStatusSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
+    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
 ) -> BlockstoreProcessorResult {
     do_process_blockstore_from_root(
         blockstore,
@@ -416,6 +437,7 @@ pub(crate) fn process_blockstore_from_root(
         opts,
         recyclers,
         transaction_status_sender,
+        cache_block_meta_sender,
     )
 }
 
@@ -424,7 +446,8 @@ fn do_process_blockstore_from_root(
     bank: Arc<Bank>,
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
-    transaction_status_sender: Option<TransactionStatusSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
+    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
 ) -> BlockstoreProcessorResult {
     info!("processing ledger from slot {}...", bank.slot());
     let allocated = thread_mem_usage::Allocatedp::default();
@@ -466,6 +489,7 @@ fn do_process_blockstore_from_root(
         }
     }
 
+    let mut timing = ExecuteTimings::default();
     // Iterate and replay slots from blockstore starting from `start_slot`
     let (initial_forks, leader_schedule_cache) = {
         if let Some(meta) = blockstore
@@ -486,6 +510,8 @@ fn do_process_blockstore_from_root(
                 opts,
                 recyclers,
                 transaction_status_sender,
+                cache_block_meta_sender,
+                &mut timing,
             )?;
             initial_forks.sort_by_key(|bank| bank.slot());
 
@@ -503,6 +529,7 @@ fn do_process_blockstore_from_root(
     }
     let bank_forks = BankForks::new_from_banks(&initial_forks, root);
 
+    info!("ledger processing timing: {:?}", timing);
     info!(
         "ledger processed in {}. {} MB allocated. root slot is {}, {} fork{} at {}, with {} frozen bank{}",
         HumanTime::from(chrono::Duration::from_std(now.elapsed()).unwrap()).to_text_en(Accuracy::Precise, Tense::Present),
@@ -584,15 +611,16 @@ fn confirm_full_slot(
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
     progress: &mut ConfirmationProgress,
-    transaction_status_sender: Option<TransactionStatusSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
+    timing: &mut ExecuteTimings,
 ) -> result::Result<(), BlockstoreProcessorError> {
-    let mut timing = ConfirmationTiming::default();
+    let mut confirmation_timing = ConfirmationTiming::default();
     let skip_verification = !opts.poh_verify;
     confirm_slot(
         blockstore,
         bank,
-        &mut timing,
+        &mut confirmation_timing,
         progress,
         skip_verification,
         transaction_status_sender,
@@ -601,6 +629,8 @@ fn confirm_full_slot(
         recyclers,
         opts.allow_dead_slots,
     )?;
+
+    timing.accumulate(&confirmation_timing.execute_timings);
 
     if !bank.is_complete() {
         Err(BlockstoreProcessorError::InvalidBlock(
@@ -660,7 +690,7 @@ pub fn confirm_slot(
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
-    transaction_status_sender: Option<TransactionStatusSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     entry_callback: Option<&ProcessCallback>,
     recyclers: &VerifyRecyclers,
@@ -780,6 +810,7 @@ fn process_bank_0(
     blockstore: &Blockstore,
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
+    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
 ) {
     assert_eq!(bank0.slot(), 0);
     let mut progress = ConfirmationProgress::new(bank0.last_blockhash());
@@ -791,9 +822,11 @@ fn process_bank_0(
         &mut progress,
         None,
         None,
+        &mut ExecuteTimings::default(),
     )
     .expect("processing for bank 0 must succeed");
     bank0.freeze();
+    cache_block_meta(bank0, cache_block_meta_sender);
 }
 
 // Given a bank, add its children to the pending slots queue if those children slots are
@@ -855,6 +888,7 @@ fn process_next_slots(
 
 // Iterate through blockstore processing slots starting from the root slot pointed to by the
 // given `meta` and return a vector of frozen bank forks
+#[allow(clippy::too_many_arguments)]
 fn load_frozen_forks(
     root_bank: &Arc<Bank>,
     root_meta: &SlotMeta,
@@ -863,7 +897,9 @@ fn load_frozen_forks(
     root: &mut Slot,
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
-    transaction_status_sender: Option<TransactionStatusSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
+    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+    timing: &mut ExecuteTimings,
 ) -> result::Result<Vec<Arc<Bank>>, BlockstoreProcessorError> {
     let mut initial_forks = HashMap::new();
     let mut all_banks = HashMap::new();
@@ -919,8 +955,10 @@ fn load_frozen_forks(
                 opts,
                 recyclers,
                 &mut progress,
-                transaction_status_sender.clone(),
+                transaction_status_sender,
+                cache_block_meta_sender,
                 None,
+                timing,
             )
             .is_err()
             {
@@ -944,7 +982,7 @@ fn load_frozen_forks(
                     ).and_then(|supermajority_root| {
                         if supermajority_root > *root {
                             // If there's a cluster confirmed root greater than our last
-                            // replayed root, then beccause the cluster confirmed root should
+                            // replayed root, then because the cluster confirmed root should
                             // be descended from our last root, it must exist in `all_banks`
                             let cluster_root_bank = all_banks.get(&supermajority_root).unwrap();
 
@@ -952,6 +990,21 @@ fn load_frozen_forks(
                             // is drastically wrong
                             assert!(cluster_root_bank.ancestors.contains_key(root));
                             info!("blockstore processor found new cluster confirmed root: {}, observed in bank: {}", cluster_root_bank.slot(), bank.slot());
+
+                            // Ensure cluster-confirmed root and parents are set as root in blockstore
+                            let mut rooted_slots = vec![];
+                            let mut new_root_bank = cluster_root_bank.clone();
+                            loop {
+                                if new_root_bank.slot() == *root { break; } // Found the last root in the chain, yay!
+                                assert!(new_root_bank.slot() > *root);
+
+                                rooted_slots.push(new_root_bank.slot());
+                                // As noted, the cluster confirmed root should be descended from
+                                // our last root; therefore parent should be set
+                                new_root_bank = new_root_bank.parent().unwrap();
+                            }
+                            inc_new_counter_info!("load_frozen_forks-cluster-confirmed-root", rooted_slots.len());
+                            blockstore.set_roots(&rooted_slots).expect("Blockstore::set_roots should succeed");
                             Some(cluster_root_bank)
                         } else {
                             None
@@ -1077,12 +1130,14 @@ fn process_single_slot(
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
     progress: &mut ConfirmationProgress,
-    transaction_status_sender: Option<TransactionStatusSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
+    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
+    timing: &mut ExecuteTimings,
 ) -> result::Result<(), BlockstoreProcessorError> {
     // Mark corrupt slots as dead so validators don't replay this slot and
     // see AlreadyProcessed errors later in ReplayStage
-    confirm_full_slot(blockstore, bank, opts, recyclers, progress, transaction_status_sender, replay_vote_sender).map_err(|err| {
+    confirm_full_slot(blockstore, bank, opts, recyclers, progress, transaction_status_sender, replay_vote_sender, timing).map_err(|err| {
         let slot = bank.slot();
         warn!("slot {} failed to verify: {}", slot, err);
         if blockstore.is_primary_access() {
@@ -1096,6 +1151,7 @@ fn process_single_slot(
     })?;
 
     bank.freeze(); // all banks handled by this routine are created from complete slots
+    cache_block_meta(bank, cache_block_meta_sender);
 
     Ok(())
 }
@@ -1113,6 +1169,7 @@ pub struct TransactionStatusBatch {
     pub token_balances: TransactionTokenBalancesSet,
     pub inner_instructions: Option<Vec<Option<InnerInstructionsList>>>,
     pub transaction_logs: Option<Vec<TransactionLogMessages>>,
+    pub rent_debits: Vec<RentDebits>,
 }
 
 #[derive(Clone)]
@@ -1131,6 +1188,7 @@ impl TransactionStatusSender {
         token_balances: TransactionTokenBalancesSet,
         inner_instructions: Vec<Option<InnerInstructionsList>>,
         transaction_logs: Vec<TransactionLogMessages>,
+        rent_debits: Vec<RentDebits>,
     ) {
         let slot = bank.slot();
         let (inner_instructions, transaction_logs) = if !self.enable_cpi_and_log_storage {
@@ -1148,6 +1206,7 @@ impl TransactionStatusSender {
                 token_balances,
                 inner_instructions,
                 transaction_logs,
+                rent_debits,
             }))
         {
             trace!(
@@ -1167,6 +1226,16 @@ impl TransactionStatusSender {
                 e
             );
         }
+    }
+}
+
+pub type CacheBlockMetaSender = Sender<Arc<Bank>>;
+
+pub fn cache_block_meta(bank: &Arc<Bank>, cache_block_meta_sender: Option<&CacheBlockMetaSender>) {
+    if let Some(cache_block_meta_sender) = cache_block_meta_sender {
+        cache_block_meta_sender
+            .send(bank.clone())
+            .unwrap_or_else(|err| warn!("cache_block_meta_sender failed: {:?}", err));
     }
 }
 
@@ -1217,7 +1286,7 @@ pub mod tests {
         self, create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
     };
     use solana_sdk::{
-        account::Account,
+        account::{AccountSharedData, WritableAccount},
         epoch_schedule::EpochSchedule,
         hash::Hash,
         pubkey::Pubkey,
@@ -1284,6 +1353,7 @@ pub mod tests {
                 poh_verify: true,
                 ..ProcessOptions::default()
             },
+            None,
         )
         .unwrap();
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
@@ -1336,6 +1406,7 @@ pub mod tests {
                 poh_verify: true,
                 ..ProcessOptions::default()
             },
+            None,
         )
         .unwrap();
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
@@ -1360,6 +1431,7 @@ pub mod tests {
                 poh_verify: true,
                 ..ProcessOptions::default()
             },
+            None,
         )
         .unwrap();
 
@@ -1414,11 +1486,13 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
+
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -1426,6 +1500,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
@@ -1496,6 +1571,7 @@ pub mod tests {
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -1503,6 +1579,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
 
@@ -1524,7 +1601,6 @@ pub mod tests {
         // Slot 0 should not show up in the ending bank_forks_info
 
         let evm_state_dir = TempDir::new().unwrap();
-
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
             .generate_evm_state(&ledger_path, None)
@@ -1537,6 +1613,7 @@ pub mod tests {
             &evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
 
@@ -1604,8 +1681,10 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
+
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
+
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
@@ -1616,6 +1695,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
 
@@ -1695,11 +1775,13 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
+
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -1707,6 +1789,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
 
@@ -1775,6 +1858,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             ProcessOptions::default(),
+            None,
         )
         .unwrap();
 
@@ -1831,6 +1915,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             ProcessOptions::default(),
+            None,
         )
         .unwrap();
 
@@ -1891,6 +1976,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             ProcessOptions::default(),
+            None,
         )
         .unwrap();
 
@@ -1940,11 +2026,13 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
+
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -1952,6 +2040,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
 
@@ -2096,11 +2185,13 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
+
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -2108,6 +2199,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
 
@@ -2137,11 +2229,13 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
+
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -2149,6 +2243,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
 
@@ -2167,11 +2262,13 @@ pub mod tests {
             override_num_threads: Some(1),
             ..ProcessOptions::default()
         };
+
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         process_blockstore(
             &genesis_config,
             &blockstore,
@@ -2179,6 +2276,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
         PAR_THREAD_POOL.with(|pool| {
@@ -2196,11 +2294,13 @@ pub mod tests {
             full_leader_cache: true,
             ..ProcessOptions::default()
         };
+
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         let (_bank_forks, leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -2208,6 +2308,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
         assert_eq!(leader_schedule.max_schedules(), std::usize::MAX);
@@ -2269,11 +2370,13 @@ pub mod tests {
             entry_callback: Some(entry_callback),
             ..ProcessOptions::default()
         };
+
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         process_blockstore(
             &genesis_config,
             &blockstore,
@@ -2281,6 +2384,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
         assert_eq!(*callback_counter.write().unwrap(), 2);
@@ -2654,7 +2758,7 @@ pub mod tests {
         let mut hash = bank.last_blockhash();
 
         let present_account_key = Keypair::new();
-        let present_account = Account::new(1, 10, &Pubkey::default());
+        let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
         let mut entries: Vec<_> = (0..NUM_TRANSFERS)
@@ -2935,6 +3039,7 @@ pub mod tests {
             dev_halt_at_slot: Some(0),
             ..ProcessOptions::default()
         };
+
         let evm_state_path = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
@@ -2948,6 +3053,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
 
@@ -2999,7 +3105,7 @@ pub mod tests {
             ..ProcessOptions::default()
         };
         let recyclers = VerifyRecyclers::default();
-        process_bank_0(&bank0, &blockstore, &opts, &recyclers);
+        process_bank_0(&bank0, &blockstore, &opts, &recyclers, None);
         let bank1 = Arc::new(Bank::new_from_parent(&bank0, &Pubkey::default(), 1));
         confirm_full_slot(
             &blockstore,
@@ -3009,13 +3115,15 @@ pub mod tests {
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             None,
             None,
+            &mut ExecuteTimings::default(),
         )
         .unwrap();
         bank1.squash();
 
         // Test process_blockstore_from_root() from slot 1 onwards
         let (bank_forks, _leader_schedule) =
-            do_process_blockstore_from_root(&blockstore, bank1, &opts, &recyclers, None).unwrap();
+            do_process_blockstore_from_root(&blockstore, bank1, &opts, &recyclers, None, None)
+                .unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![5, 6]);
         assert_eq!(bank_forks.working_bank().slot(), 6);
@@ -3060,7 +3168,7 @@ pub mod tests {
         }
 
         let present_account_key = Keypair::new();
-        let present_account = Account::new(1, 10, &Pubkey::default());
+        let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
         let mut i = 0;
@@ -3186,7 +3294,7 @@ pub mod tests {
             &[],
             None,
             None,
-            HashSet::new(),
+            AccountSecondaryIndexes::default(),
             false,
         );
         *bank.epoch_schedule()
@@ -3225,7 +3333,7 @@ pub mod tests {
         let bank = Arc::new(Bank::new(&genesis_config));
 
         let present_account_key = Keypair::new();
-        let present_account = Account::new(1, 10, &Pubkey::default());
+        let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
         let keypair = Keypair::new();
@@ -3442,11 +3550,13 @@ pub mod tests {
             poh_verify: true,
             ..ProcessOptions::default()
         };
+
         let evm_state_dir = TempDir::new().unwrap();
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -3454,6 +3564,7 @@ pub mod tests {
             evm_genesis_path,
             Vec::new(),
             opts.clone(),
+            None,
         )
         .unwrap();
 
@@ -3491,6 +3602,7 @@ pub mod tests {
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -3498,6 +3610,7 @@ pub mod tests {
             &evm_genesis_path,
             Vec::new(),
             opts.clone(),
+            None,
         )
         .unwrap();
 
@@ -3554,11 +3667,11 @@ pub mod tests {
         );
 
         let evm_state_dir = TempDir::new().unwrap();
-
         let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
             .generate_evm_state(&ledger_path, None)
             .unwrap();
+
         let (bank_forks, _leader_schedule) = process_blockstore(
             &genesis_config,
             &blockstore,
@@ -3566,6 +3679,7 @@ pub mod tests {
             &evm_genesis_path,
             Vec::new(),
             opts,
+            None,
         )
         .unwrap();
 
@@ -3592,10 +3706,13 @@ pub mod tests {
                     .map(|(root, stake)| {
                         let mut vote_state = VoteState::default();
                         vote_state.root_slot = Some(root);
-                        let mut vote_account =
-                            Account::new(1, VoteState::size_of(), &solana_vote_program::id());
+                        let mut vote_account = AccountSharedData::new(
+                            1,
+                            VoteState::size_of(),
+                            &solana_vote_program::id(),
+                        );
                         let versioned = VoteStateVersions::new_current(vote_state);
-                        VoteState::serialize(&versioned, &mut vote_account.data).unwrap();
+                        VoteState::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
                         (
                             solana_sdk::pubkey::new_rand(),
                             (stake, ArcVoteAccount::from(vote_account)),

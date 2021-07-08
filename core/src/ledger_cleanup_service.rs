@@ -48,10 +48,6 @@ impl LedgerCleanupService {
         compaction_interval: Option<u64>,
         max_compaction_jitter: Option<u64>,
     ) -> Self {
-        info!(
-            "LedgerCleanupService active. Max Ledger Slots {}",
-            max_ledger_shreds
-        );
         let exit = exit.clone();
         let mut last_purge_slot = 0;
         let mut last_compaction_slot = 0;
@@ -59,6 +55,11 @@ impl LedgerCleanupService {
         let compaction_interval = compaction_interval.unwrap_or(DEFAULT_COMPACTION_SLOT_INTERVAL);
         let last_compact_slot = Arc::new(AtomicU64::new(0));
         let last_compact_slot2 = last_compact_slot.clone();
+
+        info!(
+            "LedgerCleanupService active. max ledger shreds={}, compaction interval={}",
+            max_ledger_shreds, compaction_interval,
+        );
 
         let exit_compact = exit.clone();
         let blockstore_compact = blockstore.clone();
@@ -206,11 +207,25 @@ impl LedgerCleanupService {
                     );
 
                     let mut purge_time = Measure::start("purge_slots");
+
                     blockstore.purge_slots(
                         purge_first_slot,
                         lowest_cleanup_slot,
-                        PurgeType::PrimaryIndex,
+                        PurgeType::CompactionFilter,
                     );
+                    // Update only after purge operation.
+                    // Safety: This value can be used by compaction_filters shared via Arc<AtomicU64>.
+                    // Compactions are async and run as a multi-threaded background job. However, this
+                    // shouldn't cause consistency issues for iterators and getters because we have
+                    // already expired all affected keys (older than or equal to lowest_cleanup_slot)
+                    // by the above `purge_slots`. According to the general RocksDB design where SST
+                    // files are immutable, even running iterators aren't affected; the database grabs
+                    // a snapshot of the live set of sst files at iterator's creation.
+                    // Also, we passed the PurgeType::CompactionFilter, meaning no delete_range for
+                    // transaction_status and address_signatures CFs. These are fine because they
+                    // don't require strong consistent view for their operation.
+                    blockstore.set_max_expired_slot(lowest_cleanup_slot);
+
                     purge_time.stop();
                     info!("{}", purge_time);
 

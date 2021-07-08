@@ -46,7 +46,7 @@ esac
 
 case $URL in
 stable)
-  URL=http://devnet.solana.com
+  URL=http://api.devnet.solana.com
   ;;
 localhost)
   URL=http://localhost:8899
@@ -57,7 +57,7 @@ esac
 
 case $TAG in
 edge|beta)
-  DOWNLOAD_URL=http://release.solana.com/"$TAG"/solana-release-$TARGET.tar.bz2
+  DOWNLOAD_URL=https://release.solana.com/"$TAG"/solana-release-$TARGET.tar.bz2
   ;;
 *)
   DOWNLOAD_URL=https://github.com/solana-labs/solana/releases/download/"$TAG"/solana-release-$TARGET.tar.bz2

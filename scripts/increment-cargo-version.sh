@@ -19,9 +19,11 @@ source ci/semver_bash/semver.sh
 source scripts/read-cargo-variable.sh
 
 ignores=(
-    .cache
-    .cargo
-    target
+  .cache
+  .cargo
+  target
+  web3.js/examples
+  node_modules
 )
 
 not_paths=()
@@ -108,11 +110,11 @@ esac
 # in dirty working trees. Gate after arg parsing to prevent breaking the
 # `check` subcommand.
 (
-    set +e
-    if ! git diff --exit-code; then
-        echo -e "\nError: Working tree is dirty. Commit or discard changes before bumping version." 1>&2
-        exit 1
-    fi
+  set +e
+  if ! git diff --exit-code; then
+    echo -e "\nError: Working tree is dirty. Commit or discard changes before bumping version." 1>&2
+    exit 1
+  fi
 )
 
 newVersion="$MAJOR.$MINOR.$PATCH$SPECIAL"
@@ -121,8 +123,10 @@ newVersion="$MAJOR.$MINOR.$PATCH$SPECIAL"
 for Cargo_toml in "${Cargo_tomls[@]}"; do
     # Set new crate version
     (
-        set -x
-        sed -i "$Cargo_toml" -e "0,/^version =/{s/^version = \"[^\"]*\"$/version = \"$newVersion\"/}"
+      set -x
+      sed -i "$Cargo_toml" -e "
+        s/^$crate = { *path *= *\"\([^\"]*\)\" *, *version *= *\"[^\"]*\"\(.*\)} *\$/$crate = \{ path = \"\1\", version = \"=$newVersion\"\2\}/
+      "
     )
     
     # Fix up the version references to other internal crates

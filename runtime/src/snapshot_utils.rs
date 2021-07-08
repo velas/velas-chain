@@ -1,9 +1,9 @@
 use crate::{
     accounts_db::AccountsDb,
-    accounts_index::AccountIndex,
+    accounts_index::AccountSecondaryIndexes,
     bank::{Bank, BankSlotDelta, Builtins},
     bank_forks::ArchiveFormat,
-    hardened_unpack::{unpack_snapshot, UnpackError},
+    hardened_unpack::{unpack_snapshot, UnpackError, UnpackedAppendVecMap},
     serde_snapshot::{
         bank_from_stream, bank_to_stream, EvmStateVersion, SnapshotStorage, SnapshotStorages,
     },
@@ -41,14 +41,12 @@ pub const TAR_VERSION_FILE: &str = "version";
 pub const MAX_SNAPSHOTS: usize = 8; // Save some snapshots but not too many
 const EVM_STATE_DIR: &str = "evm-state";
 const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
-const VERSION_STRING_V1_3_0: &str = "1.3.0";
 const VERSION_STRING_V1_4_0: &str = "1.4.0";
 const DEFAULT_SNAPSHOT_VERSION: SnapshotVersion = SnapshotVersion::V1_4_0;
 const TMP_SNAPSHOT_PREFIX: &str = "tmp-snapshot-";
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SnapshotVersion {
-    V1_3_0,
     V1_4_0,
 }
 
@@ -67,7 +65,6 @@ impl fmt::Display for SnapshotVersion {
 impl From<SnapshotVersion> for &'static str {
     fn from(snapshot_version: SnapshotVersion) -> &'static str {
         match snapshot_version {
-            SnapshotVersion::V1_3_0 => VERSION_STRING_V1_3_0,
             SnapshotVersion::V1_4_0 => VERSION_STRING_V1_4_0,
         }
     }
@@ -87,7 +84,6 @@ impl FromStr for SnapshotVersion {
             version_string
         };
         match version_string {
-            VERSION_STRING_V1_3_0 => Ok(SnapshotVersion::V1_3_0),
             VERSION_STRING_V1_4_0 => Ok(SnapshotVersion::V1_4_0),
             _ => Err("unsupported snapshot version"),
         }
@@ -280,11 +276,10 @@ pub fn archive_snapshot_package(snapshot_package: &AccountsPackage) -> Result<()
     for storage in snapshot_package.storages.iter().flatten() {
         storage.flush()?;
         let storage_path = storage.get_path();
-        let output_path =
-            staging_accounts_dir.join(crate::append_vec::AppendVec::new_relative_path(
-                storage.slot(),
-                storage.append_vec_id(),
-            ));
+        let output_path = staging_accounts_dir.join(crate::append_vec::AppendVec::file_name(
+            storage.slot(),
+            storage.append_vec_id(),
+        ));
 
         // `storage_path` - The file path where the AppendVec itself is located
         // `output_path` - The file path where the AppendVec will be placed in the staging directory.
@@ -531,7 +526,6 @@ pub fn add_snapshot<P: AsRef<Path>>(
     let mut bank_serialize = Measure::start("bank-serialize-ms");
     let bank_snapshot_serializer = move |stream: &mut BufWriter<File>| -> Result<()> {
         let evm_version = match snapshot_version {
-            SnapshotVersion::V1_3_0 => EvmStateVersion::V1_3_0,
             SnapshotVersion::V1_4_0 => EvmStateVersion::V1_4_0,
         };
         bank_to_stream(evm_version, stream.by_ref(), bank, snapshot_storages)?;
@@ -637,17 +631,22 @@ pub fn bank_from_archive<P: AsRef<Path>>(
     genesis_config: &GenesisConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     additional_builtins: Option<&Builtins>,
-    account_indexes: HashSet<AccountIndex>,
+    account_indexes: AccountSecondaryIndexes,
     accounts_db_caching_enabled: bool,
 ) -> Result<Bank> {
     // Untar the snapshot into a temporary directory
     let unpack_dir = tempfile::Builder::new()
         .prefix(TMP_SNAPSHOT_PREFIX)
         .tempdir_in(snapshot_path)?;
-    untar_snapshot_in(&snapshot_tar, &unpack_dir, archive_format)?;
+
+    let unpacked_append_vec_map = untar_snapshot_in(
+        &snapshot_tar,
+        &unpack_dir.as_ref(),
+        account_paths,
+        archive_format,
+    )?;
 
     let mut measure = Measure::start("bank rebuild from snapshot");
-    let unpacked_accounts_dir = unpack_dir.as_ref().join(TAR_ACCOUNTS_DIR);
     let unpacked_snapshots_dir = unpack_dir.as_ref().join(TAR_SNAPSHOTS_DIR);
     let unpacked_version_file = unpack_dir.as_ref().join(TAR_VERSION_FILE);
 
@@ -657,10 +656,10 @@ pub fn bank_from_archive<P: AsRef<Path>>(
     let bank = rebuild_bank_from_snapshots(
         snapshot_version.trim(),
         evm_state_path,
-        account_paths,
         frozen_account_pubkeys,
         &unpacked_snapshots_dir,
-        unpacked_accounts_dir,
+        account_paths,
+        unpacked_append_vec_map,
         genesis_config,
         debug_keys,
         additional_builtins,
@@ -768,57 +767,55 @@ pub fn purge_old_snapshot_archives<P: AsRef<Path>>(snapshot_output_dir: P) {
     }
 }
 
-pub fn untar_snapshot_in<P: AsRef<Path>, Q: AsRef<Path>>(
+fn untar_snapshot_in<P: AsRef<Path>>(
     snapshot_tar: P,
-    unpack_dir: Q,
+    unpack_dir: &Path,
+    account_paths: &[PathBuf],
     archive_format: ArchiveFormat,
-) -> Result<()> {
+) -> Result<UnpackedAppendVecMap> {
     let mut measure = Measure::start("snapshot untar");
     let tar_name = File::open(&snapshot_tar)?;
-    match archive_format {
+    let account_paths_map = match archive_format {
         ArchiveFormat::TarBzip2 => {
             let tar = BzDecoder::new(BufReader::new(tar_name));
             let mut archive = Archive::new(tar);
-            unpack_snapshot(&mut archive, unpack_dir)?;
+            unpack_snapshot(&mut archive, unpack_dir, account_paths)?
         }
         ArchiveFormat::TarGzip => {
             let tar = GzDecoder::new(BufReader::new(tar_name));
             let mut archive = Archive::new(tar);
-            unpack_snapshot(&mut archive, unpack_dir)?;
+            unpack_snapshot(&mut archive, unpack_dir, account_paths)?
         }
         ArchiveFormat::TarZstd => {
             let tar = zstd::stream::read::Decoder::new(BufReader::new(tar_name))?;
             let mut archive = Archive::new(tar);
-            unpack_snapshot(&mut archive, unpack_dir)?;
+            unpack_snapshot(&mut archive, unpack_dir, account_paths)?
         }
         ArchiveFormat::Tar => {
             let tar = BufReader::new(tar_name);
             let mut archive = Archive::new(tar);
-            unpack_snapshot(&mut archive, unpack_dir)?;
+            unpack_snapshot(&mut archive, unpack_dir, account_paths)?
         }
     };
     measure.stop();
     info!("{}", measure);
-    Ok(())
+    Ok(account_paths_map)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn rebuild_bank_from_snapshots<P>(
+fn rebuild_bank_from_snapshots(
     snapshot_version: &str,
     evm_state_path: &Path,
-    account_paths: &[PathBuf],
     frozen_account_pubkeys: &[Pubkey],
     unpacked_snapshots_dir: &Path,
-    append_vecs_path: P,
+    account_paths: &[PathBuf],
+    unpacked_append_vec_map: UnpackedAppendVecMap,
     genesis_config: &GenesisConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     additional_builtins: Option<&Builtins>,
-    account_indexes: HashSet<AccountIndex>,
+    account_indexes: AccountSecondaryIndexes,
     accounts_db_caching_enabled: bool,
-) -> Result<Bank>
-where
-    P: AsRef<Path>,
-{
+) -> Result<Bank> {
     info!("snapshot version: {}", snapshot_version);
 
     let snapshot_version_enum =
@@ -835,10 +832,8 @@ where
     let root_paths = snapshot_paths
         .pop()
         .ok_or_else(|| get_io_error("No snapshots found in snapshots directory"))?;
-    info!(
-        "restoring database from storage backup: {:?}",
-        root_paths.evm_state_backup_path
-    );
+
+    // EVM State load
     let mut measure = Measure::start("evm state database restore");
     if evm_state_path.exists() {
         warn!(
@@ -858,25 +853,12 @@ where
     );
     let bank = deserialize_snapshot_data_file(&root_paths.snapshot_file_path, |mut stream| {
         Ok(match snapshot_version_enum {
-            SnapshotVersion::V1_3_0 => bank_from_stream(
-                EvmStateVersion::V1_3_0,
-                &mut stream,
-                &append_vecs_path,
-                &evm_state_path,
-                account_paths,
-                genesis_config,
-                frozen_account_pubkeys,
-                debug_keys,
-                additional_builtins,
-                account_indexes,
-                accounts_db_caching_enabled,
-            ),
             SnapshotVersion::V1_4_0 => bank_from_stream(
+                &evm_state_path,
                 EvmStateVersion::V1_4_0,
                 &mut stream,
-                &append_vecs_path,
-                &evm_state_path,
                 account_paths,
+                unpacked_append_vec_map,
                 genesis_config,
                 frozen_account_pubkeys,
                 debug_keys,
@@ -932,7 +914,13 @@ pub fn verify_snapshot_archive<P, Q, R>(
 {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let unpack_dir = temp_dir.path();
-    untar_snapshot_in(snapshot_archive, &unpack_dir, archive_format).unwrap();
+    untar_snapshot_in(
+        snapshot_archive,
+        &unpack_dir,
+        &[unpack_dir.to_path_buf()],
+        archive_format,
+    )
+    .unwrap();
 
     // Check snapshots are the same
     let unpacked_snapshots = unpack_dir.join(&TAR_SNAPSHOTS_DIR);

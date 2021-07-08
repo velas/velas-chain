@@ -1,10 +1,12 @@
-use crate::rpc_request;
-use solana_faucet::faucet::FaucetError;
-use solana_sdk::{
-    signature::SignerError, transaction::TransactionError, transport::TransportError,
+use {
+    crate::rpc_request,
+    solana_faucet::faucet::FaucetError,
+    solana_sdk::{
+        signature::SignerError, transaction::TransactionError, transport::TransportError,
+    },
+    std::io,
+    thiserror::Error,
 };
-use std::io;
-use thiserror::Error;
 
 pub use reqwest; // export `reqwest` for clients
 

@@ -101,6 +101,7 @@ fn full_battery_tests(
         nonce_account: 1,
         seed,
         nonce_authority: optional_authority,
+        memo: None,
         amount: SpendAmount::Some(1000),
     };
 
@@ -134,6 +135,7 @@ fn full_battery_tests(
     config_payer.command = CliCommand::NewNonce {
         nonce_account,
         nonce_authority: index,
+        memo: None,
     };
     process_command(&config_payer).unwrap();
 
@@ -151,6 +153,7 @@ fn full_battery_tests(
     config_payer.command = CliCommand::WithdrawFromNonceAccount {
         nonce_account,
         nonce_authority: index,
+        memo: None,
         destination_account_pubkey: payee_pubkey,
         lamports: 100,
     };
@@ -171,6 +174,7 @@ fn full_battery_tests(
     config_payer.command = CliCommand::AuthorizeNonceAccount {
         nonce_account,
         nonce_authority: index,
+        memo: None,
         new_authority: new_authority.pubkey(),
     };
     process_command(&config_payer).unwrap();
@@ -179,6 +183,7 @@ fn full_battery_tests(
     config_payer.command = CliCommand::NewNonce {
         nonce_account,
         nonce_authority: index,
+        memo: None,
     };
     process_command(&config_payer).unwrap_err();
 
@@ -187,6 +192,7 @@ fn full_battery_tests(
     config_payer.command = CliCommand::NewNonce {
         nonce_account,
         nonce_authority: 1,
+        memo: None,
     };
     process_command(&config_payer).unwrap();
 
@@ -194,6 +200,7 @@ fn full_battery_tests(
     config_payer.command = CliCommand::WithdrawFromNonceAccount {
         nonce_account,
         nonce_authority: 1,
+        memo: None,
         destination_account_pubkey: payee_pubkey,
         lamports: 100,
     };
@@ -253,6 +260,7 @@ fn test_create_account_with_seed() {
         nonce_account: 0,
         seed: Some(seed),
         nonce_authority: Some(authority_pubkey),
+        memo: None,
         amount: SpendAmount::Some(241),
     };
     process_command(&creator_config).unwrap();
@@ -284,10 +292,12 @@ fn test_create_account_with_seed() {
         from: 0,
         sign_only: true,
         dump_transaction_message: true,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::None(nonce_hash),
         nonce_account: Some(nonce_address),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,
@@ -308,6 +318,7 @@ fn test_create_account_with_seed() {
         from: 0,
         sign_only: false,
         dump_transaction_message: true,
+        allow_unfunded_recipient: true,
         no_wait: false,
         blockhash_query: BlockhashQuery::FeeCalculator(
             blockhash_query::Source::NonceAccount(nonce_address),
@@ -315,6 +326,7 @@ fn test_create_account_with_seed() {
         ),
         nonce_account: Some(nonce_address),
         nonce_authority: 0,
+        memo: None,
         fee_payer: 0,
         derived_address_seed: None,
         derived_address_program_id: None,

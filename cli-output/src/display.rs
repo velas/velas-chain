@@ -4,10 +4,12 @@ use {
     console::style,
     indicatif::{ProgressBar, ProgressStyle},
     solana_sdk::{
-        clock::UnixTimestamp, hash::Hash, native_token::lamports_to_sol,
-        program_utils::limited_deserialize, transaction::Transaction,
+        clock::UnixTimestamp, hash::Hash, message::Message, native_token::lamports_to_sol,
+        program_utils::limited_deserialize, pubkey::Pubkey, transaction::Transaction,
     },
     solana_transaction_status::UiTransactionStatusMeta,
+    spl_memo::id as spl_memo_id,
+    spl_memo::v1::id as spl_memo_v1_id,
     std::{collections::HashMap, fmt, io},
 };
 
@@ -26,6 +28,11 @@ impl Default for BuildBalanceMessageConfig {
             trim_trailing_zeros: true,
         }
     }
+}
+
+fn is_memo_program(k: &Pubkey) -> bool {
+    let k_str = k.to_string();
+    (k_str == spl_memo_v1_id().to_string()) || (k_str == spl_memo_id().to_string())
 }
 
 pub fn build_balance_message_with_config(
@@ -125,6 +132,31 @@ pub fn println_signers(
     println!();
 }
 
+fn format_account_mode(message: &Message, index: usize) -> String {
+    format!(
+        "{}r{}{}", // accounts are always readable...
+        if message.is_signer(index) {
+            "s" // stands for signer
+        } else {
+            "-"
+        },
+        if message.is_writable(index, /*demote_sysvar_write_locks=*/ true) {
+            "w" // comment for consistent rust fmt (no joking; lol)
+        } else {
+            "-"
+        },
+        // account may be executable on-chain while not being
+        // designated as a program-id in the message
+        if message.maybe_executable(index) {
+            "x"
+        } else {
+            // programs to be executed via CPI cannot be identified as
+            // executable from the message
+            "-"
+        },
+    )
+}
+
 pub fn write_transaction<W: io::Write>(
     w: &mut W,
     transaction: &Transaction,
@@ -167,16 +199,31 @@ pub fn write_transaction<W: io::Write>(
             prefix, signature_index, signature, sigverify_status,
         )?;
     }
-    writeln!(w, "{}{:?}", prefix, message.header)?;
+    let mut fee_payer_index = None;
     for (account_index, account) in message.account_keys.iter().enumerate() {
-        writeln!(w, "{}Account {}: {:?}", prefix, account_index, account)?;
+        if fee_payer_index.is_none() && message.is_non_loader_key(account, account_index) {
+            fee_payer_index = Some(account_index)
+        }
+        writeln!(
+            w,
+            "{}Account {}: {} {}{}",
+            prefix,
+            account_index,
+            format_account_mode(message, account_index),
+            account,
+            if Some(account_index) == fee_payer_index {
+                " (fee payer)"
+            } else {
+                ""
+            },
+        )?;
     }
     for (instruction_index, instruction) in message.instructions.iter().enumerate() {
         let program_pubkey = message.account_keys[instruction.program_id_index as usize];
         writeln!(w, "{}Instruction {}", prefix, instruction_index)?;
         writeln!(
             w,
-            "{}  Program: {} ({})",
+            "{}  Program:   {} ({})",
             prefix, program_pubkey, instruction.program_id_index
         )?;
         for (account_index, account) in instruction.accounts.iter().enumerate() {
@@ -211,6 +258,11 @@ pub fn write_transaction<W: io::Write>(
             >(&instruction.data)
             {
                 writeln!(w, "{}  {:?}", prefix, system_instruction)?;
+                raw = false;
+            }
+        } else if is_memo_program(&program_pubkey) {
+            if let Ok(s) = std::str::from_utf8(&instruction.data) {
+                writeln!(w, "{}  Data: \"{}\"", prefix, s)?;
                 raw = false;
             }
         }
@@ -270,7 +322,38 @@ pub fn write_transaction<W: io::Write>(
             if !log_messages.is_empty() {
                 writeln!(w, "{}Log Messages:", prefix,)?;
                 for log_message in log_messages {
-                    writeln!(w, "{}  {}", prefix, log_message,)?;
+                    writeln!(w, "{}  {}", prefix, log_message)?;
+                }
+            }
+        }
+
+        if let Some(rewards) = &transaction_status.rewards {
+            if !rewards.is_empty() {
+                writeln!(w, "{}Rewards:", prefix,)?;
+                writeln!(
+                    w,
+                    "{}  {:<44}  {:^15}  {:<15}  {:<20}",
+                    prefix, "Address", "Type", "Amount", "New Balance"
+                )?;
+                for reward in rewards {
+                    let sign = if reward.lamports < 0 { "-" } else { "" };
+                    writeln!(
+                        w,
+                        "{}  {:<44}  {:^15}  {:<15}  {}",
+                        prefix,
+                        reward.pubkey,
+                        if let Some(reward_type) = reward.reward_type {
+                            format!("{}", reward_type)
+                        } else {
+                            "-".to_string()
+                        },
+                        format!(
+                            "{}◎{:<14.9}",
+                            sign,
+                            lamports_to_sol(reward.lamports.abs() as u64)
+                        ),
+                        format!("◎{:<18.9}", lamports_to_sol(reward.post_balance),)
+                    )?;
                 }
             }
         }
