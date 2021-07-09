@@ -2272,6 +2272,7 @@ mod tests {
         signature::{keypair_from_seed, read_keypair_file, write_keypair_file, Keypair, Presigner},
         transaction::TransactionError,
     };
+    use solana_stake_program::stake_state::MIN_DELEGATE_STAKE_AMOUNT;
     use solana_transaction_status::TransactionConfirmationStatus;
     use std::path::PathBuf;
 

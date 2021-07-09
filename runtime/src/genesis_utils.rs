@@ -225,14 +225,8 @@ pub fn create_genesis_config_with_leader_ex(
         *validator_pubkey,
         AccountSharedData::new(validator_lamports, 0, &system_program::id()),
     ));
-    initial_accounts.push((
-        *validator_vote_account_pubkey,
-        AccountSharedData::from(validator_vote_account),
-    ));
-    initial_accounts.push((
-        *validator_stake_account_pubkey,
-        AccountSharedData::from(validator_stake_account),
-    ));
+    initial_accounts.push((*validator_vote_account_pubkey, validator_vote_account));
+    initial_accounts.push((*validator_stake_account_pubkey, validator_stake_account));
 
     let accounts = initial_accounts
         .into_iter()

@@ -1512,28 +1512,6 @@ pub fn main() {
                 .help("Introduce jitter into the compaction to offset compaction operation"),
         )
         .arg(
-            Arg::with_name("rocksdb_compaction_interval")
-                .long("rocksdb-compaction-interval-slots")
-                .value_name("ROCKSDB_COMPACTION_INTERVAL_SLOTS")
-                .takes_value(true)
-                .help("Number of slots between compacting ledger"),
-        )
-        .arg(
-            Arg::with_name("tpu_coalesce_ms")
-                .long("tpu-coalesce-ms")
-                .value_name("MILLISECS")
-                .takes_value(true)
-                .validator(is_parsable::<u64>)
-                .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
-        )
-        .arg(
-            Arg::with_name("rocksdb_max_compaction_jitter")
-                .long("rocksdb-max-compaction-jitter-slots")
-                .value_name("ROCKSDB_MAX_COMPACTION_JITTER_SLOTS")
-                .takes_value(true)
-                .help("Introduce jitter into the compaction to offset compaction operation"),
-        )
-        .arg(
             Arg::with_name("bind_address")
                 .long("bind-address")
                 .value_name("HOST")
@@ -1743,7 +1721,14 @@ pub fn main() {
                 .long("account-index")
                 .takes_value(true)
                 .multiple(true)
-                .possible_values(&["program-id", "spl-token-owner", "spl-token-mint"])
+                .possible_values(&[
+                    "program-id",
+                    "spl-token-owner",
+                    "spl-token-mint",
+                    "velas-accounts-storages",
+                    "velas-accounts-owners",
+                    "velas-accounts-operationals",
+                ])
                 .value_name("INDEX")
                 .help("Enable an accounts index, indexed by the selected account field"),
         )
@@ -1896,84 +1881,6 @@ pub fn main() {
             .after_help("Note: If this command exits with a non-zero status \
                          then this not a good time for a restart")
         )
-        .arg(
-            Arg::with_name("poh_pinned_cpu_core")
-                .hidden(true)
-                .long("experimental-poh-pinned-cpu-core")
-                .takes_value(true)
-                .value_name("CPU_CORE_INDEX")
-                .validator(|s| {
-                    let core_index = usize::from_str(&s).map_err(|e| e.to_string())?;
-                    let max_index = core_affinity::get_core_ids().map(|cids| cids.len() - 1).unwrap_or(0);
-                    if core_index > max_index {
-                        return Err(format!("core index must be in the range [0, {}]", max_index));
-                    }
-                    Ok(())
-                })
-                .help("EXPERIMENTAL: Specify which CPU core PoH is pinned to"),
-        )
-        .arg(
-            Arg::with_name("poh_hashes_per_batch")
-                .hidden(true)
-                .long("poh-hashes-per-batch")
-                .takes_value(true)
-                .value_name("NUM")
-                .help("Specify hashes per batch in PoH service"),
-        )
-        .arg(
-            Arg::with_name("account_indexes")
-                .long("account-index")
-                .takes_value(true)
-                .multiple(true)
-                .possible_values(&[
-                    "program-id",
-                    "spl-token-owner",
-                    "spl-token-mint",
-                    "velas-accounts-storages",
-                    "velas-accounts-owners",
-                    "velas-accounts-operationals",
-                ])
-                .value_name("INDEX")
-                .help("Enable an accounts index, indexed by the selected account field"),
-        )
-        .arg(
-            Arg::with_name("no_accounts_db_caching")
-                .long("no-accounts-db-caching")
-                .help("Disables accounts caching"),
-        )
-        .arg(
-            Arg::with_name("accounts_db_test_hash_calculation")
-                .long("accounts-db-test-hash-calculation")
-                .help("Enables testing of hash calculation using stores in AccountsHashVerifier. This has a computational cost."),
-        )
-        .arg(
-            Arg::with_name("no_accounts_db_index_hashing")
-                .long("no-accounts-db-index-hashing")
-                .help("Disables the use of the index in hash calculation in AccountsHashVerifier/Accounts Background Service."),
-        )
-        .arg(
-            // legacy nop argument
-            Arg::with_name("accounts_db_caching_enabled")
-                .long("accounts-db-caching-enabled")
-                .conflicts_with("no_accounts_db_caching")
-                .hidden(true)
-        )
-        .arg(
-            Arg::with_name("no_duplicate_instance_check")
-                .long("no-duplicate-instance-check")
-                .takes_value(false)
-                .help("Disables duplicate instance check")
-                .hidden(true),
-        )
-        .after_help("The default subcommand is run")
-        .subcommand(
-             SubCommand::with_name("init")
-             .about("Initialize the ledger directory then exit")
-         )
-        .subcommand(
-             SubCommand::with_name("run")
-             .about("Run the validator")
-         )
         .get_matches();
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
@@ -2641,7 +2548,10 @@ fn process_account_indexes(matches: &ArgMatches) -> AccountSecondaryIndexes {
             "program-id" => AccountIndex::ProgramId,
             "spl-token-mint" => AccountIndex::SplTokenMint,
             "spl-token-owner" => AccountIndex::SplTokenOwner,
-            _ => unreachable!(),
+            "velas-accounts-storages" => AccountIndex::VelasAccountStorage,
+            "velas-accounts-owners" => AccountIndex::VelasAccountOwner,
+            "velas-accounts-operationals" => AccountIndex::VelasAccountOperational,
+            unexpected => panic!("Unable to handle 'account_indexes' flag {}", unexpected),
         })
         .collect();
 

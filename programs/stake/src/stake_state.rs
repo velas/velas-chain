@@ -1322,17 +1322,14 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
             StakeState::Initialized(meta) => {
                 meta.authorized
                     .check(&signers, StakeAuthorize::Withdrawer)?;
+
                 let reserve = if prevent_withdraw_to_zero {
                     checked_add(meta.rent_exempt_reserve, 1)? // stake accounts must have a balance > rent_exempt_reserve
                 } else {
                     meta.rent_exempt_reserve
                 };
 
-                (
-                    meta.lockup,
-                    meta.rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT,
-                    false,
-                )
+                (meta.lockup, reserve + MIN_DELEGATE_STAKE_AMOUNT, false)
             }
             StakeState::Uninitialized => {
                 if !signers.contains(&self.unsigned_key()) {

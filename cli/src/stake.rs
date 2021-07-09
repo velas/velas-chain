@@ -473,19 +473,6 @@ impl StakeSubCommands for App<'_, '_> {
                         })
                         .help("Display NUM recent epochs worth of stake history in text mode. 0 for all")
                 )
-                .arg(
-                    Arg::with_name("limit")
-                        .long("limit")
-                        .takes_value(true)
-                        .value_name("NUM")
-                        .default_value("10")
-                        .validator(|s| {
-                            s.parse::<usize>()
-                                .map(|_| ())
-                                .map_err(|e| e.to_string())
-                        })
-                        .help("Display NUM recent epochs worth of stake history in text mode. 0 for all")
-                )
         )
     }
 }

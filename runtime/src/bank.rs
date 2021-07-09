@@ -5630,15 +5630,19 @@ pub(crate) mod tests {
             ..GenesisConfig::default()
         }));
         let sysvar_and_native_proram_delta0 = 10;
+        let evm_state_and_program_delta = 2;
         assert_eq!(
             bank0.capitalization(),
-            42 * 42 + sysvar_and_native_proram_delta0
+            42 * 42 + sysvar_and_native_proram_delta0 + evm_state_and_program_delta,
         );
         let bank1 = Bank::new_from_parent(&bank0, &Pubkey::default(), 1);
         let sysvar_and_native_proram_delta1 = 2;
         assert_eq!(
             bank1.capitalization(),
-            42 * 42 + sysvar_and_native_proram_delta0 + sysvar_and_native_proram_delta1,
+            42 * 42
+                + sysvar_and_native_proram_delta0
+                + sysvar_and_native_proram_delta1
+                + evm_state_and_program_delta,
         );
     }
 
@@ -7302,9 +7306,10 @@ pub(crate) mod tests {
         bank0.restore_old_behavior_for_fragile_tests();
 
         let sysvar_and_native_proram_delta0 = 10;
+        let evm_state_and_program_delta = 2;
         assert_eq!(
             bank0.capitalization(),
-            42 * 1_000_000_000 + sysvar_and_native_proram_delta0
+            42 * 1_000_000_000 + sysvar_and_native_proram_delta0 + evm_state_and_program_delta,
         );
         assert!(bank0.rewards.read().unwrap().is_empty());
 
@@ -7425,9 +7430,10 @@ pub(crate) mod tests {
         bank.restore_old_behavior_for_fragile_tests();
 
         let sysvar_and_native_proram_delta = 10;
+        let evm_state_and_program_delta = 2;
         assert_eq!(
             bank.capitalization(),
-            42 * 1_000_000_000 + sysvar_and_native_proram_delta
+            42 * 1_000_000_000 + sysvar_and_native_proram_delta + evm_state_and_program_delta,
         );
         assert!(bank.rewards.read().unwrap().is_empty());
 
@@ -10896,19 +10902,19 @@ pub(crate) mod tests {
             if bank.slot == 32 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "7AkMgAb2v4tuoiSf3NnVgaBxSvp7XidbrSwsPEn4ENTp"
+                    "7x879deKLA5jAVpFTTV7w8wThuePdi1vzHwd5M3tgF83"
                 );
             }
             if bank.slot == 64 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "2JzWWRBtQgdXboaACBRXNNKsHeBtn57uYmqH1AgGUkdG"
+                    "2hDcZFBGCyXbBshR9VfcvFUZpXu3noDiW3L5X2oFX93E"
                 );
             }
             if bank.slot == 128 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "FQnVhDVjhCyfBxFb3bdm3CLiuCePvWuW5TGDsLBZnKAo"
+                    "6o6RvvLmmF2xQgX8THLyYGz9S11xpmoVvZmFBXeN1bk8"
                 );
                 break;
             }
@@ -11054,7 +11060,7 @@ pub(crate) mod tests {
         // No more slots should be shrunk
         assert_eq!(bank2.shrink_candidate_slots(), 0);
         // alive_counts represents the count of alive accounts in the three slots 0,1,2
-        assert_eq!(alive_counts, vec![9, 1, 7]);
+        assert_eq!(alive_counts, vec![11, 1, 7]); // TODO(velas): ensure we can cleanup EVM accounts
     }
 
     #[test]
@@ -11102,7 +11108,8 @@ pub(crate) mod tests {
             .map(|_| bank.process_stale_slot_with_budget(0, force_to_return_alive_account))
             .sum();
         // consumed_budgets represents the count of alive accounts in the three slots 0,1,2
-        assert_eq!(consumed_budgets, 10);
+        let evm_state_and_program_delta = 2;
+        assert_eq!(consumed_budgets, 10 + evm_state_and_program_delta);
     }
 
     #[test]
@@ -11994,7 +12001,7 @@ pub(crate) mod tests {
         update_vote_account_timestamp(
             BlockTimestamp {
                 slot: bank.slot(),
-                timestamp: bank.unix_timestamp_from_genesis() - 1,
+                timestamp: recent_timestamp + additional_secs,
             },
             &bank,
             &voting_keypair.pubkey(),

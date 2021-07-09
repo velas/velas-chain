@@ -215,11 +215,7 @@ impl RpcClient {
 
     #[allow(clippy::unnecessary_wraps)] // to keep interface compatible with solana
     fn default_cluster_transaction_encoding(&self) -> Result<UiTransactionEncoding, RpcError> {
-        if self.get_node_version()? < semver::Version::new(1, 3, 16) {
-            Ok(UiTransactionEncoding::Base58)
-        } else {
-            Ok(UiTransactionEncoding::Base64)
-        }
+        Ok(UiTransactionEncoding::Base64) // Velas only supports base64 encoding
     }
 
     pub fn send_transaction_with_config(

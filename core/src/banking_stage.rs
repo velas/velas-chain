@@ -746,7 +746,6 @@ impl BankingStage {
 
         let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::new();
 
-        let pre_balances = bank.collect_balances(batch);
         let pre_token_balances = if transaction_status_sender.is_some() {
             collect_token_balances(&bank, &batch, &mut mint_decimals)
         } else {

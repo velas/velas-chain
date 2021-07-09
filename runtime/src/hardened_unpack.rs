@@ -512,11 +512,11 @@ mod tests {
             &["aaaa"],
             tar::EntryType::GNUSparse,
         ));
-        assert!(!is_valid_genesis_archive_entry(
+        assert!(is_valid_genesis_archive_entry(
             &["rocksdb"],
             tar::EntryType::Regular
         ));
-        assert!(!is_valid_genesis_archive_entry(
+        assert!(is_valid_genesis_archive_entry(
             &["rocksdb"],
             tar::EntryType::GNUSparse,
         ));
@@ -528,11 +528,11 @@ mod tests {
             &["rocksdb", "foo", "bar"],
             tar::EntryType::Directory,
         ));
-        assert!(!is_valid_genesis_archive_entry(
+        assert!(is_valid_genesis_archive_entry(
             &["rocksdb", "foo", "bar"],
             tar::EntryType::Regular
         ));
-        assert!(!is_valid_genesis_archive_entry(
+        assert!(is_valid_genesis_archive_entry(
             &["rocksdb", "foo", "bar"],
             tar::EntryType::GNUSparse
         ));
