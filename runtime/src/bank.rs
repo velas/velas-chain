@@ -3187,7 +3187,8 @@ impl Bank {
                     };
 
                     // Create evm_executor only if evm_state account is locked.
-                    let mut evm_executor = if tx.message.is_modify_evm_state() {
+                    // Executor can be used to execute multiple transactions, but currently executor only created for single tx.
+                    let evm_executor = if tx.message.is_modify_evm_state() {
                         // append to old patch if exist, or create new, from existing evm state
                         let state = evm_patch.take().or_else(|| evm_state_getter(self));
                         let last_hashes = self.evm_hashes();
@@ -3206,26 +3207,30 @@ impl Bank {
                         None
                     };
 
-                    let mut process_result = self.message_processor.process_message(
-                        tx.message(),
-                        &loader_refcells,
-                        &account_refcells,
-                        &account_dep_refcells,
-                        &self.rent_collector,
-                        log_collector.clone(),
-                        executors.clone(),
-                        instruction_recorders.as_deref(),
-                        self.feature_set.clone(),
-                        bpf_compute_budget,
-                        &mut timings.details,
-                        self.rc.accounts.clone(),
-                        &self.ancestors,
-                        evm_executor.as_mut(),
-                    );
-
-                    if let Some(evm_executor) = evm_executor {
-                        evm_patch = Some(evm_executor.deconstruct());
-                    }
+                    let mut process_result = self
+                        .message_processor
+                        .process_message(
+                            tx.message(),
+                            &loader_refcells,
+                            &account_refcells,
+                            &account_dep_refcells,
+                            &self.rent_collector,
+                            log_collector.clone(),
+                            executors.clone(),
+                            instruction_recorders.as_deref(),
+                            self.feature_set.clone(),
+                            bpf_compute_budget,
+                            &mut timings.details,
+                            self.rc.accounts.clone(),
+                            &self.ancestors,
+                            evm_executor,
+                        )
+                        .map(|new_executor| {
+                            // if execution succeed, apply state changes.
+                            if let Some(evm_executor) = new_executor {
+                                evm_patch = Some(evm_executor.deconstruct());
+                            }
+                        });
 
                     if enable_log_recording {
                         let log_messages: TransactionLogMessages =

@@ -40,6 +40,8 @@ pub trait InvokeContext {
         accounts: &[Rc<RefCell<AccountSharedData>>],
         caller_pivileges: Option<&[bool]>,
     ) -> Result<(), InstructionError>;
+    /// Get evm executor context
+    fn get_evm_executor(&self) -> &Option<RefCell<evm_state::Executor>>;
     /// Get the program ID of the currently executing program
     fn get_caller(&self) -> Result<&Pubkey, InstructionError>;
     /// Get a list of built-in programs
@@ -301,6 +303,19 @@ pub struct MockInvokeContext {
     pub accounts: Vec<(Pubkey, Rc<RefCell<AccountSharedData>>)>,
     pub invoke_depth: usize,
     pub sysvars: Vec<(Pubkey, Option<Rc<Vec<u8>>>)>,
+    pub evm_executor: Option<RefCell<evm_state::Executor>>,
+}
+
+impl MockInvokeContext {
+    pub fn with_evm(evm_executor: evm_state::Executor) -> Self {
+        Self {
+            evm_executor: Some(RefCell::new(evm_executor)),
+            ..Default::default()
+        }
+    }
+    pub fn deconstruct(self) -> Option<evm_state::Executor> {
+        self.evm_executor.map(|e| e.into_inner())
+    }
 }
 impl Default for MockInvokeContext {
     fn default() -> Self {
@@ -315,6 +330,7 @@ impl Default for MockInvokeContext {
             accounts: vec![],
             invoke_depth: 0,
             sysvars: vec![],
+            evm_executor: None,
         }
     }
 }
@@ -353,6 +369,9 @@ impl InvokeContext for MockInvokeContext {
         _caller_pivileges: Option<&[bool]>,
     ) -> Result<(), InstructionError> {
         Ok(())
+    }
+    fn get_evm_executor(&self) -> &Option<RefCell<evm_state::Executor>> {
+        &self.evm_executor
     }
     fn get_caller(&self) -> Result<&Pubkey, InstructionError> {
         Ok(&self.key)

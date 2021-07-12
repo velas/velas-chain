@@ -130,7 +130,7 @@ impl Incomming {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EvmBackend<State> {
     pub state: State,
     pub kvs: KVS,

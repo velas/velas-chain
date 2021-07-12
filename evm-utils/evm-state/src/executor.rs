@@ -41,7 +41,7 @@ pub struct ExecutionResult {
     pub tx_logs: Vec<Log>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Executor {
     pub evm_backend: EvmBackend<Incomming>,
     chain_context: ChainContext,
