@@ -1235,7 +1235,6 @@ impl ReplayStage {
         transaction_status_sender: Option<&TransactionStatusSender>,
         replay_vote_sender: &ReplayVoteSender,
         verify_recyclers: &VerifyRecyclers,
-        subscriptions: &Arc<RpcSubscriptions>,
     ) -> result::Result<usize, BlockstoreProcessorError> {
         let tx_count_before = bank_progress.replay_progress.num_txs;
         let confirm_result = blockstore_processor::confirm_slot(
@@ -1743,7 +1742,6 @@ impl ReplayStage {
                     transaction_status_sender,
                     replay_vote_sender,
                     verify_recyclers,
-                    subscriptions,
                 );
                 match replay_result {
                     Ok(replay_tx_count) => tx_count += replay_tx_count,
@@ -3223,12 +3221,6 @@ pub(crate) mod tests {
                 None,
                 &replay_vote_sender,
                 &&VerifyRecyclers::default(),
-                &Arc::new(RpcSubscriptions::new(
-                    &exit,
-                    bank_forks.clone(),
-                    block_commitment_cache,
-                    OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
-                )),
             );
 
             let subscriptions = Arc::new(RpcSubscriptions::new(

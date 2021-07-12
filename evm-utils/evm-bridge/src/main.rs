@@ -919,15 +919,6 @@ impl rpc::rpc_minimal::Minimal for RpcSolProxy {
 impl rpc::rpc_full::Full for RpcSolProxy {
     type Metadata = Arc<EvmBridge>;
 
-    fn confirm_transaction(
-        &self,
-        meta: Self::Metadata,
-        id: String,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<RpcResponse<bool>> {
-        proxy_sol_rpc!(meta.rpc_client, GetConfirmedTransaction, id, commitment)
-    }
-
     fn get_account_info(
         &self,
         meta: Self::Metadata,
@@ -1037,20 +1028,6 @@ impl rpc::rpc_full::Full for RpcSolProxy {
     ) -> Result<RpcResponse<RpcFeeRateGovernor>> {
         proxy_sol_rpc!(meta.rpc_client, GetFeeRateGovernor)
     }
-
-    // fn get_signature_confirmation(
-    //     &self,
-    //     meta: Self::Metadata,
-    //     signature_str: String,
-    //     commitment: Option<CommitmentConfig>,
-    // ) -> Result<Option<RpcSignatureConfirmation>> {
-    //     proxy_sol_rpc!(
-    //         meta.rpc_client,
-    //         GetSignatureConfirmation,
-    //         signature_str,
-    //         commitment
-    //     )
-    // }
 
     fn get_signature_statuses(
         &self,

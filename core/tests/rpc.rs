@@ -81,12 +81,17 @@ fn test_rpc_send_tx() {
 
     let mut confirmed_tx = false;
 
-    let request = json_req!("confirmTransaction", [signature]);
+    let request = json_req!("getSignatureStatuses", [[signature]]);
 
     for _ in 0..solana_sdk::clock::DEFAULT_TICKS_PER_SLOT {
-        let json = post_rpc(request.clone(), &rpc_url);
+        let json = dbg!(post_rpc(request.clone(), &rpc_url));
 
-        if true == json["result"]["value"] {
+        if json["result"]["value"]
+            .as_array()
+            .expect("Response Value: expected array")
+            .first()
+            .is_some()
+        {
             confirmed_tx = true;
             break;
         }

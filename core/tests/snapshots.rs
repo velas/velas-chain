@@ -66,7 +66,7 @@ mod tests {
     use std::{
         collections::HashSet,
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
             mpsc::channel,
@@ -76,14 +76,15 @@ mod tests {
     };
     use tempfile::TempDir;
 
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_2_0, Development, V1_2_0_Development);
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_2_0, Devnet, V1_2_0_Devnet);
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_2_0, Testnet, V1_2_0_Testnet);
-    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_2_0, MainnetBeta, V1_2_0_MainnetBeta);
+    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_4_0, Development, V1_4_0_Development);
+    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_4_0, Devnet, V1_4_0_Devnet);
+    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_4_0, Testnet, V1_4_0_Testnet);
+    DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_4_0, MainnetBeta, V1_4_0_MainnetBeta);
 
     struct SnapshotTestConfig {
         accounts_dir: TempDir,
         snapshot_dir: TempDir,
+        evm_state_dir: TempDir,
         _snapshot_output_path: TempDir,
         snapshot_config: SnapshotConfig,
         bank_forks: BankForks,
@@ -98,11 +99,13 @@ mod tests {
         ) -> SnapshotTestConfig {
             let accounts_dir = TempDir::new().unwrap();
             let snapshot_dir = TempDir::new().unwrap();
+            let evm_state_dir = TempDir::new().unwrap();
             let snapshot_output_path = TempDir::new().unwrap();
             let mut genesis_config_info = create_genesis_config(10_000);
             genesis_config_info.genesis_config.cluster_type = cluster_type;
             let bank0 = Bank::new_with_paths(
                 &genesis_config_info.genesis_config,
+                None, // Skip EVM genesis
                 vec![accounts_dir.path().to_path_buf()],
                 &[],
                 None,
@@ -125,6 +128,7 @@ mod tests {
             SnapshotTestConfig {
                 accounts_dir,
                 snapshot_dir,
+                evm_state_dir,
                 _snapshot_output_path: snapshot_output_path,
                 snapshot_config,
                 bank_forks,
@@ -138,6 +142,7 @@ mod tests {
         old_last_slot: Slot,
         old_genesis_config: &GenesisConfig,
         account_paths: &[PathBuf],
+        evm_state_path: &Path,
     ) {
         let (snapshot_path, snapshot_package_output_path) = old_bank_forks
             .snapshot_config
@@ -148,6 +153,7 @@ mod tests {
         let old_last_bank = old_bank_forks.get(old_last_slot).unwrap();
 
         let deserialized_bank = snapshot_utils::bank_from_archive(
+            evm_state_path,
             &account_paths,
             &[],
             &old_bank_forks
@@ -253,7 +259,14 @@ mod tests {
         // Restore bank from snapshot
         let account_paths = &[snapshot_test_config.accounts_dir.path().to_path_buf()];
         let genesis_config = &snapshot_test_config.genesis_config_info.genesis_config;
-        restore_from_snapshot(bank_forks, last_slot, genesis_config, account_paths);
+        let evm_state = snapshot_test_config.evm_state_dir.path();
+        restore_from_snapshot(
+            bank_forks,
+            last_slot,
+            genesis_config,
+            account_paths,
+            evm_state,
+        );
     }
 
     fn run_test_bank_forks_snapshot_n(
