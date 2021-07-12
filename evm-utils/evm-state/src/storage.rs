@@ -53,6 +53,16 @@ enum Location {
     Temporary(Arc<TempDir>),
     Persisent(PathBuf),
 }
+impl Eq for Location {}
+impl PartialEq for Location {
+    fn eq(&self, other: &Location) -> bool {
+        match (self, other) {
+            (Location::Persisent(p1), Location::Persisent(p2)) => p1 == p2,
+            (Location::Temporary(p1), Location::Temporary(p2)) => p1.path() == p2.path(),
+            _ => false,
+        }
+    }
+}
 
 impl AsRef<Path> for Location {
     fn as_ref(&self) -> &Path {
@@ -63,7 +73,7 @@ impl AsRef<Path> for Location {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Storage {
     pub(crate) db: Arc<DbWithClose>,
     // Location should be second field, because of drop order in Rust.
@@ -169,6 +179,15 @@ impl Drop for DbWithClose {
         self.0.cancel_all_background_work(true);
     }
 }
+
+impl PartialEq for DbWithClose {
+    fn eq(&self, other: &DbWithClose) -> bool {
+        self.0.path() == other.0.path()
+    }
+}
+
+impl Eq for DbWithClose {}
+
 impl AsRef<DB> for DbWithClose {
     fn as_ref(&self) -> &DB {
         &self.0

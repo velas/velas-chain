@@ -1,3 +1,5 @@
+use std::ops::DerefMut;
+
 use super::account_structure::AccountStructure;
 use super::instructions::{EvmBigTransaction, EvmInstruction};
 use super::precompiles;
@@ -29,17 +31,39 @@ impl EvmProcessor {
         _program_id: &Pubkey,
         keyed_accounts: &[KeyedAccount],
         data: &[u8],
-        executor: Option<&mut Executor>,
         invoke_context: &mut dyn InvokeContext,
+        cross_execution: bool,
     ) -> Result<(), InstructionError> {
-        let executor = if let Some(executor) = executor {
-            executor
+        let (evm_state_account, keyed_accounts) = Self::check_evm_account(keyed_accounts)?;
+
+        let cross_execution_enabled = false;
+        if cross_execution && !cross_execution_enabled {
+            ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
+            return Err(InstructionError::InvalidError);
+        }
+
+        let evm_executor = if let Some(evm_executor) = invoke_context.get_evm_executor() {
+            evm_executor
         } else {
-            debug!("Evm execution without executor is not allowed.");
+            ic_msg!(
+                invoke_context,
+                "Invoke context didn't provide evm executor."
+            );
             return Err(InstructionError::InvalidError);
         };
-
-        let (evm_state_account, keyed_accounts) = Self::check_evm_account(keyed_accounts)?;
+        // bind variable to increase lifetime of temporary RefCell borrow.
+        let mut evm_executor_borrow;
+        // evm executor cannot be borrowed, because it not exist in invoke context, or borrowing failed.
+        let executor = if let Some(evm_executor) = evm_executor.try_borrow_mut().ok() {
+            evm_executor_borrow = evm_executor;
+            evm_executor_borrow.deref_mut()
+        } else {
+            ic_msg!(
+                invoke_context,
+                "Recursive cross-program evm execution not enabled."
+            );
+            return Err(InstructionError::InvalidError);
+        };
 
         let accounts = AccountStructure::new(evm_state_account, keyed_accounts);
 
@@ -70,7 +94,7 @@ impl EvmProcessor {
     fn process_raw_tx(
         &self,
         executor: &mut Executor,
-        invoke_context: &mut dyn InvokeContext,
+        invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         evm_tx: evm::Transaction,
     ) -> Result<(), InstructionError> {
@@ -133,7 +157,7 @@ impl EvmProcessor {
     fn process_authorized_tx(
         &self,
         executor: &mut Executor,
-        invoke_context: &mut dyn InvokeContext,
+        invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         from: evm::Address,
         unsigned_tx: evm::UnsignedTransaction,
@@ -221,7 +245,7 @@ impl EvmProcessor {
     fn process_free_ownership(
         &self,
         _executor: &mut Executor,
-        invoke_context: &mut dyn InvokeContext,
+        invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
     ) -> Result<(), InstructionError> {
         let user = accounts.first().ok_or_else(|| {
@@ -248,7 +272,7 @@ impl EvmProcessor {
     fn process_swap_to_evm(
         &self,
         executor: &mut Executor,
-        invoke_context: &mut dyn InvokeContext,
+        invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         lamports: u64,
         evm_address: evm::Address,
@@ -298,7 +322,7 @@ impl EvmProcessor {
     fn process_big_tx(
         &self,
         executor: &mut Executor,
-        invoke_context: &mut dyn InvokeContext,
+        invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         big_tx: EvmBigTransaction,
     ) -> Result<(), InstructionError> {
@@ -514,7 +538,6 @@ mod test {
     fn execute_tx() {
         let _logger = simple_logger::SimpleLogger::new().init();
         let mut executor = evm_state::Executor::testing();
-        let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
@@ -522,10 +545,7 @@ mod test {
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
 
         let address = secret_key.to_address();
-        executor
-            .as_mut()
-            .unwrap()
-            .deposit(address, U256::from(2) * 300000);
+        executor.deposit(address, U256::from(2) * 300000);
         let tx_create = evm::UnsignedTransaction {
             nonce: 0.into(),
             gas_price: 1.into(),
@@ -536,6 +556,7 @@ mod test {
         };
         let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         assert!(processor
             .process_instruction(
                 &crate::ID,
@@ -544,10 +565,11 @@ mod test {
                     evm_tx: tx_create.clone()
                 })
                 .unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_ok());
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
         let tx_address = tx_create.address().unwrap();
         let tx_call = evm::UnsignedTransaction {
@@ -562,28 +584,26 @@ mod test {
         let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
         let tx_hash = tx_call.tx_id_hash();
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         assert!(processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_ok());
+
+        let mut executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
-        assert!(executor
-            .as_deref_mut()
-            .unwrap()
-            .get_tx_receipt_by_hash(tx_hash)
-            .is_some())
+        assert!(executor.get_tx_receipt_by_hash(tx_hash).is_some())
     }
 
     #[test]
     fn deploy_tx_refund_fee() {
         let _logger = simple_logger::SimpleLogger::new().init();
         let mut executor = evm_state::Executor::testing();
-        let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
         let user_id = Pubkey::new_unique();
         let first_user_account = RefCell::new(solana_sdk::account::Account {
@@ -602,7 +622,7 @@ mod test {
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
 
         let address = secret_key.to_address();
-        executor.as_mut().unwrap().deposit(
+        executor.deposit(
             address,
             U256::from(crate::evm::LAMPORTS_TO_GWEI_PRICE) * 300000,
         );
@@ -615,18 +635,19 @@ mod test {
             input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec(),
         };
         let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
-        let mut mock = MockInvokeContext::default();
+        let mut mock = MockInvokeContext::with_evm(executor);
         assert!(processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create }).unwrap(),
-                executor.as_deref_mut(),
                 &mut mock,
+                false,
             )
             .is_ok());
-        println!("cx = {:?}", executor);
         println!("logger = {:?}", mock.logger);
+        let executor = mock.deconstruct().unwrap();
+        println!("cx = {:?}", executor);
         let used_gas_for_hello_world_deploy = 114985;
         let fee = used_gas_for_hello_world_deploy; // price is 1lamport
         assert_eq!(first_user_account.borrow().lamports, fee);
@@ -640,17 +661,13 @@ mod test {
     #[test]
     fn tx_preserve_nonce() {
         let mut executor = evm_state::Executor::testing();
-        let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account];
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let address = secret_key.to_address();
-        executor
-            .as_mut()
-            .unwrap()
-            .deposit(address, U256::from(2) * 300000);
+        executor.deposit(address, U256::from(2) * 300000);
         let burn_addr = H160::zero();
         let tx_0 = evm::UnsignedTransaction {
             nonce: 0.into(),
@@ -670,6 +687,7 @@ mod test {
 
         let tx_0_shadow_sign = tx_0.sign(&secret_key, Some(CHAIN_ID));
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         // Execute of second tx should fail.
         assert!(processor
             .process_instruction(
@@ -679,22 +697,26 @@ mod test {
                     evm_tx: tx_1_sign.clone()
                 })
                 .unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_err());
 
+        let executor = invoke_context.deconstruct().unwrap();
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         // First tx should execute successfully.
         assert!(processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_0_sign }).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_ok());
 
+        let executor = invoke_context.deconstruct().unwrap();
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         // Executing copy of first tx with different signature, should not pass too.
         assert!(processor
             .process_instruction(
@@ -704,36 +726,38 @@ mod test {
                     evm_tx: tx_0_shadow_sign,
                 })
                 .unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_err());
 
+        let executor = invoke_context.deconstruct().unwrap();
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         // But executing of second tx now should succeed.
         assert!(processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_1_sign }).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_ok());
 
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
     }
 
     #[test]
     fn tx_preserve_gas() {
         let mut executor = evm_state::Executor::testing();
-        let mut executor = Some(&mut executor);
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account];
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let address = secret_key.to_address();
-        executor.as_mut().unwrap().deposit(address, U256::from(1));
+        executor.deposit(address, U256::from(1));
         let burn_addr = H160::zero();
         let tx_0 = evm::UnsignedTransaction {
             nonce: 0.into(),
@@ -745,17 +769,19 @@ mod test {
         };
         let tx_0_sign = tx_0.sign(&secret_key, Some(CHAIN_ID));
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         // Transaction should fail because can't pay the bill.
         assert!(processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_0_sign }).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_err());
 
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
     }
 
@@ -796,28 +822,25 @@ mod test {
             None,
         );
         {
-            let mut executor_orig = evm_state::Executor::default_configs(state);
-            let mut executor = Some(&mut executor_orig);
+            let mut executor = evm_state::Executor::default_configs(state);
             let address = secret_key.to_address();
-            executor
-                .as_mut()
-                .unwrap()
-                .deposit(address, U256::from(2) * 300000);
+            executor.deposit(address, U256::from(2) * 300000);
+
+            let mut invoke_context = MockInvokeContext::with_evm(executor);
             assert!(processor
                 .process_instruction(
                     &crate::ID,
                     &keyed_accounts,
                     &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create })
                         .unwrap(),
-                    executor.as_deref_mut(),
-                    &mut MockInvokeContext::default(),
+                    &mut invoke_context,
+                    false,
                 )
                 .is_ok());
-            println!("cx = {:?}", executor);
 
-            let committed = executor_orig
-                .deconstruct()
-                .commit_block(0, Default::default());
+            let executor = invoke_context.deconstruct().unwrap();
+            println!("cx = {:?}", executor);
+            let committed = executor.deconstruct().commit_block(0, Default::default());
             state = committed.next_incomming(0);
         }
 
@@ -846,29 +869,27 @@ mod test {
         let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
         let tx_hash = tx_call.tx_id_hash();
         {
-            let mut executor_orig = evm_state::Executor::default_configs(state);
-            let mut executor = Some(&mut executor_orig);
+            let mut executor = evm_state::Executor::default_configs(state);
 
             let address = secret_key.to_address();
-            executor
-                .as_mut()
-                .unwrap()
-                .deposit(address, U256::from(2) * 300000);
+            executor.deposit(address, U256::from(2) * 300000);
+
+            let mut invoke_context = MockInvokeContext::with_evm(executor);
             assert!(processor
                 .process_instruction(
                     &crate::ID,
                     &keyed_accounts,
                     &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
                         .unwrap(),
-                    executor.as_deref_mut(),
-                    &mut MockInvokeContext::default(),
+                    &mut invoke_context,
+                    false,
                 )
                 .is_ok());
+
+            let executor = invoke_context.deconstruct().unwrap();
             println!("cx = {:?}", executor);
 
-            let committed = executor_orig
-                .deconstruct()
-                .commit_block(0, Default::default());
+            let committed = executor.deconstruct().commit_block(0, Default::default());
 
             let receipt = committed.find_committed_transaction(tx_hash).unwrap();
             assert!(matches!(
@@ -882,8 +903,7 @@ mod test {
 
     #[test]
     fn execute_native_transfer_tx() {
-        let mut executor_orig = evm_state::Executor::testing();
-        let mut executor = Some(&mut executor_orig);
+        let executor = evm_state::Executor::testing();
         let processor = EvmProcessor::default();
         let user_account = RefCell::new(solana_sdk::account::Account {
             lamports: 1000,
@@ -902,6 +922,7 @@ mod test {
 
         let lamports_before = keyed_accounts[0].try_account_ref_mut().unwrap().lamports;
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         assert!(processor
             .process_instruction(
                 &crate::ID,
@@ -911,10 +932,12 @@ mod test {
                     evm_address: ether_dummy_address
                 })
                 .unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_ok());
+
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
 
         assert_eq!(
@@ -922,22 +945,26 @@ mod test {
             lamports_before + 1000
         );
         assert_eq!(keyed_accounts[1].try_account_ref_mut().unwrap().lamports, 0);
+
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         assert!(processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::FreeOwnership {}).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_ok());
+
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
         assert_eq!(
             keyed_accounts[1].try_account_ref_mut().unwrap().owner,
             solana_sdk::system_program::id()
         );
 
-        let state = executor_orig.deconstruct();
+        let state = executor.deconstruct();
         assert_eq!(
             state
                 .get_account_state(ether_dummy_address)
@@ -949,8 +976,7 @@ mod test {
 
     #[test]
     fn execute_transfer_to_native_without_needed_account() {
-        let mut executor_orig = evm_state::Executor::testing();
-        let mut executor = Some(&mut executor_orig);
+        let executor = evm_state::Executor::testing();
         let processor = EvmProcessor::default();
         let first_user_account = RefCell::new(solana_sdk::account::Account {
             lamports: 1000,
@@ -973,6 +999,8 @@ mod test {
 
         let lamports_to_send = 1000;
         let lamports_to_send_back = 300;
+
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         assert!(processor
             .process_instruction(
                 &crate::ID,
@@ -982,10 +1010,12 @@ mod test {
                     evm_address: ether_dummy_address
                 })
                 .unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_ok());
+
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
 
         assert_eq!(
@@ -994,7 +1024,7 @@ mod test {
         );
         assert_eq!(keyed_accounts[1].try_account_ref_mut().unwrap().lamports, 0);
 
-        let mut state = executor_orig.deconstruct();
+        let mut state = executor.deconstruct();
         assert_eq!(
             state
                 .get_account_state(ether_dummy_address)
@@ -1034,9 +1064,9 @@ mod test {
 
         let tx_call = tx_call.sign(&ether_sc, Some(CHAIN_ID));
         {
-            let mut executor_orig = evm_state::Executor::default_configs(state);
-            let mut executor = Some(&mut executor_orig);
+            let executor = evm_state::Executor::default_configs(state);
 
+            let mut invoke_context = MockInvokeContext::with_evm(executor);
             // Error transaction has no needed account.
             assert!(processor
                 .process_instruction(
@@ -1044,14 +1074,14 @@ mod test {
                     &keyed_accounts,
                     &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
                         .unwrap(),
-                    executor.as_deref_mut(),
-                    &mut MockInvokeContext::default(),
+                    &mut invoke_context,
+                    false,
                 )
                 .is_err());
+
+            let executor = invoke_context.deconstruct().unwrap();
             println!("cx = {:?}", executor);
-            let committed = executor_orig
-                .deconstruct()
-                .commit_block(0, Default::default());
+            let committed = executor.deconstruct().commit_block(0, Default::default());
             state = committed.next_incomming(0);
         }
 
@@ -1076,8 +1106,7 @@ mod test {
     fn execute_transfer_roundtrip() {
         let _ = simple_logger::SimpleLogger::new().init();
 
-        let mut executor_orig = evm_state::Executor::testing();
-        let mut executor = Some(&mut executor_orig);
+        let executor = evm_state::Executor::testing();
         let processor = EvmProcessor::default();
         let first_user_account = RefCell::new(solana_sdk::account::Account {
             lamports: 1000,
@@ -1101,6 +1130,7 @@ mod test {
         let lamports_to_send = 1000;
         let lamports_to_send_back = 300;
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         processor
             .process_instruction(
                 &crate::ID,
@@ -1110,11 +1140,12 @@ mod test {
                     evm_address: ether_dummy_address,
                 })
                 .unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .unwrap();
 
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
 
         assert_eq!(
@@ -1123,7 +1154,7 @@ mod test {
         );
         assert_eq!(keyed_accounts[1].try_account_ref_mut().unwrap().lamports, 0);
 
-        let mut state = executor_orig.deconstruct();
+        let mut state = executor.deconstruct();
         // state.apply();
         assert_eq!(
             state
@@ -1162,25 +1193,26 @@ mod test {
 
         let tx_call = tx_call.sign(&ether_sc, Some(CHAIN_ID));
         {
-            let mut executor_orig = evm_state::Executor::default_configs(state);
-            let mut executor = Some(&mut executor_orig);
-            let mut invoke_context = MockInvokeContext::default();
+            let executor = evm_state::Executor::default_configs(state);
 
             println!("cx before = {:?}", executor);
+            let mut invoke_context = MockInvokeContext::with_evm(executor);
+
             let result = processor.process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
-                executor.as_deref_mut(),
                 &mut invoke_context,
+                false,
             );
-            println!("cx = {:?}", executor);
             println!("logger = {:?}", invoke_context.logger);
+
+            let executor = invoke_context.deconstruct().unwrap();
+
+            println!("cx = {:?}", executor);
             result.unwrap();
 
-            let committed = executor_orig
-                .deconstruct()
-                .commit_block(0, Default::default());
+            let committed = executor.deconstruct().commit_block(0, Default::default());
             state = committed.next_incomming(0);
         }
 
@@ -1210,8 +1242,7 @@ mod test {
     fn execute_transfer_roundtrip_insufficient_amount() {
         let _ = simple_logger::SimpleLogger::new().init();
 
-        let mut executor_orig = evm_state::Executor::testing();
-        let mut executor = Some(&mut executor_orig);
+        let executor = evm_state::Executor::testing();
         let processor = EvmProcessor::default();
         let first_user_account = RefCell::new(solana_sdk::account::Account {
             lamports: 1000,
@@ -1235,6 +1266,7 @@ mod test {
         let lamports_to_send = 1000;
         let lamports_to_send_back = 1001;
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         processor
             .process_instruction(
                 &crate::ID,
@@ -1244,11 +1276,11 @@ mod test {
                     evm_address: ether_dummy_address,
                 })
                 .unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .unwrap();
-
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
 
         assert_eq!(
@@ -1257,7 +1289,7 @@ mod test {
         );
         assert_eq!(keyed_accounts[1].try_account_ref_mut().unwrap().lamports, 0);
 
-        let mut state = executor_orig.deconstruct();
+        let mut state = executor.deconstruct();
         // state.apply();
         assert_eq!(
             state
@@ -1296,25 +1328,24 @@ mod test {
 
         let tx_call = tx_call.sign(&ether_sc, Some(CHAIN_ID));
         {
-            let mut executor_orig = evm_state::Executor::default_configs(state);
-            let mut executor = Some(&mut executor_orig);
-            let mut invoke_context = MockInvokeContext::default();
-
+            let executor = evm_state::Executor::default_configs(state);
             println!("cx before = {:?}", executor);
+            let mut invoke_context = MockInvokeContext::with_evm(executor);
+
             let result = processor.process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
-                executor.as_deref_mut(),
                 &mut invoke_context,
+                false,
             );
-            println!("cx = {:?}", executor);
+
             println!("logger = {:?}", invoke_context.logger);
+            let executor = invoke_context.deconstruct().unwrap();
+            println!("cx = {:?}", executor);
             result.unwrap_err();
 
-            let committed = executor_orig
-                .deconstruct()
-                .commit_block(0, Default::default());
+            let committed = executor.deconstruct().commit_block(0, Default::default());
             state = committed.next_incomming(0);
         }
 
@@ -1376,17 +1407,13 @@ mod test {
         for ix in all_ixs() {
             // Create clear executor for each run, to avoid state conflicts in instructions (signed and unsigned tx with same nonce).
             let mut executor = evm_state::Executor::testing();
-            let mut executor = Some(&mut executor);
 
             let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
-            executor
-                .as_mut()
-                .unwrap()
-                .deposit(secret_key.to_address(), U256::from(2) * 300000); // deposit some small amount for gas payments
-                                                                           // insert new accounts, if some missing
+            executor.deposit(secret_key.to_address(), U256::from(2) * 300000); // deposit some small amount for gas payments
+                                                                               // insert new accounts, if some missing
             for acc in &ix.accounts {
                 // also deposit to instruction callers shadow evm addresses (to allow authorized tx call)
-                executor.as_mut().unwrap().deposit(
+                executor.deposit(
                     crate::evm_address_for_program(acc.pubkey),
                     U256::from(2) * 300000,
                 );
@@ -1412,7 +1439,7 @@ mod test {
                     }
                 })
                 .collect();
-            let mut context = MockInvokeContext::default();
+            let mut context = MockInvokeContext::with_evm(executor);
             println!("Keyed accounts = {:?}", keyed_accounts);
             // First execution without evm state key, should fail.
             let err = processor
@@ -1420,8 +1447,8 @@ mod test {
                     &crate::ID,
                     &keyed_accounts[1..],
                     &bincode::serialize(&data).unwrap(),
-                    executor.as_deref_mut(),
                     &mut context,
+                    false,
                 )
                 .unwrap_err();
             println!("logg = {:?}", context.logger);
@@ -1435,12 +1462,13 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&data).unwrap(),
-                executor.as_deref_mut(),
                 &mut context,
+                false,
             );
 
-            println!("cx =  {:?}", executor);
             println!("logg = {:?}", context.logger);
+            let executor = context.deconstruct().unwrap();
+            println!("cx =  {:?}", executor);
             result.unwrap();
         }
     }
@@ -1451,13 +1479,9 @@ mod test {
         let mut executor = evm_state::Executor::testing();
 
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
-        let mut executor = Some(&mut executor);
 
         let address = secret_key.to_address();
-        executor
-            .as_mut()
-            .unwrap()
-            .deposit(address, U256::from(2) * 300000);
+        executor.deposit(address, U256::from(2) * 300000);
         let tx_create = evm::UnsignedTransaction {
             nonce: 0.into(),
             gas_price: 1.into(),
@@ -1487,13 +1511,15 @@ mod test {
 
         let dummy_address = tx_create.address().unwrap();
         let ix = crate::send_raw_tx(user_id, tx_create, None);
+
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &ix.data,
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .unwrap();
 
@@ -1505,21 +1531,25 @@ mod test {
             value: 0.into(),
             input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
         };
-        executor.as_mut().unwrap().deposit(
+
+        let mut executor = invoke_context.deconstruct().unwrap();
+        executor.deposit(
             crate::evm_address_for_program(user_id),
             U256::from(2) * 300000,
         );
         let ix = crate::authorized_tx(user_id, unsigned_tx);
 
         println!("Keyed accounts = {:?}", &keyed_accounts);
+
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         // First execution without signer user key, should fail.
         let err = processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &ix.data,
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .unwrap_err();
 
@@ -1532,22 +1562,22 @@ mod test {
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
         let keyed_accounts = [evm_keyed_account, user_keyed_account];
 
+        let executor = invoke_context.deconstruct().unwrap();
         // Because first execution is fail, state didn't changes, and second execution should pass.
         processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &ix.data,
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut MockInvokeContext::with_evm(executor),
+                false,
             )
             .unwrap();
     }
 
     #[test]
     fn big_tx_allocation_error() {
-        let mut executor = evm_state::Executor::testing();
-        let mut executor = Some(&mut executor);
+        let executor = evm_state::Executor::testing();
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
@@ -1567,30 +1597,37 @@ mod test {
         let big_transaction = EvmBigTransaction::EvmTransactionAllocate {
             size: evm_state::MAX_TX_LEN + 1,
         };
+
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         assert!(processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_err());
+
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
 
         let big_transaction = EvmBigTransaction::EvmTransactionAllocate {
             size: evm_state::MAX_TX_LEN,
         };
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .unwrap();
+
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
     }
 
@@ -1598,8 +1635,7 @@ mod test {
     fn big_tx_write_out_of_bound() {
         let _ = simple_logger::SimpleLogger::new().init();
 
-        let mut executor = evm_state::Executor::testing();
-        let mut executor = Some(&mut executor);
+        let executor = evm_state::Executor::testing();
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
@@ -1619,15 +1655,19 @@ mod test {
         let keyed_accounts = [evm_keyed_account, user_keyed_account];
 
         let big_transaction = EvmBigTransaction::EvmTransactionAllocate { size: batch_size };
+
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .unwrap();
+
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
 
         // out of bound write
@@ -1636,16 +1676,18 @@ mod test {
             data: vec![1],
         };
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         assert!(processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_err());
 
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
         // out of bound write
         let big_transaction = EvmBigTransaction::EvmTransactionWrite {
@@ -1653,16 +1695,18 @@ mod test {
             data: vec![1; batch_size as usize + 1],
         };
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         assert!(processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_err());
 
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
 
         // Write in bounds
@@ -1671,16 +1715,18 @@ mod test {
             data: vec![1; batch_size as usize],
         };
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .unwrap();
 
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
         // Overlaped writes is allowed
         let big_transaction = EvmBigTransaction::EvmTransactionWrite {
@@ -1688,23 +1734,24 @@ mod test {
             data: vec![1],
         };
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .unwrap();
 
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
     }
 
     #[test]
     fn big_tx_write_without_alloc() {
-        let mut executor = evm_state::Executor::testing();
-        let mut executor = Some(&mut executor);
+        let executor = evm_state::Executor::testing();
         let processor = EvmProcessor::default();
         let evm_account = RefCell::new(crate::create_state_account(0));
         let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
@@ -1726,15 +1773,18 @@ mod test {
             data: vec![1],
         };
 
+        let mut invoke_context = MockInvokeContext::with_evm(executor);
         assert!(processor
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmBigTransaction(big_transaction)).unwrap(),
-                executor.as_deref_mut(),
-                &mut MockInvokeContext::default(),
+                &mut invoke_context,
+                false,
             )
             .is_err());
+
+        let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
     }
 

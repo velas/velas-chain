@@ -223,6 +223,7 @@ pub struct ThisInvokeContext<'a> {
     executors: Rc<RefCell<Executors>>,
     instruction_recorder: Option<InstructionRecorder>,
     feature_set: Arc<FeatureSet>,
+    evm_executor: Option<RefCell<evm_state::Executor>>,
 }
 impl<'a> ThisInvokeContext<'a> {
     #[allow(clippy::too_many_arguments)]
@@ -237,6 +238,7 @@ impl<'a> ThisInvokeContext<'a> {
         executors: Rc<RefCell<Executors>>,
         instruction_recorder: Option<InstructionRecorder>,
         feature_set: Arc<FeatureSet>,
+        evm_executor: Option<evm_state::Executor>,
     ) -> Self {
         let mut program_ids = Vec::with_capacity(bpf_compute_budget.max_invoke_depth);
         program_ids.push(*program_id);
@@ -254,7 +256,11 @@ impl<'a> ThisInvokeContext<'a> {
             executors,
             instruction_recorder,
             feature_set,
+            evm_executor: evm_executor.map(|e| RefCell::new(e)),
         }
+    }
+    pub fn deconstruct(self) -> Option<evm_state::Executor> {
+        self.evm_executor.map(|c| c.into_inner())
     }
 }
 impl<'a> InvokeContext for ThisInvokeContext<'a> {
@@ -297,6 +303,9 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
             ),
             None => Err(InstructionError::GenericError), // Should never happen
         }
+    }
+    fn get_evm_executor(&self) -> &Option<RefCell<evm_state::Executor>> {
+        &self.evm_executor
     }
     fn get_caller(&self) -> Result<&Pubkey, InstructionError> {
         self.program_ids
@@ -494,7 +503,7 @@ impl MessageProcessor {
         keyed_accounts: &[KeyedAccount],
         instruction_data: &[u8],
         invoke_context: &mut dyn InvokeContext,
-        evm_executor: Option<&mut evm_state::Executor>,
+        cross_execution: bool,
     ) -> Result<(), InstructionError> {
         if let Some(root_account) = keyed_accounts.iter().next() {
             let root_id = root_account.unsigned_key();
@@ -504,8 +513,8 @@ impl MessageProcessor {
                         &solana_sdk::evm_loader::id(),
                         &keyed_accounts[1..], // skip evm program_id
                         instruction_data,
-                        evm_executor,
                         invoke_context,
+                        cross_execution,
                     );
                 }
                 for (id, process_instruction) in &self.programs {
@@ -798,7 +807,7 @@ impl MessageProcessor {
                 &keyed_accounts,
                 &instruction.data,
                 invoke_context,
-                None,
+                true,
             );
             if result.is_ok() {
                 // Verify the called program has not misbehaved
@@ -962,8 +971,8 @@ impl MessageProcessor {
         instruction_index: usize,
         feature_set: Arc<FeatureSet>,
         bpf_compute_budget: BpfComputeBudget,
-        evm_executor: Option<&mut evm_state::Executor>,
-    ) -> Result<(), InstructionError> {
+        evm_executor: Option<evm_state::Executor>,
+    ) -> Result<Option<evm_state::Executor>, InstructionError> {
         // Fixup the special instructions key if present
         // before the account pre-values are taken care of
         if feature_set.is_active(&instructions_sysvar_enabled::id()) {
@@ -992,6 +1001,7 @@ impl MessageProcessor {
             executors,
             instruction_recorder,
             feature_set,
+            evm_executor,
         );
         let keyed_accounts =
             Self::create_keyed_accounts(message, instruction, executable_accounts, accounts);
@@ -1000,7 +1010,7 @@ impl MessageProcessor {
             &keyed_accounts,
             &instruction.data,
             &mut invoke_context,
-            evm_executor,
+            false,
         )?;
         Self::verify(
             message,
@@ -1010,7 +1020,7 @@ impl MessageProcessor {
             accounts,
             &rent_collector.rent,
         )?;
-        Ok(())
+        Ok(invoke_context.deconstruct())
     }
 
     /// Process a message.
@@ -1029,30 +1039,31 @@ impl MessageProcessor {
         instruction_recorders: Option<&[InstructionRecorder]>,
         feature_set: Arc<FeatureSet>,
         bpf_compute_budget: BpfComputeBudget,
-        mut evm_executor: Option<&mut evm_state::Executor>,
-    ) -> Result<(), TransactionError> {
+        mut evm_executor: Option<evm_state::Executor>,
+    ) -> Result<Option<evm_state::Executor>, TransactionError> {
         for (instruction_index, instruction) in message.instructions.iter().enumerate() {
             let instruction_recorder = instruction_recorders
                 .as_ref()
                 .map(|recorders| recorders[instruction_index].clone());
-            self.execute_instruction(
-                message,
-                instruction,
-                &loaders[instruction_index],
-                accounts,
-                account_deps,
-                rent_collector,
-                log_collector.clone(),
-                executors.clone(),
-                instruction_recorder,
-                instruction_index,
-                feature_set.clone(),
-                bpf_compute_budget,
-                evm_executor.as_deref_mut(),
-            )
-            .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
+            evm_executor = self
+                .execute_instruction(
+                    message,
+                    instruction,
+                    &loaders[instruction_index],
+                    accounts,
+                    account_deps,
+                    rent_collector,
+                    log_collector.clone(),
+                    executors.clone(),
+                    instruction_recorder,
+                    instruction_index,
+                    feature_set.clone(),
+                    bpf_compute_budget,
+                    evm_executor,
+                )
+                .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
         }
-        Ok(())
+        Ok(evm_executor)
     }
 }
 
@@ -1098,6 +1109,7 @@ mod tests {
             Rc::new(RefCell::new(Executors::default())),
             None,
             Arc::new(FeatureSet::all_enabled()),
+            None,
         );
 
         // Check call depth increases and has a limit
@@ -1671,7 +1683,7 @@ mod tests {
             BpfComputeBudget::new(&FeatureSet::all_enabled()),
             None,
         );
-        assert_eq!(result, Ok(()));
+        assert_eq!(result, Ok(None));
         assert_eq!(accounts[0].borrow().lamports, 100);
         assert_eq!(accounts[1].borrow().lamports, 0);
 
@@ -1698,11 +1710,8 @@ mod tests {
             None,
         );
         assert_eq!(
-            result,
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::ReadonlyLamportChange
-            ))
+            result.unwrap_err(),
+            TransactionError::InstructionError(0, InstructionError::ReadonlyLamportChange)
         );
 
         let message = Message::new(
@@ -1728,11 +1737,8 @@ mod tests {
             None,
         );
         assert_eq!(
-            result,
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::ReadonlyDataModified
-            ))
+            result.unwrap_err(),
+            TransactionError::InstructionError(0, InstructionError::ReadonlyDataModified)
         );
     }
 
@@ -1842,11 +1848,8 @@ mod tests {
             None,
         );
         assert_eq!(
-            result,
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::AccountBorrowFailed
-            ))
+            result.unwrap_err(),
+            TransactionError::InstructionError(0, InstructionError::AccountBorrowFailed)
         );
 
         // Try to borrow mut the same account in a safe way
@@ -1871,7 +1874,7 @@ mod tests {
             BpfComputeBudget::new(&FeatureSet::all_enabled()),
             None,
         );
-        assert_eq!(result, Ok(()));
+        assert_eq!(result, Ok(None));
 
         // Do work on the same account but at different location in keyed_accounts[]
         let message = Message::new(
@@ -1898,7 +1901,7 @@ mod tests {
             BpfComputeBudget::new(&FeatureSet::all_enabled()),
             None,
         );
-        assert_eq!(result, Ok(()));
+        assert_eq!(result, Ok(None));
         assert_eq!(accounts[0].borrow().lamports, 80);
         assert_eq!(accounts[1].borrow().lamports, 20);
         assert_eq!(accounts[0].borrow().data, vec![42]);
@@ -1982,6 +1985,7 @@ mod tests {
             Rc::new(RefCell::new(Executors::default())),
             None,
             Arc::new(FeatureSet::all_enabled()),
+            None,
         );
         let metas = vec![
             AccountMeta::new(owned_key, false),
