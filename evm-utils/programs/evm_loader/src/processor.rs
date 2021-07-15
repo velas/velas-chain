@@ -36,7 +36,8 @@ impl EvmProcessor {
     ) -> Result<(), InstructionError> {
         let (evm_state_account, keyed_accounts) = Self::check_evm_account(keyed_accounts)?;
 
-        let cross_execution_enabled = false;
+        let cross_execution_enabled = invoke_context
+            .is_feature_active(&solana_sdk::feature_set::velas_evm_cross_execution::id());
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
             return Err(InstructionError::InvalidError);
@@ -277,6 +278,8 @@ impl EvmProcessor {
         lamports: u64,
         evm_address: evm::Address,
     ) -> Result<(), InstructionError> {
+        let register_swap_tx_in_evm = invoke_context
+            .is_feature_active(&solana_sdk::feature_set::velas_native_swap_in_evm_history::id());
         let gweis = evm::lamports_to_gwei(lamports);
         let user = accounts.first().ok_or_else(|| {
             ic_msg!(
