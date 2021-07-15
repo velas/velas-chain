@@ -158,6 +158,14 @@ pub mod velas_hardfork_pack {
     solana_sdk::declare_id!("91nakVjUc5UmNzLioE6K7HhASmb2m1E7hRuLZS4LzUPV");
 }
 
+pub mod velas_evm_cross_execution {
+    solana_sdk::declare_id!("3rkhJCKKR8Szj5v237NzRF3FS2nnyRvaeGF8xAvnVkwf");
+}
+
+pub mod velas_native_swap_in_evm_history {
+    solana_sdk::declare_id!("8h8BTnexqgpfiA8E6Bx8JT97asTPDGBPwhBR98x1Z5cW");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES_BEFORE_MAINNET: HashMap<Pubkey, &'static str> = [
@@ -203,6 +211,10 @@ lazy_static! {
             // Velas features
             (velas_hardfork_pack::id(),
              "EVMblockhashes sysvar history, roothashes calculation. Apply old (reconfigure_native_token, unlock_switch_vote)."),
+            (velas_hardfork_pack::id(), "EVMblockhashes sysvar history, roothashes calculation. Apply old (reconfigure_native_token, unlock_switch_vote)."),
+            (velas_evm_cross_execution::id(), "EVM cross execution."),
+            (velas_native_swap_in_evm_history::id(), "Native swap in evm history."),
+            /*************** ADD NEW FEATURES HERE ***************/
         ]
     ).collect();
 
