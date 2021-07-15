@@ -16,7 +16,7 @@ declare_sysvar_id!(
 );
 
 #[repr(C)]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct RecentBlockhashes(#[serde(with = "RecentBlockhashes")] pub [Hash; MAX_ENTRIES]);
 
 impl Default for RecentBlockhashes {
