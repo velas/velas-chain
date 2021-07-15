@@ -303,7 +303,7 @@ impl Validator {
         identity_keypair: &Arc<Keypair>,
         ledger_path: &Path,
         vote_account: &Pubkey,
-        mut authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
+        authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
         cluster_entrypoints: Vec<ContactInfo>,
         config: &ValidatorConfig,
         should_check_duplicate_instance: bool,

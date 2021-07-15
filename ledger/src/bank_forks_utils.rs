@@ -29,6 +29,7 @@ fn to_loadresult(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn load(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,

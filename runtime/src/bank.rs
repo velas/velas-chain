@@ -12734,7 +12734,6 @@ pub(crate) mod tests {
 
     #[test]
     fn test_vote_epoch_panic() {
-        let min_stake = bootstrap_validator_stake_lamports();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,

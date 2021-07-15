@@ -616,8 +616,8 @@ pub mod tests {
         assert_eq!(account.data().len(), 2);
         assert_eq!(account.owner, key);
         assert_eq!(account.owner(), &key);
-        assert_eq!(account.executable, true);
-        assert_eq!(account.executable(), true);
+        assert!(account.executable);
+        assert!(account.executable());
         assert_eq!(account.rent_epoch, 4);
         assert_eq!(account.rent_epoch(), 4);
         let account = account2;
@@ -627,8 +627,8 @@ pub mod tests {
         assert_eq!(account.data().len(), 2);
         assert_eq!(account.owner, key);
         assert_eq!(account.owner(), &key);
-        assert_eq!(account.executable, true);
-        assert_eq!(account.executable(), true);
+        assert!(account.executable);
+        assert!(account.executable());
         assert_eq!(account.rent_epoch, 4);
         assert_eq!(account.rent_epoch(), 4);
     }

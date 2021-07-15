@@ -550,20 +550,6 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
             OutputFormat::Display
         });
 
-    let verbose = matches.is_present("verbose");
-    let output_format = matches
-        .value_of("output_format")
-        .map(|value| match value {
-            "json" => OutputFormat::Json,
-            "json-compact" => OutputFormat::JsonCompact,
-            _ => unreachable!(),
-        })
-        .unwrap_or(if verbose {
-            OutputFormat::DisplayVerbose
-        } else {
-            OutputFormat::Display
-        });
-
     let future = match matches.subcommand() {
         ("upload", Some(arg_matches)) => {
             let starting_slot = value_t!(arg_matches, "starting_slot", Slot).unwrap_or(0);

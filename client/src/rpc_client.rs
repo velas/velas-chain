@@ -1938,7 +1938,7 @@ mod tests {
         // Send erroneous parameter
         let blockhash: ClientResult<String> =
             rpc_client.send(RpcRequest::GetRecentBlockhash, json!(["parameter"]));
-        assert_eq!(blockhash.is_err(), true);
+        assert!(blockhash.is_err());
     }
 
     #[test]

@@ -2720,10 +2720,10 @@ impl Blockstore {
         hash: H256,
         id: evm_state::BlockNum,
     ) -> Result<()> {
-        let mut w_active_transaction_status_index =
+        let w_active_transaction_status_index =
             self.active_transaction_status_index.write().unwrap();
         let primary_index =
-            self.get_primary_index_to_write(slot, &mut w_active_transaction_status_index)?;
+            self.get_primary_index_to_write(slot, &w_active_transaction_status_index)?;
         self.evm_blocks_by_hash_cf
             .put_protobuf((primary_index, hash), &id)
     }
@@ -2941,10 +2941,10 @@ impl Blockstore {
         status: evm::TransactionReceipt,
     ) -> Result<()> {
         // reuse mechanism of transaction_status_index_cf gating
-        let mut w_active_transaction_status_index =
+        let w_active_transaction_status_index =
             self.active_transaction_status_index.write().unwrap();
         let index =
-            self.get_primary_index_to_write(block_num, &mut w_active_transaction_status_index)?;
+            self.get_primary_index_to_write(block_num, &w_active_transaction_status_index)?;
         let status = status.into();
         self.evm_transactions_cf.put_protobuf(
             EvmTransactionReceiptsIndex {

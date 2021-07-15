@@ -1852,7 +1852,6 @@ fn main() {
                 .unwrap_or_else(|_| ledger_path.clone());
             let mut warp_slot = value_t!(arg_matches, "warp_slot", Slot).ok();
             let remove_stake_accounts = arg_matches.is_present("remove_stake_accounts");
-            let warp_time = arg_matches.is_present("warp_time");
             let new_hard_forks = hardforks_of(arg_matches, "hard_forks");
 
             let faucet_pubkey = pubkey_of(&arg_matches, "faucet_pubkey");

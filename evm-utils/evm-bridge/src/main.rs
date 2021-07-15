@@ -43,7 +43,7 @@ use solana_sdk::{
     signature::Signer,
     signers::Signers,
     system_instruction,
-    transaction::{self, TransactionError},
+    transaction::TransactionError,
 };
 use solana_transaction_status::{EncodedConfirmedTransaction, TransactionStatus, UiConfirmedBlock};
 
