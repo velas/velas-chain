@@ -47,6 +47,7 @@ use {
 pub struct RpcClient {
     sender: Box<dyn RpcSender + Send + Sync + 'static>,
     commitment_config: CommitmentConfig,
+    #[allow(dead_code)] // NOTE(velas): single usage was removed, but keep this field
     node_version: RwLock<Option<semver::Version>>,
 }
 
@@ -135,6 +136,7 @@ impl RpcClient {
         Self::new_with_timeout(url, timeout)
     }
 
+    #[allow(dead_code)] // NOTE(velas): single usage was removed, but keep this field
     fn get_node_version(&self) -> Result<semver::Version, RpcError> {
         let r_node_version = self.node_version.read().unwrap();
         if let Some(version) = &*r_node_version {
@@ -157,8 +159,10 @@ impl RpcClient {
         self.commitment_config
     }
 
+    // to keep interface compatible with solana
+    #[allow(clippy::unnecessary_wraps)]
     fn use_deprecated_commitment(&self) -> Result<bool, RpcError> {
-        Ok(self.get_node_version()? < semver::Version::new(1, 5, 5))
+        Ok(false)
     }
 
     fn maybe_map_commitment(
@@ -477,14 +481,14 @@ impl RpcClient {
         )
     }
 
-    #[deprecated(since = "1.5.19", note = "Please use RpcClient::supply() instead")]
+    #[deprecated(since = "0.4.0", note = "Please use RpcClient::supply() instead")]
     #[allow(deprecated)]
     pub fn total_supply(&self) -> ClientResult<u64> {
         self.total_supply_with_commitment(self.commitment_config)
     }
 
     #[deprecated(
-        since = "1.5.19",
+        since = "0.4.0",
         note = "Please use RpcClient::supply_with_commitment() instead"
     )]
     #[allow(deprecated)]
@@ -645,7 +649,7 @@ impl RpcClient {
     }
 
     #[deprecated(
-        since = "1.5.19",
+        since = "0.4.0",
         note = "Please use RpcClient::get_confirmed_signatures_for_address2() instead"
     )]
     #[allow(deprecated)]
@@ -846,8 +850,8 @@ impl RpcClient {
         &self,
         transaction: &Transaction,
     ) -> ClientResult<Signature> {
-        const SEND_RETRIES: usize = usize::MAX;
-        const GET_STATUS_RETRIES: usize = usize::MAX;
+        const SEND_RETRIES: usize = 20;
+        const GET_STATUS_RETRIES: usize = 40;
 
         'sending: for _ in 0..SEND_RETRIES {
             let signature = self.send_transaction(transaction)?;

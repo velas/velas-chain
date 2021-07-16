@@ -205,15 +205,6 @@ impl SignerSource {
             legacy: true,
         }
     }
-
-    // pub fn signer_from_path_with_config(
-    //     &self,
-    //     matches: &ArgMatches,
-    //     wallet_manager: &mut Option<Arc<RemoteWalletManager>>,
-    //     config: &SignerFromPathConfig,
-    // ) -> Result<Box<dyn Signer>, Box<dyn std::error::Error>> {
-    //     signer_from_path_with_config(matches, &self.path, &self.arg_name, wallet_manager, config)
-    // }
 }
 
 const SIGNER_SOURCE_PROMPT: &str = "prompt";

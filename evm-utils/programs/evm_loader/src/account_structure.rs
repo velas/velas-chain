@@ -1,6 +1,6 @@
 use solana_sdk::{keyed_account::KeyedAccount, pubkey::Pubkey};
 
-/// Helper structure that wrap all solana accounts, that is needed for evm loader.l47
+/// Helper structure that wrap all solana accounts, that is needed for evm loader.
 /// It will restrict and provide access to needed solana accounts in:
 /// 1. Instruction handlers (ExecuteTx, SwapToEvm, FreeOwnership) - full access to evm state.
 /// 2. Builtin contracts (SwapToNative) - Full access to evm state.

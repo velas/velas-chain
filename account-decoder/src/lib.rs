@@ -34,6 +34,7 @@ pub type StringDecimals = String;
 #[serde(rename_all = "camelCase")]
 pub struct UiAccount {
     pub lamports: u64,
+    #[serde(default)]
     pub lamports_str: StringAmount,
     pub data: UiAccountData,
     pub owner: String,

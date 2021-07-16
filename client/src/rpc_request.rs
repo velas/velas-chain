@@ -22,7 +22,7 @@ pub enum RpcRequest {
     GetConfirmedBlocksWithLimit,
 
     #[deprecated(
-        since = "1.5.19",
+        since = "0.4.0",
         note = "Please use RpcRequest::GetConfirmedSignaturesForAddress2 instead"
     )]
     GetConfirmedSignaturesForAddress,
@@ -67,7 +67,7 @@ pub enum RpcRequest {
     GetTokenAccountsByOwner,
     GetTokenSupply,
 
-    #[deprecated(since = "1.5.19", note = "Please use RpcRequest::GetSupply instead")]
+    #[deprecated(since = "0.4.0", note = "Please use RpcRequest::GetSupply instead")]
     GetTotalSupply,
 
     GetTransactionCount,
