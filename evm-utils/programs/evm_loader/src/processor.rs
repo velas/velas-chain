@@ -38,6 +38,8 @@ impl EvmProcessor {
 
         let cross_execution_enabled = invoke_context
             .is_feature_active(&solana_sdk::feature_set::velas_evm_cross_execution::id());
+        let register_swap_tx_in_evm = invoke_context
+            .is_feature_active(&solana_sdk::feature_set::velas_native_swap_in_evm_history::id());
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
             return Err(InstructionError::InvalidError);
@@ -70,7 +72,7 @@ impl EvmProcessor {
 
         let ix = limited_deserialize(data)?;
         trace!("Run evm exec with ix = {:?}.", ix);
-        match ix {
+        let result = match ix {
             EvmInstruction::EvmTransaction { evm_tx } => {
                 self.process_raw_tx(executor, invoke_context, accounts, evm_tx)
             }
@@ -89,7 +91,11 @@ impl EvmProcessor {
             EvmInstruction::EvmBigTransaction(big_tx) => {
                 self.process_big_tx(executor, invoke_context, accounts, big_tx)
             }
+        };
+        if register_swap_tx_in_evm {
+            executor.reset_balance(*precompiles::ETH_TO_VLX_ADDR)
         }
+        result
     }
 
     fn process_raw_tx(
@@ -319,6 +325,9 @@ impl EvmProcessor {
         user_account.lamports -= lamports;
         accounts.evm.try_account_ref_mut()?.lamports += lamports;
         executor.deposit(evm_address, gweis);
+        if register_swap_tx_in_evm {
+            executor.register_swap_tx_in_evm(*precompiles::ETH_TO_VLX_ADDR, evm_address, gweis)
+        }
         Ok(())
     }
 

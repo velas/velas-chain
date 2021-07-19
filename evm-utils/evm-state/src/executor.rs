@@ -1,4 +1,4 @@
-use evm::executor::{MemoryStackState, StackSubstateMetadata};
+use evm::executor::{MemoryStackState, StackState, StackSubstateMetadata};
 pub use evm::{
     backend::{Apply, ApplyBackend, Backend, Log, MemoryAccount, MemoryVicinity},
     executor::StackExecutor,
@@ -349,17 +349,52 @@ impl Executor {
     ///
     /// Internally just mint token, and create system transaction (not implemented):
     /// 1. Type: Call
-    /// 2. from: EVM_BURN_ADDRESS
+    /// 2. from: EVM_MINT_ADDRESS
     /// 3. to: recipient (some address specified by method caller)
     /// 4. data: empty,
     /// 5. value: amount (specified by method caller)
     ///
-    /// After transaction EVM_BURN_ADDRESS will cleanup.
     pub fn deposit(&mut self, recipient: H160, amount: U256) {
         self.with_executor(
             |_, _, _, _| None,
             |e| e.state_mut().deposit(recipient, amount),
         );
+    }
+
+    pub fn register_swap_tx_in_evm(&mut self, mint_address: H160, recipient: H160, amount: U256) {
+        let nonce = self.with_executor(
+            |_, _, _, _| None,
+            |e| {
+                let nonce = e.nonce(mint_address);
+                e.state_mut().inc_nonce(mint_address);
+                nonce
+            },
+        );
+        let tx = UnsignedTransaction {
+            nonce: nonce,
+            gas_limit: 0.into(),
+            gas_price: 0.into(),
+            value: amount,
+            input: Vec::new(),
+            action: TransactionAction::Call(recipient),
+        };
+        let unsigned_tx = UnsignedTransactionWithCaller {
+            unsigned_tx: tx,
+            caller: mint_address,
+            chain_id: Some(self.config.chain_id),
+        };
+        let result = ExecutionResult {
+            tx_logs: Vec::new(),
+            used_gas: 0,
+            exit_data: Vec::new(),
+            exit_reason: ExitReason::Succeed(ExitSucceed::Returned),
+        };
+        self.register_tx_with_receipt(TransactionInReceipt::Unsigned(unsigned_tx), result)
+    }
+
+    /// After "swap from evm" transaction EVM_MINT_ADDRESS will cleanup. Using this method.
+    pub fn reset_balance(&mut self, balance: H160) {
+        self.with_executor(|_, _, _, _| None, |e| e.state_mut().reset_balance(balance));
     }
 
     //  /// Burn some tokens on address:
@@ -368,7 +403,7 @@ impl Executor {
     //  /// Internally just burn address, and create system transaction (not implemented):
     //  /// 1. Type: Call
     //  /// 2. from: from (some address specified by method caller)
-    //  /// 3. to: EVM_BURN_ADDRESS
+    //  /// 3. to: EVM_MINT_ADDRESS
     //  /// 4. data: empty,
     //  /// 5. value: amount (specified by method caller)
     //  ///
