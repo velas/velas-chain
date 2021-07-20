@@ -3114,27 +3114,31 @@ impl Bank {
                         None
                     };
 
-                    let process_result = self
-                        .message_processor
-                        .process_message(
-                            tx.message(),
-                            &loader_refcells,
-                            &account_refcells,
-                            &account_dep_refcells,
-                            &self.rent_collector,
-                            log_collector.clone(),
-                            executors.clone(),
-                            instruction_recorders.as_deref(),
-                            self.feature_set.clone(),
-                            bpf_compute_budget,
-                            evm_executor,
-                        )
-                        .map(|new_executor| {
-                            // if execution succeed, apply state changes.
-                            if let Some(evm_executor) = new_executor {
-                                evm_patch = Some(evm_executor.deconstruct());
-                            }
-                        });
+                    // Create reference counted pointer, to pass evm executor trought InvokeContext.
+                    // Without Rc/RefCell we need to somehow provide mutable evm executor from InvokeContext,
+                    // keeping InvokeContext free to sharable borrowing for logging purposes.
+                    let evm_executor = evm_executor.map(RefCell::new).map(Rc::new);
+
+                    let process_result = self.message_processor.process_message(
+                        tx.message(),
+                        &loader_refcells,
+                        &account_refcells,
+                        &account_dep_refcells,
+                        &self.rent_collector,
+                        log_collector.clone(),
+                        executors.clone(),
+                        instruction_recorders.as_deref(),
+                        self.feature_set.clone(),
+                        bpf_compute_budget,
+                        evm_executor.clone(),
+                    );
+
+                    if let Some(evm_executor) = evm_executor {
+                        let executor = Rc::try_unwrap(evm_executor)
+                            .expect("Rc should be free after message processing.")
+                            .into_inner();
+                        evm_patch = Some(executor.deconstruct());
+                    }
 
                     if enable_log_recording {
                         let log_messages: TransactionLogMessages =

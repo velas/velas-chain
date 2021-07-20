@@ -44,7 +44,7 @@ pub trait InvokeContext {
         caller_pivileges: Option<&[bool]>,
     ) -> Result<(), InstructionError>;
     /// Get evm executor context
-    fn get_evm_executor(&self) -> &Option<RefCell<evm_state::Executor>>;
+    fn get_evm_executor(&self) -> Option<Rc<RefCell<evm_state::Executor>>>;
     /// Get the program ID of the currently executing program
     fn get_caller(&self) -> Result<&Pubkey, InstructionError>;
     /// Get a list of built-in programs
@@ -312,18 +312,19 @@ pub struct MockInvokeContext {
     pub compute_meter: MockComputeMeter,
     pub programs: Vec<(Pubkey, ProcessInstructionWithContext)>,
     pub invoke_depth: usize,
-    pub evm_executor: Option<RefCell<evm_state::Executor>>,
+    pub evm_executor: Option<Rc<RefCell<evm_state::Executor>>>,
 }
 
 impl MockInvokeContext {
     pub fn with_evm(evm_executor: evm_state::Executor) -> Self {
         Self {
-            evm_executor: Some(RefCell::new(evm_executor)),
+            evm_executor: Some(Rc::new(RefCell::new(evm_executor))),
             ..Default::default()
         }
     }
     pub fn deconstruct(self) -> Option<evm_state::Executor> {
-        self.evm_executor.map(|e| e.into_inner())
+        self.evm_executor
+            .and_then(|e| Some(Rc::try_unwrap(e).ok()?.into_inner()))
     }
 }
 impl Default for MockInvokeContext {
@@ -361,8 +362,8 @@ impl InvokeContext for MockInvokeContext {
     ) -> Result<(), InstructionError> {
         Ok(())
     }
-    fn get_evm_executor(&self) -> &Option<RefCell<evm_state::Executor>> {
-        &self.evm_executor
+    fn get_evm_executor(&self) -> Option<Rc<RefCell<evm_state::Executor>>> {
+        self.evm_executor.clone()
     }
     fn get_caller(&self) -> Result<&Pubkey, InstructionError> {
         Ok(&self.key)
