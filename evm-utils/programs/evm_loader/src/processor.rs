@@ -85,13 +85,19 @@ impl EvmProcessor {
             EvmInstruction::SwapNativeToEther {
                 lamports,
                 evm_address,
-            } => {
-                self.process_swap_to_evm(executor, invoke_context, accounts, lamports, evm_address)
-            }
+            } => self.process_swap_to_evm(
+                executor,
+                invoke_context,
+                accounts,
+                lamports,
+                evm_address,
+                register_swap_tx_in_evm,
+            ),
             EvmInstruction::EvmBigTransaction(big_tx) => {
                 self.process_big_tx(executor, invoke_context, accounts, big_tx)
             }
         };
+
         if register_swap_tx_in_evm {
             executor.reset_balance(*precompiles::ETH_TO_VLX_ADDR)
         }
@@ -141,6 +147,7 @@ impl EvmProcessor {
         ) {
             return Err(InstructionError::InvalidError);
         }
+
         let fee = tx_gas_price * result.used_gas;
         if let Some(payer) = accounts.users.first() {
             let (fee, _) = gweis_to_lamports(fee);
@@ -283,9 +290,8 @@ impl EvmProcessor {
         accounts: AccountStructure,
         lamports: u64,
         evm_address: evm::Address,
+        register_swap_tx_in_evm: bool,
     ) -> Result<(), InstructionError> {
-        let register_swap_tx_in_evm = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas_native_swap_in_evm_history::id());
         let gweis = evm::lamports_to_gwei(lamports);
         let user = accounts.first().ok_or_else(|| {
             ic_msg!(
