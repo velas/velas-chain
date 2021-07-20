@@ -24,6 +24,8 @@ snafu = "0.6"
 crc32fast = "1.2.1"
 sha2 = "0.9.4"
 ripemd160 = "0.9.1"
+num-derive = "0.3"
+num-traits = "0.2"
 
 [lib]
 crate-type = ["lib", "cdylib"]

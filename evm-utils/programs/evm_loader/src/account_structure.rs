@@ -1,5 +1,7 @@
 use solana_sdk::{keyed_account::KeyedAccount, pubkey::Pubkey};
 
+use crate::error::EvmError;
+
 /// Helper structure that wrap all solana accounts, that is needed for evm loader.
 /// It will restrict and provide access to needed solana accounts in:
 /// 1. Instruction handlers (ExecuteTx, SwapToEvm, FreeOwnership) - full access to evm state.
@@ -27,6 +29,17 @@ impl<'a> AccountStructure<'a> {
     /// Find user by its public key.
     pub fn find_user(&self, key: &Pubkey) -> Option<&KeyedAccount> {
         self.users.iter().find(|keyed| keyed.unsigned_key() == key)
+    }
+
+    pub fn refund_fee(&self, user: &'a KeyedAccount<'a>, fee: u64) -> Result<(), EvmError> {
+        self.evm
+            .try_account_ref_mut()
+            .map_err(|_| EvmError::BorrowingFailed)?
+            .lamports -= fee;
+        user.try_account_ref_mut()
+            .map_err(|_| EvmError::BorrowingFailed)?
+            .lamports += fee;
+        Ok(())
     }
 
     /// Create AccountStructure for testing purposes, with random accounts.

@@ -5658,6 +5658,8 @@ dependencies = [
  "hex",
  "hex-literal",
  "log 0.4.14",
+ "num-derive",
+ "num-traits",
  "once_cell",
  "primitive-types",
  "quickcheck 1.0.3",

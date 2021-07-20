@@ -146,6 +146,7 @@ pub struct EvmBridge {
     accounts: HashMap<evm_state::Address, evm_state::SecretKey>,
     rpc_client: RpcClient,
     verbose_errors: bool,
+    no_simulate: bool,
 }
 
 impl EvmBridge {
@@ -155,6 +156,7 @@ impl EvmBridge {
         evm_keys: Vec<SecretKey>,
         addr: String,
         verbose_errors: bool,
+        no_simulate: bool,
     ) -> Self {
         info!("EVM chain id {}", evm_chain_id);
 
@@ -178,6 +180,7 @@ impl EvmBridge {
             accounts,
             rpc_client,
             verbose_errors,
+            no_simulate,
         }
     }
 
@@ -192,14 +195,16 @@ impl EvmBridge {
 
         let rpc_tx = RPCTransaction::from_transaction(tx.clone())?;
 
-        // Try simulate transaction execution
-        match RpcClient::send::<Bytes>(
-            &self.rpc_client,
-            RpcRequest::EthCall,
-            json!([rpc_tx, "latest"]),
-        ) {
-            Err(e) => return Err(from_client_error(e)),
-            Ok(_o) => {}
+        if self.no_simulate {
+            // Try simulate transaction execution
+            match RpcClient::send::<Bytes>(
+                &self.rpc_client,
+                RpcRequest::EthCall,
+                json!([rpc_tx, "latest"]),
+            ) {
+                Err(e) => return Err(from_client_error(e)),
+                Ok(_o) => {}
+            }
         }
 
         if bytes.len() > evm::TX_MTU {
@@ -273,6 +278,7 @@ impl EvmBridge {
                 &send_raw_tx,
                 RpcSendTransactionConfig {
                     preflight_commitment: Some(CommitmentLevel::Processed),
+                    skip_preflight: self.no_simulate,
                     ..Default::default()
                 },
             )
@@ -1374,6 +1380,8 @@ struct Args {
     evm_chain_id: u64,
     #[structopt(long = "verbose-errors")]
     verbose_errors: bool,
+    #[structopt(long = "no-simulate")]
+    no_simulate: bool,
 }
 
 use jsonrpc_http_server::jsonrpc_core::*;
@@ -1414,6 +1422,7 @@ fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
         vec![evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap()],
         server_path,
         args.verbose_errors,
+        args.no_simulate,
     );
     let meta = Arc::new(meta);
     let mut io = MetaIoHandler::with_middleware(LoggingMiddleware);
