@@ -1,6 +1,7 @@
 mod account_structure;
 pub mod tx_chunks;
 
+pub mod error;
 pub mod instructions;
 pub mod precompiles;
 pub mod processor;

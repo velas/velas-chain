@@ -194,6 +194,9 @@ pub mod velas_evm_cross_execution {
 pub mod velas_native_swap_in_evm_history {
     solana_sdk::declare_id!("8h8BTnexqgpfiA8E6Bx8JT97asTPDGBPwhBR98x1Z5cW");
 }
+pub mod velas_evm_new_error_handling {
+    solana_sdk::declare_id!("9HscytNCkVfhQYuVbKGdicUzk6zGjRVtwXXbo1b6spRG");
+}
 
 lazy_static! {
 
@@ -251,6 +254,7 @@ lazy_static! {
             (velas_hardfork_pack::id(), "EVMblockhashes sysvar history, roothashes calculation. Apply old (reconfigure_native_token, unlock_switch_vote)."),
             (velas_evm_cross_execution::id(), "EVM cross execution."),
             (velas_native_swap_in_evm_history::id(), "Native swap in evm history."),
+            (velas_evm_new_error_handling::id(), "EVM new error handling."),
             /*************** ADD NEW FEATURES HERE ***************/
         ]
         .iter()

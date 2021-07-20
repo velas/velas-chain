@@ -13,6 +13,7 @@ use solana_sdk::process_instruction::InvokeContext;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{keyed_account::KeyedAccount, program_utils::limited_deserialize};
 
+use super::error::EvmError;
 use super::tx_chunks::TxChunks;
 
 /// Return the next AccountInfo or a NotEnoughAccountKeys error
@@ -40,9 +41,12 @@ impl EvmProcessor {
             .is_feature_active(&solana_sdk::feature_set::velas_evm_cross_execution::id());
         let register_swap_tx_in_evm = invoke_context
             .is_feature_active(&solana_sdk::feature_set::velas_native_swap_in_evm_history::id());
+        let new_error_handling = invoke_context
+            .is_feature_active(&solana_sdk::feature_set::velas_evm_new_error_handling::id());
+
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
-            return Err(InstructionError::InvalidError);
+            return Err(EvmError::CrossExecutionNotEnabled.into());
         }
 
         let evm_executor = if let Some(evm_executor) = invoke_context.get_evm_executor() {
@@ -52,7 +56,7 @@ impl EvmProcessor {
                 invoke_context,
                 "Invoke context didn't provide evm executor."
             );
-            return Err(InstructionError::InvalidError);
+            return Err(EvmError::NoEvmExecutorFound.into());
         };
         // bind variable to increase lifetime of temporary RefCell borrow.
         let mut evm_executor_borrow;
@@ -65,7 +69,7 @@ impl EvmProcessor {
                 invoke_context,
                 "Recursive cross-program evm execution not enabled."
             );
-            return Err(InstructionError::InvalidError);
+            return Err(EvmError::RecursiveCrossExecution.into());
         };
 
         let accounts = AccountStructure::new(evm_state_account, keyed_accounts);
@@ -78,6 +82,9 @@ impl EvmProcessor {
             }
             EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => {
                 self.process_authorized_tx(executor, invoke_context, accounts, from, unsigned_tx)
+            }
+            EvmInstruction::EvmBigTransaction(big_tx) => {
+                self.process_big_tx(executor, invoke_context, accounts, big_tx)
             }
             EvmInstruction::FreeOwnership {} => {
                 self.process_free_ownership(executor, invoke_context, accounts)
@@ -93,14 +100,42 @@ impl EvmProcessor {
                 evm_address,
                 register_swap_tx_in_evm,
             ),
-            EvmInstruction::EvmBigTransaction(big_tx) => {
-                self.process_big_tx(executor, invoke_context, accounts, big_tx)
-            }
         };
+
+        // When old error handling, manually convert EvmError to InstructionError
+        let result = result.or_else(|result| {
+            ic_msg!(invoke_context, "Execution error: {}", result);
+
+            let err = if !new_error_handling {
+                use EvmError::*;
+                match result {
+                    CrossExecutionNotEnabled => InstructionError::InvalidError,
+                    NoEvmExecutorFound => InstructionError::InvalidError,
+                    RecursiveCrossExecution => InstructionError::InvalidError,
+                    InternalExecutorError => InstructionError::InvalidArgument,
+                    InternalTransactionError => InstructionError::InvalidError,
+                    MissingAccount => InstructionError::MissingAccount,
+                    MissingRequiredSignature => InstructionError::MissingRequiredSignature,
+                    AuthorizedTransactionIncorrectAddress => InstructionError::InvalidArgument,
+                    FreeNotEvmAccount => InstructionError::InvalidError,
+                    SwapInsufficient => InstructionError::InsufficientFunds,
+                    BorrowingFailed => InstructionError::AccountBorrowFailed,
+                    AllocateStorageFailed => InstructionError::InvalidArgument,
+                    WriteStorageFailed => InstructionError::InvalidArgument,
+                    DeserializationError => InstructionError::InvalidArgument,
+                    RevertTransaction => return Ok(()), // originally revert was not an error
+                }
+            } else {
+                result.into()
+            };
+
+            Err(err)
+        });
 
         if register_swap_tx_in_evm {
             executor.reset_balance(*precompiles::ETH_TO_VLX_ADDR)
         }
+
         result
     }
 
@@ -110,7 +145,7 @@ impl EvmProcessor {
         invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         evm_tx: evm::Transaction,
-    ) -> Result<(), InstructionError> {
+    ) -> Result<(), EvmError> {
         // TODO: Handle gas price in EVM Bridge
 
         ic_msg!(
@@ -122,50 +157,13 @@ impl EvmProcessor {
             evm_tx.action
         );
         let tx_gas_price = evm_tx.gas_price;
-        let result = executor
-            .transaction_execute(
-                evm_tx,
-                precompiles::entrypoint(accounts, executor.support_precompile()),
-            )
-            .map_err(|e| {
-                ic_msg!(
-                    invoke_context,
-                    "EvmTransaction: transaction execution error: {}",
-                    e
-                );
-                InstructionError::InvalidArgument
-            })?;
-
-        ic_msg!(
-            invoke_context,
-            "EvmTransaction: Executed transaction result: {:?}",
-            result
+        let result = executor.transaction_execute(
+            evm_tx,
+            precompiles::entrypoint(accounts, executor.support_precompile()),
         );
-        if matches!(
-            result.exit_reason,
-            ExitReason::Fatal(_) | ExitReason::Error(_)
-        ) {
-            return Err(InstructionError::InvalidError);
-        }
+        let sender = accounts.users.first();
 
-        let fee = tx_gas_price * result.used_gas;
-        if let Some(payer) = accounts.users.first() {
-            let (fee, _) = gweis_to_lamports(fee);
-            ic_msg!(
-                invoke_context,
-                "EvmTransaction: Refunding transaction fee to transaction sender fee:{:?}, sender:{}",
-                fee,
-                payer.unsigned_key()
-            );
-            accounts.evm.account.borrow_mut().lamports -= fee;
-            payer.account.borrow_mut().lamports += fee;
-        } else {
-            ic_msg!(
-                invoke_context,
-                "EvmTransaction: Sender didnt give his account, ignoring fee refund.",
-            );
-        }
-        Ok(())
+        self.handle_transaction_result(invoke_context, accounts, sender, tx_gas_price, result)
     }
 
     fn process_authorized_tx(
@@ -175,7 +173,7 @@ impl EvmProcessor {
         accounts: AccountStructure,
         from: evm::Address,
         unsigned_tx: evm::UnsignedTransaction,
-    ) -> Result<(), InstructionError> {
+    ) -> Result<(), EvmError> {
         // TODO: Check that it is from program?
         // TODO: Gas limit?
         let program_account = accounts.first().ok_or_else(|| {
@@ -183,7 +181,7 @@ impl EvmProcessor {
                 invoke_context,
                 "EvmAuthorizedTransaction: Not enough accounts, expected signer address as second account."
             );
-            InstructionError::NotEnoughAccountKeys
+            EvmError::MissingAccount
         })?;
         let key = if let Some(key) = program_account.signer_key() {
             key
@@ -192,7 +190,7 @@ impl EvmProcessor {
                 invoke_context,
                 "EvmAuthorizedTransaction: Second account is not a signer, cannot execute transaction."
             );
-            return Err(InstructionError::MissingRequiredSignature);
+            return Err(EvmError::MissingRequiredSignature);
         };
         let from_expected = crate::evm_address_for_program(*key);
 
@@ -201,7 +199,7 @@ impl EvmProcessor {
                 invoke_context,
                 "EvmAuthorizedTransaction: From is not calculated with evm_address_for_program."
             );
-            return Err(InstructionError::InvalidArgument);
+            return Err(EvmError::AuthorizedTransactionIncorrectAddress);
         }
 
         ic_msg!(
@@ -214,46 +212,14 @@ impl EvmProcessor {
         );
 
         let tx_gas_price = unsigned_tx.gas_price;
-        let result = executor
-            .transaction_execute_unsinged(
-                from,
-                unsigned_tx,
-                precompiles::entrypoint(accounts, executor.support_precompile()),
-            )
-            .map_err(|e| {
-                ic_msg!(
-                    invoke_context,
-                    "EvmAuthorizedTransaction: transaction execution error: {}",
-                    e
-                );
-                InstructionError::InvalidArgument
-            })?;
-        ic_msg!(
-            invoke_context,
-            "EvmAuthorizedTransaction: Executed transaction result: {:?}",
-            result
+        let result = executor.transaction_execute_unsinged(
+            from,
+            unsigned_tx,
+            precompiles::entrypoint(accounts, executor.support_precompile()),
         );
-        if matches!(
-            result.exit_reason,
-            ExitReason::Fatal(_) | ExitReason::Error(_)
-        ) {
-            return Err(InstructionError::InvalidError);
-        }
-        let fee = tx_gas_price * result.used_gas;
-        let payer = accounts
-            .first()
-            .expect("Payer is program account, and was checked before");
-        let (fee, _) = gweis_to_lamports(fee);
-        ic_msg!(
-            invoke_context,
-            "EvmAuthorizedTransaction: Refunding transaction fee to transaction sender fee:{:?}, sender:{}",
-            fee,
-            payer.unsigned_key()
-        );
-        accounts.evm.account.borrow_mut().lamports -= fee;
-        payer.account.borrow_mut().lamports += fee;
+        let sender = accounts.first();
 
-        Ok(())
+        self.handle_transaction_result(invoke_context, accounts, sender, tx_gas_price, result)
     }
 
     fn process_free_ownership(
@@ -261,23 +227,25 @@ impl EvmProcessor {
         _executor: &mut Executor,
         invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
-    ) -> Result<(), InstructionError> {
+    ) -> Result<(), EvmError> {
         let user = accounts.first().ok_or_else(|| {
             ic_msg!(
                 invoke_context,
                 "FreeOwnership: expected account as argument."
             );
-            InstructionError::NotEnoughAccountKeys
+            EvmError::MissingAccount
         })?;
         let user_pk = user.unsigned_key();
-        let mut user = user.try_account_ref_mut()?;
+        let mut user = user
+            .try_account_ref_mut()
+            .map_err(|_| EvmError::BorrowingFailed)?;
 
         if user.owner != crate::ID || *user_pk == solana::evm_state::ID {
             ic_msg!(
                 invoke_context,
                 "FreeOwnership: Incorrect account provided, maybe this account is not owned by evm."
             );
-            return Err(InstructionError::InvalidError);
+            return Err(EvmError::FreeNotEvmAccount);
         }
         user.owner = solana_sdk::system_program::id();
         Ok(())
@@ -291,14 +259,14 @@ impl EvmProcessor {
         lamports: u64,
         evm_address: evm::Address,
         register_swap_tx_in_evm: bool,
-    ) -> Result<(), InstructionError> {
+    ) -> Result<(), EvmError> {
         let gweis = evm::lamports_to_gwei(lamports);
         let user = accounts.first().ok_or_else(|| {
             ic_msg!(
                 invoke_context,
                 "SwapNativeToEther: No sender account found in swap to evm."
             );
-            InstructionError::NotEnoughAccountKeys
+            EvmError::MissingAccount
         })?;
 
         ic_msg!(
@@ -314,10 +282,12 @@ impl EvmProcessor {
 
         if user.signer_key().is_none() {
             ic_msg!(invoke_context, "SwapNativeToEther: from must sign");
-            return Err(InstructionError::MissingRequiredSignature);
+            return Err(EvmError::MissingRequiredSignature);
         }
 
-        let mut user_account = user.try_account_ref_mut()?;
+        let mut user_account = user
+            .try_account_ref_mut()
+            .map_err(|_| EvmError::BorrowingFailed)?;
         if lamports > user_account.lamports {
             ic_msg!(
                 invoke_context,
@@ -325,11 +295,15 @@ impl EvmProcessor {
                 user_account.lamports,
                 lamports
             );
-            return Err(InstructionError::InsufficientFunds);
+            return Err(EvmError::SwapInsufficient);
         }
 
         user_account.lamports -= lamports;
-        accounts.evm.try_account_ref_mut()?.lamports += lamports;
+        accounts
+            .evm
+            .try_account_ref_mut()
+            .map_err(|_| EvmError::BorrowingFailed)?
+            .lamports += lamports;
         executor.deposit(evm_address, gweis);
         if register_swap_tx_in_evm {
             executor.register_swap_tx_in_evm(*precompiles::ETH_TO_VLX_ADDR, evm_address, gweis)
@@ -343,7 +317,7 @@ impl EvmProcessor {
         invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         big_tx: EvmBigTransaction,
-    ) -> Result<(), InstructionError> {
+    ) -> Result<(), EvmError> {
         debug!("executing big_tx = {:?}", big_tx);
 
         let storage = accounts.first().ok_or_else(|| {
@@ -351,14 +325,19 @@ impl EvmProcessor {
                 invoke_context,
                 "EvmBigTransaction: No storage account found."
             );
-            InstructionError::InvalidArgument
+            EvmError::MissingAccount
         })?;
 
         if storage.signer_key().is_none() {
-            ic_msg!(invoke_context, "EvmBigTransaction: from must sign");
-            return Err(InstructionError::MissingRequiredSignature);
+            ic_msg!(
+                invoke_context,
+                "EvmBigTransaction: Storage should sign instruction."
+            );
+            return Err(EvmError::MissingRequiredSignature);
         }
-        let mut storage = storage.try_account_ref_mut()?;
+        let mut storage = storage
+            .try_account_ref_mut()
+            .map_err(|_| EvmError::BorrowingFailed)?;
 
         let mut tx_chunks = TxChunks::new(storage.data.as_mut_slice());
 
@@ -370,7 +349,7 @@ impl EvmProcessor {
                         "EvmTransactionAllocate: allocate error: {:?}",
                         e
                     );
-                    InstructionError::InvalidArgument
+                    EvmError::AllocateStorageFailed
                 })?;
 
                 Ok(())
@@ -389,7 +368,7 @@ impl EvmProcessor {
                         "EvmTransactionWrite: Tx write error: {:?}",
                         e
                     );
-                    InstructionError::InvalidArgument
+                    EvmError::WriteStorageFailed
                 })?;
 
                 Ok(())
@@ -407,7 +386,7 @@ impl EvmProcessor {
                         "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
                         e
                     );
-                    InstructionError::InvalidArgument
+                    EvmError::DeserializationError
                 })?;
 
                 debug!("Executing EVM tx = {:?}", tx);
@@ -420,48 +399,66 @@ impl EvmProcessor {
                     tx.action
                 );
                 let tx_gas_price = tx.gas_price;
-                let result = executor
-                    .transaction_execute(tx, precompiles::entrypoint(accounts, executor.support_precompile()))
-                    .map_err(|e| {
-                        ic_msg!(
-                            invoke_context,
-                            "BigTransaction::EvmTransactionExecute: transaction execution error: {}",
-                            e
-                        );
-                        InstructionError::InvalidArgument
-                    })?;
-
-                ic_msg!(
-                    invoke_context,
-                    "BigTransaction::EvmTransactionExecute: Execute tx exit status = {:?}",
-                    result
+                let result = executor.transaction_execute(
+                    tx,
+                    precompiles::entrypoint(accounts, executor.support_precompile()),
                 );
-                if matches!(
-                    result.exit_reason,
-                    ExitReason::Fatal(_) | ExitReason::Error(_)
-                ) {
-                    return Err(InstructionError::InvalidError);
-                }
-                let fee = tx_gas_price * result.used_gas;
-                if let Some(payer) = accounts.users.get(1) {
-                    let (fee, _) = gweis_to_lamports(fee);
-                    ic_msg!(
-                        invoke_context,
-                        "BigTransaction::EvmTransactionExecute: Refunding transaction fee to transaction sender fee:{:?}, sender:{}",
-                        fee,
-                        payer.unsigned_key()
-                    );
-                    accounts.evm.account.borrow_mut().lamports -= fee;
-                    payer.account.borrow_mut().lamports += fee;
-                } else {
-                    ic_msg!(
-                        invoke_context,
-                        "BigTransaction::EvmTransactionExecute: Sender didnt give his account, ignoring fee refund.",
-                    );
-                }
-                Ok(())
+                let sender = accounts.users.get(1);
+
+                self.handle_transaction_result(
+                    invoke_context,
+                    accounts,
+                    sender,
+                    tx_gas_price,
+                    result,
+                )
             }
         }
+    }
+
+    // Handle executor errors.
+    // refund fee
+    pub fn handle_transaction_result(
+        &self,
+        invoke_context: &dyn InvokeContext,
+        accounts: AccountStructure,
+        sender: Option<&KeyedAccount>,
+        tx_gas_price: evm_state::U256,
+        result: Result<evm_state::ExecutionResult, evm_state::error::Error>,
+    ) -> Result<(), EvmError> {
+        let result = result.map_err(|e| {
+            ic_msg!(invoke_context, "Transaction execution error: {}", e);
+            EvmError::InternalExecutorError
+        })?;
+
+        ic_msg!(invoke_context, "Execute tx exit status = {:?}", result);
+        if matches!(
+            result.exit_reason,
+            ExitReason::Fatal(_) | ExitReason::Error(_)
+        ) {
+            return Err(EvmError::InternalTransactionError);
+        }
+        let fee = tx_gas_price * result.used_gas;
+        if let Some(payer) = sender {
+            let (fee, _) = gweis_to_lamports(fee);
+            ic_msg!(
+                invoke_context,
+                "Refunding transaction fee to transaction sender fee:{:?}, sender:{}",
+                fee,
+                payer.unsigned_key()
+            );
+            accounts.refund_fee(payer, fee)?;
+        } else {
+            ic_msg!(
+                invoke_context,
+                "Sender didnt give his account, ignoring fee refund.",
+            );
+        }
+        // revert processed after fee refund, because it is a valid behaviour
+        if let ExitReason::Revert(_) = result.exit_reason {
+            return Err(EvmError::RevertTransaction);
+        }
+        Ok(())
     }
 
     /// Ensure that first account is program itself, and it's locked for writes.
