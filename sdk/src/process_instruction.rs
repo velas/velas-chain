@@ -9,7 +9,7 @@ use solana_sdk::{
     message::Message,
     pubkey::Pubkey,
 };
-use std::{cell::RefCell, fmt::Debug, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::BTreeSet, fmt::Debug, rc::Rc, sync::Arc};
 
 // Prototype of a native loader entry point
 ///
@@ -313,6 +313,7 @@ pub struct MockInvokeContext {
     pub programs: Vec<(Pubkey, ProcessInstructionWithContext)>,
     pub invoke_depth: usize,
     pub evm_executor: Option<Rc<RefCell<evm_state::Executor>>>,
+    pub disabled_features: BTreeSet<Pubkey>,
 }
 
 impl MockInvokeContext {
@@ -325,6 +326,10 @@ impl MockInvokeContext {
     pub fn deconstruct(self) -> Option<evm_state::Executor> {
         self.evm_executor
             .and_then(|e| Some(Rc::try_unwrap(e).ok()?.into_inner()))
+    }
+
+    pub fn disable_feature(&mut self, feature: &Pubkey) {
+        self.disabled_features.insert(*feature);
     }
 }
 impl Default for MockInvokeContext {
@@ -339,6 +344,7 @@ impl Default for MockInvokeContext {
             programs: vec![],
             invoke_depth: 0,
             evm_executor: None,
+            disabled_features: BTreeSet::new(),
         }
     }
 }
@@ -385,8 +391,8 @@ impl InvokeContext for MockInvokeContext {
         None
     }
     fn record_instruction(&self, _instruction: &Instruction) {}
-    fn is_feature_active(&self, _feature_id: &Pubkey) -> bool {
-        true
+    fn is_feature_active(&self, feature_id: &Pubkey) -> bool {
+        !self.disabled_features.contains(feature_id)
     }
     fn get_account(&self, _pubkey: &Pubkey) -> Option<RefCell<Account>> {
         None

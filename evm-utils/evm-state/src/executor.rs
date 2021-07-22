@@ -371,7 +371,7 @@ impl Executor {
             },
         );
         let tx = UnsignedTransaction {
-            nonce: nonce,
+            nonce,
             gas_limit: 0.into(),
             gas_price: 0.into(),
             value: amount,

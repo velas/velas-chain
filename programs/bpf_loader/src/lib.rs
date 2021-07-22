@@ -1123,6 +1123,7 @@ mod tests {
             Rc::new(RefCell::new(Executors::default())),
             None,
             Arc::new(FeatureSet::default()),
+            None,
         );
         assert_eq!(
             Err(InstructionError::ProgramFailedToComplete),

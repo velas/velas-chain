@@ -61,7 +61,7 @@ impl EvmProcessor {
         // bind variable to increase lifetime of temporary RefCell borrow.
         let mut evm_executor_borrow;
         // evm executor cannot be borrowed, because it not exist in invoke context, or borrowing failed.
-        let executor = if let Some(evm_executor) = evm_executor.try_borrow_mut().ok() {
+        let executor = if let Ok(evm_executor) = evm_executor.try_borrow_mut() {
             evm_executor_borrow = evm_executor;
             evm_executor_borrow.deref_mut()
         } else {
@@ -515,6 +515,7 @@ mod test {
         FromKey,
     };
     use evm_state::{AccountProvider, ExitReason, ExitSucceed};
+    use hex_literal::hex;
     use primitive_types::{H160, H256, U256};
     use solana_sdk::keyed_account::KeyedAccount;
     use solana_sdk::native_loader;
@@ -1096,8 +1097,16 @@ mod test {
 
             let executor = invoke_context.deconstruct().unwrap();
             println!("cx = {:?}", executor);
+
             let committed = executor.deconstruct().commit_block(0, Default::default());
             state = committed.next_incomming(0);
+            assert_eq!(
+                state
+                    .get_account_state(*precompiles::ETH_TO_VLX_ADDR)
+                    .unwrap()
+                    .balance,
+                0.into()
+            )
         }
 
         // Nothing should change, because of error
@@ -1229,6 +1238,13 @@ mod test {
 
             let committed = executor.deconstruct().commit_block(0, Default::default());
             state = committed.next_incomming(0);
+            assert_eq!(
+                state
+                    .get_account_state(*precompiles::ETH_TO_VLX_ADDR)
+                    .unwrap()
+                    .balance,
+                0.into()
+            )
         }
 
         assert_eq!(
@@ -1569,7 +1585,9 @@ mod test {
             .unwrap_err();
 
         match err {
-            InstructionError::MissingRequiredSignature => {}
+            e @ InstructionError::Custom(_) => {
+                assert_eq!(e, crate::error::EvmError::MissingRequiredSignature.into())
+            } // new_error_handling feature always activated at MockInvokeContext
             rest => panic!("Unexpected result = {:?}", rest),
         }
 
