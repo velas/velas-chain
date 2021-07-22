@@ -38,11 +38,11 @@ impl EvmProcessor {
         let (evm_state_account, keyed_accounts) = Self::check_evm_account(keyed_accounts)?;
 
         let cross_execution_enabled = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas_evm_cross_execution::id());
+            .is_feature_active(&solana_sdk::feature_set::velas::evm_cross_execution::id());
         let register_swap_tx_in_evm = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas_native_swap_in_evm_history::id());
+            .is_feature_active(&solana_sdk::feature_set::velas::native_swap_in_evm_history::id());
         let new_error_handling = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas_evm_new_error_handling::id());
+            .is_feature_active(&solana_sdk::feature_set::velas::evm_new_error_handling::id());
 
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
@@ -56,7 +56,7 @@ impl EvmProcessor {
                 invoke_context,
                 "Invoke context didn't provide evm executor."
             );
-            return Err(EvmError::NoEvmExecutorFound.into());
+            return Err(EvmError::EvmExecutorNotFound.into());
         };
         // bind variable to increase lifetime of temporary RefCell borrow.
         let mut evm_executor_borrow;
@@ -103,30 +103,32 @@ impl EvmProcessor {
         };
 
         // When old error handling, manually convert EvmError to InstructionError
-        let result = result.or_else(|result| {
-            ic_msg!(invoke_context, "Execution error: {}", result);
+        let result = result.or_else(|error| {
+            ic_msg!(invoke_context, "Execution error: {}", error);
 
             let err = if !new_error_handling {
                 use EvmError::*;
-                match result {
-                    CrossExecutionNotEnabled => InstructionError::InvalidError,
-                    NoEvmExecutorFound => InstructionError::InvalidError,
-                    RecursiveCrossExecution => InstructionError::InvalidError,
-                    InternalExecutorError => InstructionError::InvalidArgument,
-                    InternalTransactionError => InstructionError::InvalidError,
+                match error {
+                    CrossExecutionNotEnabled
+                    | EvmExecutorNotFound
+                    | RecursiveCrossExecution
+                    | FreeNotEvmAccount
+                    | InternalTransactionError => InstructionError::InvalidError,
+
+                    InternalExecutorError
+                    | AuthorizedTransactionIncorrectAddress
+                    | AllocateStorageFailed
+                    | WriteStorageFailed
+                    | DeserializationError => InstructionError::InvalidArgument,
+
                     MissingAccount => InstructionError::MissingAccount,
                     MissingRequiredSignature => InstructionError::MissingRequiredSignature,
-                    AuthorizedTransactionIncorrectAddress => InstructionError::InvalidArgument,
-                    FreeNotEvmAccount => InstructionError::InvalidError,
                     SwapInsufficient => InstructionError::InsufficientFunds,
                     BorrowingFailed => InstructionError::AccountBorrowFailed,
-                    AllocateStorageFailed => InstructionError::InvalidArgument,
-                    WriteStorageFailed => InstructionError::InvalidArgument,
-                    DeserializationError => InstructionError::InvalidArgument,
                     RevertTransaction => return Ok(()), // originally revert was not an error
                 }
             } else {
-                result.into()
+                error.into()
             };
 
             Err(err)
@@ -431,7 +433,11 @@ impl EvmProcessor {
             EvmError::InternalExecutorError
         })?;
 
-        ic_msg!(invoke_context, "Execute tx exit status = {:?}", result);
+        ic_msg!(
+            invoke_context,
+            "Transaction execution status = {:?}",
+            result
+        );
         if matches!(
             result.exit_reason,
             ExitReason::Fatal(_) | ExitReason::Error(_)
@@ -515,7 +521,6 @@ mod test {
         FromKey,
     };
     use evm_state::{AccountProvider, ExitReason, ExitSucceed};
-    use hex_literal::hex;
     use primitive_types::{H160, H256, U256};
     use solana_sdk::keyed_account::KeyedAccount;
     use solana_sdk::native_loader;

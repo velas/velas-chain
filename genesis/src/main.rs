@@ -635,9 +635,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     solana_stake_program::add_genesis_accounts(&mut genesis_config);
 
-    if genesis_config.cluster_type == ClusterType::Development
-        || genesis_config.cluster_type == ClusterType::Devnet
-    {
+    if matches!(
+        genesis_config.cluster_type,
+        ClusterType::Development | ClusterType::Devnet
+    ) {
         solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
     } else {
         solana_runtime::genesis_utils::activate_velas_features_on_prod(&mut genesis_config);

@@ -73,7 +73,7 @@ impl AsRef<Path> for Location {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Storage {
     pub(crate) db: Arc<DbWithClose>,
     // Location should be second field, because of drop order in Rust.

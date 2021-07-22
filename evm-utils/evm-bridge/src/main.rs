@@ -146,7 +146,7 @@ pub struct EvmBridge {
     accounts: HashMap<evm_state::Address, evm_state::SecretKey>,
     rpc_client: RpcClient,
     verbose_errors: bool,
-    no_simulate: bool,
+    simulate: bool,
 }
 
 impl EvmBridge {
@@ -156,7 +156,7 @@ impl EvmBridge {
         evm_keys: Vec<SecretKey>,
         addr: String,
         verbose_errors: bool,
-        no_simulate: bool,
+        simulate: bool,
     ) -> Self {
         info!("EVM chain id {}", evm_chain_id);
 
@@ -180,7 +180,7 @@ impl EvmBridge {
             accounts,
             rpc_client,
             verbose_errors,
-            no_simulate,
+            simulate,
         }
     }
 
@@ -195,7 +195,7 @@ impl EvmBridge {
 
         let rpc_tx = RPCTransaction::from_transaction(tx.clone())?;
 
-        if !self.no_simulate {
+        if self.simulate {
             // Try simulate transaction execution
             match RpcClient::send::<Bytes>(
                 &self.rpc_client,
@@ -279,7 +279,7 @@ impl EvmBridge {
                 &send_raw_tx,
                 RpcSendTransactionConfig {
                     preflight_commitment: Some(CommitmentLevel::Processed),
-                    skip_preflight: self.no_simulate,
+                    skip_preflight: !self.simulate,
                     ..Default::default()
                 },
             )
@@ -1382,7 +1382,7 @@ struct Args {
     #[structopt(long = "verbose-errors")]
     verbose_errors: bool,
     #[structopt(long = "no-simulate")]
-    no_simulate: bool,
+    no_simulate: bool, // parse inverted to keep false default
 }
 
 use jsonrpc_http_server::jsonrpc_core::*;
@@ -1423,7 +1423,7 @@ fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
         vec![evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap()],
         server_path,
         args.verbose_errors,
-        args.no_simulate,
+        !args.no_simulate, // invert argument
     );
     let meta = Arc::new(meta);
     let mut io = MetaIoHandler::with_middleware(LoggingMiddleware);
