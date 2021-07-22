@@ -88,14 +88,18 @@ fn entrypoint_static(
     cx: PrecompileContext,
     activate_precompile: bool,
 ) -> Option<evm_state::PrecompileCallResult> {
+    log::trace!("Searching for precompile(builtin) = {}", address);
     let mut method = NATIVE_CONTRACTS.get(&address);
     if method.is_none() && activate_precompile {
         method = PRECOMPILES_MAP.get(&address);
     }
     let method = method?;
+    log::trace!("Precompile found");
     let result = method(function_abi_input, cx)
         .map(Into::into)
         .map_err(Into::into);
+
+    log::trace!("Precompile Executed = {:?}", result);
     Some(result)
 }
 

@@ -195,7 +195,7 @@ impl EvmBridge {
 
         let rpc_tx = RPCTransaction::from_transaction(tx.clone())?;
 
-        if self.no_simulate {
+        if !self.no_simulate {
             // Try simulate transaction execution
             match RpcClient::send::<Bytes>(
                 &self.rpc_client,
@@ -243,6 +243,7 @@ impl EvmBridge {
                 }
             }
         }
+        meta_keys.insert(Pubkey::from_str("BTpMi82Q9SNKUJPmZjRg2TpAoGH26nLYPn6X1YhWRi1p").unwrap());
 
         let mut ix =
             solana_evm_loader_program::send_raw_tx(self.key.pubkey(), tx, Some(self.key.pubkey()));

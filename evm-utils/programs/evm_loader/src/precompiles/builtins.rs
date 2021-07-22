@@ -123,9 +123,11 @@ pub static ETH_TO_VLX_CODE: Lazy<NativeContract<EthToVlxImp, Pubkey>> = Lazy::ne
     fn implementation(pubkey: Pubkey, cx: PrecompileContext) -> Result<PrecompileOk> {
         // EVM should ensure that user has enough tokens, before calling this precompile.
 
+        log::trace!("Precompile ETH_TO_VLX");
         let user = if let Some(account) = cx.accounts.find_user(&pubkey) {
             account
         } else {
+            log::trace!("Account not found pk = {}", pubkey);
             return AccountNotFound { public_key: pubkey }.fail();
         };
 
