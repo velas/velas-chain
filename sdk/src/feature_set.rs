@@ -179,25 +179,26 @@ pub mod test_features {
     solana_sdk::declare_id!("11111111111111111111111111111111");
 }
 
-pub mod velas_hardfork_pack {
-    // 1. difficulty not a hash but a number.
-    // 2. transactionRoot, receiptRoot - should calculate, and empty hashes should be setted too
-    // 3. nonce is 64bit hash not a number.
-    // 4. sha3uncle hash from zero block, not zeros.
-    solana_sdk::declare_id!("91nakVjUc5UmNzLioE6K7HhASmb2m1E7hRuLZS4LzUPV");
-}
+pub mod velas {
+    pub mod hardfork_pack {
+        // 1. difficulty not a hash but a number.
+        // 2. transactionRoot, receiptRoot - should calculate, and empty hashes should be setted too
+        // 3. nonce is 64bit hash not a number.
+        // 4. sha3uncle hash from zero block, not zeros.
+        solana_sdk::declare_id!("91nakVjUc5UmNzLioE6K7HhASmb2m1E7hRuLZS4LzUPV");
+    }
 
-pub mod velas_evm_cross_execution {
-    solana_sdk::declare_id!("3rkhJCKKR8Szj5v237NzRF3FS2nnyRvaeGF8xAvnVkwf");
-}
+    pub mod evm_cross_execution {
+        solana_sdk::declare_id!("3rkhJCKKR8Szj5v237NzRF3FS2nnyRvaeGF8xAvnVkwf");
+    }
 
-pub mod velas_native_swap_in_evm_history {
-    solana_sdk::declare_id!("8h8BTnexqgpfiA8E6Bx8JT97asTPDGBPwhBR98x1Z5cW");
+    pub mod native_swap_in_evm_history {
+        solana_sdk::declare_id!("8h8BTnexqgpfiA8E6Bx8JT97asTPDGBPwhBR98x1Z5cW");
+    }
+    pub mod evm_new_error_handling {
+        solana_sdk::declare_id!("9HscytNCkVfhQYuVbKGdicUzk6zGjRVtwXXbo1b6spRG");
+    }
 }
-pub mod velas_evm_new_error_handling {
-    solana_sdk::declare_id!("9HscytNCkVfhQYuVbKGdicUzk6zGjRVtwXXbo1b6spRG");
-}
-
 lazy_static! {
 
     pub static ref FEATURE_NAMES_BEFORE_MAINNET: HashMap<Pubkey, &'static str> = [
@@ -251,10 +252,10 @@ lazy_static! {
     .chain(
         [
             (test_features::id(), "Test feature used as example how to implement features."),
-            (velas_hardfork_pack::id(), "EVMblockhashes sysvar history, roothashes calculation. Apply old (reconfigure_native_token, unlock_switch_vote)."),
-            (velas_evm_cross_execution::id(), "EVM cross execution."),
-            (velas_native_swap_in_evm_history::id(), "Native swap in evm history."),
-            (velas_evm_new_error_handling::id(), "EVM new error handling."),
+            (velas::hardfork_pack::id(), "EVMblockhashes sysvar history, roothashes calculation. Apply old (reconfigure_native_token, unlock_switch_vote)."),
+            (velas::evm_cross_execution::id(), "EVM cross execution."),
+            (velas::native_swap_in_evm_history::id(), "Native swap in evm history."),
+            (velas::evm_new_error_handling::id(), "EVM new error handling."),
             /*************** ADD NEW FEATURES HERE ***************/
         ]
         .iter()

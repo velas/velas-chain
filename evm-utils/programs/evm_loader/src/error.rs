@@ -6,13 +6,13 @@ use snafu::Snafu;
 /// Reasons the evm execution can fail.
 #[derive(Debug, Clone, PartialEq, FromPrimitive, ToPrimitive, Snafu)]
 pub enum EvmError {
-    #[snafu(display("Cross-Program evm execution not enabled."))]
+    #[snafu(display("Cross-Program EVM execution disabled."))]
     CrossExecutionNotEnabled,
 
     #[snafu(display("InvokeContext didn't provide evm executor."))]
-    NoEvmExecutorFound,
+    EvmExecutorNotFound,
 
-    #[snafu(display("Recursive cross-program evm execution not enabled."))]
+    #[snafu(display("Recursive cross-program EVM execution disabled."))]
     RecursiveCrossExecution,
 
     #[snafu(display("Internal executor error."))]
@@ -33,7 +33,7 @@ pub enum EvmError {
     #[snafu(display("Cannot free ownership of an account that EVM didn't own."))]
     FreeNotEvmAccount,
 
-    #[snafu(display("Cannot process swap, sender has no enogh tokens."))]
+    #[snafu(display("Cannot process swap, sender has no enoght tokens."))]
     SwapInsufficient,
 
     #[snafu(display("Internal Error: Cannot borrow some of account."))]

@@ -1,6 +1,7 @@
-use solana_sdk::{keyed_account::KeyedAccount, pubkey::Pubkey};
+use solana_sdk::{account::Account, keyed_account::KeyedAccount, pubkey::Pubkey};
 
 use crate::error::EvmError;
+use std::cell::RefMut;
 
 /// Helper structure that wrap all solana accounts, that is needed for evm loader.
 /// It will restrict and provide access to needed solana accounts in:
@@ -42,13 +43,28 @@ impl<'a> AccountStructure<'a> {
         Ok(())
     }
 
+    pub fn evm_mut(&self) -> Result<RefMut<Account>, EvmError> {
+        self.evm
+            .try_account_ref_mut()
+            .map_err(|_| EvmError::BorrowingFailed)
+    }
+
+    pub fn user_mut(&self, ix: usize) -> Result<RefMut<Account>, EvmError> {
+        self.users
+            .get(ix)
+            .ok_or(EvmError::MissingAccount)
+            .and_then(|u| {
+                u.try_account_ref_mut()
+                    .map_err(|_| EvmError::BorrowingFailed)
+            })
+    }
+
     /// Create AccountStructure for testing purposes, with random accounts.
     #[cfg(test)]
     pub(crate) fn testing<F, U>(num_keys: usize, func: F) -> U
     where
         F: for<'r> Fn(AccountStructure<'r>) -> U,
     {
-        use solana_sdk::account::Account;
         use std::cell::RefCell;
 
         let evm_key = Pubkey::new_unique();

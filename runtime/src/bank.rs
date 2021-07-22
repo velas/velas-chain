@@ -4896,7 +4896,7 @@ impl Bank {
             self.slot() > Self::get_unlock_switch_vote_slot(self.cluster_type());
         let velas_unlock_switch = self
             .feature_set
-            .is_active(&feature_set::velas_hardfork_pack::id());
+            .is_active(&feature_set::velas::hardfork_pack::id());
         solana_unlock_switch || velas_unlock_switch
     }
 
@@ -4951,7 +4951,7 @@ impl Bank {
         }
         self.ensure_feature_builtins(init_finish_or_warp, &new_feature_activations);
         self.reconfigure_token2_native_mint(
-            new_feature_activations.contains(&feature_set::velas_hardfork_pack::id()),
+            new_feature_activations.contains(&feature_set::velas::hardfork_pack::id()),
         );
         self.ensure_no_storage_rewards_pool();
     }
@@ -5174,12 +5174,12 @@ impl Bank {
 
     fn fix_spv_proofs_evm(&self) -> bool {
         self.feature_set
-            .is_active(&feature_set::velas_hardfork_pack::id())
+            .is_active(&feature_set::velas::hardfork_pack::id())
     }
 
     fn fix_recent_blockhashes_sysvar_evm(&self) -> bool {
         self.feature_set
-            .is_active(&feature_set::velas_hardfork_pack::id())
+            .is_active(&feature_set::velas::hardfork_pack::id())
     }
 
     fn fix_recent_blockhashes_sysvar_delay(&self) -> bool {
@@ -11342,7 +11342,7 @@ pub(crate) mod tests {
 
         // schedule activation of velas_hardfork_pack which contain spl token reconfigure patch
         bank.store_account_and_update_capitalization(
-            &feature_set::velas_hardfork_pack::id(),
+            &feature_set::velas::hardfork_pack::id(),
             &feature::create_account(&Feature { activated_at: None }, feature_balance),
         );
         let bank = Bank::new_from_parent(
