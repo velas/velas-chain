@@ -958,6 +958,7 @@ impl Accounts {
                     fee_payer_index = Some(i);
                 }
                 let is_fee_payer = Some(i) == fee_payer_index;
+                // Change account ONLY IF transaction result is okay.
                 if message.is_writable(i, demote_sysvar_write_locks)
                     && (res.is_ok()
                         || (maybe_nonce_rollback.is_some() && (is_nonce_account || is_fee_payer)))

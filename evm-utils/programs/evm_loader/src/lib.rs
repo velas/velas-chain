@@ -99,7 +99,7 @@ pub(crate) fn transfer_native_to_eth(
     )
 }
 
-pub(crate) fn free_ownership(owner: solana::Address) -> solana::Instruction {
+pub fn free_ownership(owner: solana::Address) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
         AccountMeta::new(owner, true),

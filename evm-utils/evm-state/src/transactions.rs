@@ -450,6 +450,14 @@ impl TransactionReceipt {
             logs,
         }
     }
+    // Returns transaction sender.
+    // If transaction signed, this method involve signature verification.
+    pub fn caller(&self) -> Option<H160> {
+        match &self.transaction {
+            TransactionInReceipt::Unsigned(tx) => Some(tx.caller),
+            TransactionInReceipt::Signed(tx) => tx.caller().ok(),
+        }
+    }
 }
 
 pub fn addr_from_public_key(key: &PublicKey) -> H160 {

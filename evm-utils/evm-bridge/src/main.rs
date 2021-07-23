@@ -38,7 +38,6 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     epoch_info::EpochInfo,
     epoch_schedule::EpochSchedule,
-    instruction::InstructionError,
     message::Message,
     signature::Signer,
     signers::Signers,
@@ -243,7 +242,6 @@ impl EvmBridge {
                 }
             }
         }
-        meta_keys.insert(Pubkey::from_str("BTpMi82Q9SNKUJPmZjRg2TpAoGH26nLYPn6X1YhWRi1p").unwrap());
 
         let mut ix =
             solana_evm_loader_program::send_raw_tx(self.key.pubkey(), tx, Some(self.key.pubkey()));
@@ -798,23 +796,21 @@ fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
             original_err,
         }) => {
             match data {
-                // if transaction preflight, try to get last log message, and return it as error.
+                // if transaction preflight, try to get last log messages, and return it as error.
                 RpcResponseErrorData::SendTransactionPreflightFailure(
                     RpcSimulateTransactionResult {
-                        err:
-                            Some(TransactionError::InstructionError(
-                                _,
-                                InstructionError::InvalidArgument,
-                            )),
+                        err: Some(TransactionError::InstructionError(_, _)),
                         logs: Some(logs),
                         ..
                     },
                 ) if !logs.is_empty() => {
-                    let last_log = logs.last().unwrap();
+                    let first_entry = logs.len().saturating_sub(2); // take two elements from logs
+                    let last_log = logs[first_entry..].join(";");
+
                     return evm_rpc::Error::ProxyRpcError {
                         source: jsonrpc_core::Error {
                             code: (*code).into(),
-                            message: last_log.clone(),
+                            message: last_log,
                             data: original_err.clone().into(),
                         },
                     };
