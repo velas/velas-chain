@@ -3097,11 +3097,11 @@ impl Bank {
                     // Executor can be used to execute multiple transactions, but currently executor only created for single tx.
                     let evm_executor = if tx.message.is_modify_evm_state() {
                         // append to old patch if exist, or create new, from existing evm state
-                        let state = evm_patch.take().or_else(|| evm_state_getter(self));
+                        evm_patch = evm_patch.take().or_else(|| evm_state_getter(self));
                         let last_hashes = self.evm_hashes();
-                        if let Some(state) = state {
+                        if let Some(state) = &evm_patch {
                             let evm_executor = evm_state::Executor::with_config(
-                                state,
+                                state.clone(),
                                 evm_state::ChainContext::new(last_hashes),
                                 evm_state::EvmConfig::new(self.evm_chain_id),
                             );
@@ -3137,7 +3137,21 @@ impl Bank {
                         let executor = Rc::try_unwrap(evm_executor)
                             .expect("Rc should be free after message processing.")
                             .into_inner();
-                        evm_patch = Some(executor.deconstruct());
+                        let new_patch = executor.deconstruct();
+
+                        // On error save only transaction and increase nonce.
+                        if matches!(process_result, Err(TransactionError::InstructionError(..)))
+                            && self.feature_set.is_active(
+                                &solana_sdk::feature_set::velas::evm_new_error_handling::id(),
+                            )
+                        {
+                            evm_patch
+                                .as_mut()
+                                .expect("Evm patch should exist, on transaction execution.")
+                                .apply_failed_update(&new_patch);
+                        } else {
+                            evm_patch = Some(new_patch);
+                        }
                     }
 
                     if enable_log_recording {
@@ -8200,6 +8214,186 @@ pub(crate) mod tests {
             let (before, after) = test_with_users(*i);
             assert_ne!(before, after);
         }
+    }
+
+    #[test]
+    fn test_evm_revert_tx() {
+        solana_logger::setup_with("trace");
+        fn fund_evm_with_revert(
+            from_keypair: &Keypair,
+            receiver: evm_state::H160,
+            hash: Hash,
+            lamports: u64,
+        ) -> Transaction {
+            let from_pubkey = from_keypair.pubkey();
+            let mut instructions = solana_evm_loader_program::transfer_native_to_eth_ixs(
+                from_pubkey,
+                lamports,
+                receiver,
+            );
+            let s = Keypair::new();
+            // add invalid ix that should revert tx
+            let ix = solana_evm_loader_program::free_ownership(s.pubkey());
+            instructions.push(ix);
+            let message = Message::new(&instructions, Some(&from_pubkey));
+            Transaction::new(&[from_keypair, &s], message, hash)
+        }
+        let tx = solana_evm_loader_program::processor::dummy_call(0).0;
+        let receiver = tx.caller().unwrap();
+        let (genesis_config, mint_keypair) = create_genesis_config(20000);
+        let mut bank = Bank::new(&genesis_config);
+
+        bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
+        bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
+        let recent_hash = genesis_config.hash();
+
+        let tx = fund_evm_with_revert(&mint_keypair, receiver, recent_hash, 20000);
+        let res = bank.process_transaction(&tx);
+
+        res.unwrap_err();
+
+        let hash_before = bank.evm_state.read().unwrap().last_root();
+        bank.freeze();
+
+        let evm_state = bank.evm_state.read().unwrap();
+        let hash_after = evm_state.last_root();
+
+        // check that revert keep tx in history, but balances are set to zero
+        assert_eq!(evm_state.processed_tx_len(), 1);
+        let account = bank.get_account(&mint_keypair.pubkey()).unwrap();
+        assert_eq!(account.lamports, 20000);
+        let state = evm_state.get_account_state(receiver).unwrap_or_default();
+        assert_eq!(state.balance, 0.into());
+        let state_swapper = evm_state
+            .get_account_state(*solana_evm_loader_program::precompiles::ETH_TO_VLX_ADDR)
+            .unwrap_or_default();
+        assert_eq!(state_swapper.nonce, 1.into());
+        assert_eq!(state_swapper.balance, 0.into());
+
+        // hash updated with nonce increasing
+        assert_ne!(hash_before, hash_after);
+    }
+
+    #[test]
+    fn test_evm_revert_tx_swap() {
+        solana_logger::setup_with("trace");
+        fn fund_evm_with_evm_call(
+            from_keypair: &Keypair,
+            receiver: evm_state::H160,
+            hash: Hash,
+            lamports: u64,
+            nonce: usize,
+        ) -> Transaction {
+            let from_pubkey = from_keypair.pubkey();
+            let mut instructions = solana_evm_loader_program::transfer_native_to_eth_ixs(
+                from_pubkey,
+                lamports,
+                receiver,
+            );
+            let instruction = solana_evm_loader_program::send_raw_tx(
+                from_pubkey,
+                solana_evm_loader_program::processor::dummy_call(nonce).0,
+                None,
+            );
+            instructions.push(instruction);
+            let s = Keypair::new();
+            // add invalid ix that should revert tx
+            let ix = solana_evm_loader_program::free_ownership(s.pubkey());
+            instructions.push(ix);
+            let message = Message::new(&instructions, Some(&from_pubkey));
+            Transaction::new(&[from_keypair, &s], message, hash)
+        }
+        let tx = solana_evm_loader_program::processor::dummy_call(0).0;
+        let receiver = tx.caller().unwrap();
+        let (genesis_config, mint_keypair) = create_genesis_config(20000);
+        let mut bank = Bank::new(&genesis_config);
+
+        bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
+        bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
+        let recent_hash = genesis_config.hash();
+
+        let tx = fund_evm_with_evm_call(&mint_keypair, receiver, recent_hash, 20000, 0);
+        let res = bank.process_transaction(&tx);
+
+        res.unwrap_err();
+
+        let hash_before = bank.evm_state.read().unwrap().last_root();
+        bank.freeze();
+
+        let evm_state = bank.evm_state.read().unwrap();
+        let hash_after = evm_state.last_root();
+
+        // check that revert keep tx in history, but balances are set to zero
+        assert_eq!(evm_state.processed_tx_len(), 2);
+        let account = bank.get_account(&mint_keypair.pubkey()).unwrap();
+        assert_eq!(account.lamports, 20000);
+        let state = evm_state.get_account_state(receiver).unwrap_or_default();
+        assert_eq!(state.balance, 0.into());
+        assert_eq!(state.nonce, 1.into());
+        let state_swapper = evm_state
+            .get_account_state(*solana_evm_loader_program::precompiles::ETH_TO_VLX_ADDR)
+            .unwrap_or_default();
+        assert_eq!(state_swapper.nonce, 1.into());
+        assert_eq!(state_swapper.balance, 0.into());
+
+        // hash updated with nonce increasing
+        assert_ne!(hash_before, hash_after);
+    }
+
+    #[test]
+    fn test_evm_no_revert_tx_on_new_errorhandling() {
+        solana_logger::setup();
+        fn fund_evm(
+            from_keypair: &Keypair,
+            receiver: evm_state::H160,
+            hash: Hash,
+            lamports: u64,
+        ) -> Transaction {
+            let from_pubkey = from_keypair.pubkey();
+            let instructions = solana_evm_loader_program::transfer_native_to_eth_ixs(
+                from_pubkey,
+                lamports,
+                receiver,
+            );
+            let message = Message::new(&instructions, Some(&from_pubkey));
+            Transaction::new(&[from_keypair], message, hash)
+        }
+        let tx = solana_evm_loader_program::processor::dummy_call(0).0;
+        let receiver = tx.caller().unwrap();
+        let (genesis_config, mint_keypair) = create_genesis_config(20000);
+        let mut bank = Bank::new(&genesis_config);
+
+        bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
+        bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
+        let recent_hash = genesis_config.hash();
+
+        let tx = fund_evm(&mint_keypair, receiver, recent_hash, 20000);
+        let res = bank.process_transaction(&tx);
+
+        res.unwrap();
+
+        let hash_before = bank.evm_state.read().unwrap().last_root();
+        bank.freeze();
+
+        let evm_state = bank.evm_state.read().unwrap();
+        let hash_after = evm_state.last_root();
+
+        // check that revert keep tx in history, but balances are set to zero
+        assert_eq!(evm_state.processed_tx_len(), 1);
+        let account = bank.get_account(&mint_keypair.pubkey()).unwrap_or_default();
+        assert_eq!(account.lamports, 0);
+        let state = evm_state.get_account_state(receiver).unwrap_or_default();
+        assert_eq!(
+            state.balance,
+            solana_evm_loader_program::scope::evm::lamports_to_gwei(20000)
+        ); // 10^9 times bigger
+        let state_swapper = evm_state
+            .get_account_state(*solana_evm_loader_program::precompiles::ETH_TO_VLX_ADDR)
+            .unwrap_or_default();
+        assert_eq!(state_swapper.nonce, 1.into());
+        assert_eq!(state_swapper.balance, 0.into());
+
+        assert_ne!(hash_before, hash_after);
     }
 
     #[test]

@@ -102,6 +102,10 @@ impl EvmProcessor {
             ),
         };
 
+        if register_swap_tx_in_evm {
+            executor.reset_balance(*precompiles::ETH_TO_VLX_ADDR)
+        }
+
         // When old error handling, manually convert EvmError to InstructionError
         let result = result.or_else(|error| {
             ic_msg!(invoke_context, "Execution error: {}", error);
@@ -133,10 +137,6 @@ impl EvmProcessor {
 
             Err(err)
         });
-
-        if register_swap_tx_in_evm {
-            executor.reset_balance(*precompiles::ETH_TO_VLX_ADDR)
-        }
 
         result
     }
@@ -444,6 +444,11 @@ impl EvmProcessor {
         ) {
             return Err(EvmError::InternalTransactionError);
         }
+        // Fee refund will not work with revert, because transaction will be reverted from native chain too.
+        if let ExitReason::Revert(_) = result.exit_reason {
+            return Err(EvmError::RevertTransaction);
+        }
+
         let fee = tx_gas_price * result.used_gas;
         if let Some(payer) = sender {
             let (fee, _) = gweis_to_lamports(fee);
@@ -460,10 +465,7 @@ impl EvmProcessor {
                 "Sender didnt give his account, ignoring fee refund.",
             );
         }
-        // revert processed after fee refund, because it is a valid behaviour
-        if let ExitReason::Revert(_) = result.exit_reason {
-            return Err(EvmError::RevertTransaction);
-        }
+
         Ok(())
     }
 
@@ -1506,6 +1508,140 @@ mod test {
             let executor = context.deconstruct().unwrap();
             println!("cx =  {:?}", executor);
             result.unwrap();
+        }
+    }
+
+    // Contract receive ether, and then try to spend 1 ether, when other method called.
+    // Spend is done with native swap.
+    #[test]
+    fn execute_swap_with_revert() {
+        use hex_literal::hex;
+        let _ = simple_logger::SimpleLogger::new().init();
+        let code_without_revert = hex!("608060405234801561001057600080fd5b5061021a806100206000396000f3fe6080604052600436106100295760003560e01c80639c320d0b1461002e578063a3e76c0f14610089575b600080fd5b34801561003a57600080fd5b506100876004803603604081101561005157600080fd5b81019080803573ffffffffffffffffffffffffffffffffffffffff16906020019092919080359060200190929190505050610093565b005b6100916101e2565b005b8173ffffffffffffffffffffffffffffffffffffffff16670de0b6b3a764000082604051602401808281526020019150506040516020818303038152906040527fb1d6927a000000000000000000000000000000000000000000000000000000007bffffffffffffffffffffffffffffffffffffffffffffffffffffffff19166020820180517bffffffffffffffffffffffffffffffffffffffffffffffffffffffff83818316178352505050506040518082805190602001908083835b602083106101745780518252602082019150602081019050602083039250610151565b6001836020036101000a03801982511681845116808217855250505050505090500191505060006040518083038185875af1925050503d80600081146101d6576040519150601f19603f3d011682016040523d82523d6000602084013e6101db565b606091505b5050505050565b56fea2646970667358221220b9c91ba5fa12925c1988f74e7b6cc9f8047a3a0c36f13b65773a6b608d08b17a64736f6c634300060c0033");
+        let code_with_revert = hex!("608060405234801561001057600080fd5b5061021b806100206000396000f3fe6080604052600436106100295760003560e01c80639c320d0b1461002e578063a3e76c0f14610089575b600080fd5b34801561003a57600080fd5b506100876004803603604081101561005157600080fd5b81019080803573ffffffffffffffffffffffffffffffffffffffff16906020019092919080359060200190929190505050610093565b005b6100916101e3565b005b8173ffffffffffffffffffffffffffffffffffffffff16670de0b6b3a764000082604051602401808281526020019150506040516020818303038152906040527fb1d6927a000000000000000000000000000000000000000000000000000000007bffffffffffffffffffffffffffffffffffffffffffffffffffffffff19166020820180517bffffffffffffffffffffffffffffffffffffffffffffffffffffffff83818316178352505050506040518082805190602001908083835b602083106101745780518252602082019150602081019050602083039250610151565b6001836020036101000a03801982511681845116808217855250505050505090500191505060006040518083038185875af1925050503d80600081146101d6576040519150601f19603f3d011682016040523d82523d6000602084013e6101db565b606091505b505050600080fd5b56fea2646970667358221220ca731585b5955eee8418d7952d7537d5e7576a8ac5047530ddb0282f369e7f8e64736f6c634300060c0033");
+
+        // abi encode "address _contract": "0x56454c41532D434841494e000000000053574150", "bytes32 native_recipient": "0x9b73845fe592e092a13df83a8f8485296ba9c0a28c7c0824c33b1b3b352b4043"
+        let contract_take_ether_abi = hex!("9c320d0b00000000000000000000000056454c41532d434841494e0000000000535741509b73845fe592e092a13df83a8f8485296ba9c0a28c7c0824c33b1b3b352b4043");
+        let _receive_tokens_abi = hex!("a3e76c0f"); // no need because we use fn deposit from vm.
+
+        for code in [&code_without_revert[..], &code_with_revert[..]] {
+            let revert = code == &code_with_revert[..];
+            let mut state = evm_state::EvmBackend::default();
+            let processor = EvmProcessor::default();
+            let evm_account = RefCell::new(crate::create_state_account(1_000_000_000));
+            let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+            let receiver = Pubkey::new(&hex!(
+                "9b73845fe592e092a13df83a8f8485296ba9c0a28c7c0824c33b1b3b352b4043"
+            ));
+            let user_account = RefCell::new(solana_sdk::account::Account::new(
+                0,
+                0,
+                &solana_sdk::system_program::id(),
+            ));
+            let user_account = KeyedAccount::new(&receiver, false, &user_account);
+            let keyed_accounts = [evm_keyed_account, user_account];
+
+            let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
+
+            let tx_create = evm::UnsignedTransaction {
+                nonce: 0.into(),
+                gas_price: 1.into(),
+                gas_limit: 300000.into(),
+                action: TransactionAction::Create,
+                value: 0.into(),
+                input: code.to_vec(),
+            };
+            let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
+
+            let _caller_address = tx_create.caller().unwrap();
+
+            let tx_address = tx_create.address().unwrap();
+
+            {
+                let mut executor = evm_state::Executor::default_configs(state);
+                let address = secret_key.to_address();
+                executor.deposit(address, U256::from(2) * 300000);
+
+                let mut invoke_context = MockInvokeContext::with_evm(executor);
+                assert!(processor
+                    .process_instruction(
+                        &crate::ID,
+                        &keyed_accounts,
+                        &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create })
+                            .unwrap(),
+                        &mut invoke_context,
+                        false,
+                    )
+                    .is_ok());
+
+                let executor = invoke_context.deconstruct().unwrap();
+                println!("cx = {:?}", executor);
+                let committed = executor.deconstruct().commit_block(0, Default::default());
+                state = committed.next_incomming(0);
+            }
+
+            {
+                let mut executor = evm_state::Executor::default_configs(state);
+
+                executor.deposit(
+                    tx_address,
+                    U256::from(1_000_000_000) * U256::from(1_000_000_000),
+                ); // 1ETHER
+
+                let tx_call = evm::UnsignedTransaction {
+                    nonce: 1.into(),
+                    gas_price: 1.into(),
+                    gas_limit: 300000.into(),
+                    action: TransactionAction::Call(tx_address),
+                    value: 0.into(),
+                    input: contract_take_ether_abi.to_vec(),
+                };
+
+                let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
+                let tx_hash = tx_call.tx_id_hash();
+
+                let mut invoke_context = MockInvokeContext::with_evm(executor);
+
+                let result = processor.process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
+                        .unwrap(),
+                    &mut invoke_context,
+                    false,
+                );
+                if !revert {
+                    result.unwrap();
+                } else {
+                    assert_eq!(result.unwrap_err(), EvmError::RevertTransaction.into())
+                }
+                println!("logs = {:?}", invoke_context.logger);
+                let mut executor = invoke_context.deconstruct().unwrap();
+                println!("cx = {:?}", executor);
+                let tx = executor.get_tx_receipt_by_hash(tx_hash).unwrap();
+                if revert {
+                    println!("status = {:?}", tx.status);
+                    assert!(matches!(tx.status, ExitReason::Revert(_)));
+                }
+
+                let committed = executor.deconstruct().commit_block(0, Default::default());
+                state = committed.next_incomming(0);
+
+                let lamports = keyed_accounts[1].account.borrow().lamports;
+                if !revert {
+                    assert_eq!(
+                        state.get_account_state(tx_address).unwrap().balance,
+                        0.into()
+                    );
+                    assert_eq!(lamports, 1_000_000_000)
+                } else {
+                    assert_eq!(
+                        state.get_account_state(tx_address).unwrap().balance,
+                        U256::from(1_000_000_000) * U256::from(1_000_000_000)
+                    );
+                    // assert_eq!(lamports, 0), solana runtime will revert this account
+                }
+            }
         }
     }
 

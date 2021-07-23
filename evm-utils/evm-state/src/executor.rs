@@ -175,7 +175,8 @@ impl Executor {
         let fee = executor.fee(gas_price);
         let mut executor_state = executor.into_state();
 
-        if let ExitReason::Succeed(_) = &exit_reason {
+        let burn_fee = matches!(exit_reason, ExitReason::Succeed(_));
+        if burn_fee {
             // Burn the fee, if transaction executed correctly
             executor_state
                 .withdraw(caller, fee)

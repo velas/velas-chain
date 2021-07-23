@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use evm::{ExitReason, ExitRevert};
 use log::*;
 
 use primitive_types::H256;
@@ -207,6 +208,12 @@ impl EvmBackend<Incomming> {
         state.state_root = new_root;
     }
 
+    fn increase_nonce(&mut self, address: H160) {
+        let mut account_state = self.get_account_state(address).unwrap_or_default();
+        account_state.nonce += U256::from(1);
+        self.set_account_state(address, account_state)
+    }
+
     pub fn commit_block(mut self, slot: u64, native_blockhash: H256) -> EvmBackend<Committed> {
         debug!("commit: State before = {:?}", self.state);
         self.flush_changes();
@@ -277,6 +284,39 @@ impl EvmBackend<Incomming> {
             .iter()
             .map(|(h, _)| *h)
             .collect()
+    }
+
+    pub fn apply_failed_update(&mut self, failed: &Self) {
+        let txs_len = self.state.executed_transactions.len();
+        debug_assert_eq!(
+            self.state.executed_transactions[..txs_len],
+            failed.state.executed_transactions[..txs_len]
+        );
+
+        // Save all remaining txs as reverted, increase nonce to transaction sender.
+        if failed.state.executed_transactions.len() > txs_len {
+            for (h, tx) in failed.state.executed_transactions[txs_len..].iter() {
+                let mut tx = tx.clone();
+
+                // dont change failed or error status
+                if matches!(tx.status, ExitReason::Succeed(_)) {
+                    debug!("Setting exit status to reverted, for tx={:?}", h);
+
+                    tx.status = ExitReason::Revert(ExitRevert::Reverted);
+                }
+
+                if let Some(caller) = tx.caller() {
+                    debug!("Increasing nonce for caller={:?}", caller);
+                    self.increase_nonce(caller);
+                    self.state.executed_transactions.push((*h, tx));
+                } else {
+                    error!(
+                        "Cannot get caller for tx={:?}, don't save this transaction",
+                        h
+                    )
+                }
+            }
+        }
     }
 
     pub fn set_initial(
@@ -667,6 +707,13 @@ impl EvmState {
         match self {
             Self::Incomming(i) => i.get_storage_from_kvs(root, address, index),
             Self::Committed(c) => c.get_storage_from_kvs(root, address, index),
+        }
+    }
+    // Count of processed transction since last commit, or previous if state is committed.
+    pub fn processed_tx_len(&self) -> usize {
+        match self {
+            Self::Incomming(i) => i.state.executed_transactions.len(),
+            Self::Committed(c) => c.state.committed_transactions.len(),
         }
     }
 }
