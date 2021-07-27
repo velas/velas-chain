@@ -32,7 +32,6 @@ pub use triedb::empty_trie_hash;
 
 mod context;
 mod executor;
-pub mod persist_old;
 mod state;
 mod storage;
 

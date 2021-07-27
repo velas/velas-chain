@@ -43,7 +43,6 @@ use solana_frozen_abi::abi_example::IgnoreAsHelper;
 
 mod common;
 mod future;
-mod future_legacy;
 mod tests;
 mod utils;
 
