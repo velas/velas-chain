@@ -176,23 +176,9 @@ lazy_static! {
         (stake_program_v3::id(), "solana_stake_program v3"),
         (require_custodian_for_locked_stake_authorize::id(), "require custodian to authorize withdrawer change for locked stake"),
         (spl_token_v2_self_transfer_fix::id(), "spl-token self-transfer fix"),
-        (full_inflation::mainnet::certusone::enable::id(), "full inflation enabled by Certus One"),
-        (full_inflation::mainnet::certusone::vote::id(), "community vote allowing Certus One to enable full inflation"),
         (warp_timestamp_again::id(), "warp timestamp again, adjust bounding to 25% fast 80% slow #15204"),
         (check_init_vote_data::id(), "check initialized Vote data"),
         (check_program_owner::id(), "limit programs to operating on accounts owned by itself"),
-        (require_stake_for_gossip::id(), "require stakes for propagating crds values through gossip #15561"),
-        (cpi_data_cost::id(), "charge the compute budget for data passed via CPI"),
-        (upgradeable_close_instruction::id(), "close upgradeable buffer accounts"),
-        (demote_sysvar_write_locks::id(), "demote builtins and sysvar write locks to readonly #15497"),
-        (sysvar_via_syscall::id(), "provide sysvars via syscalls"),
-        (check_duplicates_by_hash::id(), "use transaction message hash for duplicate check"),
-        (enforce_aligned_host_addrs::id(), "enforce aligned host addresses"),
-        (update_data_on_realloc::id(), "Retain updated data values modified after realloc via CPI"),
-        (set_upgrade_authority_via_cpi_enabled::id(), "set upgrade authority instruction via cpi calls for upgradable programs"),
-        (keccak256_syscall_enabled::id(), "keccak256 syscall"),
-        (stake_program_v4::id(), "solana_stake_program v4"),
-        (system_transfer_zero_check::id(), "perform all checks for transfers of 0 lamports"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
         .iter()
@@ -201,6 +187,20 @@ lazy_static! {
 
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = FEATURE_NAMES_BEFORE_MAINNET.iter().map(|(k, v)| (*k, *v)).chain(
         [
+            // Solana new features
+            (require_stake_for_gossip::id(), "require stakes for propagating crds values through gossip #15561"),
+            (cpi_data_cost::id(), "charge the compute budget for data passed via CPI"),
+            (upgradeable_close_instruction::id(), "close upgradeable buffer accounts"),
+            (demote_sysvar_write_locks::id(), "demote builtins and sysvar write locks to readonly #15497"),
+            (sysvar_via_syscall::id(), "provide sysvars via syscalls"),
+            (check_duplicates_by_hash::id(), "use transaction message hash for duplicate check"),
+            (enforce_aligned_host_addrs::id(), "enforce aligned host addresses"),
+            (update_data_on_realloc::id(), "Retain updated data values modified after realloc via CPI"),
+            (set_upgrade_authority_via_cpi_enabled::id(), "set upgrade authority instruction via cpi calls for upgradable programs"),
+            (keccak256_syscall_enabled::id(), "keccak256 syscall"),
+            (stake_program_v4::id(), "solana_stake_program v4"),
+            (system_transfer_zero_check::id(), "perform all checks for transfers of 0 lamports"),
+            // Velas features
             (velas_hardfork_pack::id(),
              "EVMblockhashes sysvar history, roothashes calculation. Apply old (reconfigure_native_token, unlock_switch_vote)."),
         ]
