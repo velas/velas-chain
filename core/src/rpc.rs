@@ -629,7 +629,7 @@ impl JsonRpcRequestProcessor {
                     vote_pubkey: (pubkey).to_string(),
                     node_pubkey: vote_state.node_pubkey.to_string(),
                     activated_stake: *activated_stake,
-                    activated_stake_str: UiLamports::String(activated_stake.to_string()),
+                    activated_stake_str: activated_stake.to_string(),
                     commission: vote_state.commission,
                     root_slot: vote_state.root_slot.unwrap_or(0),
                     epoch_credits: vote_state.epoch_credits().clone(),
