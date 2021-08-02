@@ -288,7 +288,8 @@ pub struct RpcVoteAccountInfo {
 
     /// The current stake, in lamports, delegated to this vote account
     pub activated_stake: u64,
-    pub activated_stake_str: UiLamports,
+    #[serde(default)]
+    pub activated_stake_str: String,
 
     /// An 8-bit integer used as a fraction (commission/MAX_U8) for rewards payout
     pub commission: u8,
