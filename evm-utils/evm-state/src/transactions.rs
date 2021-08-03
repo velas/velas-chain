@@ -17,6 +17,8 @@ pub use secp256k1::{PublicKey, SecretKey, SECP256K1};
 pub type Address = H160;
 pub type Gas = U256;
 
+const UNSIGNED_TX_MARKER: u8 = 0x1;
+
 /// Etherium transaction.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct Transaction {
@@ -364,8 +366,16 @@ impl Decodable for TransactionInReceipt {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         let items = rlp.item_count()?;
         Ok(match items {
-            8 => TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode(rlp)?),
-            9 => TransactionInReceipt::Signed(Transaction::decode(rlp)?),
+            8 => TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode(rlp, false)?),
+            9 => {
+                if rlp.val_at::<u8>(8) == Ok(0x1u8) {
+                    TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode(
+                        rlp, true,
+                    )?)
+                } else {
+                    TransactionInReceipt::Signed(Transaction::decode(rlp)?)
+                }
+            }
             _ => return Err(DecoderError::RlpInvalidLength),
         })
     }
@@ -375,39 +385,81 @@ impl Decodable for TransactionInReceipt {
 pub struct UnsignedTransactionWithCaller {
     pub unsigned_tx: UnsignedTransaction,
     pub caller: H160,
-    pub chain_id: Option<u64>,
+    pub chain_id: u64,
+    // with signed_compatible, transaction serialization differ, and start to be compatible with signed tx, the only difference is that s is always empty.
+    pub signed_compatible: bool,
 }
 
 impl Encodable for UnsignedTransactionWithCaller {
     fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(8);
-        s.append(&self.unsigned_tx.nonce);
-        s.append(&self.unsigned_tx.gas_price);
-        s.append(&self.unsigned_tx.gas_limit);
-        s.append(&self.unsigned_tx.action);
-        s.append(&self.unsigned_tx.value);
-        s.append(&self.unsigned_tx.input);
-        s.append(&self.caller);
-        s.append(&self.chain_id.unwrap_or(0));
+        let chain_id = self.chain_id;
+        if self.signed_compatible {
+            s.begin_list(9);
+            s.append(&self.unsigned_tx.nonce);
+            s.append(&self.unsigned_tx.gas_price);
+            s.append(&self.unsigned_tx.gas_limit);
+            s.append(&self.unsigned_tx.action);
+            s.append(&self.unsigned_tx.value);
+            s.append(&self.unsigned_tx.input);
+            s.append(&chain_id);
+            s.append(&self.caller);
+            s.append(&UNSIGNED_TX_MARKER);
+        } else {
+            s.begin_list(8);
+            s.append(&self.unsigned_tx.nonce);
+            s.append(&self.unsigned_tx.gas_price);
+            s.append(&self.unsigned_tx.gas_limit);
+            s.append(&self.unsigned_tx.action);
+            s.append(&self.unsigned_tx.value);
+            s.append(&self.unsigned_tx.input);
+            s.append(&self.caller);
+            s.append(&chain_id);
+        }
     }
 }
 
-impl Decodable for UnsignedTransactionWithCaller {
-    fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
-        let chain_id = rlp.val_at(7)?;
-        let chain_id = if chain_id == 0 { None } else { Some(chain_id) };
-        Ok(Self {
-            unsigned_tx: UnsignedTransaction {
-                nonce: rlp.val_at(0)?,
-                gas_price: rlp.val_at(1)?,
-                gas_limit: rlp.val_at(2)?,
-                action: rlp.val_at(3)?,
-                value: rlp.val_at(4)?,
-                input: rlp.val_at(5)?,
-            },
-            caller: rlp.val_at(6)?,
-            chain_id,
-        })
+impl UnsignedTransactionWithCaller {
+    pub fn tx_id_hash(&self) -> H256 {
+        // old transaction hash was calculated with different rlp structure, use signing_hash to be compatible
+        if !self.signed_compatible {
+            return self.unsigned_tx.signing_hash(Some(self.chain_id));
+        }
+        let mut stream = RlpStream::new();
+        self.rlp_append(&mut stream);
+        H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
+    }
+    fn decode(rlp: &Rlp<'_>, signed_compatible: bool) -> Result<Self, DecoderError> {
+        if signed_compatible {
+            let chain_id = rlp.val_at(6)?;
+            Ok(Self {
+                unsigned_tx: UnsignedTransaction {
+                    nonce: rlp.val_at(0)?,
+                    gas_price: rlp.val_at(1)?,
+                    gas_limit: rlp.val_at(2)?,
+                    action: rlp.val_at(3)?,
+                    value: rlp.val_at(4)?,
+                    input: rlp.val_at(5)?,
+                },
+                caller: rlp.val_at(7)?,
+                chain_id,
+                signed_compatible,
+            })
+        } else {
+            let chain_id = rlp.val_at(7)?;
+            Ok(Self {
+                unsigned_tx: UnsignedTransaction {
+                    nonce: rlp.val_at(0)?,
+                    gas_price: rlp.val_at(1)?,
+                    gas_limit: rlp.val_at(2)?,
+                    action: rlp.val_at(3)?,
+                    value: rlp.val_at(4)?,
+                    input: rlp.val_at(5)?,
+                },
+                caller: rlp.val_at(6)?,
+                chain_id,
+                signed_compatible,
+            })
+        }
     }
 }
 
@@ -577,7 +629,8 @@ mod test {
         let unsigned = UnsignedTransactionWithCaller {
             unsigned_tx,
             caller: H160::repeat_byte(3),
-            chain_id: None,
+            chain_id: 0x0,
+            signed_compatible: false,
         };
         let bytes = rlp::encode(&unsigned);
         let unsigned_deserialized: TransactionInReceipt =

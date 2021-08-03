@@ -56,6 +56,8 @@ pub struct UnsignedTransactionWithCaller {
     pub caller: std::vec::Vec<u8>,
     #[prost(uint64, tag = "3")]
     pub chain_id: u64,
+    #[prost(bool, tag = "4")]
+    pub signed_compatible: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TransactionInReceipt {

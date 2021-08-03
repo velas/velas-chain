@@ -165,6 +165,10 @@ pub mod velas {
     pub mod evm_new_error_handling {
         solana_sdk::declare_id!("9HscytNCkVfhQYuVbKGdicUzk6zGjRVtwXXbo1b6spRG");
     }
+
+    pub mod unsigned_tx_fix {
+        solana_sdk::declare_id!("5sUZxkYgPYW97L2pjMqhsmeCxEdu3LtxMStD3Ycrag2K");
+    }
 }
 lazy_static! {
     /// Map of feature identifiers to user-visible description
