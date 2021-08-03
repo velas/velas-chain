@@ -36,6 +36,7 @@ message UnsignedTransactionWithCaller {
   bytes rlp_encoded_body = 1;
   bytes caller = 2;
   uint64 chain_id = 3;
+  bool signed_compatible = 4;
 }
 
 message TransactionInReceipt {

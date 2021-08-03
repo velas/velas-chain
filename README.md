@@ -57,11 +57,11 @@ $ cargo test --no-fail-fast
 Info about EVM integration is at our [docs](https://docs.velas.com/evm).
 
 ### Starting a local testnet
-Start your own devnet locally, instructions are in the [online docs](https://docs.velas.com/cluster/bench-tps).
+Start your own Development network locally, instructions are in the [online docs](https://docs.velas.com/cluster/bench-tps).
 
 ### Accessing the remote testnet and mainnet
-* `testnet` - public devnet accessible via bootstrap.testnet.veladev.net.
-* `mainnet` - public devnet accessible via bootstrap.velas.com.
+* `testnet` - public accessible via bootstrap.testnet.veladev.net.
+* `mainnet` - public accessible via bootstrap.velas.com.
 
 # Benchmarking
 

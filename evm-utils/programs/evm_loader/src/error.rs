@@ -30,6 +30,9 @@ pub enum EvmError {
     #[snafu(display("Authorized transaction EVM address should be calculated from sender address using evm_address_for_program."))]
     AuthorizedTransactionIncorrectAddress,
 
+    #[snafu(display("Wrong AuthorizedTx account owner.."))]
+    AuthorizedTransactionIncorrectOwner,
+
     #[snafu(display("Cannot free ownership of an account that EVM didn't own."))]
     FreeNotEvmAccount,
 
@@ -50,6 +53,9 @@ pub enum EvmError {
 
     #[snafu(display("EVM Transaction was reverted."))]
     RevertTransaction,
+
+    #[snafu(display("This instruction is not supported yet."))]
+    InstructionNotSupportedYet,
 }
 
 impl<E> DecodeError<E> for EvmError {

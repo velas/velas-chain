@@ -14,6 +14,9 @@ pub enum EvmBigTransaction {
 
     /// Execute merged transaction, in order to do this, user should make sure that transaction is successfully writed.
     EvmTransactionExecute {},
+
+    /// Execute merged unsigned transaction, in order to do this, user should make sure that transaction is successfully writed.
+    EvmTransactionExecuteUnsigned { from: evm::Address },
 }
 
 #[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize)]

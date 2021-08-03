@@ -1017,8 +1017,9 @@ impl From<evm_state::UnsignedTransactionWithCaller>
         let bytes = rlp::encode(&unsigned.unsigned_tx);
         Self {
             rlp_encoded_body: bytes.to_vec(),
-            chain_id: unsigned.chain_id.unwrap_or_default(),
+            chain_id: unsigned.chain_id,
             caller: unsigned.caller.into_vec(),
+            signed_compatible: unsigned.signed_compatible,
         }
     }
 }
@@ -1030,13 +1031,9 @@ impl TryFrom<generated_evm::UnsignedTransactionWithCaller>
     fn try_from(
         unsigned: generated_evm::UnsignedTransactionWithCaller,
     ) -> Result<Self, Self::Error> {
-        let chain_id = if unsigned.chain_id == 0 {
-            None
-        } else {
-            unsigned.chain_id.into()
-        };
         Ok(Self {
-            chain_id,
+            chain_id: unsigned.chain_id,
+            signed_compatible: unsigned.signed_compatible,
             caller: convert_from_bytes(unsigned.caller)?,
             unsigned_tx: rlp::decode(&unsigned.rlp_encoded_body)
                 .map_err(|_| "Failed to deserialize rlp tx body")?,
@@ -1871,7 +1868,8 @@ mod test {
                     input: b"random bytes".to_vec(),
                 },
                 caller: evm_state::H160::random(),
-                chain_id: Some(0xdead),
+                chain_id: 0xdead,
+                signed_compatible: true,
             });
         let tx_serialized: generated_evm::TransactionInReceipt = tx.clone().into();
         assert_eq!(tx, tx_serialized.try_into().unwrap());
@@ -1886,7 +1884,8 @@ mod test {
                     input: b"123random bytes".to_vec(),
                 },
                 caller: evm_state::H160::random(),
-                chain_id: Some(0xde2d),
+                chain_id: 0xde2d,
+                signed_compatible: false,
             });
         let tx_serialized: generated_evm::TransactionInReceipt = tx.clone().into();
         assert_eq!(tx, tx_serialized.try_into().unwrap());
@@ -1921,7 +1920,8 @@ mod test {
                     input: b"random bytes".to_vec(),
                 },
                 caller: evm_state::H160::random(),
-                chain_id: Some(0xdead),
+                chain_id: 0xdead,
+                signed_compatible: true,
             });
         let receipt = evm_state::TransactionReceipt {
             transaction: tx,
@@ -1998,7 +1998,8 @@ mod test {
                     input: b"random bytes".to_vec(),
                 },
                 caller: evm_state::H160::random(),
-                chain_id: Some(0xdead),
+                chain_id: 0xdead,
+                signed_compatible: false,
             });
 
         let tx2 = evm_state::TransactionInReceipt::Signed(evm_state::Transaction {
