@@ -676,6 +676,7 @@ impl RPCTransaction {
                         ),
                     ),
                 };
+                let caller_addr = tx.caller.to_string();
                 let v = chain_id * 2 + 35;
                 (
                     to,
@@ -687,8 +688,8 @@ impl RPCTransaction {
                     value,
                     nonce,
                     v,
-                    U256::zero(),
-                    U256::zero(),
+                    Hex::<U256>::from_hex(&caller_addr)?.0,
+                    U256::from(0x1),
                 )
             }
         };

@@ -212,15 +212,21 @@ impl Executor {
         &mut self,
         caller: H160,
         tx: UnsignedTransaction,
+        calculate_tx_hash_with_caller: bool,
         precompiles: F,
     ) -> Result<ExecutionResult, Error>
     where
         F: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
     {
-        // TODO use u64 for chain_id
-        let chain_id = Some(self.config.chain_id);
+        let chain_id = self.config.chain_id;
 
-        let tx_hash = tx.signing_hash(chain_id);
+        let unsigned_tx = UnsignedTransactionWithCaller {
+            unsigned_tx: tx.clone(),
+            caller,
+            chain_id,
+            signed_compatible: calculate_tx_hash_with_caller,
+        };
+        let tx_hash = unsigned_tx.tx_id_hash();
         let result = self.transaction_execute_raw(
             caller,
             tx.nonce,
@@ -229,15 +235,10 @@ impl Executor {
             tx.action,
             tx.input.clone(),
             tx.value,
-            chain_id,
+            Some(chain_id),
             tx_hash,
             precompiles,
         )?;
-        let unsigned_tx = UnsignedTransactionWithCaller {
-            unsigned_tx: tx,
-            caller,
-            chain_id,
-        };
 
         self.register_tx_with_receipt(TransactionInReceipt::Unsigned(unsigned_tx), result.clone());
         Ok(result)
@@ -319,9 +320,7 @@ impl Executor {
     fn register_tx_with_receipt(&mut self, tx: TransactionInReceipt, result: ExecutionResult) {
         let tx_hash = match &tx {
             TransactionInReceipt::Signed(tx) => tx.tx_id_hash(),
-            TransactionInReceipt::Unsigned(tx) => {
-                tx.unsigned_tx.signing_hash(Some(self.config.chain_id))
-            }
+            TransactionInReceipt::Unsigned(tx) => tx.tx_id_hash(),
         };
 
         debug!(
@@ -362,7 +361,13 @@ impl Executor {
         );
     }
 
-    pub fn register_swap_tx_in_evm(&mut self, mint_address: H160, recipient: H160, amount: U256) {
+    pub fn register_swap_tx_in_evm(
+        &mut self,
+        mint_address: H160,
+        recipient: H160,
+        amount: U256,
+        signed_compatible: bool,
+    ) {
         let nonce = self.with_executor(
             |_, _, _, _| None,
             |e| {
@@ -382,7 +387,8 @@ impl Executor {
         let unsigned_tx = UnsignedTransactionWithCaller {
             unsigned_tx: tx,
             caller: mint_address,
-            chain_id: Some(self.config.chain_id),
+            chain_id: self.config.chain_id,
+            signed_compatible,
         };
         let result = ExecutionResult {
             tx_logs: Vec::new(),
@@ -617,6 +623,7 @@ mod tests {
                 .transaction_execute_unsinged(
                     alice.secret.to_address(),
                     create_tx.clone(),
+                    false,
                     noop_precompile
                 )
                 .unwrap()
@@ -627,10 +634,54 @@ mod tests {
         let hash = create_tx.signing_hash(Some(chain_id));
         assert!(matches!(
             executor
-            .transaction_execute_unsinged(alice.secret.to_address(), create_tx, noop_precompile)
+            .transaction_execute_unsinged(alice.secret.to_address(), create_tx,false, noop_precompile)
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash } if tx_hash == hash
         ));
+    }
+
+    #[test]
+    fn handle_duplicate_txs_unsigned_new_hash() {
+        let _logger = simple_logger::SimpleLogger::new().init();
+
+        let chain_id = 0xeba;
+        let evm_config = EvmConfig {
+            chain_id,
+            ..EvmConfig::default()
+        };
+        let mut executor =
+            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+
+        let code = hex::decode(METACOIN_CODE).unwrap();
+
+        let alice = Persona::new();
+        let create_tx = alice.unsigned(TransactionAction::Create, &code);
+
+        let address = alice.address();
+        assert!(matches!(
+            executor
+                .transaction_execute_unsinged(address, create_tx.clone(), true, noop_precompile)
+                .unwrap()
+                .exit_reason,
+            ExitReason::Succeed(ExitSucceed::Returned)
+        ));
+
+        let create_tx_with_caller = UnsignedTransactionWithCaller {
+            unsigned_tx: create_tx.clone(),
+            caller: address,
+            chain_id,
+            signed_compatible: true,
+        };
+        let hash = create_tx_with_caller.tx_id_hash();
+        println!("tx = {:?}", create_tx_with_caller);
+        println!("hash = {}", hash);
+
+        assert!(matches!(
+        executor
+            .transaction_execute_unsinged(address, create_tx, true, noop_precompile)
+            .unwrap_err(),
+                       Error::DuplicateTx { tx_hash } if tx_hash == hash
+                       ));
     }
 
     #[test]
