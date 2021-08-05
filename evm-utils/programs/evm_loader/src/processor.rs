@@ -583,6 +583,7 @@ impl EvmProcessor {
             "Transaction execution status = {:?}",
             result
         );
+        ic_msg!(invoke_context, "Native EVM TXID:{:?}", result.tx_id);
         if matches!(
             result.exit_reason,
             ExitReason::Fatal(_) | ExitReason::Error(_)
