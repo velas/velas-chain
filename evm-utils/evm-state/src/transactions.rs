@@ -349,6 +349,15 @@ pub enum TransactionInReceipt {
     Unsigned(UnsignedTransactionWithCaller),
 }
 
+impl TransactionInReceipt {
+    pub fn nonce(&self) -> U256 {
+        match self {
+            TransactionInReceipt::Signed(tx) => tx.nonce,
+            TransactionInReceipt::Unsigned(tx) => tx.unsigned_tx.nonce,
+        }
+    }
+}
+
 impl Encodable for TransactionInReceipt {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self {
