@@ -371,6 +371,18 @@ impl Encodable for TransactionInReceipt {
     }
 }
 
+impl From<Transaction> for TransactionInReceipt {
+    fn from(tx: Transaction) -> Self {
+        Self::Signed(tx)
+    }
+}
+
+impl From<UnsignedTransactionWithCaller> for TransactionInReceipt {
+    fn from(tx: UnsignedTransactionWithCaller) -> Self {
+        Self::Unsigned(tx)
+    }
+}
+
 impl Decodable for TransactionInReceipt {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         let items = rlp.item_count()?;

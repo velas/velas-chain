@@ -8,7 +8,7 @@ use super::scope::*;
 use log::*;
 
 use evm::{gweis_to_lamports, Executor, ExitReason};
-use solana_sdk::account::Account;
+use solana_sdk::account::AccountSharedData;
 use solana_sdk::ic_msg;
 use solana_sdk::instruction::InstructionError;
 use solana_sdk::process_instruction::InvokeContext;
@@ -543,7 +543,7 @@ impl EvmProcessor {
     pub fn cleanup_storage<'a>(
         &self,
         invoke_context: &dyn InvokeContext,
-        mut storage_ref: RefMut<Account>,
+        mut storage_ref: RefMut<AccountSharedData>,
         user: &'a KeyedAccount<'a>,
     ) -> Result<(), EvmError> {
         let balance = storage_ref.lamports;
