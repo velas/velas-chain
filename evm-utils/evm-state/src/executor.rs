@@ -39,6 +39,7 @@ pub struct ExecutionResult {
     pub exit_data: Vec<u8>,
     pub used_gas: u64,
     pub tx_logs: Vec<Log>,
+    pub tx_id: H256,
 }
 
 #[derive(Debug)]
@@ -204,6 +205,7 @@ impl Executor {
             exit_data,
             used_gas,
             tx_logs,
+            tx_id: tx_hash,
         })
     }
 
@@ -395,6 +397,7 @@ impl Executor {
             used_gas: 0,
             exit_data: Vec::new(),
             exit_reason: ExitReason::Succeed(ExitSucceed::Returned),
+            tx_id: unsigned_tx.tx_id_hash(),
         };
         self.register_tx_with_receipt(TransactionInReceipt::Unsigned(unsigned_tx), result)
     }
