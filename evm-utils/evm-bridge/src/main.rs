@@ -179,7 +179,7 @@ impl EvmBridge {
         let hash = tx.tx_id_hash();
         let bytes = bincode::serialize(&tx).unwrap();
 
-        let rpc_tx = RPCTransaction::from_transaction(tx.clone())?;
+        let rpc_tx = RPCTransaction::from_transaction(tx.clone().into())?;
 
         if self.simulate {
             // Try simulate transaction execution
