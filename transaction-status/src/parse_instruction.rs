@@ -1,5 +1,6 @@
 use crate::{
     parse_bpf_loader::{parse_bpf_loader, parse_bpf_upgradeable_loader},
+    parse_evm::parse_evm,
     parse_stake::parse_stake,
     parse_system::parse_system,
     parse_token::parse_token,
@@ -26,6 +27,7 @@ lazy_static! {
     static ref SYSTEM_PROGRAM_ID: Pubkey = system_program::id();
     static ref TOKEN_PROGRAM_ID: Pubkey = spl_token_id_v2_0();
     static ref VOTE_PROGRAM_ID: Pubkey = solana_vote_program::id();
+    static ref EVM_PROGRAM_ID: Pubkey = solana_evm_loader_program::ID;
     static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableProgram> = {
         let mut m = HashMap::new();
         m.insert(*MEMO_V1_PROGRAM_ID, ParsableProgram::SplMemo);
@@ -39,6 +41,7 @@ lazy_static! {
         m.insert(*STAKE_PROGRAM_ID, ParsableProgram::Stake);
         m.insert(*SYSTEM_PROGRAM_ID, ParsableProgram::System);
         m.insert(*VOTE_PROGRAM_ID, ParsableProgram::Vote);
+        m.insert(*EVM_PROGRAM_ID, ParsableProgram::Evm);
         m
     };
 }
@@ -85,6 +88,7 @@ pub enum ParsableProgram {
     Stake,
     System,
     Vote,
+    Evm,
 }
 
 pub fn parse(
@@ -107,6 +111,7 @@ pub fn parse(
         ParsableProgram::Stake => serde_json::to_value(parse_stake(instruction, account_keys)?)?,
         ParsableProgram::System => serde_json::to_value(parse_system(instruction, account_keys)?)?,
         ParsableProgram::Vote => serde_json::to_value(parse_vote(instruction, account_keys)?)?,
+        ParsableProgram::Evm => serde_json::to_value(parse_evm(instruction, account_keys)?)?,
     };
     Ok(ParsedInstruction {
         program: format!("{:?}", program_name).to_kebab_case(),
