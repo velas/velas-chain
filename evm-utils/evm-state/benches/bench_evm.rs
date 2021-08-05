@@ -190,6 +190,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             } = black_box(executor.transaction_execute_unsinged(
                 caller,
                 tx.clone(),
+                true,
                 |_, _, _, _| None,
             ))
             .unwrap();

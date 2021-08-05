@@ -3228,6 +3228,9 @@ impl Bank {
                         &self.ancestors,
                         evm_executor.clone(),
                     );
+                    let evm_new_error_handling = self
+                        .feature_set
+                        .is_active(&solana_sdk::feature_set::velas::evm_new_error_handling::id());
 
                     if let Some(evm_executor) = evm_executor {
                         let executor = Rc::try_unwrap(evm_executor)
@@ -3237,9 +3240,7 @@ impl Bank {
 
                         // On error save only transaction and increase nonce.
                         if matches!(process_result, Err(TransactionError::InstructionError(..)))
-                            && self.feature_set.is_active(
-                                &solana_sdk::feature_set::velas::evm_new_error_handling::id(),
-                            )
+                            && evm_new_error_handling
                         {
                             evm_patch
                                 .as_mut()
@@ -8374,6 +8375,110 @@ pub(crate) mod tests {
             let (before, after) = test_with_users(*i);
             assert_ne!(before, after);
         }
+    }
+
+    /// Test that only processed transaction should increase nonce.
+    /// Transaction that has invalid txid/nonce/fee should not be processed.
+    #[test]
+    fn test_evm_second_tx_with_same_nonce() {
+        solana_logger::setup_with("trace");
+        fn fund_evm(from_keypair: &Keypair, hash: Hash, lamports: u64) -> Transaction {
+            let tx = solana_evm_loader_program::processor::dummy_call(0).0;
+            let from_pubkey = from_keypair.pubkey();
+            let instructions = solana_evm_loader_program::transfer_native_to_eth_ixs(
+                from_pubkey,
+                lamports,
+                tx.caller().unwrap(),
+            );
+            let message = Message::new(&instructions, Some(&from_pubkey));
+            Transaction::new(&[from_keypair], message, hash)
+        }
+        fn evm_call(from_keypair: &Keypair, hash: Hash, nonce: usize) -> Transaction {
+            let from_pubkey = from_keypair.pubkey();
+
+            let instruction = solana_evm_loader_program::send_raw_tx(
+                from_pubkey,
+                solana_evm_loader_program::processor::dummy_call(nonce).0,
+                None,
+            );
+
+            let message = Message::new(&[instruction], Some(&from_pubkey));
+            Transaction::new(&[from_keypair], message, hash)
+        }
+        let tx = solana_evm_loader_program::processor::dummy_call(0).0;
+        let receiver = tx.caller().unwrap();
+        let (genesis_config, mint_keypair) = create_genesis_config(40000);
+        let mut bank = Bank::new(&genesis_config);
+
+        bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
+        bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
+        let recent_hash = genesis_config.hash();
+
+        let tx = fund_evm(&mint_keypair, recent_hash, 20000);
+        let _res = bank.process_transaction(&tx).unwrap();
+
+        bank.freeze();
+
+        let bank = Arc::new(bank);
+        let bank = Bank::new_from_parent(&bank, &Pubkey::default(), 1);
+
+        let state = bank
+            .evm_state
+            .read()
+            .unwrap()
+            .get_account_state(receiver)
+            .unwrap_or_default();
+        assert_eq!(state.nonce, 0.into());
+
+        let tx = evm_call(&mint_keypair, recent_hash, 0);
+        let _res = bank.process_transaction(&tx).unwrap();
+
+        let hash_before = bank.evm_state.read().unwrap().last_root();
+        bank.freeze();
+        let hash_after = bank.evm_state.read().unwrap().last_root();
+
+        assert_ne!(hash_before, hash_after); // nonce increased in old version
+
+        let state = bank
+            .evm_state
+            .read()
+            .unwrap()
+            .get_account_state(receiver)
+            .unwrap_or_default();
+        assert_eq!(state.nonce, 1.into());
+
+        assert_eq!(bank.evm_state.read().unwrap().processed_tx_len(), 1);
+
+        // Second try same tx
+        let bank = Arc::new(bank);
+        let bank = Bank::new_from_parent(&bank, &Pubkey::default(), 2);
+
+        let state = bank
+            .evm_state
+            .read()
+            .unwrap()
+            .get_account_state(receiver)
+            .unwrap_or_default();
+        assert_eq!(state.nonce, 1.into());
+
+        let tx = evm_call(&mint_keypair, recent_hash, 0); // send tx with same nonce
+        let _res = bank.process_transaction(&tx).unwrap_err(); // execution should fail
+
+        let hash_before = bank.evm_state.read().unwrap().last_root();
+        bank.freeze();
+        let hash_after = bank.evm_state.read().unwrap().last_root();
+
+        assert_eq!(hash_before, hash_after); // nonce increased in old version
+
+        assert_eq!(bank.evm_state.read().unwrap().processed_tx_len(), 0);
+
+        let state = bank
+            .evm_state
+            .read()
+            .unwrap()
+            .get_account_state(receiver)
+            .unwrap_or_default();
+        assert_eq!(state.nonce, 1.into());
     }
 
     #[test]
