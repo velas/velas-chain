@@ -148,12 +148,7 @@ fn test_accounts_serialize_style() {
     let mut reader = BufReader::new(&buf[..]);
     let (_accounts_dir, daccounts_paths) = get_temp_accounts_paths(2).unwrap();
     let daccounts = Accounts::new_empty(
-        accountsdb_from_stream(
-            &mut reader,
-            &daccounts_paths,
-            unpacked_append_vec_map,
-        )
-        .unwrap(),
+        accountsdb_from_stream(&mut reader, &daccounts_paths, unpacked_append_vec_map).unwrap(),
     );
     check_accounts(&daccounts, &pubkeys, 100);
     assert_eq!(accounts.bank_hash_at(0), daccounts.bank_hash_at(0));
