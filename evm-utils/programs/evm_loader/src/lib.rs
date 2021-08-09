@@ -79,7 +79,7 @@ pub fn authorized_tx(
     )
 }
 
-pub(crate) fn transfer_native_to_eth(
+pub(crate) fn transfer_native_to_evm(
     owner: solana::Address,
     lamports: u64,
     evm_address: evm::Address,
@@ -163,14 +163,14 @@ pub fn big_tx_execute(
     )
 }
 
-pub fn transfer_native_to_eth_ixs(
+pub fn transfer_native_to_evm_ixs(
     owner: solana::Address,
     lamports: u64,
     ether_address: evm::Address,
 ) -> Vec<solana::Instruction> {
     vec![
         solana_sdk::system_instruction::assign(&owner, &crate::ID),
-        transfer_native_to_eth(owner, lamports, ether_address),
+        transfer_native_to_evm(owner, lamports, ether_address),
         free_ownership(owner),
     ]
 }

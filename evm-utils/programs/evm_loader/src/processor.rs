@@ -1406,7 +1406,7 @@ mod test {
 
         let signer = solana::Address::new_unique();
         vec![
-            crate::transfer_native_to_eth(signer, 1, tx_call.address().unwrap()),
+            crate::transfer_native_to_evm(signer, 1, tx_call.address().unwrap()),
             crate::free_ownership(signer),
             crate::send_raw_tx(signer, tx_call, None),
             crate::authorized_tx(signer, unsigned_tx),
