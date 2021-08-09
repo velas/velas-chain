@@ -1780,26 +1780,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "evm-utils"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "env_logger 0.8.4",
- "evm-rpc",
- "evm-state",
- "hex",
- "log 0.4.14",
- "paw",
- "serde_json",
- "solana-clap-utils",
- "solana-cli-config",
- "solana-client",
- "solana-evm-loader-program",
- "solana-sdk",
- "structopt",
-]
-
-[[package]]
 name = "failure"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5365,6 +5345,7 @@ name = "solana-cli"
 version = "1.6.14"
 dependencies = [
  "Inflector",
+ "anyhow",
  "bincode",
  "bs58",
  "chrono",
@@ -5373,6 +5354,9 @@ dependencies = [
  "criterion-stats",
  "ctrlc",
  "dirs-next",
+ "evm-rpc",
+ "evm-state",
+ "hex",
  "humantime",
  "indicatif",
  "log 0.4.14",
@@ -5390,6 +5374,7 @@ dependencies = [
  "solana-client",
  "solana-config-program",
  "solana-core",
+ "solana-evm-loader-program",
  "solana-faucet",
  "solana-logger 1.6.14",
  "solana-net-utils",

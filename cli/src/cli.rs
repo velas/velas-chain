@@ -1,6 +1,6 @@
 use crate::{
-    cluster_query::*, feature::*, inflation::*, memo::*, nonce::*, program::*, spend_utils::*,
-    stake::*, validator_info::*, vote::*,
+    cluster_query::*, evm::*, feature::*, inflation::*, memo::*, nonce::*, program::*,
+    spend_utils::*, stake::*, validator_info::*, vote::*,
 };
 use clap::{value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand};
 use log::*;
@@ -384,6 +384,8 @@ pub enum CliCommand {
         derived_address_seed: Option<String>,
         derived_address_program_id: Option<Pubkey>,
     },
+    // Velas EVM Commands
+    Evm(EvmCliCommand),
 }
 
 #[derive(Debug, PartialEq)]
@@ -416,6 +418,9 @@ pub enum CliError {
     KeypairFileNotFound(String),
     #[error("incorrect loader provided: {0}")]
     IncorrectLoader(String),
+
+    #[error("error caught: {0}")]
+    Other(#[from] anyhow::Error),
 }
 
 impl From<Box<dyn error::Error>> for CliError {
@@ -915,6 +920,8 @@ pub fn parse_command(
             })
         }
         //
+        ("evm", Some(matches)) => parse_evm_subcommand(matches),
+        //
         ("", None) => {
             eprintln!("{}", matches.usage());
             Err(CliError::CommandNotRecognized(
@@ -1085,6 +1092,7 @@ fn process_confirm(
                     confirmation_status: None,
                     transaction: None,
                     get_transaction_error: None,
+
                     err: None,
                 }
             };
@@ -1919,6 +1927,10 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             derived_address_seed.clone(),
             derived_address_program_id.as_ref(),
         ),
+        CliCommand::Evm(evm_subcommand) => evm_subcommand
+            .process_with(rpc_client.as_ref(), config)
+            .map(|_| "Ok".to_string())
+            .map_err(|e| Box::new(CliError::Other(e)) as Box<dyn std::error::Error>),
     }
 }
 
@@ -1989,6 +2001,7 @@ pub fn app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'ab, '
         .nonce_subcommands()
         .program_subcommands()
         .stake_subcommands()
+        .evm_subcommands()
         .subcommand(
             SubCommand::with_name("airdrop")
                 .about("Request lamports")

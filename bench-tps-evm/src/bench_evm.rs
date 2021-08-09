@@ -158,7 +158,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Trans
         let to_fund_txs: Vec<(&Keypair, &evm::SecretKey, Transaction)> = to_fund
             .par_iter()
             .map(|(k, evm)| {
-                let instructions = solana_evm_loader_program::transfer_native_to_eth_ixs(
+                let instructions = solana_evm_loader_program::transfer_native_to_evm_ixs(
                     k.pubkey(),
                     to_lamports,
                     evm.to_address(),

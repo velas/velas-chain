@@ -50,6 +50,13 @@ thiserror = "1.0.21"
 tiny-bip39 = "0.7.0"
 url = "2.1.1"
 
+evm-state = { path = "../evm-utils/evm-state" }
+evm-rpc = { path = "../evm-utils/evm-rpc" }
+solana-evm-loader-program = { path = "../evm-utils/programs/evm_loader" }
+hex = "0.4.2"
+anyhow = { version = "1.0.42", features = ["std"] }
+
+
 [dev-dependencies]
 solana-core = { path = "../core", version = "=1.6.14" }
 tempfile = "3.1.0"
