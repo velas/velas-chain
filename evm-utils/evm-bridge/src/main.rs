@@ -123,11 +123,22 @@ mod compatibility {
         }
     }
 
-    pub fn patch_block(block: evm_rpc::RPCBlock) -> evm_rpc::RPCBlock {
+    pub fn patch_tx(mut tx: evm_rpc::RPCTransaction) -> evm_rpc::RPCTransaction {
+        if tx.r.unwrap_or_default() == Hex(U256::zero()) {
+            tx.r = Some(Hex(0x1.into()))
+        }
+        if tx.s.unwrap_or_default() == Hex(U256::zero()) {
+            tx.s = Some(Hex(0x1.into()))
+        }
+        tx
+    }
+
+    pub fn patch_block(mut block: evm_rpc::RPCBlock) -> evm_rpc::RPCBlock {
         let txs_empty = match &block.transactions {
             evm_rpc::Either::Left(txs) => txs.is_empty(),
             evm_rpc::Either::Right(txs) => txs.is_empty(),
         };
+        // if no tx, and its root == zero, return empty trie hash, to avoid panics in go client.
         if txs_empty && block.transactions_root.0 == H256::zero() {
             evm_rpc::RPCBlock {
                 transactions_root: Hex(evm_state::empty_trie_hash()),
@@ -135,6 +146,13 @@ mod compatibility {
                 ..block
             }
         } else {
+            // if txs exist, check that their signatures are not zero, and fix them if so.
+            block.transactions = match block.transactions {
+                evm_rpc::Either::Left(txs) => evm_rpc::Either::Left(txs),
+                evm_rpc::Either::Right(txs) => {
+                    evm_rpc::Either::Right(txs.into_iter().map(patch_tx).collect())
+                }
+            };
             block
         }
     }
@@ -752,6 +770,7 @@ impl BasicERPC for BasicErpcProxy {
         tx_hash: Hex<H256>,
     ) -> EvmResult<Option<RPCTransaction>> {
         proxy_evm_rpc!(meta.rpc_client, EthGetTransactionByHash, tx_hash)
+            .map(|o: Option<_>| o.map(compatibility::patch_tx))
     }
 
     fn transaction_receipt(
