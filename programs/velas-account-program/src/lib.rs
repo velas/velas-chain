@@ -25,12 +25,16 @@ pub enum VelasAccountType {
 pub struct VAccountInfo {
     /// Vaccount version
     pub version: u8,
+    ///
+    pub owners: [Pubkey; 3],
     /// Genegis owner key that generate Vaccount address
     pub genesis_seed_key: Pubkey,
     /// Storage version
-    pub storage_version: u16,
-    /// Storage address
-    pub storage: Pubkey,
+    pub operational_storage_nonce: u16,
+    /// Token storage nonce
+    pub token_storage_nonce: u16,
+    /// Programs storage nonce
+    pub programs_storage_nonce: u16,
 }
 
 /// Storage of the basic Vaccount information.
@@ -39,10 +43,8 @@ pub struct VAccountInfo {
 #[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
 #[derive(Serialize, Deserialize)]
 pub struct VAccountStorage {
-    /// Owner key in not extended VAccount
-    pub owners: Vec<Pubkey>,
     /// Operational in not extended VAccount
-    pub operationals: Vec<Operational>,
+    pub operationals: Vec<Operational>
 }
 
 /// Operational key state.
@@ -56,13 +58,13 @@ pub struct Operational {
     /// Operational key state
     pub state: OperationalState,
     /// Type of the agent session associated with an operational key
-    pub agent_type: Vec<u8>,
+    pub agent_type: [u8; 32],
     /// Allowed instruction for operational key
-    pub scopes: Vec<u8>,
-    /// Allowed programs to call
-    pub whitelist_programs: Vec<ExternalProgram>,
-    /// Allowed token accounts
-    pub whitelist_tokens: Vec<ExternalToken>,
+    pub scopes: [u8; 4],
+    /// Allowed tokens
+    pub tokens_indices: [u8; 32],
+    /// Allowed program addresses
+    pub external_programs_indices: [u8; 32],
     /// Master key is allowed to call any instruction in Vaccount
     pub is_master_key: bool,
 }
@@ -75,8 +77,6 @@ pub struct Operational {
 pub struct ExternalProgram {
     /// Allowed to call program code id
     pub program_id: Pubkey,
-    /// Allowed to call instruction inside program
-    pub scopes: Vec<u8>,
 }
 
 /// Operational key state.
@@ -122,7 +122,7 @@ impl Default for OperationalState {
 }
 
 // TODO: try to avoid direct size hardcodes
-pub const ACCOUNT_LEN: usize = 67;
+pub const ACCOUNT_LEN: usize = 135;
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -150,5 +150,10 @@ mod tests {
     #[ignore] // TODO
     fn it_checks_account_len() {
         assert_eq!(std::mem::size_of::<VAccountInfo>(), ACCOUNT_LEN);
+    }
+
+    #[test]
+    fn it_checks_account_len2() {
+        assert_eq!(solana_sdk::borsh::get_packed_len::<VAccountInfo>(), ACCOUNT_LEN)
     }
 }
