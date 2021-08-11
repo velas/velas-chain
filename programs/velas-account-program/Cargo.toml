@@ -13,3 +13,6 @@ borsh-derive = "0.8.1"
 serde = { version = "1.0.125", features = ["derive"] }
 
 solana-sdk = { path = "../../sdk", version = "1.5.14" }
+
+[dev-dependencies]
+base64 = ""
