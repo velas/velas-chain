@@ -80,7 +80,7 @@ mod test {
 
     use super::*;
 
-    use evm_state::H256;
+    use evm_state::{H160, H256};
     use quickcheck::{Arbitrary, Gen};
     use quickcheck_macros::quickcheck;
     use std::str::FromStr;
@@ -326,6 +326,75 @@ mod test {
         000000000000003078326463366330000000002a000000000000003078666666666666666666666666666666666\
         6666666666666666666666666666666666666666666666605000000000000003078323262040000000000000074657374").unwrap();
         assert_eq!(bincode::serialize(&data).unwrap(), result);
+    }
+
+    #[test]
+    fn test_serialize_big_allocate() {
+        let size = 27;
+        let ix =
+            EvmInstruction::EvmBigTransaction(EvmBigTransaction::EvmTransactionAllocate { size });
+
+        let data = bincode::serialize(&ix).unwrap();
+        let big_tx_tag = [3, 0, 0, 0];
+
+        let allocate_tag = [0, 0, 0, 0];
+        let size_in_bytes = size.to_le_bytes();
+
+        let result_data = [&big_tx_tag[..], &allocate_tag[..], &size_in_bytes[..]].concat();
+        assert_eq!(data, result_data)
+    }
+
+    #[test]
+    fn test_serialize_big_write() {
+        let input = vec![1, 2, 3, 4];
+        let offset = 27;
+        let ix = EvmInstruction::EvmBigTransaction(EvmBigTransaction::EvmTransactionWrite {
+            offset,
+            data: input.clone(),
+        });
+
+        let data = bincode::serialize(&ix).unwrap();
+        let big_tx_tag = [3, 0, 0, 0];
+
+        let write_tag = [1, 0, 0, 0];
+        let offset_in_bytes = offset.to_le_bytes();
+        let input_size_in_bytes = (input.len() as u64).to_le_bytes();
+
+        let result_data = [
+            &big_tx_tag[..],
+            &write_tag[..],
+            &offset_in_bytes[..],
+            &input_size_in_bytes[..],
+            &input[..],
+        ]
+        .concat();
+        assert_eq!(data, result_data)
+    }
+
+    #[test]
+    fn test_serialize_big_execute_unsigned() {
+        let from = H160::repeat_byte(0x1);
+        let ix =
+            EvmInstruction::EvmBigTransaction(EvmBigTransaction::EvmTransactionExecuteUnsigned {
+                from,
+            });
+
+        let data = bincode::serialize(&ix).unwrap();
+        let big_tx_tag = [3, 0, 0, 0];
+
+        let execute_tag = [3, 0, 0, 0];
+        let h160_len = (20u64 * 2 + 2).to_le_bytes();
+        let from_str = format!("{:?}", from);
+        let from_hex_bytes = from_str.as_bytes();
+
+        let result_data = [
+            &big_tx_tag[..],
+            &execute_tag[..],
+            &h160_len[..],
+            &from_hex_bytes[..],
+        ]
+        .concat();
+        assert_eq!(data, result_data)
     }
 
     #[quickcheck]
