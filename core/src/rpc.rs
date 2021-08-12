@@ -1765,7 +1765,8 @@ impl JsonRpcRequestProcessor {
                 && account.data.len() == VELAS_ACCOUNT_SIZE
                 && matches!(
                     VelasAccountType::try_from(account.data.as_slice()),
-                    Ok(VelasAccountType::Account(_account_info)))
+                    Ok(VelasAccountType::Account(_account_info))
+                )
         };
 
         if self
@@ -1793,7 +1794,7 @@ impl JsonRpcRequestProcessor {
         let is_target_velas_account_storage = |account: &Account| -> bool {
             account.owner == velas_account_program::id()
                 && match VelasAccountType::try_from(account.data.as_slice()) {
-                    Ok(VelasAccountType::Storage(_account_storage)) => true,
+                    Ok(VelasAccountType::Account(_account_storage)) => true,
                     _ => false,
                 }
         };
@@ -3400,7 +3401,7 @@ impl RpcSol for RpcSolImpl {
         let bank = meta.bank(None);
 
         let accounts = meta.get_velas_accounts_by_owner_key(&bank, owner_key);
-        
+
         debug!(
             "get_velas_accounts_by_owner_key velas accounts {:?}",
             accounts

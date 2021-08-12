@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use solana_sdk::pubkey::Pubkey;
 
-solana_sdk::declare_id!("VAcccHVjpknkW5N5R9sfRppQxYJrJYVV7QJGKchkQj5");
+solana_sdk::declare_id!("9mWgDLyWoAxa5wCgYFM89AuD8C9KrAc3dpEB2NMdYoST");
 
 /// A wrapper enum for consistency across programs
 #[derive(Debug, PartialEq)]
@@ -43,10 +43,11 @@ impl VAccountInfo {
             &[
                 &vaccount.to_bytes(),
                 b"storage",
-                &self.programs_storage_nonce.to_le_bytes()
+                &self.programs_storage_nonce.to_le_bytes(),
             ],
-            &crate::id()
-        ).0
+            &crate::id(),
+        )
+        .0
     }
 }
 
@@ -57,7 +58,7 @@ impl VAccountInfo {
 #[derive(Serialize, Deserialize)]
 pub struct VAccountStorage {
     /// Operational in not extended VAccount
-    pub operationals: Vec<Operational>
+    pub operationals: Vec<Operational>,
 }
 
 impl VAccountStorage {
@@ -132,7 +133,7 @@ impl TryFrom<&[u8]> for VelasAccountType {
         if data.len() == ACCOUNT_LEN {
             VAccountInfo::try_from_slice(data).map(VelasAccountType::Account)
         } else {
-            VAccountStorage::try_from_slice(data).map(VelasAccountType::Storage)
+            VAccountStorage::deserialize_stream_array(data).map(VelasAccountType::Storage)
         }
         .map_err(|_| ParseError::AccountNotParsable)
     }
@@ -141,14 +142,17 @@ impl TryFrom<&[u8]> for VelasAccountType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use std::str::FromStr;
 
     #[test]
     #[ignore] // TODO
     fn it_checks_account_len() {
         assert_eq!(std::mem::size_of::<VAccountInfo>(), ACCOUNT_LEN);
-        assert_eq!(solana_sdk::borsh::get_packed_len::<VAccountInfo>(), ACCOUNT_LEN)
+        assert_eq!(
+            solana_sdk::borsh::get_packed_len::<VAccountInfo>(),
+            ACCOUNT_LEN
+        )
     }
 
     #[test]
@@ -166,7 +170,8 @@ mod tests {
                     Pubkey::default(),
                     Pubkey::default()
                 ],
-                genesis_seed_key: Pubkey::from_str("9atTpuaX8WoxWr7xDanvMmE41bPWkCLnSM4V4CMTu4Lq").unwrap(),
+                genesis_seed_key: Pubkey::from_str("9atTpuaX8WoxWr7xDanvMmE41bPWkCLnSM4V4CMTu4Lq")
+                    .unwrap(),
                 operational_storage_nonce: 25,
                 token_storage_nonce: 1,
                 programs_storage_nonce: 1
@@ -187,7 +192,10 @@ mod tests {
             Operational {
                 pubkey: Pubkey::from_str("6kNwJXdAuDuXzFKKhYzMpQY5yGSFyus4eXPxxWJkDe2C").unwrap(),
                 state: OperationalState::Initialized,
-                agent_type: [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                agent_type: [
+                    0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0
+                ],
                 scopes: [127, 250, 0, 0],
                 tokens_indices: [0; 32],
                 external_programs_indices: [0; 32],
