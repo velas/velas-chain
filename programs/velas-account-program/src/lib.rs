@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use solana_sdk::pubkey::Pubkey;
 
-solana_sdk::declare_id!("9mWgDLyWoAxa5wCgYFM89AuD8C9KrAc3dpEB2NMdYoST");
+solana_sdk::declare_id!("VAcccHVjpknkW5N5R9sfRppQxYJrJYVV7QJGKchkQj5");
 
 /// A wrapper enum for consistency across programs
 #[derive(Debug, PartialEq)]
