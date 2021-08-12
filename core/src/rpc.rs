@@ -1765,7 +1765,7 @@ impl JsonRpcRequestProcessor {
                 && account.data.len() == VELAS_ACCOUNT_SIZE
                 && matches!(
                     VelasAccountType::try_from(account.data.as_slice()),
-                    Ok(VelasAccountType::Account(_account_info)) /* FIXME: delete? if account_info.storage == storage_key */ )
+                    Ok(VelasAccountType::Account(_account_info)))
         };
 
         if self
@@ -1793,10 +1793,7 @@ impl JsonRpcRequestProcessor {
         let is_target_velas_account_storage = |account: &Account| -> bool {
             account.owner == velas_account_program::id()
                 && match VelasAccountType::try_from(account.data.as_slice()) {
-                    Ok(VelasAccountType::Storage(account_storage)) => {
-                        // account_storage.owners.contains(&owner_key)
-                        return true // delete this line!
-                    }
+                    Ok(VelasAccountType::Storage(account_storage)) => true,
                     _ => false,
                 }
         };
