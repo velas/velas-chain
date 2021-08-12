@@ -50,7 +50,7 @@ pub struct VAccountStorage {
 impl VAccountStorage {
     pub const LEN: usize = std::mem::size_of::<Operational>();
 
-    pub fn try_from_slice2(data: &[u8]) -> Result<Self, std::io::Error> {
+    pub fn deserialize_stream_array(data: &[u8]) -> Result<Self, std::io::Error> {
         let number_operationals = data.len() / Self::LEN;
         let mut operationals = Vec::new();
         for index in 0..number_operationals {
@@ -166,7 +166,7 @@ mod tests {
         let storage_data_base64 = include_str!("../tests_data/account_storage.txt");
         let storage_data = base64::decode(storage_data_base64).unwrap();
 
-        let vstorage = VAccountStorage::try_from_slice2(&storage_data).unwrap();
+        let vstorage = VAccountStorage::deserialize_stream_array(&storage_data).unwrap();
 
         assert_eq!(vstorage.operationals.len(), 24);
         assert_eq!(

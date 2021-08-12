@@ -930,15 +930,12 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
             match VelasAccountType::try_from(account_data) {
                 Ok(VelasAccountType::Account(VAccountInfo { owners, programs_storage_nonce, .. })) => {
                     if account_indexes.contains(&AccountIndex::VelasAccountStorage) {
-                        let storage_nonce = [ 
-                            (programs_storage_nonce >> 8) as u8,
-                            (programs_storage_nonce & 255) as u8
-                        ];
                         let (storage, _) = Pubkey::find_program_address(
                             &[
                                 &pubkey.to_bytes(),
                                 b"storage",
-                                &storage_nonce],
+                                &programs_storage_nonce.to_le_bytes()
+                            ],
                             account_owner,
                         );
                         self.velas_account_storage_index
