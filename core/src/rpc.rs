@@ -1785,7 +1785,7 @@ impl JsonRpcRequestProcessor {
         }
     }
 
-    fn get_velas_accounts_storages_by_owner_key(
+    fn get_velas_accounts_by_owner_key(
         &self,
         bank: &Arc<Bank>,
         owner_key: Pubkey,
@@ -3399,15 +3399,8 @@ impl RpcSol for RpcSolImpl {
         let owner_key = verify_pubkey(pubkey_str)?;
         let bank = meta.bank(None);
 
-        let storages = meta.get_velas_accounts_storages_by_owner_key(&bank, owner_key);
-        debug!(
-            "get_velas_accounts_by_owner_key velas accounts storages {:?}",
-            storages
-        );
-
-        let accounts = storages
-            .into_iter()
-            .flat_map(|(storage, _)| meta.get_velas_accounts_by_storage_key(&bank, storage));
+        let accounts = meta.get_velas_accounts_by_owner_key(&bank, owner_key);
+        
         debug!(
             "get_velas_accounts_by_owner_key velas accounts {:?}",
             accounts
