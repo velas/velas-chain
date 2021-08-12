@@ -27,7 +27,7 @@ pub struct VAccountInfo {
     pub version: u8,
     ///
     pub owners: [Pubkey; 3],
-    /// Genegis owner key that generate Vaccount address
+    /// Genesis owner key that generates Vaccount address
     pub genesis_seed_key: Pubkey,
     /// Storage version
     pub operational_storage_nonce: u16,
@@ -35,6 +35,19 @@ pub struct VAccountInfo {
     pub token_storage_nonce: u16,
     /// Programs storage nonce
     pub programs_storage_nonce: u16,
+}
+
+impl VAccountInfo {
+    pub fn find_storage_key(&self, vaccount: &Pubkey) -> Pubkey {
+        Pubkey::find_program_address(
+            &[
+                &vaccount.to_bytes(),
+                b"storage",
+                &self.programs_storage_nonce.to_le_bytes()
+            ],
+            &crate::id()
+        ).0
+    }
 }
 
 /// Storage of the basic Vaccount information.
