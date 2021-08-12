@@ -1793,7 +1793,7 @@ impl JsonRpcRequestProcessor {
         let is_target_velas_account_storage = |account: &Account| -> bool {
             account.owner == velas_account_program::id()
                 && match VelasAccountType::try_from(account.data.as_slice()) {
-                    Ok(VelasAccountType::Storage(account_storage)) => true,
+                    Ok(VelasAccountType::Storage(_account_storage)) => true,
                     _ => false,
                 }
         };
