@@ -132,7 +132,7 @@ impl TryFrom<&[u8]> for VelasAccountType {
         if data.len() == ACCOUNT_LEN {
             VAccountInfo::try_from_slice(data).map(VelasAccountType::Account)
         } else {
-            VAccountStorage::try_from_slice(data).map(VelasAccountType::Storage)
+            VAccountStorage::deserialize_stream_array(data).map(VelasAccountType::Storage)
         }
         .map_err(|_| ParseError::AccountNotParsable)
     }
