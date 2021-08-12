@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
-use solana_sdk::{clock::UnixTimestamp, pubkey::Pubkey};
+use solana_sdk::pubkey::Pubkey;
 
 solana_sdk::declare_id!("VAcccHVjpknkW5N5R9sfRppQxYJrJYVV7QJGKchkQj5");
 
@@ -47,6 +47,23 @@ pub struct VAccountStorage {
     pub operationals: Vec<Operational>
 }
 
+impl VAccountStorage {
+    pub const LEN: usize = std::mem::size_of::<Operational>();
+
+    pub fn try_from_slice2(data: &[u8]) -> Result<Self, std::io::Error> {
+        let number_operationals = data.len() / Self::LEN;
+        let mut operationals = Vec::new();
+        for index in 0..number_operationals {
+            let start_from = Self::LEN * index;
+
+            operationals.push(Operational::try_from_slice(
+                &data[start_from..start_from + Self::LEN],
+            )?)
+        }
+        Ok(Self { operationals })
+    }
+}
+
 /// Operational key state.
 #[repr(C)]
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -70,16 +87,6 @@ pub struct Operational {
 }
 
 /// Operational key state.
-#[repr(C)]
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-#[derive(BorshDeserialize, BorshSerialize, BorshSchema)]
-#[derive(Serialize, Deserialize)]
-pub struct ExternalProgram {
-    /// Allowed to call program code id
-    pub program_id: Pubkey,
-}
-
-/// Operational key state.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[derive(BorshDeserialize, BorshSerialize, BorshSchema)]
@@ -89,30 +96,6 @@ pub enum OperationalState {
     Initialized,
     /// Operational has been frozen by the owner/operational freeze authority.
     Frozen,
-}
-
-/// Token account.
-#[repr(C)]
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-#[derive(BorshSchema, BorshSerialize, BorshDeserialize)]
-#[derive(Serialize, Deserialize)]
-pub struct ExternalToken {
-    /// Token account with daily transfer limit
-    pub account: TokenAccount,
-    /// Last uses of transfer
-    pub last_transfer: UnixTimestamp,
-}
-
-/// Token daily limit.
-#[repr(C)]
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-#[derive(BorshSchema, BorshSerialize, BorshDeserialize)]
-#[derive(Serialize, Deserialize)]
-pub struct TokenAccount {
-    /// Token address with vaccount authority
-    pub token_account: Pubkey,
-    /// The remainder of the daily limit lamports for transfer
-    pub remainder_daily_limit: u64,
 }
 
 impl Default for OperationalState {
@@ -145,52 +128,58 @@ impl TryFrom<&[u8]> for VelasAccountType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    
+    use std::str::FromStr;
 
     #[test]
     #[ignore] // TODO
     fn it_checks_account_len() {
         assert_eq!(std::mem::size_of::<VAccountInfo>(), ACCOUNT_LEN);
-    }
-
-    #[test]
-    fn it_checks_account_len2() {
         assert_eq!(solana_sdk::borsh::get_packed_len::<VAccountInfo>(), ACCOUNT_LEN)
     }
 
     #[test]
-    fn deserialize_vaccount_and_storage() {
-        // let vacc_data_base64 = "AX+L2di/S0km7vwWVWzabHtKq/S5CjWr58iCk6H+KxZqAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH+L2di/S0km7vwWVWzabHtKq/S5CjWr58iCk6H+KxZqGQABAAEA";
-        // let vacc_data = base64::decode(vacc_data_base64).unwrap();
-        // let vacc: VAccountInfo = borsh::de::BorshDeserialize::try_from_slice(&vacc_data[..]).unwrap();
+    fn test_deserialize_vaccountinfo() {
+        let vacc_data_base64 = include_str!("../tests_data/account_info.txt");
+        let vacc_data = base64::decode(vacc_data_base64).unwrap();
+        let vacc: VAccountInfo = borsh::BorshDeserialize::try_from_slice(&vacc_data[..]).unwrap();
 
-        // assert_eq!(
-        //     vacc,
-        //     VAccountInfo {
-        //         version: 1,
-        //         owners: [
-        //             Pubkey::from_str("9atTpuaX8WoxWr7xDanvMmE41bPWkCLnSM4V4CMTu4Lq").unwrap(),
-        //             Pubkey::default(),
-        //             Pubkey::default()
-        //         ],
-        //         genesis_seed_key: Pubkey::from_str("9atTpuaX8WoxWr7xDanvMmE41bPWkCLnSM4V4CMTu4Lq").unwrap(),
-        //         operational_storage_nonce: 25,
-        //         token_storage_nonce: 1,
-        //         programs_storage_nonce: 1
-        //     }
-        // );
+        assert_eq!(
+            vacc,
+            VAccountInfo {
+                version: 1,
+                owners: [
+                    Pubkey::from_str("9atTpuaX8WoxWr7xDanvMmE41bPWkCLnSM4V4CMTu4Lq").unwrap(),
+                    Pubkey::default(),
+                    Pubkey::default()
+                ],
+                genesis_seed_key: Pubkey::from_str("9atTpuaX8WoxWr7xDanvMmE41bPWkCLnSM4V4CMTu4Lq").unwrap(),
+                operational_storage_nonce: 25,
+                token_storage_nonce: 1,
+                programs_storage_nonce: 1
+            }
+        );
+    }
 
-        let storage_data_base64 = "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";
+    #[test]
+    fn test_deserialize_vaccountstorage() {
+        let storage_data_base64 = include_str!("../tests_data/account_storage.txt");
+        let storage_data = base64::decode(storage_data_base64).unwrap();
 
-        let mut storage_data = vec![24u8, 0, 0, 0];
-        let mut storage_data = vec![];
-        storage_data.extend(base64::decode(storage_data_base64).unwrap());
+        let vstorage = VAccountStorage::try_from_slice2(&storage_data).unwrap();
 
-        println!("{:?}", &storage_data.len());
-
-        println!("{:?}", &storage_data);
-        
-        let storage: VAccountStorage = borsh::de::BorshDeserialize::try_from_slice(&storage_data[..]).unwrap();
-
-        println!("{:?}", &storage);
+        assert_eq!(vstorage.operationals.len(), 24);
+        assert_eq!(
+            vstorage.operationals[0],
+            Operational {
+                pubkey: Pubkey::from_str("6kNwJXdAuDuXzFKKhYzMpQY5yGSFyus4eXPxxWJkDe2C").unwrap(),
+                state: OperationalState::Initialized,
+                agent_type: [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                scopes: [127, 250, 0, 0],
+                tokens_indices: [0; 32],
+                external_programs_indices: [0; 32],
+                is_master_key: false,
+            }
+        );
     }
 }

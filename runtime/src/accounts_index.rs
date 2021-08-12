@@ -928,15 +928,28 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
 
         if *account_owner == velas_account_program::id() {
             match VelasAccountType::try_from(account_data) {
-                Ok(VelasAccountType::Account(VAccountInfo { owners, /* ref storage, */ .. })) => {
+                Ok(VelasAccountType::Account(VAccountInfo { owners, programs_storage_nonce, .. })) => {
                     if account_indexes.contains(&AccountIndex::VelasAccountStorage) {
-                        // self.velas_account_storage_index
-                        //     .insert(storage, pubkey, slot);
+                        let storage_nonce = [ 
+                            (programs_storage_nonce >> 8) as u8,
+                            (programs_storage_nonce & 255) as u8
+                        ];
+                        let (storage, _) = Pubkey::find_program_address(
+                            &[
+                                &pubkey.to_bytes(),
+                                b"storage",
+                                &storage_nonce],
+                            account_owner,
+                        );
+                        self.velas_account_storage_index
+                            .insert(&storage, pubkey, slot);
                     }
+
                     if account_indexes.contains(&AccountIndex::VelasAccountOwner) {
                         for owner in owners {
-                            // FIXME: if not default value
-                            self.velas_account_owner_index.insert(&owner, pubkey, slot);
+                            if owner != Pubkey::default() {
+                                self.velas_account_owner_index.insert(&owner, pubkey, slot);
+                            }
                         }
                     }
                 }
