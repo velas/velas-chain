@@ -25,7 +25,7 @@ use {
         clock::Slot,
         pubkey::{Pubkey, PUBKEY_BYTES},
     },
-    velas_account_program::{VAccountInfo, VAccountStorage, VelasAccountType},
+    velas_account_program::{VAccountStorage, VelasAccountType},
     velas_relying_party_program::RelyingPartyData,
 };
 
@@ -928,22 +928,15 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
 
         if *account_owner == velas_account_program::id() {
             match VelasAccountType::try_from(account_data) {
-                Ok(VelasAccountType::Account(VAccountInfo { owners, programs_storage_nonce, .. })) => {
+                Ok(VelasAccountType::Account(account_info)) => {
                     if account_indexes.contains(&AccountIndex::VelasAccountStorage) {
-                        let (storage, _) = Pubkey::find_program_address(
-                            &[
-                                &pubkey.to_bytes(),
-                                b"storage",
-                                &programs_storage_nonce.to_le_bytes()
-                            ],
-                            account_owner,
-                        );
+                        let storage = account_info.find_storage_key(pubkey);
                         self.velas_account_storage_index
                             .insert(&storage, pubkey, slot);
                     }
 
                     if account_indexes.contains(&AccountIndex::VelasAccountOwner) {
-                        for owner in owners {
+                        for owner in account_info.owners {
                             if owner != Pubkey::default() {
                                 self.velas_account_owner_index.insert(&owner, pubkey, slot);
                             }
