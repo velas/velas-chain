@@ -1760,12 +1760,14 @@ impl JsonRpcRequestProcessor {
         bank: &Arc<Bank>,
         storage_key: Pubkey,
     ) -> Vec<(Pubkey, Account)> {
+        // this filter doesn't dismiss accounts which are not related to specified storage_key
         let is_target_velas_account = |account: &Account| -> bool {
             account.owner == velas_account_program::id()
                 && account.data.len() == VELAS_ACCOUNT_SIZE
                 && matches!(
                     VelasAccountType::try_from(account.data.as_slice()),
-                    Ok(VelasAccountType::Account(_account_info)))
+                    Ok(VelasAccountType::Account(_account_info))
+                )
         };
 
         if self
@@ -3400,7 +3402,7 @@ impl RpcSol for RpcSolImpl {
         let bank = meta.bank(None);
 
         let accounts = meta.get_velas_accounts_by_owner_key(&bank, owner_key);
-        
+
         debug!(
             "get_velas_accounts_by_owner_key velas accounts {:?}",
             accounts

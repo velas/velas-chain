@@ -943,9 +943,7 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
                         }
                     }
                 }
-                Ok(VelasAccountType::Storage(VAccountStorage {
-                    operationals,
-                })) => {
+                Ok(VelasAccountType::Storage(VAccountStorage { operationals })) => {
                     if account_indexes.contains(&AccountIndex::VelasAccountOperational) {
                         for operational in operationals {
                             self.velas_account_operational_index.insert(
