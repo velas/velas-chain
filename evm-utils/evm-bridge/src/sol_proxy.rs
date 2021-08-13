@@ -8,19 +8,16 @@ use solana_client::{rpc_client::RpcClient, rpc_config::*, rpc_request::*, rpc_re
 use solana_core::rpc::{self, OptionalContext};
 use solana_runtime::commitment::BlockCommitmentArray;
 use solana_sdk::{
-
-epoch_schedule::EpochSchedule,
     clock::{Slot, UnixTimestamp},
     commitment_config::CommitmentConfig,
     epoch_info::EpochInfo,
+    epoch_schedule::EpochSchedule,
 };
 
 use solana_account_decoder::{parse_token::UiTokenAmount, UiAccount};
 use solana_transaction_status::{EncodedConfirmedTransaction, TransactionStatus, UiConfirmedBlock};
 
-
-
-use crate::{EvmBridge, from_client_error};
+use crate::{from_client_error, EvmBridge};
 
 macro_rules! proxy_sol_rpc {
     ($rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
