@@ -4756,11 +4756,10 @@ mod tests {
             );
 
             // split account already has way enough lamports
-            split_stake_keyed_account.account.borrow_mut().lamports =
-                expected_rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT;
+            split_stake_keyed_account.account.borrow_mut().lamports = 10_000_000;
             assert_eq!(
                 stake_keyed_account.split(
-                    stake_lamports - (rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT), // leave rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT in original account
+                    stake_lamports - (rent_exempt_reserve + 1 + MIN_DELEGATE_STAKE_AMOUNT), // leave rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT in original account
                     &split_stake_keyed_account,
                     &signers
                 ),
@@ -4776,7 +4775,7 @@ mod tests {
                         Stake {
                             delegation: Delegation {
                                 stake: stake_lamports
-                                    - (rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT),
+                                    - (rent_exempt_reserve + 1 + MIN_DELEGATE_STAKE_AMOUNT),
                                 ..stake.delegation
                             },
                             ..*stake
@@ -4785,12 +4784,12 @@ mod tests {
                 );
                 assert_eq!(
                     stake_keyed_account.account.borrow().lamports,
-                    MIN_DELEGATE_STAKE_AMOUNT + rent_exempt_reserve
+                    MIN_DELEGATE_STAKE_AMOUNT + rent_exempt_reserve + 1
                 );
                 assert_eq!(
                     split_stake_keyed_account.account.borrow().lamports,
-                    expected_rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT + stake_lamports
-                        - (rent_exempt_reserve + MIN_DELEGATE_STAKE_AMOUNT)
+                    10_000_000 + stake_lamports
+                        - (rent_exempt_reserve + 1 + MIN_DELEGATE_STAKE_AMOUNT)
                 );
             }
         }
@@ -5205,11 +5204,7 @@ mod tests {
             let split_result =
                 stake_keyed_account.split(split_amount, &split_stake_keyed_account, &signers);
 
-            if initial_balance < MIN_DELEGATE_STAKE_AMOUNT + expected_rent_exempt_reserve {
-                assert_eq!(split_result, Err(InstructionError::InsufficientFunds));
-            } else {
-                assert_eq!(split_result, Ok(()));
-            }
+            assert_eq!(split_result, Err(InstructionError::InvalidAccountData));
 
             // Splitting 100% of source should not make a difference
             let split_result =

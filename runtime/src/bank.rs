@@ -12641,10 +12641,6 @@ pub(crate) mod tests {
             .accounts
             .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
             .unwrap();
-        for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
-            genesis_config.accounts.remove(&pair.vote_id).unwrap();
-            genesis_config.accounts.remove(&pair.enable_id).unwrap();
-        }
 
         let bank = Bank::new(&genesis_config);
 
@@ -12722,10 +12718,6 @@ pub(crate) mod tests {
             .accounts
             .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
             .unwrap();
-        for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
-            genesis_config.accounts.remove(&pair.vote_id).unwrap();
-            genesis_config.accounts.remove(&pair.enable_id).unwrap();
-        }
 
         let bank = Bank::new(&genesis_config);
 
@@ -12753,7 +12745,7 @@ pub(crate) mod tests {
         assert_eq!(bank.slot(), 3);
 
         // Request `full_inflation::mainnet::certusone` activation,
-        // which takes priority over pico_inflation
+        // which should have no effect on `get_inflation_start_slot`
         bank.store_account(
             &feature_set::full_inflation::mainnet::certusone::vote::id(),
             &feature::create_account(
@@ -12773,14 +12765,14 @@ pub(crate) mod tests {
             ),
         );
         bank.compute_active_feature_set(true);
-        assert_eq!(bank.get_inflation_start_slot(), 2);
+        assert_eq!(bank.get_inflation_start_slot(), 1);
 
         // Advance slot
         bank = new_from_parent(&Arc::new(bank));
         assert_eq!(bank.slot(), 4);
 
         // Request `full_inflation::devnet_and_testnet_velas_mainnet` activation,
-        // which should have no effect on `get_inflation_start_slot`
+        // which takes priority over pico_inflation
         bank.store_account(
             &feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id(),
             &feature::create_account(
@@ -12791,7 +12783,7 @@ pub(crate) mod tests {
             ),
         );
         bank.compute_active_feature_set(true);
-        assert_eq!(bank.get_inflation_start_slot(), 2);
+        assert_eq!(bank.get_inflation_start_slot(), 4);
     }
 
     #[test]
@@ -12809,10 +12801,6 @@ pub(crate) mod tests {
             .accounts
             .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
             .unwrap();
-        for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
-            genesis_config.accounts.remove(&pair.vote_id).unwrap();
-            genesis_config.accounts.remove(&pair.enable_id).unwrap();
-        }
 
         let mut bank = Bank::new(&genesis_config);
         assert_eq!(bank.get_inflation_num_slots(), 0);

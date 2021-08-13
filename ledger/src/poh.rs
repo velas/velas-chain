@@ -205,7 +205,7 @@ mod tests {
                 (poh.record(zero).unwrap(), Some(zero)),
                 (poh.tick().unwrap(), None),
             ],
-        ),);
+        ));
 
         assert!(verify(
             zero,
@@ -216,7 +216,7 @@ mod tests {
                 },
                 None
             )],
-        ),);
+        ));
         assert!(verify(
             zero,
             &[(
@@ -226,7 +226,7 @@ mod tests {
                 },
                 None
             )]
-        ),);
+        ));
 
         assert!(verify(
             zero,
@@ -237,8 +237,8 @@ mod tests {
                 },
                 Some(zero)
             )]
-        ),);
-        assert!(verify(
+        ));
+        assert!(!verify(
             zero,
             &[(
                 PohEntry {
@@ -247,7 +247,7 @@ mod tests {
                 },
                 None
             )]
-        ),);
+        ));
 
         assert!(verify(
             zero,
@@ -267,7 +267,7 @@ mod tests {
                     None
                 )
             ]
-        ),);
+        ));
     }
 
     #[test]
