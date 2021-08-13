@@ -100,54 +100,50 @@ pub mod skip_ro_deserialization {
 }
 
 pub mod require_stake_for_gossip {
-    solana_sdk::declare_id!("6oNzd5Z3M2L1xo4Q5hoox7CR2DuW7m1ETLWH5jHJthwa");
+    solana_sdk::declare_id!("EV8cfTBZfhjNH23qg7xz4TL95f4vKLGoNuG5gJJG85WY");
 }
 
 pub mod cpi_data_cost {
-    solana_sdk::declare_id!("Hrg5bXePPGiAVWZfDHbvjqytSeyBDPAGAQ7v6N5i4gCX");
+    solana_sdk::declare_id!("CuYeffE36Bed4qExko1XwUDHB2b6TJ9pwphXw52Nm9UB");
 }
 
 pub mod upgradeable_close_instruction {
-    solana_sdk::declare_id!("FsPaByos3gA9bUEhp3EimQpQPCoSvCEigHod496NmABQ");
+    solana_sdk::declare_id!("8CiKcDAct4LY4FZgzTv2tcAi1PkNW2P1JFzaS28tpFzB");
 }
 
 pub mod demote_sysvar_write_locks {
-    solana_sdk::declare_id!("86LJYRuq2zgtHuL3FccR6hqFJQMQkFoun4knAxcPiF1P");
+    solana_sdk::declare_id!("6LDeGYz9iqbscuLrMYpZxeifFZWDzXL7n7zS6syaCDJ8");
 }
 
 pub mod sysvar_via_syscall {
-    solana_sdk::declare_id!("7411E6gFQLDhQkdRjmpXwM1hzHMMoYQUjHicmvGPC1Nf");
+    solana_sdk::declare_id!("2bfZ6cxMn5yJ5cf3T8J3zSoraYPe9V9iMSab1gNiRERr");
 }
 
 pub mod check_duplicates_by_hash {
-    solana_sdk::declare_id!("8ZqTSYHgzyaYCcXJPMViRy6afCFSgNvYooPDeVdyj5GC");
+    solana_sdk::declare_id!("AjSWo5fdpbo2Xy2G8Xbjhythe42MQci3CV8FuJ9cpi9d");
 }
 
 pub mod enforce_aligned_host_addrs {
-    solana_sdk::declare_id!("6Qob9Z4RwGdf599FDVCqsjuKjR8ZFR3oVs2ByRLWBsua");
+    solana_sdk::declare_id!("5GDsuYGNKRRKE2tTpid7aGRixfryAVBz2MPHzSJexwyp");
 }
 pub mod set_upgrade_authority_via_cpi_enabled {
-    solana_sdk::declare_id!("GQdjCCptpGECG7QfE35hKTAopB1umGoSrdKfax2VmZWy");
+    solana_sdk::declare_id!("3n34oY4kEma7jNGGsu4btRteisnqqHGmSEZNJpz3A8cU");
 }
 
 pub mod update_data_on_realloc {
-    solana_sdk::declare_id!("BkPcYCrwHXBoTsv9vMhiRF9gteZmDj3Uwisz9CDjoMKp");
+    solana_sdk::declare_id!("23wrJ1vCGMbugM14C5vgXxP1trJbKSzK52MnMzWBtQQ4");
 }
 
 pub mod keccak256_syscall_enabled {
-    solana_sdk::declare_id!("7Ua8mFtahVfA3WCY9LoXDAJJdvJRJHckvSSr1dD8FTWc");
+    solana_sdk::declare_id!("DtDVADxBHPQpPUuXunL4tRik4fx9YiSQTHa5H1hXHksc");
 }
 
 pub mod stake_program_v4 {
-    solana_sdk::declare_id!("Dc7djyhP9aLfdq2zktpvskeAjpG56msCU1yexpxXiWZb");
+    solana_sdk::declare_id!("cug7ESsYA4ma7iE1y4qgi5zsdKyo6KJ1NyS5K4CVEE3");
 }
 
 pub mod system_transfer_zero_check {
-    solana_sdk::declare_id!("BrTR9hzw4WBGFP65AJMbpAo64DcA3U6jdPSga9fMV5cS");
-}
-
-pub mod track_writable_deescalation {
-    solana_sdk::declare_id!("HVPSxqskEtRLRT2ZeEMmkmt9FWqoFX4vrN6f5VaadLED");
+    solana_sdk::declare_id!("EqohBJpJsJym3qAJ3N7AH35c4u2rfS5yYvS693ThYTbG");
 }
 
 pub mod velas {
