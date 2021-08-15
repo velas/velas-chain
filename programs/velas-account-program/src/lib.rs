@@ -65,16 +65,10 @@ impl VAccountStorage {
     pub const LEN: usize = std::mem::size_of::<Operational>();
 
     pub fn deserialize_stream_array(data: &[u8]) -> Result<Self, std::io::Error> {
-        let number_operationals = data.len() / Self::LEN;
-        let mut operationals = Vec::new();
-        for index in 0..number_operationals {
-            let start_from = Self::LEN * index;
-
-            operationals.push(Operational::try_from_slice(
-                &data[start_from..start_from + Self::LEN],
-            )?)
-        }
-        Ok(Self { operationals })
+        data.chunks(Self::LEN)
+            .map(Operational::try_from_slice)
+            .collect::<Result<_, _>>()
+            .map(|operationals| Self { operationals })
     }
 }
 
