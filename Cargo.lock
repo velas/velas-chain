@@ -7942,6 +7942,7 @@ checksum = "f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191"
 name = "velas-account-program"
 version = "0.0.1"
 dependencies = [
+ "base64 0.13.0",
  "borsh 0.8.2",
  "borsh-derive 0.8.2",
  "serde",
