@@ -27,7 +27,7 @@ use std::{
     },
 };
 
-use velas_account_program::{VAccountInfo, VAccountStorage, VelasAccountType};
+use velas_account_program::{VAccountStorage, VelasAccountType};
 use velas_relying_party_program::RelyingPartyData;
 
 pub const ITER_BATCH_SIZE: usize = 1000;
@@ -975,20 +975,21 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
         // Velas account
         if *account_owner == velas_account_program::id() {
             match VelasAccountType::try_from(account_data) {
-                Ok(VelasAccountType::Account(VAccountInfo { ref storage, .. })) => {
+                Ok(VelasAccountType::Account(account_info)) => {
                     if account_indexes.contains(&AccountIndex::VelasAccountStorage) {
-                        self.velas_account_storage_index.insert(storage, pubkey);
+                        let storage = account_info.find_storage_key(pubkey);
+                        self.velas_account_storage_index.insert(&storage, pubkey);
                     }
-                }
-                Ok(VelasAccountType::Storage(VAccountStorage {
-                    owners,
-                    operationals,
-                })) => {
+
                     if account_indexes.contains(&AccountIndex::VelasAccountOwner) {
-                        for owner in owners {
-                            self.velas_account_owner_index.insert(&owner, pubkey);
+                        for owner in account_info.owners {
+                            if owner != Pubkey::default() {
+                                self.velas_account_owner_index.insert(&owner, pubkey);
+                            }
                         }
                     }
+                }
+                Ok(VelasAccountType::Storage(VAccountStorage { operationals })) => {
                     if account_indexes.contains(&AccountIndex::VelasAccountOperational) {
                         for operational in operationals {
                             self.velas_account_operational_index

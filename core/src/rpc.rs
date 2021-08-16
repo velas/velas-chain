@@ -2098,12 +2098,14 @@ impl JsonRpcRequestProcessor {
         bank: &Arc<Bank>,
         storage_key: Pubkey,
     ) -> Vec<(Pubkey, AccountSharedData)> {
+        // this filter doesn't dismiss accounts which are not related to specified storage_key
         let is_target_velas_account = |account: &AccountSharedData| -> bool {
             account.owner == velas_account_program::id()
                 && account.data.len() == VELAS_ACCOUNT_SIZE
                 && matches!(
                     VelasAccountType::try_from(account.data.as_slice()),
-                    Ok(VelasAccountType::Account(account_info)) if account_info.storage == storage_key)
+                    Ok(VelasAccountType::Account(_account_info))
+                )
         };
 
         if self
@@ -2123,7 +2125,7 @@ impl JsonRpcRequestProcessor {
         }
     }
 
-    fn get_velas_accounts_storages_by_owner_key(
+    fn get_velas_accounts_by_owner_key(
         &self,
         bank: &Arc<Bank>,
         owner_key: Pubkey,
@@ -2131,9 +2133,7 @@ impl JsonRpcRequestProcessor {
         let is_target_velas_account_storage = |account: &AccountSharedData| -> bool {
             account.owner == velas_account_program::id()
                 && match VelasAccountType::try_from(account.data.as_slice()) {
-                    Ok(VelasAccountType::Storage(account_storage)) => {
-                        account_storage.owners.contains(&owner_key)
-                    }
+                    Ok(VelasAccountType::Account(account)) => account.owners.contains(&owner_key),
                     _ => false,
                 }
         };
@@ -3962,15 +3962,8 @@ pub mod rpc_full {
             let owner_key = verify_pubkey(&pubkey_str)?;
             let bank = meta.bank(None);
 
-            let storages = meta.get_velas_accounts_storages_by_owner_key(&bank, owner_key);
-            debug!(
-                "get_velas_accounts_by_owner_key velas accounts storages {:?}",
-                storages
-            );
+            let accounts = meta.get_velas_accounts_by_owner_key(&bank, owner_key);
 
-            let accounts = storages
-                .into_iter()
-                .flat_map(|(storage, _)| meta.get_velas_accounts_by_storage_key(&bank, storage));
             debug!(
                 "get_velas_accounts_by_owner_key velas accounts {:?}",
                 accounts
