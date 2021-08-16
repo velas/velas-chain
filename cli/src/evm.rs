@@ -10,7 +10,9 @@ use clap::{value_t_or_exit, App, AppSettings, Arg, ArgGroup, ArgMatches, SubComm
 use log::*;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
-    commitment_config::CommitmentConfig, message::Message, native_token::lamports_to_sol,
+    commitment_config::CommitmentConfig,
+    message::Message,
+    native_token::{lamports_to_sol, LAMPORTS_PER_VLX},
     transaction::Transaction,
 };
 
@@ -61,7 +63,10 @@ impl EvmSubCommands for App<'_, '_> {
                              .index(2)
                              .takes_value(true)
                              .value_name("AMOUNT")
-                             .help("Amount in plancks")))
+                             .help("Amount in VLX"))
+                        .arg(Arg::with_name("lamports")
+                             .long("lamports")
+                             .help("Amount in lamports")))
 
 
             // Hidden commands
@@ -421,7 +426,11 @@ pub fn parse_evm_subcommand(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, 
         }
         ("transfer-to-evm", Some(matches)) => {
             let address = value_t_or_exit!(matches, "evm_address", evm::Address);
-            let amount = value_t_or_exit!(matches, "amount", u64);
+            let mut amount = value_t_or_exit!(matches, "amount", u64);
+            if !matches.is_present("lamports") {
+                amount *= LAMPORTS_PER_VLX;
+            }
+
             EvmCliCommand::TransferToEvm { address, amount }
         }
         ("send-raw-tx", Some(matches)) => {
