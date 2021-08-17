@@ -926,7 +926,7 @@ mod tests {
         slot_hashes: &[SlotHash],
         epoch: Epoch,
     ) -> Result<VoteState, InstructionError> {
-        let keyed_accounts = &[KeyedAccount::new(&vote_pubkey, true, vote_account)];
+        let keyed_accounts = &[KeyedAccount::new(vote_pubkey, true, vote_account)];
         let signers: HashSet<Pubkey> = get_signers(keyed_accounts);
         process_vote(
             &keyed_accounts[0],

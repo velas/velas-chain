@@ -335,7 +335,7 @@ fn main() {
 
         let mut validators: Vec<_> = starting_validators
             .keys()
-            .map(|node_pubkey| format!("* {}", pubkey_to_keybase(&node_pubkey)))
+            .map(|node_pubkey| format!("* {}", pubkey_to_keybase(node_pubkey)))
             .collect();
         validators.sort();
         notifier.send(&validators.join("\n"));
@@ -426,7 +426,7 @@ fn main() {
 
         let leader_records = voters::calculate_leader_records(
             &rpc_client,
-            &epoch_schedule,
+            epoch_schedule,
             round_start_slot,
             round_end_slot,
             &notifier,
@@ -456,7 +456,7 @@ fn main() {
             .iter()
             .filter(|(k, _)| leader_records.get(k).map(|r| r.healthy()).unwrap_or(false))
             .map(|(node_pubkey, vote_account_pubkey)| {
-                (pubkey_to_keybase(&node_pubkey), vote_account_pubkey)
+                (pubkey_to_keybase(node_pubkey), vote_account_pubkey)
             })
             .collect();
 

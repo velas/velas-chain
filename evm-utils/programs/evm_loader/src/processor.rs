@@ -438,7 +438,7 @@ impl EvmProcessor {
 
                 let sender = accounts.users.get(1);
                 if unsigned_tx_fix {
-                    self.cleanup_storage(invoke_context, storage, &sender.unwrap_or(accounts.evm))?;
+                    self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
                 }
 
                 self.handle_transaction_result(
@@ -528,7 +528,7 @@ impl EvmProcessor {
                     precompiles::entrypoint(accounts, executor.support_precompile()),
                 );
 
-                self.cleanup_storage(invoke_context, storage, &program_account)?;
+                self.cleanup_storage(invoke_context, storage, program_account)?;
                 self.handle_transaction_result(
                     invoke_context,
                     accounts,

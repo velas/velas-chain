@@ -587,7 +587,7 @@ pub fn keypair_from_seed_phrase(
     let keypair = if skip_validation {
         let passphrase = prompt_passphrase(&passphrase_prompt)?;
         if legacy {
-            keypair_from_seed_phrase_and_passphrase(&seed_phrase, &passphrase)?
+            keypair_from_seed_phrase_and_passphrase(seed_phrase, &passphrase)?
         } else {
             let seed = generate_seed_from_seed_phrase_and_passphrase(seed_phrase, &passphrase);
             keypair_from_seed_and_derivation_path(&seed, derivation_path)?

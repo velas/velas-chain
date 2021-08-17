@@ -50,6 +50,7 @@ fn test_accounts_create(bencher: &mut Bencher) {
     let (genesis_config, _) = create_genesis_config(10_000);
     let bank0 = Bank::new_with_paths(
         &genesis_config,
+        None,
         vec![PathBuf::from("bench_a0")],
         &[],
         None,
@@ -69,6 +70,7 @@ fn test_accounts_squash(bencher: &mut Bencher) {
     genesis_config.rent.burn_percent = 100; // Avoid triggering an assert in Bank::distribute_rent_to_validators()
     let mut prev_bank = Arc::new(Bank::new_with_paths(
         &genesis_config,
+        None,
         vec![PathBuf::from("bench_a1")],
         &[],
         None,
@@ -219,7 +221,7 @@ fn store_accounts_with_possible_contention<F: 'static>(
             // Write to a different slot than the one being read from. Because
             // there's a new account pubkey being written to every time, will
             // compete for the accounts index lock on every store
-            accounts.store_slow_uncached(slot + 1, &solana_sdk::pubkey::new_rand(), &account);
+            accounts.store_slow_uncached(slot + 1, &solana_sdk::pubkey::new_rand(), account);
         }
     })
 }

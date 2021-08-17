@@ -998,7 +998,7 @@ fn process_airdrop(
 
     let result = request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports);
     if let Ok(signature) = result {
-        let signature_cli_message = log_instruction_custom_error::<SystemError>(result, &config)?;
+        let signature_cli_message = log_instruction_custom_error::<SystemError>(result, config)?;
         println!("{}", signature_cli_message);
 
         let current_balance = rpc_client.get_balance(&pubkey)?;
@@ -1011,7 +1011,7 @@ fn process_airdrop(
             Ok(build_balance_message(current_balance, false, true))
         }
     } else {
-        log_instruction_custom_error::<SystemError>(result, &config)
+        log_instruction_custom_error::<SystemError>(result, config)
     }
 }
 
@@ -1096,7 +1096,7 @@ fn process_confirm(
 
 #[allow(clippy::unnecessary_wraps)]
 fn process_decode_transaction(config: &CliConfig, transaction: &Transaction) -> ProcessResult {
-    let sigverify_status = CliSignatureVerificationStatus::verify_transaction(&transaction);
+    let sigverify_status = CliSignatureVerificationStatus::verify_transaction(transaction);
     let decode_transaction = CliTransaction {
         decoded_transaction: transaction.clone(),
         transaction: EncodedTransaction::encode(transaction.clone(), UiTransactionEncoding::Json),
@@ -1267,7 +1267,7 @@ fn process_transfer(
         } else {
             rpc_client.send_and_confirm_transaction_with_spinner(&tx)
         };
-        log_instruction_custom_error::<SystemError>(result, &config)
+        log_instruction_custom_error::<SystemError>(result, config)
     }
 }
 
@@ -1322,7 +1322,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             from_pubkey,
             seed,
             program_id,
-        } => process_create_address_with_seed(config, from_pubkey.as_ref(), &seed, &program_id),
+        } => process_create_address_with_seed(config, from_pubkey.as_ref(), seed, program_id),
         CliCommand::Fees { ref blockhash } => process_fees(&rpc_client, config, blockhash.as_ref()),
         CliCommand::Feature(feature_subcommand) => {
             process_feature_subcommand(&rpc_client, config, feature_subcommand)
@@ -1345,8 +1345,8 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         CliCommand::LeaderSchedule { epoch } => {
             process_leader_schedule(&rpc_client, config, *epoch)
         }
-        CliCommand::LiveSlots => process_live_slots(&config),
-        CliCommand::Logs { filter } => process_logs(&config, filter),
+        CliCommand::LiveSlots => process_live_slots(config),
+        CliCommand::Logs { filter } => process_logs(config, filter),
         CliCommand::Ping {
             lamports,
             interval,
@@ -1485,10 +1485,10 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_withdraw_from_nonce_account(
             &rpc_client,
             config,
-            &nonce_account,
+            nonce_account,
             *nonce_authority,
             memo.as_ref(),
-            &destination_account_pubkey,
+            destination_account_pubkey,
             *lamports,
         ),
 
@@ -1562,7 +1562,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_deactivate_stake_account(
             &rpc_client,
             config,
-            &stake_account_pubkey,
+            stake_account_pubkey,
             *stake_authority,
             *sign_only,
             *dump_transaction_message,
@@ -1588,8 +1588,8 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_delegate_stake(
             &rpc_client,
             config,
-            &stake_account_pubkey,
-            &vote_account_pubkey,
+            stake_account_pubkey,
+            vote_account_pubkey,
             *stake_authority,
             *force,
             *sign_only,
@@ -1616,7 +1616,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_split_stake(
             &rpc_client,
             config,
-            &stake_account_pubkey,
+            stake_account_pubkey,
             *stake_authority,
             *sign_only,
             *dump_transaction_message,
@@ -1643,8 +1643,8 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_merge_stake(
             &rpc_client,
             config,
-            &stake_account_pubkey,
-            &source_stake_account_pubkey,
+            stake_account_pubkey,
+            source_stake_account_pubkey,
             *stake_authority,
             *sign_only,
             *dump_transaction_message,
@@ -1661,7 +1661,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_show_stake_account(
             &rpc_client,
             config,
-            &stake_account_pubkey,
+            stake_account_pubkey,
             *use_lamports_unit,
             *with_rewards,
         ),
@@ -1683,7 +1683,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_stake_authorize(
             &rpc_client,
             config,
-            &stake_account_pubkey,
+            stake_account_pubkey,
             new_authorizations,
             *custodian,
             *sign_only,
@@ -1708,7 +1708,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_stake_set_lockup(
             &rpc_client,
             config,
-            &stake_account_pubkey,
+            stake_account_pubkey,
             &mut lockup,
             *custodian,
             *sign_only,
@@ -1736,8 +1736,8 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_withdraw_stake(
             &rpc_client,
             config,
-            &stake_account_pubkey,
-            &destination_account_pubkey,
+            stake_account_pubkey,
+            destination_account_pubkey,
             *amount,
             *withdraw_authority,
             *custodian,
@@ -1765,7 +1765,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_set_validator_info(
             &rpc_client,
             config,
-            &validator_info,
+            validator_info,
             *force_keybase,
             *info_pubkey,
         ),
@@ -1799,7 +1799,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_show_vote_account(
             &rpc_client,
             config,
-            &vote_account_pubkey,
+            vote_account_pubkey,
             *use_lamports_unit,
             *with_rewards,
         ),
@@ -1826,8 +1826,8 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_vote_authorize(
             &rpc_client,
             config,
-            &vote_account_pubkey,
-            &new_authorized_pubkey,
+            vote_account_pubkey,
+            new_authorized_pubkey,
             *vote_authorize,
             memo.as_ref(),
         ),
@@ -1839,7 +1839,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_vote_update_validator(
             &rpc_client,
             config,
-            &vote_account_pubkey,
+            vote_account_pubkey,
             *new_identity_account,
             *withdraw_authority,
             memo.as_ref(),
@@ -1852,7 +1852,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_vote_update_commission(
             &rpc_client,
             config,
-            &vote_account_pubkey,
+            vote_account_pubkey,
             *commission,
             *withdraw_authority,
             memo.as_ref(),
@@ -1868,7 +1868,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         CliCommand::Balance {
             pubkey,
             use_lamports_unit,
-        } => process_balance(&rpc_client, config, &pubkey, *use_lamports_unit),
+        } => process_balance(&rpc_client, config, pubkey, *use_lamports_unit),
         // Confirm the last client transaction by signature
         CliCommand::Confirm(signature) => process_confirm(&rpc_client, config, signature),
         CliCommand::DecodeTransaction(transaction) => {
@@ -1885,13 +1885,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             pubkey,
             output_file,
             use_lamports_unit,
-        } => process_show_account(
-            &rpc_client,
-            config,
-            &pubkey,
-            &output_file,
-            *use_lamports_unit,
-        ),
+        } => process_show_account(&rpc_client, config, pubkey, output_file, *use_lamports_unit),
         CliCommand::Transfer {
             amount,
             to,

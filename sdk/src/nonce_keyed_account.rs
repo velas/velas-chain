@@ -297,7 +297,7 @@ mod test {
             let authorized = keyed_account.unsigned_key();
             keyed_account
                 .initialize_nonce_account(
-                    &authorized,
+                    authorized,
                     &recent_blockhashes,
                     &rent,
                     &mut MockInvokeContext::default(),
@@ -358,7 +358,7 @@ mod test {
                 keyed_account
                     .withdraw_nonce_account(
                         withdraw_lamports,
-                        &to_keyed,
+                        to_keyed,
                         &recent_blockhashes,
                         &rent,
                         &signers,
@@ -588,7 +588,7 @@ mod test {
                 nonce_keyed
                     .withdraw_nonce_account(
                         withdraw_lamports,
-                        &to_keyed,
+                        to_keyed,
                         &recent_blockhashes,
                         &rent,
                         &signers,
@@ -627,7 +627,7 @@ mod test {
                 let lamports = nonce_keyed.account.borrow().lamports;
                 let result = nonce_keyed.withdraw_nonce_account(
                     lamports,
-                    &to_keyed,
+                    to_keyed,
                     &recent_blockhashes,
                     &rent,
                     &signers,
@@ -657,7 +657,7 @@ mod test {
                 let lamports = nonce_keyed.account.borrow().lamports + 1;
                 let result = nonce_keyed.withdraw_nonce_account(
                     lamports,
-                    &to_keyed,
+                    to_keyed,
                     &recent_blockhashes,
                     &rent,
                     &signers,
@@ -687,7 +687,7 @@ mod test {
                 nonce_keyed
                     .withdraw_nonce_account(
                         withdraw_lamports,
-                        &to_keyed,
+                        to_keyed,
                         &recent_blockhashes,
                         &rent,
                         &signers,
@@ -707,7 +707,7 @@ mod test {
                 nonce_keyed
                     .withdraw_nonce_account(
                         withdraw_lamports,
-                        &to_keyed,
+                        to_keyed,
                         &recent_blockhashes,
                         &rent,
                         &signers,
@@ -761,7 +761,7 @@ mod test {
                 nonce_keyed
                     .withdraw_nonce_account(
                         withdraw_lamports,
-                        &to_keyed,
+                        to_keyed,
                         &recent_blockhashes,
                         &rent,
                         &signers,
@@ -787,7 +787,7 @@ mod test {
                 nonce_keyed
                     .withdraw_nonce_account(
                         withdraw_lamports,
-                        &to_keyed,
+                        to_keyed,
                         &recent_blockhashes,
                         &rent,
                         &signers,
@@ -828,7 +828,7 @@ mod test {
                 let withdraw_lamports = nonce_keyed.account.borrow().lamports;
                 let result = nonce_keyed.withdraw_nonce_account(
                     withdraw_lamports,
-                    &to_keyed,
+                    to_keyed,
                     &recent_blockhashes,
                     &rent,
                     &signers,
@@ -864,7 +864,7 @@ mod test {
                 let withdraw_lamports = nonce_keyed.account.borrow().lamports + 1;
                 let result = nonce_keyed.withdraw_nonce_account(
                     withdraw_lamports,
-                    &to_keyed,
+                    to_keyed,
                     &recent_blockhashes,
                     &rent,
                     &signers,
@@ -900,7 +900,7 @@ mod test {
                 let withdraw_lamports = nonce_keyed.account.borrow().lamports - min_lamports + 1;
                 let result = nonce_keyed.withdraw_nonce_account(
                     withdraw_lamports,
-                    &to_keyed,
+                    to_keyed,
                     &recent_blockhashes,
                     &rent,
                     &signers,
@@ -936,7 +936,7 @@ mod test {
                 let withdraw_lamports = u64::MAX - 54;
                 let result = nonce_keyed.withdraw_nonce_account(
                     withdraw_lamports,
-                    &to_keyed,
+                    to_keyed,
                     &recent_blockhashes,
                     &rent,
                     &signers,
@@ -1125,7 +1125,7 @@ mod test {
             let authorized = &Pubkey::default().clone();
             nonce_account
                 .initialize_nonce_account(
-                    &authorized,
+                    authorized,
                     &recent_blockhashes,
                     &rent,
                     &mut MockInvokeContext::default(),
@@ -1152,7 +1152,7 @@ mod test {
             let authorized = nonce_account.unsigned_key();
             nonce_account
                 .initialize_nonce_account(
-                    &authorized,
+                    authorized,
                     &recent_blockhashes,
                     &Rent::free(),
                     &mut MockInvokeContext::default(),
@@ -1187,7 +1187,7 @@ mod test {
             let authorized = nonce_account.unsigned_key();
             nonce_account
                 .initialize_nonce_account(
-                    &authorized,
+                    authorized,
                     &recent_blockhashes,
                     &Rent::free(),
                     &mut MockInvokeContext::default(),

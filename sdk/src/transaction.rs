@@ -968,7 +968,7 @@ mod tests {
         let (_, nonce_pubkey, tx) = nonced_transfer_tx();
         let nonce_ix = uses_durable_nonce(&tx).unwrap();
         assert_eq!(
-            get_nonce_pubkey_from_instruction(&nonce_ix, &tx),
+            get_nonce_pubkey_from_instruction(nonce_ix, &tx),
             Some(&nonce_pubkey),
         );
     }

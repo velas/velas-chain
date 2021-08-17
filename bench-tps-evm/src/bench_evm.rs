@@ -136,14 +136,14 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Trans
 
             // re-sign retained to_fund_txes with updated blockhash
             self.sign(blockhash);
-            self.send(&client);
+            self.send(client);
 
             // Sleep a few slots to allow transactions to process
             if cfg!(not(test)) {
                 sleep(Duration::from_secs(1));
             }
 
-            self.verify(&client, to_lamports);
+            self.verify(client, to_lamports);
 
             // retry anything that seems to have dropped through cracks
             //  again since these txs are all or nothing, they're fine to
@@ -218,7 +218,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Trans
                     let verified = if verify_funding_transfer(
                         &client,
                         evm_secret.to_address(),
-                        &tx,
+                        tx,
                         to_lamports,
                     ) {
                         verified_txs.fetch_add(1, Ordering::Relaxed);

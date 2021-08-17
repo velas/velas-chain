@@ -24,6 +24,7 @@ use thiserror::Error;
 extern crate serde_derive;
 
 mod access_token;
+#[allow(clippy::enum_variant_names)]
 mod bigtable;
 mod compression;
 mod root_ca_certificate;
@@ -569,7 +570,7 @@ impl LedgerStorage {
             let signature = transaction.signatures[0];
 
             for address in &transaction.message.account_keys {
-                if !is_sysvar_id(&address) {
+                if !is_sysvar_id(address) {
                     by_addr
                         .entry(address)
                         .or_default()

@@ -107,24 +107,24 @@ mod test {
     #[test]
     fn compute_websocket_url() {
         assert_eq!(
-            Config::compute_websocket_url(&"http://devnet.velas.com/rpc"),
+            Config::compute_websocket_url("http://devnet.velas.com/rpc"),
             "ws://devnet.velas.com/rpc".to_string()
         );
 
         assert_eq!(
-            Config::compute_websocket_url(&"https://devnet.velas.com"),
+            Config::compute_websocket_url("https://devnet.velas.com"),
             "wss://devnet.velas.com/".to_string()
         );
 
         assert_eq!(
-            Config::compute_websocket_url(&"http://example.com:8899"),
+            Config::compute_websocket_url("http://example.com:8899"),
             "ws://example.com:8900/".to_string()
         );
         assert_eq!(
-            Config::compute_websocket_url(&"https://example.com:1234"),
+            Config::compute_websocket_url("https://example.com:1234"),
             "wss://example.com:1235/".to_string()
         );
 
-        assert_eq!(Config::compute_websocket_url(&"garbage"), String::new());
+        assert_eq!(Config::compute_websocket_url("garbage"), String::new());
     }
 }

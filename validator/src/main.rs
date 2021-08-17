@@ -105,7 +105,7 @@ fn wait_for_restart_window(
 
     let min_idle_slots = (min_idle_time_in_minutes as f64 * 60. / DEFAULT_S_PER_SLOT) as Slot;
 
-    let admin_client = admin_rpc_service::connect(&ledger_path);
+    let admin_client = admin_rpc_service::connect(ledger_path);
     let rpc_addr = admin_rpc_service::runtime()
         .block_on(async move { admin_client.await?.rpc_addr().await })
         .map_err(|err| format!("Unable to get validator RPC address: {}", err))?;
@@ -467,7 +467,7 @@ fn get_rpc_node(
             rpc_peers
         } else {
             let trusted_snapshot_hashes =
-                get_trusted_snapshot_hashes(&cluster_info, &validator_config.trusted_validators);
+                get_trusted_snapshot_hashes(cluster_info, &validator_config.trusted_validators);
 
             let mut eligible_rpc_peers = vec![];
 
@@ -591,7 +591,7 @@ fn check_vote_account(
         }
 
         for (_, vote_account_authorized_voter_pubkey) in vote_state.authorized_voters().iter() {
-            if !authorized_voter_pubkeys.contains(&vote_account_authorized_voter_pubkey) {
+            if !authorized_voter_pubkeys.contains(vote_account_authorized_voter_pubkey) {
                 return Err(format!(
                     "authorized voter {} not available",
                     vote_account_authorized_voter_pubkey
@@ -670,7 +670,7 @@ fn load_local_genesis(
     ledger_path: &std::path::Path,
     expected_genesis_hash: Option<Hash>,
 ) -> Result<GenesisConfig, String> {
-    let existing_genesis = GenesisConfig::load(&ledger_path)
+    let existing_genesis = GenesisConfig::load(ledger_path)
         .map_err(|err| format!("Failed to load genesis config: {}", err))?;
     check_genesis_hash(&existing_genesis, expected_genesis_hash)?;
 
@@ -696,12 +696,12 @@ fn download_then_check_genesis_hash(
     {
         unpack_genesis_archive(
             &tmp_genesis_package,
-            &ledger_path,
+            ledger_path,
             max_genesis_archive_unpacked_size,
         )
         .map_err(|err| format!("Failed to unpack downloaded genesis config: {}", err))?;
 
-        let downloaded_genesis = GenesisConfig::load(&ledger_path)
+        let downloaded_genesis = GenesisConfig::load(ledger_path)
             .map_err(|err| format!("Failed to load downloaded genesis config: {}", err))?;
 
         check_genesis_hash(&downloaded_genesis, expected_genesis_hash)?;
@@ -747,7 +747,7 @@ fn verify_reachable_ports(
             ("RPC", rpc_addr, &node.info.rpc),
             ("RPC pubsub", rpc_pubsub_addr, &node.info.rpc_pubsub),
         ] {
-            if ContactInfo::is_valid_address(&public_addr) {
+            if ContactInfo::is_valid_address(public_addr) {
                 tcp_listeners.push((
                     bind_addr.port(),
                     TcpListener::bind(bind_addr).unwrap_or_else(|err| {
@@ -816,7 +816,7 @@ fn rpc_bootstrap(
         order.shuffle(&mut thread_rng());
         if order
             .into_iter()
-            .all(|i| !verify_reachable_ports(&node, &cluster_entrypoints[i], &validator_config))
+            .all(|i| !verify_reachable_ports(node, &cluster_entrypoints[i], validator_config))
         {
             exit(1);
         }
@@ -833,8 +833,8 @@ fn rpc_bootstrap(
             *start_progress.write().unwrap() = ValidatorStartProgress::SearchingForRpcService;
 
             gossip = Some(start_gossip_node(
-                &identity_keypair,
-                &cluster_entrypoints,
+                identity_keypair,
+                cluster_entrypoints,
                 ledger_path,
                 &node.info.gossip,
                 node.sockets.gossip.try_clone().unwrap(),
@@ -846,8 +846,8 @@ fn rpc_bootstrap(
 
         let rpc_node_details = get_rpc_node(
             &gossip.as_ref().unwrap().0,
-            &cluster_entrypoints,
-            &validator_config,
+            cluster_entrypoints,
+            validator_config,
             &mut blacklisted_rpc_nodes,
             bootstrap_config.no_snapshot_fetch,
             bootstrap_config.no_untrusted_rpc,
@@ -874,7 +874,7 @@ fn rpc_bootstrap(
         .and_then(|_| {
             let genesis_hash = download_then_check_genesis_hash(
                 &rpc_contact_info.rpc,
-                &ledger_path,
+                ledger_path,
                 validator_config.expected_genesis_hash,
                 bootstrap_config.max_genesis_archive_unpacked_size,
                 bootstrap_config.no_genesis_fetch,
@@ -947,7 +947,7 @@ fn rpc_bootstrap(
                             gossip_exit_flag.store(true, Ordering::Relaxed);
                             let ret = download_snapshot(
                                 &rpc_contact_info.rpc,
-                                &snapshot_output_dir,
+                                snapshot_output_dir,
                                 snapshot_hash,
                                 use_progress_bar,
                             );
@@ -964,7 +964,7 @@ fn rpc_bootstrap(
                 check_vote_account(
                     &rpc_client,
                     &identity_keypair.pubkey(),
-                    &vote_account,
+                    vote_account,
                     &authorized_voter_keypairs
                         .read()
                         .unwrap()
@@ -1659,7 +1659,7 @@ pub fn main() {
                 .long("max-genesis-archive-unpacked-size")
                 .value_name("NUMBER")
                 .takes_value(true)
-                .default_value(&default_genesis_archive_unpacked_size)
+                .default_value(default_genesis_archive_unpacked_size)
                 .help(
                     "maximum total uncompressed file size of downloaded genesis archive",
                 ),
@@ -2088,10 +2088,10 @@ pub fn main() {
         cuda: matches.is_present("cuda"),
         expected_genesis_hash: matches
             .value_of("expected_genesis_hash")
-            .map(|s| Hash::from_str(&s).unwrap()),
+            .map(|s| Hash::from_str(s).unwrap()),
         expected_bank_hash: matches
             .value_of("expected_bank_hash")
-            .map(|s| Hash::from_str(&s).unwrap()),
+            .map(|s| Hash::from_str(s).unwrap()),
         expected_shred_version: value_t!(matches, "expected_shred_version", u16).ok(),
         new_hard_forks: hardforks_of(&matches, "hard_forks"),
         rpc_config: JsonRpcConfig {

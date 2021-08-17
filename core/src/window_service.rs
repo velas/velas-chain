@@ -151,7 +151,7 @@ where
     assert_eq!(shreds.len(), repair_infos.len());
     let mut i = 0;
     shreds.retain(|_shred| (verify_repair(&repair_infos[i]), i += 1).0);
-    repair_infos.retain(|repair_info| verify_repair(&repair_info));
+    repair_infos.retain(|repair_info| verify_repair(repair_info));
     assert_eq!(shreds.len(), repair_infos.len());
 
     let (completed_data_sets, inserted_indices) = blockstore.insert_shreds_handle_duplicate(
@@ -595,7 +595,7 @@ mod test {
         keypair: &Arc<Keypair>,
     ) -> Vec<Shred> {
         let shredder = Shredder::new(slot, parent, keypair.clone(), 0, 0).unwrap();
-        shredder.entries_to_shreds(&entries, true, 0).0
+        shredder.entries_to_shreds(entries, true, 0).0
     }
 
     #[test]

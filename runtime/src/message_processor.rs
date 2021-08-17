@@ -757,7 +757,7 @@ impl MessageProcessor {
 
             let signers = signers_seeds
                 .iter()
-                .map(|seeds| Pubkey::create_program_address(&seeds, caller_program_id))
+                .map(|seeds| Pubkey::create_program_address(seeds, caller_program_id))
                 .collect::<Result<Vec<_>, solana_sdk::pubkey::PubkeyError>>()?;
             let mut caller_write_privileges = keyed_accounts
                 .iter()
@@ -1053,7 +1053,7 @@ impl MessageProcessor {
                                 .map_err(|_| InstructionError::AccountBorrowOutstanding)?;
                         }
                         let account = account.borrow();
-                        pre_account.verify(&program_id, is_writable, &rent, &account, timings)?;
+                        pre_account.verify(program_id, is_writable, rent, &account, timings)?;
                         pre_sum += u128::from(pre_account.lamports());
                         post_sum += u128::from(account.lamports);
                         if is_writable && !account.executable {

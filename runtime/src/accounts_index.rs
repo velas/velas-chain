@@ -2344,7 +2344,7 @@ pub mod tests {
 
         // Both pubkeys will now be present in the index
         check_secondary_index_mapping_correct(
-            &secondary_index,
+            secondary_index,
             &[secondary_key1, secondary_key2],
             &account_key,
         );

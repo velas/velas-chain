@@ -538,7 +538,7 @@ impl<'a> SyscallObject<BpfError> for SyscallPanic<'a> {
             memory_mapping,
             file,
             len,
-            &self.loader_id,
+            self.loader_id,
             self.enforce_aligned_host_addrs,
             &mut |string: &str| Err(SyscallError::Panic(string.to_string(), line, column).into()),
         );
@@ -569,7 +569,7 @@ impl<'a> SyscallObject<BpfError> for SyscallLog<'a> {
                 memory_mapping,
                 addr,
                 len,
-                &self.loader_id,
+                self.loader_id,
                 self.enforce_aligned_host_addrs,
                 &mut |string: &str| {
                     stable_log::program_log(&self.logger, string);
@@ -1805,7 +1805,7 @@ where
     let mut accounts = Vec::with_capacity(account_keys.len());
     let mut refs = Vec::with_capacity(account_keys.len());
     for (i, ref account_key) in account_keys.iter().enumerate() {
-        let account = invoke_context.get_account(&account_key).ok_or_else(|| {
+        let account = invoke_context.get_account(account_key).ok_or_else(|| {
             ic_msg!(
                 invoke_context,
                 "Instruction references an unknown account {}",
@@ -1973,7 +1973,7 @@ fn call<'a>(
 
         let instruction = syscall.translate_instruction(
             instruction_addr,
-            &memory_mapping,
+            memory_mapping,
             enforce_aligned_host_addrs,
         )?;
         let signers = syscall.translate_signers(

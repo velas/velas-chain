@@ -64,7 +64,7 @@ pub fn load(
                 }
 
                 let deserialized_bank = snapshot_utils::bank_from_archive(
-                    &evm_state_path.as_ref(),
+                    evm_state_path.as_ref(),
                     &account_paths,
                     &process_options.frozen_accounts,
                     &snapshot_config.snapshot_path,
@@ -115,8 +115,8 @@ pub fn load(
     info!("Processing ledger from genesis");
     to_loadresult(
         blockstore_processor::process_blockstore(
-            &genesis_config,
-            &blockstore,
+            genesis_config,
+            blockstore,
             &evm_state_path,
             evm_genesis_path,
             account_paths,

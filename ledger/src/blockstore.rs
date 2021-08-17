@@ -725,7 +725,7 @@ impl Blockstore {
         for (&(slot, set_index), erasure_meta) in erasure_metas.iter() {
             let index_meta_entry = index_working_set.get_mut(&slot).expect("Index");
             let index = &mut index_meta_entry.index;
-            match erasure_meta.status(&index) {
+            match erasure_meta.status(index) {
                 ErasureMetaStatus::CanRecover => {
                     Self::recover_shreds(
                         index,
@@ -858,7 +858,7 @@ impl Blockstore {
         let mut num_recovered_exists = 0;
         if let Some(leader_schedule_cache) = leader_schedule {
             let recovered_data = Self::try_shred_recovery(
-                &db,
+                db,
                 &erasure_metas,
                 &mut index_working_set,
                 &mut just_inserted_data_shreds,
@@ -1155,14 +1155,14 @@ impl Blockstore {
             let maybe_shred = self.get_coding_shred(slot, coding_index);
             if let Ok(Some(shred_data)) = maybe_shred {
                 let potential_shred = Shred::new_from_serialized_shred(shred_data).unwrap();
-                if Self::erasure_mismatch(&potential_shred, &shred) {
+                if Self::erasure_mismatch(&potential_shred, shred) {
                     conflicting_shred = Some(potential_shred.payload);
                 }
                 break;
             } else if let Some(potential_shred) =
                 just_received_coding_shreds.get(&(slot, coding_index))
             {
-                if Self::erasure_mismatch(&potential_shred, &shred) {
+                if Self::erasure_mismatch(potential_shred, shred) {
                     conflicting_shred = Some(potential_shred.payload.clone());
                 }
                 break;
@@ -1204,7 +1204,7 @@ impl Blockstore {
         let slot_meta = &mut slot_meta_entry.new_slot_meta.borrow_mut();
 
         if !is_trusted {
-            if Self::is_data_shred_present(&shred, slot_meta, &index_meta.data()) {
+            if Self::is_data_shred_present(&shred, slot_meta, index_meta.data()) {
                 handle_duplicate(shred);
                 return Err(InsertDataShredError::Exists);
             } else if !self.should_insert_data_shred(
@@ -1444,7 +1444,7 @@ impl Blockstore {
             index as u32,
             new_consumed,
             shred.reference_tick(),
-            &data_index,
+            data_index,
         );
         if slot_meta.is_full() {
             datapoint_info!(
@@ -1664,7 +1664,7 @@ impl Blockstore {
                 }
                 break;
             }
-            let (current_slot, index) = C::index(&db_iterator.key().expect("Expect a valid key"));
+            let (current_slot, index) = C::index(db_iterator.key().expect("Expect a valid key"));
 
             let current_index = {
                 if current_slot > slot {
@@ -1677,7 +1677,7 @@ impl Blockstore {
             let upper_index = cmp::min(current_index, end_index);
             // the tick that will be used to figure out the timeout for this hole
             let reference_tick = u64::from(Shred::reference_tick_from_data(
-                &db_iterator.value().expect("couldn't read value"),
+                db_iterator.value().expect("couldn't read value"),
             ));
 
             if ticks_since_first_insert < reference_tick + MAX_TURBINE_DELAY_IN_TICKS {
@@ -2519,7 +2519,7 @@ impl Blockstore {
             address_signatures.extend(
                 signatures
                     .into_iter()
-                    .filter(|(_, signature)| !excluded_signatures.contains(&signature)),
+                    .filter(|(_, signature)| !excluded_signatures.contains(signature)),
             )
         } else {
             address_signatures.append(&mut signatures);
@@ -2602,7 +2602,7 @@ impl Blockstore {
         next_primary_index_iter_timer.stop();
         let mut address_signatures: Vec<(Slot, Signature)> = address_signatures
             .into_iter()
-            .filter(|(_, signature)| !until_excluded_signatures.contains(&signature))
+            .filter(|(_, signature)| !until_excluded_signatures.contains(signature))
             .collect();
         address_signatures.truncate(limit);
 
@@ -2803,7 +2803,7 @@ impl Blockstore {
             }
             // Then match precisely
             tx.logs.iter().enumerate().for_each(|(idx, log)| {
-                if filter.is_log_match(&log) {
+                if filter.is_log_match(log) {
                     trace!("Adding transaction log to result = {:?}", log);
                     logs.push(evm::LogWithLocation {
                         transaction_hash: *hash,
@@ -2913,7 +2913,7 @@ impl Blockstore {
             Some(tx_data) => {
                 let tx_receipt = self
                     .evm_transactions_cf
-                    .deserialize_protobuf_or_bincode::<evm::TransactionReceipt>(&tx_data)?;
+                    .deserialize_protobuf_or_bincode::<evm::TransactionReceipt>(tx_data)?;
                 let tx_receipt: evm::TransactionReceipt =
                     tx_receipt.try_into().map_err(BlockstoreError::Other)?;
                 Some(tx_receipt)
@@ -3349,7 +3349,7 @@ impl Blockstore {
     }
 
     pub fn scan_and_fix_roots(&self, exit: &Arc<AtomicBool>) -> Result<()> {
-        let ancestor_iterator = AncestorIterator::new(self.last_root(), &self)
+        let ancestor_iterator = AncestorIterator::new(self.last_root(), self)
             .take_while(|&slot| slot >= self.lowest_cleanup_slot());
 
         let mut find_missing_roots = Measure::start("find_missing_roots");
@@ -3634,8 +3634,8 @@ fn commit_slot_meta_working_set(
         }
         // Check if the working copy of the metadata has changed
         if Some(meta) != meta_backup.as_ref() {
-            should_signal = should_signal || slot_has_updates(meta, &meta_backup);
-            write_batch.put::<cf::SlotMeta>(*slot, &meta)?;
+            should_signal = should_signal || slot_has_updates(meta, meta_backup);
+            write_batch.put::<cf::SlotMeta>(*slot, meta)?;
         }
     }
 
@@ -3669,14 +3669,13 @@ fn find_slot_meta_in_db_else_create(
 ) -> Result<Rc<RefCell<SlotMeta>>> {
     if let Some(slot_meta) = db.column::<cf::SlotMeta>().get(slot)? {
         insert_map.insert(slot, Rc::new(RefCell::new(slot_meta)));
-        Ok(insert_map.get(&slot).unwrap().clone())
     } else {
         // If this slot doesn't exist, make a orphan slot. This way we
         // remember which slots chained to this one when we eventually get a real shred
         // for this slot
         insert_map.insert(slot, Rc::new(RefCell::new(SlotMeta::new_orphan(slot))));
-        Ok(insert_map.get(&slot).unwrap().clone())
     }
+    Ok(insert_map.get(&slot).unwrap().clone())
 }
 
 // Find the slot metadata in the cache of dirty slot metadata we've previously touched
@@ -3786,7 +3785,7 @@ fn handle_chaining_for_slot(
         traverse_children_mut(
             db,
             slot,
-            &meta,
+            meta,
             working_set,
             new_chained_slots,
             slot_function,
@@ -3878,8 +3877,8 @@ pub fn create_new_ledger(
 ) -> Result<Hash> {
     Blockstore::destroy(ledger_path)?;
 
-    genesis_config.generate_evm_state(&ledger_path, evm_state_json)?;
-    genesis_config.write(&ledger_path)?;
+    genesis_config.generate_evm_state(ledger_path, evm_state_json)?;
+    genesis_config.write(ledger_path)?;
 
     // Fill slot 0 with ticks that link back to the genesis_config to bootstrap the ledger.
     let blockstore = Blockstore::open_with_access_type(ledger_path, access_type, None, false)?;

@@ -4618,7 +4618,7 @@ impl AccountsDb {
 
     pub fn get_append_vec_id(&self, pubkey: &Pubkey, slot: Slot) -> Option<AppendVecId> {
         let ancestors = vec![(slot, 1)].into_iter().collect();
-        let result = self.accounts_index.get(&pubkey, Some(&ancestors), None);
+        let result = self.accounts_index.get(pubkey, Some(&ancestors), None);
         result.map(|(list, index)| list.slot_list()[index].1.store_id)
     }
 
@@ -5709,7 +5709,7 @@ pub mod tests {
         let ancestors = vec![(0, 0)].into_iter().collect();
         for (i, key) in keys.iter().enumerate() {
             assert_eq!(
-                accounts.load_slow(&ancestors, &key).unwrap().0.lamports,
+                accounts.load_slow(&ancestors, key).unwrap().0.lamports,
                 (i as u64) + 1
             );
         }
@@ -5857,7 +5857,7 @@ pub mod tests {
         }
 
         fn ref_count_for_pubkey(&self, pubkey: &Pubkey) -> RefCount {
-            self.accounts_index.ref_count_from_storage(&pubkey)
+            self.accounts_index.ref_count_from_storage(pubkey)
         }
     }
 
@@ -7624,7 +7624,7 @@ pub mod tests {
 
         current_slot += 1;
         for pubkey in &pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         let shrink_slot = current_slot;
         accounts.get_accounts_delta_hash(current_slot);
@@ -7635,7 +7635,7 @@ pub mod tests {
         let updated_pubkeys = &pubkeys[0..pubkey_count - pubkey_count_after_shrink];
 
         for pubkey in updated_pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         accounts.get_accounts_delta_hash(current_slot);
         accounts.add_root(current_slot);
@@ -7692,7 +7692,7 @@ pub mod tests {
 
         current_slot += 1;
         for pubkey in &pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         let shrink_slot = current_slot;
         accounts.get_accounts_delta_hash(current_slot);
@@ -7703,7 +7703,7 @@ pub mod tests {
         let updated_pubkeys = &pubkeys[0..pubkey_count - pubkey_count_after_shrink];
 
         for pubkey in updated_pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         accounts.get_accounts_delta_hash(current_slot);
         accounts.add_root(current_slot);
@@ -7752,7 +7752,7 @@ pub mod tests {
 
         current_slot += 1;
         for pubkey in &pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         let shrink_slot = current_slot;
         accounts.get_accounts_delta_hash(current_slot);
@@ -7763,7 +7763,7 @@ pub mod tests {
         let updated_pubkeys = &pubkeys[0..pubkey_count - pubkey_count_after_shrink];
 
         for pubkey in updated_pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         accounts.get_accounts_delta_hash(current_slot);
         accounts.add_root(current_slot);
@@ -7906,7 +7906,7 @@ pub mod tests {
             info!(
                 "store: {:?} : {:?}",
                 store,
-                store_counts.get(&store).unwrap()
+                store_counts.get(store).unwrap()
             );
         }
         for x in 0..3 {
@@ -9097,18 +9097,12 @@ pub mod tests {
 
         let dummy_id1 = 22;
         let entry1 = Arc::new(AccountStorageEntry::new(
-            &dummy_path,
-            dummy_slot,
-            dummy_id1,
-            dummy_size,
+            dummy_path, dummy_slot, dummy_id1, dummy_size,
         ));
 
         let dummy_id2 = 44;
         let entry2 = Arc::new(AccountStorageEntry::new(
-            &dummy_path,
-            dummy_slot,
-            dummy_id2,
-            dummy_size,
+            dummy_path, dummy_slot, dummy_id2, dummy_size,
         ));
 
         let mut recycle_stores = RecycleStores::default();

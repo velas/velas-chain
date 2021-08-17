@@ -90,7 +90,7 @@ pub fn process_instruction(
             ..VestState::default()
         }
     } else {
-        VestState::deserialize(&contract_account.data())?
+        VestState::deserialize(contract_account.data())?
     };
 
     match instruction {
@@ -220,11 +220,11 @@ mod tests {
     ) -> Result<Signature> {
         let instructions = vest_instruction::create_account(
             &payer_keypair.pubkey(),
-            &terminator_pubkey,
+            terminator_pubkey,
             &contract_keypair.pubkey(),
-            &payee_pubkey,
+            payee_pubkey,
             start_date,
-            &date_pubkey,
+            date_pubkey,
             lamports,
         );
         let message = Message::new(&instructions, Some(&payer_keypair.pubkey()));
@@ -238,8 +238,8 @@ mod tests {
         new_pubkey: &Pubkey,
     ) -> Result<Signature> {
         let instruction =
-            vest_instruction::set_terminator(&contract_pubkey, &old_keypair.pubkey(), &new_pubkey);
-        bank_client.send_and_confirm_instruction(&old_keypair, instruction)
+            vest_instruction::set_terminator(contract_pubkey, &old_keypair.pubkey(), new_pubkey);
+        bank_client.send_and_confirm_instruction(old_keypair, instruction)
     }
 
     fn send_set_payee(
@@ -249,8 +249,8 @@ mod tests {
         new_pubkey: &Pubkey,
     ) -> Result<Signature> {
         let instruction =
-            vest_instruction::set_payee(&contract_pubkey, &old_keypair.pubkey(), &new_pubkey);
-        bank_client.send_and_confirm_instruction(&old_keypair, instruction)
+            vest_instruction::set_payee(contract_pubkey, &old_keypair.pubkey(), new_pubkey);
+        bank_client.send_and_confirm_instruction(old_keypair, instruction)
     }
 
     fn send_redeem_tokens(
@@ -261,7 +261,7 @@ mod tests {
         date_pubkey: &Pubkey,
     ) -> Result<Signature> {
         let instruction =
-            vest_instruction::redeem_tokens(&contract_pubkey, &date_pubkey, &payee_pubkey);
+            vest_instruction::redeem_tokens(contract_pubkey, date_pubkey, payee_pubkey);
         let message = Message::new(&[instruction], Some(&payer_keypair.pubkey()));
         bank_client.send_and_confirm_message(&[payer_keypair], message)
     }

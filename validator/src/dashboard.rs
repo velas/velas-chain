@@ -194,7 +194,7 @@ async fn wait_for_validator_startup(
         }
 
         if admin_client.is_none() {
-            match admin_rpc_service::connect(&ledger_path).await {
+            match admin_rpc_service::connect(ledger_path).await {
                 Ok(new_admin_client) => admin_client = Some(new_admin_client),
                 Err(err) => {
                     progress_bar.set_message(&format!("Unable to connect to validator: {}", err));
@@ -216,7 +216,7 @@ async fn wait_for_validator_startup(
                     }
                     .await
                     {
-                        Ok((None, _)) => progress_bar.set_message(&"RPC service not available"),
+                        Ok((None, _)) => progress_bar.set_message("RPC service not available"),
                         Ok((Some(rpc_addr), start_time)) => return Some((rpc_addr, start_time)),
                         Err(err) => {
                             progress_bar

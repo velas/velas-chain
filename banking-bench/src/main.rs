@@ -199,7 +199,7 @@ fn main() {
     if !skip_sanity {
         //sanity check, make sure all the transactions can execute sequentially
         transactions.iter().for_each(|tx| {
-            let res = bank.process_transaction(&tx);
+            let res = bank.process_transaction(tx);
             assert!(res.is_ok(), "sanity test transactions error: {:?}", res);
         });
         bank.clear_signatures();

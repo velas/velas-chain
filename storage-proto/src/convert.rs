@@ -853,7 +853,7 @@ impl ConvertFromBytes for evm_state::H256 {
     }
 
     fn from_slice(bytes: &[u8]) -> Self {
-        Self::from_slice(&bytes)
+        Self::from_slice(bytes)
     }
 
     fn into_vec(self) -> Vec<u8> {
@@ -867,7 +867,7 @@ impl ConvertFromBytes for evm_state::H160 {
     }
 
     fn from_slice(bytes: &[u8]) -> Self {
-        Self::from_slice(&bytes)
+        Self::from_slice(bytes)
     }
 
     fn into_vec(self) -> Vec<u8> {
@@ -881,7 +881,7 @@ impl ConvertFromBytes for evm_state::Bloom {
     }
 
     fn from_slice(bytes: &[u8]) -> Self {
-        Self::from_slice(&bytes)
+        Self::from_slice(bytes)
     }
     fn into_vec(self) -> Vec<u8> {
         self.as_bytes().to_vec()

@@ -142,7 +142,7 @@ fn delegate_stake(
         let instructions = stake_instruction::create_account_and_delegate_stake(
             &faucet_keypair.pubkey(),
             &stake_account_keypair.pubkey(),
-            &vote_account_pubkey,
+            vote_account_pubkey,
             &StakeAuthorized::auto(&faucet_keypair.pubkey()),
             &Lockup::default(),
             sol_to_lamports(sol_gift as f64),

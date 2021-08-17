@@ -55,7 +55,7 @@ pub fn airdrop_lamports(
         );
 
         let (blockhash, _fee_calculator) = client.get_recent_blockhash().unwrap();
-        match request_airdrop_transaction(&faucet_addr, &id.pubkey(), airdrop_amount, blockhash) {
+        match request_airdrop_transaction(faucet_addr, &id.pubkey(), airdrop_amount, blockhash) {
             Ok(transaction) => {
                 let mut tries = 0;
                 loop {
@@ -303,8 +303,8 @@ fn make_create_message(
 
             instructions
         })
+        .flatten()
         .collect();
-    let instructions: Vec<_> = instructions.into_iter().flatten().collect();
 
     Message::new(&instructions, Some(&keypair.pubkey()))
 }
@@ -431,7 +431,7 @@ fn run_accounts_bench(
                     if !airdrop_lamports(
                         &client,
                         &faucet_addr,
-                        &payer_keypairs[i],
+                        payer_keypairs[i],
                         lamports * 100_000,
                     ) {
                         warn!("failed airdrop, exiting");
@@ -482,14 +482,14 @@ fn run_accounts_bench(
                         .into_par_iter()
                         .map(|_| {
                             let message = make_close_message(
-                                &payer_keypairs[0],
+                                payer_keypairs[0],
                                 &base_keypair,
                                 seed_tracker.max_closed.clone(),
                                 1,
                                 min_balance,
                                 mint.is_some(),
                             );
-                            let signers: Vec<&Keypair> = vec![&payer_keypairs[0], &base_keypair];
+                            let signers: Vec<&Keypair> = vec![payer_keypairs[0], &base_keypair];
                             Transaction::new(&signers, message, recent_blockhash.0)
                         })
                         .collect();

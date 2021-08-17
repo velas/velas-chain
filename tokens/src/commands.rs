@@ -139,7 +139,7 @@ fn apply_previous_transactions(
     for transaction_info in transaction_infos {
         let mut amount = transaction_info.amount;
         for allocation in allocations.iter_mut() {
-            if !has_same_recipient(&allocation, &transaction_info) {
+            if !has_same_recipient(allocation, transaction_info) {
                 continue;
             }
             if allocation.amount >= amount {
@@ -161,7 +161,7 @@ fn transfer<S: Signer>(
     to_pubkey: &Pubkey,
 ) -> ClientResult<Transaction> {
     let create_instruction =
-        system_instruction::transfer(&sender_keypair.pubkey(), &to_pubkey, lamports);
+        system_instruction::transfer(&sender_keypair.pubkey(), to_pubkey, lamports);
     let message = Message::new(&[create_instruction], Some(&sender_keypair.pubkey()));
     let (recent_blockhash, _fees) = client.get_recent_blockhash()?;
     Ok(Transaction::new(
@@ -200,14 +200,14 @@ fn distribution_instructions(
         &stake_args.stake_account_address,
         &stake_authority,
         allocation.amount - unlocked_sol,
-        &new_stake_account_address,
+        new_stake_account_address,
     );
 
     let recipient = allocation.recipient.parse().unwrap();
 
     // Make the recipient the new stake authority
     instructions.push(stake_instruction::authorize(
-        &new_stake_account_address,
+        new_stake_account_address,
         &stake_authority,
         &recipient,
         StakeAuthorize::Staker,
@@ -216,7 +216,7 @@ fn distribution_instructions(
 
     // Make the recipient the new withdraw authority
     instructions.push(stake_instruction::authorize(
-        &new_stake_account_address,
+        new_stake_account_address,
         &withdraw_authority,
         &recipient,
         StakeAuthorize::Withdrawer,
@@ -236,7 +236,7 @@ fn distribution_instructions(
             custodian: None,
         };
         instructions.push(stake_instruction::set_lockup(
-            &new_stake_account_address,
+            new_stake_account_address,
             &lockup,
             &lockup_authority,
         ));
@@ -431,12 +431,8 @@ fn read_allocations(
 ) -> io::Result<Vec<Allocation>> {
     let mut rdr = ReaderBuilder::new().trim(Trim::All).from_path(input_csv)?;
     let allocations = if let Some(amount) = transfer_amount {
-        let recipients: Vec<String> = rdr
-            .deserialize()
+        rdr.deserialize()
             .map(|recipient| recipient.unwrap())
-            .collect();
-        recipients
-            .into_iter()
             .map(|recipient| Allocation {
                 recipient,
                 amount,
@@ -444,12 +440,8 @@ fn read_allocations(
             })
             .collect()
     } else if require_lockup_heading {
-        let recipients: Vec<(String, f64, String)> = rdr
-            .deserialize()
+        rdr.deserialize()
             .map(|recipient| recipient.unwrap())
-            .collect();
-        recipients
-            .into_iter()
             .map(|(recipient, amount, lockup_date)| Allocation {
                 recipient,
                 amount: sol_to_lamports(amount),
@@ -457,12 +449,8 @@ fn read_allocations(
             })
             .collect()
     } else if raw_amount {
-        let recipients: Vec<(String, u64)> = rdr
-            .deserialize()
+        rdr.deserialize()
             .map(|recipient| recipient.unwrap())
-            .collect();
-        recipients
-            .into_iter()
             .map(|(recipient, amount)| Allocation {
                 recipient,
                 amount,
@@ -470,12 +458,8 @@ fn read_allocations(
             })
             .collect()
     } else {
-        let recipients: Vec<(String, f64)> = rdr
-            .deserialize()
+        rdr.deserialize()
             .map(|recipient| recipient.unwrap())
-            .collect();
-        recipients
-            .into_iter()
             .map(|(recipient, amount)| Allocation {
                 recipient,
                 amount: sol_to_lamports(amount),
@@ -636,7 +620,7 @@ fn update_finalized_transactions(
     {
         statuses.extend(
             client
-                .get_signature_statuses(&unconfirmed_signatures_chunk)?
+                .get_signature_statuses(unconfirmed_signatures_chunk)?
                 .value
                 .into_iter(),
         );

@@ -33,7 +33,7 @@ fn save_accounts_info(data_file: &str, accounts_info: &AccountsInfo) -> io::Resu
 }
 
 fn command_record(data_file: &str, json_rpc_url: String, first_slot: Slot, batch_size: u64) {
-    let mut accounts_info = load_accounts_info(&data_file);
+    let mut accounts_info = load_accounts_info(data_file);
 
     info!("RPC URL: {}", json_rpc_url);
     let rpc_client = RpcClient::new(json_rpc_url);
@@ -149,7 +149,7 @@ fn main() {
                 .takes_value(true)
                 .help("Configuration file to use");
             if let Some(ref config_file) = *solana_cli_config::CONFIG_FILE {
-                arg.default_value(&config_file)
+                arg.default_value(config_file)
             } else {
                 arg
             }
@@ -218,11 +218,11 @@ fn main() {
             command_record(&data_file, json_rpc_url, first_slot, batch_size);
         }
         ("check", Some(matches)) => {
-            let account_address = pubkey_of(&matches, "account_address").unwrap();
+            let account_address = pubkey_of(matches, "account_address").unwrap();
             command_check(&data_file, &account_address);
         }
         ("enroll", Some(matches)) => {
-            let account_address = pubkey_of(&matches, "account_address").unwrap();
+            let account_address = pubkey_of(matches, "account_address").unwrap();
             command_enroll(&data_file, json_rpc_url, &account_address);
         }
         _ => unreachable!(),

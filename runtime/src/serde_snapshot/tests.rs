@@ -204,7 +204,7 @@ fn test_bank_serialize_style(evm_version: EvmStateVersion) {
     let unpacked_append_vec_map =
         copy_append_vecs(&bank2.rc.accounts.accounts_db, copied_accounts.path()).unwrap();
     let mut dbank = crate::serde_snapshot::bank_from_stream(
-        &evm_state_dir.path(),
+        evm_state_dir.path(),
         evm_version,
         &mut reader,
         &dbank_paths,
@@ -231,14 +231,14 @@ pub(crate) fn reconstruct_accounts_db_via_serialization(
 ) -> AccountsDb {
     let mut writer = Cursor::new(vec![]);
     let snapshot_storages = accounts.get_snapshot_storages(slot);
-    accountsdb_to_stream(&mut writer, &accounts, slot, &snapshot_storages).unwrap();
+    accountsdb_to_stream(&mut writer, accounts, slot, &snapshot_storages).unwrap();
 
     let buf = writer.into_inner();
     let mut reader = BufReader::new(&buf[..]);
     let copied_accounts = TempDir::new().unwrap();
 
     // Simulate obtaining a copy of the AppendVecs from a tarball
-    let unpacked_append_vec_map = copy_append_vecs(&accounts, copied_accounts.path()).unwrap();
+    let unpacked_append_vec_map = copy_append_vecs(accounts, copied_accounts.path()).unwrap();
     let mut accounts_db =
         accountsdb_from_stream(&mut reader, &[], unpacked_append_vec_map).unwrap();
 

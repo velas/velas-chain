@@ -637,7 +637,7 @@ mod test {
     }
 
     fn create_token_account(client: &BankClient, owner: &Keypair) -> Pubkey {
-        let new = create_account(&client, &owner);
+        let new = create_account(client, owner);
         let instruction = exchange_instruction::account_request(&owner.pubkey(), &new);
         client
             .send_and_confirm_instruction(owner, instruction)
@@ -668,9 +668,9 @@ mod test {
         trade_tokens: u64,
         price: u64,
     ) -> (Pubkey, Pubkey) {
-        let trade = create_account(&client, &owner);
-        let src = create_token_account(&client, &owner);
-        transfer(&client, &owner, &src, from_token, src_tokens);
+        let trade = create_account(client, owner);
+        let src = create_token_account(client, owner);
+        transfer(client, owner, &src, from_token, src_tokens);
 
         let instruction = exchange_instruction::trade_request(
             &owner.pubkey(),

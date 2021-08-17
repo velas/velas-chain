@@ -35,7 +35,7 @@ impl FetchStage {
                 tpu_forwards_sockets,
                 exit,
                 &sender,
-                &poh_recorder,
+                poh_recorder,
                 None,
                 coalesce_ms,
             ),
@@ -57,8 +57,8 @@ impl FetchStage {
             tx_sockets,
             tpu_forwards_sockets,
             exit,
-            &sender,
-            &poh_recorder,
+            sender,
+            poh_recorder,
             allocated_packet_limit,
             coalesce_ms,
         )
@@ -114,7 +114,7 @@ impl FetchStage {
         let tpu_threads = sockets.into_iter().map(|socket| {
             streamer::receiver(
                 socket,
-                &exit,
+                exit,
                 sender.clone(),
                 recycler.clone(),
                 "fetch_stage",
@@ -126,7 +126,7 @@ impl FetchStage {
         let tpu_forwards_threads = tpu_forwards_sockets.into_iter().map(|socket| {
             streamer::receiver(
                 socket,
-                &exit,
+                exit,
                 forward_sender.clone(),
                 recycler.clone(),
                 "fetch_forward_stage",

@@ -448,7 +448,7 @@ impl UnsignedTransactionWithCaller {
         }
         let mut stream = RlpStream::new();
         self.rlp_append(&mut stream);
-        H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
+        H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
     }
     fn decode(rlp: &Rlp<'_>, signed_compatible: bool) -> Result<Self, DecoderError> {
         let nonce = rlp.val_at(0)?;

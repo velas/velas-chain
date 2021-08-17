@@ -688,7 +688,7 @@ impl EntrySlice for [Entry] {
 }
 
 pub fn next_entry_mut(start: &mut Hash, num_hashes: u64, transactions: Vec<Transaction>) -> Entry {
-    let entry = Entry::new(&start, num_hashes, transactions);
+    let entry = Entry::new(start, num_hashes, transactions);
     *start = entry.hash;
     entry
 }
@@ -767,7 +767,7 @@ mod tests {
     #[test]
     fn test_entry_verify() {
         let zero = Hash::default();
-        let one = hash(&zero.as_ref());
+        let one = hash(zero.as_ref());
         assert!(Entry::new_tick(0, &zero).verify(&zero)); // base case, never used
         assert!(!Entry::new_tick(0, &zero).verify(&one)); // base case, bad
         assert!(next_entry(&zero, 1, vec![]).verify(&zero)); // inductive step
@@ -874,7 +874,7 @@ mod tests {
     fn test_verify_slice1() {
         solana_logger::setup();
         let zero = Hash::default();
-        let one = hash(&zero.as_ref());
+        let one = hash(zero.as_ref());
         assert_eq!(vec![][..].verify(&zero), true); // base case
         assert_eq!(vec![Entry::new_tick(0, &zero)][..].verify(&zero), true); // singleton case 1
         assert_eq!(vec![Entry::new_tick(0, &zero)][..].verify(&one), false); // singleton case 2, bad
@@ -893,8 +893,8 @@ mod tests {
     fn test_verify_slice_with_hashes1() {
         solana_logger::setup();
         let zero = Hash::default();
-        let one = hash(&zero.as_ref());
-        let two = hash(&one.as_ref());
+        let one = hash(zero.as_ref());
+        let two = hash(one.as_ref());
         assert_eq!(vec![][..].verify(&one), true); // base case
         assert_eq!(vec![Entry::new_tick(1, &two)][..].verify(&one), true); // singleton case 1
         assert_eq!(vec![Entry::new_tick(1, &two)][..].verify(&two), false); // singleton case 2, bad
@@ -914,8 +914,8 @@ mod tests {
     fn test_verify_slice_with_hashes_and_transactions() {
         solana_logger::setup();
         let zero = Hash::default();
-        let one = hash(&zero.as_ref());
-        let two = hash(&one.as_ref());
+        let one = hash(zero.as_ref());
+        let two = hash(one.as_ref());
         let alice_pubkey = Keypair::new();
         let tx0 = create_sample_payment(&alice_pubkey, one);
         let tx1 = create_sample_timestamp(&alice_pubkey, one);

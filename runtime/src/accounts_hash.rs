@@ -745,16 +745,14 @@ pub mod tests {
         let key_c = Pubkey::new(&[3u8; 32]);
         const COUNT: usize = 6;
         const VERSION: u64 = 0;
-        let hashes: Vec<_> = (0..COUNT)
-            .into_iter()
-            .map(|i| Hash::new(&[i as u8; 32]))
-            .collect();
+
         // create this vector
         // abbbcc
         let keys = [key_a, key_b, key_b, key_b, key_c, key_c];
 
-        let accounts: Vec<_> = hashes
+        let accounts: Vec<_> = (0..COUNT)
             .into_iter()
+            .map(|i| Hash::new(&[i as u8; 32]))
             .zip(keys.iter())
             .enumerate()
             .map(|(i, (hash, key))| {
@@ -1119,8 +1117,7 @@ pub mod tests {
         let input: Vec<Vec<u32>> = vec![vec![]];
         let cumulative = CumulativeOffsets::from_raw(&input);
 
-        let src: Vec<_> = input.into_iter().flatten().collect();
-        let len = src.len();
+        let len = input.into_iter().flatten().count();
         assert_eq!(cumulative.total_count, len);
         assert_eq!(cumulative.cumulative_offsets.len(), 0); // 2 non-empty vectors
     }
@@ -1190,8 +1187,7 @@ pub mod tests {
         let input: Vec<Vec<Vec<u32>>> = vec![vec![]];
         let cumulative = CumulativeOffsets::from_raw_2d(&input);
 
-        let src: Vec<_> = input.into_iter().flatten().collect();
-        let len = src.len();
+        let len = input.into_iter().flatten().count();
         assert_eq!(cumulative.total_count, len);
         assert_eq!(cumulative.cumulative_offsets.len(), 0); // 2 non-empty vectors
 

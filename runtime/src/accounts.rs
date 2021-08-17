@@ -1091,7 +1091,7 @@ mod tests {
         error_counters: &mut ErrorCounters,
     ) -> Vec<TransactionLoadResult> {
         let mut hash_queue = BlockhashQueue::new(100);
-        hash_queue.register_hash(&tx.message().recent_blockhash, &fee_calculator);
+        hash_queue.register_hash(&tx.message().recent_blockhash, fee_calculator);
         let accounts = Accounts::new_with_config(
             Vec::new(),
             &ClusterType::Development,

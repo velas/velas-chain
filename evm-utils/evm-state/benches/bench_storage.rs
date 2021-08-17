@@ -164,9 +164,7 @@ fn fill_new_db_then_backup_and_then_backup_again(c: &mut Criterion) {
                             _ => unreachable!(),
                         };
                         add_some_and_advance(&mut state, &params2);
-
-                        let evm_state = EvmState::Incomming(state);
-                        evm_state
+                        EvmState::Incomming(state)
                     },
                     |state| {
                         let _ = state.make_backup().unwrap();

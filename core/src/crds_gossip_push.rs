@@ -273,13 +273,7 @@ impl CrdsGossipPush {
         let need = Self::compute_need(self.num_active, self.active_set.len(), ratio);
         let mut new_items = HashMap::new();
         let (weights, peers): (Vec<_>, Vec<_>) = self
-            .push_options(
-                crds,
-                &self_id,
-                self_shred_version,
-                stakes,
-                gossip_validators,
-            )
+            .push_options(crds, self_id, self_shred_version, stakes, gossip_validators)
             .into_iter()
             .unzip();
         if peers.is_empty() {
@@ -656,12 +650,13 @@ mod test {
         assert!(options.contains(&node_123.pubkey()));
 
         // spy nodes should not push to people on different shred versions
-        let options = node
+
+        assert!(node
             .push_options(&crds, &spy.label().pubkey(), 0, &stakes, None)
             .iter()
             .map(|(_, c)| c.id)
-            .collect::<Vec<_>>();
-        assert!(options.is_empty());
+            .next()
+            .is_none());
     }
 
     #[test]

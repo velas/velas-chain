@@ -323,7 +323,7 @@ pub fn process_slots(rpc_client: &RpcClient, accounts_info: &mut AccountsInfo, b
             continue;
         }
 
-        match load_blocks(&rpc_client, start_slot, end_slot) {
+        match load_blocks(rpc_client, start_slot, end_slot) {
             Ok(blocks) => {
                 info!("Loaded {} blocks", blocks.len());
 
@@ -414,7 +414,7 @@ mod test {
         let message = Message::new(&instructions, Some(&payer.pubkey()));
         let stake1_signature = rpc_client
             .send_transaction(&Transaction::new(
-                &[&payer, &stake1_keypair],
+                &[payer, &stake1_keypair],
                 message,
                 blockhash,
             ))
@@ -427,7 +427,7 @@ mod test {
         // A balance increase by system transfer is ignored
         rpc_client
             .send_transaction(&system_transaction::transfer(
-                &payer,
+                payer,
                 &stake1_keypair.pubkey(),
                 min_sol,
                 blockhash,
@@ -449,7 +449,7 @@ mod test {
         let message = Message::new(&instructions, Some(&payer.pubkey()));
         let stake2_signature = rpc_client
             .send_transaction(&Transaction::new(
-                &[&payer, &stake2_keypair],
+                &[payer, &stake2_keypair],
                 message,
                 blockhash,
             ))
@@ -467,7 +467,7 @@ mod test {
         let message = Message::new(&instructions, Some(&payer.pubkey()));
         let stake3_initialize_signature = rpc_client
             .send_transaction(&Transaction::new(
-                &[&payer, &stake3_keypair],
+                &[payer, &stake3_keypair],
                 message,
                 blockhash,
             ))
@@ -484,7 +484,7 @@ mod test {
         let stake3_withdraw_signature = rpc_client
             .send_transaction_with_config(
                 &Transaction::new(
-                    &[&payer, &stake3_keypair],
+                    &[payer, &stake3_keypair],
                     Message::new(
                         &[stake_instruction::withdraw(
                             &stake3_keypair.pubkey(),
@@ -523,7 +523,7 @@ mod test {
         let message = Message::new(&instructions, Some(&payer.pubkey()));
         let stake4_initialize_signature = rpc_client
             .send_transaction(&Transaction::new(
-                &[&payer, &stake4_keypair],
+                &[payer, &stake4_keypair],
                 message,
                 blockhash,
             ))
@@ -541,7 +541,7 @@ mod test {
         let stake45_split_signature = rpc_client
             .send_transaction_with_config(
                 &Transaction::new(
-                    &[&payer, &stake5_keypair],
+                    &[payer, &stake5_keypair],
                     Message::new(
                         &stake_instruction::split(
                             &stake4_keypair.pubkey(),
@@ -573,7 +573,7 @@ mod test {
         // Fund system1
         let fund_system1_signature = rpc_client
             .send_transaction(&system_transaction::transfer(
-                &payer,
+                payer,
                 &system1_keypair.pubkey(),
                 2 * min_sol,
                 blockhash,
@@ -615,7 +615,7 @@ mod test {
         // Fund system2
         let fund_system2_signature = rpc_client
             .send_transaction(&system_transaction::transfer(
-                &payer,
+                payer,
                 &system2_keypair.pubkey(),
                 2 * min_sol,
                 blockhash,

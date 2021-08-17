@@ -168,7 +168,7 @@ impl EvmBridge {
             .into_iter()
             .map(|secret_key| {
                 let public_key =
-                    evm_state::PublicKey::from_secret_key(&evm_state::SECP256K1, &secret_key);
+                    evm_state::PublicKey::from_secret_key(evm_state::SECP256K1, &secret_key);
                 let public_key = evm_state::addr_from_public_key(&public_key);
                 (public_key, secret_key)
             })
@@ -507,7 +507,7 @@ impl BridgeERPC for BridgeErpcImpl {
             input: tx.input.map(|a| a.0).unwrap_or_default(),
         };
 
-        let tx = tx_create.sign(&secret_key, Some(meta.evm_chain_id));
+        let tx = tx_create.sign(secret_key, Some(meta.evm_chain_id));
 
         meta.send_tx(tx, meta_keys.into_native_error(meta.verbose_errors)?)
     }

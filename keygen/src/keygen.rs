@@ -155,7 +155,7 @@ fn output_keypair(
         let mut stdout = std::io::stdout();
         write_keypair(keypair, &mut stdout)?;
     } else {
-        write_keypair_file(&keypair, outfile)?;
+        write_keypair_file(keypair, outfile)?;
         println!("Wrote {} keypair to {}", source, outfile);
     }
     Ok(())

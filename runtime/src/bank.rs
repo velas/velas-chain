@@ -971,7 +971,7 @@ impl Bank {
         accounts_db_caching_enabled: bool,
     ) -> Self {
         Self::new_with_paths(
-            &genesis_config,
+            genesis_config,
             None,
             Vec::new(),
             &[],
@@ -2415,7 +2415,7 @@ impl Bank {
             name,
             self.inherit_specially_retained_account_fields(&existing_genuine_program),
         );
-        self.store_account_and_update_capitalization(&program_id, &account);
+        self.store_account_and_update_capitalization(program_id, &account);
 
         debug!("Added native program {} under {:?}", name, program_id);
     }
@@ -5367,7 +5367,7 @@ impl Drop for Bank {
 pub fn goto_end_of_slot(bank: &mut Bank) {
     let mut tick_hash = bank.last_blockhash();
     loop {
-        tick_hash = hashv(&[&tick_hash.as_ref(), [42].as_ref()]);
+        tick_hash = hashv(&[tick_hash.as_ref(), &[42]]);
         bank.register_tick(&tick_hash);
         if tick_hash == bank.last_blockhash() {
             bank.freeze();
@@ -7144,7 +7144,7 @@ pub(crate) mod tests {
                 .accounts
                 .accounts_db
                 .accounts_index
-                .get(&pubkey, Some(&ancestors), None)
+                .get(pubkey, Some(ancestors), None)
                 .unwrap();
             locked_entry
                 .slot_list()
@@ -7370,8 +7370,7 @@ pub(crate) mod tests {
                     .map(move |(_stake_pubkey, stake_account)| (stake_account, vote_account))
             })
             .map(|(stake_account, vote_account)| {
-                stake_state::calculate_points(&stake_account, &vote_account, None, true)
-                    .unwrap_or(0)
+                stake_state::calculate_points(stake_account, vote_account, None, true).unwrap_or(0)
             })
             .sum();
 
@@ -10035,11 +10034,11 @@ pub(crate) mod tests {
         assert_eq!(bank.calculate_capitalization(), bank.capitalization());
         assert_eq!(
             "mock_program1",
-            String::from_utf8_lossy(&bank.get_account(&vote_id).unwrap_or_default().data())
+            String::from_utf8_lossy(bank.get_account(&vote_id).unwrap_or_default().data())
         );
         assert_eq!(
             "mock_program2",
-            String::from_utf8_lossy(&bank.get_account(&stake_id).unwrap_or_default().data())
+            String::from_utf8_lossy(bank.get_account(&stake_id).unwrap_or_default().data())
         );
 
         // Re-adding builtin programs should be no-op
@@ -10055,11 +10054,11 @@ pub(crate) mod tests {
         assert_eq!(bank.calculate_capitalization(), bank.capitalization());
         assert_eq!(
             "mock_program1",
-            String::from_utf8_lossy(&bank.get_account(&vote_id).unwrap_or_default().data())
+            String::from_utf8_lossy(bank.get_account(&vote_id).unwrap_or_default().data())
         );
         assert_eq!(
             "mock_program2",
-            String::from_utf8_lossy(&bank.get_account(&stake_id).unwrap_or_default().data())
+            String::from_utf8_lossy(bank.get_account(&stake_id).unwrap_or_default().data())
         );
     }
 
@@ -10196,7 +10195,7 @@ pub(crate) mod tests {
     }
 
     fn get_nonce_account(bank: &Bank, nonce_pubkey: &Pubkey) -> Option<Hash> {
-        bank.get_account(&nonce_pubkey).and_then(|acc| {
+        bank.get_account(nonce_pubkey).and_then(|acc| {
             let state =
                 StateMut::<nonce::state::Versions>::state(&acc).map(|v| v.convert_to_current());
             match state {
@@ -10687,7 +10686,7 @@ pub(crate) mod tests {
         let pubkey2 = solana_sdk::pubkey::new_rand();
         let keypair0_account = AccountSharedData::new(8, 0, &Pubkey::default());
         let keypair1_account = AccountSharedData::new(9, 0, &Pubkey::default());
-        let account0 = AccountSharedData::new(11, 0, &&Pubkey::default());
+        let account0 = AccountSharedData::new(11, 0, &Pubkey::default());
         bank0.store_account(&keypair0.pubkey(), &keypair0_account);
         bank0.store_account(&keypair1.pubkey(), &keypair1_account);
         bank0.store_account(&pubkey0, &account0);
@@ -12507,7 +12506,7 @@ pub(crate) mod tests {
 
         // Write accounts to the store
         for key in &all_pubkeys {
-            bank0.store_account(&key, &starting_account);
+            bank0.store_account(key, &starting_account);
         }
 
         // Set aside a subset of accounts to modify

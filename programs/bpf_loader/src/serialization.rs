@@ -105,7 +105,7 @@ pub fn serialize_parameters_unaligned(
                 .map_err(|_| InstructionError::InvalidArgument)?;
             v.write_u64::<LittleEndian>(keyed_account.data_len()? as u64)
                 .map_err(|_| InstructionError::InvalidArgument)?;
-            v.write_all(&keyed_account.try_account_ref()?.data())
+            v.write_all(keyed_account.try_account_ref()?.data())
                 .map_err(|_| InstructionError::InvalidArgument)?;
             v.write_all(keyed_account.owner()?.as_ref())
                 .map_err(|_| InstructionError::InvalidArgument)?;
@@ -229,7 +229,7 @@ pub fn serialize_parameters_aligned(
                 .map_err(|_| InstructionError::InvalidArgument)?;
             v.write_u64::<LittleEndian>(keyed_account.data_len()? as u64)
                 .map_err(|_| InstructionError::InvalidArgument)?;
-            v.write_all(&keyed_account.try_account_ref()?.data())
+            v.write_all(keyed_account.try_account_ref()?.data())
                 .map_err(|_| InstructionError::InvalidArgument)?;
             v.resize(
                 MAX_PERMITTED_DATA_INCREASE
@@ -393,9 +393,9 @@ mod tests {
             .enumerate()
             .map(|(i, (key, account))| {
                 if i <= accounts.len() / 2 {
-                    KeyedAccount::new_readonly(&key, false, &account)
+                    KeyedAccount::new_readonly(key, false, account)
                 } else {
-                    KeyedAccount::new(&key, false, &account)
+                    KeyedAccount::new(key, false, account)
                 }
             })
             .collect();
@@ -450,9 +450,9 @@ mod tests {
             .enumerate()
             .map(|(i, (key, account))| {
                 if i <= accounts.len() / 2 {
-                    KeyedAccount::new_readonly(&key, false, &account)
+                    KeyedAccount::new_readonly(key, false, account)
                 } else {
-                    KeyedAccount::new(&key, false, &account)
+                    KeyedAccount::new(key, false, account)
                 }
             })
             .collect();
@@ -509,9 +509,9 @@ mod tests {
             .enumerate()
             .map(|(i, (key, account))| {
                 if i < accounts.len() / 2 {
-                    KeyedAccount::new_readonly(&key, false, &account)
+                    KeyedAccount::new_readonly(key, false, account)
                 } else {
-                    KeyedAccount::new(&key, false, &account)
+                    KeyedAccount::new(key, false, account)
                 }
             })
             .collect();

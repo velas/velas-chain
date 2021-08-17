@@ -199,8 +199,7 @@ impl EvmBlockstoreSubcommand for App<'_, '_> {
 }
 
 pub fn evm_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
-    let blockstore =
-        crate::open_blockstore(&ledger_path, AccessType::TryPrimaryThenSecondary, None);
+    let blockstore = crate::open_blockstore(ledger_path, AccessType::TryPrimaryThenSecondary, None);
 
     let future = match matches.subcommand() {
         ("modify-block", Some(arg_matches)) => {
