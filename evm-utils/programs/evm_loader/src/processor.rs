@@ -642,7 +642,7 @@ const TEST_CHAIN_ID: u64 = 0xdead;
 pub fn dummy_call(nonce: usize) -> (evm::Transaction, evm::UnsignedTransaction) {
     let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
     let dummy_address = evm::addr_from_public_key(&evm::PublicKey::from_secret_key(
-        &evm::SECP256K1,
+        evm::SECP256K1,
         &secret_key,
     ));
 

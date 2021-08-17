@@ -31,7 +31,7 @@ pub fn process_instruction(
             return Err(InstructionError::InvalidAccountOwner);
         }
 
-        deserialize(&config_account.data()).map_err(|err| {
+        deserialize(config_account.data()).map_err(|err| {
             ic_msg!(
                 invoke_context,
                 "Unable to deserialize config account: {}",
@@ -121,7 +121,7 @@ pub fn process_instruction(
     config_keyed_account
         .try_account_ref_mut()?
         .data_as_mut_slice()[..data.len()]
-        .copy_from_slice(&data);
+        .copy_from_slice(data);
     Ok(())
 }
 

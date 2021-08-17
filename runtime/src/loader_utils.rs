@@ -66,7 +66,7 @@ pub fn load_buffer_account<T: Client>(
 
     bank_client
         .send_and_confirm_message(
-            &[from_keypair, &buffer_keypair],
+            &[from_keypair, buffer_keypair],
             Message::new(
                 &bpf_loader_upgradeable::create_buffer(
                     &from_keypair.pubkey(),
@@ -98,7 +98,7 @@ pub fn load_buffer_account<T: Client>(
             Some(&from_keypair.pubkey()),
         );
         bank_client
-            .send_and_confirm_message(&[from_keypair, &buffer_authority_keypair], message)
+            .send_and_confirm_message(&[from_keypair, buffer_authority_keypair], message)
             .unwrap();
         offset += chunk_size as u32;
     }
@@ -117,7 +117,7 @@ pub fn load_upgradeable_program<T: Client>(
 
     load_buffer_account(
         bank_client,
-        &from_keypair,
+        from_keypair,
         buffer_keypair,
         authority_keypair,
         &program,
@@ -143,7 +143,7 @@ pub fn load_upgradeable_program<T: Client>(
     );
     bank_client
         .send_and_confirm_message(
-            &[from_keypair, &executable_keypair, &authority_keypair],
+            &[from_keypair, executable_keypair, authority_keypair],
             message,
         )
         .unwrap();
@@ -159,15 +159,15 @@ pub fn upgrade_program<T: Client>(
 ) {
     let message = Message::new(
         &[bpf_loader_upgradeable::upgrade(
-            &program_pubkey,
-            &buffer_pubkey,
+            program_pubkey,
+            buffer_pubkey,
             &authority_keypair.pubkey(),
-            &spill_pubkey,
+            spill_pubkey,
         )],
         Some(&from_keypair.pubkey()),
     );
     bank_client
-        .send_and_confirm_message(&[from_keypair, &authority_keypair], message)
+        .send_and_confirm_message(&[from_keypair, authority_keypair], message)
         .unwrap();
 }
 
@@ -187,7 +187,7 @@ pub fn set_upgrade_authority<T: Client>(
         Some(&from_keypair.pubkey()),
     );
     bank_client
-        .send_and_confirm_message(&[from_keypair, &current_authority_keypair], message)
+        .send_and_confirm_message(&[from_keypair, current_authority_keypair], message)
         .unwrap();
 }
 

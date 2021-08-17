@@ -28,7 +28,7 @@ fn verify_date_account(
     let account = verify_account(keyed_account, expected_pubkey)?;
 
     let config_data =
-        get_config_data(&account.data()).map_err(|_| InstructionError::InvalidAccountData)?;
+        get_config_data(account.data()).map_err(|_| InstructionError::InvalidAccountData)?;
     let date_config =
         DateConfig::deserialize(config_data).ok_or(InstructionError::InvalidAccountData)?;
 

@@ -1451,7 +1451,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         ),
         // Get the current nonce
         CliCommand::GetNonce(nonce_account_pubkey) => {
-            process_get_nonce(&rpc_client, config, &nonce_account_pubkey)
+            process_get_nonce(&rpc_client, config, nonce_account_pubkey)
         }
         // Get a new nonce
         CliCommand::NewNonce {
@@ -1472,7 +1472,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         } => process_show_nonce_account(
             &rpc_client,
             config,
-            &nonce_account_pubkey,
+            nonce_account_pubkey,
             *use_lamports_unit,
         ),
         // Withdraw lamports from a nonce account

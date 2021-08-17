@@ -545,7 +545,7 @@ pub fn process_instruction(
                 let custodian = keyed_accounts.next().map(|ka| ka.unsigned_key());
 
                 me.authorize_with_seed(
-                    &authority_base,
+                    authority_base,
                     &args.authority_seed,
                     &args.authority_owner,
                     &args.new_authorized_pubkey,
@@ -556,7 +556,7 @@ pub fn process_instruction(
                 )
             } else {
                 me.authorize_with_seed(
-                    &authority_base,
+                    authority_base,
                     &args.authority_seed,
                     &args.authority_owner,
                     &args.new_authorized_pubkey,
@@ -573,7 +573,7 @@ pub fn process_instruction(
             let vote = next_keyed_account(keyed_accounts)?;
 
             me.delegate(
-                &vote,
+                vote,
                 &from_keyed_account::<Clock>(next_keyed_account(keyed_accounts)?)?,
                 &from_keyed_account::<StakeHistory>(next_keyed_account(keyed_accounts)?)?,
                 &config::from_keyed_account(next_keyed_account(keyed_accounts)?)?,

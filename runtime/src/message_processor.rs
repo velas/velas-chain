@@ -118,7 +118,7 @@ impl PreAccount {
             && (!is_writable // line coverage used to get branch coverage
                 || pre.executable
                 || *program_id != pre.owner
-            || !Self::is_zeroed(&post.data()))
+            || !Self::is_zeroed(post.data()))
         {
             return Err(InstructionError::ModifiedProgramId);
         }
@@ -215,7 +215,7 @@ impl PreAccount {
             pre.set_data(account.data().clone());
         } else {
             // Copy without allocate
-            pre.data_as_mut_slice().clone_from_slice(&account.data());
+            pre.data_as_mut_slice().clone_from_slice(account.data());
         }
 
         self.changed = true;
@@ -382,7 +382,7 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
         self.executors.borrow_mut().insert(*pubkey, executor);
     }
     fn get_executor(&self, pubkey: &Pubkey) -> Option<Arc<dyn Executor>> {
-        self.executors.borrow().get(&pubkey)
+        self.executors.borrow().get(pubkey)
     }
     fn record_instruction(&self, instruction: &Instruction) {
         if let Some(recorder) = &self.instruction_recorder {
@@ -577,7 +577,7 @@ impl MessageProcessor {
         accounts: &'a [Rc<RefCell<AccountSharedData>>],
         demote_sysvar_write_locks: bool,
     ) -> Vec<KeyedAccount<'a>> {
-        let mut keyed_accounts = create_keyed_readonly_accounts(&executable_accounts);
+        let mut keyed_accounts = create_keyed_readonly_accounts(executable_accounts);
         let mut keyed_accounts2: Vec<_> = instruction
             .accounts
             .iter()
@@ -623,7 +623,7 @@ impl MessageProcessor {
                     if id == root_id {
                         // Call the builtin program
                         return process_instruction(
-                            &program_id,
+                            program_id,
                             &keyed_accounts[1..],
                             instruction_data,
                             invoke_context,
@@ -643,7 +643,7 @@ impl MessageProcessor {
                     if id == owner_id {
                         // Call the program via a builtin loader
                         return process_instruction(
-                            &program_id,
+                            program_id,
                             keyed_accounts,
                             instruction_data,
                             invoke_context,
@@ -765,7 +765,7 @@ impl MessageProcessor {
                 .collect::<Vec<bool>>();
             caller_write_privileges.insert(0, false);
             let (message, callee_program_id, _) =
-                Self::create_message(&instruction, &keyed_accounts, &signers, &invoke_context)?;
+                Self::create_message(&instruction, keyed_accounts, &signers, &invoke_context)?;
             let mut accounts = vec![];
             let mut account_refs = vec![];
             'root: for account_key in message.account_keys.iter() {
@@ -1000,7 +1000,7 @@ impl MessageProcessor {
                 }
                 let account = accounts[account_index].borrow();
                 pre_accounts[unique_index].verify(
-                    &program_id,
+                    program_id,
                     message.is_writable(account_index, demote_sysvar_write_locks),
                     rent,
                     &account,

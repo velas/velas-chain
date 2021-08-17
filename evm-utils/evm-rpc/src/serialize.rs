@@ -140,7 +140,7 @@ impl FormatHex for U128 {
         format_hex_trimmed(self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).with_context(|| BigIntError {
+        FromStr::from_str(s).with_context(|| BigIntError {
             input_data: s.to_string(),
         })
     }
@@ -151,7 +151,7 @@ impl FormatHex for U256 {
         format_hex_trimmed(self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).with_context(|| BigIntError {
+        FromStr::from_str(s).with_context(|| BigIntError {
             input_data: s.to_string(),
         })
     }
@@ -162,7 +162,7 @@ impl FormatHex for U512 {
         format_hex_trimmed(self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).with_context(|| BigIntError {
+        FromStr::from_str(s).with_context(|| BigIntError {
             input_data: s.to_string(),
         })
     }
@@ -173,7 +173,7 @@ impl FormatHex for H512 {
         format!("0x{:x}", self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).with_context(|| HexError {
+        FromStr::from_str(s).with_context(|| HexError {
             input_data: s.to_string(),
         })
     }
@@ -184,7 +184,7 @@ impl FormatHex for H256 {
         format!("0x{:x}", self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).with_context(|| HexError {
+        FromStr::from_str(s).with_context(|| HexError {
             input_data: s.to_string(),
         })
     }
@@ -195,7 +195,7 @@ impl FormatHex for H160 {
         format!("0x{:x}", self)
     }
     fn from_hex(s: &str) -> Result<Self, Error> {
-        FromStr::from_str(&s).with_context(|| HexError {
+        FromStr::from_str(s).with_context(|| HexError {
             input_data: s.to_string(),
         })
     }

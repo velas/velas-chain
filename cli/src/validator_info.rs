@@ -119,7 +119,7 @@ fn parse_validator_info(
     let key_list: ConfigKeys = deserialize(&account.data)?;
     if !key_list.keys.is_empty() {
         let (validator_pubkey, _) = key_list.keys[1];
-        let validator_info_string: String = deserialize(&get_config_data(&account.data)?)?;
+        let validator_info_string: String = deserialize(get_config_data(&*account.data)?)?;
         let validator_info: Map<_, _> = serde_json::from_str(&validator_info_string)?;
         Ok((validator_pubkey, validator_info))
     } else {

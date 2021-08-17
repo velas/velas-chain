@@ -114,7 +114,7 @@ pub fn simulation_entrypoint<'a>(
         let evm_account = RefCell::new(crate::create_state_account(evm_state_balance));
         let evm_keyed_account = KeyedAccount::new(&solana_sdk::evm_state::ID, false, &evm_account);
 
-        let accounts = AccountStructure::new(&evm_keyed_account, &users_accounts);
+        let accounts = AccountStructure::new(&evm_keyed_account, users_accounts);
         entrypoint_static(
             address,
             function_abi_input,

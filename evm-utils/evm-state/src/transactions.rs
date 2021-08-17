@@ -41,7 +41,7 @@ impl Transaction {
             .context(UnrecoverableCaller { transaction_hash })?;
         let public_key = SECP256K1
             .recover(
-                &Message::from_slice(&transaction_hash.as_bytes()).unwrap(),
+                &Message::from_slice(transaction_hash.as_bytes()).unwrap(),
                 &sig,
             )
             .context(UnrecoverableCaller { transaction_hash })?;
@@ -72,7 +72,7 @@ impl Transaction {
         let chain_id = self.signature.chain_id();
         let mut stream = RlpStream::new();
         self.signing_rlp_append(&mut stream, chain_id);
-        H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
+        H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
     }
 
     //
@@ -97,7 +97,7 @@ impl Transaction {
     pub fn tx_id_hash(&self) -> H256 {
         let mut stream = RlpStream::new();
         self.rlp_append_consistent(&mut stream);
-        H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
+        H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
     }
 }
 
@@ -131,7 +131,7 @@ impl UnsignedTransaction {
     pub fn signing_hash(&self, chain_id: Option<u64>) -> H256 {
         let mut stream = RlpStream::new();
         self.signing_rlp_append(&mut stream, chain_id);
-        H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
+        H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
     }
 
     pub fn sign(self, key: &SecretKey, chain_id: Option<u64>) -> Transaction {

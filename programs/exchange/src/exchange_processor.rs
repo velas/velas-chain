@@ -193,11 +193,11 @@ impl ExchangeProcessor {
             error!("Not enough accounts");
             return Err(InstructionError::InvalidArgument);
         }
-        Self::is_account_unallocated(&keyed_accounts[NEW_ACCOUNT_INDEX].try_account_ref()?.data())?;
+        Self::is_account_unallocated(keyed_accounts[NEW_ACCOUNT_INDEX].try_account_ref()?.data())?;
         Self::serialize(
             &ExchangeState::Account(
                 TokenAccountInfo::default()
-                    .owner(&keyed_accounts[OWNER_INDEX].unsigned_key())
+                    .owner(keyed_accounts[OWNER_INDEX].unsigned_key())
                     .tokens(100_000, 100_000, 100_000, 100_000),
             ),
             &mut keyed_accounts[NEW_ACCOUNT_INDEX]
@@ -221,13 +221,13 @@ impl ExchangeProcessor {
         }
 
         let mut to_account =
-            Self::deserialize_account(&keyed_accounts[TO_ACCOUNT_INDEX].try_account_ref()?.data())?;
+            Self::deserialize_account(keyed_accounts[TO_ACCOUNT_INDEX].try_account_ref()?.data())?;
 
         if &faucet::id() == keyed_accounts[FROM_ACCOUNT_INDEX].unsigned_key() {
             to_account.tokens[token] += tokens;
         } else {
             let state: ExchangeState =
-                bincode::deserialize(&keyed_accounts[FROM_ACCOUNT_INDEX].try_account_ref()?.data())
+                bincode::deserialize(keyed_accounts[FROM_ACCOUNT_INDEX].try_account_ref()?.data())
                     .map_err(Self::map_to_invalid_arg)?;
             match state {
                 ExchangeState::Account(mut from_account) => {
@@ -309,11 +309,10 @@ impl ExchangeProcessor {
             return Err(InstructionError::InvalidArgument);
         }
 
-        Self::is_account_unallocated(&keyed_accounts[ORDER_INDEX].try_account_ref()?.data())?;
+        Self::is_account_unallocated(keyed_accounts[ORDER_INDEX].try_account_ref()?.data())?;
 
-        let mut account = Self::deserialize_account(
-            &keyed_accounts[ACCOUNT_INDEX].try_account_ref_mut()?.data(),
-        )?;
+        let mut account =
+            Self::deserialize_account(keyed_accounts[ACCOUNT_INDEX].try_account_ref_mut()?.data())?;
 
         if &account.owner != keyed_accounts[OWNER_INDEX].unsigned_key() {
             error!("Signer does not own account");
@@ -367,8 +366,7 @@ impl ExchangeProcessor {
             return Err(InstructionError::InvalidArgument);
         }
 
-        let order =
-            Self::deserialize_order(&keyed_accounts[ORDER_INDEX].try_account_ref()?.data())?;
+        let order = Self::deserialize_order(keyed_accounts[ORDER_INDEX].try_account_ref()?.data())?;
 
         if &order.owner != keyed_accounts[OWNER_INDEX].unsigned_key() {
             error!("Signer does not own order");
@@ -404,11 +402,11 @@ impl ExchangeProcessor {
         }
 
         let mut to_order =
-            Self::deserialize_order(&keyed_accounts[TO_ORDER_INDEX].try_account_ref()?.data())?;
+            Self::deserialize_order(keyed_accounts[TO_ORDER_INDEX].try_account_ref()?.data())?;
         let mut from_order =
-            Self::deserialize_order(&keyed_accounts[FROM_ORDER_INDEX].try_account_ref()?.data())?;
+            Self::deserialize_order(keyed_accounts[FROM_ORDER_INDEX].try_account_ref()?.data())?;
         let mut profit_account = Self::deserialize_account(
-            &keyed_accounts[PROFIT_ACCOUNT_INDEX]
+            keyed_accounts[PROFIT_ACCOUNT_INDEX]
                 .try_account_ref()?
                 .data(),
         )?;

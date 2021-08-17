@@ -402,7 +402,7 @@ impl Transaction {
                     .map(|instruction| instruction.data.as_ref())
                     .collect();
                 let data = &instruction.data;
-                let e = verify_eth_addresses(data, &instruction_datas);
+                let e = verify_eth_addresses(data, &*instruction_datas);
                 e.map_err(|_| TransactionError::InvalidAccountIndex)?;
             }
         }
@@ -459,7 +459,7 @@ pub fn uses_durable_nonce(tx: &Transaction) -> Option<&CompiledInstruction> {
         .filter(|maybe_ix| {
             let prog_id_idx = maybe_ix.program_id_index as usize;
             match message.account_keys.get(prog_id_idx) {
-                Some(program_id) => system_program::check_id(&program_id),
+                Some(program_id) => system_program::check_id(program_id),
                 _ => false,
             }
         } && matches!(limited_deserialize(&maybe_ix.data), Ok(SystemInstruction::AdvanceNonceAccount))

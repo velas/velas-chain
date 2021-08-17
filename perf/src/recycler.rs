@@ -275,15 +275,12 @@ impl<T: Default + Reset + Sized> Recycler<T> {
             shrink_metric_name,
         };
         if warm_recyclers() {
-            let warmed_items: Vec<_> = (0..num)
+            (0..num)
                 .map(|_| {
                     let mut item = new.allocate().unwrap();
                     item.warm(size_hint);
                     item
                 })
-                .collect();
-            warmed_items
-                .into_iter()
                 .for_each(|i| new.recycler.recycle(i));
         }
         new

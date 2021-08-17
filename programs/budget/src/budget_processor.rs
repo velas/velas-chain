@@ -96,7 +96,7 @@ fn apply_account_data(
     if let Some(ref mut expr) = budget_state.pending_budget {
         let key = witness_keyed_account.unsigned_key();
         let program_id = witness_keyed_account.owner()?;
-        let actual_hash = hash(&witness_keyed_account.try_account_ref()?.data());
+        let actual_hash = hash(witness_keyed_account.try_account_ref()?.data());
         expr.apply_witness(&Witness::AccountData(actual_hash, program_id), key);
         final_payment = expr.final_payment();
     }
@@ -137,8 +137,7 @@ pub fn process_instruction(
                 return Ok(());
             }
             let existing =
-                BudgetState::deserialize(&contract_keyed_account.try_account_ref_mut()?.data())
-                    .ok();
+                BudgetState::deserialize(contract_keyed_account.try_account_ref_mut()?.data()).ok();
             if Some(true) == existing.map(|x| x.initialized) {
                 trace!("contract already exists");
                 return Err(InstructionError::AccountAlreadyInitialized);
@@ -157,7 +156,7 @@ pub fn process_instruction(
             let witness_keyed_account = next_keyed_account(keyed_accounts_iter)?;
             let contract_keyed_account = next_keyed_account(keyed_accounts_iter)?;
             let mut budget_state =
-                BudgetState::deserialize(&contract_keyed_account.try_account_ref()?.data())?;
+                BudgetState::deserialize(contract_keyed_account.try_account_ref()?.data())?;
             if !budget_state.is_pending() {
                 return Ok(()); // Nothing to do here.
             }
@@ -187,7 +186,7 @@ pub fn process_instruction(
             let witness_keyed_account = next_keyed_account(keyed_accounts_iter)?;
             let contract_keyed_account = next_keyed_account(keyed_accounts_iter)?;
             let mut budget_state =
-                BudgetState::deserialize(&contract_keyed_account.try_account_ref()?.data())?;
+                BudgetState::deserialize(contract_keyed_account.try_account_ref()?.data())?;
             if !budget_state.is_pending() {
                 return Ok(()); // Nothing to do here.
             }
@@ -216,7 +215,7 @@ pub fn process_instruction(
             let witness_keyed_account = next_keyed_account(keyed_accounts_iter)?;
             let contract_keyed_account = next_keyed_account(keyed_accounts_iter)?;
             let mut budget_state =
-                BudgetState::deserialize(&contract_keyed_account.try_account_ref()?.data())?;
+                BudgetState::deserialize(contract_keyed_account.try_account_ref()?.data())?;
             if !budget_state.is_pending() {
                 return Ok(()); // Nothing to do here.
             }

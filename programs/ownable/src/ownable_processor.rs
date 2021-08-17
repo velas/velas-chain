@@ -38,7 +38,7 @@ pub fn process_instruction(
     let keyed_accounts_iter = &mut keyed_accounts.iter();
     let account_keyed_account = &mut next_keyed_account(keyed_accounts_iter)?;
     let mut account_owner_pubkey: Pubkey =
-        limited_deserialize(&account_keyed_account.try_account_ref()?.data())?;
+        limited_deserialize(account_keyed_account.try_account_ref()?.data())?;
 
     if account_owner_pubkey == Pubkey::default() {
         account_owner_pubkey = new_owner_pubkey;
@@ -47,7 +47,7 @@ pub fn process_instruction(
         set_owner(
             &mut account_owner_pubkey,
             new_owner_pubkey,
-            &owner_keyed_account,
+            owner_keyed_account,
         )?;
     }
 

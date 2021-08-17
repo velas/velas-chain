@@ -28,7 +28,7 @@ pub struct Config {
 
 impl Config {
     pub fn from<T: ReadableAccount>(account: &T) -> Option<Self> {
-        get_config_data(&account.data())
+        get_config_data(account.data())
             .ok()
             .and_then(|data| deserialize(data).ok())
     }

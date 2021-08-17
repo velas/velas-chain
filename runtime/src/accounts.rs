@@ -226,7 +226,7 @@ impl Accounts {
                             .map(|(mut account, _)| {
                                 if message.is_writable(i, demote_sysvar_write_locks) {
                                     let rent_due = rent_collector
-                                        .collect_from_existing_account(&key, &mut account);
+                                        .collect_from_existing_account(key, &mut account);
                                     (account, rent_due)
                                 } else {
                                     (account, 0)
@@ -599,7 +599,7 @@ impl Accounts {
                 if Self::is_loadable(lamports) {
                     let account_cap = AccountsDb::account_balance_for_capitalization(
                         lamports,
-                        &loaded_account.owner(),
+                        loaded_account.owner(),
                         loaded_account.executable(),
                     );
 
@@ -817,12 +817,15 @@ impl Accounts {
     /// This function will prevent multiple threads from modifying the same account state at the
     /// same time
     #[must_use]
+
     pub fn lock_accounts<'a>(
         &self,
         txs: impl Iterator<Item = &'a Transaction>,
         demote_sysvar_write_locks: bool,
     ) -> Vec<Result<()>> {
         use solana_sdk::sanitize::Sanitize;
+        #[allow(clippy::needless_collect)]
+        // Collect is used to reduce time when accounts is locked.
         let keys: Vec<Result<_>> = txs
             .map(|tx| {
                 tx.sanitize().map_err(TransactionError::from)?;
@@ -977,7 +980,7 @@ impl Accounts {
                         }
                     }
                     if account.rent_epoch == INITIAL_RENT_EPOCH {
-                        let rent = rent_collector.collect_from_created_account(&key, account);
+                        let rent = rent_collector.collect_from_created_account(key, account);
                         loaded_transaction.rent += rent;
                         loaded_transaction
                             .rent_debits
@@ -1054,7 +1057,7 @@ pub fn update_accounts_bench(accounts: &Accounts, pubkeys: &[Pubkey], slot: u64)
     for pubkey in pubkeys {
         let amount = thread_rng().gen_range(0, 10);
         let account = AccountSharedData::new(amount, 0, &AccountSharedData::default().owner);
-        accounts.store_slow_uncached(slot, &pubkey, &account);
+        accounts.store_slow_uncached(slot, pubkey, &account);
     }
 }
 

@@ -536,7 +536,7 @@ impl Authorized {
             }
             StakeAuthorize::Withdrawer => {
                 if let Some((lockup, clock, custodian)) = lockup_custodian_args {
-                    if lockup.is_in_force(&clock, None) {
+                    if lockup.is_in_force(clock, None) {
                         match custodian {
                             None => {
                                 return Err(StakeError::CustodianMissing.into());
@@ -546,7 +546,7 @@ impl Authorized {
                                     return Err(StakeError::CustodianSignatureMissing.into());
                                 }
 
-                                if lockup.is_in_force(&clock, Some(custodian)) {
+                                if lockup.is_in_force(clock, Some(custodian)) {
                                     return Err(StakeError::LockupInForce.into());
                                 }
                             }
@@ -1023,7 +1023,7 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
         }
         self.authorize(
             &signers,
-            &new_authority,
+            new_authority,
             stake_authorize,
             require_custodian_for_locked_stake_authorize,
             clock,
@@ -1211,7 +1211,7 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
                     split.set_state(&StakeState::Initialized(split_meta))?;
                 }
                 StakeState::Uninitialized => {
-                    if !signers.contains(&self.unsigned_key()) {
+                    if !signers.contains(self.unsigned_key()) {
                         return Err(InstructionError::MissingRequiredSignature);
                     }
                 }
@@ -1332,7 +1332,7 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
                 (meta.lockup, reserve + MIN_DELEGATE_STAKE_AMOUNT, false)
             }
             StakeState::Uninitialized => {
-                if !signers.contains(&self.unsigned_key()) {
+                if !signers.contains(self.unsigned_key()) {
                     return Err(InstructionError::MissingRequiredSignature);
                 }
                 (Lockup::default(), 0, false) // no lockup, no restrictions
@@ -1343,7 +1343,7 @@ impl<'a> StakeAccount for KeyedAccount<'a> {
         // verify that lockup has expired or that the withdrawal is signed by
         //   the custodian, both epoch and unix_timestamp must have passed
         let custodian_pubkey = custodian.and_then(|keyed_account| keyed_account.signer_key());
-        if lockup.is_in_force(&clock, custodian_pubkey) {
+        if lockup.is_in_force(clock, custodian_pubkey) {
             return Err(StakeError::LockupInForce.into());
         }
 
@@ -4699,12 +4699,6 @@ mod tests {
             rent_exempt_reserve,
             ..Meta::default()
         };
-
-        let expected_rent_exempt_reserve = calculate_split_rent_exempt_reserve(
-            meta.rent_exempt_reserve,
-            std::mem::size_of::<StakeState>() as u64,
-            std::mem::size_of::<StakeState>() as u64,
-        );
 
         // test splitting both an Initialized stake and a Staked stake
         for state in &[

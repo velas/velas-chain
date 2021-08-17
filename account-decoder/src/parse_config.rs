@@ -37,7 +37,7 @@ fn parse_config_data<T>(data: &[u8], keys: Vec<(Pubkey, bool)>) -> Option<UiConf
 where
     T: serde::de::DeserializeOwned,
 {
-    let config_data: T = deserialize(&get_config_data(data).ok()?).ok()?;
+    let config_data: T = deserialize(get_config_data(data).ok()?).ok()?;
     let keys = keys
         .iter()
         .map(|key| UiConfigKey {
