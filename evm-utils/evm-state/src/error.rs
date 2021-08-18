@@ -1,9 +1,11 @@
 use snafu::{Backtrace, Snafu};
 
+use derivative::Derivative;
 use evm::ExitFatal;
 use primitive_types::{H256, U256};
 
-#[derive(Debug, Snafu)]
+#[derive(Derivative, Debug, Snafu)]
+#[derivative(PartialEq)]
 #[snafu(visibility = "pub(crate)")]
 pub enum Error {
     #[snafu(display(
@@ -37,16 +39,22 @@ pub enum Error {
     AllocationError {
         key: H256,
         size: u64,
+        #[derivative(PartialEq = "ignore")]
         backtrace: Backtrace,
     },
 
     #[snafu(display("Data not found: key={:x}", key))]
-    DataNotFound { key: H256, backtrace: Backtrace },
+    DataNotFound {
+        key: H256,
+        #[derivative(PartialEq = "ignore")]
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Failed to write at offset {}: key={:x}", offset, key))]
     FailedToWrite {
         key: H256,
         offset: u64,
+        #[derivative(PartialEq = "ignore")]
         backtrace: Backtrace,
     },
 
@@ -60,6 +68,7 @@ pub enum Error {
         key: H256,
         offset: u64,
         size: u64,
+        #[derivative(PartialEq = "ignore")]
         backtrace: Backtrace,
     },
 

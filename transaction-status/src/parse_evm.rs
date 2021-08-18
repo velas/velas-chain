@@ -2,11 +2,10 @@ use crate::parse_instruction::{
     check_num_accounts, ParsableProgram, ParseInstructionError, ParsedInstructionEnum,
 };
 use bincode::deserialize;
+use evm_rpc::RPCTransaction;
 use serde_json::json;
 use solana_evm_loader_program::instructions::{EvmBigTransaction, EvmInstruction};
 use solana_sdk::{instruction::CompiledInstruction, pubkey::Pubkey};
-
-use evm_rpc::*;
 
 pub fn parse_evm(
     instruction: &CompiledInstruction,

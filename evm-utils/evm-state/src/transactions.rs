@@ -407,7 +407,8 @@ pub struct UnsignedTransactionWithCaller {
     pub unsigned_tx: UnsignedTransaction,
     pub caller: H160,
     pub chain_id: u64,
-    // with signed_compatible, transaction serialization differ, and start to be compatible with signed tx, the only difference is that s is always empty.
+    // with signed_compatible, transaction serialization differ,
+    // and start to be compatible with signed tx, the only difference is that s is always empty.
     pub signed_compatible: bool,
 }
 
@@ -450,16 +451,22 @@ impl UnsignedTransactionWithCaller {
         H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
     }
     fn decode(rlp: &Rlp<'_>, signed_compatible: bool) -> Result<Self, DecoderError> {
+        let nonce = rlp.val_at(0)?;
+        let gas_price = rlp.val_at(1)?;
+        let gas_limit = rlp.val_at(2)?;
+        let action = rlp.val_at(3)?;
+        let value = rlp.val_at(4)?;
+        let input = rlp.val_at(5)?;
         if signed_compatible {
             let chain_id = rlp.val_at(6)?;
             Ok(Self {
                 unsigned_tx: UnsignedTransaction {
-                    nonce: rlp.val_at(0)?,
-                    gas_price: rlp.val_at(1)?,
-                    gas_limit: rlp.val_at(2)?,
-                    action: rlp.val_at(3)?,
-                    value: rlp.val_at(4)?,
-                    input: rlp.val_at(5)?,
+                    nonce,
+                    gas_price,
+                    gas_limit,
+                    action,
+                    value,
+                    input,
                 },
                 caller: rlp.val_at(7)?,
                 chain_id,
@@ -469,12 +476,12 @@ impl UnsignedTransactionWithCaller {
             let chain_id = rlp.val_at(7)?;
             Ok(Self {
                 unsigned_tx: UnsignedTransaction {
-                    nonce: rlp.val_at(0)?,
-                    gas_price: rlp.val_at(1)?,
-                    gas_limit: rlp.val_at(2)?,
-                    action: rlp.val_at(3)?,
-                    value: rlp.val_at(4)?,
-                    input: rlp.val_at(5)?,
+                    nonce,
+                    gas_price,
+                    gas_limit,
+                    action,
+                    value,
+                    input,
                 },
                 caller: rlp.val_at(6)?,
                 chain_id,
