@@ -465,10 +465,10 @@ impl EvmProcessor {
                 let unsigned_tx: evm::UnsignedTransaction =
                     bincode::deserialize(&bytes).map_err(|e| {
                         ic_msg!(
-                        invoke_context,
-                        "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
-                        e
-                    );
+                            invoke_context,
+                            "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
+                            e
+                        );
                         EvmError::DeserializationError
                     })?;
 

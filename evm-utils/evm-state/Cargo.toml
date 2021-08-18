@@ -34,6 +34,7 @@ ethbloom = "0.11.0"
 auto_enums = "0.7"
 fixed-hash = "0.7.0"
 impl-rlp = "0.3.0"
+derivative = "2.2"
 
 [dev-dependencies]
 criterion = "0.3.3"

@@ -624,7 +624,7 @@ mod tests {
         assert!(matches!(
             executor
                 .transaction_execute_unsinged(
-                    alice.secret.to_address(),
+                    alice.address(),
                     create_tx.clone(),
                     false,
                     noop_precompile
@@ -637,7 +637,7 @@ mod tests {
         let hash = create_tx.signing_hash(Some(chain_id));
         assert!(matches!(
             executor
-            .transaction_execute_unsinged(alice.secret.to_address(), create_tx,false, noop_precompile)
+            .transaction_execute_unsinged(alice.address(), create_tx, false, noop_precompile)
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash } if tx_hash == hash
         ));
@@ -661,13 +661,13 @@ mod tests {
         let create_tx = alice.unsigned(TransactionAction::Create, &code);
 
         let address = alice.address();
-        assert!(matches!(
+        assert_eq!(
             executor
                 .transaction_execute_unsinged(address, create_tx.clone(), true, noop_precompile)
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
-        ));
+        );
 
         let create_tx_with_caller = UnsignedTransactionWithCaller {
             unsigned_tx: create_tx.clone(),
@@ -679,12 +679,12 @@ mod tests {
         println!("tx = {:?}", create_tx_with_caller);
         println!("hash = {}", hash);
 
-        assert!(matches!(
-        executor
-            .transaction_execute_unsinged(address, create_tx, true, noop_precompile)
-            .unwrap_err(),
-                       Error::DuplicateTx { tx_hash } if tx_hash == hash
-                       ));
+        assert_eq!(
+            executor
+                .transaction_execute_unsinged(address, create_tx, true, noop_precompile)
+                .unwrap_err(),
+            Error::DuplicateTx { tx_hash: hash }
+        );
     }
 
     #[test]
