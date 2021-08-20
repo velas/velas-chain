@@ -16,6 +16,7 @@ use solana_runtime::bank::Bank;
 use crate::rpc::JsonRpcRequestProcessor;
 use std::cell::RefCell;
 use std::sync::Arc;
+const GAS_PRICE: u64 = 3;
 
 const DEFAULT_COMITTMENT: Option<CommitmentConfig> = Some(CommitmentConfig {
     commitment: CommitmentLevel::Processed,
@@ -383,6 +384,12 @@ impl BasicERPC for BasicErpcImpl {
             .collect();
         let result = call(meta, tx, block, meta_keys.into_native_error(false)?)?;
         Ok(Bytes(result.1))
+    }
+
+    fn gas_price(&self, _meta: Self::Metadata) -> Result<Hex<Gas>, Error> {
+        Ok(Hex(
+            solana_evm_loader_program::scope::evm::lamports_to_gwei(GAS_PRICE),
+        ))
     }
 
     fn estimate_gas(

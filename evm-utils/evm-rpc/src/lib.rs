@@ -374,6 +374,9 @@ pub mod basic {
             meta_keys: Option<Vec<String>>,
         ) -> Result<Bytes, Error>;
 
+        #[rpc(meta, name = "eth_gasPrice")]
+        fn gas_price(&self, meta: Self::Metadata) -> Result<Hex<Gas>, Error>;
+
         #[rpc(meta, name = "eth_estimateGas")]
         fn estimate_gas(
             &self,
@@ -543,9 +546,6 @@ pub mod bridge {
             tx: Bytes,
             meta_keys: Option<Vec<String>>,
         ) -> Result<Hex<H256>, Error>;
-
-        #[rpc(meta, name = "eth_gasPrice")]
-        fn gas_price(&self, meta: Self::Metadata) -> Result<Hex<Gas>, Error>;
 
         #[rpc(meta, name = "eth_getCompilers")]
         fn compilers(&self, meta: Self::Metadata) -> Result<Vec<String>, Error>;
