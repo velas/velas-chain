@@ -540,16 +540,6 @@ impl BridgeERPC for BridgeErpcImpl {
         meta.send_tx(tx, meta_keys.into_native_error(meta.verbose_errors)?)
     }
 
-    fn gas_price(&self, _meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
-        const GWEI: u64 = 1_000_000_000;
-        //TODO: Add gas logic
-        let gas_price = 21000 * solana_evm_loader_program::scope::evm::LAMPORTS_TO_GWEI_PRICE
-            / DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE; // 21000 is smallest call in evm
-
-        let gas_price = gas_price - gas_price % GWEI; //round to gwei for metamask
-        Ok(Hex(gas_price.into()))
-    }
-
     fn compilers(&self, _meta: Self::Metadata) -> EvmResult<Vec<String>> {
         Err(evm_rpc::Error::Unimplemented {})
     }
@@ -789,6 +779,16 @@ impl BasicERPC for BasicErpcProxy {
 
     fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> EvmResult<Vec<RPCLog>> {
         proxy_evm_rpc!(meta.rpc_client, EthGetLogs, log_filter)
+    }
+
+    fn gas_price(&self, _meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
+        const GWEI: u64 = 1_000_000_000;
+        //TODO: Add gas logic
+        let gas_price = 21000 * solana_evm_loader_program::scope::evm::LAMPORTS_TO_GWEI_PRICE
+            / DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE; // 21000 is smallest call in evm
+
+        let gas_price = gas_price - gas_price % GWEI; //round to gwei for metamask
+        Ok(Hex(gas_price.into()))
     }
 }
 
