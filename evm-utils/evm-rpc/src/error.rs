@@ -21,6 +21,20 @@ pub enum Error {
     #[snafu(display("Invalid hex prefix in Hex({})", input_data))]
     InvalidHexPrefix { input_data: String },
 
+    #[snafu(display(
+        "ServerError(-32005): Invalid blocks range {}..{}, maximum_allowed_batch={:?}",
+        starting,
+        ending,
+        batch_size
+    ))]
+    InvalidBlocksRange {
+        starting: u64,
+        ending: u64,
+        batch_size: Option<u64>,
+    },
+    #[snafu(display("Tokio runtime error: {}", details))]
+    RuntimeError { details: String },
+
     #[snafu(display("Failed to decode Rlp struct {} ({})", struct_name, input_data))]
     RlpError {
         struct_name: String,
@@ -232,6 +246,8 @@ impl From<Error> for JRpcError {
                 internal_error_with_details(EVM_EXECUTION_ERROR, &err, &data)
             }
             Error::ServerError {} => internal_error(SERVER_ERROR, &err),
+            Error::InvalidBlocksRange { .. } => internal_error(SERVER_ERROR, &err),
+            Error::RuntimeError { .. } => internal_error(SERVER_ERROR, &err),
         }
     }
 }

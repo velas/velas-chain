@@ -1928,7 +1928,10 @@ impl JsonRpcRequestProcessor {
         if blocks_from_db.is_empty() {
             blockstore_request_time += blockstore_request.elapsed();
             let bigtable_request = Instant::now();
+            trace!("requesting bigtable = {}..{}", starting_block, ending_block);
             let blocks = self.get_evm_blocks_from_bigtable(starting_block, ending_block);
+
+            trace!("bigtable_return = {:?}", blocks);
             bigtable_request_time += bigtable_request.elapsed();
             info!(
                 "Get evm blocks by ids, bigtable_time = {:?}, blockstore_time = {:?}",
@@ -1944,6 +1947,7 @@ impl JsonRpcRequestProcessor {
 
             // shortcut for case where we got all items in local db.
             if missing_block == *block_num && block.is_some() {
+                trace!("found missing block");
                 missing_block += 1;
                 blocks.push(
                     block
@@ -1965,7 +1969,10 @@ impl JsonRpcRequestProcessor {
             };
             blockstore_request_time += blockstore_request.elapsed();
             let bigtable_request = Instant::now();
-            blocks.extend(self.get_evm_blocks_from_bigtable(missing_block, ending_block)?);
+            trace!("requesting bigtable = {}..{}", missing_block, ending_block);
+            let blocks_bigtable = self.get_evm_blocks_from_bigtable(missing_block, ending_block)?;
+            trace!("bigtable_return = {:?}", blocks_bigtable);
+            blocks.extend(blocks_bigtable);
             bigtable_request_time += bigtable_request.elapsed();
             blockstore_request = Instant::now();
 
@@ -1974,6 +1981,8 @@ impl JsonRpcRequestProcessor {
             if let Some(block) = block {
                 blocks.push(block.0)
             }
+
+            missing_block = block_num + 1; // go to the next
         }
         info!(
             "Get evm blocks by ids, bigtable_time = {:?}, blockstore_time = {:?}",
