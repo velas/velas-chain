@@ -9,6 +9,7 @@ pub use primitive_types::{H256, U256};
 pub use secp256k1::{self, rand};
 
 pub mod error;
+pub mod storage;
 pub mod transactions;
 pub mod types;
 
@@ -33,7 +34,6 @@ pub use triedb::empty_trie_hash;
 mod context;
 mod executor;
 mod state;
-mod storage;
 
 // Cannot link to solana-sdk, because solana_sdk already linked to evm-state
 // Used in BlockHeader

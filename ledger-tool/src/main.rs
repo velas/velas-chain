@@ -66,6 +66,9 @@ use bigtable::*;
 mod evm_blockstore;
 use evm_blockstore::*;
 
+mod evm_state;
+use crate::evm_state::*;
+
 #[derive(PartialEq)]
 enum LedgerOutputMethod {
     Print,
@@ -893,8 +896,8 @@ fn main() {
                 .help("Show additional information where supported"),
         )
         .bigtable_subcommand()
-
         .evm_blockstore_subcommand()
+        .evm_state_subcommand()
         .subcommand(
             SubCommand::with_name("print")
             .about("Print the ledger")
@@ -1443,6 +1446,10 @@ fn main() {
         ("bigtable", Some(arg_matches)) => bigtable_process_command(&ledger_path, arg_matches),
         ("evm_blockstore", Some(arg_matches)) => {
             evm_blockstore_process_command(&ledger_path, arg_matches)
+        }
+        ("evm_state", Some(arg_matches)) => {
+            process_evm_state_command(&ledger_path, arg_matches)
+                .unwrap_or_else(|err| panic!("EVM state subcommand error: {:?}", err));
         }
         ("print", Some(arg_matches)) => {
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);

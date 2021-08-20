@@ -116,7 +116,7 @@ impl Decodable for AccountState {
 pub struct Code(Vec<u8>);
 
 impl Code {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self(vec![])
     }
 
