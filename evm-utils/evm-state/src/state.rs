@@ -149,7 +149,7 @@ impl EvmBackend<Incomming> {
     /// because it clear pending state, and is_active_changes cannot detect any state changes.
     fn flush_changes(&mut self) {
         let mut state = &mut self.state;
-        let r = RocksHandle::new(RocksDatabaseHandle::new(self.kvs.db.as_ref()));
+        let r = RocksHandle::new(RocksDatabaseHandle::new(self.kvs.db()));
 
         let mut storage_tries = TrieCollection::new(r.clone(), StaticEntries::default());
         let mut account_tries = TrieCollection::new(r, StaticEntries::default());
@@ -499,7 +499,7 @@ impl<State> EvmBackend<State> {
             .typed_for(root)
             .get(&address)
             .and_then(|Account { storage_root, .. }| {
-                FixedSecureTrieMut::new(RocksMemoryTrieMut::new(self.kvs.db.as_ref(), storage_root))
+                FixedSecureTrieMut::new(RocksMemoryTrieMut::new(self.kvs.db(), storage_root))
                     .get(&index)
                     .map(|value: U256| {
                         let mut encoded = H256::default();

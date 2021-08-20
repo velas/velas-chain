@@ -41,9 +41,14 @@ tokio = { version = "1", features = ["full"] }
 
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
+triedb = { git = "https://github.com/velas/triedb", branch = "chore/bump-rocksdb", features = ["rocksdb"] }
+rlp = "0.5.0"
+anyhow = "1.0.43"
 
 [dev-dependencies]
 assert_cmd = "1.0"
+quickcheck = "1.0.3"
+quickcheck_macros = "1.0.0"
 
 [target."cfg(unix)".dependencies]
 signal-hook = "0.1.15"

@@ -4588,16 +4588,18 @@ impl Bank {
         let mut signature_count_buf = [0u8; 8];
         LittleEndian::write_u64(&mut signature_count_buf[..], self.signature_count() as u64);
 
+        let evm_state_root = self
+            .evm_state
+            .read()
+            .expect("EVM state poisoned")
+            .last_root();
+
         let mut hash = hashv(&[
             self.parent_hash.as_ref(),
             accounts_delta_hash.hash.as_ref(),
             &signature_count_buf,
             self.last_blockhash().as_ref(),
-            self.evm_state
-                .read()
-                .expect("evm state poisoned")
-                .last_root()
-                .as_ref(),
+            evm_state_root.as_ref(),
         ]);
 
         if let Some(buf) = self
@@ -4611,13 +4613,20 @@ impl Bank {
         }
 
         info!(
-            "bank frozen: {} hash: {} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}",
-            self.slot(),
-            hash,
-            accounts_delta_hash.hash,
-            self.signature_count(),
-            self.last_blockhash(),
-            self.capitalization(),
+            "bank frozen: {slot} \
+             hash: {hash} \
+             accounts_delta: {accounts_delta} \
+             signature_count: {signature_count} \
+             last_blockhash: {last_blockhash} \
+             capitalization: {capitalization} \
+             evm_state_root: {evm_state_root:?}",
+            slot = self.slot(),
+            hash = hash,
+            accounts_delta = accounts_delta_hash.hash,
+            signature_count = self.signature_count(),
+            last_blockhash = self.last_blockhash(),
+            capitalization = self.capitalization(),
+            evm_state_root = evm_state_root,
         );
 
         info!(

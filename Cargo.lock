@@ -75,9 +75,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.42"
+version = "1.0.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "595d3cfa7a60d4555cb5067b99f07142a08ea778de5cf993f7b75c7d8fabc486"
+checksum = "28ae2b3dec75a406790005a200b1bd89785afc02517a00ca99ecfe093ee9e6cf"
 
 [[package]]
 name = "arc-swap"
@@ -5877,6 +5877,7 @@ dependencies = [
 name = "solana-ledger-tool"
 version = "1.6.14"
 dependencies = [
+ "anyhow",
  "assert_cmd",
  "bs58",
  "bytecount",
@@ -5889,7 +5890,10 @@ dependencies = [
  "histogram",
  "itertools 0.9.0",
  "log 0.4.14",
+ "quickcheck 1.0.3",
+ "quickcheck_macros 1.0.0",
  "regex",
+ "rlp",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -5908,6 +5912,7 @@ dependencies = [
  "solana-vote-program",
  "tempfile",
  "tokio 1.9.0",
+ "triedb",
 ]
 
 [[package]]
