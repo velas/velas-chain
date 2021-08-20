@@ -409,7 +409,7 @@ impl BasicERPC for BasicErpcImpl {
     }
 
     fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
-        const MAX_NUM_BLOCKS: u64 = 500;
+        const MAX_NUM_BLOCKS: u64 = 2000;
         let bank = meta.bank(None);
 
         let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
@@ -422,7 +422,11 @@ impl BasicERPC for BasicErpcImpl {
                 "Log filter, block range is too big, reducing, to={}, from={}",
                 to, from
             );
-            return Err(Error::ServerError {});
+            return Err(Error::InvalidBlocksRange {
+                starting: from,
+                ending: to,
+                batch_size: Some(MAX_NUM_BLOCKS),
+            });
         }
 
         let filter = LogFilter {
