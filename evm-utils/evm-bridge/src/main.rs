@@ -46,6 +46,8 @@ type FutureEvmResult<T> = EvmResult<T>;
 
 mod sol_proxy;
 
+const MAX_NUM_BLOCKS_IN_BATCH: u64 = 2000; // should be less or equal to const core::evm_rpc_impl::logs::MAX_NUM_BLOCKS
+
 // A compatibility layer, to make software more fluently.
 mod compatibility {
     use evm_rpc::Hex;
@@ -144,6 +146,24 @@ mod compatibility {
     }
 }
 
+macro_rules! proxy_evm_rpc {
+    (@silent $rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
+        {
+            match RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*])) {
+                Err(e) => Err(from_client_error(e).into()),
+                Ok(o) => Ok(o)
+            }
+        }
+    );
+    ($rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
+        {
+            debug!("evm proxy received {}", stringify!($rpc_call));
+            proxy_evm_rpc!(@silent $rpc, $rpc_call $(, $calls)* )
+        }
+    )
+
+}
+
 pub struct EvmBridge {
     evm_chain_id: u64,
     key: solana_sdk::signature::Keypair,
@@ -151,6 +171,7 @@ pub struct EvmBridge {
     rpc_client: RpcClient,
     verbose_errors: bool,
     simulate: bool,
+    max_logs_blocks: u64,
 }
 
 impl EvmBridge {
@@ -161,6 +182,7 @@ impl EvmBridge {
         addr: String,
         verbose_errors: bool,
         simulate: bool,
+        max_logs_blocks: u64,
     ) -> Self {
         info!("EVM chain id {}", evm_chain_id);
 
@@ -185,6 +207,7 @@ impl EvmBridge {
             rpc_client,
             verbose_errors,
             simulate,
+            max_logs_blocks,
         }
     }
 
@@ -438,18 +461,15 @@ impl EvmBridge {
 
         Ok(())
     }
-}
 
-macro_rules! proxy_evm_rpc {
-    ($rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
-        {
-            debug!("evm proxy received {}", stringify!($rpc_call));
-            match RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*])) {
-                Err(e) => Err(from_client_error(e).into()),
-                Ok(o) => Ok(o)
-            }
-        }
-    )
+    fn block_to_number(&self, block: Option<String>) -> EvmResult<u64> {
+        let block = block.unwrap_or("latest".to_string());
+        let block_string = match &*block {
+            "latest" => proxy_evm_rpc!(self.rpc_client, EthBlockNumber)?,
+            _ => block,
+        };
+        Hex::<u64>::from_hex(&block_string).map(|f| f.0)
+    }
 }
 
 pub struct BridgeErpcImpl;
@@ -787,8 +807,77 @@ impl BasicERPC for BasicErpcProxy {
         proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block, meta_keys)
     }
 
-    fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> EvmResult<Vec<RPCLog>> {
-        proxy_evm_rpc!(meta.rpc_client, EthGetLogs, log_filter)
+    fn logs(&self, meta: Self::Metadata, mut log_filter: RPCLogFilter) -> EvmResult<Vec<RPCLog>> {
+        let starting_block = meta.block_to_number(log_filter.from_block.clone())?;
+        let ending_block = meta.block_to_number(log_filter.to_block.clone())?;
+
+        if ending_block < starting_block {
+            return Err(Error::InvalidBlocksRange {
+                starting: starting_block,
+                ending: ending_block,
+                batch_size: None,
+            });
+        }
+
+        // request more than we can provide
+        if ending_block > starting_block + meta.max_logs_blocks {
+            return Err(Error::InvalidBlocksRange {
+                starting: starting_block,
+                ending: ending_block,
+                batch_size: Some(meta.max_logs_blocks),
+            });
+        }
+        // Create tokio runtime to execute requests in parallel blocking threads.
+        // Use move execution in thread::spawn to avoid panic during rutime creation
+        // (Cannot create runtime inside hyper runtime).
+        let results = std::thread::spawn(move || {
+            let mut starting = starting_block;
+
+            let mut rt = tokio::runtime::Builder::new()
+                .thread_name("get-logs-runner")
+                .max_threads(8)
+                .build()
+                .map_err(|details| Error::RuntimeError {
+                    details: details.to_string(),
+                })?;
+            // make execution parallel
+            rt.block_on(async {
+                let mut collector = Vec::new();
+                while starting <= ending_block {
+                    let ending =
+                        (starting.saturating_add(MAX_NUM_BLOCKS_IN_BATCH)).min(ending_block);
+                    log_filter.from_block = Some(format!("{:#x}", starting));
+                    log_filter.to_block = Some(format!("{:#x}", ending));
+
+                    let cloned_filter = log_filter.clone();
+                    let cloned_meta = meta.clone();
+                    // Parallel execution:
+                    collector.push(tokio::task::spawn_blocking(move || {
+                        println!("filter = {:?}", cloned_filter);
+                        let result: EvmResult<Vec<RPCLog>> =
+                            proxy_evm_rpc!(@silent cloned_meta.rpc_client, EthGetLogs, cloned_filter);
+                        println!("logs = {:?}", result);
+
+                        result
+                    }));
+
+                    starting = starting.saturating_add(MAX_NUM_BLOCKS_IN_BATCH + 1);
+                }
+                // join all execution, fast fail on any error.
+                let mut result = Vec::new();
+                for collection in collector {
+                    result.extend(collection.await.map_err(|details| Error::RuntimeError {
+                        details: details.to_string(),
+                    })??)
+                }
+                Ok(result)
+            })
+        })
+        .join()
+        .map_err(|_details| Error::RuntimeError {
+            details: "panic in spawned thread".to_string(),
+        })??;
+        Ok(results)
     }
 }
 
@@ -852,6 +941,9 @@ struct Args {
     verbose_errors: bool,
     #[structopt(long = "no-simulate")]
     no_simulate: bool, // parse inverted to keep false default
+    /// Maximum number of blocks to return in eth_getLogs rpc.
+    #[structopt(long = "max-logs-block-count", default_value = "500")]
+    max_logs_blocks: u64,
 }
 
 use jsonrpc_http_server::jsonrpc_core::*;
@@ -893,6 +985,7 @@ fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
         server_path,
         args.verbose_errors,
         !args.no_simulate, // invert argument
+        args.max_logs_blocks,
     );
     let meta = Arc::new(meta);
     let mut io = MetaIoHandler::with_middleware(LoggingMiddleware);

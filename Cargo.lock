@@ -1656,6 +1656,7 @@ dependencies = [
  "evm-state",
  "futures-util",
  "hex",
+ "itertools 0.10.1",
  "jsonrpc-core",
  "jsonrpc-core-client",
  "jsonrpc-derive",
@@ -1680,6 +1681,7 @@ dependencies = [
  "solana-sdk",
  "solana-transaction-status",
  "structopt",
+ "tokio 1.9.0",
 ]
 
 [[package]]
