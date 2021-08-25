@@ -624,7 +624,7 @@ impl HeaviestSubtreeForkChoice {
             let epoch = epoch_schedule.get_epoch(new_vote_slot_hash.0);
             let stake_update = epoch_stakes
                 .get(&epoch)
-                .map(|epoch_stakes| epoch_stakes.vote_account_stake(&pubkey))
+                .map(|epoch_stakes| epoch_stakes.vote_account_stake(pubkey))
                 .unwrap_or(0);
 
             update_operations
@@ -745,7 +745,7 @@ impl TreeDiff for HeaviestSubtreeForkChoice {
 
     fn children(&self, slot_hash_key: &SlotHashKey) -> Option<&[SlotHashKey]> {
         self.fork_infos
-            .get(&slot_hash_key)
+            .get(slot_hash_key)
             .map(|fork_info| &fork_info.children[..])
     }
 }
@@ -1008,10 +1008,11 @@ mod test {
                 .map(|s| (s, Hash::default()))
                 .collect::<Vec<_>>()
         );
-        let parents: Vec<_> = heaviest_subtree_fork_choice
+
+        assert!(heaviest_subtree_fork_choice
             .ancestor_iterator((0, Hash::default()))
-            .collect();
-        assert!(parents.is_empty());
+            .next()
+            .is_none());
 
         // Set a root, everything but slots 2, 4 should be removed
         heaviest_subtree_fork_choice.set_root((2, Hash::default()));
@@ -1333,7 +1334,7 @@ mod test {
             .chain(std::iter::once(&duplicate_leaves_descended_from_4[1]))
         {
             assert!(heaviest_subtree_fork_choice
-                .children(&duplicate_leaf)
+                .children(duplicate_leaf)
                 .unwrap()
                 .is_empty(),);
         }
@@ -1357,11 +1358,9 @@ mod test {
         // Add a leaf 10, it should be the best choice
         heaviest_subtree_fork_choice
             .add_new_leaf_slot((10, Hash::default()), Some((4, Hash::default())));
-        let ancestors = heaviest_subtree_fork_choice
+
+        for a in heaviest_subtree_fork_choice
             .ancestor_iterator((10, Hash::default()))
-            .collect::<Vec<_>>();
-        for a in ancestors
-            .into_iter()
             .chain(std::iter::once((10, Hash::default())))
         {
             assert_eq!(heaviest_subtree_fork_choice.best_slot(&a).unwrap().0, 10);
@@ -1370,11 +1369,9 @@ mod test {
         // Add a smaller leaf 9, it should be the best choice
         heaviest_subtree_fork_choice
             .add_new_leaf_slot((9, Hash::default()), Some((4, Hash::default())));
-        let ancestors = heaviest_subtree_fork_choice
+
+        for a in heaviest_subtree_fork_choice
             .ancestor_iterator((9, Hash::default()))
-            .collect::<Vec<_>>();
-        for a in ancestors
-            .into_iter()
             .chain(std::iter::once((9, Hash::default())))
         {
             assert_eq!(heaviest_subtree_fork_choice.best_slot(&a).unwrap().0, 9);
@@ -1383,11 +1380,9 @@ mod test {
         // Add a higher leaf 11, should not change the best choice
         heaviest_subtree_fork_choice
             .add_new_leaf_slot((11, Hash::default()), Some((4, Hash::default())));
-        let ancestors = heaviest_subtree_fork_choice
+
+        for a in heaviest_subtree_fork_choice
             .ancestor_iterator((11, Hash::default()))
-            .collect::<Vec<_>>();
-        for a in ancestors
-            .into_iter()
             .chain(std::iter::once((9, Hash::default())))
         {
             assert_eq!(heaviest_subtree_fork_choice.best_slot(&a).unwrap().0, 9);
@@ -1410,11 +1405,9 @@ mod test {
         // should not propagate past slot 1
         heaviest_subtree_fork_choice
             .add_new_leaf_slot((8, Hash::default()), Some((4, Hash::default())));
-        let ancestors = heaviest_subtree_fork_choice
+
+        for a in heaviest_subtree_fork_choice
             .ancestor_iterator((8, Hash::default()))
-            .collect::<Vec<_>>();
-        for a in ancestors
-            .into_iter()
             .chain(std::iter::once((8, Hash::default())))
         {
             let best_slot = if a.0 > 1 { 8 } else { leaf6 };
@@ -1437,11 +1430,9 @@ mod test {
         // weight, adding smaller leaf slots should not propagate past slot 4
         heaviest_subtree_fork_choice
             .add_new_leaf_slot((7, Hash::default()), Some((4, Hash::default())));
-        let ancestors = heaviest_subtree_fork_choice
+
+        for a in heaviest_subtree_fork_choice
             .ancestor_iterator((7, Hash::default()))
-            .collect::<Vec<_>>();
-        for a in ancestors
-            .into_iter()
             .chain(std::iter::once((8, Hash::default())))
         {
             assert_eq!(heaviest_subtree_fork_choice.best_slot(&a).unwrap().0, 8);

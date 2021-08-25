@@ -232,7 +232,7 @@ impl<'a> LoadedAccount<'a> {
 
     pub fn loaded_hash(&self) -> &Hash {
         match self {
-            LoadedAccount::Stored(stored_account_meta) => &stored_account_meta.hash,
+            LoadedAccount::Stored(stored_account_meta) => stored_account_meta.hash,
             LoadedAccount::Cached((_, cached_account)) => &cached_account.hash,
         }
     }
@@ -240,7 +240,7 @@ impl<'a> LoadedAccount<'a> {
     pub fn pubkey(&self) -> &Pubkey {
         match self {
             LoadedAccount::Stored(stored_account_meta) => &stored_account_meta.meta.pubkey,
-            LoadedAccount::Cached((pubkey, _)) => &pubkey,
+            LoadedAccount::Cached((pubkey, _)) => pubkey,
         }
     }
 
@@ -254,7 +254,7 @@ impl<'a> LoadedAccount<'a> {
     pub fn compute_hash(&self, slot: Slot, cluster_type: &ClusterType, pubkey: &Pubkey) -> Hash {
         match self {
             LoadedAccount::Stored(stored_account_meta) => {
-                AccountsDb::hash_stored_account(slot, &stored_account_meta, cluster_type)
+                AccountsDb::hash_stored_account(slot, stored_account_meta, cluster_type)
             }
             LoadedAccount::Cached((_, cached_account)) => {
                 AccountsDb::hash_account(slot, &cached_account.account, pubkey, cluster_type)
@@ -1199,7 +1199,7 @@ impl AccountsDb {
                     let mut reclaims = Vec::new();
                     for pubkey in pubkeys {
                         self.accounts_index.clean_rooted_entries(
-                            &pubkey,
+                            pubkey,
                             &mut reclaims,
                             max_clean_root,
                         );
@@ -1291,7 +1291,7 @@ impl AccountsDb {
 
                     let affected_pubkeys = &store_counts.get(&id).unwrap().1;
                     for key in affected_pubkeys {
-                        for (_slot, account_info) in &purges.get(&key).unwrap().0 {
+                        for (_slot, account_info) in &purges.get(key).unwrap().0 {
                             if !already_counted.contains(&account_info.store_id) {
                                 pending_store_ids.insert(account_info.store_id);
                             }
@@ -1315,7 +1315,7 @@ impl AccountsDb {
         for (pubkey, slots_set) in pubkey_to_slot_set {
             let is_empty = self
                 .accounts_index
-                .purge_exact(&pubkey, slots_set, &mut reclaims);
+                .purge_exact(pubkey, slots_set, &mut reclaims);
             if is_empty {
                 dead_keys.push(pubkey);
             }
@@ -1342,6 +1342,8 @@ impl AccountsDb {
 
     fn collect_uncleaned_pubkeys_to_slot(&self, max_slot: Slot) -> (Vec<Vec<Pubkey>>, Slot) {
         let mut max_slot_in_uncleaned_pubkeys = 0;
+        #[allow(clippy::needless_collect)]
+        // collect used to operate on uncleaned_pubkeys after filtering.
         let slots: Vec<Slot> = self
             .uncleaned_pubkeys
             .iter()
@@ -1518,12 +1520,12 @@ impl AccountsDb {
         // Then purge if we can
         let mut store_counts: HashMap<AppendVecId, (usize, HashSet<Pubkey>)> = HashMap::new();
         for (key, (account_infos, ref_count)) in purges.iter_mut() {
-            if purged_account_slots.contains_key(&key) {
-                *ref_count = self.accounts_index.ref_count_from_storage(&key);
+            if purged_account_slots.contains_key(key) {
+                *ref_count = self.accounts_index.ref_count_from_storage(key);
             }
             account_infos.retain(|(slot, account_info)| {
                 let was_slot_purged = purged_account_slots
-                    .get(&key)
+                    .get(key)
                     .map(|slots_removed| slots_removed.contains(slot))
                     .unwrap_or(false);
                 if was_slot_purged {
@@ -1698,11 +1700,11 @@ impl AccountsDb {
             return;
         }
         let mut clean_dead_slots = Measure::start("reclaims::clean_dead_slots");
-        self.clean_stored_dead_slots(&dead_slots, purged_account_slots);
+        self.clean_stored_dead_slots(dead_slots, purged_account_slots);
         clean_dead_slots.stop();
 
         let mut purge_removed_slots = Measure::start("reclaims::purge_removed_slots");
-        self.purge_storage_slots(&dead_slots);
+        self.purge_storage_slots(dead_slots);
         purge_removed_slots.stop();
 
         // If the slot is dead, remove the need to shrink the storages as
@@ -2475,7 +2477,7 @@ impl AccountsDb {
         let path_index = thread_rng().gen_range(0, paths.len());
         let store = Arc::new(self.new_storage_entry(
             slot,
-            &Path::new(&paths[path_index]),
+            Path::new(&paths[path_index]),
             self.page_align(size),
         ));
 
@@ -2594,7 +2596,7 @@ impl AccountsDb {
                 num_cached_slots_removed += 1;
                 total_removed_cached_bytes += slot_cache.total_bytes();
                 self.purge_slot_cache(*remove_slot, slot_cache);
-            } else if let Some((_, slot_removed_storages)) = self.storage.0.remove(&remove_slot) {
+            } else if let Some((_, slot_removed_storages)) = self.storage.0.remove(remove_slot) {
                 // Because AccountsBackgroundService synchronously flushes from the accounts cache
                 // and handles all Bank::drop() (the cleanup function that leads to this
                 // function call), then we don't need to worry above an overlapping cache flush
@@ -2716,17 +2718,16 @@ impl AccountsDb {
     fn purge_slots(&self, slots: &HashSet<Slot>) {
         // `add_root()` should be called first
         let mut safety_checks_elapsed = Measure::start("safety_checks_elapsed");
-        let non_roots: Vec<&Slot> = slots
+        let non_roots_iter = slots
             .iter()
-            .filter(|slot| !self.accounts_index.is_root(**slot))
-            .collect();
+            .filter(|slot| !self.accounts_index.is_root(**slot));
         safety_checks_elapsed.stop();
         self.external_purge_slots_stats
             .safety_checks_elapsed
             .fetch_add(safety_checks_elapsed.as_us(), Ordering::Relaxed);
         self.do_purge_slots_from_cache_and_store(
             true,
-            non_roots.into_iter(),
+            non_roots_iter,
             &self.external_purge_slots_stats,
         );
         self.external_purge_slots_stats
@@ -2846,7 +2847,7 @@ impl AccountsDb {
                 &account.owner,
                 account.executable,
                 account.rent_epoch,
-                &account.data(),
+                account.data(),
                 pubkey,
                 include_owner,
             )
@@ -2857,7 +2858,7 @@ impl AccountsDb {
                 &account.owner,
                 account.executable,
                 account.rent_epoch,
-                &account.data(),
+                account.data(),
                 pubkey,
                 include_owner,
             )
@@ -2867,8 +2868,8 @@ impl AccountsDb {
     fn hash_frozen_account_data(account: &AccountSharedData) -> Hash {
         let mut hasher = Hasher::default();
 
-        hasher.hash(&account.data());
-        hasher.hash(&account.owner.as_ref());
+        hasher.hash(account.data());
+        hasher.hash(account.owner.as_ref());
 
         if account.executable {
             hasher.hash(&[1u8; 1]);
@@ -2901,7 +2902,7 @@ impl AccountsDb {
 
         hasher.hash(&rent_epoch.to_le_bytes());
 
-        hasher.hash(&data);
+        hasher.hash(data);
 
         if executable {
             hasher.hash(&[1u8; 1]);
@@ -2910,9 +2911,9 @@ impl AccountsDb {
         }
 
         if include_owner {
-            hasher.hash(&owner.as_ref());
+            hasher.hash(owner.as_ref());
         }
-        hasher.hash(&pubkey.as_ref());
+        hasher.hash(pubkey.as_ref());
 
         hasher.result()
     }
@@ -2939,7 +2940,7 @@ impl AccountsDb {
 
         hasher.update(&rent_epoch.to_le_bytes());
 
-        hasher.update(&data);
+        hasher.update(data);
 
         if executable {
             hasher.update(&[1u8; 1]);
@@ -2948,9 +2949,9 @@ impl AccountsDb {
         }
 
         if include_owner {
-            hasher.update(&owner.as_ref());
+            hasher.update(owner.as_ref());
         }
-        hasher.update(&pubkey.as_ref());
+        hasher.update(pubkey.as_ref());
 
         Hash(<[u8; solana_sdk::hash::HASH_BYTES]>::try_from(hasher.finalize().as_slice()).unwrap())
     }
@@ -3719,7 +3720,7 @@ impl AccountsDb {
         let mut time = Measure::start("scan all accounts");
         stats.num_snapshot_storage = storage.len();
         let result: Vec<Vec<Vec<CalculateHashIntermediate>>> = Self::scan_account_storage_no_bank(
-            &storage,
+            storage,
             &mut stats,
             |loaded_account: LoadedAccount,
              accum: &mut Vec<Vec<CalculateHashIntermediate>>,
@@ -3898,7 +3899,7 @@ impl AccountsDb {
                 slot,
                 pubkey,
                 &pubkey_account.1.owner,
-                &pubkey_account.1.data(),
+                pubkey_account.1.data(),
                 &self.account_indexes,
                 info,
                 &mut reclaims,
@@ -4100,7 +4101,7 @@ impl AccountsDb {
 
     pub(crate) fn freeze_accounts(&mut self, ancestors: &Ancestors, account_pubkeys: &[Pubkey]) {
         for account_pubkey in account_pubkeys {
-            if let Some((account, _slot)) = self.load_slow(ancestors, &account_pubkey) {
+            if let Some((account, _slot)) = self.load_slow(ancestors, account_pubkey) {
                 let frozen_account_info = FrozenAccountInfo {
                     hash: Self::hash_frozen_account_data(&account),
                     lamports: account.lamports,
@@ -4135,7 +4136,7 @@ impl AccountsDb {
                     )
                 }
 
-                let hash = Self::hash_frozen_account_data(&account);
+                let hash = Self::hash_frozen_account_data(account);
                 if hash != frozen_account_info.hash {
                     FROZEN_ACCOUNT_PANIC.store(true, Ordering::Relaxed);
                     panic!(
@@ -4497,7 +4498,7 @@ impl AccountsDb {
                             *slot,
                             &pubkey,
                             &stored_account.account_meta.owner,
-                            &stored_account.data,
+                            stored_account.data,
                             &self.account_indexes,
                             account_info,
                             &mut _reclaims,
@@ -4526,7 +4527,7 @@ impl AccountsDb {
             for (id, store) in slot_stores.value().read().unwrap().iter() {
                 // Should be default at this point
                 assert_eq!(store.alive_bytes(), 0);
-                if let Some((stored_size, count)) = stored_sizes_and_counts.get(&id) {
+                if let Some((stored_size, count)) = stored_sizes_and_counts.get(id) {
                     trace!("id: {} setting count: {} cur: {}", id, count, store.count(),);
                     store.count_and_status.write().unwrap().0 = *count;
                     store.alive_bytes.store(*stored_size, Ordering::SeqCst);
@@ -4617,7 +4618,7 @@ impl AccountsDb {
 
     pub fn get_append_vec_id(&self, pubkey: &Pubkey, slot: Slot) -> Option<AppendVecId> {
         let ancestors = vec![(slot, 1)].into_iter().collect();
-        let result = self.accounts_index.get(&pubkey, Some(&ancestors), None);
+        let result = self.accounts_index.get(pubkey, Some(&ancestors), None);
         result.map(|(list, index)| list.slot_list()[index].1.store_id)
     }
 
@@ -5708,7 +5709,7 @@ pub mod tests {
         let ancestors = vec![(0, 0)].into_iter().collect();
         for (i, key) in keys.iter().enumerate() {
             assert_eq!(
-                accounts.load_slow(&ancestors, &key).unwrap().0.lamports,
+                accounts.load_slow(&ancestors, key).unwrap().0.lamports,
                 (i as u64) + 1
             );
         }
@@ -5856,7 +5857,7 @@ pub mod tests {
         }
 
         fn ref_count_for_pubkey(&self, pubkey: &Pubkey) -> RefCount {
-            self.accounts_index.ref_count_from_storage(&pubkey)
+            self.accounts_index.ref_count_from_storage(pubkey)
         }
     }
 
@@ -7623,7 +7624,7 @@ pub mod tests {
 
         current_slot += 1;
         for pubkey in &pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         let shrink_slot = current_slot;
         accounts.get_accounts_delta_hash(current_slot);
@@ -7634,7 +7635,7 @@ pub mod tests {
         let updated_pubkeys = &pubkeys[0..pubkey_count - pubkey_count_after_shrink];
 
         for pubkey in updated_pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         accounts.get_accounts_delta_hash(current_slot);
         accounts.add_root(current_slot);
@@ -7691,7 +7692,7 @@ pub mod tests {
 
         current_slot += 1;
         for pubkey in &pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         let shrink_slot = current_slot;
         accounts.get_accounts_delta_hash(current_slot);
@@ -7702,7 +7703,7 @@ pub mod tests {
         let updated_pubkeys = &pubkeys[0..pubkey_count - pubkey_count_after_shrink];
 
         for pubkey in updated_pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         accounts.get_accounts_delta_hash(current_slot);
         accounts.add_root(current_slot);
@@ -7751,7 +7752,7 @@ pub mod tests {
 
         current_slot += 1;
         for pubkey in &pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         let shrink_slot = current_slot;
         accounts.get_accounts_delta_hash(current_slot);
@@ -7762,7 +7763,7 @@ pub mod tests {
         let updated_pubkeys = &pubkeys[0..pubkey_count - pubkey_count_after_shrink];
 
         for pubkey in updated_pubkeys {
-            accounts.store_uncached(current_slot, &[(&pubkey, &account)]);
+            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
         }
         accounts.get_accounts_delta_hash(current_slot);
         accounts.add_root(current_slot);
@@ -7905,7 +7906,7 @@ pub mod tests {
             info!(
                 "store: {:?} : {:?}",
                 store,
-                store_counts.get(&store).unwrap()
+                store_counts.get(store).unwrap()
             );
         }
         for x in 0..3 {
@@ -9096,18 +9097,12 @@ pub mod tests {
 
         let dummy_id1 = 22;
         let entry1 = Arc::new(AccountStorageEntry::new(
-            &dummy_path,
-            dummy_slot,
-            dummy_id1,
-            dummy_size,
+            dummy_path, dummy_slot, dummy_id1, dummy_size,
         ));
 
         let dummy_id2 = 44;
         let entry2 = Arc::new(AccountStorageEntry::new(
-            &dummy_path,
-            dummy_slot,
-            dummy_id2,
-            dummy_size,
+            dummy_path, dummy_slot, dummy_id2, dummy_size,
         ));
 
         let mut recycle_stores = RecycleStores::default();

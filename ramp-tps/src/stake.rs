@@ -99,7 +99,7 @@ pub fn wait_for_warm_up(
             latest_epoch
         );
 
-        if let Some(stake_entry) = stake_history_entry(latest_epoch, &rpc_client) {
+        if let Some(stake_entry) = stake_history_entry(latest_epoch, rpc_client) {
             debug!("Stake history entry: {:?}", &stake_entry);
             let warm_up_epochs = calculate_stake_warmup(stake_entry, stake_config);
             let stake_warmed_up_epoch = latest_epoch + warm_up_epochs;

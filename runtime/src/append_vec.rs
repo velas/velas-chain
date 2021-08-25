@@ -719,7 +719,7 @@ pub mod tests {
     fn test_new_from_file_crafted_zero_lamport_account() {
         let file = get_append_vec_path("test_append");
         let path = &file.path;
-        let mut av = AppendVec::new(&path, true, 1024 * 1024);
+        let mut av = AppendVec::new(path, true, 1024 * 1024);
         av.set_no_remove_on_drop();
 
         let pubkey = solana_sdk::pubkey::new_rand();
@@ -747,7 +747,7 @@ pub mod tests {
     fn test_new_from_file_crafted_data_len() {
         let file = get_append_vec_path("test_new_from_file_crafted_data_len");
         let path = &file.path;
-        let mut av = AppendVec::new(&path, true, 1024 * 1024);
+        let mut av = AppendVec::new(path, true, 1024 * 1024);
         av.set_no_remove_on_drop();
 
         let crafted_data_len = 1;
@@ -775,7 +775,7 @@ pub mod tests {
     fn test_new_from_file_too_large_data_len() {
         let file = get_append_vec_path("test_new_from_file_too_large_data_len");
         let path = &file.path;
-        let mut av = AppendVec::new(&path, true, 1024 * 1024);
+        let mut av = AppendVec::new(path, true, 1024 * 1024);
         av.set_no_remove_on_drop();
 
         let too_large_data_len = u64::max_value();
@@ -802,7 +802,7 @@ pub mod tests {
     fn test_new_from_file_crafted_executable() {
         let file = get_append_vec_path("test_new_from_crafted_executable");
         let path = &file.path;
-        let mut av = AppendVec::new(&path, true, 1024 * 1024);
+        let mut av = AppendVec::new(path, true, 1024 * 1024);
         av.set_no_remove_on_drop();
         av.append_account_test(&create_test_account(10)).unwrap();
         {

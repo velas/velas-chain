@@ -35,13 +35,13 @@ lazy_static! {
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    DatabaseErr(#[from] rocksdb::Error),
+    Database(#[from] rocksdb::Error),
     #[error("Type {1} :: {0}")]
-    BincodeErr(bincode::Error, &'static str),
+    Bincode(bincode::Error, &'static str),
     #[error("Unable to construct key from bytes")]
-    KeyErr(#[from] TryFromSliceError),
+    Key(#[from] TryFromSliceError),
     #[error("Internal IO error: {0:?}")]
-    InternalErr(#[from] IoError),
+    Internal(#[from] IoError),
 }
 
 const BACKUP_SUBDIR: &str = "backup";

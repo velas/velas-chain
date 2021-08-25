@@ -127,7 +127,7 @@ mod test {
         let mut a = AccountSharedData::new(0, 512, &id());
         let b = VestState::default();
         b.serialize(a.data_as_mut_slice()).unwrap();
-        let c = VestState::deserialize(&a.data()).unwrap();
+        let c = VestState::deserialize(a.data()).unwrap();
         assert_eq!(b, c);
     }
 

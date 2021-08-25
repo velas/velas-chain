@@ -244,13 +244,11 @@ pub fn verify_shreds_gpu(
         shred_gpu_offsets(pubkeys_len, batches, recycler_cache);
     let mut out = recycler_cache.buffer().allocate().unwrap();
     out.set_pinnable();
-    elems.push(
-        perf_libs::Elems {
-            #![allow(clippy::cast_ptr_alignment)]
-            elems: pubkeys.as_ptr() as *const solana_sdk::packet::Packet,
-            num: num_packets as u32,
-        },
-    );
+    elems.push(perf_libs::Elems {
+        #[allow(clippy::cast_ptr_alignment)]
+        elems: pubkeys.as_ptr() as *const solana_sdk::packet::Packet,
+        num: num_packets as u32,
+    });
 
     for p in batches {
         elems.push(perf_libs::Elems {
@@ -314,7 +312,7 @@ fn sign_shred_cpu(keypair: &Keypair, packet: &mut Packet) {
     );
     let signature = keypair.sign_message(&packet.data[msg_start..msg_end]);
     trace!("signature {:?}", signature);
-    packet.data[0..sig_end].copy_from_slice(&signature.as_ref());
+    packet.data[0..sig_end].copy_from_slice(signature.as_ref());
 }
 
 pub fn sign_shreds_cpu(keypair: &Keypair, batches: &mut [Packets]) {
@@ -366,7 +364,7 @@ pub fn sign_shreds_gpu(
 
     let mut elems = Vec::new();
     let offset: usize = pinned_keypair.len();
-    let num_keypair_packets = vec_size_in_packets(&pinned_keypair);
+    let num_keypair_packets = vec_size_in_packets(pinned_keypair);
     let mut num_packets = num_keypair_packets;
 
     //should be zero
@@ -383,13 +381,11 @@ pub fn sign_shreds_gpu(
     let mut signatures_out = recycler_cache.buffer().allocate().unwrap();
     signatures_out.set_pinnable();
     signatures_out.resize(total_sigs * sig_size, 0);
-    elems.push(
-        perf_libs::Elems {
-            #![allow(clippy::cast_ptr_alignment)]
-            elems: pinned_keypair.as_ptr() as *const solana_sdk::packet::Packet,
-            num: num_keypair_packets as u32,
-        },
-    );
+    elems.push(perf_libs::Elems {
+        #[allow(clippy::cast_ptr_alignment)]
+        elems: pinned_keypair.as_ptr() as *const solana_sdk::packet::Packet,
+        num: num_keypair_packets as u32,
+    });
 
     for p in batches.iter() {
         elems.push(perf_libs::Elems {

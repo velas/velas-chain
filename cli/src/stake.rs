@@ -966,7 +966,7 @@ pub fn process_create_stake_account(
 ) -> ProcessResult {
     let stake_account = config.signers[stake_account];
     let stake_account_address = if let Some(seed) = seed {
-        Pubkey::create_with_seed(&stake_account.pubkey(), &seed, &solana_stake_program::id())?
+        Pubkey::create_with_seed(&stake_account.pubkey(), seed, &solana_stake_program::id())?
     } else {
         stake_account.pubkey()
     };
@@ -1091,7 +1091,7 @@ pub fn process_create_stake_account(
     } else {
         tx.try_sign(&config.signers, recent_blockhash)?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
-        log_instruction_custom_error::<SystemError>(result, &config)
+        log_instruction_custom_error::<SystemError>(result, config)
     }
 }
 
@@ -1173,7 +1173,7 @@ pub fn process_stake_authorize(
             config.commitment,
         )?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
-        log_instruction_custom_error::<StakeError>(result, &config)
+        log_instruction_custom_error::<StakeError>(result, config)
     }
 }
 
@@ -1197,7 +1197,7 @@ pub fn process_deactivate_stake_account(
     let stake_authority = config.signers[stake_authority];
 
     let stake_account_address = if let Some(seed) = seed {
-        Pubkey::create_with_seed(&stake_account_pubkey, seed, &solana_stake_program::id())?
+        Pubkey::create_with_seed(stake_account_pubkey, seed, &solana_stake_program::id())?
     } else {
         *stake_account_pubkey
     };
@@ -1249,7 +1249,7 @@ pub fn process_deactivate_stake_account(
             config.commitment,
         )?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
-        log_instruction_custom_error::<StakeError>(result, &config)
+        log_instruction_custom_error::<StakeError>(result, config)
     }
 }
 
@@ -1275,7 +1275,7 @@ pub fn process_withdraw_stake(
     let custodian = custodian.map(|index| config.signers[index]);
 
     let stake_account_address = if let Some(seed) = seed {
-        Pubkey::create_with_seed(&stake_account_pubkey, seed, &solana_stake_program::id())?
+        Pubkey::create_with_seed(stake_account_pubkey, seed, &solana_stake_program::id())?
     } else {
         *stake_account_pubkey
     };
@@ -1348,7 +1348,7 @@ pub fn process_withdraw_stake(
             config.commitment,
         )?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
-        log_instruction_custom_error::<SystemError>(result, &config)
+        log_instruction_custom_error::<SystemError>(result, config)
     }
 }
 
@@ -1383,10 +1383,10 @@ pub fn process_split_stake(
     }
     check_unique_pubkeys(
         (&fee_payer.pubkey(), "fee-payer keypair".to_string()),
-        (&stake_account_pubkey, "stake_account".to_string()),
+        (stake_account_pubkey, "stake_account".to_string()),
     )?;
     check_unique_pubkeys(
-        (&stake_account_pubkey, "stake_account".to_string()),
+        (stake_account_pubkey, "stake_account".to_string()),
         (
             &split_stake_account.pubkey(),
             "split_stake_account".to_string(),
@@ -1398,7 +1398,7 @@ pub fn process_split_stake(
     let split_stake_account_address = if let Some(seed) = split_stake_account_seed {
         Pubkey::create_with_seed(
             &split_stake_account.pubkey(),
-            &seed,
+            seed,
             &solana_stake_program::id(),
         )?
     } else {
@@ -1450,7 +1450,7 @@ pub fn process_split_stake(
 
     let ixs = if let Some(seed) = split_stake_account_seed {
         stake_instruction::split_with_seed(
-            &stake_account_pubkey,
+            stake_account_pubkey,
             &stake_authority.pubkey(),
             lamports,
             &split_stake_account_address,
@@ -1460,7 +1460,7 @@ pub fn process_split_stake(
         .with_memo(memo)
     } else {
         stake_instruction::split(
-            &stake_account_pubkey,
+            stake_account_pubkey,
             &stake_authority.pubkey(),
             lamports,
             &split_stake_account_address,
@@ -1509,7 +1509,7 @@ pub fn process_split_stake(
             config.commitment,
         )?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
-        log_instruction_custom_error::<StakeError>(result, &config)
+        log_instruction_custom_error::<StakeError>(result, config)
     }
 }
 
@@ -1532,19 +1532,19 @@ pub fn process_merge_stake(
 
     check_unique_pubkeys(
         (&fee_payer.pubkey(), "fee-payer keypair".to_string()),
-        (&stake_account_pubkey, "stake_account".to_string()),
+        (stake_account_pubkey, "stake_account".to_string()),
     )?;
     check_unique_pubkeys(
         (&fee_payer.pubkey(), "fee-payer keypair".to_string()),
         (
-            &source_stake_account_pubkey,
+            source_stake_account_pubkey,
             "source_stake_account".to_string(),
         ),
     )?;
     check_unique_pubkeys(
-        (&stake_account_pubkey, "stake_account".to_string()),
+        (stake_account_pubkey, "stake_account".to_string()),
         (
-            &source_stake_account_pubkey,
+            source_stake_account_pubkey,
             "source_stake_account".to_string(),
         ),
     )?;
@@ -1569,8 +1569,8 @@ pub fn process_merge_stake(
         blockhash_query.get_blockhash_and_fee_calculator(rpc_client, config.commitment)?;
 
     let ixs = stake_instruction::merge(
-        &stake_account_pubkey,
-        &source_stake_account_pubkey,
+        stake_account_pubkey,
+        source_stake_account_pubkey,
         &stake_authority.pubkey(),
     )
     .with_memo(memo);
@@ -1620,7 +1620,7 @@ pub fn process_merge_stake(
             config.commitment,
             config.send_transaction_config,
         );
-        log_instruction_custom_error::<StakeError>(result, &config)
+        log_instruction_custom_error::<StakeError>(result, config)
     }
 }
 
@@ -1691,7 +1691,7 @@ pub fn process_stake_set_lockup(
             config.commitment,
         )?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
-        log_instruction_custom_error::<StakeError>(result, &config)
+        log_instruction_custom_error::<StakeError>(result, config)
     }
 }
 
@@ -2093,7 +2093,7 @@ pub fn process_delegate_stake(
             config.commitment,
         )?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
-        log_instruction_custom_error::<StakeError>(result, &config)
+        log_instruction_custom_error::<StakeError>(result, config)
     }
 }
 

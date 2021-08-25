@@ -317,7 +317,7 @@ impl PropagatedStats {
     pub fn add_node_pubkey(&mut self, node_pubkey: &Pubkey, bank: &Bank) {
         if !self.propagated_node_ids.contains(node_pubkey) {
             let node_vote_accounts = bank
-                .epoch_vote_accounts_for_node_id(&node_pubkey)
+                .epoch_vote_accounts_for_node_id(node_pubkey)
                 .map(|v| &v.vote_accounts);
 
             if let Some(node_vote_accounts) = node_vote_accounts {
@@ -477,7 +477,7 @@ impl ProgressMap {
                 .latest_unconfirmed_duplicate_ancestor = Some(slot);
 
             for d in descendants {
-                if let Some(fork_progress) = self.get_mut(&d) {
+                if let Some(fork_progress) = self.get_mut(d) {
                     fork_progress
                         .duplicate_stats
                         .latest_unconfirmed_duplicate_ancestor = Some(std::cmp::max(
@@ -499,7 +499,7 @@ impl ProgressMap {
         descendants: &HashSet<u64>,
     ) {
         for a in ancestors {
-            if let Some(fork_progress) = self.get_mut(&a) {
+            if let Some(fork_progress) = self.get_mut(a) {
                 fork_progress.set_duplicate_confirmed();
             }
         }
@@ -516,7 +516,7 @@ impl ProgressMap {
 
             if slot_had_unconfirmed_duplicate_ancestor {
                 for d in descendants {
-                    if let Some(descendant_fork_progress) = self.get_mut(&d) {
+                    if let Some(descendant_fork_progress) = self.get_mut(d) {
                         descendant_fork_progress
                             .duplicate_stats
                             .update_with_newly_confirmed_duplicate_ancestor(slot);
@@ -848,11 +848,11 @@ mod test {
         // Mark the slots as unconfirmed duplicates
         progress.set_unconfirmed_duplicate_slot(
             smaller_duplicate_slot,
-            &descendants.get(&smaller_duplicate_slot).unwrap(),
+            descendants.get(&smaller_duplicate_slot).unwrap(),
         );
         progress.set_unconfirmed_duplicate_slot(
             larger_duplicate_slot,
-            &descendants.get(&larger_duplicate_slot).unwrap(),
+            descendants.get(&larger_duplicate_slot).unwrap(),
         );
 
         // Correctness checks
@@ -895,8 +895,8 @@ mod test {
         // Mark the smaller duplicate slot as confirmed
         progress.set_confirmed_duplicate_slot(
             smaller_duplicate_slot,
-            &ancestors.get(&smaller_duplicate_slot).unwrap(),
-            &descendants.get(&smaller_duplicate_slot).unwrap(),
+            ancestors.get(&smaller_duplicate_slot).unwrap(),
+            descendants.get(&smaller_duplicate_slot).unwrap(),
         );
         for slot in bank_forks.read().unwrap().banks().keys() {
             if *slot < larger_duplicate_slot {
@@ -930,8 +930,8 @@ mod test {
         // have any unconfirmed duplicate ancestors, and should be marked as duplciate confirmed
         progress.set_confirmed_duplicate_slot(
             larger_duplicate_slot,
-            &ancestors.get(&larger_duplicate_slot).unwrap(),
-            &descendants.get(&larger_duplicate_slot).unwrap(),
+            ancestors.get(&larger_duplicate_slot).unwrap(),
+            descendants.get(&larger_duplicate_slot).unwrap(),
         );
         for slot in bank_forks.read().unwrap().banks().keys() {
             // All slots <= the latest duplciate confirmed slot are ancestors of
@@ -960,15 +960,15 @@ mod test {
         // Mark the larger duplicate slot as confirmed
         progress.set_confirmed_duplicate_slot(
             larger_duplicate_slot,
-            &ancestors.get(&larger_duplicate_slot).unwrap(),
-            &descendants.get(&larger_duplicate_slot).unwrap(),
+            ancestors.get(&larger_duplicate_slot).unwrap(),
+            descendants.get(&larger_duplicate_slot).unwrap(),
         );
 
         // All slots should no longer have any unconfirmed duplicate ancestors
         progress.set_confirmed_duplicate_slot(
             larger_duplicate_slot,
-            &ancestors.get(&larger_duplicate_slot).unwrap(),
-            &descendants.get(&larger_duplicate_slot).unwrap(),
+            ancestors.get(&larger_duplicate_slot).unwrap(),
+            descendants.get(&larger_duplicate_slot).unwrap(),
         );
         for slot in bank_forks.read().unwrap().banks().keys() {
             // All slots <= the latest duplciate confirmed slot are ancestors of

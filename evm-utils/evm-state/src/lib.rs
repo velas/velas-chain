@@ -47,11 +47,11 @@ pub trait FromKey {
 
 impl FromKey for secp256k1::SecretKey {
     fn to_public_key(&self) -> secp256k1::PublicKey {
-        secp256k1::PublicKey::from_secret_key(&secp256k1::SECP256K1, self)
+        secp256k1::PublicKey::from_secret_key(secp256k1::SECP256K1, self)
     }
     fn to_address(&self) -> crate::Address {
         addr_from_public_key(&secp256k1::PublicKey::from_secret_key(
-            &secp256k1::SECP256K1,
+            secp256k1::SECP256K1,
             self,
         ))
     }

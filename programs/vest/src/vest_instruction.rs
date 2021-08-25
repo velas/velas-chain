@@ -99,7 +99,7 @@ pub fn create_account(
 ) -> Vec<Instruction> {
     let space = serialized_size(&VestState::default()).unwrap();
     vec![
-        system_instruction::create_account(&payer_pubkey, contract_pubkey, lamports, space, &id()),
+        system_instruction::create_account(payer_pubkey, contract_pubkey, lamports, space, &id()),
         initialize_account(
             terminator_pubkey,
             payee_pubkey,

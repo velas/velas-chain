@@ -357,7 +357,7 @@ impl EvmBackend<Incomming> {
     }
 
     fn state_updates(&self, address: &H160) -> Option<&(Maybe<AccountState>, HashMap<H256, H256>)> {
-        self.state.state_updates.get(&address)
+        self.state.state_updates.get(address)
     }
 }
 
@@ -1011,7 +1011,7 @@ mod tests {
     #[test]
     fn reads_the_same_after_consequent_dumps() {
         use std::ops::Bound::Included;
-        let _ = simple_logger::SimpleLogger::from_env().init();
+        let _ = simple_logger::SimpleLogger::new().env().init();
 
         const N_VERSIONS: usize = 10;
         const ACCOUNTS_PER_VERSION: usize = 10;

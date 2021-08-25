@@ -9,6 +9,7 @@ use solana_sdk::transaction;
 use std::any::Any;
 
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum Error {
     Io(std::io::Error),
     Json(serde_json::Error),

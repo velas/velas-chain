@@ -28,7 +28,7 @@ impl ServeRepairService {
         );
         let t_receiver = streamer::receiver(
             serve_repair_socket.clone(),
-            &exit,
+            exit,
             request_sender,
             Recycler::new_without_limit("serve-repair-receiver-recycler-shrink-stats"),
             "serve_repair_receiver",

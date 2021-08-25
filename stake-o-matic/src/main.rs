@@ -278,7 +278,7 @@ fn get_config() -> Config {
                 .global(true)
                 .help("Configuration file to use");
             if let Some(ref config_file) = *solana_cli_config::CONFIG_FILE {
-                arg.default_value(&config_file)
+                arg.default_value(config_file)
             } else {
                 arg
             }
@@ -754,7 +754,7 @@ fn validate_source_stake_account(
 ) -> Result<u64, Box<dyn error::Error>> {
     // check source stake account
     let (source_stake_balance, source_stake_state) =
-        get_stake_account(&rpc_client, &config.source_stake_address)?;
+        get_stake_account(rpc_client, &config.source_stake_address)?;
 
     info!(
         "stake account balance: {} SOL",
@@ -900,7 +900,7 @@ fn transact(
             );
             statuses.extend(
                 rpc_client
-                    .get_signature_statuses(&pending_signatures_chunk)?
+                    .get_signature_statuses(pending_signatures_chunk)?
                     .value
                     .into_iter(),
             )
@@ -1202,12 +1202,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         ..
     } in &vote_account_info
     {
-        let formatted_node_pubkey =
-            format_labeled_address(&node_pubkey_str, &config.address_labels);
-        let node_pubkey = Pubkey::from_str(&node_pubkey_str).unwrap();
+        let formatted_node_pubkey = format_labeled_address(node_pubkey_str, &config.address_labels);
+        let node_pubkey = Pubkey::from_str(node_pubkey_str).unwrap();
         let baseline_seed = &vote_pubkey.to_string()[..32];
         let bonus_seed = &format!("A{{{}", vote_pubkey)[..32];
-        let vote_pubkey = Pubkey::from_str(&vote_pubkey).unwrap();
+        let vote_pubkey = Pubkey::from_str(vote_pubkey).unwrap();
 
         let baseline_stake_address = Pubkey::create_with_seed(
             &config.authorized_staker.pubkey(),

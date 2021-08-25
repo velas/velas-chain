@@ -145,7 +145,7 @@ impl ShredFetchStage {
             .map(|s| {
                 streamer::receiver(
                     s,
-                    &exit,
+                    exit,
                     packet_sender.clone(),
                     recycler.clone(),
                     "packet_modifier",
@@ -175,7 +175,7 @@ impl ShredFetchStage {
 
         let (mut tvu_threads, tvu_filter) = Self::packet_modifier(
             sockets,
-            &exit,
+            exit,
             sender.clone(),
             recycler.clone(),
             bank_forks.clone(),
@@ -185,7 +185,7 @@ impl ShredFetchStage {
 
         let (tvu_forwards_threads, fwd_thread_hdl) = Self::packet_modifier(
             forward_sockets,
-            &exit,
+            exit,
             sender.clone(),
             recycler.clone(),
             bank_forks.clone(),
@@ -195,7 +195,7 @@ impl ShredFetchStage {
 
         let (repair_receiver, repair_handler) = Self::packet_modifier(
             vec![repair_socket],
-            &exit,
+            exit,
             sender.clone(),
             recycler,
             bank_forks,

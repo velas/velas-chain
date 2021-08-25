@@ -438,7 +438,7 @@ impl EvmProcessor {
 
                 let sender = accounts.users.get(1);
                 if unsigned_tx_fix {
-                    self.cleanup_storage(invoke_context, storage, &sender.unwrap_or(accounts.evm))?;
+                    self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
                 }
 
                 self.handle_transaction_result(
@@ -528,7 +528,7 @@ impl EvmProcessor {
                     precompiles::entrypoint(accounts, executor.support_precompile()),
                 );
 
-                self.cleanup_storage(invoke_context, storage, &program_account)?;
+                self.cleanup_storage(invoke_context, storage, program_account)?;
                 self.handle_transaction_result(
                     invoke_context,
                     accounts,
@@ -642,7 +642,7 @@ const TEST_CHAIN_ID: u64 = 0xdead;
 pub fn dummy_call(nonce: usize) -> (evm::Transaction, evm::UnsignedTransaction) {
     let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
     let dummy_address = evm::addr_from_public_key(&evm::PublicKey::from_secret_key(
-        &evm::SECP256K1,
+        evm::SECP256K1,
         &secret_key,
     ));
 

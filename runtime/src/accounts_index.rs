@@ -619,7 +619,7 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
                 read_lock_timer.stop();
                 read_lock_elapsed += read_lock_timer.as_us();
                 let mut latest_slot_timer = Measure::start("latest_slot");
-                if let Some(index) = self.latest_slot(Some(ancestors), &list_r, max_root) {
+                if let Some(index) = self.latest_slot(Some(ancestors), list_r, max_root) {
                     latest_slot_timer.stop();
                     latest_slot_elapsed += latest_slot_timer.as_us();
                     let mut load_account_timer = Measure::start("load_account");
@@ -809,7 +809,7 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
         max: Option<Slot>,
     ) -> (SlotList<T>, RefCount) {
         (
-            self.get_rooted_entries(&locked_account_entry.slot_list(), max),
+            self.get_rooted_entries(locked_account_entry.slot_list(), max),
             locked_account_entry.ref_count().load(Ordering::Relaxed),
         )
     }
@@ -826,7 +826,7 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
         let mut write_account_map_entry = self.get_account_write_entry(pubkey).unwrap();
         write_account_map_entry.slot_list_mut(|slot_list| {
             slot_list.retain(|(slot, item)| {
-                let should_purge = slots_to_purge.contains(&slot);
+                let should_purge = slots_to_purge.contains(slot);
                 if should_purge {
                     reclaims.push((*slot, item.clone()));
                     false
@@ -894,7 +894,7 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
         self.get_account_read_entry(pubkey)
             .and_then(|locked_entry| {
                 let found_index =
-                    self.latest_slot(ancestors, &locked_entry.slot_list(), max_root)?;
+                    self.latest_slot(ancestors, locked_entry.slot_list(), max_root)?;
                 Some((locked_entry, found_index))
             })
     }
@@ -1122,7 +1122,7 @@ impl<T: 'static + Clone + IsCached + ZeroLamport> AccountsIndex<T> {
         max_clean_root: Option<Slot>,
     ) {
         let roots_tracker = &self.roots_tracker.read().unwrap();
-        let max_root = Self::get_max_root(&roots_tracker.roots, &list, max_clean_root);
+        let max_root = Self::get_max_root(&roots_tracker.roots, list, max_clean_root);
 
         let mut purged_slots: HashSet<Slot> = HashSet::new();
         list.retain(|(slot, value)| {
@@ -2344,7 +2344,7 @@ pub mod tests {
 
         // Both pubkeys will now be present in the index
         check_secondary_index_mapping_correct(
-            &secondary_index,
+            secondary_index,
             &[secondary_key1, secondary_key2],
             &account_key,
         );

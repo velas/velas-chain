@@ -30,6 +30,6 @@ impl ParseTokens for Pubkey {
             }
         };
 
-        Ok(Pubkey::new(&bytes))
+        Ok(Pubkey::new(bytes))
     }
 }

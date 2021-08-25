@@ -72,9 +72,9 @@ impl Tpu {
         let fetch_stage = FetchStage::new_with_sender(
             transactions_sockets,
             tpu_forwards_sockets,
-            &exit,
+            exit,
             &packet_sender,
-            &poh_recorder,
+            poh_recorder,
             // At 1024 packets per `Packet`, each packet about MTU size ~1k, this is roughly
             // 20GB
             Some(20_000),
@@ -89,10 +89,10 @@ impl Tpu {
 
         let (verified_vote_packets_sender, verified_vote_packets_receiver) = unbounded();
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
-            &exit,
+            exit,
             cluster_info.clone(),
             verified_vote_packets_sender,
-            &poh_recorder,
+            poh_recorder,
             vote_tracker,
             bank_forks,
             subscriptions.clone(),
@@ -105,7 +105,7 @@ impl Tpu {
         );
 
         let banking_stage = BankingStage::new(
-            &cluster_info,
+            cluster_info,
             poh_recorder,
             verified_receiver,
             verified_vote_packets_receiver,
@@ -118,7 +118,7 @@ impl Tpu {
             cluster_info.clone(),
             entry_receiver,
             retransmit_slots_receiver,
-            &exit,
+            exit,
             blockstore,
             shred_version,
         );

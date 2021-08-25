@@ -86,7 +86,7 @@ impl<'a> AccountStructure<'a> {
         .collect();
         let keyed_accounts: Vec<_> = keys
             .iter()
-            .map(|(user_key, user_account)| KeyedAccount::new(&user_key, false, &user_account))
+            .map(|(user_key, user_account)| KeyedAccount::new(user_key, false, user_account))
             .collect();
         let borrowed_keys: &[_] = &keyed_accounts;
         let structure = AccountStructure::new(&evm_state, borrowed_keys);

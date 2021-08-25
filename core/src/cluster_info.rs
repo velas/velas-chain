@@ -261,7 +261,7 @@ impl PruneData {
             destination: Pubkey::new_unique(),
             wallclock,
         };
-        prune_data.sign(&self_keypair);
+        prune_data.sign(self_keypair);
         prune_data
     }
 }
@@ -1307,7 +1307,7 @@ impl ClusterInfo {
                 if r_stake == l_stake {
                     peers[*r_info].id.cmp(&peers[*l_info].id)
                 } else {
-                    r_stake.cmp(&l_stake)
+                    r_stake.cmp(l_stake)
                 }
             })
             .collect();
@@ -1619,7 +1619,7 @@ impl ClusterInfo {
         generate_pull_requests: bool,
         require_stake_for_gossip: bool,
     ) -> Vec<(SocketAddr, Protocol)> {
-        self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, &stakes);
+        self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
         // This will flush local pending push messages before generating
         // pull-request bloom filters, preventing pull responses to return the
         // same values back to the node itself. Note that packets will arrive
@@ -1630,7 +1630,7 @@ impl ClusterInfo {
             .add_relaxed(out.len() as u64);
         if generate_pull_requests {
             let (pings, pull_requests) =
-                self.new_pull_requests(&thread_pool, gossip_validators, stakes);
+                self.new_pull_requests(thread_pool, gossip_validators, stakes);
             self.stats
                 .packets_sent_pull_requests_count
                 .add_relaxed(pull_requests.len() as u64);
@@ -2174,7 +2174,7 @@ impl ClusterInfo {
         if !responses.is_empty() {
             let timeouts = {
                 let gossip = self.gossip.read().unwrap();
-                gossip.make_timeouts(&stakes, epoch_duration)
+                gossip.make_timeouts(stakes, epoch_duration)
             };
             for (from, data) in responses {
                 self.handle_pull_response(&from, data, &timeouts);
@@ -2390,6 +2390,7 @@ impl ClusterInfo {
         let prunes = self
             .time_gossip_write_lock("prune_received_cache", &self.stats.prune_received_cache)
             .prune_received_cache(origins, stakes);
+        #[allow(clippy::needless_collect)] // collect items for parallel processing.
         let prunes: Vec<(Pubkey /*from*/, Vec<Pubkey> /*origins*/)> = prunes
             .into_iter()
             .flat_map(|(from, prunes)| {
@@ -3176,6 +3177,7 @@ mod tests {
             .iter()
             .map(|(keypair, _)| Ping::new_rand(&mut rng, keypair).unwrap())
             .collect();
+        #[allow(clippy::needless_collect)] // need to free ping borrows before next use
         let pongs: Vec<_> = pings
             .iter()
             .map(|ping| Pong::new(ping, &this_node).unwrap())
@@ -3882,10 +3884,11 @@ mod tests {
             });
             i += 1;
         }
-        let split: Vec<_> =
-            ClusterInfo::split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, vec![value])
-                .collect();
-        assert_eq!(split.len(), 0);
+
+        assert_eq!(
+            ClusterInfo::split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, vec![value]).count(),
+            0
+        );
     }
 
     fn test_split_messages(value: CrdsValue) {
@@ -3897,9 +3900,10 @@ mod tests {
         let expected_len = (NUM_VALUES + num_values_per_payload - 1) / num_values_per_payload;
         let msgs = vec![value; NUM_VALUES as usize];
 
-        let split: Vec<_> =
-            ClusterInfo::split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, msgs).collect();
-        assert!(split.len() as u64 <= expected_len);
+        assert!(
+            ClusterInfo::split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, msgs).count() as u64
+                <= expected_len
+        );
     }
 
     #[test]

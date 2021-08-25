@@ -153,9 +153,9 @@ fn output_keypair(
 ) -> Result<(), Box<dyn error::Error>> {
     if outfile == "-" {
         let mut stdout = std::io::stdout();
-        write_keypair(&keypair, &mut stdout)?;
+        write_keypair(keypair, &mut stdout)?;
     } else {
-        write_keypair_file(&keypair, outfile)?;
+        write_keypair_file(keypair, outfile)?;
         println!("Wrote {} keypair to {}", source, outfile);
     }
     Ok(())
@@ -342,7 +342,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .global(true)
                 .help("Configuration file to use");
             if let Some(ref config_file) = *CONFIG_FILE {
-                arg.default_value(&config_file)
+                arg.default_value(config_file)
             } else {
                 arg
             }
@@ -532,7 +532,7 @@ fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
 
             if matches.is_present("outfile") {
                 let outfile = matches.value_of("outfile").unwrap();
-                check_for_overwrite(&outfile, &matches);
+                check_for_overwrite(outfile, matches);
                 write_pubkey_file(outfile, pubkey)?;
             } else {
                 println!("{}", pubkey);
@@ -551,7 +551,7 @@ fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
 
             match outfile {
                 Some("-") => (),
-                Some(outfile) => check_for_overwrite(&outfile, &matches),
+                Some(outfile) => check_for_overwrite(outfile, matches),
                 None => (),
             }
 
@@ -570,7 +570,7 @@ fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
             let keypair = keypair_from_seed(seed.as_bytes())?;
 
             if let Some(outfile) = outfile {
-                output_keypair(&keypair, &outfile, "new")
+                output_keypair(&keypair, outfile, "new")
                     .map_err(|err| format!("Unable to write {}: {}", outfile, err))?;
             }
 
@@ -593,7 +593,7 @@ fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
             };
 
             if outfile != "-" {
-                check_for_overwrite(&outfile, &matches);
+                check_for_overwrite(outfile, matches);
             }
 
             let keypair_name = "recover";
@@ -603,7 +603,7 @@ fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
                 let skip_validation = matches.is_present(SKIP_SEED_PHRASE_VALIDATION_ARG.name);
                 keypair_from_seed_phrase(keypair_name, skip_validation, true, None, true)?
             };
-            output_keypair(&keypair, &outfile, "recovered")?;
+            output_keypair(&keypair, outfile, "recovered")?;
         }
         ("grind", Some(matches)) => {
             let ignore_case = matches.is_present("ignore_case");

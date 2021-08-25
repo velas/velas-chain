@@ -115,13 +115,13 @@ fn assign(
         return Ok(());
     }
 
-    if !address.is_signer(&signers) {
+    if !address.is_signer(signers) {
         ic_msg!(invoke_context, "Assign: account {:?} must sign", address);
         return Err(InstructionError::MissingRequiredSignature);
     }
 
     // guard against sysvars being made
-    if sysvar::check_id(&owner) {
+    if sysvar::check_id(owner) {
         ic_msg!(invoke_context, "Assign: cannot assign to sysvar, {}", owner);
         return Err(SystemError::InvalidProgramId.into());
     }
@@ -301,13 +301,13 @@ pub fn process_instruction(
             let from = next_keyed_account(keyed_accounts_iter)?;
             let to = next_keyed_account(keyed_accounts_iter)?;
             let to_address = Address::create(
-                &to.unsigned_key(),
+                to.unsigned_key(),
                 Some((&base, &seed, &owner)),
                 invoke_context,
             )?;
             create_account(
                 from,
-                &to,
+                to,
                 &to_address,
                 lamports,
                 space,
@@ -729,11 +729,11 @@ mod tests {
         let result = create_account(
             &KeyedAccount::new(&from, true, &from_account),
             &KeyedAccount::new(&to, false, &to_account),
-            &address,
+            address,
             50,
             MAX_PERMITTED_DATA_LENGTH + 1,
             &system_program::id(),
-            &signers,
+            signers,
             &mut MockInvokeContext::default(),
         );
         assert!(result.is_err());
@@ -746,11 +746,11 @@ mod tests {
         let result = create_account(
             &KeyedAccount::new(&from, true, &from_account),
             &KeyedAccount::new(&to, false, &to_account),
-            &address,
+            address,
             50,
             MAX_PERMITTED_DATA_LENGTH,
             &system_program::id(),
-            &signers,
+            signers,
             &mut MockInvokeContext::default(),
         );
         assert!(result.is_ok());
@@ -783,7 +783,7 @@ mod tests {
             50,
             2,
             &new_owner,
-            &signers,
+            signers,
             &mut MockInvokeContext::default(),
         );
         assert_eq!(result, Err(SystemError::AccountAlreadyInUse.into()));
@@ -802,7 +802,7 @@ mod tests {
             50,
             2,
             &new_owner,
-            &signers,
+            signers,
             &mut MockInvokeContext::default(),
         );
         assert_eq!(result, Err(SystemError::AccountAlreadyInUse.into()));
@@ -820,7 +820,7 @@ mod tests {
             50,
             2,
             &new_owner,
-            &signers,
+            signers,
             &mut MockInvokeContext::default(),
         );
         assert_eq!(result, Err(SystemError::AccountAlreadyInUse.into()));
@@ -1134,7 +1134,7 @@ mod tests {
         transfer_with_seed(
             &from_keyed_account,
             &from_base_keyed_account,
-            &from_seed,
+            from_seed,
             &from_owner,
             &to_keyed_account,
             50,
@@ -1151,7 +1151,7 @@ mod tests {
         let result = transfer_with_seed(
             &from_keyed_account,
             &from_base_keyed_account,
-            &from_seed,
+            from_seed,
             &from_owner,
             &to_keyed_account,
             100,
@@ -1166,7 +1166,7 @@ mod tests {
         assert!(transfer_with_seed(
             &from_keyed_account,
             &from_base_keyed_account,
-            &from_seed,
+            from_seed,
             &from_owner,
             &to_keyed_account,
             0,

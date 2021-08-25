@@ -1486,7 +1486,7 @@ impl RpcClient {
     ) -> ClientResult<u64> {
         let now = Instant::now();
         loop {
-            match self.get_balance_with_commitment(&pubkey, commitment_config) {
+            match self.get_balance_with_commitment(pubkey, commitment_config) {
                 Ok(bal) => {
                     return Ok(bal.value);
                 }
@@ -1555,7 +1555,7 @@ impl RpcClient {
         let now = Instant::now();
         loop {
             if let Ok(Some(_)) =
-                self.get_signature_status_with_commitment(&signature, commitment_config)
+                self.get_signature_status_with_commitment(signature, commitment_config)
             {
                 break;
             }
@@ -1712,11 +1712,11 @@ impl RpcClient {
         let (signature, status) = loop {
             // Get recent commitment in order to count confirmations for successful transactions
             let status = self
-                .get_signature_status_with_commitment(&signature, CommitmentConfig::processed())?;
+                .get_signature_status_with_commitment(signature, CommitmentConfig::processed())?;
             if status.is_none() {
                 if self
                     .get_fee_calculator_for_blockhash_with_commitment(
-                        &recent_blockhash,
+                        recent_blockhash,
                         CommitmentConfig::processed(),
                     )?
                     .value
@@ -1732,25 +1732,27 @@ impl RpcClient {
                 sleep(Duration::from_millis(500));
             }
         };
-        if let Some(result) = status {
-            if let Err(err) = result {
+        match status {
+            Some(Err(err)) => {
                 return Err(err.into());
             }
-        } else {
-            return Err(RpcError::ForUser(
-                "unable to confirm transaction. \
-                                      This can happen in situations such as transaction expiration \
-                                      and insufficient fee-payer funds"
-                    .to_string(),
-            )
-            .into());
+            None => {
+                return Err(RpcError::ForUser(
+                    "unable to confirm transaction. \
+                                        This can happen in situations such as transaction expiration \
+                                        and insufficient fee-payer funds"
+                        .to_string(),
+                )
+                .into());
+            }
+            Some(Ok(_)) => {}
         }
         let now = Instant::now();
         loop {
             // Return when specified commitment is reached
             // Failed transactions have already been eliminated, `is_some` check is sufficient
             if self
-                .get_signature_status_with_commitment(&signature, commitment)?
+                .get_signature_status_with_commitment(signature, commitment)?
                 .is_some()
             {
                 progress_bar.set_message("Transaction confirmed");
@@ -1766,7 +1768,7 @@ impl RpcClient {
             ));
             sleep(Duration::from_millis(500));
             confirmations = self
-                .get_num_blocks_since_signature_confirmation(&signature)
+                .get_num_blocks_since_signature_confirmation(signature)
                 .unwrap_or(confirmations);
             if now.elapsed().as_secs() >= MAX_HASH_AGE_IN_SECONDS as u64 {
                 return Err(

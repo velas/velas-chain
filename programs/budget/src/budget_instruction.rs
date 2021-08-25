@@ -65,7 +65,7 @@ pub fn create_account(
     }
     let space = serialized_size(&BudgetState::new(expr.clone())).unwrap();
     vec![
-        system_instruction::create_account(&from, contract, lamports, space, &id()),
+        system_instruction::create_account(from, contract, lamports, space, &id()),
         initialize_account(contract, expr),
     ]
 }
@@ -73,7 +73,7 @@ pub fn create_account(
 /// Create a new payment script.
 pub fn payment(from: &Pubkey, to: &Pubkey, contract: &Pubkey, lamports: u64) -> Vec<Instruction> {
     let expr = BudgetExpr::new_payment(lamports, to);
-    create_account(from, &contract, lamports, expr)
+    create_account(from, contract, lamports, expr)
 }
 
 /// Create a future payment script.

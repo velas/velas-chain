@@ -66,7 +66,7 @@ fn block_to_confirmed_num(
             let evm = bank.evm_state.read().unwrap();
             evm.block_number().saturating_sub(1)
         })),
-        v => Hex::<u64>::from_hex(&v).ok().map(|f| f.0),
+        v => Hex::<u64>::from_hex(v).ok().map(|f| f.0),
     }
 }
 

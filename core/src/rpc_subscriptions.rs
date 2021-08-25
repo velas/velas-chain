@@ -338,7 +338,7 @@ fn filter_program_results(
     let keyed_accounts = accounts.into_iter().filter(move |(_, account)| {
         filters.iter().all(|filter_type| match filter_type {
             RpcFilterType::DataSize(size) => account.data().len() as u64 == *size,
-            RpcFilterType::Memcmp(compare) => compare.bytes_match(&account.data()),
+            RpcFilterType::Memcmp(compare) => compare.bytes_match(account.data()),
         })
     });
     let accounts: Box<dyn Iterator<Item = RpcKeyedAccount>> = if program_id == &spl_token_id_v2_0()
@@ -621,7 +621,7 @@ impl RpcSubscriptions {
         if let Some(subscription_ids) = subscriptions.get_mut(signature) {
             subscription_ids.retain(|k, _| !notified_ids.contains(k));
             if subscription_ids.is_empty() {
-                subscriptions.remove(&signature);
+                subscriptions.remove(signature);
             }
         }
         notified_ids
@@ -1207,7 +1207,7 @@ impl RpcSubscriptions {
             &subscriptions.gossip_signature_subscriptions,
             bank_forks,
             &commitment_slots,
-            &notifier,
+            notifier,
             "gossip",
         );
     }
@@ -1233,8 +1233,8 @@ impl RpcSubscriptions {
                 pubkey,
                 bank_forks,
                 account_subscriptions.clone(),
-                &notifier,
-                &commitment_slots,
+                notifier,
+                commitment_slots,
             )
             .len();
         }
@@ -1251,8 +1251,8 @@ impl RpcSubscriptions {
                 address,
                 bank_forks,
                 logs_subscriptions.clone(),
-                &notifier,
-                &commitment_slots,
+                notifier,
+                commitment_slots,
             )
             .len();
         }
@@ -1269,8 +1269,8 @@ impl RpcSubscriptions {
                 program_id,
                 bank_forks,
                 program_subscriptions.clone(),
-                &notifier,
-                &commitment_slots,
+                notifier,
+                commitment_slots,
             )
             .len();
         }
@@ -1287,8 +1287,8 @@ impl RpcSubscriptions {
                 signature,
                 bank_forks,
                 signature_subscriptions.clone(),
-                &notifier,
-                &commitment_slots,
+                notifier,
+                commitment_slots,
             )
             .len();
         }
@@ -1355,7 +1355,7 @@ impl RpcSubscriptions {
                                     ReceivedSignatureResult::ReceivedSignature,
                                 ),
                             },
-                            &sink,
+                            sink,
                         );
                     }
                 }

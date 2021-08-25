@@ -383,7 +383,7 @@ impl BlockHeader {
     pub fn hash(&self) -> H256 {
         let mut stream = RlpStream::new();
         self.rlp_append(&mut stream);
-        H256::from_slice(Keccak256::digest(&stream.as_raw()).as_slice())
+        H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
     }
 
     pub fn rlp_append_legacy(&self, s: &mut RlpStream) {
