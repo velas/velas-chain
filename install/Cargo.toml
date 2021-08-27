@@ -20,6 +20,7 @@ indicatif = "0.15.0"
 lazy_static = "1.4.0"
 nix = "0.19.0"
 reqwest = { version = "0.11.2", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+semver = "1.0.4"
 serde = { version = "1.0.122", features = ["derive"] }
 serde_json = "1.0.62"
 serde_yaml = "0.8.13"
@@ -29,7 +30,6 @@ solana-config-program = { path = "../programs/config", version = "=1.6.14" }
 solana-logger = { path = "../logger", version = "=1.6.14" }
 solana-sdk = { path = "../sdk", version = "=1.6.14" }
 solana-version = { path = "../version", version = "=0.4.0" }
-semver = "0.9.0"
 tar = "0.4.28"
 tempfile = "3.1.0"
 url = "2.1.1"

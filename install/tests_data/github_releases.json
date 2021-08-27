@@ -1,0 +1,53 @@
+[
+    {
+        "tag_name": "v0.1.0",
+        "name": null,
+        "published_at": "2021-03-29T21:58:55Z",
+        "note": "Mock entry for testing sorting"
+    },
+    {
+        "tag_name": "v2.0.0-alpha",
+        "name": "Release name here",
+        "published_at": "2021-08-02T12:46:57Z"
+    },
+    {
+        "tag_name": "v1.3.0",
+        "name": "",
+        "published_at": "2021-05-14T15:47:59Z"
+    },
+    {
+        "tag_name": "v1.2.0",
+        "name": null,
+        "published_at": "2021-04-25T19:26:50Z"
+    },
+    {
+        "tag_name": "v1.2.0-alpha",
+        "name": null,
+        "published_at": "2021-04-19T13:31:53Z"
+    },
+    {
+        "tag_name": "v1.1.1",
+        "name": null,
+        "published_at": "2021-04-19T10:37:09Z"
+    },
+    {
+        "tag_name": "v1.1.0",
+        "name": null,
+        "published_at": "2021-04-18T13:35:53Z"
+    },
+    {
+        "tag_name": "v0.5.1-pre",
+        "name": null,
+        "published_at": "2021-04-15T15:19:54Z"
+    },
+    {
+        "tag_name": "v0.4.0",
+        "name": null,
+        "published_at": "2021-04-12T16:46:35Z"
+    },
+    {
+        "tag_name": "v0.3.1",
+        "name": null,
+        "published_at": "2021-04-02T12:43:49Z"
+    }
+]
