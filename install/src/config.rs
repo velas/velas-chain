@@ -1,16 +1,23 @@
 use {
-    crate::update_manifest::UpdateManifest,
     serde::{Deserialize, Serialize},
-    solana_sdk::pubkey::Pubkey,
+    solana_sdk::{hash::Hash, pubkey::Pubkey},
     std::fs::{create_dir_all, File},
     std::io::{self, Write},
     std::path::{Path, PathBuf},
 };
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum ExplicitRelease {
     Semver(String),
     Channel(String),
+}
+
+/// Information required to download and apply a given update
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+pub struct UpdateManifest {
+    pub timestamp_secs: u64, // When the release was deployed in seconds since UNIX EPOCH
+    pub download_url: String, // Download URL to the release tar.bz2
+    pub download_sha256: Hash, // SHA256 digest of the release tar.bz2 file
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
@@ -42,33 +49,33 @@ impl Config {
         }
     }
 
-    fn _load(config_file: &str) -> Result<Self, io::Error> {
-        let file = File::open(config_file.to_string())?;
+    fn _load(config_path: &str) -> Result<Self, io::Error> {
+        let file = File::open(config_path.to_string())?;
         let config = serde_yaml::from_reader(file)
             .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{:?}", err)))?;
         Ok(config)
     }
 
-    pub fn load(config_file: &str) -> Result<Self, String> {
-        Self::_load(config_file).map_err(|err| format!("Unable to load {}: {:?}", config_file, err))
+    pub fn load(config_path: &str) -> Result<Self, String> {
+        Self::_load(config_path).map_err(|err| format!("Unable to load {}: {:?}", config_path, err))
     }
 
-    fn _save(&self, config_file: &str) -> Result<(), io::Error> {
+    fn _save(&self, config_path: &str) -> Result<(), io::Error> {
         let serialized = serde_yaml::to_string(self)
             .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{:?}", err)))?;
 
-        if let Some(outdir) = Path::new(&config_file).parent() {
+        if let Some(outdir) = Path::new(&config_path).parent() {
             create_dir_all(outdir)?;
         }
-        let mut file = File::create(config_file)?;
+        let mut file = File::create(config_path)?;
         file.write_all(&serialized.into_bytes())?;
 
         Ok(())
     }
 
-    pub fn save(&self, config_file: &str) -> Result<(), String> {
-        self._save(config_file)
-            .map_err(|err| format!("Unable to save {}: {:?}", config_file, err))
+    pub fn save(&self, config_path: &str) -> Result<(), String> {
+        self._save(config_path)
+            .map_err(|err| format!("Unable to save {}: {:?}", config_path, err))
     }
 
     pub fn active_release_dir(&self) -> &PathBuf {
