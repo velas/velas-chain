@@ -98,9 +98,8 @@ impl GithubReleases {
             Version::LatestStable => self
                 .releases
                 .iter()
-                .filter(|release| release.semver.pre.is_empty())
-                .next(),
-            Version::LatestEdge => self.releases.iter().next(),
+                .find(|release| release.semver.pre.is_empty()),
+            Version::LatestEdge => self.releases.get(0),
             Version::Semver(version_req) => {
                 semver::VersionReq::parse(version_req)
                     .ok()

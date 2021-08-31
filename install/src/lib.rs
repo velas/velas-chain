@@ -28,7 +28,7 @@ pub fn main() -> Result<(), String> {
                 .global(true)
                 .help("Configuration file to use");
             match *defaults::CONFIG_PATH {
-                Some(ref config_file) => arg.default_value(&config_file),
+                Some(ref config_file) => arg.default_value(config_file),
                 None => arg.required(true),
             }
         })
@@ -45,7 +45,7 @@ pub fn main() -> Result<(), String> {
                         .required(true)
                         .help("Directory to store install data");
                     match *defaults::DATA_DIR {
-                        Some(ref data_dir) => arg.default_value(&data_dir),
+                        Some(ref data_dir) => arg.default_value(data_dir),
                         None => arg,
                     }
                 })
@@ -83,8 +83,8 @@ pub fn main() -> Result<(), String> {
         .get_matches();
 
     match matches.subcommand() {
-        ("init", Some(matches)) => init::command_init(&matches, init::Mode::Init),
-        ("update", Some(matches)) => init::command_init(&matches, init::Mode::Update),
+        ("init", Some(matches)) => init::command_init(matches, init::Mode::Init),
+        ("update", Some(matches)) => init::command_init(matches, init::Mode::Update),
         ("versions", Some(_matches)) => versions::command_versions(),
         _ => unreachable!(),
     }
@@ -102,7 +102,7 @@ pub fn main_init() -> Result<(), String> {
                 .takes_value(true)
                 .help("Configuration file to use");
             match *defaults::CONFIG_PATH {
-                Some(ref config_file) => arg.default_value(&config_file),
+                Some(ref config_file) => arg.default_value(config_file),
                 None => arg.required(true),
             }
         })
@@ -115,7 +115,7 @@ pub fn main_init() -> Result<(), String> {
                 .required(true)
                 .help("Directory to store install data");
             match *defaults::DATA_DIR {
-                Some(ref data_dir) => arg.default_value(&data_dir),
+                Some(ref data_dir) => arg.default_value(data_dir),
                 None => arg,
             }
         })

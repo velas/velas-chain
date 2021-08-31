@@ -185,7 +185,7 @@ pub fn command_init(matches: &clap::ArgMatches, mode: Mode) -> Result<(), String
     // $PATH routines begin
     // ==========================
     let path_modified = if !no_modify_path {
-        add_to_path(&config.active_release_bin_dir().to_str().unwrap())
+        add_to_path(config.active_release_bin_dir().to_str().unwrap())
     } else {
         false
     };
