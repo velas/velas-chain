@@ -463,7 +463,7 @@ impl EvmBridge {
     }
 
     fn block_to_number(&self, block: Option<String>) -> EvmResult<u64> {
-        let block = block.unwrap_or("latest".to_string());
+        let block = block.unwrap_or_else(|| "latest".to_string());
         let block_string = match &*block {
             "latest" => proxy_evm_rpc!(self.rpc_client, EthBlockNumber)?,
             _ => block,
