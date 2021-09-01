@@ -29,7 +29,6 @@ use solana_sdk::{
     instruction::AccountMeta, message::Message, pubkey::Pubkey, signature::Signer,
     signers::Signers, system_instruction, transaction::TransactionError,
 };
-use solana_transaction_status::TransactionStatus;
 
 use solana_client::{
     client_error::{ClientError, ClientErrorKind},
@@ -224,14 +223,9 @@ impl EvmBridge {
 
         if self.simulate {
             // Try simulate transaction execution
-            match RpcClient::send::<Bytes>(
-                &self.rpc_client,
-                RpcRequest::EthCall,
-                json!([rpc_tx, "latest"]),
-            ) {
-                Err(e) => return Err(from_client_error(e)),
-                Ok(_o) => {}
-            }
+            self.rpc_client
+                .send::<Bytes>(RpcRequest::EthCall, json!([rpc_tx, "latest"]))
+                .map_err(from_client_error)?;
         }
 
         if bytes.len() > evm::TX_MTU {
@@ -969,9 +963,15 @@ impl<M: jsonrpc_core::Metadata> Middleware<M> for LoggingMiddleware {
     }
 }
 
+// RUST_LOG="debug" cargo run ~/Desktop/velas-validator-keypair.json https://api.testnet.velas.com/rpc 0.0.0.0:8545 111
+
 #[paw::main]
 fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    env_logger::builder()
+        .filter(Some("hyper"), LevelFilter::Off)
+        .filter(Some("reqwest"), LevelFilter::Off)
+        .init();
+
     let keyfile_path = args
         .keyfile
         .unwrap_or_else(|| solana_cli_config::Config::default().keypair_path);
@@ -1081,20 +1081,12 @@ fn send_and_confirm_transactions<T: Signers>(
             }
 
             transactions_signatures.retain(|(_transaction, signature)| {
-                let tx_status = signature
+                signature
                     .and_then(|signature| rpc_client.get_signature_statuses(&[signature]).ok())
-                    .and_then(|RpcResponse { mut value, .. }| value.remove(0));
-
-                // Remove confirmed
-                if let Some(TransactionStatus {
-                    confirmations: Some(confirmations),
-                    ..
-                }) = tx_status
-                {
-                    confirmations == 0 // retain unconfirmed
-                } else {
-                    true
-                }
+                    .and_then(|RpcResponse { mut value, .. }| value.remove(0))
+                    .and_then(|status| status.confirmations)
+                    .map(|confirmations| confirmations == 0) // retain unconfirmed only
+                    .unwrap_or(true)
             });
 
             if transactions_signatures.is_empty() {
