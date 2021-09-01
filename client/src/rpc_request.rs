@@ -187,7 +187,7 @@ impl fmt::Display for RpcRequest {
             RpcRequest::EthTraceCall => "trace_call",
             RpcRequest::EthTraceCallMany => "trace_callMany",
             RpcRequest::EthTraceReplayTransaction => "trace_replayTransaction",
-            RpcRequest::EthTraceReplayBlock => "trace_replayBlock",
+            RpcRequest::EthTraceReplayBlock => "trace_replayBlockTransactions",
             RpcRequest::EthEstimateGas => "eth_estimateGas",
             RpcRequest::EthGetLogs => "eth_getLogs",
             RpcRequest::GetVelasAccountsByOperationalKey => "getVelasAccountsByOperationalKey",
