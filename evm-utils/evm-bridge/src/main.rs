@@ -24,7 +24,7 @@ use snafu::ResultExt;
 
 use solana_evm_loader_program::{scope::*, tx_chunks::TxChunks};
 use solana_sdk::{
-    clock::DEFAULT_TICKS_PER_SECOND, commitment_config::CommitmentConfig,
+    clock::MS_PER_TICK, commitment_config::CommitmentConfig,
     commitment_config::CommitmentLevel, fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE,
     instruction::AccountMeta, message::Message, pubkey::Pubkey, signature::Signer,
     signers::Signers, system_instruction, transaction::TransactionError,
@@ -44,6 +44,7 @@ type EvmResult<T> = StdResult<T, evm_rpc::Error>;
 type FutureEvmResult<T> = EvmResult<T>;
 
 mod sol_proxy;
+mod transaction_pool;
 
 const MAX_NUM_BLOCKS_IN_BATCH: u64 = 2000; // should be less or equal to const core::evm_rpc_impl::logs::MAX_NUM_BLOCKS
 
@@ -964,7 +965,7 @@ impl<M: jsonrpc_core::Metadata> Middleware<M> for LoggingMiddleware {
 }
 
 // RUST_LOG="debug" cargo run ~/Desktop/velas-validator-keypair.json https://api.testnet.velas.com/rpc 0.0.0.0:8545 111
-
+// ANCHOR: main
 #[paw::main]
 fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
     env_logger::builder()
@@ -1052,7 +1053,7 @@ fn send_and_confirm_transactions<T: Signers>(
                     // Delay ~1 tick between write transactions in an attempt to reduce AccountInUse errors
                     // when all the write transactions modify the same program account (eg, deploying a
                     // new program)
-                    sleep(Duration::from_millis(1000 / DEFAULT_TICKS_PER_SECOND));
+                    sleep(Duration::from_millis(MS_PER_TICK));
                 }
 
                 debug!("Sending {:?}", transaction.signatures);

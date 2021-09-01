@@ -1681,7 +1681,6 @@ dependencies = [
  "solana-sdk",
  "solana-transaction-status",
  "structopt",
- "tokio 1.9.0",
 ]
 
 [[package]]
