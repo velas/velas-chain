@@ -1,9 +1,11 @@
-use std::{convert::TryInto, str::FromStr};
+use std::str::FromStr;
 
 use sha3::{Digest, Keccak256};
 use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use solana_sdk::keyed_account::KeyedAccount;
 
+use crate::rpc::JsonRpcRequestProcessor;
+use evm_rpc::error::EvmStateError;
 use evm_rpc::{
     basic::BasicERPC,
     chain_mock::ChainMockERPC,
@@ -11,10 +13,9 @@ use evm_rpc::{
     trace::TraceMeta,
     Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTopicFilter, RPCTransaction,
 };
-use evm_state::{AccountProvider, Address, Gas, LogFilter, H256, U256};
+use evm_state::{AccountProvider, Address, Gas, LogFilter, TransactionAction, H256, U256};
+use snafu::ResultExt;
 use solana_runtime::bank::Bank;
-
-use crate::rpc::JsonRpcRequestProcessor;
 use std::cell::RefCell;
 use std::sync::Arc;
 const GAS_PRICE: u64 = 3;
@@ -688,7 +689,7 @@ fn call_many(
             tx.clone(),
             meta_keys.clone(),
             &*bank,
-        ))
+        )?)
     }
     Ok(result)
 }
@@ -698,25 +699,35 @@ fn call_inner(
     tx: RPCTransaction,
     meta_keys: Vec<solana_sdk::pubkey::Pubkey>,
     bank: &Bank,
-) -> (
-    evm_state::ExitReason,
-    Vec<u8>,
-    u64,
-    Vec<evm_state::executor::Trace>,
-) {
+) -> Result<
+    (
+        evm_state::ExitReason,
+        Vec<u8>,
+        u64,
+        Vec<evm_state::executor::Trace>,
+    ),
+    Error,
+> {
     let caller = tx.from.map(|a| a.0).unwrap_or_default();
 
     let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
     let input = tx.input.map(|a| a.0).unwrap_or_else(Vec::new);
     let gas_limit = tx.gas.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
-    let gas_limit: u64 = gas_limit.try_into().unwrap_or(u64::MAX);
+    let gas_price = tx.gas_price.map(|a| a.0).unwrap_or_else(|| u64::MIN.into());
+
+    let nonce = tx
+        .nonce
+        .map(|a| a.0)
+        .unwrap_or_else(|| executor.nonce(caller));
+    let tx_chain_id = executor.chain_id();
+    let tx_hash = tx.hash.map(|a| a.0).unwrap_or_else(|| H256::random());
 
     let evm_state_balance = bank
         .get_account(&solana_sdk::evm_state::id())
         .unwrap_or_default()
         .lamports;
 
-    let (result, output, traces, gas_used) = if let Some(address) = tx.to {
+    let (user_accounts, action) = if let Some(address) = tx.to {
         use solana_evm_loader_program::precompiles::*;
         let address = address.0;
         debug!(
@@ -747,37 +758,37 @@ fn call_inner(
                 }
             }
         }
-        let user_accounts: Vec<_> = meta_keys
-            .iter()
-            .map(|(user_account, pk)| KeyedAccount::new(pk, false, user_account))
-            .collect();
 
-        executor.with_executor(
+        (meta_keys, TransactionAction::Call(address))
+    } else {
+        (vec![], TransactionAction::Create)
+    };
+    let user_accounts: Vec<_> = user_accounts
+        .iter()
+        .map(|(user_account, pk)| KeyedAccount::new(pk, false, user_account))
+        .collect();
+    let result = executor
+        .transaction_execute_raw(
+            caller,
+            nonce,
+            gas_price,
+            gas_limit,
+            action,
+            input,
+            value,
+            Some(tx_chain_id),
+            tx_hash,
             solana_evm_loader_program::precompiles::simulation_entrypoint(
                 executor.support_precompile(),
                 evm_state_balance,
                 &user_accounts,
             ),
-            |e| {
-                let result = e.transact_call(caller, address, value, input, gas_limit);
-                let traces = e.take_traces();
-                (result.0, result.1, traces, e.used_gas())
-            },
         )
-    } else {
-        executor.with_executor(
-            solana_evm_loader_program::precompiles::simulation_entrypoint(
-                executor.support_precompile(),
-                evm_state_balance,
-                &[],
-            ),
-            |e| {
-                let result = e.transact_create(caller, value, input, gas_limit);
-                let traces = e.take_traces();
-
-                (result, vec![], traces, e.used_gas())
-            },
-        )
-    };
-    (result, output, gas_used, traces)
+        .with_context(|| EvmStateError)?;
+    Ok((
+        result.exit_reason,
+        result.exit_data,
+        result.used_gas,
+        result.traces,
+    ))
 }

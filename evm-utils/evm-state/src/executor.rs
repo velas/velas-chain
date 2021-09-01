@@ -112,7 +112,7 @@ impl Executor {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn transaction_execute_raw<F>(
+    pub fn transaction_execute_raw<F>(
         &mut self,
         caller: H160,
         nonce: U256,
@@ -481,6 +481,15 @@ impl Executor {
 
     pub fn get_tx_receipt_by_hash(&mut self, tx: H256) -> Option<&TransactionReceipt> {
         self.evm_backend.find_transaction_receipt(tx)
+    }
+    pub fn chain_id(&self) -> u64 {
+        self.config.chain_id
+    }
+    pub fn nonce(&self, addr: H160) -> U256 {
+        self.evm_backend
+            .get_account_state(addr)
+            .unwrap_or_default()
+            .nonce
     }
 
     pub fn deconstruct(self) -> EvmBackend<Incomming> {
