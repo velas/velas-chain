@@ -8384,7 +8384,7 @@ pub(crate) mod tests {
         fn fund_evm(from_keypair: &Keypair, hash: Hash, lamports: u64) -> Transaction {
             let tx = solana_evm_loader_program::processor::dummy_call(0).0;
             let from_pubkey = from_keypair.pubkey();
-            let instructions = solana_evm_loader_program::transfer_native_to_eth_ixs(
+            let instructions = solana_evm_loader_program::transfer_native_to_evm_ixs(
                 from_pubkey,
                 lamports,
                 tx.caller().unwrap(),
