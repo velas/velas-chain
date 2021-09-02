@@ -213,7 +213,7 @@ impl EvmCliCommand {
                 println!("EVM Address: {:?}", secret_key.to_address());
             }
             Self::ParseArray { array } => {
-                let bytes: Vec<u8> = serde_json::from_str(&array)?;
+                let bytes: Vec<u8> = serde_json::from_str(array)?;
                 println!("Resulting data hex = {}", hex::encode(&bytes));
                 println!("Resulting data utf8 = {}", String::from_utf8_lossy(&bytes));
             }
