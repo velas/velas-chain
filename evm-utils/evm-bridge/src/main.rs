@@ -24,10 +24,10 @@ use snafu::ResultExt;
 
 use solana_evm_loader_program::{scope::*, tx_chunks::TxChunks};
 use solana_sdk::{
-    clock::MS_PER_TICK, commitment_config::CommitmentConfig,
-    commitment_config::CommitmentLevel, fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE,
-    instruction::AccountMeta, message::Message, pubkey::Pubkey, signature::Signer,
-    signers::Signers, system_instruction, transaction::TransactionError,
+    clock::MS_PER_TICK, commitment_config::CommitmentConfig, commitment_config::CommitmentLevel,
+    fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE, instruction::AccountMeta,
+    message::Message, pubkey::Pubkey, signature::Signer, signers::Signers, system_instruction,
+    transaction::TransactionError,
 };
 
 use solana_client::{
@@ -38,6 +38,8 @@ use solana_client::{
     rpc_response::Response as RpcResponse,
     rpc_response::*,
 };
+
+use ::tokio;
 
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
@@ -217,6 +219,7 @@ impl EvmBridge {
         tx: evm::Transaction,
         mut meta_keys: HashSet<Pubkey>,
     ) -> FutureEvmResult<Hex<H256>> {
+        warn!("SEND_TX CALLED");
         let hash = tx.tx_id_hash();
         let bytes = bincode::serialize(&tx).unwrap();
 
@@ -230,6 +233,7 @@ impl EvmBridge {
         }
 
         if bytes.len() > evm::TX_MTU {
+            warn!("BIG TX DETECTED");
             debug!("Sending tx = {}, by chunks", hash);
             match self.deploy_big_tx(&self.key, &tx) {
                 Ok(_tx) => return Ok(Hex(hash)),
@@ -278,21 +282,17 @@ impl EvmBridge {
         let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
 
         debug!("Getting block hash");
-        let (blockhash, _fee_calculator, _) = match self
+        let (blockhash, _fee_calculator, _) = self
             .rpc_client
             .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
-        {
-            Ok(ok) => ok.value,
-            Err(e) => {
-                return Err(Error::NativeRpcError {
-                    details: String::from("Failed to get recent blockhash"),
-                    source: e.into(),
-                    verbose: self.verbose_errors,
-                })
-            }
-        };
+            .map(|response| response.value)
+            .map_err(|e| Error::NativeRpcError {
+                details: String::from("Failed to get recent blockhash"),
+                source: e.into(),
+                verbose: self.verbose_errors,
+            })?;
 
-        send_raw_tx.sign(&vec![&self.key], blockhash);
+        send_raw_tx.sign(&[&self.key], blockhash);
         debug!("Sending tx = {:?}", send_raw_tx);
 
         self.rpc_client
@@ -792,6 +792,9 @@ impl BasicERPC for BasicErpcProxy {
         proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block, meta_keys)
     }
 
+    // NOTE: no panics
+    // request: {"jsonrpc": "2.0", "method": "eth_getLogs", "params": [{}], "id": 1}
+    // response: {"jsonrpc": "2.0", "result": [],"id": 1}
     fn logs(&self, meta: Self::Metadata, mut log_filter: RPCLogFilter) -> EvmResult<Vec<RPCLog>> {
         let starting_block = meta.block_to_number(log_filter.from_block.clone())?;
         let ending_block = meta.block_to_number(log_filter.to_block.clone())?;
@@ -812,57 +815,47 @@ impl BasicERPC for BasicErpcProxy {
                 batch_size: Some(meta.max_logs_blocks),
             });
         }
-        // Create tokio runtime to execute requests in parallel blocking threads.
-        // Use move execution in thread::spawn to avoid panic during rutime creation
-        // (Cannot create runtime inside hyper runtime).
-        let results = std::thread::spawn(move || {
-            let mut starting = starting_block;
 
-            let mut rt = tokio::runtime::Builder::new()
-                .thread_name("get-logs-runner")
-                .max_threads(8)
-                .build()
-                .map_err(|details| Error::RuntimeError {
+        let mut starting = starting_block;
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .thread_name("get-logs-runner")
+            .build()
+            .map_err(|details| Error::RuntimeError {
+                details: details.to_string(),
+            })?;
+
+        // make execution parallel
+        rt.block_on(async {
+            let mut collector = Vec::new();
+            while starting <= ending_block {
+                let ending = (starting.saturating_add(MAX_NUM_BLOCKS_IN_BATCH)).min(ending_block);
+                log_filter.from_block = Some(format!("{:#x}", starting));
+                log_filter.to_block = Some(format!("{:#x}", ending));
+
+                let cloned_filter = log_filter.clone();
+                let cloned_meta = meta.clone();
+                // Parallel execution:
+                collector.push(tokio::task::spawn_blocking(move || {
+                    info!("filter = {:?}", cloned_filter);
+                    let result: EvmResult<Vec<RPCLog>> =
+                        proxy_evm_rpc!(@silent cloned_meta.rpc_client, EthGetLogs, cloned_filter);
+                    info!("logs = {:?}", result);
+
+                    result
+                }));
+
+                starting = starting.saturating_add(MAX_NUM_BLOCKS_IN_BATCH + 1);
+            }
+            // join all execution, fast fail on any error.
+            let mut result = Vec::new();
+            for collection in collector {
+                result.extend(collection.await.map_err(|details| Error::RuntimeError {
                     details: details.to_string(),
-                })?;
-            // make execution parallel
-            rt.block_on(async {
-                let mut collector = Vec::new();
-                while starting <= ending_block {
-                    let ending =
-                        (starting.saturating_add(MAX_NUM_BLOCKS_IN_BATCH)).min(ending_block);
-                    log_filter.from_block = Some(format!("{:#x}", starting));
-                    log_filter.to_block = Some(format!("{:#x}", ending));
-
-                    let cloned_filter = log_filter.clone();
-                    let cloned_meta = meta.clone();
-                    // Parallel execution:
-                    collector.push(tokio::task::spawn_blocking(move || {
-                        println!("filter = {:?}", cloned_filter);
-                        let result: EvmResult<Vec<RPCLog>> =
-                            proxy_evm_rpc!(@silent cloned_meta.rpc_client, EthGetLogs, cloned_filter);
-                        println!("logs = {:?}", result);
-
-                        result
-                    }));
-
-                    starting = starting.saturating_add(MAX_NUM_BLOCKS_IN_BATCH + 1);
-                }
-                // join all execution, fast fail on any error.
-                let mut result = Vec::new();
-                for collection in collector {
-                    result.extend(collection.await.map_err(|details| Error::RuntimeError {
-                        details: details.to_string(),
-                    })??)
-                }
-                Ok(result)
-            })
+                })??)
+            }
+            Ok(result)
         })
-        .join()
-        .map_err(|_details| Error::RuntimeError {
-            details: "panic in spawned thread".to_string(),
-        })??;
-        Ok(results)
     }
 
     fn gas_price(&self, _meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
@@ -967,7 +960,8 @@ impl<M: jsonrpc_core::Metadata> Middleware<M> for LoggingMiddleware {
 // RUST_LOG="debug" cargo run ~/Desktop/velas-validator-keypair.json https://api.testnet.velas.com/rpc 0.0.0.0:8545 111
 // ANCHOR: main
 #[paw::main]
-fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
     env_logger::builder()
         .filter(Some("hyper"), LevelFilter::Off)
         .filter(Some("reqwest"), LevelFilter::Off)
