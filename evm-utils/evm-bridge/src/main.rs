@@ -457,11 +457,11 @@ impl EvmBridge {
         Ok(())
     }
 
-    fn block_to_number(&self, block: Option<String>) -> EvmResult<u64> {
-        let block = block.unwrap_or("latest".to_string());
-        let block_string = match &*block {
+    fn block_to_number(&self, block: &Option<String>) -> EvmResult<u64> {
+        let block = block.as_deref().unwrap_or("latest");
+        let block_string = match block {
             "latest" => proxy_evm_rpc!(self.rpc_client, EthBlockNumber)?,
-            _ => block,
+            _ => block.to_string(),
         };
         Hex::<u64>::from_hex(&block_string).map(|f| f.0)
     }
@@ -796,8 +796,8 @@ impl BasicERPC for BasicErpcProxy {
     // request: {"jsonrpc": "2.0", "method": "eth_getLogs", "params": [{}], "id": 1}
     // response: {"jsonrpc": "2.0", "result": [],"id": 1}
     fn logs(&self, meta: Self::Metadata, mut log_filter: RPCLogFilter) -> EvmResult<Vec<RPCLog>> {
-        let starting_block = meta.block_to_number(log_filter.from_block.clone())?;
-        let ending_block = meta.block_to_number(log_filter.to_block.clone())?;
+        let starting_block = meta.block_to_number(&log_filter.from_block)?;
+        let ending_block = meta.block_to_number(&log_filter.to_block)?;
 
         if ending_block < starting_block {
             return Err(Error::InvalidBlocksRange {
