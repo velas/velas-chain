@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use jsonrpc_core::BoxFuture;
 use jsonrpc_derive::rpc;
 use primitive_types::{H256, U256};
 use serde::{Deserialize, Serialize};
@@ -537,7 +538,7 @@ pub mod bridge {
             meta: Self::Metadata,
             tx: RPCTransaction,
             meta_keys: Option<Vec<String>>,
-        ) -> Result<Hex<H256>, Error>;
+        ) -> BoxFuture<Result<Hex<H256>, Error>>;
 
         #[rpc(meta, name = "eth_sendRawTransaction")]
         fn send_raw_transaction(
@@ -545,7 +546,7 @@ pub mod bridge {
             meta: Self::Metadata,
             tx: Bytes,
             meta_keys: Option<Vec<String>>,
-        ) -> Result<Hex<H256>, Error>;
+        ) -> BoxFuture<Result<Hex<H256>, Error>>;
 
         #[rpc(meta, name = "eth_getCompilers")]
         fn compilers(&self, meta: Self::Metadata) -> Result<Vec<String>, Error>;

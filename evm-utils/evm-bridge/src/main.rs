@@ -43,7 +43,7 @@ use ::tokio;
 
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
-type FutureEvmResult<T> = EvmResult<T>;
+type FutureEvmResult<T> = BoxFuture<EvmResult<T>>;
 
 mod sol_proxy;
 mod transaction_pool;
@@ -215,97 +215,108 @@ impl EvmBridge {
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
     fn send_tx(
-        &self,
+        self: Arc<Self>,
         tx: evm::Transaction,
         mut meta_keys: HashSet<Pubkey>,
     ) -> FutureEvmResult<Hex<H256>> {
-        warn!("SEND_TX CALLED");
-        let hash = tx.tx_id_hash();
-        let bytes = bincode::serialize(&tx).unwrap();
+        let future = async move {
+            warn!("SEND_TX CALLED");
+            let hash = tx.tx_id_hash();
 
-        let rpc_tx = RPCTransaction::from_transaction(tx.clone().into())?;
+            let bytes = bincode::serialize(&tx).unwrap();
 
-        if self.simulate {
-            // Try simulate transaction execution
-            self.rpc_client
-                .send::<Bytes>(RpcRequest::EthCall, json!([rpc_tx, "latest"]))
-                .map_err(from_client_error)?;
-        }
+            let rpc_tx = RPCTransaction::from_transaction(tx.clone().into())?;
 
-        if bytes.len() > evm::TX_MTU {
-            warn!("BIG TX DETECTED");
-            debug!("Sending tx = {}, by chunks", hash);
-            match self.deploy_big_tx(&self.key, &tx) {
-                Ok(_tx) => return Ok(Hex(hash)),
-                Err(e) => {
-                    error!("Error creating big tx = {}", e);
-                    return Err(e);
-                }
+            if self.simulate {
+                // Try simulate transaction execution
+                self.rpc_client
+                    .send::<Bytes>(RpcRequest::EthCall, json!([rpc_tx, "latest"]))
+                    .map_err(from_client_error)?;
             }
-        }
 
-        debug!(
-            "Printing tx_info from = {:?}, to = {:?}, nonce = {}, chain_id = {:?}",
-            tx.caller(),
-            tx.address(),
-            tx.nonce,
-            tx.signature.chain_id()
-        );
-
-        // Shortcut for swap tokens to native, will add solana account to transaction.
-        if let TransactionAction::Call(addr) = tx.action {
-            use solana_evm_loader_program::precompiles::*;
-
-            if addr == *ETH_TO_VLX_ADDR {
-                debug!("Found transferToNative transaction");
-                match ETH_TO_VLX_CODE.parse_abi(&tx.input) {
-                    Ok(pk) => {
-                        info!("Adding account to meta = {}", pk);
-                        meta_keys.insert(pk);
-                    }
+            if bytes.len() > evm::TX_MTU {
+                warn!("BIG TX DETECTED");
+                debug!("Sending tx = {}, by chunks", hash);
+                match self.deploy_big_tx(&self.key, &tx) {
+                    Ok(_tx) => {
+                        warn!("BIG TX DEPLOYED");
+                        return Ok(Hex(hash))
+                    },
                     Err(e) => {
-                        error!("Error in parsing abi = {}", e);
+                        error!("Error creating big tx = {}", e);
+                        return Err(e);
                     }
                 }
             }
-        }
 
-        let mut ix =
-            solana_evm_loader_program::send_raw_tx(self.key.pubkey(), tx, Some(self.key.pubkey()));
+            debug!(
+                "Printing tx_info from = {:?}, to = {:?}, nonce = {}, chain_id = {:?}",
+                tx.caller(),
+                tx.address(),
+                tx.nonce,
+                tx.signature.chain_id()
+            );
 
-        // Add meta accounts as additional arguments
-        for account in meta_keys {
-            ix.accounts.push(AccountMeta::new(account, false))
-        }
+            // Shortcut for swap tokens to native, will add solana account to transaction.
+            if let TransactionAction::Call(addr) = tx.action {
+                use solana_evm_loader_program::precompiles::*;
 
-        let message = Message::new(&[ix], Some(&self.key.pubkey()));
-        let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
+                if addr == *ETH_TO_VLX_ADDR {
+                    debug!("Found transferToNative transaction");
+                    match ETH_TO_VLX_CODE.parse_abi(&tx.input) {
+                        Ok(pk) => {
+                            info!("Adding account to meta = {}", pk);
+                            meta_keys.insert(pk);
+                        }
+                        Err(e) => {
+                            error!("Error in parsing abi = {}", e);
+                        }
+                    }
+                }
+            }
 
-        debug!("Getting block hash");
-        let (blockhash, _fee_calculator, _) = self
-            .rpc_client
-            .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
-            .map(|response| response.value)
-            .map_err(|e| Error::NativeRpcError {
-                details: String::from("Failed to get recent blockhash"),
-                source: e.into(),
-                verbose: self.verbose_errors,
-            })?;
+            let mut ix = solana_evm_loader_program::send_raw_tx(
+                self.key.pubkey(),
+                tx,
+                Some(self.key.pubkey()),
+            );
 
-        send_raw_tx.sign(&[&self.key], blockhash);
-        debug!("Sending tx = {:?}", send_raw_tx);
+            // Add meta accounts as additional arguments
+            for account in meta_keys {
+                ix.accounts.push(AccountMeta::new(account, false))
+            }
 
-        self.rpc_client
-            .send_transaction_with_config(
-                &send_raw_tx,
-                RpcSendTransactionConfig {
-                    preflight_commitment: Some(CommitmentLevel::Processed),
-                    skip_preflight: !self.simulate,
-                    ..Default::default()
-                },
-            )
-            .map(|_| Hex(hash))
-            .map_err(from_client_error)
+            let message = Message::new(&[ix], Some(&self.key.pubkey()));
+            let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
+
+            debug!("Getting block hash");
+            let (blockhash, _fee_calculator, _) = self
+                .rpc_client
+                .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+                .map(|response| response.value)
+                .map_err(|e| Error::NativeRpcError {
+                    details: String::from("Failed to get recent blockhash"),
+                    source: e.into(),
+                    verbose: self.verbose_errors,
+                })?;
+
+            send_raw_tx.sign(&[&self.key], blockhash);
+            debug!("Sending tx = {:?}", send_raw_tx);
+
+            self.rpc_client
+                .send_transaction_with_config(
+                    &send_raw_tx,
+                    RpcSendTransactionConfig {
+                        preflight_commitment: Some(CommitmentLevel::Processed),
+                        skip_preflight: !self.simulate,
+                        ..Default::default()
+                    },
+                )
+                .map(|_| Hex(hash))
+                .map_err(from_client_error)
+        };
+
+        Box::pin(future)
     }
 
     fn deploy_big_tx(
@@ -491,40 +502,47 @@ impl BridgeERPC for BridgeErpcImpl {
         tx: RPCTransaction,
         meta_keys: Option<Vec<String>>,
     ) -> FutureEvmResult<Hex<H256>> {
-        let address = tx.from.map(|a| a.0).unwrap_or_default();
+        let meta = meta.clone();
+        let future = async move {
+            let address = tx.from.map(|a| a.0).unwrap_or_default();
 
-        debug!("send_transaction from = {}", address);
+            debug!("send_transaction from = {}", address);
 
-        let meta_keys: StdResult<HashSet<_>, _> = meta_keys
-            .into_iter()
-            .flatten()
-            .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
-            .collect();
+            let meta_keys: StdResult<HashSet<_>, _> = meta_keys
+                .into_iter()
+                .flatten()
+                .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
+                .collect();
 
-        let secret_key = meta
-            .accounts
-            .get(&address)
-            .ok_or(Error::KeyNotFound { account: address })?;
-        let nonce = tx
-            .nonce
-            .map(|a| a.0)
-            .or_else(|| meta.rpc_client.get_evm_transaction_count(&address).ok())
-            .unwrap_or_default();
-        let tx_create = evm::UnsignedTransaction {
-            nonce,
-            gas_price: tx.gas_price.map(|a| a.0).unwrap_or_else(|| 0.into()),
-            gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 30000000.into()),
-            action: tx
-                .to
-                .map(|a| evm::TransactionAction::Call(a.0))
-                .unwrap_or(evm::TransactionAction::Create),
-            value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
-            input: tx.input.map(|a| a.0).unwrap_or_default(),
+            let secret_key = meta
+                .accounts
+                .get(&address)
+                .ok_or(Error::KeyNotFound { account: address })?;
+            let nonce = tx
+                .nonce
+                .map(|a| a.0)
+                .or_else(|| meta.rpc_client.get_evm_transaction_count(&address).ok())
+                .unwrap_or_default();
+            let tx_create = evm::UnsignedTransaction {
+                nonce,
+                gas_price: tx.gas_price.map(|a| a.0).unwrap_or_else(|| 0.into()),
+                gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 30000000.into()),
+                action: tx
+                    .to
+                    .map(|a| evm::TransactionAction::Call(a.0))
+                    .unwrap_or(evm::TransactionAction::Create),
+                value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
+                input: tx.input.map(|a| a.0).unwrap_or_default(),
+            };
+
+            let tx = tx_create.sign(secret_key, Some(meta.evm_chain_id));
+
+            let verbose_errors = meta.verbose_errors;
+            meta.send_tx(tx, meta_keys.into_native_error(verbose_errors)?)
+                .await
         };
 
-        let tx = tx_create.sign(secret_key, Some(meta.evm_chain_id));
-
-        meta.send_tx(tx, meta_keys.into_native_error(meta.verbose_errors)?)
+        Box::pin(future)
     }
 
     fn send_raw_transaction(
@@ -533,26 +551,35 @@ impl BridgeERPC for BridgeErpcImpl {
         bytes: Bytes,
         meta_keys: Option<Vec<String>>,
     ) -> FutureEvmResult<Hex<H256>> {
-        debug!("send_raw_transaction");
-        let meta_keys: StdResult<HashSet<_>, _> = meta_keys
-            .into_iter()
-            .flatten()
-            .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
-            .collect();
+        let meta = meta.clone();
+        let future = async move {
+            debug!("send_raw_transaction");
+            let meta_keys: StdResult<HashSet<_>, _> = meta_keys
+                .into_iter()
+                .flatten()
+                .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
+                .collect();
 
-        let tx: compatibility::Transaction = rlp::decode(&bytes.0).with_context(|| RlpError {
-            struct_name: "RawTransaction".to_string(),
-            input_data: hex::encode(&bytes.0),
-        })?;
-        let tx: evm::Transaction = tx.into();
+            let tx: compatibility::Transaction =
+                rlp::decode(&bytes.0).with_context(|| RlpError {
+                    struct_name: "RawTransaction".to_string(),
+                    input_data: hex::encode(&bytes.0),
+                })?;
+            let tx: evm::Transaction = tx.into();
 
-        // TODO: Check chain_id.
-        // TODO: check gas price.
+            // TODO: Check chain_id.
+            // TODO: check gas price.
 
-        let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
-        let hash = unsigned_tx.signing_hash(Some(meta.evm_chain_id));
-        debug!("loaded tx_hash = {}", hash);
-        meta.send_tx(tx, meta_keys.into_native_error(meta.verbose_errors)?)
+            let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
+            let hash = unsigned_tx.signing_hash(Some(meta.evm_chain_id));
+            debug!("loaded tx_hash = {}", hash);
+
+            let verbose_errors = meta.verbose_errors;
+            meta.send_tx(tx, meta_keys.into_native_error(verbose_errors)?)
+                .await
+        };
+
+        Box::pin(future)
     }
 
     fn compilers(&self, _meta: Self::Metadata) -> EvmResult<Vec<String>> {
@@ -960,8 +987,8 @@ impl<M: jsonrpc_core::Metadata> Middleware<M> for LoggingMiddleware {
 // RUST_LOG="debug" cargo run ~/Desktop/velas-validator-keypair.json https://api.testnet.velas.com/rpc 0.0.0.0:8545 111
 // ANCHOR: main
 #[paw::main]
-#[tokio::main]
-async fn main(args: Args) -> std::result::Result<(), Box<dyn std::error::Error>> {
+#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
+async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     env_logger::builder()
         .filter(Some("hyper"), LevelFilter::Off)
         .filter(Some("reqwest"), LevelFilter::Off)
