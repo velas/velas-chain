@@ -713,7 +713,8 @@ fn call_inner(
     let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
     let input = tx.input.map(|a| a.0).unwrap_or_else(Vec::new);
     let gas_limit = tx.gas.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
-    let gas_price = tx.gas_price.map(|a| a.0).unwrap_or_else(|| u64::MIN.into());
+    // On estimate set gas price to zero, to avoid out of funds errors.
+    let gas_price = u64::MIN.into();
 
     let nonce = tx
         .nonce
