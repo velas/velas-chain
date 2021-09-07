@@ -1562,13 +1562,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53d4e679d6864bc26210feb5cf044e245741cd9d7701b35c00440a6e84d61399"
 dependencies = [
  "anyhow",
- "ethereum-types",
+ "ethereum-types 0.10.0",
  "hex",
  "serde",
  "serde_json",
  "sha3 0.9.1",
  "thiserror",
- "uint",
+ "uint 0.9.1",
+]
+
+[[package]]
+name = "ethbloom"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd0584482a6433370908dee84ea13992c2cf39c569600e4dbfafe520bb3b90d1"
+dependencies = [
+ "crunchy",
+ "fixed-hash 0.4.0",
+ "impl-rlp 0.2.1",
+ "impl-serde 0.2.3",
+ "tiny-keccak 1.5.0",
 ]
 
 [[package]]
@@ -1578,10 +1591,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22a621dcebea74f2a6f2002d0a885c81ccf6cbdf86760183316a7722b5707ca4"
 dependencies = [
  "crunchy",
- "fixed-hash",
- "impl-rlp",
- "impl-serde",
- "tiny-keccak",
+ "fixed-hash 0.7.0",
+ "impl-rlp 0.3.0",
+ "impl-serde 0.3.1",
+ "tiny-keccak 2.0.2",
 ]
 
 [[package]]
@@ -1591,10 +1604,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "779864b9c7f7ead1f092972c3257496c6a84b46dba2ce131dd8a282cb2cc5972"
 dependencies = [
  "crunchy",
- "fixed-hash",
- "impl-rlp",
- "impl-serde",
- "tiny-keccak",
+ "fixed-hash 0.7.0",
+ "impl-rlp 0.3.0",
+ "impl-serde 0.3.1",
+ "tiny-keccak 2.0.2",
 ]
 
 [[package]]
@@ -1603,15 +1616,29 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8603f637f22e3ab9aff8466b37850cd7ea2ae52034b07e41fdc82f1f68dfa2c"
 dependencies = [
- "ethereum-types",
+ "ethereum-types 0.10.0",
  "hash-db",
  "hash256-std-hasher",
  "parity-scale-codec",
- "rlp",
+ "rlp 0.5.1",
  "rlp-derive",
  "serde",
  "sha3 0.9.1",
  "triehash",
+]
+
+[[package]]
+name = "ethereum-types"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a5a7777cb75d9ee2b8d3752634b15e4e4e70d2ef81a227e9d157acfa18592b1"
+dependencies = [
+ "ethbloom 0.7.0",
+ "fixed-hash 0.4.0",
+ "impl-rlp 0.2.1",
+ "impl-serde 0.2.3",
+ "primitive-types 0.5.1",
+ "uint 0.8.5",
 ]
 
 [[package]]
@@ -1621,11 +1648,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05dc5f0df4915fa6dff7f975a8366ecfaaa8959c74235469495153e7bb1b280e"
 dependencies = [
  "ethbloom 0.10.0",
- "fixed-hash",
- "impl-rlp",
- "impl-serde",
- "primitive-types",
- "uint",
+ "fixed-hash 0.7.0",
+ "impl-rlp 0.3.0",
+ "impl-serde 0.3.1",
+ "primitive-types 0.8.0",
+ "uint 0.9.1",
 ]
 
 [[package]]
@@ -1639,8 +1666,8 @@ dependencies = [
  "evm-runtime",
  "log 0.4.14",
  "parity-scale-codec",
- "primitive-types",
- "rlp",
+ "primitive-types 0.8.0",
+ "rlp 0.5.1",
  "serde",
  "sha3 0.8.2",
 ]
@@ -1663,8 +1690,8 @@ dependencies = [
  "jsonrpc-ws-server",
  "log 0.4.14",
  "paw",
- "primitive-types",
- "rlp",
+ "primitive-types 0.8.0",
+ "rlp 0.5.1",
  "secp256k1",
  "serde_json",
  "sha3 0.9.1",
@@ -1679,6 +1706,7 @@ dependencies = [
  "solana-transaction-status",
  "structopt",
  "tokio 1.9.0",
+ "txpool",
 ]
 
 [[package]]
@@ -1687,7 +1715,7 @@ version = "0.23.0"
 source = "git+https://github.com/velas/evm?branch=evm-estimate-dontrecord-l64#e60bf6c62197f3486f31a263c74a058479d923d8"
 dependencies = [
  "parity-scale-codec",
- "primitive-types",
+ "primitive-types 0.8.0",
  "serde",
 ]
 
@@ -1698,7 +1726,7 @@ source = "git+https://github.com/velas/evm?branch=evm-estimate-dontrecord-l64#e6
 dependencies = [
  "evm-core",
  "evm-runtime",
- "primitive-types",
+ "primitive-types 0.8.0",
 ]
 
 [[package]]
@@ -1716,14 +1744,14 @@ dependencies = [
  "jsonrpc-derive",
  "jsonrpc-http-server",
  "jsonrpc-pubsub",
- "primitive-types",
- "rlp",
+ "primitive-types 0.8.0",
+ "rlp 0.5.1",
  "rustc-hex",
  "secp256k1",
  "serde",
  "serde_json",
  "snafu",
- "uint",
+ "uint 0.9.1",
 ]
 
 [[package]]
@@ -1732,7 +1760,7 @@ version = "0.23.0"
 source = "git+https://github.com/velas/evm?branch=evm-estimate-dontrecord-l64#e60bf6c62197f3486f31a263c74a058479d923d8"
 dependencies = [
  "evm-core",
- "primitive-types",
+ "primitive-types 0.8.0",
  "sha3 0.8.2",
 ]
 
@@ -1752,21 +1780,21 @@ dependencies = [
  "ethabi",
  "ethbloom 0.11.0",
  "evm",
- "fixed-hash",
+ "fixed-hash 0.7.0",
  "hex",
- "impl-rlp",
+ "impl-rlp 0.3.0",
  "itertools 0.10.1",
  "keccak-hash",
  "lazy_static 1.4.0",
  "log 0.4.14",
  "once_cell",
  "paste 1.0.5",
- "primitive-types",
+ "primitive-types 0.8.0",
  "quickcheck 0.9.2",
  "quickcheck_macros 0.9.1",
  "rand 0.6.1",
  "rand 0.8.4",
- "rlp",
+ "rlp 0.5.1",
  "rocksdb",
  "secp256k1",
  "serde",
@@ -1845,6 +1873,18 @@ dependencies = [
 
 [[package]]
 name = "fixed-hash"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "516877b7b9a1cc2d0293cbce23cd6203f0edbfd4090e6ca4489fecb5aa73050e"
+dependencies = [
+ "byteorder",
+ "rand 0.5.6",
+ "rustc-hex",
+ "static_assertions 0.2.5",
+]
+
+[[package]]
+name = "fixed-hash"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcf0ed7fe52a17a03854ec54a9f76d6d84508d1c0e66bc1793301c73fc8493c"
@@ -1852,7 +1892,7 @@ dependencies = [
  "byteorder",
  "rand 0.8.4",
  "rustc-hex",
- "static_assertions",
+ "static_assertions 1.1.0",
 ]
 
 [[package]]
@@ -2559,11 +2599,29 @@ dependencies = [
 
 [[package]]
 name = "impl-rlp"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f7a72f11830b52333f36e3b09a288333888bf54380fd0ac0790a3c31ab0f3c5"
+dependencies = [
+ "rlp 0.4.6",
+]
+
+[[package]]
+name = "impl-rlp"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f28220f89297a075ddc7245cd538076ee98b01f2a9c23a53a4f1105d5a322808"
 dependencies = [
- "rlp",
+ "rlp 0.5.1",
+]
+
+[[package]]
+name = "impl-serde"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58e3cae7e99c7ff5a995da2cf78dd0a5383740eda71d98cf7b1910c301ac69b8"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -2858,8 +2916,8 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3208a3f8f6fad9a5c626276812ebdd54d3b5f79cb59e34c2fdcdf03837900072"
 dependencies = [
- "primitive-types",
- "tiny-keccak",
+ "primitive-types 0.8.0",
+ "tiny-keccak 2.0.2",
 ]
 
 [[package]]
@@ -2870,7 +2928,7 @@ checksum = "711adba9940a039f4374fc5724c0a5eaca84a2d558cce62256bfe26f0dbef05e"
 dependencies = [
  "hash-db",
  "hash256-std-hasher",
- "tiny-keccak",
+ "tiny-keccak 2.0.2",
 ]
 
 [[package]]
@@ -2920,7 +2978,7 @@ dependencies = [
  "bitflags",
  "cfg-if 1.0.0",
  "ryu",
- "static_assertions",
+ "static_assertions 1.1.0",
 ]
 
 [[package]]
@@ -3861,15 +3919,28 @@ checksum = "bc5c99d529f0d30937f6f4b8a86d988047327bb88d04d2c4afc356de74722131"
 
 [[package]]
 name = "primitive-types"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83ef7b3b965c0eadcb6838f34f827e1dfb2939bdd5ebd43f9647e009b12b0371"
+dependencies = [
+ "fixed-hash 0.4.0",
+ "impl-codec",
+ "impl-rlp 0.2.1",
+ "impl-serde 0.2.3",
+ "uint 0.8.5",
+]
+
+[[package]]
+name = "primitive-types"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3824ae2c5e27160113b9e029a10ec9e3f0237bad8029f69c7724393c9fdefd8"
 dependencies = [
- "fixed-hash",
+ "fixed-hash 0.7.0",
  "impl-codec",
- "impl-rlp",
- "impl-serde",
- "uint",
+ "impl-rlp 0.3.0",
+ "impl-serde 0.3.1",
+ "uint 0.9.1",
 ]
 
 [[package]]
@@ -4082,6 +4153,19 @@ dependencies = [
  "libc",
  "rand_core 0.3.1",
  "rdrand",
+ "winapi 0.3.9",
+]
+
+[[package]]
+name = "rand"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c618c47cd3ebd209790115ab837de41425723956ad3ce2e6a7f09890947cacb9"
+dependencies = [
+ "cloudabi",
+ "fuchsia-cprng",
+ "libc",
+ "rand_core 0.3.1",
  "winapi 0.3.9",
 ]
 
@@ -4434,6 +4518,15 @@ dependencies = [
  "block-buffer 0.9.0",
  "digest 0.9.0",
  "opaque-debug 0.3.0",
+]
+
+[[package]]
+name = "rlp"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1190dcc8c3a512f1eef5d09bb8c84c7f39e1054e174d1795482e18f5272f2e73"
+dependencies = [
+ "rustc-hex",
 ]
 
 [[package]]
@@ -5516,7 +5609,7 @@ dependencies = [
  "net2",
  "num-traits",
  "num_cpus",
- "primitive-types",
+ "primitive-types 0.8.0",
  "rand 0.7.3",
  "rand_chacha 0.2.2",
  "rand_core 0.6.3",
@@ -5525,7 +5618,7 @@ dependencies = [
  "regex",
  "reqwest",
  "retain_mut",
- "rlp",
+ "rlp 0.5.1",
  "rustc_version 0.2.3",
  "secp256k1",
  "serde",
@@ -5646,7 +5739,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "once_cell",
- "primitive-types",
+ "primitive-types 0.8.0",
  "quickcheck 1.0.3",
  "quickcheck_macros 1.0.0",
  "ripemd160",
@@ -6360,7 +6453,7 @@ dependencies = [
  "rand 0.7.3",
  "rand_chacha 0.2.2",
  "rand_core 0.6.3",
- "rlp",
+ "rlp 0.5.1",
  "rustc_version 0.2.3",
  "rustversion",
  "serde",
@@ -6549,7 +6642,7 @@ dependencies = [
  "bs58",
  "evm-state",
  "prost",
- "rlp",
+ "rlp 0.5.1",
  "serde",
  "serde_derive",
  "solana-account-decoder",
@@ -6810,6 +6903,12 @@ dependencies = [
 
 [[package]]
 name = "static_assertions"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c19be23126415861cb3a23e501d34a708f7f9b2183c5252d690941c2e69199d5"
+
+[[package]]
+name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
@@ -7011,7 +7110,7 @@ dependencies = [
  "pin-project",
  "rand 0.7.3",
  "serde",
- "static_assertions",
+ "static_assertions 1.1.0",
  "tarpc-plugins",
  "tokio 1.9.0",
  "tokio-serde",
@@ -7187,6 +7286,15 @@ dependencies = [
  "thiserror",
  "unicode-normalization",
  "zeroize",
+]
+
+[[package]]
+name = "tiny-keccak"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d8a021c69bb74a44ccedb824a046447e2c84a01df9e5c20779750acb38e11b2"
+dependencies = [
+ "crunchy",
 ]
 
 [[package]]
@@ -7630,6 +7738,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "360dfd1d6d30e05fda32ace2c8c70e9c0a9da713275777f5a4dbb8a1893930c6"
 
 [[package]]
+name = "trace-time"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a1e75297b57b61495169dd40dd86e0ab52bfc7cdba570f59be5683709c9d480"
+dependencies = [
+ "log 0.4.14",
+]
+
+[[package]]
 name = "tracing"
 version = "0.1.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7698,8 +7815,8 @@ name = "triedb"
 version = "0.5.0"
 source = "git+https://github.com/velas/triedb?branch=chore/bump-rocksdb#ea0083bc880a47f51c11df4cbfebb90ee4988545"
 dependencies = [
- "primitive-types",
- "rlp",
+ "primitive-types 0.8.0",
+ "rlp 0.5.1",
  "rocksdb",
  "sha3 0.9.1",
  "thiserror",
@@ -7712,7 +7829,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1631b201eb031b563d2e85ca18ec8092508e262a3196ce9bd10a67ec87b9f5c"
 dependencies = [
  "hash-db",
- "rlp",
+ "rlp 0.5.1",
 ]
 
 [[package]]
@@ -7742,6 +7859,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "txpool"
+version = "1.0.0-alpha"
+dependencies = [
+ "ethereum-types 0.7.0",
+ "log 0.4.14",
+ "smallvec 0.6.14",
+ "trace-time",
+]
+
+[[package]]
 name = "typeable"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7761,6 +7888,18 @@ checksum = "56dee185309b50d1f11bfedef0fe6d036842e3fb77413abef29f8f8d1c5d4c1c"
 
 [[package]]
 name = "uint"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9db035e67dfaf7edd9aebfe8676afcd63eed53c8a4044fed514c8cccf1835177"
+dependencies = [
+ "byteorder",
+ "crunchy",
+ "rustc-hex",
+ "static_assertions 1.1.0",
+]
+
+[[package]]
+name = "uint"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6470ab50f482bde894a037a57064480a246dbfdd5960bd65a44824693f08da5f"
@@ -7768,7 +7907,7 @@ dependencies = [
  "byteorder",
  "crunchy",
  "hex",
- "static_assertions",
+ "static_assertions 1.1.0",
 ]
 
 [[package]]
