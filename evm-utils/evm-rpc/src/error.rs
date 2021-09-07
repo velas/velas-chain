@@ -76,7 +76,7 @@ pub enum Error {
         verbose: bool,
     },
 
-    #[snafu(display("Error in evm processing layer"))]
+    #[snafu(display("Error in evm processing layer: {}", source))]
     EvmStateError { source: evm_state::error::Error },
 
     #[snafu(display("Method unimplemented"))]
