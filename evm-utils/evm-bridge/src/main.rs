@@ -46,7 +46,6 @@ type EvmResult<T> = StdResult<T, evm_rpc::Error>;
 type FutureEvmResult<T> = BoxFuture<EvmResult<T>>;
 
 mod sol_proxy;
-mod transaction_pool;
 
 const MAX_NUM_BLOCKS_IN_BATCH: u64 = 2000; // should be less or equal to const core::evm_rpc_impl::logs::MAX_NUM_BLOCKS
 
