@@ -1,11 +1,16 @@
+use std::{sync::Arc, thread::JoinHandle};
+
 use evm_state::{Address, H256};
-use txpool::{Listener, Options, Pool, Scoring, ShouldReplace, VerifiedTransaction};
+use log::*;
+use txpool::{Listener, Pool, Readiness, Scoring, ShouldReplace, VerifiedTransaction};
 use solana_evm_loader_program::scope::evm;
 
-type EthPool = Pool<PooledTransaction, MyScoring, MyListener>;
+use crate::EvmBridge;
+
+pub type EthPool = Pool<PooledTransaction, MyScoring, MyListener>;
 
 #[derive(Debug)]
-struct PooledTransaction {
+pub struct PooledTransaction {
     inner: evm::Transaction,
     sender: Address,
     hash: H256
@@ -43,7 +48,7 @@ impl VerifiedTransaction for PooledTransaction {
 }
 
 #[derive(Debug)]
-struct MyScoring;
+pub struct MyScoring;
 
 impl Scoring<PooledTransaction> for MyScoring {
     type Score = H256;
@@ -105,25 +110,53 @@ impl ShouldReplace<PooledTransaction> for MyScoring {
     }
 }
 
-#[test]
-fn test_pool() {
-    let mut pool = EthPool::new(MyListener, MyScoring, Options::default());
+pub fn create_pool_worker(bridge: Arc<EvmBridge>) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        loop {
+            let mut data = bridge.pool.lock().unwrap();
+            let tx = data.pending(|tx: &PooledTransaction| Readiness::Ready, H256::zero()).next();
 
-    let evm_tx = evm::Transaction {
-        nonce: 1.into(),
-        gas_price: 222.into(),
-        gas_limit: 333.into(),
-        action: evm::TransactionAction::Create,
-        value: 123.into(),
-        signature: evm::TransactionSignature { 
-            r: H256::zero(),
-            s: H256::zero(),
-            v: 0u64
-        },
-        input: vec![1, 2, 3],
-    };
+            std::mem::drop(data);
 
-    let pooled_tx = PooledTransaction::from(evm_tx);
+            if let Some(tx) = tx {
+                info!("pool worker is doing some work: tx.hash = {:?}", &tx.hash);
+                
+                let successfully_processed = true;
+            
+                if (successfully_processed) {
+                    bridge.pool.lock().unwrap().remove(tx.hash(), false).unwrap();
+                }
+            } else {
+                info!("pool worker is idling...")
+            }
 
-    pool.import(pooled_tx, &mut MyScoring).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(3500));
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_pool() {
+        let mut pool = EthPool::new(MyListener, MyScoring, Options::default());
+    
+        let evm_tx = evm::Transaction {
+            nonce: 1.into(),
+            gas_price: 222.into(),
+            gas_limit: 333.into(),
+            action: evm::TransactionAction::Create,
+            value: 123.into(),
+            signature: evm::TransactionSignature { 
+                r: H256::zero(),
+                s: H256::zero(),
+                v: 0u64
+            },
+            input: vec![1, 2, 3],
+        };
+    
+        let pooled_tx = PooledTransaction::from(evm_tx);
+    
+        pool.import(pooled_tx, &mut MyScoring).unwrap();
+    }
 }
