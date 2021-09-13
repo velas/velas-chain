@@ -26,19 +26,26 @@ maybeReleaseFlag=--release
 validatorOnly=
 
 while [[ -n $1 ]]; do
-  if [[ ${1:0:1} = - ]]; then
-    if [[ $1 = --debug ]]; then
-      maybeReleaseFlag=
-      buildVariant=debug
-      shift
-    elif [[ $1 = --validator-only ]]; then
-      validatorOnly=true
-      shift
+    if [[ ${1:0:1} = - ]]; then
+        if [[ $1 = --debug ]]; then
+            maybeReleaseFlag=
+            buildVariant=debug
+            shift
+            elif [[ $1 = --validator-only ]]; then
+            validatorOnly=true
+            shift
+        else
+            usage "Unknown option: $1"
+        fi
+        elif [[ ${1:0:1} = \+ ]]; then
+        maybeRustVersion=$1
+        shift
     else
         installDir=$1
         shift
     fi
 done
+
 
 if [[ -z "$installDir" ]]; then
     usage "Install directory not specified"
@@ -62,7 +69,6 @@ if [[ $CI_OS_NAME = windows ]]; then
         velas-install
         velas-install-init
         velas-keygen
-        evm-utils
         evm-bridge
     )
 else
@@ -85,7 +91,6 @@ else
         velas-keygen
         velas-test-validator
         velas-validator
-        evm-utils
         evm-bridge
     )
     
@@ -102,15 +107,15 @@ done
 mkdir -p "$installDir/bin"
 
 (
-  set -x
-  # shellcheck disable=SC2086 # Don't want to double quote $rust_version
-  "$cargo" $maybeRustVersion build $maybeReleaseFlag "${binArgs[@]}"
-
-  # Exclude `spl-token` binary for net.sh builds
-  if [[ -z "$validatorOnly" ]]; then
+    set -x
     # shellcheck disable=SC2086 # Don't want to double quote $rust_version
-    "$cargo" $maybeRustVersion install spl-token-cli --root "$installDir"
-  fi
+    "$cargo" $maybeRustVersion build $maybeReleaseFlag "${binArgs[@]}"
+    
+    # Exclude `spl-token` binary for net.sh builds
+    if [[ -z "$validatorOnly" ]]; then
+        # shellcheck disable=SC2086 # Don't want to double quote $rust_version
+        "$cargo" $maybeRustVersion install spl-token-cli --root "$installDir"
+    fi
 )
 
 for bin in "${BINS[@]}"; do

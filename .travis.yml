@@ -1,7 +1,7 @@
 branches:
   only:
-    - /^v\d+\.\d+/ # release builds
-    - /^v\d+\.\d+\-[a-z0-9]*/ #pre release builds
+    - /^v\d+\.\d+\.\d+/ # release builds
+    - /^v\d+\.\d+\.\d+-[a-z0-9]*/ #pre release builds
 
 notifications:
   email: false
