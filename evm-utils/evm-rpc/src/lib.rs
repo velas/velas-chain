@@ -538,7 +538,7 @@ pub mod bridge {
             meta: Self::Metadata,
             tx: RPCTransaction,
             meta_keys: Option<Vec<String>>,
-        ) -> BoxFuture<Result<Hex<H256>, Error>>;
+        ) -> Result<Hex<H256>, Error>;
 
         #[rpc(meta, name = "eth_sendRawTransaction")]
         fn send_raw_transaction(
@@ -546,7 +546,7 @@ pub mod bridge {
             meta: Self::Metadata,
             tx: Bytes,
             meta_keys: Option<Vec<String>>,
-        ) -> BoxFuture<Result<Hex<H256>, Error>>;
+        ) -> Result<Hex<H256>, Error>;
 
         #[rpc(meta, name = "eth_getCompilers")]
         fn compilers(&self, meta: Self::Metadata) -> Result<Vec<String>, Error>;
