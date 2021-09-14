@@ -61,7 +61,7 @@ impl rpc::rpc_minimal::Minimal for MinimalRpcSolProxy {
     }
 
     fn get_identity(&self, meta: Self::Metadata) -> Result<RpcIdentity> {
-        proxy_sol_rpc!(meta.rpc_client, GetMinimumBalanceForRentExemption)
+        proxy_sol_rpc!(meta.rpc_client, GetIdentity)
     }
 
     fn get_slot(&self, meta: Self::Metadata, commitment: Option<CommitmentConfig>) -> Result<u64> {
