@@ -1,6 +1,7 @@
 use log::*;
-use txpool::{Options, VerifiedTransaction};
+use txpool::{NoopListener, Options, VerifiedTransaction};
 
+use std::convert::TryInto;
 use std::future::Future;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -42,7 +43,7 @@ use solana_client::{
 
 use ::tokio;
 
-use pool::{EthPool, MyListener, MyScoring, create_pool_worker};
+use pool::{PooledTransaction, EthPool, MyScoring, create_pool_worker};
 
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
@@ -209,7 +210,7 @@ impl EvmBridge {
         let key = solana_sdk::signature::read_keypair_file(&keypath).unwrap();
         
         info!("Creating mempool...");
-        let pool = Mutex::new(EthPool::new(MyListener, MyScoring, Options::default()));
+        let pool = Mutex::new(EthPool::new(NoopListener, MyScoring, Options::default()));
         
         Self {
             evm_chain_id,
@@ -231,8 +232,12 @@ impl EvmBridge {
     ) -> EvmResult<Hex<H256>> {
         warn!("SEND_TX CALLED");
         
+        let tx = tx.try_into()
+            .map_err(|e| evm_rpc::Error::Unimplemented {})?; // TODO: fix enum variant
+
         let mut data = self.pool.lock().unwrap();
-        let pooled_tx = data.import(tx.into(), &MyScoring);
+        
+        let pooled_tx = data.import(tx, &MyScoring);
         
         std::mem::drop(data);
         
@@ -240,8 +245,7 @@ impl EvmBridge {
             .map(|tx| Hex(*tx.hash()))
             .map_err(|_e| {
                 warn!("Could not import tx tp the pool");
-
-                evm_rpc::Error::Unimplemented {}
+                evm_rpc::Error::Unimplemented {} // TODO: fix enum variant
             })
 
         // let bytes = bincode::serialize(&tx).unwrap();

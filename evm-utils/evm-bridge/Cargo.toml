@@ -38,4 +38,6 @@ anyhow = "1.0"
 # futures-util = "0.3.15"
 # itertools = "0.10.0"
 tokio = "1"
+
+# https://github.com/openethereum/openethereum/tree/main/crates/transaction-pool
 txpool = { path = "../transaction-pool" }

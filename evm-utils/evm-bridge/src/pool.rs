@@ -1,31 +1,33 @@
-use std::{sync::Arc, thread::JoinHandle};
+use std::{convert::TryFrom, sync::Arc, thread::JoinHandle};
 
 use evm_state::{Address, H256};
 use log::*;
-use txpool::{Listener, Pool, Readiness, Scoring, ShouldReplace, VerifiedTransaction};
+use txpool::{Listener, NoopListener, Pool, Readiness, Scoring, ShouldReplace, VerifiedTransaction};
 use solana_evm_loader_program::scope::evm;
 
 use crate::EvmBridge;
 
-pub type EthPool = Pool<PooledTransaction, MyScoring, MyListener>;
+pub type EthPool = Pool<PooledTransaction, MyScoring, NoopListener>;
 
 #[derive(Debug)]
 pub struct PooledTransaction {
-    inner: evm::Transaction,
+    pub inner: evm::Transaction,
     sender: Address,
     hash: H256
 }
 
-impl From<evm::Transaction> for PooledTransaction {
-    fn from(transaction: evm::Transaction) -> Self {
-        let hash = transaction.tx_id_hash();
-        let sender = transaction.caller().unwrap_or_default(); // TODO: we need to know sender's address
+impl TryFrom<evm::Transaction> for PooledTransaction {
+    type Error = evm_state::error::Error;
 
-        Self {
+    fn try_from(transaction: evm::Transaction) -> Result<Self, Self::Error> {
+        let hash = transaction.tx_id_hash();
+        let sender = transaction.caller()?;
+    
+        Ok(Self {
             inner: transaction,
             sender,
             hash
-        }
+        })
     }
 }
 
@@ -70,33 +72,6 @@ impl Scoring<PooledTransaction> for MyScoring {
         _change: txpool::scoring::Change<Self::Event>,
     ) {
         () // TODO: implement
-    }
-}
-
-pub struct MyListener;
-impl<T> Listener<T> for MyListener {
-    fn added(&mut self, _tx: &std::sync::Arc<T>, _old: Option<&std::sync::Arc<T>>) {
-        println!("MyListener::added")
-    }
-
-    fn rejected<H: std::fmt::Debug + std::fmt::LowerHex>(&mut self, _tx: &std::sync::Arc<T>, _reason: &txpool::Error<H>) {
-        println!("MyListener::rejected")
-    }
-
-    fn dropped(&mut self, _tx: &std::sync::Arc<T>, _by: Option<&T>) {
-        println!("MyListener::dropped")
-    }
-
-    fn invalid(&mut self, _tx: &std::sync::Arc<T>) {
-        println!("MyListener::invalid")
-    }
-
-    fn canceled(&mut self, _tx: &std::sync::Arc<T>) {
-        println!("MyListener::canceled")
-    }
-
-    fn culled(&mut self, _tx: &std::sync::Arc<T>) {
-        println!("MyListener::culled")
     }
 }
 
