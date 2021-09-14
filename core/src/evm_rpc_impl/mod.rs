@@ -7,7 +7,7 @@ use solana_sdk::keyed_account::KeyedAccount;
 use evm_rpc::{
     basic::BasicERPC,
     chain_mock::ChainMockERPC,
-    error::{Error, IntoNativeRpcError},
+    error::{Error, into_native_error},
     Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{AccountProvider, Address, Gas, LogFilter, H256, U256};
@@ -377,12 +377,13 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<String>,
         meta_keys: Option<Vec<String>>,
     ) -> Result<Bytes, Error> {
-        let meta_keys: Result<Vec<_>, _> = meta_keys
+        let meta_keys = meta_keys
             .into_iter()
             .flatten()
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
-            .collect();
-        let result = call(meta, tx, block, meta_keys.into_native_error(false)?)?;
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| into_native_error(e, false))?;
+        let result = call(meta, tx, block, meta_keys)?;
         Ok(Bytes(result.1))
     }
 
@@ -399,12 +400,13 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<String>,
         meta_keys: Option<Vec<String>>,
     ) -> Result<Hex<Gas>, Error> {
-        let meta_keys: Result<Vec<_>, _> = meta_keys
+        let meta_keys = meta_keys
             .into_iter()
             .flatten()
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
-            .collect();
-        let result = call(meta, tx, block, meta_keys.into_native_error(false)?)?;
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| into_native_error(e, false))?;
+        let result = call(meta, tx, block, meta_keys)?;
         Ok(Hex(result.2.into()))
     }
 
@@ -447,9 +449,8 @@ impl BasicERPC for BasicErpcImpl {
             .filter_logs(filter)
             .map_err(|e| {
                 debug!("filter_logs error = {:?}", e);
-                e
-            })
-            .into_native_error(false)?;
+                into_native_error(e, false)
+            })?;
         Ok(logs.into_iter().map(|l| l.into()).collect())
     }
 }

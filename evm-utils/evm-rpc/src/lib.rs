@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 
-use jsonrpc_core::BoxFuture;
 use jsonrpc_derive::rpc;
 use primitive_types::{H256, U256};
 use serde::{Deserialize, Serialize};

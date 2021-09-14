@@ -355,7 +355,9 @@ impl EvmBridge {
 
         debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
-        let tx_bytes = bincode::serialize(&tx).into_native_error(self.verbose_errors)?;
+        let tx_bytes = bincode::serialize(&tx)
+            .map_err(|e| into_native_error(e, self.verbose_errors))?;
+
         debug!(
             "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
             storage_pubkey,
@@ -366,12 +368,12 @@ impl EvmBridge {
         let balance = self
             .rpc_client
             .get_minimum_balance_for_rent_exemption(tx_bytes.len())
-            .into_native_error(self.verbose_errors)?;
+            .map_err(|e| into_native_error(e, self.verbose_errors))?;
 
         let (blockhash, _, _) = self
             .rpc_client
             .get_recent_blockhash_with_commitment(CommitmentConfig::finalized())
-            .into_native_error(self.verbose_errors)?
+            .map_err(|e| into_native_error(e, self.verbose_errors))?
             .value;
 
         let create_storage_ix = system_instruction::create_account(
@@ -407,14 +409,13 @@ impl EvmBridge {
             })
             .map_err(|e| {
                 error!("Error create and allocate {} tx: {:?}", storage_pubkey, e);
-                e
-            })
-            .into_native_error(self.verbose_errors)?;
+                into_native_error(e, self.verbose_errors)
+            })?;
 
         let (blockhash, _) = self
             .rpc_client
             .get_new_blockhash(&blockhash)
-            .into_native_error(self.verbose_errors)?;
+            .map_err(|e| into_native_error(e, self.verbose_errors))?;
 
         let write_data_txs: Vec<solana::Transaction> = tx_bytes
             // TODO: encapsulate
@@ -443,14 +444,13 @@ impl EvmBridge {
             .map(|_| debug!("All write txs for storage {} was done", storage_pubkey))
             .map_err(|e| {
                 error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
-                e
-            })
-            .into_native_error(self.verbose_errors)?;
+                into_native_error(e, self.verbose_errors)
+            })?;
 
         let (blockhash, _, _) = self
             .rpc_client
             .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
-            .into_native_error(self.verbose_errors)?
+            .map_err(|e| into_native_error(e, self.verbose_errors))?
             .value;
 
         let execute_tx = solana::Transaction::new_signed_with_payer(
@@ -528,11 +528,12 @@ impl BridgeERPC for BridgeErpcImpl {
 
         debug!("send_transaction from = {}", address);
 
-        let meta_keys: StdResult<HashSet<_>, _> = meta_keys
+        let meta_keys = meta_keys
             .into_iter()
             .flatten()
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
-            .collect();
+            .collect::<StdResult<HashSet<_>, _>>()
+            .map_err(|e| into_native_error(e, meta.verbose_errors))?;
 
         let secret_key = meta
             .accounts
@@ -557,8 +558,7 @@ impl BridgeERPC for BridgeErpcImpl {
 
         let tx = tx_create.sign(secret_key, Some(meta.evm_chain_id));
 
-        let verbose_errors = meta.verbose_errors;
-        meta.send_tx(tx, meta_keys.into_native_error(verbose_errors)?)
+        meta.send_tx(tx, meta_keys)
     }
 
     fn send_raw_transaction(
@@ -568,11 +568,12 @@ impl BridgeERPC for BridgeErpcImpl {
         meta_keys: Option<Vec<String>>,
     ) -> EvmResult<Hex<H256>> {
         debug!("send_raw_transaction");
-        let meta_keys: StdResult<HashSet<_>, _> = meta_keys
+        let meta_keys = meta_keys
             .into_iter()
             .flatten()
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
-            .collect();
+            .collect::<StdResult<HashSet<_>, _>>()
+            .map_err(|e| into_native_error(e, meta.verbose_errors))?;
 
         let tx: compatibility::Transaction =
             rlp::decode(&bytes.0).with_context(|| RlpError {
@@ -588,8 +589,7 @@ impl BridgeERPC for BridgeErpcImpl {
         let hash = unsigned_tx.signing_hash(Some(meta.evm_chain_id));
         debug!("loaded tx_hash = {}", hash);
 
-        let verbose_errors = meta.verbose_errors;
-        meta.send_tx(tx, meta_keys.into_native_error(verbose_errors)?)
+        meta.send_tx(tx, meta_keys)
     }
 
     fn compilers(&self, _meta: Self::Metadata) -> EvmResult<Vec<String>> {

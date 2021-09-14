@@ -252,27 +252,15 @@ impl From<Error> for JRpcError {
     }
 }
 
-pub trait IntoNativeRpcError<T> {
-    fn into_native_error(self, verbose: bool) -> Result<T, Error>;
-}
-
-impl<T, Err> IntoNativeRpcError<T> for Result<T, Err>
+pub fn into_native_error<E>(e: E, verbose: bool) -> Error
 where
-    anyhow::Error: From<Err>,
-    Err: std::fmt::Debug,
+    E: Into<anyhow::Error> + std::fmt::Debug
 {
-    fn into_native_error(self, verbose: bool) -> Result<T, Error> {
-        match self {
-            Ok(ok) => Ok(ok),
-            Err(e) => {
-                let details = format!("{:?}", e);
-                Err(Error::NativeRpcError {
-                    source: anyhow::Error::from(e),
-                    details,
-                    verbose,
-                })
-            }
-        }
+    let details = format!("{:?}", e);
+    Error::NativeRpcError {
+        source: e.into(),
+        details,
+        verbose,
     }
 }
 
