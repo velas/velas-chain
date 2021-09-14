@@ -73,7 +73,7 @@ pub enum IndexKey {
     VelasRelyingOwner(Pubkey),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AccountIndex {
     ProgramId,
     SplTokenMint,

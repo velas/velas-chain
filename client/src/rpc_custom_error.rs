@@ -3,6 +3,7 @@
 use {
     crate::rpc_response::RpcSimulateTransactionResult,
     jsonrpc_core::{Error, ErrorCode},
+    solana_runtime::accounts_index::AccountIndex,
     solana_sdk::clock::Slot,
 };
 
@@ -17,6 +18,7 @@ pub const JSON_RPC_SERVER_ERROR_NO_SNAPSHOT: i64 = -32008;
 pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_SLOT_SKIPPED: i64 = -32009;
 pub const JSON_RPC_SERVER_ERROR_KEY_EXCLUDED_FROM_SECONDARY_INDEX: i64 = -32010;
 pub const JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE: i64 = -32011;
+pub const JSON_RPC_SERVER_ERROR_INDEX_NOT_AVALABLE: i64 = -32101; // TDB error range
 
 pub enum RpcCustomError {
     BlockCleanedUp {
@@ -46,6 +48,7 @@ pub enum RpcCustomError {
         index_key: String,
     },
     TransactionHistoryNotAvailable,
+    DisabledIndex(AccountIndex),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -129,7 +132,7 @@ impl From<RpcCustomError> for Error {
                 ),
                 message: format!(
                     "{} excluded from account secondary indexes; \
-                    this RPC method unavailable for key",
+                     this RPC method unavailable for key",
                     index_key
                 ),
                 data: None,
@@ -139,6 +142,21 @@ impl From<RpcCustomError> for Error {
                     JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
                 ),
                 message: "Transaction history is not available from this node".to_string(),
+                data: None,
+            },
+            RpcCustomError::DisabledIndex(index) => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_INDEX_NOT_AVALABLE),
+                message: format!(
+                    "Request for indexed accounts is not available from this node due disabled index: {}",
+                    match index {
+                        AccountIndex::ProgramId => "Program ID",
+                        AccountIndex::SplTokenMint => "SPL Token Mint",
+                        AccountIndex::SplTokenOwner => "SPL Token Owner",
+                        AccountIndex::VelasAccountStorage => "Velas Account Storage",
+                        AccountIndex::VelasAccountOwner => "Velas Account Owner",
+                        AccountIndex::VelasAccountOperational => "Velas Account Operational",
+                        AccountIndex::VelasRelyingOwner => "Velas Relying Owner",
+                    }),
                 data: None,
             },
         }
