@@ -391,7 +391,7 @@ mod test {
             &big_tx_tag[..],
             &execute_tag[..],
             &h160_len[..],
-            &from_hex_bytes[..],
+            from_hex_bytes,
         ]
         .concat();
         assert_eq!(data, result_data)
