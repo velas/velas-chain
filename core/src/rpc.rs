@@ -2106,7 +2106,7 @@ impl JsonRpcRequestProcessor {
         &self,
         bank: &Arc<Bank>,
         storage_key: Pubkey,
-    ) -> Vec<(Pubkey, AccountSharedData)> {
+    ) -> Option<Vec<(Pubkey, AccountSharedData)>> {
         // this filter doesn't dismiss accounts which are not related to specified storage_key
         let is_target_velas_account = |account: &AccountSharedData| -> bool {
             account.owner == velas_account_program::id()
@@ -2117,34 +2117,22 @@ impl JsonRpcRequestProcessor {
                 )
         };
 
-        if self
-            .config
+        self.config
             .account_indexes
             .contains(&AccountIndex::VelasAccountStorage)
-        {
-            bank.get_filtered_indexed_accounts(
-                &IndexKey::VelasAccountStorage(storage_key),
-                is_target_velas_account,
-            )
-        } else if self
-            .config
-            .account_indexes
-            .contains(&AccountIndex::ProgramId)
-        {
-            bank.get_filtered_program_accounts(
-                &velas_account_program::id(),
-                is_target_velas_account,
-            )
-        } else {
-            vec![]
-        }
+            .then(|| {
+                bank.get_filtered_indexed_accounts(
+                    &IndexKey::VelasAccountStorage(storage_key),
+                    is_target_velas_account,
+                )
+            })
     }
 
     fn get_velas_accounts_by_owner_key(
         &self,
         bank: &Arc<Bank>,
         owner_key: Pubkey,
-    ) -> Vec<(Pubkey, AccountSharedData)> {
+    ) -> Option<Vec<(Pubkey, AccountSharedData)>> {
         let is_target_velas_account_storage = |account: &AccountSharedData| -> bool {
             account.owner == velas_account_program::id()
                 && match VelasAccountType::try_from(account.data.as_slice()) {
@@ -2153,34 +2141,22 @@ impl JsonRpcRequestProcessor {
                 }
         };
 
-        if self
-            .config
+        self.config
             .account_indexes
             .contains(&AccountIndex::VelasAccountOwner)
-        {
-            bank.get_filtered_indexed_accounts(
-                &IndexKey::VelasAccountOwner(owner_key),
-                is_target_velas_account_storage,
-            )
-        } else if self
-            .config
-            .account_indexes
-            .contains(&AccountIndex::ProgramId)
-        {
-            bank.get_filtered_program_accounts(
-                &velas_account_program::id(),
-                is_target_velas_account_storage,
-            )
-        } else {
-            vec![]
-        }
+            .then(|| {
+                bank.get_filtered_indexed_accounts(
+                    &IndexKey::VelasAccountOwner(owner_key),
+                    is_target_velas_account_storage,
+                )
+            })
     }
 
     fn get_velas_relying_party_by_owner_key(
         &self,
         bank: &Arc<Bank>,
         owner_key: Pubkey,
-    ) -> Vec<(Pubkey, AccountSharedData)> {
+    ) -> Option<Vec<(Pubkey, AccountSharedData)>> {
         let is_target_velas_account_storage = |account: &AccountSharedData| -> bool {
             account.owner == velas_relying_party_program::id()
                 && match RelyingPartyData::try_from(account.data.as_slice()) {
@@ -2189,34 +2165,22 @@ impl JsonRpcRequestProcessor {
                 }
         };
 
-        if self
-            .config
+        self.config
             .account_indexes
             .contains(&AccountIndex::VelasRelyingOwner)
-        {
-            bank.get_filtered_indexed_accounts(
-                &IndexKey::VelasRelyingOwner(owner_key),
-                is_target_velas_account_storage,
-            )
-        } else if self
-            .config
-            .account_indexes
-            .contains(&AccountIndex::ProgramId)
-        {
-            bank.get_filtered_program_accounts(
-                &velas_relying_party_program::id(),
-                is_target_velas_account_storage,
-            )
-        } else {
-            vec![]
-        }
+            .then(|| {
+                bank.get_filtered_indexed_accounts(
+                    &IndexKey::VelasRelyingOwner(owner_key),
+                    is_target_velas_account_storage,
+                )
+            })
     }
 
     fn get_velas_accounts_storages_by_operational_key(
         &self,
         bank: &Arc<Bank>,
         operational_key: Pubkey,
-    ) -> Vec<(Pubkey, AccountSharedData)> {
+    ) -> Option<Vec<(Pubkey, AccountSharedData)>> {
         let is_target_velas_account_storage = |account: &AccountSharedData| -> bool {
             account.owner == velas_account_program::id()
                 && match VelasAccountType::try_from(account.data.as_slice()) {
@@ -2228,27 +2192,15 @@ impl JsonRpcRequestProcessor {
                 }
         };
 
-        if self
-            .config
+        self.config
             .account_indexes
             .contains(&AccountIndex::VelasAccountOperational)
-        {
-            bank.get_filtered_indexed_accounts(
-                &IndexKey::VelasAccountOperational(operational_key),
-                is_target_velas_account_storage,
-            )
-        } else if self
-            .config
-            .account_indexes
-            .contains(&AccountIndex::ProgramId)
-        {
-            bank.get_filtered_program_accounts(
-                &velas_account_program::id(),
-                is_target_velas_account_storage,
-            )
-        } else {
-            vec![]
-        }
+            .then(|| {
+                bank.get_filtered_indexed_accounts(
+                    &IndexKey::VelasAccountOperational(operational_key),
+                    is_target_velas_account_storage,
+                )
+            })
     }
 }
 
@@ -3112,6 +3064,16 @@ pub mod rpc_full {
             meta: Self::Metadata,
             pubkey_str: String,
         ) -> Result<RpcResponse<Vec<String>>>;
+    }
+
+    macro_rules! check_index {
+        ($config:expr, $index:expr) => {{
+            let config = $config;
+            let index = $index;
+            if !config.account_indexes.contains(&index) {
+                return Err(RpcCustomError::DisabledIndex(index).into());
+            }
+        }};
     }
 
     pub struct FullImpl;
@@ -3992,11 +3954,12 @@ pub mod rpc_full {
                 pubkey_str
             );
 
+            check_index!(&meta.config, AccountIndex::VelasAccountOwner);
+
             let owner_key = verify_pubkey(&pubkey_str)?;
             let bank = meta.bank(None);
 
             let accounts = meta.get_velas_accounts_by_owner_key(&bank, owner_key);
-
             debug!(
                 "get_velas_accounts_by_owner_key velas accounts {:?}",
                 accounts
@@ -4006,6 +3969,7 @@ pub mod rpc_full {
                 &bank,
                 accounts
                     .into_iter()
+                    .flatten()
                     .map(|(pubkey, _account)| pubkey.to_string())
                     .collect(),
             ))
@@ -4021,6 +3985,8 @@ pub mod rpc_full {
                 pubkey_str
             );
 
+            check_index!(&meta.config, AccountIndex::VelasRelyingOwner);
+
             let owner_key = verify_pubkey(&pubkey_str)?;
             let bank = meta.bank(None);
 
@@ -4034,6 +4000,7 @@ pub mod rpc_full {
                 &bank,
                 accounts
                     .into_iter()
+                    .flatten()
                     .map(|(pubkey, _account)| pubkey.to_string())
                     .collect(),
             ))
@@ -4049,6 +4016,9 @@ pub mod rpc_full {
                 pubkey_str
             );
 
+            check_index!(&meta.config, AccountIndex::VelasAccountOperational);
+            check_index!(&meta.config, AccountIndex::VelasAccountStorage);
+
             let operational_key = verify_pubkey(&pubkey_str)?;
             let bank = meta.bank(None);
 
@@ -4061,7 +4031,9 @@ pub mod rpc_full {
 
             let accounts = storages
                 .into_iter()
-                .flat_map(|(storage, _)| meta.get_velas_accounts_by_storage_key(&bank, storage));
+                .flatten()
+                .flat_map(|(storage, _)| meta.get_velas_accounts_by_storage_key(&bank, storage))
+                .flatten();
             debug!(
                 "get_velas_accounts_by_operational_key velas accounts {:?}",
                 accounts
