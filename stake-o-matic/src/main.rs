@@ -473,14 +473,14 @@ fn get_config() -> Config {
     let min_release_version = release_version_of(&matches, "min_release_version");
 
     let (json_rpc_url, validator_list) = match cluster.as_str() {
-        "mainnet-beta" => (
+        "mainnet" => (
             value_t!(matches, "json_rpc_url", String)
-                .unwrap_or_else(|_| "https://mainnet.velas.com/rpc".into()),
+                .unwrap_or_else(|_| "https://api.mainnet.velas.com".into()),
             validator_list::mainnet_beta_validators(),
         ),
         "testnet" => (
             value_t!(matches, "json_rpc_url", String)
-                .unwrap_or_else(|_| "https://testnet.velas.com/rpc".into()),
+                .unwrap_or_else(|_| "https://api.testnet.velas.com".into()),
             validator_list::testnet_validators(),
         ),
         "unknown" => {
