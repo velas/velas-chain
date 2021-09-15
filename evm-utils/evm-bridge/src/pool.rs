@@ -1,15 +1,25 @@
 use std::{collections::HashSet, sync::Arc, thread::JoinHandle};
 
-use evm_rpc::{Bytes, Error, Hex, RPCTransaction, error::into_native_error};
-use evm_state::{Address, H256, TransactionAction};
+use evm_rpc::{error::into_native_error, Bytes, Error, Hex, RPCTransaction};
+use evm_state::{Address, TransactionAction, H256};
 use log::*;
 use serde_json::json;
 use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
-use solana_sdk::{commitment_config::{CommitmentConfig, CommitmentLevel}, instruction::AccountMeta, message::Message, pubkey::Pubkey, signer::Signer, system_instruction};
+use solana_evm_loader_program::{
+    scope::{evm, solana},
+    tx_chunks::TxChunks,
+};
+use solana_sdk::{
+    commitment_config::{CommitmentConfig, CommitmentLevel},
+    instruction::AccountMeta,
+    message::Message,
+    pubkey::Pubkey,
+    signer::Signer,
+    system_instruction,
+};
 use txpool::{NoopListener, Pool, Readiness, Scoring, ShouldReplace, VerifiedTransaction};
-use solana_evm_loader_program::{scope::{evm, solana}, tx_chunks::TxChunks};
 
-use crate::{EvmBridge, EvmResult, from_client_error, send_and_confirm_transactions};
+use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult};
 
 pub type EthPool = Pool<PooledTransaction, MyScoring, NoopListener>;
 
@@ -22,15 +32,18 @@ pub struct PooledTransaction {
 }
 
 impl PooledTransaction {
-    pub fn new(transaction: evm::Transaction, meta_keys: HashSet<Pubkey>) -> Result<Self, evm_state::error::Error> {
+    pub fn new(
+        transaction: evm::Transaction,
+        meta_keys: HashSet<Pubkey>,
+    ) -> Result<Self, evm_state::error::Error> {
         let hash = transaction.tx_id_hash();
         let sender = transaction.caller()?;
-        
+
         Ok(Self {
             inner: transaction,
             sender,
             hash,
-            meta_keys
+            meta_keys,
         })
     }
 }
@@ -65,7 +78,11 @@ impl Scoring<PooledTransaction> for MyScoring {
         old.inner.cmp(&other.inner) // TODO: implement
     }
 
-    fn choose(&self, _old: &PooledTransaction, _new: &PooledTransaction) -> txpool::scoring::Choice {
+    fn choose(
+        &self,
+        _old: &PooledTransaction,
+        _new: &PooledTransaction,
+    ) -> txpool::scoring::Choice {
         txpool::scoring::Choice::RejectNew // TODO: implement
     }
 
@@ -83,40 +100,47 @@ impl ShouldReplace<PooledTransaction> for MyScoring {
     fn should_replace(
         &self,
         _old: &txpool::ReplaceTransaction<PooledTransaction>,
-        _new: &txpool::ReplaceTransaction<PooledTransaction>
+        _new: &txpool::ReplaceTransaction<PooledTransaction>,
     ) -> txpool::scoring::Choice {
         txpool::scoring::Choice::RejectNew // TODO: implement
     }
 }
 
 pub fn create_pool_worker(bridge: Arc<EvmBridge>) -> JoinHandle<()> {
-    std::thread::spawn(move || {
-        loop {
-            let tx = {
-                let pool = bridge.pool.lock().unwrap();
-                pool.pending(|_tx: &PooledTransaction| Readiness::Ready, H256::zero()).next()
-            };
+    std::thread::spawn(move || loop {
+        let tx = {
+            let pool = bridge.pool.lock().unwrap();
+            pool.pending(|_tx: &PooledTransaction| Readiness::Ready, H256::zero())
+                .next()
+        };
 
-            if let Some(tx) = tx {
-                let tx = (*tx).clone();
-                let hash = tx.hash;
-                info!("pool worker is doing some work: tx.hash = {:?}", &hash);
-                match process_tx(bridge.clone(), tx) {
-                    Ok(hash) => {
-                        bridge.pool.lock().unwrap().remove(&hash.0, false).unwrap();
-                    },
-                    Err(_e) => warn!("Something went wrong in tx pricessing with hash = {:?}", &hash),
+        if let Some(tx) = tx {
+            let tx = (*tx).clone();
+            let hash = tx.hash;
+            info!("pool worker is doing some work: tx.hash = {:?}", &hash);
+            match process_tx(bridge.clone(), tx) {
+                Ok(hash) => {
+                    bridge.pool.lock().unwrap().remove(&hash.0, false).unwrap();
                 }
-            } else {
-                trace!("pool worker is idling...");
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                Err(_e) => warn!(
+                    "Something went wrong in tx pricessing with hash = {:?}",
+                    &hash
+                ),
             }
+        } else {
+            trace!("pool worker is idling...");
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     })
 }
 
 fn process_tx(bridge: Arc<EvmBridge>, tx: PooledTransaction) -> EvmResult<Hex<H256>> {
-    let PooledTransaction { inner, mut meta_keys, sender, hash } = tx;
+    let PooledTransaction {
+        inner,
+        mut meta_keys,
+        sender,
+        hash,
+    } = tx;
     let tx = inner;
 
     let bytes = bincode::serialize(&tx).unwrap();
@@ -125,7 +149,8 @@ fn process_tx(bridge: Arc<EvmBridge>, tx: PooledTransaction) -> EvmResult<Hex<H2
 
     if bridge.simulate {
         // Try simulate transaction execution
-        bridge.rpc_client
+        bridge
+            .rpc_client
             .send::<Bytes>(RpcRequest::EthCall, json!([rpc_tx, "latest"]))
             .map_err(from_client_error)?;
     }
@@ -136,8 +161,8 @@ fn process_tx(bridge: Arc<EvmBridge>, tx: PooledTransaction) -> EvmResult<Hex<H2
         match deploy_big_tx(&bridge, &bridge.key, &tx) {
             Ok(_tx) => {
                 warn!("BIG TX DEPLOYED");
-                return Ok(Hex(hash))
-            },
+                return Ok(Hex(hash));
+            }
             Err(e) => {
                 error!("Error creating big tx = {}", e);
                 return Err(e);
@@ -171,11 +196,8 @@ fn process_tx(bridge: Arc<EvmBridge>, tx: PooledTransaction) -> EvmResult<Hex<H2
         }
     }
 
-    let mut ix = solana_evm_loader_program::send_raw_tx(
-        bridge.key.pubkey(),
-        tx,
-        Some(bridge.key.pubkey()),
-    );
+    let mut ix =
+        solana_evm_loader_program::send_raw_tx(bridge.key.pubkey(), tx, Some(bridge.key.pubkey()));
 
     // Add meta accounts as additional arguments
     for account in meta_keys {
@@ -199,7 +221,8 @@ fn process_tx(bridge: Arc<EvmBridge>, tx: PooledTransaction) -> EvmResult<Hex<H2
     send_raw_tx.sign(&[&bridge.key], blockhash);
     debug!("Sending tx = {:?}", send_raw_tx);
 
-    bridge.rpc_client
+    bridge
+        .rpc_client
         .send_transaction_with_config(
             &send_raw_tx,
             RpcSendTransactionConfig {
@@ -226,8 +249,8 @@ fn deploy_big_tx(
 
     debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
-    let tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
+    let tx_bytes =
+        bincode::serialize(&tx).map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     debug!(
         "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
@@ -270,7 +293,8 @@ fn deploy_big_tx(
         create_and_allocate_tx.signatures
     );
 
-    bridge.rpc_client
+    bridge
+        .rpc_client
         .send_and_confirm_transaction(&create_and_allocate_tx)
         .map(|signature| {
             debug!(
@@ -342,7 +366,8 @@ fn deploy_big_tx(
         ..Default::default()
     };
 
-    bridge.rpc_client
+    bridge
+        .rpc_client
         .send_transaction_with_config(&execute_tx, rpc_send_cfg)
         .map(|signature| {
             debug!(
@@ -360,29 +385,28 @@ fn deploy_big_tx(
     Ok(())
 }
 
-
 // #[cfg(test)]
 // mod tests {
 //     #[test]
 //     fn test_pool() {
 //         let mut pool = EthPool::new(MyListener, MyScoring, Options::default());
-    
+
 //         let evm_tx = evm::Transaction {
 //             nonce: 1.into(),
 //             gas_price: 222.into(),
 //             gas_limit: 333.into(),
 //             action: evm::TransactionAction::Create,
 //             value: 123.into(),
-//             signature: evm::TransactionSignature { 
+//             signature: evm::TransactionSignature {
 //                 r: H256::zero(),
 //                 s: H256::zero(),
 //                 v: 0u64
 //             },
 //             input: vec![1, 2, 3],
 //         };
-    
+
 //         let pooled_tx = PooledTransaction::from(evm_tx);
-    
+
 //         pool.import(pooled_tx, &mut MyScoring).unwrap();
 //     }
 // }

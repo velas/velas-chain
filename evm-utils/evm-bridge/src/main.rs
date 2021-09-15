@@ -1,5 +1,4 @@
 use log::*;
-use txpool::{NoopListener, Options, VerifiedTransaction};
 use std::future::Future;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -9,6 +8,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
 };
+use txpool::{NoopListener, Options, VerifiedTransaction};
 
 use evm_rpc::basic::BasicERPC;
 use evm_rpc::bridge::BridgeERPC;
@@ -24,10 +24,8 @@ use snafu::ResultExt;
 
 use solana_evm_loader_program::scope::*;
 use solana_sdk::{
-    clock::MS_PER_TICK,
-    fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE,
-    pubkey::Pubkey, signers::Signers,
-    transaction::TransactionError,
+    clock::MS_PER_TICK, fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE, pubkey::Pubkey,
+    signers::Signers, transaction::TransactionError,
 };
 
 use solana_client::{
@@ -41,13 +39,13 @@ use solana_client::{
 
 use ::tokio;
 
-use pool::{PooledTransaction, EthPool, MyScoring, create_pool_worker};
+use pool::{create_pool_worker, EthPool, MyScoring, PooledTransaction};
 
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
 
-mod sol_proxy;
 mod pool;
+mod sol_proxy;
 
 const MAX_NUM_BLOCKS_IN_BATCH: u64 = 2000; // should be less or equal to const core::evm_rpc_impl::logs::MAX_NUM_BLOCKS
 
@@ -175,7 +173,7 @@ pub struct EvmBridge {
     verbose_errors: bool,
     simulate: bool,
     max_logs_blocks: u64,
-    pool: Mutex<EthPool>
+    pool: Mutex<EthPool>,
 }
 
 impl EvmBridge {
@@ -205,10 +203,10 @@ impl EvmBridge {
 
         info!("Loading keypair from: {}", keypath);
         let key = solana_sdk::signature::read_keypair_file(&keypath).unwrap();
-        
+
         info!("Creating mempool...");
         let pool = Mutex::new(EthPool::new(NoopListener, MyScoring, Options::default()));
-        
+
         Self {
             evm_chain_id,
             key,
@@ -217,36 +215,29 @@ impl EvmBridge {
             verbose_errors,
             simulate,
             max_logs_blocks,
-            pool
+            pool,
         }
     }
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
-    fn send_tx(
-        &self,
-        tx: evm::Transaction,
-        meta_keys: HashSet<Pubkey>,
-    ) -> EvmResult<Hex<H256>> {
+    fn send_tx(&self, tx: evm::Transaction, meta_keys: HashSet<Pubkey>) -> EvmResult<Hex<H256>> {
         warn!("SEND_TX CALLED");
-        
-        let tx = PooledTransaction::new(tx, meta_keys)
-            .map_err(|_e| evm_rpc::Error::Unimplemented {})?; // TODO: fix enum variant
+
+        let tx =
+            PooledTransaction::new(tx, meta_keys).map_err(|_e| evm_rpc::Error::Unimplemented {})?; // TODO: fix enum variant
 
         let mut data = self.pool.lock().unwrap();
-        
+
         let pooled_tx = data.import(tx, &MyScoring);
-        
+
         std::mem::drop(data);
-        
-        pooled_tx
-            .map(|tx| Hex(*tx.hash()))
-            .map_err(|_e| {
-                warn!("Could not import tx to the pool");
-                evm_rpc::Error::Unimplemented {} // TODO: fix enum variant
-            })
+
+        pooled_tx.map(|tx| Hex(*tx.hash())).map_err(|_e| {
+            warn!("Could not import tx to the pool");
+            evm_rpc::Error::Unimplemented {} // TODO: fix enum variant
+        })
     }
 
-    
     fn block_to_number(&self, block: &Option<String>) -> EvmResult<u64> {
         let block = block.as_deref().unwrap_or("latest");
         let block_string = match block {
@@ -332,11 +323,10 @@ impl BridgeERPC for BridgeErpcImpl {
             .collect::<StdResult<HashSet<_>, _>>()
             .map_err(|e| into_native_error(e, meta.verbose_errors))?;
 
-        let tx: compatibility::Transaction =
-            rlp::decode(&bytes.0).with_context(|| RlpError {
-                struct_name: "RawTransaction".to_string(),
-                input_data: hex::encode(&bytes.0),
-            })?;
+        let tx: compatibility::Transaction = rlp::decode(&bytes.0).with_context(|| RlpError {
+            struct_name: "RawTransaction".to_string(),
+            input_data: hex::encode(&bytes.0),
+        })?;
         let tx: evm::Transaction = tx.into();
 
         // TODO: Check chain_id.
@@ -537,10 +527,12 @@ impl BasicERPC for BasicErpcProxy {
         address: Hex<Address>,
         block: Option<String>,
     ) -> EvmResult<Hex<U256>> {
-        
         let result = proxy_evm_rpc!(meta.rpc_client, EthGetTransactionCount, address, block);
-        
-        info!("BasicErpcProxy::transaction_count called with result: {:?}", result);
+
+        info!(
+            "BasicErpcProxy::transaction_count called with result: {:?}",
+            result
+        );
 
         result
     }
