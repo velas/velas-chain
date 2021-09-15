@@ -1,7 +1,5 @@
 use log::*;
 use txpool::{NoopListener, Options, VerifiedTransaction};
-
-use std::convert::TryInto;
 use std::future::Future;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -24,11 +22,11 @@ use futures_util::future::Either;
 use serde_json::json;
 use snafu::ResultExt;
 
-use solana_evm_loader_program::{scope::*, tx_chunks::TxChunks};
+use solana_evm_loader_program::scope::*;
 use solana_sdk::{
-    clock::MS_PER_TICK, commitment_config::CommitmentConfig, commitment_config::CommitmentLevel,
-    fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE, instruction::AccountMeta,
-    message::Message, pubkey::Pubkey, signature::Signer, signers::Signers, system_instruction,
+    clock::MS_PER_TICK,
+    fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE,
+    pubkey::Pubkey, signers::Signers,
     transaction::TransactionError,
 };
 
@@ -47,7 +45,6 @@ use pool::{PooledTransaction, EthPool, MyScoring, create_pool_worker};
 
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
-type FutureEvmResult<T> = BoxFuture<EvmResult<T>>;
 
 mod sol_proxy;
 mod pool;
@@ -233,7 +230,7 @@ impl EvmBridge {
         warn!("SEND_TX CALLED");
         
         let tx = PooledTransaction::new(tx, meta_keys)
-            .map_err(|e| evm_rpc::Error::Unimplemented {})?; // TODO: fix enum variant
+            .map_err(|_e| evm_rpc::Error::Unimplemented {})?; // TODO: fix enum variant
 
         let mut data = self.pool.lock().unwrap();
         

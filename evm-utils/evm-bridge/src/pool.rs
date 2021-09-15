@@ -1,4 +1,4 @@
-use std::{collections::HashSet, convert::TryFrom, sync::Arc, thread::JoinHandle};
+use std::{collections::HashSet, sync::Arc, thread::JoinHandle};
 
 use evm_rpc::{Bytes, Error, Hex, RPCTransaction, error::into_native_error};
 use evm_state::{Address, H256, TransactionAction};
@@ -6,7 +6,7 @@ use log::*;
 use serde_json::json;
 use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
 use solana_sdk::{commitment_config::{CommitmentConfig, CommitmentLevel}, instruction::AccountMeta, message::Message, pubkey::Pubkey, signer::Signer, system_instruction};
-use txpool::{Listener, NoopListener, Pool, Readiness, Scoring, ShouldReplace, VerifiedTransaction};
+use txpool::{NoopListener, Pool, Readiness, Scoring, ShouldReplace, VerifiedTransaction};
 use solana_evm_loader_program::{scope::{evm, solana}, tx_chunks::TxChunks};
 
 use crate::{EvmBridge, EvmResult, from_client_error, send_and_confirm_transactions};
@@ -94,7 +94,7 @@ pub fn create_pool_worker(bridge: Arc<EvmBridge>) -> JoinHandle<()> {
         loop {
             let tx = {
                 let pool = bridge.pool.lock().unwrap();
-                pool.pending(|tx: &PooledTransaction| Readiness::Ready, H256::zero()).next()
+                pool.pending(|_tx: &PooledTransaction| Readiness::Ready, H256::zero()).next()
             };
 
             if let Some(tx) = tx {
@@ -105,7 +105,7 @@ pub fn create_pool_worker(bridge: Arc<EvmBridge>) -> JoinHandle<()> {
                     Ok(hash) => {
                         bridge.pool.lock().unwrap().remove(&hash.0, false).unwrap();
                     },
-                    Err(e) => warn!("Something went wrong in tx pricessing with hash = {:?}", &hash),
+                    Err(_e) => warn!("Something went wrong in tx pricessing with hash = {:?}", &hash),
                 }
             } else {
                 trace!("pool worker is idling...");
