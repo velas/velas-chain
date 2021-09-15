@@ -210,7 +210,7 @@ pub struct LogWithLocation {
 pub struct LogFilter {
     pub from_block: u64,
     pub to_block: u64,
-    pub address: Option<H160>,
+    pub address: Vec<H160>,
     pub topics: Vec<LogFilterTopicEntry>, // None - mean any topic
 }
 
@@ -256,6 +256,7 @@ impl LogFilterTopicEntry {
 impl LogFilter {
     // TODO: Check topic size in each
     const LIMIT_FILTER_ITEMS: usize = 8;
+    const LIMIT_ADDRESSES_SIZE: usize = 4;
 
     /// Convert topics filter to its cartesian_product
     ///
@@ -274,43 +275,56 @@ impl LogFilter {
     }
 
     pub fn bloom_possibilities(&self) -> Vec<Bloom> {
-        let bloom_addr = if let Some(address) = self.address {
-            Bloom::from(Input::Raw(address.as_bytes()))
-        } else {
-            Bloom::default()
-        };
+        let bloom_addresses = self
+            .address
+            .iter()
+            .map(|address| Bloom::from(Input::Raw(address.as_bytes())))
+            .collect();
 
         if self.topics.is_empty() {
-            return vec![bloom_addr];
+            return bloom_addresses;
         }
 
-        self.topic_product()
+        let bloom_topics = self
+            .topic_product()
             .map(|topics| {
                 topics
                     .into_iter()
                     .flatten()
-                    .fold(bloom_addr, |bloom, topic| {
-                        log::info!("Starting bloom = {:?}, adding topic ={:?}", bloom, topic);
+                    .fold(Bloom::default(), |bloom, topic| {
                         let result = bloom | Bloom::from(Input::Hash(topic.as_fixed_bytes()));
-                        log::info!("Resulting bloom = {:?}", result);
                         result
                     })
             })
             .take(Self::LIMIT_FILTER_ITEMS)
-            .collect()
+            .collect();
+
+        // if user ask for too many addresses just query by logs.
+        if bloom_addresses.len() > Self::LIMIT_ADDRESSES_SIZE {
+            return bloom_topics;
+        }
+
+        // collect addresses and topics production.
+        let mut result = Vec::new();
+        for address in bloom_addresses {
+            for topic in bloom_topics.iter() {
+                result.push(*topic | address)
+            }
+        }
+        result
     }
 
     pub fn is_log_match(&self, log: &Log) -> bool {
-        if let Some(address) = self.address {
-            if log.address != address {
-                return false;
-            }
+        if self.address.iter().all(|address| log.address != *address) {
+            return false;
         }
+
         for (log_topic, self_topic) in log.topics.iter().zip(&self.topics) {
             if !self_topic.match_topic(log_topic) {
                 return false;
             }
         }
+
         true
     }
 }

@@ -2779,10 +2779,10 @@ impl Blockstore {
         masks: &[evm::Bloom],
         filter: &evm::LogFilter,
     ) -> Result<Vec<evm::LogWithLocation>> {
-        // First filterout all blocks that not contain ALL topic + addresses
-        if !masks
+        // First filterout all blocks that not contain any of our masks (each mask represent address + topic set)
+        if masks
             .iter()
-            .any(|mask| block.header.logs_bloom.contains_bloom(mask))
+            .all(|mask| !block.header.logs_bloom.contains_bloom(mask))
         {
             trace!(
                 "Blocks not matching bloom filter blocks_bloom = {:?}, blooms={:?}",
