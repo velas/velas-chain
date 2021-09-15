@@ -584,7 +584,13 @@ impl BasicERPC for BasicErpcImpl {
         }
 
         let filter = LogFilter {
-            address: log_filter.address.map(|k| k.0),
+            address: log_filter
+                .address
+                .map(|k| match k {
+                    Either::Left(v) => v.into_iter().map(|k| k.0).collect(),
+                    Either::Right(k) => vec![k.0],
+                })
+                .unwrap_or_default(),
             topics: log_filter
                 .topics
                 .into_iter()

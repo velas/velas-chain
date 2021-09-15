@@ -49,7 +49,7 @@ impl RPCTopicFilter {
 pub struct RPCLogFilter {
     pub from_block: Option<String>,
     pub to_block: Option<String>,
-    pub address: Option<Hex<Address>>,
+    pub address: Option<Either<Vec<Hex<Address>>, Hex<Address>>>,
     pub topics: Option<Vec<Option<RPCTopicFilter>>>,
 }
 
