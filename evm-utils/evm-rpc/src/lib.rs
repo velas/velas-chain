@@ -688,7 +688,7 @@ impl RPCTransaction {
                         ),
                     ),
                 };
-                let caller_addr = tx.caller.to_string();
+                let addr = U256::from_big_endian(tx.caller.as_bytes());
                 let v = tx.chain_id;
 
                 (
@@ -702,7 +702,7 @@ impl RPCTransaction {
                     value,
                     nonce,
                     v,
-                    Hex::<U256>::from_hex(&caller_addr)?.0,
+                    addr,
                     U256::from(0x1),
                 )
             }
