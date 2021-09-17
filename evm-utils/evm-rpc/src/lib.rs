@@ -469,25 +469,25 @@ pub mod trace {
                 evm_state::ExitReason::Revert(_) => {
                     let reason = super::error::format_data(&Bytes(result.output.clone()));
                     Some(if reason.is_empty() {
-                        format!("Execution reverted")
+                        String::from("Execution reverted")
                     } else {
                         format!("Execution reverted:{}", reason)
                     })
                 }
                 evm_state::ExitReason::Error(evm_state::ExitError::OutOfGas) => {
-                    Some(format!("Out of gas"))
+                    Some(String::from("Out of gas"))
                 }
                 evm_state::ExitReason::Error(evm_state::ExitError::InvalidJump) => {
-                    Some(format!("Invalid jump"))
+                    Some(String::from("Invalid jump"))
                 }
                 evm_state::ExitReason::Error(evm_state::ExitError::StackUnderflow) => {
-                    Some(format!("Stack underflow"))
+                    Some(String::from("Stack underflow"))
                 }
                 evm_state::ExitReason::Error(evm_state::ExitError::StackOverflow) => {
-                    Some(format!("Stack overflow"))
+                    Some(String::from("Stack overflow"))
                 }
                 evm_state::ExitReason::Error(evm_state::ExitError::DesignatedInvalid) => {
-                    Some(format!("Invalid instruction"))
+                    Some(String::from("Invalid instruction"))
                 }
                 evm_state::ExitReason::Error(e) => Some(format!("Internal error: {:?}", e)),
                 evm_state::ExitReason::Fatal(f) => Some(format!("Fatal error: {:?}", f)),
