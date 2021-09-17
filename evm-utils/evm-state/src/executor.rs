@@ -1120,6 +1120,7 @@ mod tests {
                     value: U256::zero(),
                     input: data.to_vec(),
                 },
+                false, /* calculate_tx_hash_with_caller */
                 noop_precompile,
             )
             .unwrap();
