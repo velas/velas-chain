@@ -8,7 +8,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
 };
-use txpool::{NoopListener, Options, VerifiedTransaction};
+use txpool::{NoopListener, Options, Readiness, VerifiedTransaction};
 
 use evm_rpc::basic::BasicERPC;
 use evm_rpc::bridge::BridgeERPC;
@@ -221,8 +221,6 @@ impl EvmBridge {
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
     fn send_tx(&self, tx: evm::Transaction, meta_keys: HashSet<Pubkey>) -> EvmResult<Hex<H256>> {
-        warn!("SEND_TX CALLED");
-
         let tx =
             PooledTransaction::new(tx, meta_keys).map_err(|_e| evm_rpc::Error::Unimplemented {})?; // TODO: fix enum variant
 
@@ -245,6 +243,25 @@ impl EvmBridge {
             _ => block.to_string(),
         };
         Hex::<u64>::from_hex(&block_string).map(|f| f.0)
+    }
+
+    fn next_nonce(&self, sender: &Address) -> Option<U256> {
+        let pool = self.pool.lock().unwrap();
+        pool.pending_from_sender(|_tx: &PooledTransaction| Readiness::Ready, sender, H256::zero())
+            .map(|tx| tx.inner.nonce)
+            .fold(None, |acc, next| {
+                match acc {
+                    Some(acc_val) => {
+                        if next > acc_val {
+                            Some(next)
+                        } else {
+                            acc
+                        }
+                    },
+                    None => Some(next),
+                }
+            })
+            .map(|last_nonce| last_nonce + 1)
     }
 }
 
@@ -287,11 +304,16 @@ impl BridgeERPC for BridgeErpcImpl {
             .accounts
             .get(&address)
             .ok_or(Error::KeyNotFound { account: address })?;
+
         let nonce = tx
             .nonce
             .map(|a| a.0)
-            .or_else(|| meta.rpc_client.get_evm_transaction_count(&address).ok())
+            .or_else(|| { info!("meta.next_nonce"); meta.next_nonce(&address)})
+            .or_else(|| { info!("meta.rpc_client.get_evm_transaction_count"); meta.rpc_client.get_evm_transaction_count(&address).ok()})
             .unwrap_or_default();
+
+        dbg!(&nonce);
+
         let tx_create = evm::UnsignedTransaction {
             nonce,
             gas_price: tx.gas_price.map(|a| a.0).unwrap_or_else(|| 0.into()),
@@ -527,14 +549,8 @@ impl BasicERPC for BasicErpcProxy {
         address: Hex<Address>,
         block: Option<String>,
     ) -> EvmResult<Hex<U256>> {
-        let result = proxy_evm_rpc!(meta.rpc_client, EthGetTransactionCount, address, block);
-
-        info!(
-            "BasicErpcProxy::transaction_count called with result: {:?}",
-            result
-        );
-
-        result
+        // FIXME: ask pool first
+        proxy_evm_rpc!(meta.rpc_client, EthGetTransactionCount, address, block)
     }
 
     fn code(
@@ -551,6 +567,7 @@ impl BasicERPC for BasicErpcProxy {
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
     ) -> EvmResult<Option<RPCTransaction>> {
+        // TODO: ask pool first
         proxy_evm_rpc!(meta.rpc_client, EthGetTransactionByHash, tx_hash)
             .map(|o: Option<_>| o.map(compatibility::patch_tx))
     }
@@ -748,15 +765,12 @@ impl<M: jsonrpc_core::Metadata> Middleware<M> for LoggingMiddleware {
     }
 }
 
-// RUST_LOG="info" cargo run ~/Desktop/velas-validator-keypair.json https://api.testnet.velas.com/rpc 0.0.0.0:8545 111
+// RUST_LOG="warn,evm_bridge=info" cargo run ~/Desktop/velas-validator-keypair.json https://api.testnet.velas.com/rpc 0.0.0.0:8545 111
 // ANCHOR: main
 #[paw::main]
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
-    env_logger::builder()
-        .filter(Some("hyper"), LevelFilter::Off)
-        .filter(Some("reqwest"), LevelFilter::Off)
-        .init();
+    env_logger::builder().init();
 
     let keyfile_path = args
         .keyfile

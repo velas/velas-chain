@@ -254,7 +254,7 @@ impl From<Error> for JRpcError {
 
 pub fn into_native_error<E>(e: E, verbose: bool) -> Error
 where
-    E: Into<anyhow::Error> + std::fmt::Debug
+    E: Into<anyhow::Error> + std::fmt::Debug,
 {
     let details = format!("{:?}", e);
     Error::NativeRpcError {

@@ -17,7 +17,9 @@ use solana_sdk::{
     signer::Signer,
     system_instruction,
 };
-use txpool::{NoopListener, Pool, Readiness, Scoring, ShouldReplace, VerifiedTransaction};
+use txpool::{
+    scoring::Choice, NoopListener, Pool, Readiness, Scoring, ShouldReplace, VerifiedTransaction,
+};
 
 use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult};
 
@@ -75,15 +77,19 @@ impl Scoring<PooledTransaction> for MyScoring {
     type Event = ();
 
     fn compare(&self, old: &PooledTransaction, other: &PooledTransaction) -> std::cmp::Ordering {
-        old.inner.cmp(&other.inner) // TODO: implement
+        old.inner.nonce.cmp(&other.inner.nonce)
     }
 
-    fn choose(
-        &self,
-        _old: &PooledTransaction,
-        _new: &PooledTransaction,
-    ) -> txpool::scoring::Choice {
-        txpool::scoring::Choice::RejectNew // TODO: implement
+    fn choose(&self, old: &PooledTransaction, new: &PooledTransaction) -> Choice {
+        if old.inner.nonce == new.inner.nonce {
+            if new.inner.gas_price > old.inner.gas_price {
+                Choice::ReplaceOld
+            } else {
+                Choice::RejectNew
+            }
+        } else {
+            Choice::InsertNew
+        }
     }
 
     fn update_scores(
@@ -101,8 +107,8 @@ impl ShouldReplace<PooledTransaction> for MyScoring {
         &self,
         _old: &txpool::ReplaceTransaction<PooledTransaction>,
         _new: &txpool::ReplaceTransaction<PooledTransaction>,
-    ) -> txpool::scoring::Choice {
-        txpool::scoring::Choice::RejectNew // TODO: implement
+    ) -> Choice {
+        Choice::InsertNew // TODO: implement
     }
 }
 
@@ -120,13 +126,16 @@ pub fn create_pool_worker(bridge: Arc<EvmBridge>) -> JoinHandle<()> {
             info!("pool worker is doing some work: tx.hash = {:?}", &hash);
             match process_tx(bridge.clone(), tx) {
                 Ok(hash) => {
-                    bridge.pool.lock().unwrap().remove(&hash.0, false).unwrap();
+                    info!("Tx with hash = {:?} processed successfully", &hash);
                 }
-                Err(_e) => warn!(
-                    "Something went wrong in tx pricessing with hash = {:?}",
-                    &hash
-                ),
+                Err(e) => {
+                    warn!("Something went wrong in tx processing with hash = {:?}. Error = {:?}",
+                        &hash,
+                        e
+                    );
+                },
             }
+            bridge.pool.lock().unwrap().remove(&hash, false).unwrap();
         } else {
             trace!("pool worker is idling...");
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -156,11 +165,9 @@ fn process_tx(bridge: Arc<EvmBridge>, tx: PooledTransaction) -> EvmResult<Hex<H2
     }
 
     if bytes.len() > evm::TX_MTU {
-        warn!("BIG TX DETECTED");
         debug!("Sending tx = {}, by chunks", hash);
         match deploy_big_tx(&bridge, &bridge.key, &tx) {
             Ok(_tx) => {
-                warn!("BIG TX DEPLOYED");
                 return Ok(Hex(hash));
             }
             Err(e) => {
@@ -212,6 +219,7 @@ fn process_tx(bridge: Arc<EvmBridge>, tx: PooledTransaction) -> EvmResult<Hex<H2
         .rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
         .map(|response| response.value)
+        // NOTE: into_native_error?
         .map_err(|e| Error::NativeRpcError {
             details: String::from("Failed to get recent blockhash"),
             source: e.into(),

@@ -7,7 +7,7 @@ use solana_sdk::keyed_account::KeyedAccount;
 use evm_rpc::{
     basic::BasicERPC,
     chain_mock::ChainMockERPC,
-    error::{Error, into_native_error},
+    error::{into_native_error, Error},
     Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{AccountProvider, Address, Gas, LogFilter, H256, U256};
@@ -445,12 +445,10 @@ impl BasicERPC for BasicErpcImpl {
 
         debug!("filter = {:?}", filter);
 
-        let logs = meta
-            .filter_logs(filter)
-            .map_err(|e| {
-                debug!("filter_logs error = {:?}", e);
-                into_native_error(e, false)
-            })?;
+        let logs = meta.filter_logs(filter).map_err(|e| {
+            debug!("filter_logs error = {:?}", e);
+            into_native_error(e, false)
+        })?;
         Ok(logs.into_iter().map(|l| l.into()).collect())
     }
 }
