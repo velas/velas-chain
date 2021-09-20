@@ -9,7 +9,7 @@ use evm_rpc::error::EvmStateError;
 use evm_rpc::{
     basic::BasicERPC,
     chain_mock::ChainMockERPC,
-    error::{Error, IntoNativeRpcError},
+    error::{into_native_error, Error},
     trace::TraceMeta,
     Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTopicFilter, RPCTransaction,
 };
@@ -379,11 +379,12 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<String>,
         meta_keys: Option<Vec<String>>,
     ) -> Result<Bytes, Error> {
-        let meta_keys: Result<Vec<_>, _> = meta_keys
+        let meta_keys = meta_keys
             .into_iter()
             .flatten()
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| into_native_error(e, false))?;
         let num = block_to_confirmed_num(block.as_ref(), &meta);
         let saved_root = if let Some(block_num) = num {
             let block = meta
@@ -395,7 +396,8 @@ impl BasicERPC for BasicErpcImpl {
         } else {
             None
         };
-        let result = call(meta, tx, saved_root, meta_keys.into_native_error(false)?)?;
+
+        let result = call(meta, tx, saved_root, meta_keys)?;
         Ok(Bytes(result.exit_data))
     }
 
@@ -443,14 +445,15 @@ impl BasicERPC for BasicErpcImpl {
         // TODO: Handle Vec<String> - traces array, check that it contain "trace" string.
         for (t, _, meta) in tx_traces {
             let meta = meta.unwrap_or_default();
-            let meta_keys: Result<Vec<_>, _> = meta
+            let meta_keys = meta
                 .meta_keys
                 .iter()
                 .flatten()
                 .map(|s| solana_sdk::pubkey::Pubkey::from_str(s))
-                .collect();
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| into_native_error(e, false))?;
 
-            txs.push((t, meta_keys.into_native_error(false)?));
+            txs.push((t, meta_keys));
             txs_meta.push(meta);
         }
 
@@ -537,11 +540,12 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<String>,
         meta_keys: Option<Vec<String>>,
     ) -> Result<Hex<Gas>, Error> {
-        let meta_keys: Result<Vec<_>, _> = meta_keys
+        let meta_keys = meta_keys
             .into_iter()
             .flatten()
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| into_native_error(e, false))?;
         let num = block_to_confirmed_num(block.as_ref(), &meta);
         let saved_root = if let Some(block_num) = num {
             let block = meta
@@ -553,8 +557,9 @@ impl BasicERPC for BasicErpcImpl {
         } else {
             None
         };
-        let output = call(meta, tx, saved_root, meta_keys.into_native_error(false)?)?;
-        Ok(Hex(output.used_gas.into()))
+
+        let result = call(meta, tx, saved_root, meta_keys)?;
+        Ok(Hex(result.used_gas.into()))
     }
 
     fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
@@ -592,13 +597,10 @@ impl BasicERPC for BasicErpcImpl {
 
         debug!("filter = {:?}", filter);
 
-        let logs = meta
-            .filter_logs(filter)
-            .map_err(|e| {
-                debug!("filter_logs error = {:?}", e);
-                e
-            })
-            .into_native_error(false)?;
+        let logs = meta.filter_logs(filter).map_err(|e| {
+            debug!("filter_logs error = {:?}", e);
+            into_native_error(e, false)
+        })?;
         Ok(logs.into_iter().map(|l| l.into()).collect())
     }
 }
