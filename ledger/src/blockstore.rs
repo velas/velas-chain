@@ -1955,9 +1955,10 @@ impl Blockstore {
                 txs.push((*hash, tx))
             } else {
                 warn!(
-                    "Evm transaction = {}, was cleanedup, while block still exist",
-                    hash
+                    "Requesting block {}, evm transaction = {}, was cleaned up, while block still exist,",
+                    block_number, hash
                 );
+                return Err(BlockstoreError::SlotCleanedUp);
             };
         }
 
