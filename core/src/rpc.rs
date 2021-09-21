@@ -934,7 +934,6 @@ impl JsonRpcRequestProcessor {
                     .highest_confirmed_root()
             {
                 let result = self.blockstore.get_rooted_block(slot, true);
-                self.check_blockstore_root(&result, slot)?;
                 if result.is_err() {
                     if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
                         let bigtable_result = self
@@ -946,6 +945,7 @@ impl JsonRpcRequestProcessor {
                         }));
                     }
                 }
+                self.check_blockstore_root(&result, slot)?;
                 self.check_slot_cleaned_up(&result, slot)?;
                 return Ok(result.ok().map(|confirmed_block| {
                     confirmed_block.configure(encoding, transaction_details, show_rewards)
