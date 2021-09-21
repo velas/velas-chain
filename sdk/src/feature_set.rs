@@ -167,7 +167,7 @@ pub mod velas {
     }
 
     pub mod unsigned_tx_fix {
-        solana_sdk::declare_id!("5sUZxkYgPYW97L2pjMqhsmeCxEdu3LtxMStD3Ycrag2K");
+        solana_sdk::declare_id!("HfCMpyxjAmu7sPtRdnqdrTf3zDpkErKugzYPnKs4vhat");
     }
 }
 lazy_static! {
@@ -217,6 +217,7 @@ lazy_static! {
             (velas::evm_cross_execution::id(), "EVM cross execution."),
             (velas::native_swap_in_evm_history::id(), "Native swap in evm history."),
             (velas::evm_new_error_handling::id(), "EVM new error handling."),
+            (velas::unsigned_tx_fix::id(), "Authorized transaction hash fixed."),
             /*************** ADD NEW FEATURES HERE ***************/
         ]
     ).collect();
