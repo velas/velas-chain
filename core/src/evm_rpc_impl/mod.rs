@@ -11,65 +11,66 @@ use evm_rpc::{
     chain_mock::ChainMockERPC,
     error::{Error, IntoNativeRpcError},
     trace::TraceMeta,
-    Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTopicFilter, RPCTransaction,
+    BlockId, BlockRelId, Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt,
+    RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{AccountProvider, Address, Gas, LogFilter, TransactionAction, H256, U256};
 use snafu::ResultExt;
 use solana_runtime::bank::Bank;
 use std::cell::RefCell;
-use std::sync::Arc;
 const GAS_PRICE: u64 = 3;
 
 const DEFAULT_COMITTMENT: Option<CommitmentConfig> = Some(CommitmentConfig {
     commitment: CommitmentLevel::Processed,
 });
 
-fn block_to_bank_and_root(
-    block: Option<String>,
-    meta: &JsonRpcRequestProcessor,
-) -> (Arc<Bank>, H256) {
-    let commitment = if let Some(block) = &block {
-        match block.as_ref() {
-            "earliest" => Some(CommitmentLevel::Confirmed),
-            "latest" => Some(CommitmentLevel::Processed),
-            "pending" => Some(CommitmentLevel::Processed),
-            v => {
-                // Try to parse newest version of block commitment.
-                if let Ok(c) = serde_json::from_str::<CommitmentLevel>(v) {
-                    Some(c)
-                } else {
-                    // Probably user provide specific slot number, we didn't support bank from future, so just return default.
-                    None
-                }
-            }
+fn block_to_state_root(block: Option<BlockId>, meta: &JsonRpcRequestProcessor) -> Option<H256> {
+    let block_id = block.unwrap_or_default();
+
+    let mut found_block_hash = None;
+
+    let block_num = match block_id {
+        BlockId::Num(num) => num.0,
+        BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
+            meta.get_last_available_evm_block().unwrap_or_else(|| {
+                let bank = meta.bank(Some(CommitmentConfig::processed()));
+                let evm = bank.evm_state.read().unwrap();
+                evm.block_number().saturating_sub(1)
+            })
         }
-    } else {
-        None
+        BlockId::RelativeId(BlockRelId::Earliest) => meta.get_frist_available_evm_block(),
+        BlockId::BlockHash { block_hash } => {
+            found_block_hash = Some(block_hash.0);
+            meta.get_evm_block_id_by_hash(block_hash.0)?
+        }
     };
-    let bank = meta.bank(commitment.map(|commitment| CommitmentConfig { commitment }));
-    let last_root = {
-        let lock = bank.evm_state.read().expect("Evm state poisoned");
-        let block_num = block_to_confirmed_num(block, meta).unwrap_or_else(|| lock.block_number());
-        meta.get_evm_block_by_id(block_num)
-            .map(|(b, _)| b.header.state_root)
-            .unwrap_or_else(|| lock.last_root())
-    };
-    (bank, last_root)
+    meta.get_evm_block_by_id(block_num) // TODO: don't request full block.
+        .filter(|(b, _)| {
+            // if requested specific block hash, check that block with this hash is not in reorged fork
+            found_block_hash
+                .map(|block_hash| b.header.hash() == block_hash)
+                .unwrap_or(true)
+        })
+        .map(|(b, _)| b.header.state_root)
 }
 
-fn block_to_confirmed_num(
-    block: Option<impl AsRef<str>>,
+fn block_parse_confirmed_num(
+    block: Option<BlockId>,
     meta: &JsonRpcRequestProcessor,
 ) -> Option<u64> {
     let block = block?;
-    match block.as_ref() {
-        "earliest" => Some(meta.get_frist_available_evm_block()),
-        "pending" | "latest" => Some(meta.get_last_available_evm_block().unwrap_or_else(|| {
-            let bank = meta.bank(Some(CommitmentConfig::processed()));
-            let evm = bank.evm_state.read().unwrap();
-            evm.block_number().saturating_sub(1)
-        })),
-        v => Hex::<u64>::from_hex(v).ok().map(|f| f.0),
+    match block {
+        BlockId::BlockHash { .. } => return None,
+        BlockId::RelativeId(BlockRelId::Earliest) => Some(meta.get_frist_available_evm_block()),
+        BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
+            Some(meta.get_last_available_evm_block().unwrap_or_else(|| {
+                let bank = meta.bank(Some(CommitmentConfig::processed()));
+                let evm = bank.evm_state.read().unwrap();
+                evm.block_number().saturating_sub(1)
+            }))
+        }
+
+        BlockId::Num(num) => Some(num.0),
     }
 }
 
@@ -200,7 +201,7 @@ impl BasicERPC for BasicErpcImpl {
     type Metadata = JsonRpcRequestProcessor;
 
     fn block_number(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error> {
-        let block = block_to_confirmed_num(Some("latest"), &meta).unwrap_or(0);
+        let block = block_parse_confirmed_num(None, &meta).unwrap_or(0);
         Ok(Hex(block as usize))
     }
 
@@ -208,9 +209,12 @@ impl BasicERPC for BasicErpcImpl {
         &self,
         meta: Self::Metadata,
         address: Hex<Address>,
-        block: Option<String>,
+        block: Option<BlockId>,
     ) -> Result<Hex<U256>, Error> {
-        let (bank, root) = block_to_bank_and_root(block, &meta);
+        let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
+            block: block.unwrap_or_default(),
+        })?;
+        let bank = meta.bank(Some(CommitmentConfig::processed()));
         let evm_state = bank.evm_state.read().expect("Evm state poisoned");
         let account = evm_state
             .get_account_state_at(root, address.0)
@@ -223,9 +227,12 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         address: Hex<Address>,
         data: Hex<H256>,
-        block: Option<String>,
+        block: Option<BlockId>,
     ) -> Result<Hex<H256>, Error> {
-        let (bank, root) = block_to_bank_and_root(block, &meta);
+        let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
+            block: block.unwrap_or_default(),
+        })?;
+        let bank = meta.bank(Some(CommitmentConfig::processed()));
         let evm_state = bank.evm_state.read().expect("Evm state poisoned");
         Ok(Hex(evm_state
             .get_storage_at(root, address.0, data.0)
@@ -236,9 +243,12 @@ impl BasicERPC for BasicErpcImpl {
         &self,
         meta: Self::Metadata,
         address: Hex<Address>,
-        block: Option<String>,
+        block: Option<BlockId>,
     ) -> Result<Hex<U256>, Error> {
-        let (bank, root) = block_to_bank_and_root(block, &meta);
+        let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
+            block: block.unwrap_or_default(),
+        })?;
+        let bank = meta.bank(Some(CommitmentConfig::processed()));
         let evm_state = bank.evm_state.read().expect("Evm state poisoned");
         let account = evm_state
             .get_account_state_at(root, address.0)
@@ -250,9 +260,12 @@ impl BasicERPC for BasicErpcImpl {
         &self,
         meta: Self::Metadata,
         address: Hex<Address>,
-        block: Option<String>,
+        block: Option<BlockId>,
     ) -> Result<Bytes, Error> {
-        let (bank, root) = block_to_bank_and_root(block, &meta);
+        let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
+            block: block.unwrap_or_default(),
+        })?;
+        let bank = meta.bank(Some(CommitmentConfig::processed()));
         let evm_state = bank.evm_state.read().expect("Evm state poisoned");
         let account = evm_state
             .get_account_state_at(root, address.0)
@@ -272,25 +285,29 @@ impl BasicERPC for BasicErpcImpl {
                 error!("Not found block for hash:{}", block_hash);
                 return Ok(None);
             }
-            Some(b) => b,
+            Some(b) => match meta.get_evm_block_by_id(b) {
+                // check that found block only in valid fork.
+                Some(block) if block.0.header.hash() == block_hash.0 => b,
+                _ => return Ok(None),
+            },
         };
         debug!("Found block = {:?}", block);
 
-        self.block_by_number(meta, format!("{:#x}", block), full)
+        self.block_by_number(meta, block.into(), full)
     }
 
     fn block_by_number(
         &self,
         meta: Self::Metadata,
-        block: String,
+        block: BlockId,
         full: bool,
     ) -> Result<Option<RPCBlock>, Error> {
-        let num = block_to_confirmed_num(Some(&block), &meta);
+        let num = block_parse_confirmed_num(Some(block), &meta);
         // TODO: Inline evm_state lookups, and request only solana headers.
         let (block, confirmed) = match num.and_then(|block_num| meta.get_evm_block_by_id(block_num))
         {
             None => {
-                error!("Error requesting block:{} ({:?}) not found", block, num);
+                error!("Error requesting block:{:?} ({:?}) not found", block, num);
                 return Ok(None);
             }
             Some(b) => b,
@@ -338,7 +355,7 @@ impl BasicERPC for BasicErpcImpl {
             Some(receipt) => {
                 let (block, _) = meta.get_evm_block_by_id(receipt.block_number).ok_or({
                     Error::BlockNotFound {
-                        block: receipt.block_number,
+                        block: receipt.block_number.into(),
                     }
                 })?;
                 let block_hash = block.header.hash();
@@ -360,7 +377,7 @@ impl BasicERPC for BasicErpcImpl {
             Some(receipt) => {
                 let (block, _) = meta.get_evm_block_by_id(receipt.block_number).ok_or({
                     Error::BlockNotFound {
-                        block: receipt.block_number,
+                        block: receipt.block_number.into(),
                     }
                 })?;
                 let block_hash = block.header.hash();
@@ -376,7 +393,7 @@ impl BasicERPC for BasicErpcImpl {
         &self,
         meta: Self::Metadata,
         tx: RPCTransaction,
-        block: Option<String>,
+        block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
     ) -> Result<Bytes, Error> {
         let meta_keys: Result<Vec<_>, _> = meta_keys
@@ -384,18 +401,15 @@ impl BasicERPC for BasicErpcImpl {
             .flatten()
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
             .collect();
-        let num = block_to_confirmed_num(block.as_ref(), &meta);
-        let saved_root = if let Some(block_num) = num {
-            let block = meta
-                .get_evm_block_by_id(block_num.saturating_sub(1))
-                .ok_or(Error::StateNotFoundForBlock {
-                    block: block_num.to_string(),
-                })?;
-            Some(block.0.header.state_root)
-        } else {
-            None
-        };
-        let result = call(meta, tx, saved_root, meta_keys.into_native_error(false)?)?;
+        let saved_root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
+            block: block.unwrap_or_default(),
+        })?;
+        let result = call(
+            meta,
+            tx,
+            Some(saved_root),
+            meta_keys.into_native_error(false)?,
+        )?;
         Ok(Bytes(result.1))
     }
 
@@ -410,7 +424,7 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         tx: RPCTransaction,
         traces: Vec<String>, //TODO: check trace = ["trace"]
-        block: Option<String>,
+        block: Option<BlockId>,
         meta_info: Option<TraceMeta>,
     ) -> Result<evm_rpc::trace::TraceResultsWithTransactionHash, Error> {
         Ok(self
@@ -424,19 +438,11 @@ impl BasicERPC for BasicErpcImpl {
         &self,
         meta: Self::Metadata,
         tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
-        block: Option<String>,
+        block: Option<BlockId>,
     ) -> Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
-        let num = block_to_confirmed_num(block.as_ref(), &meta);
-        let saved_root = if let Some(block_num) = num {
-            let block = meta
-                .get_evm_block_by_id(block_num.saturating_sub(1))
-                .ok_or(Error::StateNotFoundForBlock {
-                    block: block_num.to_string(),
-                })?;
-            Some(block.0.header.state_root)
-        } else {
-            None
-        };
+        let saved_root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
+            block: block.unwrap_or_default(),
+        })?;
         let mut txs = Vec::new();
         let mut txs_meta = Vec::new();
 
@@ -454,7 +460,7 @@ impl BasicERPC for BasicErpcImpl {
             txs_meta.push(meta);
         }
 
-        let traces = call_many(meta, &txs, saved_root)?.into_iter();
+        let traces = call_many(meta, &txs, Some(saved_root))?.into_iter();
 
         let mut result = Vec::new();
         for (trace, meta_tx) in traces.zip(txs_meta) {
@@ -482,7 +488,7 @@ impl BasicERPC for BasicErpcImpl {
         match tx {
             Ok(Some(tx)) => {
                 let block = if let Some(block) = tx.block_number {
-                    block.to_string()
+                    block.0.as_u64().into()
                 } else {
                     return Ok(None);
                 };
@@ -501,7 +507,7 @@ impl BasicERPC for BasicErpcImpl {
     fn trace_replay_block(
         &self,
         meta: Self::Metadata,
-        block_num: String,
+        block_num: BlockId,
         traces: Vec<String>,
         meta_info: Option<TraceMeta>,
     ) -> Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
@@ -527,14 +533,19 @@ impl BasicERPC for BasicErpcImpl {
                 (tx, traces.clone(), Some(meta_info))
             })
             .collect();
-        self.trace_call_many(meta, transactions, Some(block.number.to_string()))
+        // execute on pervious block
+        self.trace_call_many(
+            meta,
+            transactions,
+            Some(block.number.as_u64().saturating_sub(1).into()),
+        )
     }
 
     fn estimate_gas(
         &self,
         meta: Self::Metadata,
         tx: RPCTransaction,
-        block: Option<String>,
+        block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
     ) -> Result<Hex<Gas>, Error> {
         let meta_keys: Result<Vec<_>, _> = meta_keys
@@ -542,18 +553,15 @@ impl BasicERPC for BasicErpcImpl {
             .flatten()
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
             .collect();
-        let num = block_to_confirmed_num(block.as_ref(), &meta);
-        let saved_root = if let Some(block_num) = num {
-            let block = meta
-                .get_evm_block_by_id(block_num.saturating_sub(1))
-                .ok_or(Error::StateNotFoundForBlock {
-                    block: block_num.to_string(),
-                })?;
-            Some(block.0.header.state_root)
-        } else {
-            None
-        };
-        let result = call(meta, tx, saved_root, meta_keys.into_native_error(false)?)?;
+        let saved_root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
+            block: block.unwrap_or_default(),
+        })?;
+        let result = call(
+            meta,
+            tx,
+            Some(saved_root),
+            meta_keys.into_native_error(false)?,
+        )?;
         Ok(Hex(result.2.into()))
     }
 
@@ -563,9 +571,8 @@ impl BasicERPC for BasicErpcImpl {
 
         let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
         let block_num = evm_lock.block_number();
-        let to = block_to_confirmed_num(log_filter.to_block.as_ref(), &meta).unwrap_or(block_num);
-        let from =
-            block_to_confirmed_num(log_filter.from_block.as_ref(), &meta).unwrap_or(block_num);
+        let to = block_parse_confirmed_num(log_filter.to_block, &meta).unwrap_or(block_num);
+        let from = block_parse_confirmed_num(log_filter.from_block, &meta).unwrap_or(block_num);
         if to > from + MAX_NUM_BLOCKS {
             warn!(
                 "Log filter, block range is too big, reducing, to={}, from={}",

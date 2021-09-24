@@ -1,5 +1,6 @@
 use std::num::ParseIntError;
 
+use crate::BlockId;
 use evm_state::{ExitError, ExitFatal, ExitRevert, H256};
 use jsonrpc_core::Error as JRpcError;
 use rlp::DecoderError;
@@ -57,11 +58,11 @@ pub enum Error {
     #[snafu(display("Failed to cast BigInt({}) to short int.", input_data))]
     BigIntTrimFailed { input_data: String, error: String },
 
-    #[snafu(display("Failed to find block {}", block))]
-    BlockNotFound { block: evm_state::BlockNum },
+    #[snafu(display("Failed to find block {:?}", block))]
+    BlockNotFound { block: BlockId },
 
-    #[snafu(display("Failed to find state for block {}", block))]
-    StateNotFoundForBlock { block: String },
+    #[snafu(display("Failed to find state for block {:?}", block))]
+    StateNotFoundForBlock { block: BlockId },
 
     #[snafu(display("Failed to find state root {}", state))]
     StateRootNotFound { state: H256 },

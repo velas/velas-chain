@@ -45,8 +45,8 @@ impl RPCTopicFilter {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCLogFilter {
-    pub from_block: Option<String>,
-    pub to_block: Option<String>,
+    pub from_block: Option<BlockId>,
+    pub to_block: Option<BlockId>,
     pub address: Option<Hex<Address>>,
     pub topics: Option<Vec<Option<RPCTopicFilter>>>,
 }
@@ -305,6 +305,36 @@ pub struct RPCDumpAccountBasic {
     // pub storage: HashMap<Hex<U256>, Hex<U256>>,
 }
 
+#[derive(Eq, PartialEq, Serialize, Deserialize, Debug, Clone, Copy)]
+#[serde(untagged)]
+pub enum BlockId {
+    Num(Hex<u64>),
+    BlockHash {
+        #[serde(rename = "blockHash")]
+        block_hash: Hex<H256>,
+    },
+    RelativeId(BlockRelId),
+}
+
+#[derive(Eq, PartialEq, Serialize, Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub enum BlockRelId {
+    Latest,
+    Pending,
+    Earliest,
+}
+
+impl Default for BlockId {
+    fn default() -> Self {
+        Self::RelativeId(BlockRelId::Latest)
+    }
+}
+
+impl From<u64> for BlockId {
+    fn from(b: u64) -> BlockId {
+        BlockId::Num(Hex(b))
+    }
+}
 pub mod trace {
     use super::*;
 
@@ -542,7 +572,7 @@ pub mod basic {
             &self,
             meta: Self::Metadata,
             address: Hex<Address>,
-            block: Option<String>,
+            block: Option<BlockId>,
         ) -> Result<Hex<U256>, Error>;
 
         #[rpc(meta, name = "eth_getStorageAt")]
@@ -551,7 +581,7 @@ pub mod basic {
             meta: Self::Metadata,
             address: Hex<Address>,
             data: Hex<H256>,
-            block: Option<String>,
+            block: Option<BlockId>,
         ) -> Result<Hex<H256>, Error>;
 
         #[rpc(meta, name = "eth_getTransactionCount")]
@@ -559,7 +589,7 @@ pub mod basic {
             &self,
             meta: Self::Metadata,
             address: Hex<Address>,
-            block: Option<String>,
+            block: Option<BlockId>,
         ) -> Result<Hex<U256>, Error>;
 
         #[rpc(meta, name = "eth_getCode")]
@@ -567,7 +597,7 @@ pub mod basic {
             &self,
             meta: Self::Metadata,
             address: Hex<Address>,
-            block: Option<String>,
+            block: Option<BlockId>,
         ) -> Result<Bytes, Error>;
 
         #[rpc(meta, name = "eth_getBlockByHash")]
@@ -582,7 +612,7 @@ pub mod basic {
         fn block_by_number(
             &self,
             meta: Self::Metadata,
-            block: String,
+            block: BlockId,
             full: bool,
         ) -> Result<Option<RPCBlock>, Error>;
 
@@ -605,7 +635,7 @@ pub mod basic {
             &self,
             meta: Self::Metadata,
             tx: RPCTransaction,
-            block: Option<String>,
+            block: Option<BlockId>,
             meta_keys: Option<Vec<String>>,
         ) -> Result<Bytes, Error>;
 
@@ -618,7 +648,7 @@ pub mod basic {
             meta: Self::Metadata,
             tx: RPCTransaction,
             traces: Vec<String>,
-            block: Option<String>,
+            block: Option<BlockId>,
             meta_info: Option<TraceMeta>,
         ) -> Result<trace::TraceResultsWithTransactionHash, Error>;
 
@@ -627,7 +657,7 @@ pub mod basic {
             &self,
             meta: Self::Metadata,
             tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
-            block: Option<String>,
+            block: Option<BlockId>,
         ) -> Result<Vec<trace::TraceResultsWithTransactionHash>, Error>;
 
         #[rpc(meta, name = "trace_replayTransaction")]
@@ -643,7 +673,7 @@ pub mod basic {
         fn trace_replay_block(
             &self,
             meta: Self::Metadata,
-            block: String,
+            block: BlockId,
             traces: Vec<String>,
             meta_info: Option<TraceMeta>,
         ) -> Result<Vec<trace::TraceResultsWithTransactionHash>, Error>;
@@ -653,7 +683,7 @@ pub mod basic {
             &self,
             meta: Self::Metadata,
             tx: RPCTransaction,
-            block: Option<String>,
+            block: Option<BlockId>,
             meta_keys: Option<Vec<String>>,
         ) -> Result<Hex<Gas>, Error>;
 
@@ -1078,5 +1108,51 @@ impl From<LogWithLocation> for RPCLog {
             topics: log.topics.into_iter().map(Hex).collect(),
             data: Bytes(log.data),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::*;
+
+    #[test]
+    fn test_block_id() {
+        println!(
+            "{}",
+            serde_json::to_string(&BlockId::Num(Hex(1234))).unwrap()
+        );
+        println!(
+            "{}",
+            serde_json::to_string(&BlockId::RelativeId(BlockRelId::Latest)).unwrap()
+        );
+        println!(
+            "{}",
+            serde_json::to_string(&BlockId::RelativeId(BlockRelId::Pending)).unwrap()
+        );
+        println!(
+            "{}",
+            serde_json::to_string(&BlockId::RelativeId(BlockRelId::Earliest)).unwrap()
+        );
+        println!(
+            "{}",
+            serde_json::to_string(&BlockId::BlockHash {
+                block_hash: Hex(H256::repeat_byte(0xde))
+            })
+            .unwrap()
+        );
+
+        let block: BlockId = serde_json::from_str("\"0x123\"").unwrap();
+        assert!(matches!(block, BlockId::Num(Hex(0x123u64))));
+        let block: BlockId = serde_json::from_str("\"latest\"").unwrap();
+        assert!(matches!(block, BlockId::RelativeId(BlockRelId::Latest)));
+        let block: BlockId = serde_json::from_str("\"pending\"").unwrap();
+        assert!(matches!(block, BlockId::RelativeId(BlockRelId::Pending)));
+        let block: BlockId = serde_json::from_str("\"earliest\"").unwrap();
+        assert!(matches!(block, BlockId::RelativeId(BlockRelId::Earliest)));
+        let block : BlockId = serde_json::from_str("{\"blockHash\":\"0xdededededededededededededededededededededededededededededededede\"}").unwrap();
+        assert!(
+            matches!(block, BlockId::BlockHash{block_hash} if block_hash == Hex(H256::repeat_byte(0xde)))
+        );
     }
 }
