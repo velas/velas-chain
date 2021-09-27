@@ -396,7 +396,7 @@ impl BasicERPC for BasicErpcImpl {
             None
         };
         let result = call(meta, tx, saved_root, meta_keys.into_native_error(false)?)?;
-        Ok(Bytes(result.1))
+        Ok(Bytes(result.exit_data))
     }
 
     fn gas_price(&self, _meta: Self::Metadata) -> Result<Hex<Gas>, Error> {
@@ -447,7 +447,7 @@ impl BasicERPC for BasicErpcImpl {
                 .meta_keys
                 .iter()
                 .flatten()
-                .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
+                .map(|s| solana_sdk::pubkey::Pubkey::from_str(s))
                 .collect();
 
             txs.push((t, meta_keys.into_native_error(false)?));
@@ -457,10 +457,10 @@ impl BasicERPC for BasicErpcImpl {
         let traces = call_many(meta, &txs, saved_root)?.into_iter();
 
         let mut result = Vec::new();
-        for (trace, meta_tx) in traces.zip(txs_meta) {
+        for (output, meta_tx) in traces.zip(txs_meta) {
             result.push(evm_rpc::trace::TraceResultsWithTransactionHash {
-                trace: trace.3.into_iter().map(From::from).collect(),
-                output: trace.1.into(),
+                trace: output.traces.into_iter().map(From::from).collect(),
+                output: output.exit_data.into(),
                 transaction_hash: meta_tx.transaction_hash.map(Hex),
                 transaction_index: meta_tx.transaction_index.map(Hex),
                 block_hash: meta_tx.block_hash.map(Hex),
@@ -553,8 +553,8 @@ impl BasicERPC for BasicErpcImpl {
         } else {
             None
         };
-        let result = call(meta, tx, saved_root, meta_keys.into_native_error(false)?)?;
-        Ok(Hex(result.2.into()))
+        let output = call(meta, tx, saved_root, meta_keys.into_native_error(false)?)?;
+        Ok(Hex(output.used_gas.into()))
     }
 
     fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
@@ -603,53 +603,63 @@ impl BasicERPC for BasicErpcImpl {
     }
 }
 
+struct TxOutput {
+    exit_reason: evm_state::ExitReason,
+    exit_data: Vec<u8>,
+    used_gas: u64,
+    traces: Vec<evm_state::executor::Trace>,
+}
+
 fn call(
     meta: JsonRpcRequestProcessor,
     tx: RPCTransaction,
     saved_root: Option<H256>,
     meta_keys: Vec<solana_sdk::pubkey::Pubkey>,
-) -> Result<
-    (
-        evm_state::ExitSucceed,
-        Vec<u8>,
-        u64,
-        Vec<evm_state::executor::Trace>,
-    ),
-    Error,
-> {
-    let result = call_many(meta, &[(tx, meta_keys)], saved_root)?;
-    let (reason, data, gas_used, traces) = result
+) -> Result<TxOutput, Error> {
+    use evm_state::ExitReason;
+
+    let outputs = call_many(meta, &[(tx, meta_keys)], saved_root)?;
+
+    let TxOutput {
+        exit_reason,
+        exit_data,
+        used_gas,
+        traces,
+    } = outputs
         .into_iter()
         .next()
         .expect("Should contain result for tx.");
-    let (reason, data) = match reason {
-        evm_state::ExitReason::Error(error) => Err(Error::CallError {
-            data: data.into(),
-            error,
-        }),
-        evm_state::ExitReason::Revert(error) => Err(Error::CallRevert {
-            data: data.into(),
-            error,
-        }),
-        evm_state::ExitReason::Fatal(error) => Err(Error::CallFatal { error }),
-        evm_state::ExitReason::Succeed(s) => Ok((s, data)),
-    }?;
-    Ok((reason, data, gas_used, traces))
+
+    match exit_reason {
+        ExitReason::Succeed(_) => {}
+        ExitReason::Error(error) => {
+            return Err(Error::CallError {
+                data: exit_data.into(),
+                error,
+            })
+        }
+        ExitReason::Revert(error) => {
+            return Err(Error::CallRevert {
+                data: exit_data.into(),
+                error,
+            })
+        }
+        ExitReason::Fatal(error) => return Err(Error::CallFatal { error }),
+    }
+
+    Ok(TxOutput {
+        exit_reason,
+        exit_data,
+        used_gas,
+        traces,
+    })
 }
 
 fn call_many(
     meta: JsonRpcRequestProcessor,
     txs: &[(RPCTransaction, Vec<solana_sdk::pubkey::Pubkey>)],
     saved_root: Option<H256>,
-) -> Result<
-    Vec<(
-        evm_state::ExitReason,
-        Vec<u8>,
-        u64,
-        Vec<evm_state::executor::Trace>,
-    )>,
-    Error,
-> {
+) -> Result<Vec<TxOutput>, Error> {
     let bank = meta.bank(DEFAULT_COMITTMENT);
     let evm_state = bank
         .evm_state
@@ -699,15 +709,7 @@ fn call_inner(
     tx: RPCTransaction,
     meta_keys: Vec<solana_sdk::pubkey::Pubkey>,
     bank: &Bank,
-) -> Result<
-    (
-        evm_state::ExitReason,
-        Vec<u8>,
-        u64,
-        Vec<evm_state::executor::Trace>,
-    ),
-    Error,
-> {
+) -> Result<TxOutput, Error> {
     let caller = tx.from.map(|a| a.0).unwrap_or_default();
 
     let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
@@ -721,7 +723,7 @@ fn call_inner(
         .map(|a| a.0)
         .unwrap_or_else(|| executor.nonce(caller));
     let tx_chain_id = executor.chain_id();
-    let tx_hash = tx.hash.map(|a| a.0).unwrap_or_else(|| H256::random());
+    let tx_hash = tx.hash.map(|a| a.0).unwrap_or_else(H256::random);
 
     let evm_state_balance = bank
         .get_account(&solana_sdk::evm_state::id())
@@ -768,7 +770,14 @@ fn call_inner(
         .iter()
         .map(|(user_account, pk)| KeyedAccount::new(pk, false, user_account))
         .collect();
-    let result = executor
+
+    let evm_state::executor::ExecutionResult {
+        exit_reason,
+        exit_data,
+        used_gas,
+        traces,
+        ..
+    } = executor
         .transaction_execute_raw(
             caller,
             nonce,
@@ -786,10 +795,11 @@ fn call_inner(
             ),
         )
         .with_context(|| EvmStateError)?;
-    Ok((
-        result.exit_reason,
-        result.exit_data,
-        result.used_gas,
-        result.traces,
-    ))
+
+    Ok(TxOutput {
+        exit_reason,
+        exit_data,
+        used_gas,
+        traces,
+    })
 }
