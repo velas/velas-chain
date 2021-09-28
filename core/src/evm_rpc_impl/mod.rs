@@ -30,7 +30,6 @@ fn block_to_state_root(block: Option<BlockId>, meta: &JsonRpcRequestProcessor) -
     let mut found_block_hash = None;
 
     let block_num = match block_id {
-        BlockId::Num(num) => num.0,
         BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
             meta.get_last_available_evm_block().unwrap_or_else(|| {
                 let bank = meta.bank(Some(CommitmentConfig::processed()));
@@ -38,7 +37,10 @@ fn block_to_state_root(block: Option<BlockId>, meta: &JsonRpcRequestProcessor) -
                 evm.block_number().saturating_sub(1)
             })
         }
-        BlockId::RelativeId(BlockRelId::Earliest) => meta.get_frist_available_evm_block(),
+        BlockId::RelativeId(BlockRelId::Earliest) | BlockId::Num(Hex(0)) => {
+            meta.get_frist_available_evm_block()
+        }
+        BlockId::Num(num) => num.0,
         BlockId::BlockHash { block_hash } => {
             found_block_hash = Some(block_hash.0);
             meta.get_evm_block_id_by_hash(block_hash.0)?
@@ -58,7 +60,7 @@ fn block_parse_confirmed_num(
     block: Option<BlockId>,
     meta: &JsonRpcRequestProcessor,
 ) -> Option<u64> {
-    let block = block?;
+    let block = block.unwrap_or_default();
     match block {
         BlockId::BlockHash { .. } => return None,
         BlockId::RelativeId(BlockRelId::Earliest) => Some(meta.get_frist_available_evm_block()),
