@@ -9,7 +9,9 @@ use snafu::ResultExt;
 
 mod serialize;
 use self::error::EvmStateError;
-use evm_state::{Address, Gas, LogFilterTopicEntry, LogWithLocation, TransactionInReceipt};
+use evm_state::{
+    Address, ExitSucceed, Gas, LogFilterTopicEntry, LogWithLocation, TransactionInReceipt,
+};
 
 pub mod error;
 pub use self::error::Error;
@@ -226,6 +228,8 @@ pub struct RPCReceipt {
     pub from: Option<Hex<Address>>,
     pub logs: Vec<RPCLog>,
     pub status: Hex<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<jsonrpc_core::Error>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -987,6 +991,7 @@ impl RPCReceipt {
         receipt: evm_state::transactions::TransactionReceipt,
         tx_hash: H256,
         block_hash: H256,
+        exit_data: Option<Vec<u8>>,
     ) -> Result<Self, crate::Error> {
         let (from, to, contract_address) = match receipt.transaction {
             TransactionInReceipt::Signed(tx) => {
@@ -1044,6 +1049,13 @@ impl RPCReceipt {
             })
             .collect();
 
+        let (status, error) =
+            match handle_evm_exit_reason(receipt.status, exit_data.unwrap_or_default()) {
+                // todo use data
+                Ok(_) => (1, None),
+                Err(e) => (0, Some(e.into())),
+            };
+
         Ok(RPCReceipt {
             from: Hex(from).into(),
             to: to.map(Hex),
@@ -1056,11 +1068,8 @@ impl RPCReceipt {
             block_number,
             logs_bloom: receipt.logs_bloom,
             logs,
-            status: Hex(if let evm_state::ExitReason::Succeed(_) = receipt.status {
-                1
-            } else {
-                0
-            }),
+            status: Hex(status),
+            error,
         })
     }
 }
@@ -1079,4 +1088,22 @@ impl From<LogWithLocation> for RPCLog {
             data: Bytes(log.data),
         }
     }
+}
+
+pub fn handle_evm_exit_reason(
+    reason: evm_state::ExitReason,
+    data: Vec<u8>,
+) -> Result<(ExitSucceed, Vec<u8>), Error> {
+    return match reason {
+        evm_state::ExitReason::Error(error) => Err(Error::CallError {
+            data: data.into(),
+            error,
+        }),
+        evm_state::ExitReason::Revert(error) => Err(Error::CallRevert {
+            data: data.into(),
+            error,
+        }),
+        evm_state::ExitReason::Fatal(error) => Err(Error::CallFatal { error }),
+        evm_state::ExitReason::Succeed(s) => Ok((s, data)),
+    };
 }
