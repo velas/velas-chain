@@ -27,6 +27,12 @@ use std::{
 
 pub const MAX_ACTIVE_SUBSCRIPTIONS: usize = 100_000;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EthPubSubResult {
+    Header(evm_rpc::RPCBlock),
+    Log(evm_rpc::RPCLog),
+}
+
 // Suppress needless_return due to
 //   https://github.com/paritytech/jsonrpc/blob/2d38e6424d8461cdf72e78425ce67d51af9c6586/derive/src/lib.rs#L204
 // Once https://github.com/paritytech/jsonrpc/issues/418 is resolved, try to remove this clippy allow
@@ -193,7 +199,7 @@ pub trait RpcSolPubSub {
     fn eth_subscribe(
         &self,
         meta: Self::Metadata,
-        subscriber: Subscriber<evm_rpc::RPCBlock>,
+        subscriber: Subscriber<EthPubSubResult>,
         topic: String,
         anydata: Option<jsonrpc_core::Value>,
     );
@@ -572,26 +578,96 @@ impl RpcSolPubSub for RpcSolPubSubImpl {
     fn eth_subscribe(
         &self,
         _meta: Self::Metadata,
-        subscriber: Subscriber<evm_rpc::RPCBlock>,
+        subscriber: Subscriber<EthPubSubResult>,
         topic: String,
-        _anydata: Option<jsonrpc_core::Value>,
+        anydata: Option<jsonrpc_core::Value>,
     ) {
         info!("eth_subscribe_new_heads");
-        if topic == "newHeads" {
-            if let Err(err) = self.check_subscription_count() {
-                subscriber.reject(err).unwrap_or_default();
-                return;
+        match topic.as_ref() {
+            "newHeads" => {
+                if let Err(err) = self.check_subscription_count() {
+                    subscriber.reject(err).unwrap_or_default();
+                    return;
+                }
+                let id = self.uid.fetch_add(1, atomic::Ordering::Relaxed);
+                let sub_id = SubscriptionId::Number(id as u64);
+                info!("new_heads_subscribe: id={:?}", sub_id);
+                self.subscriptions
+                    .add_evm_block_subscription(sub_id, subscriber);
             }
-            let id = self.uid.fetch_add(1, atomic::Ordering::Relaxed);
-            let sub_id = SubscriptionId::Number(id as u64);
-            info!("new_heads_subscribe: id={:?}", sub_id);
-            self.subscriptions
-                .add_evm_block_subscription(sub_id, subscriber);
-        } else {
-            error!(
-                "eth_subscribe: Trying to subscribe to unsupported topic: {}",
-                topic
-            )
+            "logs" => {
+                if let Err(err) = self.check_subscription_count() {
+                    subscriber.reject(err).unwrap_or_default();
+                    return;
+                }
+                let log_filter: evm_rpc::RPCLogFilter = match anydata.map(serde_json::from_value) {
+                    Some(Ok(filter)) => filter,
+                    Some(Err(e)) => {
+                        subscriber
+                            .reject(Error {
+                                code: ErrorCode::InvalidParams,
+                                message: format!(
+                                    "Invalid Request: Serde cannot parse request {}",
+                                    e
+                                ),
+                                data: None,
+                            })
+                            .unwrap_or_default();
+                        return;
+                    }
+
+                    None => {
+                        subscriber
+                            .reject(Error {
+                                code: ErrorCode::InvalidParams,
+                                message: "Invalid Request: No filter provded for get logs".into(),
+                                data: None,
+                            })
+                            .unwrap_or_default();
+                        return;
+                    }
+                };
+                // TODO: Make more clever way to convert blockid to filter block.
+                let from = match log_filter.from_block {
+                    Some(evm_rpc::BlockId::Num(id)) => id.0,
+                    _ => 0,
+                };
+
+                let to = match log_filter.from_block {
+                    Some(evm_rpc::BlockId::Num(id)) => id.0,
+                    _ => u64::MAX,
+                };
+
+                let filter = evm_state::LogFilter {
+                    address: log_filter
+                        .address
+                        .map(|k| match k {
+                            evm_rpc::Either::Left(v) => v.into_iter().map(|k| k.0).collect(),
+                            evm_rpc::Either::Right(k) => vec![k.0],
+                        })
+                        .unwrap_or_default(),
+                    topics: log_filter
+                        .topics
+                        .into_iter()
+                        .flatten()
+                        .map(evm_rpc::RPCTopicFilter::into_topics)
+                        .collect(),
+                    from_block: from,
+                    to_block: to,
+                };
+
+                let id = self.uid.fetch_add(1, atomic::Ordering::Relaxed);
+                let sub_id = SubscriptionId::Number(id as u64);
+                info!("new_heads_subscribe: id={:?}", sub_id);
+                self.subscriptions
+                    .add_evm_logs_subscription(sub_id, filter, subscriber);
+            }
+            _ => {
+                error!(
+                    "eth_subscribe: Trying to subscribe to unsupported topic: {}",
+                    topic
+                );
+            }
         }
     }
 

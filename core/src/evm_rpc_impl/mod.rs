@@ -597,7 +597,6 @@ impl BasicERPC for BasicErpcImpl {
             from_block: from,
             to_block: to,
         };
-
         debug!("filter = {:?}", filter);
 
         let logs = meta.filter_logs(filter).map_err(|e| {

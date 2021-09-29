@@ -53,6 +53,7 @@ pub struct RPCLogFilter {
     pub topics: Option<Vec<Option<RPCTopicFilter>>>,
 }
 
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCLog {
@@ -65,6 +66,15 @@ pub struct RPCLog {
     pub address: Hex<Address>,
     pub data: Bytes,
     pub topics: Vec<Hex<H256>>,
+}
+impl From<RPCLog> for evm_state::Log {
+    fn from(rpc: RPCLog) -> evm_state::Log {
+        evm_state::Log {
+            data: rpc.data.0,
+            topics: rpc.topics.iter().map(|e| e.0).collect(),
+            address: rpc.address.0,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

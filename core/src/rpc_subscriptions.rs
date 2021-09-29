@@ -3,6 +3,7 @@
 use crate::{
     optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
     rpc::{get_parsed_token_account, get_parsed_token_accounts},
+    rpc_pubsub::EthPubSubResult,
 };
 use core::hash::Hash;
 use evm_rpc::Hex;
@@ -92,6 +93,7 @@ enum NotificationEntry {
     Gossip(Slot),
     SignaturesReceived((Slot, Vec<Signature>)),
     EvmBlock(evm_rpc::RPCBlock),
+    EvmLogs(Vec<evm_rpc::RPCLog>),
 }
 
 impl std::fmt::Debug for NotificationEntry {
@@ -100,6 +102,7 @@ impl std::fmt::Debug for NotificationEntry {
             NotificationEntry::Root(root) => write!(f, "Root({})", root),
             NotificationEntry::Vote(vote) => write!(f, "Vote({:?})", vote),
             NotificationEntry::EvmBlock(b) => write!(f, "EvmBlock({:?})", b),
+            NotificationEntry::EvmLogs(logs_batch) => write!(f, "EvmLogs({:?})", logs_batch),
             NotificationEntry::Slot(slot_info) => write!(f, "Slot({:?})", slot_info),
             NotificationEntry::SlotUpdate(slot_update) => {
                 write!(f, "SlotUpdate({:?})", slot_update)
@@ -154,7 +157,9 @@ type RpcSlotSubscriptions = RwLock<HashMap<SubscriptionId, Sink<SlotInfo>>>;
 type RpcSlotUpdateSubscriptions = RwLock<HashMap<SubscriptionId, Sink<Arc<SlotUpdate>>>>;
 type RpcVoteSubscriptions = RwLock<HashMap<SubscriptionId, Sink<RpcVote>>>;
 type RpcRootSubscriptions = RwLock<HashMap<SubscriptionId, Sink<Slot>>>;
-type EvmBlockSubscriptions = RwLock<HashMap<SubscriptionId, Sink<evm_rpc::RPCBlock>>>;
+type EvmBlockSubscriptions = RwLock<HashMap<SubscriptionId, Sink<EthPubSubResult>>>;
+type EvmLogsSubscriptions =
+    RwLock<HashMap<SubscriptionId, (Sink<EthPubSubResult>, evm_state::LogFilter)>>;
 
 fn add_subscription<K, S, T>(
     subscriptions: &mut HashMap<K, HashMap<SubscriptionId, SubscriptionData<S, T>>>,
@@ -402,6 +407,7 @@ struct Subscriptions {
     vote_subscriptions: Arc<RpcVoteSubscriptions>,
     root_subscriptions: Arc<RpcRootSubscriptions>,
     evm_block_subscriptions: Arc<EvmBlockSubscriptions>,
+    evm_logs_subscriptions: Arc<EvmLogsSubscriptions>,
 }
 
 impl Subscriptions {
@@ -419,6 +425,7 @@ impl Subscriptions {
         total += self.vote_subscriptions.read().unwrap().len();
         total += self.root_subscriptions.read().unwrap().len();
         total += self.evm_block_subscriptions.read().unwrap().len();
+        total += self.evm_logs_subscriptions.read().unwrap().len();
         total
     }
 }
@@ -483,6 +490,8 @@ impl RpcSubscriptions {
         let vote_subscriptions = Arc::new(RpcVoteSubscriptions::default());
         let root_subscriptions = Arc::new(RpcRootSubscriptions::default());
         let evm_block_subscriptions = Arc::new(EvmBlockSubscriptions::default());
+        let evm_logs_subscriptions = Arc::new(EvmLogsSubscriptions::default());
+
         let notification_sender = Arc::new(Mutex::new(notification_sender));
 
         let _bank_forks = bank_forks.clone();
@@ -502,6 +511,7 @@ impl RpcSubscriptions {
             vote_subscriptions,
             root_subscriptions,
             evm_block_subscriptions,
+            evm_logs_subscriptions,
         };
         let _subscriptions = subscriptions.clone();
 
@@ -1013,7 +1023,7 @@ impl RpcSubscriptions {
     pub fn add_evm_block_subscription(
         &self,
         sub_id: SubscriptionId,
-        subscriber: Subscriber<evm_rpc::RPCBlock>,
+        subscriber: Subscriber<EthPubSubResult>,
     ) {
         let sink = subscriber.assign_id(sub_id.clone()).unwrap();
         let mut subscriptions = self.subscriptions.evm_block_subscriptions.write().unwrap();
@@ -1025,6 +1035,22 @@ impl RpcSubscriptions {
         subscriptions.remove(id).is_some()
     }
 
+    pub fn add_evm_logs_subscription(
+        &self,
+        sub_id: SubscriptionId,
+        filter: evm_state::LogFilter,
+        subscriber: Subscriber<EthPubSubResult>,
+    ) {
+        let sink = subscriber.assign_id(sub_id.clone()).unwrap();
+        let mut subscriptions = self.subscriptions.evm_logs_subscriptions.write().unwrap();
+        subscriptions.insert(sub_id, (sink, filter));
+    }
+
+    pub fn remove_evm_logs_subscription(&self, id: &SubscriptionId) -> bool {
+        let mut subscriptions = self.subscriptions.evm_logs_subscriptions.write().unwrap();
+        subscriptions.remove(id).is_some()
+    }
+
     pub fn notify_evm_block(&self, new_head: evm_state::Block) {
         let transactions = new_head
             .transactions
@@ -1032,12 +1058,32 @@ impl RpcSubscriptions {
             .map(|(k, _)| *k)
             .map(Hex)
             .collect();
+        let block_number = new_head.header.block_number;
+        let block_hash = new_head.header.hash();
+        let mut logs = Vec::new();
+        for (transaction_index, (transaction_hash, tx)) in new_head.transactions.iter().enumerate()
+        {
+            for (log_index, log) in tx.logs.iter().enumerate() {
+                logs.push(evm_rpc::RPCLog {
+                    removed: false,
+                    log_index: log_index.into(),
+                    transaction_index: transaction_index.into(),
+                    transaction_hash: (*transaction_hash).into(),
+                    block_hash: block_hash.into(),
+                    block_number: evm_state::U256::from(block_number).into(),
+                    address: log.address.into(),
+                    data: log.data.clone().into(),
+                    topics: log.topics.iter().copied().map(From::from).collect(),
+                })
+            }
+        }
         let block = evm_rpc::RPCBlock::new_from_head(
             new_head.header,
             false,
             evm_rpc::Either::Left(transactions),
         );
-        self.enqueue_notification(NotificationEntry::EvmBlock(block))
+        self.enqueue_notification(NotificationEntry::EvmBlock(block));
+        self.enqueue_notification(NotificationEntry::EvmLogs(logs))
     }
 
     fn enqueue_notification(&self, notification_entry: NotificationEntry) {
@@ -1143,7 +1189,25 @@ impl RpcSubscriptions {
                         }
                         for (_, sink) in subscriptions.iter() {
                             inc_new_counter_info!("rpc-subscription-notify-block", 1);
-                            notifier.notify(block.clone(), sink);
+                            notifier.notify(EthPubSubResult::Header(block.clone()), sink);
+                        }
+                    }
+                    NotificationEntry::EvmLogs(logs) => {
+                        let subscriptions = subscriptions.evm_logs_subscriptions.read().unwrap();
+                        let num_subscriptions = subscriptions.len();
+                        if num_subscriptions > 0 {
+                            debug!(
+                                "block notify: {:?}, num_subscriptions: {:?}",
+                                logs, num_subscriptions
+                            );
+                        }
+                        for (_, (sink, filter)) in subscriptions.iter() {
+                            inc_new_counter_info!("rpc-subscription-notify-logs", 1);
+                            for log in logs.iter() {
+                                if filter.is_log_match(&log.clone().into()) {
+                                    notifier.notify(EthPubSubResult::Log(log.clone()), sink);
+                                }
+                            }
                         }
                     }
                     NotificationEntry::Bank(commitment_slots) => {
