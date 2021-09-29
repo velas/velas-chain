@@ -365,7 +365,7 @@ impl BasicERPC for BasicErpcImpl {
                 })?;
                 let block_hash = block.header.hash();
                 Some(RPCReceipt::new_from_receipt(
-                    receipt, tx_hash.0, block_hash,
+                    receipt, tx_hash.0, block_hash, None,
                 )?)
             }
             None => None,
@@ -618,8 +618,6 @@ fn call(
     saved_root: Option<H256>,
     meta_keys: Vec<solana_sdk::pubkey::Pubkey>,
 ) -> Result<TxOutput, Error> {
-    use evm_state::ExitReason;
-
     let outputs = call_many(meta, &[(tx, meta_keys)], saved_root)?;
 
     let TxOutput {
@@ -632,22 +630,7 @@ fn call(
         .next()
         .expect("Should contain result for tx.");
 
-    match exit_reason {
-        ExitReason::Succeed(_) => {}
-        ExitReason::Error(error) => {
-            return Err(Error::CallError {
-                data: exit_data.into(),
-                error,
-            })
-        }
-        ExitReason::Revert(error) => {
-            return Err(Error::CallRevert {
-                data: exit_data.into(),
-                error,
-            })
-        }
-        ExitReason::Fatal(error) => return Err(Error::CallFatal { error }),
-    }
+    let (_, exit_data) = evm_rpc::handle_evm_exit_reason(exit_reason.clone(), exit_data)?;
 
     Ok(TxOutput {
         exit_reason,
