@@ -2785,6 +2785,7 @@ impl Blockstore {
             .all(|mask| !block.header.logs_bloom.contains_bloom(mask))
         {
             trace!(
+                target: "evm",
                 "Blocks not matching bloom filter blocks_bloom = {:?}, blooms={:?}",
                 block.header.logs_bloom,
                 masks
@@ -2795,7 +2796,7 @@ impl Blockstore {
         for (id, (hash, tx)) in block.transactions.iter().enumerate() {
             // Second filterout all transactions that not contain ALL topic + addresses
             if !masks.iter().any(|mask| tx.logs_bloom.contains_bloom(mask)) {
-                trace!(
+                trace!(target: "evm",
                     "tx not matching bloom filter blocks_bloom = {:?}, blooms={:?}",
                     tx.logs_bloom,
                     masks
@@ -2805,7 +2806,7 @@ impl Blockstore {
             // Then match precisely
             tx.logs.iter().enumerate().for_each(|(idx, log)| {
                 if filter.is_log_match(log) {
-                    trace!("Adding transaction log to result = {:?}", log);
+                    trace!(target: "evm", "Adding transaction log to result = {:?}", log);
                     logs.push(evm::LogWithLocation {
                         transaction_hash: *hash,
                         transaction_id: id as u64,

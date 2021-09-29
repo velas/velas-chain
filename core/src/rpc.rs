@@ -1995,7 +1995,7 @@ impl JsonRpcRequestProcessor {
         &self,
         filter: evm_state::LogFilter,
     ) -> solana_ledger::blockstore_db::Result<Vec<evm_state::LogWithLocation>> {
-        info!("Starting search for logs with filter = {:?}", filter);
+        info!(target: "evm","Starting search for logs with filter = {:?}", filter);
         let mut filter_request_time = Duration::from_millis(0);
         let filter_request = Instant::now();
         let masks = filter.bloom_possibilities();
@@ -2008,7 +2008,7 @@ impl JsonRpcRequestProcessor {
             logs.extend(Blockstore::filter_block_logs(&block, &masks, &filter)?);
             filter_request_time += filter_request.elapsed();
         }
-        info!("Filter evm logs, filter_time = {:?}", filter_request_time);
+        info!(target: "evm","Filter evm logs, filter_time = {:?}", filter_request_time);
 
         Ok(logs)
     }
