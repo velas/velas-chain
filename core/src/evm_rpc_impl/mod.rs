@@ -62,7 +62,7 @@ fn block_parse_confirmed_num(
 ) -> Option<u64> {
     let block = block.unwrap_or_default();
     match block {
-        BlockId::BlockHash { .. } => return None,
+        BlockId::BlockHash { .. } => None,
         BlockId::RelativeId(BlockRelId::Earliest) => Some(meta.get_frist_available_evm_block()),
         BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
             Some(meta.get_last_available_evm_block().unwrap_or_else(|| {
@@ -511,12 +511,11 @@ impl BasicERPC for BasicErpcImpl {
         traces: Vec<String>,
         meta_info: Option<TraceMeta>,
     ) -> Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
-        let block =
-            if let Some(block) = self.block_by_number(meta.clone(), block_num.clone(), true)? {
-                block
-            } else {
-                return Err(Error::StateNotFoundForBlock { block: block_num });
-            };
+        let block = if let Some(block) = self.block_by_number(meta.clone(), block_num, true)? {
+            block
+        } else {
+            return Err(Error::StateNotFoundForBlock { block: block_num });
+        };
         let txs = match block.transactions {
             Either::Right(txs) => txs,
             _ => return Err(Error::Unimplemented {}),

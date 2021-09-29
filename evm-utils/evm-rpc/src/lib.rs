@@ -1124,7 +1124,7 @@ pub fn handle_evm_exit_reason(
     reason: evm_state::ExitReason,
     data: Vec<u8>,
 ) -> Result<(ExitSucceed, Vec<u8>), Error> {
-    return match reason {
+    match reason {
         evm_state::ExitReason::Error(error) => Err(Error::CallError {
             data: data.into(),
             error,
@@ -1135,7 +1135,7 @@ pub fn handle_evm_exit_reason(
         }),
         evm_state::ExitReason::Fatal(error) => Err(Error::CallFatal { error }),
         evm_state::ExitReason::Succeed(s) => Ok((s, data)),
-    };
+    }
 }
 #[cfg(test)]
 mod test {

@@ -630,7 +630,7 @@ mod tests {
         let log_entry_empty = LogFilter {
             from_block: 0,
             to_block: 0,
-            address: None,
+            address: vec![],
             topics: vec![], // None - mean any topic
         };
 
@@ -676,7 +676,7 @@ mod tests {
         let log_entry_empty = LogFilter {
             from_block: 0,
             to_block: 0,
-            address: Some(fixed_addr),
+            address: vec![fixed_addr],
             topics: vec![
                 LogFilterTopicEntry::One(fake_topic1),
                 LogFilterTopicEntry::One(fake_topic2),
