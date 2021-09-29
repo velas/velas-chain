@@ -245,7 +245,7 @@ impl EvmBridge {
             }
             _ => return Err(Error::BlockNotFound { block }),
         };
-        return Ok(block_num);
+        Ok(block_num)
     }
 }
 
