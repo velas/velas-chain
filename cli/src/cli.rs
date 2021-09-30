@@ -1003,10 +1003,7 @@ fn process_airdrop(
 
     let pre_balance = rpc_client.get_balance(&pubkey)?;
 
-    let result = rpc_client
-        .request_airdrop(&pubkey, lamports)
-        .or_else(|_e| request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports));
-
+    let result = request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports);
     if let Ok(signature) = result {
         let signature_cli_message = log_instruction_custom_error::<SystemError>(result, config)?;
         println!("{}", signature_cli_message);
