@@ -1003,10 +1003,7 @@ fn process_airdrop(
 
     let pre_balance = rpc_client.get_balance(&pubkey)?;
 
-    let result = rpc_client
-        .request_airdrop(&pubkey, lamports)
-        .or_else(|_e| request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports));
-
+    let result = request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports);
     if let Ok(signature) = result {
         let signature_cli_message = log_instruction_custom_error::<SystemError>(result, config)?;
         println!("{}", signature_cli_message);
@@ -1945,7 +1942,9 @@ pub fn request_and_confirm_airdrop(
 ) -> ClientResult<Signature> {
     let (recent_blockhash, _fee_calculator) = rpc_client.get_recent_blockhash()?;
     let signature =
-        rpc_client.request_airdrop_with_blockhash(to_pubkey, lamports, &recent_blockhash)?;
+        rpc_client
+            .request_airdrop(to_pubkey, lamports)
+            .or_else(|_e| rpc_client.request_airdrop_with_blockhash(to_pubkey, lamports, &recent_blockhash))?;
     rpc_client.confirm_transaction_with_spinner(
         &signature,
         &recent_blockhash,
