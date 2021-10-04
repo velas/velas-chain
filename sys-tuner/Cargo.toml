@@ -16,7 +16,7 @@ log = "0.4.11"
 libc = "0.2.81"
 solana-clap-utils = { path = "../clap-utils", version = "=1.6.14" }
 solana-logger = { path = "../logger", version = "=1.6.14" }
-solana-version = { path = "../version", version = "=0.4.0" }
+solana-version = { path = "../version", version = "=0.4.1" }
 
 [target."cfg(unix)".dependencies]
 unix_socket2 = "0.5.4"

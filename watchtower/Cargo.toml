@@ -21,7 +21,7 @@ solana-logger = { path = "../logger", version = "=1.6.14" }
 solana-metrics = { path = "../metrics", version = "=1.6.14" }
 solana-notifier = { path = "../notifier", version = "=1.6.14" }
 solana-sdk = { path = "../sdk", version = "=1.6.14" }
-solana-version = { path = "../version", version = "=0.4.0" }
+solana-version = { path = "../version", version = "=0.4.1" }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
