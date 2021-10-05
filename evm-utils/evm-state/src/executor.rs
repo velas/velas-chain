@@ -443,8 +443,15 @@ impl Executor {
     }
 
     /// After "swap from evm" transaction EVM_MINT_ADDRESS will cleanup. Using this method.
-    pub fn reset_balance(&mut self, balance: H160) {
-        self.with_executor(|_, _, _, _| None, |e| e.state_mut().reset_balance(balance));
+    pub fn reset_balance(&mut self, swap_addr: H160, ignore_reset_on_cleared: bool) {
+        self.with_executor(
+            |_, _, _, _| None,
+            |e| {
+                if !ignore_reset_on_cleared || e.state().basic(swap_addr).balance != U256::zero() {
+                    e.state_mut().reset_balance(swap_addr)
+                }
+            },
+        );
     }
 
     //  /// Burn some tokens on address:
