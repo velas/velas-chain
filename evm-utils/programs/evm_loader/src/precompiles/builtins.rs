@@ -95,7 +95,7 @@ where
 //
 // NativeContracts declaration below
 //
-
+// 0x56454c41532d434841494e000000000053574150 for better search
 // TODO: Implement some procedural macro to render this in more
 pub static ETH_TO_VLX_ADDR: Lazy<H160> = Lazy::new(|| {
     H160::from_str(concat!(

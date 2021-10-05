@@ -169,6 +169,10 @@ pub mod velas {
     pub mod unsigned_tx_fix {
         solana_sdk::declare_id!("HfCMpyxjAmu7sPtRdnqdrTf3zDpkErKugzYPnKs4vhat");
     }
+
+    pub mod ignore_reset_on_cleared {
+        solana_sdk::declare_id!("HC6ZH7Dx92Q5dwVLYAaK3SPNCDc1L7Wq41Zuc7FU1mR1");
+    }
 }
 lazy_static! {
     /// Map of feature identifiers to user-visible description
@@ -218,6 +222,7 @@ lazy_static! {
             (velas::native_swap_in_evm_history::id(), "Native swap in evm history."),
             (velas::evm_new_error_handling::id(), "EVM new error handling."),
             (velas::unsigned_tx_fix::id(), "Authorized transaction hash fixed."),
+            (velas::ignore_reset_on_cleared::id(), "Don't reset evm_swap address balance, when it already swapped, to avoid empty blocks."),
             /*************** ADD NEW FEATURES HERE ***************/
         ]
     ).collect();

@@ -48,6 +48,9 @@ impl EvmProcessor {
             .is_feature_active(&solana_sdk::feature_set::velas::evm_new_error_handling::id());
         let unsigned_tx_fix = invoke_context
             .is_feature_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id());
+        let ignore_reset_on_cleared = invoke_context
+            .is_feature_active(&solana_sdk::feature_set::velas::ignore_reset_on_cleared::id());
+
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
             return Err(EvmError::CrossExecutionNotEnabled.into());
@@ -114,7 +117,7 @@ impl EvmProcessor {
         };
 
         if register_swap_tx_in_evm {
-            executor.reset_balance(*precompiles::ETH_TO_VLX_ADDR)
+            executor.reset_balance(*precompiles::ETH_TO_VLX_ADDR, ignore_reset_on_cleared)
         }
 
         // When old error handling, manually convert EvmError to InstructionError
