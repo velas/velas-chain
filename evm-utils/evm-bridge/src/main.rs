@@ -176,6 +176,7 @@ pub struct EvmBridge {
     simulate: bool,
     max_logs_blocks: u64,
     pool: EthPool<SystemClock>,
+    min_gas_price: U256,
 }
 
 impl EvmBridge {
@@ -187,6 +188,7 @@ impl EvmBridge {
         verbose_errors: bool,
         simulate: bool,
         max_logs_blocks: u64,
+        min_gas_price: U256,
     ) -> Self {
         info!("EVM chain id {}", evm_chain_id);
 
@@ -218,6 +220,7 @@ impl EvmBridge {
             simulate,
             max_logs_blocks,
             pool,
+            min_gas_price,
         }
     }
 
@@ -273,6 +276,12 @@ impl BridgeERPC for BridgeErpcImpl {
         tx: RPCTransaction,
         meta_keys: Option<Vec<String>>,
     ) -> EvmResult<Hex<H256>> {
+        if let Some(gas_price) = tx.gas_price {
+            if gas_price.0 < meta.min_gas_price {
+                return Err(Error::GasPriceTooLow {});
+            }
+        }
+
         let address = tx.from.map(|a| a.0).unwrap_or_default();
 
         debug!("send_transaction from = {}", address);
@@ -298,7 +307,10 @@ impl BridgeERPC for BridgeErpcImpl {
 
         let tx_create = evm::UnsignedTransaction {
             nonce,
-            gas_price: tx.gas_price.map(|a| a.0).unwrap_or_else(|| 0.into()),
+            gas_price: tx
+                .gas_price
+                .map(|a| a.0)
+                .unwrap_or_else(|| meta.min_gas_price),
             gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 30000000.into()),
             action: tx
                 .to
@@ -706,14 +718,8 @@ impl BasicERPC for BasicErpcProxy {
         })
     }
 
-    fn gas_price(&self, _meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
-        const GWEI: u64 = 1_000_000_000;
-        //TODO: Add gas logic
-        let gas_price = 21000 * solana_evm_loader_program::scope::evm::LAMPORTS_TO_GWEI_PRICE
-            / DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE; // 21000 is smallest call in evm
-
-        let gas_price = gas_price - gas_price % GWEI; //round to gwei for metamask
-        Ok(Hex(gas_price.into()))
+    fn gas_price(&self, meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
+        Ok(Hex(meta.min_gas_price))
     }
 }
 
@@ -773,6 +779,8 @@ struct Args {
     binding_address: SocketAddr,
     #[structopt(default_value = "57005")] // 0xdead
     evm_chain_id: u64,
+    #[structopt(long = "min-gas-price")]
+    min_gas_price: Option<String>,
     #[structopt(long = "verbose-errors")]
     verbose_errors: bool,
     #[structopt(long = "no-simulate")]
@@ -782,12 +790,44 @@ struct Args {
     max_logs_blocks: u64,
 }
 
+impl Args {
+    fn min_gas_price_or_default(&self) -> U256 {
+        fn min_gas_price() -> U256 {
+            const GWEI: u64 = 1_000_000_000;
+            //TODO: Add gas logic
+            let gas_price = 21000 * solana_evm_loader_program::scope::evm::LAMPORTS_TO_GWEI_PRICE
+                / DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE; // 21000 is smallest call in evm
+
+            (gas_price - gas_price % GWEI).into() //round to gwei for metamask
+        }
+
+        match self
+            .min_gas_price
+            .as_ref()
+            .and_then(|gas_price| U256::from_dec_str(gas_price).ok())
+        {
+            Some(gas_price) => {
+                info!(r#"--min-gas-price is set to {}"#, &gas_price);
+                gas_price
+            }
+            None => {
+                let default_price = min_gas_price();
+                warn!(
+                    r#"Value of "--min-gas-price" is not set or unable to parse. Default value is: {}"#,
+                    default_price
+                );
+                default_price
+            }
+        }
+    }
+}
+
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
 #[paw::main]
 fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     env_logger::init();
-
+    let min_gas_price = args.min_gas_price_or_default();
     let keyfile_path = args
         .keyfile
         .unwrap_or_else(|| solana_cli_config::Config::default().keypair_path);
@@ -802,6 +842,7 @@ fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         args.verbose_errors,
         !args.no_simulate, // invert argument
         args.max_logs_blocks,
+        min_gas_price,
     );
     let meta = Arc::new(meta);
 

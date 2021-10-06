@@ -99,10 +99,10 @@ pub enum Error {
     CallRevert { data: Bytes, error: ExitRevert },
     #[snafu(display("Fatal evm error: {:?}", error))]
     CallFatal { error: ExitFatal },
+    GasPriceTooLow {},
     // InvalidParams {},
     // UnsupportedTrieQuery,
     // NotFound,
-    // CallError,
     // UnknownSourceMapJump
 }
 
@@ -162,6 +162,7 @@ const BLOCK_NOT_FOUND_RPC_ERROR: i64 = 2001;
 const STATE_NOT_FOUND_RPC_ERROR: i64 = 2002;
 const KEY_NOT_FOUND_RPC_ERROR: i64 = 2003;
 const FATAL_EVM_ERROR: i64 = 2004;
+const GAS_PRICE_TOO_LOW: i64 = 2005;
 
 const EVM_EXECUTION_ERROR: i64 = 3; // from geth docs
 const ERROR_EVM_BASE_SUBCODE: i64 = 100; //reserved place for evm errors range: 100 - 200
@@ -253,6 +254,7 @@ impl From<Error> for JRpcError {
             Error::ServerError {} => internal_error(SERVER_ERROR, &err),
             Error::InvalidBlocksRange { .. } => internal_error(SERVER_ERROR, &err),
             Error::RuntimeError { .. } => internal_error(SERVER_ERROR, &err),
+            Error::GasPriceTooLow {} => internal_error(GAS_PRICE_TOO_LOW, &err),
         }
     }
 }
