@@ -42,6 +42,8 @@ pub trait InvokeContext {
     ) -> Result<(), InstructionError>;
     /// Get evm executor context
     fn get_evm_executor(&self) -> Option<Rc<RefCell<evm_state::Executor>>>;
+    /// Get the program ID of the cross-execution-caller, if any.
+    fn get_parent_caller(&self) -> Option<&Pubkey>;
     /// Get the program ID of the currently executing program
     fn get_caller(&self) -> Result<&Pubkey, InstructionError>;
     /// Get a list of built-in programs
@@ -379,6 +381,9 @@ impl InvokeContext for MockInvokeContext {
     }
     fn get_evm_executor(&self) -> Option<Rc<RefCell<evm_state::Executor>>> {
         self.evm_executor.clone()
+    }
+    fn get_parent_caller(&self) -> Option<&Pubkey> {
+        None
     }
     fn get_caller(&self) -> Result<&Pubkey, InstructionError> {
         Ok(&self.key)

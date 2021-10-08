@@ -361,6 +361,10 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
     fn get_evm_executor(&self) -> Option<Rc<RefCell<evm_state::Executor>>> {
         self.evm_executor.clone()
     }
+    fn get_parent_caller(&self) -> Option<&Pubkey> {
+        let id = self.program_ids.len().checked_sub(2);
+        id.and_then(|id| self.program_ids.get(id))
+    }
     fn get_caller(&self) -> Result<&Pubkey, InstructionError> {
         self.program_ids
             .last()
