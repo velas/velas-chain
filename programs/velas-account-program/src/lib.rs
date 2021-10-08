@@ -38,12 +38,14 @@ pub struct VAccountInfo {
 }
 
 impl VAccountInfo {
+    const SUFFIX_OPERATIONAL_STORAGE: &'static [u8] = b"operationals";
+
     pub fn find_storage_key(&self, vaccount: &Pubkey) -> Pubkey {
         Pubkey::find_program_address(
             &[
                 &vaccount.to_bytes(),
-                b"storage",
-                &self.programs_storage_nonce.to_le_bytes(),
+                Self::SUFFIX_OPERATIONAL_STORAGE,
+                &self.operational_storage_nonce.to_le_bytes(),
             ],
             &crate::id(),
         )
