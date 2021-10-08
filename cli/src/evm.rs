@@ -13,6 +13,7 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     message::Message,
     native_token::{lamports_to_sol, LAMPORTS_PER_VLX},
+    pubkey::Pubkey,
     transaction::Transaction,
 };
 
@@ -79,6 +80,14 @@ impl EvmSubCommands for App<'_, '_> {
                              .takes_value(true)
                              .value_name("RAW_TX")
                              .help("A path to a file where raw transaction is stored in bincode encoding")))
+                .subcommand(
+                    SubCommand::with_name("native-to-evm-addr")
+                        .setting(AppSettings::Hidden)
+                        .about("Convert native address to evm address")
+                        .arg(Arg::with_name("address")
+                             .takes_value(true)
+                             .value_name("ADDRESS")
+                             .help("A native pubkey base58 encoded")))
 
                 .subcommand(
                     SubCommand::with_name("create-dummy")
@@ -157,6 +166,10 @@ pub enum EvmCliCommand {
         raw_tx: PathBuf,
     },
 
+    NativeToEvmAddress {
+        address: Pubkey,
+    },
+
     CreateDummy {
         tx_file: PathBuf,
         contract_code: Option<Vec<u8>>,
@@ -195,6 +208,9 @@ impl EvmCliCommand {
             // Hidden commands
             Self::SendRawTx { raw_tx } => {
                 send_raw_tx(rpc_client, config, raw_tx)?;
+            }
+            Self::NativeToEvmAddress { address } => {
+                native_to_evm_address(address)?;
             }
             Self::CreateDummy {
                 tx_file,
@@ -347,6 +363,11 @@ fn send_raw_tx<P: AsRef<Path>>(
     println!("signature = {:?}", signature);
     Ok(())
 }
+fn native_to_evm_address(address: &Pubkey) -> anyhow::Result<()> {
+    let key = solana_evm_loader_program::evm_address_for_program(*address);
+    println!("{:x}", key);
+    Ok(())
+}
 
 fn create_dummy(tx_file: impl AsRef<Path>, contract_code: Option<&[u8]>) -> anyhow::Result<()> {
     let contract_code =
@@ -436,6 +457,10 @@ pub fn parse_evm_subcommand(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, 
         ("send-raw-tx", Some(matches)) => {
             let raw_tx = value_t_or_exit!(matches, "raw_tx", PathBuf);
             EvmCliCommand::SendRawTx { raw_tx }
+        }
+        ("native-to-evm-addr", Some(matches)) => {
+            let address = value_t_or_exit!(matches, "address", Pubkey);
+            EvmCliCommand::NativeToEvmAddress { address }
         }
         ("create-dummy", Some(matches)) => {
             let tx_file = value_t_or_exit!(matches, "tx_file", PathBuf);
