@@ -226,12 +226,20 @@ impl EvmProcessor {
         );
 
         if unsigned_tx_fix {
-            let program_caller = invoke_context.get_caller().map(|k| *k).unwrap_or_default();
+            let program_caller = invoke_context
+                .get_parent_caller()
+                .copied()
+                .unwrap_or_default();
             let program_owner = program_account
                 .try_account_ref()
                 .map_err(|_| EvmError::BorrowingFailed)?
                 .owner;
             if program_owner != program_caller {
+                ic_msg!(
+                    invoke_context,
+                    "EvmAuthorizedTransaction: Incorrect caller program_caller:{}, program_owner:{}",
+                    program_caller, program_owner,
+                );
                 return Err(EvmError::AuthorizedTransactionIncorrectOwner);
             }
         }
