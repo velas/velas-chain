@@ -4030,10 +4030,12 @@ pub mod rpc_full {
             );
 
             let accounts = storages
+                .expect("velas account operational index to be activated")
                 .into_iter()
-                .flatten()
-                .flat_map(|(storage, _)| meta.get_velas_accounts_by_storage_key(&bank, storage))
-                .flatten();
+                .flat_map(|(storage, _)| {
+                    meta.get_velas_accounts_by_storage_key(&bank, storage)
+                        .expect("velas account storage index to be activated")
+                });
             debug!(
                 "get_velas_accounts_by_operational_key velas accounts {:?}",
                 accounts
