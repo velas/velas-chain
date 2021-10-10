@@ -5,8 +5,9 @@ use std::{
     thread::JoinHandle,
 };
 
+use ::tokio::sync::mpsc;
 use evm_rpc::{error::into_native_error, Bytes, Hex, RPCTransaction};
-use evm_state::{Address, TransactionAction, H256, U256};
+use evm_state::{Address, TransactionAction, H160, H256, U256};
 use log::*;
 use serde_json::json;
 use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
@@ -171,18 +172,20 @@ impl<C: Clock> EthPool<C> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PooledTransaction {
     pub inner: evm::Transaction,
     pub meta_keys: HashSet<Pubkey>,
     sender: Address,
     hash: H256,
+    hash_sender: mpsc::Sender<EvmResult<Hex<H256>>>,
 }
 
 impl PooledTransaction {
     pub fn new(
         transaction: evm::Transaction,
         meta_keys: HashSet<Pubkey>,
+        hash_sender: mpsc::Sender<EvmResult<Hex<H256>>>,
     ) -> Result<Self, evm_state::error::Error> {
         let hash = transaction.tx_id_hash();
         let sender = transaction.caller()?;
@@ -192,6 +195,7 @@ impl PooledTransaction {
             sender,
             hash,
             meta_keys,
+            hash_sender,
         })
     }
 }
@@ -266,28 +270,33 @@ impl ShouldReplace<PooledTransaction> for MyScoring {
 }
 
 /// This worker checks for new transactions in pool and tries to deploy them
-pub fn worker_deploy(bridge: Arc<EvmBridge>) -> JoinHandle<()> {
-    std::thread::spawn(move || loop {
+pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
+    loop {
         let tx = bridge.pool.pending();
 
-        if let Some(tx) = tx {
-            let tx = (*tx).clone();
-            let hash = tx.hash;
-            let nonce = tx.nonce;
-            let sender = tx.sender;
+        if let Some(pooled_tx) = tx {
+            let hash = pooled_tx.hash;
+            let nonce = pooled_tx.nonce;
+            let sender = pooled_tx.sender;
+            let meta_keys = pooled_tx.meta_keys.clone();
+            let tx = (*pooled_tx).clone();
             info!(
                 "Pool worker is trying to deploy tx with = {:?} [tx = {:?}]",
-                &hash, *tx
+                &hash, tx
             );
-            match process_tx(bridge.clone(), tx) {
+            match process_tx(bridge.clone(), tx, hash, sender, meta_keys) {
                 Ok(hash) => {
                     info!("Tx with hash = {:?} processed successfully", &hash);
+                    let _result = pooled_tx.hash_sender.send(Ok(hash)).await;
                 }
+                // IF (error recoverable ) { /* just stall, skip remove */ }
+                // else { stall, do remove }
                 Err(e) => {
                     warn!(
                         "Something went wrong in tx processing with hash = {:?}. Error = {:?}",
-                        &hash, e
+                        &hash, &e
                     );
+                    let _result = pooled_tx.hash_sender.send(Err(e)).await;
                 }
             }
             match bridge.pool.remove(&hash) {
@@ -305,11 +314,12 @@ pub fn worker_deploy(bridge: Arc<EvmBridge>) -> JoinHandle<()> {
                     }
                 }
             }
+            // tx.channel_sender_notify(result: EvmResult<Hex<H256>>)
         } else {
             trace!("pool worker is idling...");
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
-    })
+    }
 }
 
 pub fn worker_cleaner(bridge: Arc<EvmBridge>) -> JoinHandle<()> {
@@ -323,15 +333,13 @@ pub fn worker_cleaner(bridge: Arc<EvmBridge>) -> JoinHandle<()> {
     })
 }
 
-fn process_tx(bridge: Arc<EvmBridge>, tx: PooledTransaction) -> EvmResult<Hex<H256>> {
-    let PooledTransaction {
-        inner,
-        mut meta_keys,
-        sender,
-        hash,
-    } = tx;
-    let tx = inner;
-
+fn process_tx(
+    bridge: Arc<EvmBridge>,
+    tx: evm_state::Transaction,
+    hash: H256,
+    sender: H160,
+    mut meta_keys: HashSet<Pubkey>,
+) -> EvmResult<Hex<H256>> {
     let bytes = bincode::serialize(&tx).unwrap();
 
     let rpc_tx = RPCTransaction::from_transaction(tx.clone().into())?;
@@ -724,7 +732,8 @@ mod tests {
 
         let secret_key: evm_state::SecretKey = evm::SecretKey::from_slice(secret_key).unwrap();
 
-        PooledTransaction::new(tx_create.sign(&secret_key, Some(111)), HashSet::new()).unwrap()
+        let (tx, _) = mpsc::channel(1);
+        PooledTransaction::new(tx_create.sign(&secret_key, Some(111)), HashSet::new(), tx).unwrap()
     }
 
     fn import(pool: &mut Pool, tx: PooledTransaction) {

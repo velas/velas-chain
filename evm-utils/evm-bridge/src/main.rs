@@ -7,7 +7,6 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
 };
-use txpool::VerifiedTransaction;
 
 use evm_rpc::basic::BasicERPC;
 use evm_rpc::bridge::BridgeERPC;
@@ -18,6 +17,7 @@ use evm_rpc::*;
 use evm_state::*;
 use sha3::{Digest, Keccak256};
 
+use jsonrpc_core::BoxFuture;
 use jsonrpc_http_server::jsonrpc_core::*;
 use jsonrpc_http_server::*;
 
@@ -40,6 +40,7 @@ use solana_client::{
 };
 
 use ::tokio;
+use ::tokio::sync::mpsc;
 
 use pool::{worker_cleaner, worker_deploy, EthPool, PooledTransaction, SystemClock};
 
@@ -225,18 +226,24 @@ impl EvmBridge {
     }
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
-    fn send_tx(&self, tx: evm::Transaction, meta_keys: HashSet<Pubkey>) -> EvmResult<Hex<H256>> {
-        let tx = PooledTransaction::new(tx, meta_keys)
+    async fn send_tx(
+        &self,
+        tx: evm::Transaction,
+        meta_keys: HashSet<Pubkey>,
+    ) -> EvmResult<Hex<H256>> {
+        let (sender, mut receiver) = mpsc::channel::<EvmResult<Hex<H256>>>(1);
+
+        let tx = PooledTransaction::new(tx, meta_keys, sender)
             .map_err(|source| evm_rpc::Error::EvmStateError { source })?;
 
-        let pooled_tx = self.pool.import(tx);
-
-        pooled_tx.map(|tx| Hex(*tx.hash())).map_err(|e| {
+        self.pool.import(tx).map_err(|e| {
             warn!("Could not import tx to the pool");
             evm_rpc::Error::RuntimeError {
                 details: format!("Mempool error: {:?}", e),
             }
-        })
+        })?;
+
+        receiver.recv().await.unwrap()
     }
 
     fn block_to_number(&self, block: Option<BlockId>) -> EvmResult<u64> {
@@ -275,54 +282,58 @@ impl BridgeERPC for BridgeErpcImpl {
         meta: Self::Metadata,
         tx: RPCTransaction,
         meta_keys: Option<Vec<String>>,
-    ) -> EvmResult<Hex<H256>> {
-        if let Some(gas_price) = tx.gas_price {
-            if gas_price.0 < meta.min_gas_price {
-                return Err(Error::GasPriceTooLow {});
+    ) -> BoxFuture<EvmResult<Hex<H256>>> {
+        let future = async move {
+            if let Some(gas_price) = tx.gas_price {
+                if gas_price.0 < meta.min_gas_price {
+                    return Err(Error::GasPriceTooLow {});
+                }
             }
-        }
 
-        let address = tx.from.map(|a| a.0).unwrap_or_default();
+            let address = tx.from.map(|a| a.0).unwrap_or_default();
 
-        debug!("send_transaction from = {}", address);
+            debug!("send_transaction from = {}", address);
 
-        let meta_keys = meta_keys
-            .into_iter()
-            .flatten()
-            .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
-            .collect::<StdResult<HashSet<_>, _>>()
-            .map_err(|e| into_native_error(e, meta.verbose_errors))?;
+            let meta_keys = meta_keys
+                .into_iter()
+                .flatten()
+                .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
+                .collect::<StdResult<HashSet<_>, _>>()
+                .map_err(|e| into_native_error(e, meta.verbose_errors))?;
 
-        let secret_key = meta
-            .accounts
-            .get(&address)
-            .ok_or(Error::KeyNotFound { account: address })?;
+            let secret_key = meta
+                .accounts
+                .get(&address)
+                .ok_or(Error::KeyNotFound { account: address })?;
 
-        let nonce = tx
-            .nonce
-            .map(|a| a.0)
-            .or_else(|| meta.pool.transaction_count(&address))
-            .or_else(|| meta.rpc_client.get_evm_transaction_count(&address).ok())
-            .unwrap_or_default();
-
-        let tx_create = evm::UnsignedTransaction {
-            nonce,
-            gas_price: tx
-                .gas_price
+            let nonce = tx
+                .nonce
                 .map(|a| a.0)
-                .unwrap_or_else(|| meta.min_gas_price),
-            gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 30000000.into()),
-            action: tx
-                .to
-                .map(|a| evm::TransactionAction::Call(a.0))
-                .unwrap_or(evm::TransactionAction::Create),
-            value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
-            input: tx.input.map(|a| a.0).unwrap_or_default(),
+                .or_else(|| meta.pool.transaction_count(&address))
+                .or_else(|| meta.rpc_client.get_evm_transaction_count(&address).ok())
+                .unwrap_or_default();
+
+            let tx_create = evm::UnsignedTransaction {
+                nonce,
+                gas_price: tx
+                    .gas_price
+                    .map(|a| a.0)
+                    .unwrap_or_else(|| meta.min_gas_price),
+                gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 30000000.into()),
+                action: tx
+                    .to
+                    .map(|a| evm::TransactionAction::Call(a.0))
+                    .unwrap_or(evm::TransactionAction::Create),
+                value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
+                input: tx.input.map(|a| a.0).unwrap_or_default(),
+            };
+
+            let tx = tx_create.sign(secret_key, Some(meta.evm_chain_id));
+
+            meta.send_tx(tx, meta_keys).await
         };
 
-        let tx = tx_create.sign(secret_key, Some(meta.evm_chain_id));
-
-        meta.send_tx(tx, meta_keys)
+        Box::pin(future)
     }
 
     fn send_raw_transaction(
@@ -330,29 +341,34 @@ impl BridgeERPC for BridgeErpcImpl {
         meta: Self::Metadata,
         bytes: Bytes,
         meta_keys: Option<Vec<String>>,
-    ) -> EvmResult<Hex<H256>> {
-        debug!("send_raw_transaction");
-        let meta_keys = meta_keys
-            .into_iter()
-            .flatten()
-            .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
-            .collect::<StdResult<HashSet<_>, _>>()
-            .map_err(|e| into_native_error(e, meta.verbose_errors))?;
+    ) -> BoxFuture<EvmResult<Hex<H256>>> {
+        let future = async move {
+            debug!("send_raw_transaction");
+            let meta_keys = meta_keys
+                .into_iter()
+                .flatten()
+                .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
+                .collect::<StdResult<HashSet<_>, _>>()
+                .map_err(|e| into_native_error(e, meta.verbose_errors))?;
 
-        let tx: compatibility::Transaction = rlp::decode(&bytes.0).with_context(|| RlpError {
-            struct_name: "RawTransaction".to_string(),
-            input_data: hex::encode(&bytes.0),
-        })?;
-        let tx: evm::Transaction = tx.into();
+            let tx: compatibility::Transaction =
+                rlp::decode(&bytes.0).with_context(|| RlpError {
+                    struct_name: "RawTransaction".to_string(),
+                    input_data: hex::encode(&bytes.0),
+                })?;
+            let tx: evm::Transaction = tx.into();
 
-        // TODO: Check chain_id.
-        // TODO: check gas price.
+            // TODO: Check chain_id.
+            // TODO: check gas price.
 
-        let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
-        let hash = unsigned_tx.signing_hash(Some(meta.evm_chain_id));
-        debug!("loaded tx_hash = {}", hash);
+            let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
+            let hash = unsigned_tx.signing_hash(Some(meta.evm_chain_id));
+            debug!("loaded tx_hash = {}", hash);
 
-        meta.send_tx(tx, meta_keys)
+            meta.send_tx(tx, meta_keys).await
+        };
+
+        Box::pin(future)
     }
 
     fn compilers(&self, _meta: Self::Metadata) -> EvmResult<Vec<String>> {
@@ -825,7 +841,8 @@ impl Args {
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
 #[paw::main]
-fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     env_logger::init();
     let min_gas_price = args.min_gas_price_or_default();
     let keyfile_path = args
@@ -894,7 +911,10 @@ fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
             .start(&websocket_binding)
             .expect("Unable to start EVM bridge server")
     };
-    mempool_worker.join().unwrap();
+    tokio::task::spawn_blocking(|| mempool_worker)
+        .await
+        .unwrap()
+        .await;
     cleaner.join().unwrap();
     ws_server.wait().unwrap();
     server.wait();
