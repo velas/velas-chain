@@ -271,6 +271,23 @@ impl ShouldReplace<PooledTransaction> for MyScoring {
 
 /// This worker checks for new transactions in pool and tries to deploy them
 pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
+    let recoverable =
+        regex::Regex::new(r#"Transaction nonce [\d]+ differs from nonce in state [\d]+"#).unwrap();
+
+    /// Transactions, deployed with recoverable error result, can be deployed later
+    ///
+    /// Example:
+    /// Error = ProxyRpcError {
+    ///     source: Error {
+    ///         code: ServerError(1002),
+    ///         message: "Error in evm processing layer: Transaction nonce 1687 differs from nonce in state 1686",
+    ///         data: Some(String("Transaction nonce 1687 differs from nonce in state 1686"))
+    ///     }
+    /// }
+    fn is_recoverable(e: &evm_rpc::Error, recoverable: &regex::Regex) -> bool {
+        matches!(&e, evm_rpc::Error::ProxyRpcError { source } if recoverable.is_match(&source.message))
+    }
+
     loop {
         let tx = bridge.pool.pending();
 
@@ -292,6 +309,10 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
                 // IF (error recoverable ) { /* just stall, skip remove */ }
                 // else { stall, do remove }
                 Err(e) => {
+                    if is_recoverable(&e, &recoverable) {
+                        continue;
+                    }
+
                     warn!(
                         "Something went wrong in tx processing with hash = {:?}. Error = {:?}",
                         &hash, &e
@@ -301,7 +322,7 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
             }
             match bridge.pool.remove(&hash) {
                 Some(tx) => {
-                    info!("Tx with has = {:?} removed from the pool", tx.hash)
+                    info!("Tx with hash = {:?} removed from the pool", tx.hash)
                 }
                 None => {
                     match bridge.pool.remove_by_nonce(&sender, nonce) {
