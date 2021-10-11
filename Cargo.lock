@@ -1664,6 +1664,7 @@ dependencies = [
  "log 0.4.14",
  "paw",
  "primitive-types",
+ "regex",
  "rlp",
  "secp256k1",
  "serde_json",
