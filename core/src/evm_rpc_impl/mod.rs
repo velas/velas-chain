@@ -697,6 +697,7 @@ fn call_inner(
     meta_keys: Vec<solana_sdk::pubkey::Pubkey>,
     bank: &Bank,
 ) -> Result<TxOutput, Error> {
+    use solana_evm_loader_program::precompiles::*;
     let caller = tx.from.map(|a| a.0).unwrap_or_default();
 
     let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
@@ -718,7 +719,6 @@ fn call_inner(
         .lamports;
 
     let (user_accounts, action) = if let Some(address) = tx.to {
-        use solana_evm_loader_program::precompiles::*;
         let address = address.0;
         debug!(
             "Trying to execute tx = {:?}",
@@ -753,6 +753,16 @@ fn call_inner(
     } else {
         (vec![], TransactionAction::Create)
     };
+
+    // system transfers always set s = 0x1
+    if Some(Hex(U256::from(0x1))) == tx.s {
+        // check if it native swap, then predeposit, amount, to pass transaction
+        if caller == *ETH_TO_VLX_ADDR {
+            let amount = value + gas_limit * gas_price;
+            executor.deposit(caller, amount)
+        }
+    }
+
     let user_accounts: Vec<_> = user_accounts
         .iter()
         .map(|(user_account, pk)| KeyedAccount::new(pk, false, user_account))
