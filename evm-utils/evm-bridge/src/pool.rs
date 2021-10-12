@@ -2,7 +2,6 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Deref,
     sync::{Arc, Mutex},
-    thread::JoinHandle,
 };
 
 use ::tokio::sync::mpsc;
@@ -271,6 +270,8 @@ impl ShouldReplace<PooledTransaction> for MyScoring {
 
 /// This worker checks for new transactions in pool and tries to deploy them
 pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
+    info!("Running deploy worker task...");
+
     let recoverable =
         regex::Regex::new(r#"Transaction nonce [\d]+ differs from nonce in state [\d]+"#).unwrap();
 
@@ -298,7 +299,7 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
             let meta_keys = pooled_tx.meta_keys.clone();
             let tx = (*pooled_tx).clone();
             info!(
-                "Pool worker is trying to deploy tx with = {:?} [tx = {:?}]",
+                "Deploy worker is trying to process tx with hash = {:?} [tx = {:?}]",
                 &hash, tx
             );
             match process_tx(bridge.clone(), tx, hash, sender, meta_keys) {
@@ -335,23 +336,23 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
                     }
                 }
             }
-            // tx.channel_sender_notify(result: EvmResult<Hex<H256>>)
         } else {
-            trace!("pool worker is idling...");
+            trace!("Deploy worker is idling...");
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
 }
 
-pub fn worker_cleaner(bridge: Arc<EvmBridge>) -> JoinHandle<()> {
+/// Checks updated timestamp tails in pool and removes them
+pub async fn worker_cleaner(bridge: Arc<EvmBridge>) {
+    info!("Running cleaner task...");
     const CLEANUP_DELAY: std::time::Duration = std::time::Duration::from_secs(CLEANUP_DELAY_SEC);
-
-    std::thread::spawn(move || loop {
-        std::thread::sleep(CLEANUP_DELAY);
+    loop {
+        tokio::time::sleep(CLEANUP_DELAY).await;
 
         let (before_strip, after_strip) = bridge.pool.strip_outdated();
         info!("Cleanup of outdated `last deployed` infos. Entries before cleanup: {}, after cleanup: {}", before_strip, after_strip);
-    })
+    }
 }
 
 fn process_tx(

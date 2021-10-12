@@ -883,10 +883,8 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     let ether_mock = ChainMockErpcProxy;
     io.extend_with(ether_mock.to_delegate());
 
-    info!("Creating worker thread...");
     let mempool_worker = worker_deploy(meta.clone());
 
-    info!("Creating cleaner thread...");
     let cleaner = worker_cleaner(meta.clone());
 
     info!("Creating server with: {}", binding_address);
@@ -911,11 +909,11 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
             .start(&websocket_binding)
             .expect("Unable to start EVM bridge server")
     };
+    tokio::task::spawn(cleaner);
     tokio::task::spawn_blocking(|| mempool_worker)
         .await
         .unwrap()
         .await;
-    cleaner.join().unwrap();
     ws_server.wait().unwrap();
     server.wait();
     Ok(())
