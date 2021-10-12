@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Deref,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use ::tokio::sync::mpsc;
@@ -30,10 +31,6 @@ use txpool::{
 use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult};
 
 type UnixTimeMs = u64;
-
-/// Pause in milliseconds between the end of deploying previous and the beginning
-/// of the next transaction from the same sender
-const PAUSE_MS: u64 = 15000;
 
 /// Delay in seconds before next cleanup of outdated entries from hashmap of
 /// last deployed transactions
@@ -93,15 +90,18 @@ impl<C: Clock> EthPool<C> {
         self.pool.lock().unwrap().import(tx, &MyScoring)
     }
 
-    /// Removes transaction from the pool and stalls next transactions from the same sender
+    /// Prevents pooled transactions from specified sender `address` from processing for certain amount of time
+    pub fn pause_processing(&self, sender: &H160, pause: Duration) {
+        let stop_before = self.clock.now() + pause.as_millis() as u64;
+        self.last_entry
+            .lock()
+            .unwrap()
+            .insert(*sender, stop_before);
+    }
+
+    /// Removes transaction from the pool
     pub fn remove(&self, hash: &H256) -> Option<Arc<PooledTransaction>> {
-        let mut pool = self.pool.lock().unwrap();
-        let removed = pool.remove(hash, false);
-        if let Some(removed) = &removed {
-            let mut last_entry = self.last_entry.lock().unwrap();
-            last_entry.insert(removed.sender, self.clock.now());
-        }
-        removed
+        self.pool.lock().unwrap().remove(hash, false)
     }
 
     /// Used for a special case when the transaction was replaced at a time when the worker was already processing it
@@ -125,10 +125,8 @@ impl<C: Clock> EthPool<C> {
 
         pool.pending(
             |tx: &PooledTransaction| {
-                if let Some(processed) = last_entry.get(&tx.sender) {
-                    if (self.clock.now() - processed) >= PAUSE_MS {
-                        return Readiness::Ready;
-                    } else {
+                if let Some(stop_before) = last_entry.get(&tx.sender) {
+                    if self.clock.now() < *stop_before {
                         return Readiness::Stale;
                     }
                 }
@@ -165,7 +163,7 @@ impl<C: Clock> EthPool<C> {
         let now = self.clock.now();
         let mut last_entry = self.last_entry.lock().unwrap();
         let before_strip = last_entry.len();
-        last_entry.retain(|_, timestamp| *timestamp + PAUSE_MS > now);
+        last_entry.retain(|_, stop_before| *stop_before > now);
         let after_strip = last_entry.len();
         (before_strip, after_strip)
     }
@@ -272,6 +270,8 @@ impl ShouldReplace<PooledTransaction> for MyScoring {
 pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
     info!("Running deploy worker task...");
 
+    const SENDER_PAUSE: Duration = Duration::from_millis(15_000);
+
     let recoverable =
         regex::Regex::new(r#"Transaction nonce [\d]+ differs from nonce in state [\d]+"#).unwrap();
 
@@ -307,8 +307,6 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
                     info!("Tx with hash = {:?} processed successfully", &hash);
                     let _result = pooled_tx.hash_sender.send(Ok(hash)).await;
                 }
-                // IF (error recoverable ) { /* just stall, skip remove */ }
-                // else { stall, do remove }
                 Err(e) => {
                     if is_recoverable(&e, &recoverable) {
                         continue;
@@ -321,6 +319,9 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
                     let _result = pooled_tx.hash_sender.send(Err(e)).await;
                 }
             }
+
+            bridge.pool.pause_processing(&sender, SENDER_PAUSE);
+
             match bridge.pool.remove(&hash) {
                 Some(tx) => {
                     info!("Tx with hash = {:?} removed from the pool", tx.hash)
@@ -338,7 +339,7 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
             }
         } else {
             trace!("Deploy worker is idling...");
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 }
@@ -346,7 +347,7 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
 /// Checks updated timestamp tails in pool and removes them
 pub async fn worker_cleaner(bridge: Arc<EvmBridge>) {
     info!("Running cleaner task...");
-    const CLEANUP_DELAY: std::time::Duration = std::time::Duration::from_secs(CLEANUP_DELAY_SEC);
+    const CLEANUP_DELAY: Duration = Duration::from_secs(CLEANUP_DELAY_SEC);
     loop {
         tokio::time::sleep(CLEANUP_DELAY).await;
 
@@ -675,6 +676,8 @@ mod tests {
 
     #[test]
     fn test_delay_transaction_from_same_sender() {
+        const TICK: Duration = std::time::Duration::from_millis(100);
+    
         let test_clock = Arc::new(Mutex::new(TestClock { now: 0 }));
 
         let pool = EthPool::new(test_clock.clone());
@@ -689,26 +692,32 @@ mod tests {
         assert_eq!(next.input, "11".as_bytes());
         assert_eq!(pool.strip_outdated(), (0, 0));
 
+        pool.pause_processing(&next.sender, TICK);
         pool.remove(&next.hash);
         assert_eq!(pool.strip_outdated(), (1, 1));
 
         let next = pool.pending().unwrap();
         assert_eq!(next.input, "33".as_bytes());
 
+        pool.pause_processing(&next.sender, TICK);
         pool.remove(&next.hash);
         assert_eq!(pool.strip_outdated(), (2, 2));
 
         let next = pool.pending().unwrap();
         assert_eq!(next.input, "55".as_bytes());
 
+        pool.pause_processing(&next.sender, TICK);
         pool.remove(&next.hash);
         assert_eq!(pool.strip_outdated(), (3, 3));
 
         assert!(pool.pending().is_none());
 
-        test_clock.lock().unwrap().now += PAUSE_MS;
+        test_clock.lock().unwrap().now += TICK.as_millis() as u64;
 
-        assert_eq!(pool.pending().unwrap().input, "22".as_bytes());
+        assert!(pool.pending().is_some());
+
+        let next = pool.pending().unwrap();
+        assert_eq!(next.input, "22".as_bytes());
         assert_eq!(pool.strip_outdated(), (3, 0));
     }
 
