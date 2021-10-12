@@ -1,3 +1,5 @@
+mod listener;
+
 use std::{
     collections::{HashMap, HashSet},
     ops::Deref,
@@ -8,6 +10,7 @@ use std::{
 use ::tokio::sync::mpsc;
 use evm_rpc::{error::into_native_error, Bytes, Hex, RPCTransaction};
 use evm_state::{Address, TransactionAction, H160, H256, U256};
+use listener::PoolListener;
 use log::*;
 use serde_json::json;
 use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
@@ -24,8 +27,7 @@ use solana_sdk::{
     system_instruction,
 };
 use txpool::{
-    scoring::Choice, NoopListener, Pool, Readiness, Ready, Scoring, ShouldReplace,
-    VerifiedTransaction,
+    scoring::Choice, Pool, Readiness, Ready, Scoring, ShouldReplace, VerifiedTransaction,
 };
 
 use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult};
@@ -64,7 +66,7 @@ impl<T> Ready<T> for AlwaysReady {
 
 pub struct EthPool<C: Clock> {
     /// Pool of transactions awaiting to be deployed
-    pool: Mutex<Pool<PooledTransaction, MyScoring, NoopListener>>,
+    pool: Mutex<Pool<PooledTransaction, MyScoring, PoolListener>>,
 
     /// Timestamps of the last deployed transactions
     last_entry: Mutex<HashMap<Address, UnixTimeMs>>,
@@ -76,7 +78,7 @@ pub struct EthPool<C: Clock> {
 impl<C: Clock> EthPool<C> {
     pub fn new(clock: C) -> Self {
         Self {
-            pool: Mutex::new(Pool::new(NoopListener, MyScoring, Default::default())),
+            pool: Mutex::new(Pool::new(PoolListener, MyScoring, Default::default())),
             last_entry: Mutex::new(HashMap::new()),
             clock,
         }
@@ -93,10 +95,7 @@ impl<C: Clock> EthPool<C> {
     /// Prevents pooled transactions from specified sender `address` from processing for certain amount of time
     pub fn pause_processing(&self, sender: &H160, pause: Duration) {
         let stop_before = self.clock.now() + pause.as_millis() as u64;
-        self.last_entry
-            .lock()
-            .unwrap()
-            .insert(*sender, stop_before);
+        self.last_entry.lock().unwrap().insert(*sender, stop_before);
     }
 
     /// Removes transaction from the pool
@@ -608,7 +607,7 @@ fn deploy_big_tx(
 mod tests {
     use txpool::Ready;
 
-    type Pool = txpool::Pool<PooledTransaction, MyScoring, NoopListener>;
+    type Pool = txpool::Pool<PooledTransaction, MyScoring, PoolListener>;
 
     use super::*;
 
@@ -629,7 +628,7 @@ mod tests {
 
     #[test]
     fn test_pending_queuing() {
-        let mut pool = Pool::new(NoopListener, MyScoring, Default::default());
+        let mut pool = Pool::new(PoolListener, MyScoring, Default::default());
 
         import(&mut pool, test_tx(100, 1000, "foo", &SK1));
         import(&mut pool, test_tx(100, 1600, "foo", &SK1));
@@ -656,7 +655,7 @@ mod tests {
 
     #[test]
     fn test_readiness() {
-        let mut pool = Pool::new(NoopListener, MyScoring, Default::default());
+        let mut pool = Pool::new(PoolListener, MyScoring, Default::default());
 
         import(&mut pool, test_tx(1, 1, "11", &SK1));
         import(&mut pool, test_tx(1, 100, "22", &SK2));
@@ -677,7 +676,7 @@ mod tests {
     #[test]
     fn test_delay_transaction_from_same_sender() {
         const TICK: Duration = std::time::Duration::from_millis(100);
-    
+
         let test_clock = Arc::new(Mutex::new(TestClock { now: 0 }));
 
         let pool = EthPool::new(test_clock.clone());
