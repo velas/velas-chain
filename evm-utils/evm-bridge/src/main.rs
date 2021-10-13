@@ -1,3 +1,6 @@
+mod pool;
+mod sol_proxy;
+
 use log::*;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -46,9 +49,6 @@ use pool::{worker_cleaner, worker_deploy, EthPool, PooledTransaction, SystemCloc
 
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
-
-mod pool;
-mod sol_proxy;
 
 const MAX_NUM_BLOCKS_IN_BATCH: u64 = 2000; // should be less or equal to const core::evm_rpc_impl::logs::MAX_NUM_BLOCKS
 
