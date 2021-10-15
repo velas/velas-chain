@@ -12,6 +12,7 @@ use evm_rpc::{error::into_native_error, Bytes, Hex, RPCTransaction};
 use evm_state::{Address, TransactionAction, H160, H256, U256};
 use listener::PoolListener;
 use log::*;
+use once_cell::sync::Lazy;
 use serde_json::json;
 use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
 use solana_evm_loader_program::{
@@ -271,8 +272,9 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
 
     const SENDER_PAUSE: Duration = Duration::from_millis(15_000);
 
-    let recoverable =
-        regex::Regex::new(r#"Transaction nonce [\d]+ differs from nonce in state [\d]+"#).unwrap();
+    static RECOVERABLE: Lazy<regex::Regex> = Lazy::new(|| {
+        regex::Regex::new(r#"Transaction nonce [\d]+ differs from nonce in state [\d]+"#).unwrap()
+    });
 
     /// Transactions, deployed with recoverable error result, can be deployed later
     ///
@@ -284,8 +286,8 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
     ///         data: Some(String("Transaction nonce 1687 differs from nonce in state 1686"))
     ///     }
     /// }
-    fn is_recoverable(e: &evm_rpc::Error, recoverable: &regex::Regex) -> bool {
-        matches!(&e, evm_rpc::Error::ProxyRpcError { source } if recoverable.is_match(&source.message))
+    fn is_recoverable(e: &evm_rpc::Error) -> bool {
+        matches!(&e, evm_rpc::Error::ProxyRpcError { source } if RECOVERABLE.is_match(&source.message))
     }
 
     loop {
@@ -301,13 +303,24 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
                 "Deploy worker is trying to process tx with hash = {:?} [tx = {:?}]",
                 &hash, tx
             );
-            match process_tx(bridge.clone(), tx, hash, sender, meta_keys) {
+            let cloned_bridge = bridge.clone();
+            let processed_tx = tokio::task::spawn_blocking(move || {
+                process_tx(cloned_bridge, tx, hash, sender, meta_keys)
+            })
+            .await
+            .expect("tokio should allow new spawns");
+            match processed_tx {
                 Ok(hash) => {
                     info!("Tx with hash = {:?} processed successfully", &hash);
                     let _result = pooled_tx.hash_sender.send(Ok(hash)).await;
                 }
                 Err(e) => {
-                    if is_recoverable(&e, &recoverable) {
+                    if is_recoverable(&e) {
+                        debug!(
+                            "Found recoverable error, for tx = {:?}. Error = {:?}",
+                            &hash, &e
+                        );
+                        bridge.pool.pause_processing(&sender, SENDER_PAUSE);
                         continue;
                     }
 

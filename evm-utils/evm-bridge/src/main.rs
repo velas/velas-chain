@@ -909,13 +909,23 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
             .start(&websocket_binding)
             .expect("Unable to start EVM bridge server")
     };
-    tokio::task::spawn(cleaner);
-    tokio::task::spawn_blocking(|| mempool_worker)
-        .await
-        .unwrap()
-        .await;
-    ws_server.wait().unwrap();
-    server.wait();
+
+    let _cleaner = tokio::task::spawn(cleaner);
+    let mempool_task = tokio::task::spawn(mempool_worker);
+    let servers_waiter = tokio::task::spawn_blocking(|| {
+        ws_server.wait().unwrap();
+        server.wait();
+    });
+
+    // wait for any failure/stops.
+    tokio::select! {
+        _ = servers_waiter => {
+            println!("Server exited.");
+        }
+        _ = mempool_task => {
+            println!("Mempool task exited.");
+        }
+    };
     Ok(())
 }
 
