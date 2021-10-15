@@ -86,6 +86,28 @@ impl ClientError {
     pub fn kind(&self) -> &ClientErrorKind {
         &self.kind
     }
+
+    pub fn already_exist_error(&self) -> bool {
+        use crate::rpc_response::RpcSimulateTransactionResult;
+        use rpc_request::{RpcError, RpcResponseErrorData};
+        if let ClientErrorKind::RpcError(RpcError::RpcResponseError { data, message, .. }) =
+            &self.kind
+        {
+            if matches!(
+                data,
+                RpcResponseErrorData::SendTransactionPreflightFailure(
+                    RpcSimulateTransactionResult {
+                        err: Some(TransactionError::AlreadyProcessed),
+                        ..
+                    }
+                )
+            ) || message.contains("This transaction has already been processed")
+            {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 impl From<ClientErrorKind> for ClientError {
