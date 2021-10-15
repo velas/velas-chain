@@ -846,15 +846,16 @@ impl RpcClient {
         self.send(RpcRequest::MinimumLedgerSlot, Value::Null)
     }
 
-    pub fn send_and_confirm_transaction(
+    pub fn send_and_confirm_transaction_with_config(
         &self,
         transaction: &Transaction,
+        config: RpcSendTransactionConfig,
     ) -> ClientResult<Signature> {
         const SEND_RETRIES: usize = 20;
         const GET_STATUS_RETRIES: usize = 40;
 
         'sending: for _ in 0..SEND_RETRIES {
-            let signature = self.send_transaction(transaction)?;
+            let signature = self.send_transaction_with_config(transaction, config)?;
 
             let recent_blockhash = if uses_durable_nonce(transaction).is_some() {
                 let (recent_blockhash, ..) = self
@@ -899,6 +900,22 @@ impl RpcClient {
                 .to_string(),
         )
         .into())
+    }
+
+    pub fn send_and_confirm_transaction(
+        &self,
+        transaction: &Transaction,
+    ) -> ClientResult<Signature> {
+        self.send_and_confirm_transaction_with_config(
+            transaction,
+            RpcSendTransactionConfig {
+                preflight_commitment: Some(
+                    self.maybe_map_commitment(self.commitment_config)?
+                        .commitment,
+                ),
+                ..RpcSendTransactionConfig::default()
+            },
+        )
     }
 
     /// Note that `get_account` returns `Err(..)` if the account does not exist whereas

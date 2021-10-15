@@ -35,9 +35,12 @@ use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResu
 
 type UnixTimeMs = u64;
 
-/// Delay in seconds before next cleanup of outdated entries from hashmap of
+/// Delay before next cleanup of outdated entries from hashmap of
 /// last deployed transactions
-const CLEANUP_DELAY_SEC: u64 = 86400; // = 24 hours
+const CLEANUP_DELAY: Duration = Duration::from_secs(86400); // = 24 hours
+
+/// Limit activity of sender, who send invalid transactions.
+const SENDER_PAUSE: Duration = Duration::from_secs(15);
 
 /// Abstracting the time source for the testing purposes
 pub trait Clock: Send + Sync {
@@ -270,26 +273,6 @@ impl ShouldReplace<PooledTransaction> for MyScoring {
 pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
     info!("Running deploy worker task...");
 
-    const SENDER_PAUSE: Duration = Duration::from_millis(15_000);
-
-    static RECOVERABLE: Lazy<regex::Regex> = Lazy::new(|| {
-        regex::Regex::new(r#"Transaction nonce [\d]+ differs from nonce in state [\d]+"#).unwrap()
-    });
-
-    /// Transactions, deployed with recoverable error result, can be deployed later
-    ///
-    /// Example:
-    /// Error = ProxyRpcError {
-    ///     source: Error {
-    ///         code: ServerError(1002),
-    ///         message: "Error in evm processing layer: Transaction nonce 1687 differs from nonce in state 1686",
-    ///         data: Some(String("Transaction nonce 1687 differs from nonce in state 1686"))
-    ///     }
-    /// }
-    fn is_recoverable(e: &evm_rpc::Error) -> bool {
-        matches!(&e, evm_rpc::Error::ProxyRpcError { source } if RECOVERABLE.is_match(&source.message))
-    }
-
     loop {
         let tx = bridge.pool.pending();
 
@@ -304,23 +287,29 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
                 &hash, tx
             );
             let cloned_bridge = bridge.clone();
+
             let processed_tx = tokio::task::spawn_blocking(move || {
                 process_tx(cloned_bridge, tx, hash, sender, meta_keys)
             })
             .await
             .expect("tokio should allow new spawns");
+
             match processed_tx {
                 Ok(hash) => {
                     info!("Tx with hash = {:?} processed successfully", &hash);
                     let _result = pooled_tx.hash_sender.send(Ok(hash)).await;
                 }
                 Err(e) => {
-                    if is_recoverable(&e) {
+                    // Any error is a reason to limit user activity.
+                    // If error is recoverable, then implement delay to avoid flooding.
+                    // If error is not recoverable, then client form invalid tx.
+                    bridge.pool.pause_processing(&sender, SENDER_PAUSE);
+
+                    if is_recoverable_error(&e) {
                         debug!(
                             "Found recoverable error, for tx = {:?}. Error = {:?}",
                             &hash, &e
                         );
-                        bridge.pool.pause_processing(&sender, SENDER_PAUSE);
                         continue;
                     }
 
@@ -331,8 +320,6 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
                     let _result = pooled_tx.hash_sender.send(Err(e)).await;
                 }
             }
-
-            bridge.pool.pause_processing(&sender, SENDER_PAUSE);
 
             match bridge.pool.remove(&hash) {
                 Some(tx) => {
@@ -359,7 +346,6 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
 /// Checks updated timestamp tails in pool and removes them
 pub async fn worker_cleaner(bridge: Arc<EvmBridge>) {
     info!("Running cleaner task...");
-    const CLEANUP_DELAY: Duration = Duration::from_secs(CLEANUP_DELAY_SEC);
     loop {
         tokio::time::sleep(CLEANUP_DELAY).await;
 
@@ -523,20 +509,32 @@ fn deploy_big_tx(
         "Create and allocate tx signatures = {:?}",
         create_and_allocate_tx.signatures
     );
+    let rpc_send_cfg = RpcSendTransactionConfig {
+        skip_preflight: !bridge.simulate,
+        preflight_commitment: Some(CommitmentLevel::Processed),
+        ..Default::default()
+    };
 
-    bridge
+    match bridge
         .rpc_client
-        .send_and_confirm_transaction(&create_and_allocate_tx)
-        .map(|signature| {
+        .send_and_confirm_transaction_with_config(&create_and_allocate_tx, rpc_send_cfg)
+    {
+        Ok(signature) => {
             debug!(
                 "Create and allocate {} tx was done, signature = {:?}",
                 storage_pubkey, signature
             )
-        })
-        .map_err(|e| {
+        }
+        Err(e) if e.already_exist_error() => {
+            warn!(
+                "Create and allocate tx processing return AlreadyExist error, trying to continue"
+            );
+        }
+        Err(e) => {
             error!("Error create and allocate {} tx: {:?}", storage_pubkey, e);
-            into_native_error(e, bridge.verbose_errors)
-        })?;
+            return Err(into_native_error(e, bridge.verbose_errors));
+        }
+    }
 
     let (blockhash, _) = bridge
         .rpc_client
@@ -591,29 +589,45 @@ fn deploy_big_tx(
 
     debug!("Execute EVM transaction at storage {} ...", storage_pubkey);
 
-    let rpc_send_cfg = RpcSendTransactionConfig {
-        skip_preflight: false,
-        preflight_commitment: Some(CommitmentLevel::Processed),
-        ..Default::default()
-    };
-
-    bridge
+    match bridge
         .rpc_client
         .send_transaction_with_config(&execute_tx, rpc_send_cfg)
-        .map(|signature| {
+    {
+        Ok(signature) => {
             debug!(
                 "Execute EVM tx at {} was done, signature = {:?}",
                 storage_pubkey, signature
             )
-        })
-        .map_err(|e| {
+        }
+        Err(e) if e.already_exist_error() => {
+            warn!("Executing EVM tx return AlreadyExist error, handle as executed.");
+        }
+        Err(e) => {
             error!("Execute EVM tx at {} failed: {:?}", storage_pubkey, e);
-            from_client_error(e)
-        })?;
-
-    // TODO: here we can transfer back lamports and delete storage
+            return Err(from_client_error(e));
+        }
+    }
 
     Ok(())
+}
+
+/// Transactions, deployed with recoverable error result, can be deployed later
+///
+/// Example:
+/// Error = ProxyRpcError {
+///     source: Error {
+///         code: ServerError(1002),
+///         message: "Error in evm processing layer: Transaction nonce 1687 differs from nonce in state 1686",
+///         data: Some(String("Transaction nonce 1687 differs from nonce in state 1686"))
+///     }
+/// }
+
+fn is_recoverable_error(e: &evm_rpc::Error) -> bool {
+    static RECOVERABLE_NONCE: Lazy<regex::Regex> = Lazy::new(|| {
+        regex::Regex::new(r#"Transaction nonce [\d]+ differs from nonce in state [\d]+"#).unwrap()
+    });
+
+    matches!(e, evm_rpc::Error::ProxyRpcError { source } if RECOVERABLE_NONCE.is_match(&source.message))
 }
 
 #[cfg(test)]
