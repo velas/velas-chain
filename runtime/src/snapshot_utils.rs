@@ -128,8 +128,8 @@ pub enum SnapshotError {
     #[error("accounts package send error")]
     AccountsPackageSendError(#[from] Box<AccountsPackageSendError>),
 
-    #[error("evm backup error: {0}")]
-    EvmBackupError(#[from] evm_state::storage::Error),
+    #[error("Wrong EVM state: {0}")]
+    EvmStateError(anyhow::Error),
 }
 pub type Result<T> = std::result::Result<T, SnapshotError>;
 
@@ -313,7 +313,10 @@ pub fn archive_snapshot_package(snapshot_package: &AccountsPackage) -> Result<()
 
         let evm_target = snapshot_hardlink_dir.join(EVM_STATE_DIR);
         let mut evm_state_backup = Measure::start("evm-state-backup-ms");
-        let backup_path = snapshot_package.evm_db.backup(evm_target.into())?;
+        let backup_path = snapshot_package
+            .evm_db
+            .backup(evm_target.into())
+            .map_err(|e| SnapshotError::EvmStateError(e.into()))?;
         evm_state_backup.stop();
         inc_new_counter_info!("evm-state-backup-ms", evm_state_backup.as_ms() as usize);
         info!(
@@ -862,6 +865,42 @@ fn rebuild_bank_from_snapshots(
             ),
         }?)
     })?;
+
+    // Verify EVM state
+    {
+        use evm_state::storage::{
+            inspectors::verifier::{AccountsVerifier, StoragesTriesVerifier},
+            walker::Walker,
+        };
+        use rayon::prelude::*;
+
+        let evm_state = bank.evm_state.read().unwrap();
+        let storage = evm_state.kvs().clone();
+        let last_root = evm_state.last_root();
+
+        info!("Verifying EVM state root {:?} ...", last_root);
+
+        let accounts_verifier = AccountsVerifier::new(storage.clone());
+        let mut walker = Walker::new(storage.db(), accounts_verifier);
+        let mut measure = Measure::start("verifying accounts");
+        walker
+            .traverse(last_root)
+            .map(|_| measure.stop())
+            .map_err(SnapshotError::EvmStateError)?;
+        info!("{}", measure);
+
+        let mut measure = Measure::start("verifying storages");
+        walker
+            .inspector
+            .storage_roots
+            .into_par_iter()
+            .try_for_each(|storage_root| {
+                Walker::new(storage.db(), StoragesTriesVerifier::default()).traverse(storage_root)
+            })
+            .map(|_| measure.stop())
+            .map_err(SnapshotError::EvmStateError)?;
+        info!("{}", measure);
+    }
 
     let status_cache_path = unpacked_snapshots_dir.join(SNAPSHOT_STATUS_CACHE_FILE_NAME);
     let slot_deltas = deserialize_snapshot_data_file(&status_cache_path, |stream| {

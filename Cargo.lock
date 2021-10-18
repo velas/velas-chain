@@ -5893,6 +5893,7 @@ dependencies = [
  "log 0.4.14",
  "quickcheck 1.0.3",
  "quickcheck_macros 1.0.0",
+ "rayon",
  "regex",
  "rlp",
  "serde",
@@ -6275,6 +6276,7 @@ dependencies = [
 name = "solana-runtime"
 version = "1.6.14"
 dependencies = [
+ "anyhow",
  "arrayref",
  "assert_matches",
  "bincode",

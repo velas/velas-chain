@@ -58,6 +58,7 @@ evm-rpc = { path = "../evm-utils/evm-rpc" }
 solana-evm-loader-program = { path = "../evm-utils/programs/evm_loader" }
 velas-account-program = { path = "../programs/velas-account-program" }
 velas-relying-party-program = { path = "../programs/velas-relying-party-program" }
+anyhow = "1.0.34"
 
 
 [lib]
