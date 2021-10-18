@@ -1,4 +1,4 @@
-use derive_more::{From, Into};
+use derive_more::{AsRef, From, Into};
 use itertools::Itertools;
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 
@@ -112,7 +112,7 @@ impl Decodable for AccountState {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, From, Into, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, From, Into, AsRef, Serialize, Deserialize)]
 pub struct Code(Vec<u8>);
 
 impl Code {

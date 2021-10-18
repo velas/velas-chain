@@ -360,7 +360,7 @@ impl EvmBackend<Incomming> {
         }
     }
 
-    fn kvs(&self) -> &KVS {
+    pub fn kvs(&self) -> &KVS {
         &self.kvs
     }
 

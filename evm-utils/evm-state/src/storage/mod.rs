@@ -25,6 +25,9 @@ use crate::{
 };
 use triedb::{empty_trie_hash, rocksdb::RocksMemoryTrieMut, FixedSecureTrieMut};
 
+pub mod inspectors;
+pub mod walker;
+
 pub type Result<T> = std::result::Result<T, Error>;
 pub use rocksdb; // avoid mess with dependencies for another crates
 
