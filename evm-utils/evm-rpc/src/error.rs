@@ -1,7 +1,7 @@
 use std::num::ParseIntError;
 
 use crate::BlockId;
-use evm_state::{ExitError, ExitFatal, ExitRevert, H256};
+use evm_state::{ExitError, ExitFatal, ExitRevert, H256, U256};
 use jsonrpc_core::Error as JRpcError;
 use rlp::DecoderError;
 use rustc_hex::FromHexError;
@@ -99,8 +99,10 @@ pub enum Error {
     CallRevert { data: Bytes, error: ExitRevert },
     #[snafu(display("Fatal evm error: {:?}", error))]
     CallFatal { error: ExitFatal },
-    GasPriceTooLow {},
-    TransactionReplaced {},
+    #[snafu(display("Gas price too low, need={}", need))]
+    GasPriceTooLow { need: U256 },
+    #[snafu(display("Transaction was removed from mempool"))]
+    TransactionRemoved {},
     // InvalidParams {},
     // UnsupportedTrieQuery,
     // NotFound,
@@ -256,8 +258,8 @@ impl From<Error> for JRpcError {
             Error::ServerError {} => internal_error(SERVER_ERROR, &err),
             Error::InvalidBlocksRange { .. } => internal_error(SERVER_ERROR, &err),
             Error::RuntimeError { .. } => internal_error(SERVER_ERROR, &err),
-            Error::GasPriceTooLow {} => internal_error(GAS_PRICE_TOO_LOW, &err),
-            Error::TransactionReplaced {} => internal_error(TRANSACTION_REPLACED, &err)
+            Error::GasPriceTooLow { .. } => internal_error(GAS_PRICE_TOO_LOW, &err),
+            Error::TransactionRemoved {} => internal_error(TRANSACTION_REPLACED, &err),
         }
     }
 }

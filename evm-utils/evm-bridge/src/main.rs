@@ -233,15 +233,26 @@ impl EvmBridge {
     ) -> EvmResult<Hex<H256>> {
         let (sender, mut receiver) = mpsc::channel::<EvmResult<Hex<H256>>>(1);
 
+        if tx.gas_price < self.min_gas_price {
+            return Err(Error::GasPriceTooLow {
+                need: self.min_gas_price,
+            });
+        }
+
         let tx = PooledTransaction::new(tx, meta_keys, sender)
             .map_err(|source| evm_rpc::Error::EvmStateError { source })?;
 
-        self.pool.import(tx).map_err(|e| {
-            warn!("Could not import tx to the pool");
-            evm_rpc::Error::RuntimeError {
-                details: format!("Mempool error: {:?}", e),
+        match self.pool.import(tx) {
+            // tx was already processed on this bridge, return hash.
+            Err(txpool::Error::AlreadyImported(h)) => return Ok(Hex(h)),
+            Ok(tx) => tx,
+            Err(source) => {
+                warn!("Could not import tx to the pool");
+                return Err(evm_rpc::Error::RuntimeError {
+                    details: format!("Mempool error: {:?}", source),
+                });
             }
-        })?;
+        };
 
         receiver.recv().await.unwrap()
     }
@@ -284,12 +295,6 @@ impl BridgeERPC for BridgeErpcImpl {
         meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<EvmResult<Hex<H256>>> {
         let future = async move {
-            if let Some(gas_price) = tx.gas_price {
-                if gas_price.0 < meta.min_gas_price {
-                    return Err(Error::GasPriceTooLow {});
-                }
-            }
-
             let address = tx.from.map(|a| a.0).unwrap_or_default();
 
             debug!("send_transaction from = {}", address);
@@ -808,16 +813,15 @@ struct Args {
 
 impl Args {
     fn min_gas_price_or_default(&self) -> U256 {
+        let gwei: U256 = 1_000_000_000.into();
         fn min_gas_price() -> U256 {
-            const GWEI: u64 = 1_000_000_000;
             //TODO: Add gas logic
-            let gas_price = 21000 * solana_evm_loader_program::scope::evm::LAMPORTS_TO_GWEI_PRICE
-                / DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE; // 21000 is smallest call in evm
-
-            (gas_price - gas_price % GWEI).into() //round to gwei for metamask
+            (21000 * solana_evm_loader_program::scope::evm::LAMPORTS_TO_GWEI_PRICE
+                / DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE)
+                .into() // 21000 is smallest call in evm
         }
 
-        match self
+        let mut gas_price = match self
             .min_gas_price
             .as_ref()
             .and_then(|gas_price| U256::from_dec_str(gas_price).ok())
@@ -834,7 +838,10 @@ impl Args {
                 );
                 default_price
             }
-        }
+        };
+        // ceil to gwei for metamask
+        gas_price += gwei - 1;
+        gas_price - gas_price % gwei
     }
 }
 
