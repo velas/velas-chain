@@ -624,10 +624,23 @@ fn deploy_big_tx(
 
 fn is_recoverable_error(e: &evm_rpc::Error) -> bool {
     static RECOVERABLE_NONCE: Lazy<regex::Regex> = Lazy::new(|| {
-        regex::Regex::new(r#"Transaction nonce [\d]+ differs from nonce in state [\d]+"#).unwrap()
+        regex::Regex::new(r#"Transaction nonce (?P<tx_nonce>\d+) differs from nonce in state (?P<state_nonce>\d+)"#).unwrap()
     });
 
-    matches!(e, evm_rpc::Error::ProxyRpcError { source } if RECOVERABLE_NONCE.is_match(&source.message))
+    if let evm_rpc::Error::ProxyRpcError { source } = e {
+        let caps = RECOVERABLE_NONCE.captures(&source.message);
+        let caps = if let Some(caps) = caps {
+            caps
+        } else {
+            return false;
+        };
+        let tx_nonce: U256 = caps.name("tx_nonce").unwrap().as_str().parse().unwrap();
+        let state_nonce: U256 = caps.name("state_nonce").unwrap().as_str().parse().unwrap();
+        if tx_nonce > state_nonce {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -651,6 +664,37 @@ mod tests {
         fn now(&self) -> UnixTimeMs {
             self.lock().unwrap().now
         }
+    }
+
+    #[test]
+    fn test_recoverable_nonce() {
+        fn create_proxy_error(message: String) -> evm_rpc::Error {
+            evm_rpc::Error::ProxyRpcError {
+                source: jsonrpc_core::Error::invalid_params(message),
+            }
+        }
+
+        let e = create_proxy_error(format!(
+            "Transaction nonce 1687 differs from nonce in state 1686"
+        ));
+        assert_eq!(is_recoverable_error(&e), true);
+
+        let e = create_proxy_error(format!("Transaction nonce 1 differs from nonce in state 0"));
+        assert_eq!(is_recoverable_error(&e), true);
+
+        let e = create_proxy_error(format!(
+            "HasPrefix:Transaction nonce 1687 differs from nonce in state 1686. And sufix"
+        ));
+        assert_eq!(is_recoverable_error(&e), true);
+
+        let e = create_proxy_error(format!("Any other text"));
+        assert_eq!(is_recoverable_error(&e), false);
+
+        // outdated transaction
+        let e = create_proxy_error(format!(
+            "Transaction nonce 1685 differs from nonce in state 1686"
+        ));
+        assert_eq!(is_recoverable_error(&e), false);
     }
 
     #[test]
