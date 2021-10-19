@@ -50,6 +50,18 @@ pub enum PrecompileErrors {
 
     #[snafu(display("Native chain Instruction error source = {}", source))]
     NativeChainInstructionError { source: InstructionError },
+
+    #[snafu(display("Cannot parse point: {}", message))]
+    ParsePointError { message: String },
+
+    #[snafu(display("Cannot parse coordinate: {}", message))]
+    ParseCoordinateError { message: String },
+
+    #[snafu(display("Bad input length: {}", length))]
+    BadInputLength { length: usize },
+
+    #[snafu(display("Incorrect final block indicator flag"))]
+    IncorrectBlockIndicator,
 }
 
 impl From<PrecompileErrors> for ExitError {

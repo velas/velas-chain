@@ -26,6 +26,10 @@ sha2 = "0.9.4"
 ripemd160 = "0.9.1"
 num-derive = "0.3"
 num-traits = "0.2"
+num = { version = "0.1", default-features = false, features = ["bigint"] }
+substrate-bn = { git = "https://github.com/paritytech/bn.git", default-features = false }
+byteorder = "1.4.3"
+eip-152 = "0.1.0"
 
 [lib]
 crate-type = ["lib", "cdylib"]
