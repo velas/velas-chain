@@ -15,7 +15,7 @@ clap = "2.33.3"
 cargo_metadata = "0.12.0"
 solana-download-utils = { path = "../../download-utils", version = "=1.6.14" }
 solana-sdk = { path = "..", version = "=1.6.14" }
-tar = "0.4.28"
+tar = "0.4.37"
 
 [features]
 program = []
