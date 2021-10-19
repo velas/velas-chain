@@ -173,6 +173,10 @@ pub mod velas {
     pub mod ignore_reset_on_cleared {
         solana_sdk::declare_id!("HC6ZH7Dx92Q5dwVLYAaK3SPNCDc1L7Wq41Zuc7FU1mR1");
     }
+
+    pub mod free_ownership_require_signer {
+        solana_sdk::declare_id!("3zdr7CPgRJegSXMQrSVvAMXvGFPyRKmuLdajCXnbrXNL");
+    }
 }
 lazy_static! {
     /// Map of feature identifiers to user-visible description
@@ -223,6 +227,8 @@ lazy_static! {
             (velas::evm_new_error_handling::id(), "EVM new error handling."),
             (velas::unsigned_tx_fix::id(), "Authorized transaction hash fixed."),
             (velas::ignore_reset_on_cleared::id(), "Don't reset evm_swap address balance, when it already swapped, to avoid empty blocks."),
+            (velas::free_ownership_require_signer::id(), "Free ownership require signer."),
+
             /*************** ADD NEW FEATURES HERE ***************/
         ]
     ).collect();

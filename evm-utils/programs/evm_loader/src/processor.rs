@@ -50,6 +50,9 @@ impl EvmProcessor {
             .is_feature_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id());
         let ignore_reset_on_cleared = invoke_context
             .is_feature_active(&solana_sdk::feature_set::velas::ignore_reset_on_cleared::id());
+        let free_ownership_require_signer = invoke_context
+            .is_feature_active(&solana_sdk::feature_set::velas::free_ownership_require_signer::id());
+
 
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
@@ -100,7 +103,7 @@ impl EvmProcessor {
                 self.process_big_tx(executor, invoke_context, accounts, big_tx, unsigned_tx_fix)
             }
             EvmInstruction::FreeOwnership {} => {
-                self.process_free_ownership(executor, invoke_context, accounts)
+                self.process_free_ownership(executor, invoke_context, accounts, free_ownership_require_signer)
             }
             EvmInstruction::SwapNativeToEther {
                 lamports,
@@ -264,6 +267,7 @@ impl EvmProcessor {
         _executor: &mut Executor,
         invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
+        free_ownership_require_signer: bool,
     ) -> Result<(), EvmError> {
         let user = accounts.first().ok_or_else(|| {
             ic_msg!(
@@ -272,6 +276,11 @@ impl EvmProcessor {
             );
             EvmError::MissingAccount
         })?;
+        if free_ownership_require_signer && user.signer_key().is_none() {
+            ic_msg!(invoke_context, "FreeOwnership: Missing signer key.");
+            return Err(EvmError::MissingRequiredSignature);
+        }
+
         let user_pk = user.unsigned_key();
         let mut user = user
             .try_account_ref_mut()
