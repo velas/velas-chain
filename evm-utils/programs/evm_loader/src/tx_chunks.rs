@@ -52,7 +52,7 @@ impl<T: BorrowMut<[u8]>> TxChunks<T> {
         let data = data.as_ref();
 
         ensure!(
-            (offset + data.len()) <= bytes.len(),
+            (offset.saturating_add(data.len())) <= bytes.len(),
             OutOfBound {
                 data_size: bytes.len(),
                 attempt: offset + data.len()

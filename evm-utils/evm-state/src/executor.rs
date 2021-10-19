@@ -166,6 +166,14 @@ impl Executor {
             GasLimitOutOfBounds { gas_limit }
         );
 
+        ensure!(
+            self.config.gas_limit >= self.evm_backend.state.used_gas,
+            GasLimitConfigAssert {
+                gas_limit: self.config.gas_limit,
+                gas_used: self.evm_backend.state.used_gas
+            }
+        );
+
         let max_fee = gas_limit * gas_price;
         ensure!(
             max_fee + value <= state_account.balance,
@@ -225,6 +233,7 @@ impl Executor {
                     state_balance: state_account.balance,
                 })?;
         }
+
         // This was assert before, but at some point evm executor waste more gas than exist (on solidty assert opcode).
         ensure!(
             used_gas < block_gas_limit_left,

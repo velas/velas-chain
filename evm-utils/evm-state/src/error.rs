@@ -110,4 +110,11 @@ pub enum Error {
         value: U256,
         max_fee: U256,
     },
+
+    #[snafu(display(
+        "Gas limit in config = exceed used gas gas_limit={}, gas_used={}",
+        gas_limit,
+        gas_used,
+    ))]
+    GasLimitConfigAssert { gas_limit: u64, gas_used: u64 },
 }

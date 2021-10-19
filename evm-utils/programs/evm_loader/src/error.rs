@@ -56,6 +56,9 @@ pub enum EvmError {
 
     #[snafu(display("This instruction is not supported yet."))]
     InstructionNotSupportedYet,
+
+    #[snafu(display("This instruction cause overflow in fee refund calculation."))]
+    OverflowInRefund,
 }
 
 impl<E> DecodeError<E> for EvmError {

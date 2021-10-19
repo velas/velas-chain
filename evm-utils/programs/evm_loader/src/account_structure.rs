@@ -33,13 +33,25 @@ impl<'a> AccountStructure<'a> {
     }
 
     pub fn refund_fee(&self, user: &'a KeyedAccount<'a>, fee: u64) -> Result<(), EvmError> {
-        self.evm
+        let mut evm_acc = self
+            .evm
             .try_account_ref_mut()
-            .map_err(|_| EvmError::BorrowingFailed)?
-            .lamports -= fee;
-        user.try_account_ref_mut()
-            .map_err(|_| EvmError::BorrowingFailed)?
-            .lamports += fee;
+            .map_err(|_| EvmError::BorrowingFailed)?;
+
+        evm_acc.lamports = evm_acc
+            .lamports
+            .checked_sub(fee)
+            .ok_or(EvmError::OverflowInRefund)?;
+
+        let mut user_acc = user
+            .try_account_ref_mut()
+            .map_err(|_| EvmError::BorrowingFailed)?;
+
+        user_acc.lamports = user_acc
+            .lamports
+            .checked_add(fee)
+            .ok_or(EvmError::OverflowInRefund)?;
+
         Ok(())
     }
 
