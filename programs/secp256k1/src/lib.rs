@@ -34,7 +34,7 @@ pub mod test {
             SIGNATURE_OFFSETS_SERIALIZED_SIZE
         );
 
-        let secp_privkey = secp256k1::SecretKey::random(&mut thread_rng());
+        let secp_privkey = libsecp256k1::SecretKey::random(&mut thread_rng());
         let message_arr = b"hello";
         let mut secp_instruction = new_secp256k1_instruction(&secp_privkey, message_arr);
         let mint_keypair = Keypair::new();
@@ -48,7 +48,7 @@ pub mod test {
 
         assert!(tx.verify_precompiles().is_ok());
 
-        let index = thread_rng().gen_range(0, secp_instruction.data.len());
+        let index = thread_rng().gen_range(0..secp_instruction.data.len());
         secp_instruction.data[index] = secp_instruction.data[index].wrapping_add(12);
         let tx = Transaction::new_signed_with_payer(
             &[secp_instruction],
