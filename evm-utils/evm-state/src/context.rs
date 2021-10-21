@@ -172,7 +172,9 @@ impl<'a> ExecutorContext<'a, Incomming> {
     }
 
     pub fn gas_left(&self) -> u64 {
-        self.config.gas_limit - self.backend.state.used_gas
+        self.config
+            .gas_limit
+            .saturating_sub(self.backend.state.used_gas)
     }
 
     // TODO: implement logs append for blocks.
