@@ -2,6 +2,7 @@ mod pool;
 mod sol_proxy;
 
 use log::*;
+use solana_sdk::commitment_config::CommitmentConfig;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::thread::sleep;
@@ -204,7 +205,7 @@ impl EvmBridge {
             .collect();
 
         info!("Trying to create rpc client with addr: {}", addr);
-        let rpc_client = RpcClient::new(addr);
+        let rpc_client = RpcClient::new_with_commitment(addr, CommitmentConfig::processed());
 
         info!("Loading keypair from: {}", keypath);
         let key = solana_sdk::signature::read_keypair_file(&keypath).unwrap();
@@ -241,8 +242,7 @@ impl EvmBridge {
 
         let tx = PooledTransaction::new(tx, meta_keys, sender)
             .map_err(|source| evm_rpc::Error::EvmStateError { source })?;
-
-        match self.pool.import(tx) {
+        let tx = match self.pool.import(tx) {
             // tx was already processed on this bridge, return hash.
             Err(txpool::Error::AlreadyImported(h)) => return Ok(Hex(h)),
             Ok(tx) => tx,
@@ -254,7 +254,11 @@ impl EvmBridge {
             }
         };
 
-        receiver.recv().await.unwrap()
+        if self.simulate {
+            receiver.recv().await.unwrap()
+        } else {
+            Ok(tx.inner.tx_id_hash().into())
+        }
     }
 
     fn block_to_number(&self, block: Option<BlockId>) -> EvmResult<u64> {
