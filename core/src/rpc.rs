@@ -95,7 +95,7 @@ use tokio::runtime::Runtime;
 use velas_account_program::{VelasAccountType, ACCOUNT_LEN as VELAS_ACCOUNT_SIZE};
 use velas_relying_party_program::RelyingPartyData;
 
-pub const MAX_REQUEST_PAYLOAD_SIZE: usize = 50 * (1 << 10); // 50kB
+pub const MAX_REQUEST_PAYLOAD_SIZE: usize = 200 * (1 << 10); // 200kB perviously: 50 * (1 << 10); // 50kB
 pub const PERFORMANCE_SAMPLES_LIMIT: usize = 720;
 
 // Limit the length of the `epoch_credits` array for each validator in a `get_vote_accounts`
