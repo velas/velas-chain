@@ -51,7 +51,7 @@ jobs:
       name: "Linux release artifacts"
       os: linux
       env:
-        - RUSTFLAGS="-C target-cpu=haswell" # Compile with optimisation for skylake CPU to avoid AVX512 simd, that is not exist at any cpu.
+        - RUSTFLAGS="-C target-cpu=skylake" # Compile with optimisation for skylake CPU to avoid AVX512 simd, that is not exist at any cpu.
       before_install:
         - sudo apt-get install libssl-dev libudev-dev
 
