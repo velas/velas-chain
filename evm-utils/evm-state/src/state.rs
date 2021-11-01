@@ -727,7 +727,7 @@ impl EvmState {
 }
 
 #[derive(Default)]
-struct StaticEntries {}
+pub struct StaticEntries {}
 
 impl ItemCounter for StaticEntries {
     fn increase(&mut self, _: H256) -> usize {

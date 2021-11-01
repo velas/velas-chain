@@ -479,11 +479,15 @@ impl<T> From<Maybe<T>> for Option<T> {
 
 mod transaction_roots {
 
+    use crate::state::StaticEntries;
     use crate::{Log, TransactionReceipt, H256, U256};
     use ethbloom::Bloom;
     use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
-    use triedb::FixedMemoryTrieMut;
+    use std::collections::HashMap;
+    use triedb::gc::TrieCollection;
+    use triedb::{FixedTrieMut, TrieMut};
 
+    #[derive(Clone, Debug)]
     pub struct EthereumReceipt {
         pub gas_used: U256,
         pub log_bloom: Bloom,
@@ -528,7 +532,8 @@ mod transaction_roots {
     }
 
     pub fn transactions_root<'a>(receipts: impl Iterator<Item = &'a TransactionReceipt>) -> H256 {
-        let mut trie = FixedMemoryTrieMut::default();
+        let trie_c = TrieCollection::new(HashMap::new(), StaticEntries::default());
+        let mut trie = FixedTrieMut::<_, U256, _>::new(trie_c.trie_for(triedb::empty_trie_hash()));
         for (i, receipt) in receipts.enumerate() {
             let transaction_in_receipt = &receipt.transaction;
             trie.insert(&U256::from(i), transaction_in_receipt);
@@ -537,12 +542,53 @@ mod transaction_roots {
     }
 
     pub fn receipts_root<'a>(receipts: impl Iterator<Item = &'a TransactionReceipt>) -> H256 {
-        let mut trie = FixedMemoryTrieMut::default();
+        let mut trie_c = TrieCollection::new(HashMap::new(), StaticEntries::default());
+        let mut root = triedb::empty_trie_hash();
         for (i, receipt) in receipts.enumerate() {
+            let mut trie = FixedTrieMut::<_, U256, EthereumReceipt>::new(trie_c.trie_for(root));
             let ethereum_receipt: EthereumReceipt = receipt.into();
             trie.insert(&U256::from(i), &ethereum_receipt);
+
+            let trie = trie.to_trie();
+            root = trie.root();
+            let patch = trie.into_patch();
+            trie_c.apply(patch);
         }
-        trie.root()
+
+        root
+    }
+
+    #[cfg(test)]
+    mod test {
+        use triedb::{FixedMemoryTrieMut, TrieMut};
+
+        use super::*;
+
+        #[test]
+        fn test_crash_ethereum_receipt() {
+            let receipt = EthereumReceipt {
+                gas_used: 21000.into(),
+                log_bloom: Default::default(),
+                logs: vec![],
+                status: 0x1,
+            };
+            let receipts = std::iter::from_fn(|| Some(receipt.clone())).take(129);
+
+            let mut trie_c = TrieCollection::new(HashMap::new(), StaticEntries::default());
+            let mut root = triedb::empty_trie_hash();
+
+            for (i, receipt) in receipts.enumerate() {
+                let mut trie = FixedTrieMut::<_, U256, EthereumReceipt>::new(trie_c.trie_for(root));
+                println!("receipt: {:?}", i);
+                // let ethereum_receipt: EthereumReceipt = receipt.into();
+                trie.insert(&U256::from(i), &receipt);
+
+                let trie = trie.to_trie();
+                let root = trie.root();
+                let patch = trie.into_patch();
+                trie_c.apply(patch);
+            }
+        }
     }
 }
 
