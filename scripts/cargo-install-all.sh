@@ -91,6 +91,7 @@ else
         velas-keygen
         velas-test-validator
         velas-validator
+        solana-ledger-tool
         evm-bridge
     )
     
