@@ -532,13 +532,20 @@ mod transaction_roots {
     }
 
     pub fn transactions_root<'a>(receipts: impl Iterator<Item = &'a TransactionReceipt>) -> H256 {
-        let trie_c = TrieCollection::new(HashMap::new(), StaticEntries::default());
-        let mut trie = FixedTrieMut::<_, U256, _>::new(trie_c.trie_for(triedb::empty_trie_hash()));
+        let mut trie_c = TrieCollection::new(HashMap::new(), StaticEntries::default());
+        let mut root = triedb::empty_trie_hash();
         for (i, receipt) in receipts.enumerate() {
+            let mut trie =
+                FixedTrieMut::<_, U256, _>::new(trie_c.trie_for(triedb::empty_trie_hash()));
             let transaction_in_receipt = &receipt.transaction;
             trie.insert(&U256::from(i), transaction_in_receipt);
+
+            let trie = trie.to_trie();
+            root = trie.root();
+            let patch = trie.into_patch();
+            trie_c.apply(patch);
         }
-        trie.root()
+        root
     }
 
     pub fn receipts_root<'a>(receipts: impl Iterator<Item = &'a TransactionReceipt>) -> H256 {
@@ -560,7 +567,7 @@ mod transaction_roots {
 
     #[cfg(test)]
     mod test {
-        use triedb::{FixedMemoryTrieMut, TrieMut};
+        use triedb::TrieMut;
 
         use super::*;
 
@@ -584,7 +591,7 @@ mod transaction_roots {
                 trie.insert(&U256::from(i), &receipt);
 
                 let trie = trie.to_trie();
-                let root = trie.root();
+                root = trie.root();
                 let patch = trie.into_patch();
                 trie_c.apply(patch);
             }
