@@ -7714,7 +7714,7 @@ dependencies = [
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/velas/triedb?branch=chore/bump-rocksdb#ea0083bc880a47f51c11df4cbfebb90ee4988545"
+source = "git+https://github.com/velas/triedb?branch=fix/remove-before-add#ea0083bc880a47f51c11df4cbfebb90ee4988545"
 dependencies = [
  "primitive-types",
  "rlp",
