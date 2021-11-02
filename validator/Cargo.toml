@@ -40,7 +40,7 @@ solana-net-utils = { path = "../net-utils", version = "=1.6.14" }
 solana-perf = { path = "../perf", version = "=1.6.14" }
 solana-runtime = { path = "../runtime", version = "=1.6.14" }
 solana-sdk = { path = "../sdk", version = "=1.6.14" }
-solana-version = { path = "../version", version = "=0.4.1" }
+solana-version = { path = "../version", version = "=0.4.2" }
 solana-vote-program = { path = "../programs/vote", version = "=1.6.14" }
 symlink = "0.1.0"
 

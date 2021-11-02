@@ -43,7 +43,7 @@ solana-remote-wallet = { path = "../remote-wallet", version = "=1.6.14" }
 solana-sdk = { path = "../sdk", version = "=1.6.14" }
 solana-stake-program = { path = "../programs/stake", version = "=1.6.14" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.6.14" }
-solana-version = { path = "../version", version = "=0.4.1" }
+solana-version = { path = "../version", version = "=0.4.2" }
 solana-vote-program = { path = "../programs/vote", version = "=1.6.14" }
 spl-memo = { version = "=3.0.1", features = ["no-entrypoint"] }
 thiserror = "1.0.21"
