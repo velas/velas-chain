@@ -112,7 +112,7 @@ impl Storage {
 
     pub fn backup(&self) -> Result<PathBuf> {
         let backup_dir = self.location.as_ref().join(BACKUP_SUBDIR);
-        info!("backup storage data into {}", backup_dir.display());
+        info!("EVM Backup storage data into {}", backup_dir.display());
 
         let mut engine = BackupEngine::open(&BackupEngineOptions::default(), &backup_dir)?;
         if engine.get_backup_info().len() > KEEP_N_BACKUPS {

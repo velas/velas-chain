@@ -828,6 +828,8 @@ fn rpc_bootstrap(
 
     let mut blacklisted_rpc_nodes = HashSet::new();
     let mut gossip = None;
+    let mut retry = 0;
+    const RETRY_RPC_REQUEST_COUNT: usize = 10;
     loop {
         if gossip.is_none() {
             *start_progress.write().unwrap() = ValidatorStartProgress::SearchingForRpcService;
@@ -854,7 +856,14 @@ fn rpc_bootstrap(
             snapshot_output_dir,
         );
         if rpc_node_details.is_none() {
-            return;
+            if retry == RETRY_RPC_REQUEST_COUNT {
+                error!("Cannot find rpc node with active snapshot.");
+                return;
+            }
+            retry += 1;
+
+            warn!("No rpc found retring.");
+            continue;
         }
         let (rpc_contact_info, snapshot_hash) = rpc_node_details.unwrap();
 
@@ -872,22 +881,6 @@ fn rpc_bootstrap(
             Err(err) => Err(format!("Failed to get RPC node version: {}", err)),
         }
         .and_then(|_| {
-            let genesis_hash = download_then_check_genesis_hash(
-                &rpc_contact_info.rpc,
-                ledger_path,
-                validator_config.expected_genesis_hash,
-                bootstrap_config.max_genesis_archive_unpacked_size,
-                bootstrap_config.no_genesis_fetch,
-                use_progress_bar,
-            );
-
-            if let Ok(genesis_hash) = genesis_hash {
-                if validator_config.expected_genesis_hash.is_none() {
-                    info!("Expected genesis hash set to {}", genesis_hash);
-                    validator_config.expected_genesis_hash = Some(genesis_hash);
-                }
-            }
-
             if let Some(expected_genesis_hash) = validator_config.expected_genesis_hash {
                 // Sanity check that the RPC node is using the expected genesis hash before
                 // downloading a snapshot from it
@@ -901,6 +894,24 @@ fn rpc_bootstrap(
                         expected_genesis_hash, rpc_genesis_hash
                     ));
                 }
+            }
+            let genesis_hash = download_then_check_genesis_hash(
+                &rpc_contact_info.rpc,
+                ledger_path,
+                validator_config.expected_genesis_hash,
+                bootstrap_config.max_genesis_archive_unpacked_size,
+                bootstrap_config.no_genesis_fetch,
+                use_progress_bar,
+            );
+
+            match genesis_hash {
+                Ok(genesis_hash) => {
+                    if validator_config.expected_genesis_hash.is_none() {
+                        info!("Expected genesis hash set to {}", genesis_hash);
+                        validator_config.expected_genesis_hash = Some(genesis_hash);
+                    }
+                }
+                Err(err) => return Err(format!("Cannot download or open genesis: {}", err)),
             }
 
             if let Some(snapshot_hash) = snapshot_hash {
