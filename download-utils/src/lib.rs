@@ -156,7 +156,7 @@ pub fn download_genesis_if_missing(
     genesis_package: &Path,
     use_progress_bar: bool,
 ) -> Result<PathBuf, String> {
-    if !genesis_package.exists() {
+    if !genesis_package.is_file() {
         let tmp_genesis_path = genesis_package.parent().unwrap().join("tmp-genesis");
         let tmp_genesis_package = tmp_genesis_path.join("genesis.tar.bz2");
 

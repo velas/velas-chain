@@ -789,7 +789,7 @@ impl ClusterInfo {
         let mut different_shred_nodes = 0usize;
         let my_pubkey = self.id();
         let my_shred_version = self.my_shred_version();
-        let nodes: Vec<_> = self
+        let mut nodes_sorted: Vec<_> = self
             .all_peers()
             .into_iter()
             .filter_map(|(node, last_updated)| {
@@ -799,13 +799,32 @@ impl ClusterInfo {
                 }
 
                 let node_version = self.get_node_version(&node.id);
-                if my_shred_version != 0 && (node.shred_version != 0 && node.shred_version != my_shred_version) {
+                if my_shred_version != 0
+                    && (node.shred_version != 0 && node.shred_version != my_shred_version)
+                {
                     different_shred_nodes = different_shred_nodes.saturating_add(1);
                     None
                 } else {
                     if is_spy_node {
                         shred_spy_nodes = shred_spy_nodes.saturating_add(1);
                     }
+                    let ip_addr = node.gossip.ip();
+                    let slot = self
+                        .gossip
+                        .read()
+                        .unwrap()
+                        .crds
+                        .get(&CrdsValueLabel::SnapshotHashes(node.id))
+                        .and_then(|x| x.value.snapshot_hash())
+                        .and_then(|x| x.hashes.iter().map(|(s, _)| *s).max());
+                    Some((slot, ip_addr, node, node_version, last_updated))
+                }
+            })
+            .collect();
+        nodes_sorted.sort_by_key(|(slot, ..)| slot.unwrap_or_default());
+
+        let nodes: Vec<_> = nodes_sorted.iter()
+                .map(|(slot, ip_addr, node, node_version , last_updated)| {
                     fn addr_to_string(default_ip: &IpAddr, addr: &SocketAddr) -> String {
                         if ContactInfo::is_valid_address(addr) {
                             if &addr.ip() == default_ip {
@@ -817,16 +836,15 @@ impl ClusterInfo {
                             "none".to_string()
                         }
                     }
-                    let ip_addr = node.gossip.ip();
-                    Some(format!(
-                        "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}| {:5}| {:5}| {:5}| {:5}| {:5}| {:5}| {}\n",
+                    format!(
+                        "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}| {:5}| {:5}| {:5}| {:5}| {:5}| {:5}| {:5}| {}\n",
                         if ContactInfo::is_valid_address(&node.gossip) {
                             ip_addr.to_string()
                         } else {
                             "none".to_string()
                         },
                         if node.id == my_pubkey { "me" } else { "" }.to_string(),
-                        now.saturating_sub(last_updated),
+                        now.saturating_sub(*last_updated),
                         node.id.to_string(),
                         if let Some(node_version) = node_version {
                             node_version.to_string()
@@ -841,14 +859,14 @@ impl ClusterInfo {
                         addr_to_string(&ip_addr, &node.repair),
                         addr_to_string(&ip_addr, &node.serve_repair),
                         node.shred_version,
-                    ))
-                }
-            })
+                        slot.map(|x|x.to_string())
+                        .unwrap_or_default(),
+                    )})
             .collect();
 
         format!(
             "IP Address        |Age(ms)| Node identifier                              \
-             | Version |Gossip| TPU  |TPUfwd| TVU  |TVUfwd|Repair|ServeR|ShredVer\n\
+             | Version |Gossip| TPU  |TPUfwd| TVU  |TVUfwd|Repair|ServeR|ShredVer|LastSnapshot\n\
              ------------------+-------+----------------------------------------------+---------+\
              ------+------+------+------+------+------+------+--------\n\
              {}\
