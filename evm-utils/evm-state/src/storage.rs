@@ -115,9 +115,9 @@ impl Storage {
         info!("EVM Backup storage data into {}", backup_dir.display());
 
         let mut engine = BackupEngine::open(&BackupEngineOptions::default(), &backup_dir)?;
-        if engine.get_backup_info().len() > KEEP_N_BACKUPS {
+        if engine.get_backup_info().len() > HARD_BACKUPS_COUNT {
             // TODO: measure
-            engine.purge_old_backups(KEEP_N_BACKUPS)?;
+            engine.purge_old_backups(HARD_BACKUPS_COUNT)?;
         }
         engine.create_new_backup_flush(self.db.as_ref(), true)?;
         Ok(backup_dir)
@@ -256,7 +256,8 @@ impl Storage {
     }
 }
 
-const KEEP_N_BACKUPS: usize = 3; // TODO: tweak it
+// hard limit of backups count
+const HARD_BACKUPS_COUNT: usize = 10; // TODO: tweak it
 
 // #[macro_export]
 // macro_rules! persistent_types {
