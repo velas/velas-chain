@@ -177,8 +177,8 @@ pub fn package_snapshot<P: AsRef<Path>, Q: AsRef<Path>>(
 
         let evm_source = fs::canonicalize(&snapshot_files.evm_state_backup_path)?;
         let evm_target = snapshot_hardlink_dir.join(EVM_STATE_DIR);
-        info!("EVM backup linked {:?} => {:?}", evm_source, evm_target);
-        symlink::symlink_dir(evm_source, evm_target)?;
+        info!("EVM backup moved {:?} => {:?}", evm_source, evm_target);
+        fs::rename(evm_source, evm_target)?;
     }
 
     let package = AccountsPackagePre::new(
