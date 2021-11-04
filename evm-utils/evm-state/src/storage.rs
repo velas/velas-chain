@@ -257,7 +257,7 @@ impl Storage {
 }
 
 // hard limit of backups count
-const HARD_BACKUPS_COUNT: usize = 10; // TODO: tweak it
+const HARD_BACKUPS_COUNT: usize = 1; // TODO: tweak it
 
 // #[macro_export]
 // macro_rules! persistent_types {
