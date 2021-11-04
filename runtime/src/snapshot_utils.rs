@@ -572,7 +572,7 @@ pub fn add_snapshot<P: AsRef<Path>>(
     evm_state_backup.stop();
     info!("EVM state backup done in {:?}", backup_path);
 
-    symlink::symlink_dir(&backup_path, &evm_state_backup_dir)?;
+    solana_sdk::genesis_config::evm_genesis::copy_dir(backup_path, &evm_state_backup_dir)?;
 
     inc_new_counter_info!("evm-state-backup-ms", evm_state_backup.as_ms() as usize);
     info!(
