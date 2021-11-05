@@ -26,6 +26,8 @@ pub struct AccountsPackagePre {
     pub snapshot_output_dir: PathBuf,
     pub expected_capitalization: u64,
     pub hash_for_testing: Option<Hash>,
+    pub evm_root: evm_state::H256,
+    pub evm_db: evm_state::storage::Storage,
 }
 
 impl AccountsPackagePre {
@@ -42,6 +44,8 @@ impl AccountsPackagePre {
         snapshot_output_dir: PathBuf,
         expected_capitalization: u64,
         hash_for_testing: Option<Hash>,
+        evm_root: evm_state::H256,
+        evm_db: evm_state::storage::Storage,
     ) -> Self {
         Self {
             slot,
@@ -55,6 +59,8 @@ impl AccountsPackagePre {
             snapshot_output_dir,
             expected_capitalization,
             hash_for_testing,
+            evm_root,
+            evm_db,
         }
     }
 }
@@ -69,6 +75,8 @@ pub struct AccountsPackage {
     pub hash: Hash,
     pub archive_format: ArchiveFormat,
     pub snapshot_version: SnapshotVersion,
+    pub evm_root: evm_state::H256,
+    pub evm_db: evm_state::storage::Storage,
 }
 
 impl AccountsPackage {
@@ -82,6 +90,8 @@ impl AccountsPackage {
         hash: Hash,
         archive_format: ArchiveFormat,
         snapshot_version: SnapshotVersion,
+        evm_root: evm_state::H256,
+        evm_db: evm_state::storage::Storage,
     ) -> Self {
         Self {
             slot,
@@ -93,6 +103,8 @@ impl AccountsPackage {
             hash,
             archive_format,
             snapshot_version,
+            evm_root,
+            evm_db,
         }
     }
 }

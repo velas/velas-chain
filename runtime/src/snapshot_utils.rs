@@ -13,6 +13,7 @@ use crate::{
 };
 use bincode::{config::Options, serialize_into};
 use bzip2::bufread::BzDecoder;
+use evm_state::AccountProvider;
 use flate2::read::GzDecoder;
 use log::*;
 use rayon::ThreadPool;
@@ -126,6 +127,9 @@ pub enum SnapshotError {
 
     #[error("accounts package send error")]
     AccountsPackageSendError(#[from] AccountsPackageSendError),
+
+    #[error("evm backup error: {0}")]
+    EvmBackupError(#[from] evm_state::storage::Error),
 }
 pub type Result<T> = std::result::Result<T, SnapshotError>;
 
@@ -174,13 +178,11 @@ pub fn package_snapshot<P: AsRef<Path>, Q: AsRef<Path>>(
             &snapshot_files.snapshot_file_path,
             &snapshot_hardlink_dir.join(snapshot_files.slot.to_string()),
         )?;
-
-        let evm_source = fs::canonicalize(&snapshot_files.evm_state_backup_path)?;
-        let evm_target = snapshot_hardlink_dir.join(EVM_STATE_DIR);
-        info!("EVM backup moved {:?} => {:?}", evm_source, evm_target);
-        fs::rename(evm_source, evm_target)?;
     }
 
+    let evm = bank.evm_state.read().unwrap();
+    let evm_db = evm.kvs().clone();
+    let evm_root = evm.last_root();
     let package = AccountsPackagePre::new(
         bank.slot(),
         bank.block_height(),
@@ -193,6 +195,8 @@ pub fn package_snapshot<P: AsRef<Path>, Q: AsRef<Path>>(
         snapshot_package_output_path.as_ref().to_path_buf(),
         bank.capitalization(),
         hash_for_testing,
+        evm_root,
+        evm_db,
     );
 
     Ok(package)
@@ -298,6 +302,25 @@ pub fn archive_snapshot_package(snapshot_package: &AccountsPackage) -> Result<()
     }
 
     let file_ext = get_archive_ext(snapshot_package.archive_format);
+
+    //
+    // Create evm state backup
+    //
+    {
+        let slot = snapshot_package.slot;
+        let snapshot_tmpdir = snapshot_package.snapshot_links.path();
+        let snapshot_hardlink_dir = snapshot_tmpdir.join(slot.to_string());
+
+        let evm_target = snapshot_hardlink_dir.join(EVM_STATE_DIR);
+        let mut evm_state_backup = Measure::start("evm-state-backup-ms");
+        let backup_path = snapshot_package.evm_db.backup(evm_target.into())?;
+        evm_state_backup.stop();
+        inc_new_counter_info!("evm-state-backup-ms", evm_state_backup.as_ms() as usize);
+        info!(
+            "EVM state backup {} for slot {} at {:?}",
+            evm_state_backup, slot, backup_path
+        );
+    }
 
     // Tar the staging directory into the archive at `archive_path`
     //
@@ -518,6 +541,8 @@ pub fn add_snapshot<P: AsRef<Path>>(
 
     // the bank snapshot is stored as snapshot_path/slot/slot
     let snapshot_bank_file_path = slot_snapshot_dir.join(get_snapshot_file_name(slot));
+    let evm_state_backup_path = slot_snapshot_dir.join(EVM_STATE_DIR);
+
     info!(
         "Creating snapshot for slot {}, path: {:?}",
         slot, snapshot_bank_file_path,
@@ -548,42 +573,11 @@ pub fn add_snapshot<P: AsRef<Path>>(
         "{} for slot {} at {:?}",
         bank_serialize, slot, snapshot_bank_file_path,
     );
-    let evm_state_backup_dir = slot_snapshot_dir.join(EVM_STATE_DIR);
-
-    let mut wl_acquire = Measure::start("evm_state_write_lock_acquire_time");
-    let evm_state = bank.evm_state.write().unwrap();
-    wl_acquire.stop();
-    debug!("EVM state write acquire time lock {}", wl_acquire);
-
-    let mut squash_evm_state_time = Measure::start("squash_evm_state_time");
-    // TODO(hrls): evm_state.gc();
-    squash_evm_state_time.stop();
-    debug!("EVM state squash time {}", squash_evm_state_time);
-
-    inc_new_counter_info!(
-        "squash_evm_state_time",
-        squash_evm_state_time.as_ms() as usize
-    );
-
-    let mut evm_state_backup = Measure::start("evm-state-backup-ms");
-    let backup_path = evm_state
-        .make_backup()
-        .expect("Unable to save EVM storage data in new place");
-    evm_state_backup.stop();
-    info!("EVM state backup done in {:?}", backup_path);
-
-    solana_sdk::genesis_config::evm_genesis::copy_dir(backup_path, &evm_state_backup_dir)?;
-
-    inc_new_counter_info!("evm-state-backup-ms", evm_state_backup.as_ms() as usize);
-    info!(
-        "EVM state backup {} for slot {} at {:?}",
-        evm_state_backup, slot, evm_state_backup_dir
-    );
 
     Ok(SlotSnapshotPaths {
         slot,
         snapshot_file_path: snapshot_bank_file_path,
-        evm_state_backup_path: evm_state_backup_dir,
+        evm_state_backup_path,
     })
 }
 
@@ -1068,6 +1062,8 @@ pub fn process_accounts_package_pre(
         hash,
         accounts_package.archive_format,
         accounts_package.snapshot_version,
+        accounts_package.evm_root,
+        accounts_package.evm_db,
     )
 }
 

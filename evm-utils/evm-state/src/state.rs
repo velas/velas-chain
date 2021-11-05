@@ -631,7 +631,7 @@ impl EvmState {
 
     /// Make backup of current kvs storage.
     pub fn make_backup(&self) -> Result<PathBuf, anyhow::Error> {
-        Ok(self.kvs().backup()?)
+        Ok(self.kvs().backup(None)?)
     }
 
     /// Convert current state into persist one.
@@ -649,7 +649,7 @@ impl EvmState {
         Arc::strong_count(&self.kvs().db)
     }
 
-    fn kvs(&self) -> &KVS {
+    pub fn kvs(&self) -> &KVS {
         match self {
             Self::Committed(c) => c.kvs(),
             Self::Incomming(i) => i.kvs(),
