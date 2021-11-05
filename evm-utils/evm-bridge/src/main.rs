@@ -540,8 +540,10 @@ impl BasicERPC for BasicErpcProxy {
         address: Hex<Address>,
         block: Option<BlockId>,
     ) -> EvmResult<Hex<U256>> {
-        if let Some(tx_count) = meta.pool.transaction_count(&address.0) {
-            return Ok(Hex(tx_count));
+        if matches!(block, Some(BlockId::RelativeId(BlockRelId::Pending))) {
+            if let Some(tx_count) = meta.pool.transaction_count(&address.0) {
+                return Ok(Hex(tx_count));
+            }
         }
 
         proxy_evm_rpc!(meta.rpc_client, EthGetTransactionCount, address, block)
