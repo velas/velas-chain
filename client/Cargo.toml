@@ -30,7 +30,7 @@ solana-faucet = { path = "../faucet", version = "=1.6.14" }
 solana-net-utils = { path = "../net-utils", version = "=1.6.14" }
 solana-sdk = { path = "../sdk", version = "=1.6.14" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.6.14" }
-solana-version = { path = "../version", version = "=0.4.2" }
+solana-version = { path = "../version", version = "=0.4.3" }
 solana-vote-program = { path = "../programs/vote", version = "=1.6.14" }
 solana-stake-program = { path = "../programs/stake", version = "=1.6.14" }
 solana-runtime = { path = "../runtime", version = "=1.6.14" }
