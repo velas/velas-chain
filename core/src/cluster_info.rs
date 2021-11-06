@@ -851,13 +851,13 @@ impl ClusterInfo {
                         } else {
                             "-".to_string()
                         },
-                        addr_to_string(&ip_addr, &node.gossip),
-                        addr_to_string(&ip_addr, &node.tpu),
-                        addr_to_string(&ip_addr, &node.tpu_forwards),
-                        addr_to_string(&ip_addr, &node.tvu),
-                        addr_to_string(&ip_addr, &node.tvu_forwards),
-                        addr_to_string(&ip_addr, &node.repair),
-                        addr_to_string(&ip_addr, &node.serve_repair),
+                        addr_to_string(ip_addr, &node.gossip),
+                        addr_to_string(ip_addr, &node.tpu),
+                        addr_to_string(ip_addr, &node.tpu_forwards),
+                        addr_to_string(ip_addr, &node.tvu),
+                        addr_to_string(ip_addr, &node.tvu_forwards),
+                        addr_to_string(ip_addr, &node.repair),
+                        addr_to_string(ip_addr, &node.serve_repair),
                         node.shred_version,
                         slot.map(|x|x.to_string())
                         .unwrap_or_default(),
