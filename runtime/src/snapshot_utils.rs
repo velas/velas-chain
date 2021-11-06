@@ -126,7 +126,7 @@ pub enum SnapshotError {
     UnpackError(#[from] UnpackError),
 
     #[error("accounts package send error")]
-    AccountsPackageSendError(#[from] AccountsPackageSendError),
+    AccountsPackageSendError(#[from] Box<AccountsPackageSendError>),
 
     #[error("evm backup error: {0}")]
     EvmBackupError(#[from] evm_state::storage::Error),
@@ -976,7 +976,7 @@ pub fn snapshot_bank(
         hash_for_testing,
     )?;
 
-    accounts_package_sender.send(package)?;
+    accounts_package_sender.send(package).map_err(Box::new)?;
 
     Ok(())
 }

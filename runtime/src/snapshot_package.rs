@@ -80,6 +80,7 @@ pub struct AccountsPackage {
 }
 
 impl AccountsPackage {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         slot: Slot,
         block_height: u64,
