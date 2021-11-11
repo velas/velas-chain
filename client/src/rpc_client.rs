@@ -1817,6 +1817,13 @@ impl RpcClient {
         .map(|h| h.0)
     }
 
+    pub fn get_evm_transaction_receipt(&self, hash: &evm_state::H256) -> ClientResult<Option<evm_rpc::RPCReceipt>> {
+        self.send::<Option<evm_rpc::RPCReceipt>>(
+            RpcRequest::EthGetTransactionReceipt,
+            json!([evm_rpc::Hex(*hash)])
+        )
+    }
+
     pub fn send<T>(&self, request: RpcRequest, params: Value) -> ClientResult<T>
     where
         T: serde::de::DeserializeOwned,

@@ -12,21 +12,14 @@ impl PoolListener {
         if let Ok(handle) = Handle::try_current() {
             let tx = tx.clone();
             handle.spawn(async move {
-                if let Err(e) = tx
-                    .hash_sender
-                    .send(Err(evm_rpc::Error::TransactionRemoved {}))
-                    .await
-                {
+                if let Err(e) = tx.send(Err(evm_rpc::Error::TransactionRemoved {})).await {
                     warn!(
                         "PoolListener failed to notify tx sender about transaction, error:{:?}",
                         e
                     )
                 }
             });
-        } else if let Err(e) = tx
-                .hash_sender
-                .blocking_send(Err(evm_rpc::Error::TransactionRemoved {}))
-        {
+        } else if let Err(e) = tx.blocking_send(Err(evm_rpc::Error::TransactionRemoved {})) {
             warn!(
                 "PoolListener failed to notify tx sender about transaction, error:{:?}",
                 e

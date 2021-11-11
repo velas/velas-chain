@@ -24,9 +24,11 @@ use solana_sdk::{
     instruction::AccountMeta,
     message::Message,
     pubkey::Pubkey,
+    signature::Signature,
     signer::Signer,
     system_instruction,
 };
+use tokio::sync::mpsc::error::SendError;
 use txpool::{
     scoring::Choice, Pool, Readiness, Ready, Scoring, ShouldReplace, VerifiedTransaction,
 };
@@ -35,12 +37,27 @@ use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResu
 
 type UnixTimeMs = u64;
 
-/// Delay before next cleanup of outdated entries from hashmap of
-/// last deployed transactions
-const CLEANUP_DELAY: Duration = Duration::from_secs(86400); // = 24 hours
+/// Loop delay of signature check worker
+const SIG_CHECK_WORKER_PAUSE: Duration = Duration::from_secs(60);
 
-/// Limit activity of sender, who send invalid transactions.
+/// Delay before next loop of cleanup of outdated entries
+/// from hashmap of last deployed transactions
+const CLEANUP_WORKER_PAUSE: Duration = Duration::from_secs(86400); // = 24 hours
+
+/// Limit activity of transaction sender, who sends invalid transactions.
 const SENDER_PAUSE: Duration = Duration::from_secs(15);
+
+/// Threshold waiting for the status of the signature before
+/// reimporting the transaction to the pool
+/// TODO: adjust value
+const TX_REIMPORT_THRESHOLD: Duration = Duration::from_secs(30);
+
+pub struct CachedTransaction {
+    evm_tx: evm_state::Transaction,
+    meta_keys: HashSet<Pubkey>,
+    cached_at: UnixTimeMs,
+    signature: Signature,
+}
 
 /// Abstracting the time source for the testing purposes
 pub trait Clock: Send + Sync {
@@ -69,11 +86,15 @@ impl<T> Ready<T> for AlwaysReady {
 }
 
 pub struct EthPool<C: Clock> {
-    /// Pool of transactions awaiting to be deployed
+    /// A pool of transactions, waiting to be deployed
     pool: Mutex<Pool<PooledTransaction, MyScoring, PoolListener>>,
 
     /// Timestamps of the last deployed transactions
     last_entry: Mutex<HashMap<Address, UnixTimeMs>>,
+
+    /// List of EVM transactions, which need to be
+    /// checked and redeployed in case of error
+    after_deploy_check: Mutex<HashMap<H256, CachedTransaction>>,
 
     /// Clock used to determine whether transaction is stalled or ready to be deployed
     clock: C,
@@ -84,6 +105,7 @@ impl<C: Clock> EthPool<C> {
         Self {
             pool: Mutex::new(Pool::new(PoolListener, MyScoring, Default::default())),
             last_entry: Mutex::new(HashMap::new()),
+            after_deploy_check: Mutex::new(HashMap::new()),
             clock,
         }
     }
@@ -140,17 +162,13 @@ impl<C: Clock> EthPool<C> {
         .next()
     }
 
-    /// Returns nonce from transaction pool, on `None` if the pool doesn't contain
-    /// any transactions associated with specified sender
+    /// Returns nonce from transaction pool, or `None` if the it doesn't contain
+    /// any transactions associated with the specified sender
     pub fn transaction_count(&self, sender: &Address) -> Option<U256> {
         self.pool
             .lock()
             .unwrap()
-            .pending_from_sender(
-                |_tx: &PooledTransaction| Readiness::Ready,
-                sender,
-                H256::zero(),
-            )
+            .pending_from_sender(AlwaysReady, sender, H256::zero())
             .max_by_key(|tx| tx.nonce)
             .map(|tx| tx.nonce + 1)
     }
@@ -161,7 +179,8 @@ impl<C: Clock> EthPool<C> {
         pool.find(&tx_hash.0)
     }
 
-    /// Strip outdated timestamps, returns amount of elements in collection before and after the strip
+    /// Strips outdated timestamps and returns the number of
+    /// elements in the collection before and after the strip
     pub fn strip_outdated(&self) -> (usize, usize) {
         let now = self.clock.now();
         let mut last_entry = self.last_entry.lock().unwrap();
@@ -169,6 +188,63 @@ impl<C: Clock> EthPool<C> {
         last_entry.retain(|_, stop_before| *stop_before > now);
         let after_strip = last_entry.len();
         (before_strip, after_strip)
+    }
+
+    /// Adds signature for later tracking of transaction status
+    ///
+    /// * `hash` - EVM transaction hash
+    /// * `signature` - signature of Solana transaction to be checked for status
+    /// * `meta_keys` -
+    /// * `evm_tx` - ethereum tx to be redeployed in case of status error
+    pub fn schedule_after_deploy_check(
+        &self,
+        hash: H256,
+        signature: Signature,
+        meta_keys: HashSet<Pubkey>,
+        evm_tx: evm_state::Transaction,
+    ) {
+        let cached_at = self.clock.now();
+
+        let cached_tx = CachedTransaction {
+            evm_tx,
+            meta_keys,
+            cached_at,
+            signature,
+        };
+
+        self.after_deploy_check
+            .lock()
+            .unwrap()
+            .insert(hash, cached_tx);
+    }
+
+    /// Gets hashes and signatures of transactions needed to be checked for status
+    pub fn get_scheduled_for_check_transactions(&self) -> Vec<(H256, UnixTimeMs)> {
+        self.after_deploy_check
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(hash, tx)| (*hash, tx.cached_at))
+            .collect()
+    }
+
+    /// Drops transaction from the cache when post-deploy checks lo longer required
+    pub fn drop_from_cache(&self, hash: &H256) {
+        self.after_deploy_check.lock().unwrap().remove(hash);
+    }
+
+    /// Extracts EVM transaction from the cache for redeploy
+    pub fn transaction_for_redeploy(&self, hash: &H256) -> Option<CachedTransaction> {
+        self.after_deploy_check.lock().unwrap().remove(hash)
+    }
+
+    /// Gets signature of cached transaction
+    pub fn signature_of_cached_transaction(&self, hash: &H256) -> Option<Signature> {
+        self.after_deploy_check
+            .lock()
+            .unwrap()
+            .get(hash)
+            .map(|cached| cached.signature)
     }
 }
 
@@ -178,14 +254,14 @@ pub struct PooledTransaction {
     pub meta_keys: HashSet<Pubkey>,
     sender: Address,
     hash: H256,
-    hash_sender: mpsc::Sender<EvmResult<Hex<H256>>>,
+    hash_sender: Option<mpsc::Sender<EvmResult<Hex<H256>>>>,
 }
 
 impl PooledTransaction {
     pub fn new(
         transaction: evm::Transaction,
         meta_keys: HashSet<Pubkey>,
-        hash_sender: mpsc::Sender<EvmResult<Hex<H256>>>,
+        hash_sender: Option<mpsc::Sender<EvmResult<Hex<H256>>>>,
     ) -> Result<Self, evm_state::error::Error> {
         let hash = transaction.tx_id_hash();
         let sender = transaction.caller()?;
@@ -197,6 +273,28 @@ impl PooledTransaction {
             meta_keys,
             hash_sender,
         })
+    }
+
+    async fn send(
+        &self,
+        hash: EvmResult<Hex<H256>>,
+    ) -> Result<(), SendError<EvmResult<Hex<H256>>>> {
+        if let Some(hash_sender) = &self.hash_sender {
+            hash_sender.send(hash).await
+        } else {
+            Ok(())
+        }
+    }
+
+    fn blocking_send(
+        &self,
+        hash: EvmResult<Hex<H256>>,
+    ) -> Result<(), SendError<EvmResult<Hex<H256>>>> {
+        if let Some(hash_sender) = &self.hash_sender {
+            hash_sender.blocking_send(hash)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -296,8 +394,8 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
 
             match processed_tx {
                 Ok(hash) => {
-                    info!("Tx with hash = {:?} processed successfully", &hash);
-                    let _result = pooled_tx.hash_sender.send(Ok(hash)).await;
+                    info!("Transaction {} processed successfully", &hash);
+                    let _result = pooled_tx.send(Ok(hash)).await;
                 }
                 Err(e) => {
                     // Any error is a reason to limit user activity.
@@ -314,16 +412,16 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
                     }
 
                     warn!(
-                        "Something went wrong in tx processing with hash = {:?}. Error = {:?}",
+                        "Something went wrong in transaction {}. Error = {:?}",
                         &hash, &e
                     );
-                    let _result = pooled_tx.hash_sender.send(Err(e)).await;
+                    let _result = pooled_tx.send(Err(e)).await;
                 }
             }
 
             match bridge.pool.remove(&hash) {
                 Some(tx) => {
-                    info!("Tx with hash = {:?} removed from the pool", tx.hash)
+                    info!("Transaction {} removed from the pool", tx.hash)
                 }
                 None => {
                     match bridge.pool.remove_by_nonce(&sender, nonce) {
@@ -347,10 +445,73 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
 pub async fn worker_cleaner(bridge: Arc<EvmBridge>) {
     info!("Running cleaner task...");
     loop {
-        tokio::time::sleep(CLEANUP_DELAY).await;
+        tokio::time::sleep(CLEANUP_WORKER_PAUSE).await;
 
         let (before_strip, after_strip) = bridge.pool.strip_outdated();
         info!("Cleanup of outdated `last deployed` infos. Entries before cleanup: {}, after cleanup: {}", before_strip, after_strip);
+    }
+}
+
+/// Checks signatures of deployed transactions and returns transaction back in the
+/// pool in case of status error
+pub async fn worker_signature_checker(bridge: Arc<EvmBridge>) {
+    info!("Running signature checker task...");
+
+    loop {
+        info!("Worker checks signatures");
+
+        for (hash, generated) in bridge.pool.get_scheduled_for_check_transactions() {
+            debug!("Checking scheduled transaction {}", &hash);
+
+            let now = bridge.pool.clock.now();
+
+            match bridge.is_transaction_landed(&hash) {
+                Some(true) => {
+                    info!("Transaction {} finalized.", &hash);
+                    bridge.pool.drop_from_cache(&hash);
+                }
+                Some(false) | None => {
+                    if now - generated > TX_REIMPORT_THRESHOLD.as_millis() as u64 {
+                        info!("Transaction {} needs to redeploy", &hash);
+                        let evm_tx = bridge.pool.transaction_for_redeploy(&hash);
+                        match evm_tx {
+                            Some(cached) => {
+                                warn!("Redeploying transaction {}", &hash);
+                                if let Ok(pooled_tx) =
+                                    PooledTransaction::new(cached.evm_tx, cached.meta_keys, None)
+                                {
+                                    match bridge.pool.import(pooled_tx) {
+                                        Ok(tx) => {
+                                            bridge.pool.drop_from_cache(&hash);
+                                            info!(
+                                                "Transaction reimported to the pool. New tx hash: {}",
+                                                tx.hash
+                                            )
+                                        }
+                                        Err(err) => {
+                                            warn!(
+                                                "Transaction can not be reimported to the pool: {:?}",
+                                                err
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            None => {
+                                error!("Bug: transaction {} should be present in cache", &hash)
+                            }
+                        }
+                    } else {
+                        debug!(
+                            "Transaction {} has not passed redeploy threshold yet",
+                            &hash
+                        )
+                    }
+                }
+            }
+        }
+
+        tokio::time::sleep(SIG_CHECK_WORKER_PAUSE).await;
     }
 }
 
@@ -412,11 +573,14 @@ fn process_tx(
         }
     }
 
-    let mut ix =
-        solana_evm_loader_program::send_raw_tx(bridge.key.pubkey(), tx, Some(bridge.key.pubkey()));
+    let mut ix = solana_evm_loader_program::send_raw_tx(
+        bridge.key.pubkey(),
+        tx.clone(),
+        Some(bridge.key.pubkey()),
+    );
 
     // Add meta accounts as additional arguments
-    for account in meta_keys {
+    for account in meta_keys.clone() {
         ix.accounts.push(AccountMeta::new(account, false))
     }
 
@@ -438,7 +602,7 @@ fn process_tx(
     send_raw_tx.sign(&[&bridge.key], blockhash);
     debug!("Sending tx = {:?}", send_raw_tx);
 
-    bridge
+    let signature = bridge
         .rpc_client
         .send_transaction_with_config(
             &send_raw_tx,
@@ -448,8 +612,13 @@ fn process_tx(
                 ..Default::default()
             },
         )
-        .map(|_| Hex(hash))
-        .map_err(from_client_error)
+        .map_err(from_client_error)?;
+
+    bridge
+        .pool
+        .schedule_after_deploy_check(hash, signature, meta_keys, tx);
+
+    Ok(Hex(hash))
 }
 
 fn deploy_big_tx(
