@@ -46,7 +46,10 @@ use solana_client::{
 use ::tokio;
 use ::tokio::sync::mpsc;
 
-use pool::{worker_cleaner, worker_deploy, EthPool, PooledTransaction, SystemClock};
+use pool::{
+    worker_cleaner, worker_deploy, worker_signature_checker, EthPool, PooledTransaction,
+    SystemClock,
+};
 
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
@@ -240,7 +243,7 @@ impl EvmBridge {
             });
         }
 
-        let tx = PooledTransaction::new(tx, meta_keys, sender)
+        let tx = PooledTransaction::new(tx, meta_keys, Some(sender))
             .map_err(|source| evm_rpc::Error::EvmStateError { source })?;
         let tx = match self.pool.import(tx) {
             // tx was already processed on this bridge, return hash.
@@ -271,6 +274,36 @@ impl EvmBridge {
             _ => return Err(Error::BlockNotFound { block }),
         };
         Ok(block_num)
+    }
+
+    pub fn is_transaction_landed(&self, hash: &H256) -> Option<bool> {
+        fn is_receipt_exists(bridge: &EvmBridge, hash: &H256) -> Option<bool> {
+            bridge
+                .rpc_client
+                .get_evm_transaction_receipt(hash)
+                .ok()
+                .flatten()
+                .map(|_receipt| true)
+        }
+
+        fn is_signature_exists(bridge: &EvmBridge, hash: &H256) -> Option<bool> {
+            bridge
+                .pool
+                .signature_of_cached_transaction(hash)
+                .map(|signature| {
+                    bridge
+                        .rpc_client
+                        .get_signature_status(&signature)
+                        .ok()
+                        .flatten()
+                        .map(|result| result.ok())
+                        .flatten()
+                        .map(|()| true)
+                })
+                .flatten()
+        }
+
+        is_receipt_exists(self, hash).or_else(|| is_signature_exists(self, hash))
     }
 }
 
@@ -900,6 +933,8 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
 
     let cleaner = worker_cleaner(meta.clone());
 
+    let signature_checker = worker_signature_checker(meta.clone());
+
     info!("Creating server with: {}", binding_address);
     let meta_clone = meta.clone();
     let server = ServerBuilder::with_meta_extractor(
@@ -924,6 +959,7 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     };
 
     let _cleaner = tokio::task::spawn(cleaner);
+    let _signature_checker = tokio::task::spawn(signature_checker);
     let mempool_task = tokio::task::spawn(mempool_worker);
     let servers_waiter = tokio::task::spawn_blocking(|| {
         ws_server.wait().unwrap();
