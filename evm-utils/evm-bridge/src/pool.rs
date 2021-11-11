@@ -24,6 +24,7 @@ use solana_sdk::{
     instruction::AccountMeta,
     message::Message,
     pubkey::Pubkey,
+    signature::Signature,
     signer::Signer,
     system_instruction,
 };
@@ -35,12 +36,18 @@ use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResu
 
 type UnixTimeMs = u64;
 
+/// FIXME: add docs
+const SIGNATURE_CHECK_DELAY: Duration = Duration::from_secs(60);
+
 /// Delay before next cleanup of outdated entries from hashmap of
 /// last deployed transactions
 const CLEANUP_DELAY: Duration = Duration::from_secs(86400); // = 24 hours
 
 /// Limit activity of sender, who send invalid transactions.
 const SENDER_PAUSE: Duration = Duration::from_secs(15);
+
+/// Pause before adding solana signature to check queue
+const SIG_CHECK_DELAY: Duration = Duration::from_secs(30);
 
 /// Abstracting the time source for the testing purposes
 pub trait Clock: Send + Sync {
@@ -75,6 +82,10 @@ pub struct EthPool<C: Clock> {
     /// Timestamps of the last deployed transactions
     last_entry: Mutex<HashMap<Address, UnixTimeMs>>,
 
+    /// List of signatures and assosiated evm txs, which need to be
+    /// checked and redeployed in case of error
+    needs_signature_check: Mutex<HashMap<Signature, (UnixTimeMs, evm_state::Transaction)>>,
+
     /// Clock used to determine whether transaction is stalled or ready to be deployed
     clock: C,
 }
@@ -84,6 +95,7 @@ impl<C: Clock> EthPool<C> {
         Self {
             pool: Mutex::new(Pool::new(PoolListener, MyScoring, Default::default())),
             last_entry: Mutex::new(HashMap::new()),
+            needs_signature_check: Mutex::new(HashMap::new()),
             clock,
         }
     }
@@ -169,6 +181,50 @@ impl<C: Clock> EthPool<C> {
         last_entry.retain(|_, stop_before| *stop_before > now);
         let after_strip = last_entry.len();
         (before_strip, after_strip)
+    }
+
+    /// Add signature for later tracking of transaction status
+    ///
+    /// * `sig` - signature of solana tx to be checked for status
+    /// * `evm_tx` - ethereum tx to be redeployed in case of status error
+    pub fn schedule_signature_check(&self, sig: Signature, evm_tx: evm_state::Transaction) {
+        let now = self.clock.now();
+        self.needs_signature_check
+            .lock()
+            .unwrap()
+            .insert(sig, (now, evm_tx));
+    }
+
+    /// Gets signatures of transactions, deployed a while ago, and ready to be checked for status
+    pub fn signatures_ready_for_check(&self) -> Vec<Signature> {
+        let now = self.clock.now();
+
+        self.needs_signature_check
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(signature, (timestamp, _evm_tx))| {
+                if *timestamp + (SIG_CHECK_DELAY.as_millis() as u64) < now {
+                    Some(*signature)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Forget signature from cheking
+    pub fn drop_signature(&self, sig: &Signature) {
+        self.needs_signature_check.lock().unwrap().remove(sig);
+    }
+
+    /// Extracts evm tx from cache by solana signature
+    pub fn transaction_for_redeploy(&self, sig: &Signature) -> Option<evm_state::Transaction> {
+        self.needs_signature_check
+            .lock()
+            .unwrap()
+            .remove(sig)
+            .map(|(_timestamp, evm_tx)| evm_tx)
     }
 }
 
@@ -354,6 +410,40 @@ pub async fn worker_cleaner(bridge: Arc<EvmBridge>) {
     }
 }
 
+/// TODO: add docs
+pub async fn worker_signature_checker(bridge: Arc<EvmBridge>) {
+    info!("Running signature checker task...");
+
+    loop {
+        info!("Worker checks signatures");
+
+        for sig in bridge.pool.signatures_ready_for_check() {
+            if let Ok(Some(Ok(()))) = bridge.rpc_client.get_signature_status(&sig) {
+                bridge.pool.drop_signature(&sig);
+            } else {
+                // TODO: Some error results might not need redeploy?
+                let evm_tx = bridge.pool.transaction_for_redeploy(&sig);
+                match evm_tx {
+                    Some(evm_tx) => {
+                        warn!("Redeploying tx with signature {}", &sig);
+                        // TODO: add `meta_keys` and `hash_sender` to scope
+                        if let Ok(pooled_tx) =
+                            PooledTransaction::new(evm_tx, meta_keys, hash_sender)
+                        {
+                            bridge.pool.import(pooled_tx);
+                        }
+                    }
+                    None => {
+                        error!("Bug")
+                    }
+                }
+            }
+        }
+
+        tokio::time::sleep(SIGNATURE_CHECK_DELAY).await;
+    }
+}
+
 fn process_tx(
     bridge: Arc<EvmBridge>,
     tx: evm_state::Transaction,
@@ -412,8 +502,11 @@ fn process_tx(
         }
     }
 
-    let mut ix =
-        solana_evm_loader_program::send_raw_tx(bridge.key.pubkey(), tx, Some(bridge.key.pubkey()));
+    let mut ix = solana_evm_loader_program::send_raw_tx(
+        bridge.key.pubkey(),
+        tx.clone(),
+        Some(bridge.key.pubkey()),
+    );
 
     // Add meta accounts as additional arguments
     for account in meta_keys {
@@ -438,7 +531,7 @@ fn process_tx(
     send_raw_tx.sign(&[&bridge.key], blockhash);
     debug!("Sending tx = {:?}", send_raw_tx);
 
-    bridge
+    let signature = bridge
         .rpc_client
         .send_transaction_with_config(
             &send_raw_tx,
@@ -448,8 +541,11 @@ fn process_tx(
                 ..Default::default()
             },
         )
-        .map(|_| Hex(hash))
-        .map_err(from_client_error)
+        .map_err(from_client_error)?;
+
+    bridge.pool.schedule_signature_check(signature, tx);
+
+    Ok(Hex(hash))
 }
 
 fn deploy_big_tx(

@@ -46,7 +46,10 @@ use solana_client::{
 use ::tokio;
 use ::tokio::sync::mpsc;
 
-use pool::{worker_cleaner, worker_deploy, EthPool, PooledTransaction, SystemClock};
+use pool::{
+    worker_cleaner, worker_deploy, worker_signature_checker, EthPool, PooledTransaction,
+    SystemClock,
+};
 
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
@@ -900,6 +903,8 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
 
     let cleaner = worker_cleaner(meta.clone());
 
+    let signature_checker = worker_signature_checker(meta.clone());
+
     info!("Creating server with: {}", binding_address);
     let meta_clone = meta.clone();
     let server = ServerBuilder::with_meta_extractor(
@@ -924,6 +929,7 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     };
 
     let _cleaner = tokio::task::spawn(cleaner);
+    let _signature_checker = tokio::task::spawn(signature_checker);
     let mempool_task = tokio::task::spawn(mempool_worker);
     let servers_waiter = tokio::task::spawn_blocking(|| {
         ws_server.wait().unwrap();
