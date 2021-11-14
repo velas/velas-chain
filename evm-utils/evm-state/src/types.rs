@@ -300,7 +300,7 @@ impl LogFilter {
             .collect();
 
         // if user ask for too many addresses just query by logs.
-        if bloom_addresses.len() > Self::LIMIT_ADDRESSES_SIZE {
+        if bloom_addresses.is_empty() || bloom_addresses.len() > Self::LIMIT_ADDRESSES_SIZE {
             return bloom_topics;
         }
 
@@ -315,7 +315,7 @@ impl LogFilter {
     }
 
     pub fn is_log_match(&self, log: &Log) -> bool {
-        if self.address.iter().all(|address| log.address != *address) {
+        if !self.address.is_empty() && self.address.iter().all(|address| log.address != *address) {
             return false;
         }
 
@@ -726,7 +726,7 @@ mod tests {
             topics: vec![
                 LogFilterTopicEntry::One(fake_topic1),
                 LogFilterTopicEntry::One(fake_topic2),
-            ], // None - mean any topic
+            ],
         };
 
         let log = Log {
@@ -735,6 +735,35 @@ mod tests {
             data: vec![],
         };
         assert!(!log_entry_empty.is_log_match(&log))
+    }
+
+    #[test]
+    fn test_is_log_match_empty_addr_topic() {
+        use std::str::FromStr;
+        let fixed_addr = H160::from_str("0x99f3f75da23bb250e4868c7889b8349f8bbfe72b").unwrap();
+        let topic1 =
+            H256::from_str("0xfb5a77ff5da352f242c9eb0481ce3b43d0289b0daae76d3c67046fc92fb215cc")
+                .unwrap();
+        let log_entry_empty1 = LogFilter {
+            from_block: 0,
+            to_block: 0,
+            address: vec![],
+            topics: vec![LogFilterTopicEntry::One(topic1)],
+        };
+        let log_entry_empty2 = LogFilter {
+            from_block: 0,
+            to_block: 0,
+            address: vec![fixed_addr],
+            topics: vec![], // None - mean any topic
+        };
+
+        let log = Log {
+            address: fixed_addr,
+            topics: vec![topic1],
+            data: vec![],
+        };
+        assert!(log_entry_empty1.is_log_match(&log));
+        assert!(log_entry_empty2.is_log_match(&log))
     }
 
     #[test]
