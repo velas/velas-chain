@@ -114,19 +114,19 @@ And create executor only for executing single/batch of transactions.
 
 Original state machine design can be drawn in diagram:
 
-     new_bank
-    ┌───────┐
-    │       │
-    │  ┌────┴─────┐new_bank┌───────────┐
-    └──►  Empty   ◄────────┤ Committed │
-       └────┬─────┘        └─────▲─────┘
-            │                    │
-   execute  │                    │
-     tx     │                    │
-            │                    │
-       ┌────▼─────┐              │
-       │  Active  ├──────────────┘
-       └──────────┘    commit(on bank freeze)
+      new_bank
+      ┌───────┐
+      │       │
+      │  ┌────┴─────┐new_bank┌───────────┐
+      └──►  Empty   ◄────────┤ Committed │
+         └────┬─────┘        └─────▲─────┘
+              │                    │
+     execute  │                    │
+       tx     │                    │
+              │                    │
+         ┌────▼─────┐              │
+         │  Active  ├──────────────┘
+         └──────────┘    commit(on bank freeze)
 
 State is created as `Empty`. When any tx is procesed, it transit to `Active`.
 `Active` state is accumulating state changes and transactions that would be executed, but newer write in database dirrectly.
