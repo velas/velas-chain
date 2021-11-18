@@ -1,4 +1,4 @@
-# Our upderstanding of solana(native) runtime.
+# Our understanding of solana(native) runtime.
 
 As a regular blockchain, solana has its transaction format.
 Transaction is data transfer object, that user publish in order to change some data in the shared (among parties) state.
@@ -7,7 +7,7 @@ In solana state is represented as set of accounts.
 Some blockchains has smart contracts - arbitrary code that can extend blockchain capabilities, and should be executed on blockchain parties.
 Solana names them "programs". Each program has entrypoint, which expects some bytearray, each program decide how they represent this bytearray.
 
-In solana transaction contain multiple instructions. Instruction is a chunk of data that is feeded into program entrypoint, with some meta information about account that it uses, and program identificator that should be executed.
+In solana transaction contain multiple instructions. Instruction is a chunk of data that is fed into program entrypoint, with some meta information about account that it uses, and program identificator that should be executed.
 Instruction can also be perceived as minimal execution unit.
 When any instruction fails - full transaction will fail, and any data change will be reverted.
 
@@ -16,13 +16,13 @@ When any instruction fails - full transaction will fail, and any data change wil
 As we understand bank - is a structure that rule how block will be formed. It can be in completed, or in incompleted state.
 When state is incompleted (unfreezed) - transaction processing and committing are allowed.
 Completed(freezed) banks are used only for transaction simulation in rpc.
-Bank structure represent current state of blockchain with refference to actual account database, etc.
+Bank structure represent current state of blockchain with reference to actual account database, etc.
 
 ### Multithread execution
 For state, we understand that solana has same mechanism as in rw-lock. Account metas from transaction define how it would use account state.
 If account state is used as write, then this account should not be used from any other thread, for time of transaction execution.
 
-So for multithread execution, solana just need to balance transactions among threads, apply rw-lock rule for each account in execution batch, if any of rw-locks rising will fail - transaction execution should be postponed.
+So for multithread execution, solana just needs to balance transactions among threads, apply rw-lock rule for each account in execution batch, if any of rw-locks rising will fail - transaction execution should be postponed.
 
 ## Blockstore
 Blockstore in solana is just retrospective information storage, it store shreds(parts of block) for blocks, and multiple metadata indexes.
@@ -35,20 +35,20 @@ To save shared disk space, for rpc, blockstore is also backed-up to bigtable.
 
 Main requirement was to create a program in solana that can execute EVM bytecode.
 Later it's extended too, not only execute evm bytecode, but also be compatible with ethereum  transaction and blocks structure.
-Also for better user expirience we should support eth_ rpc calls https://openethereum.github.io/JSONRPC-eth-module
+Also for better user expirience, we should support eth_ rpc calls https://openethereum.github.io/JSONRPC-eth-module
 
 # Design choses
 
 ## Serialization format
 
-When we started, `bincode` was "default" serialization format, and we was familar with serde family, so we decide to keep it as format for evm instruction. As a drawback of fast production release, our evm types are serialized as a hex string instead of binnary data, which increase memory footprints.
+When we started, `bincode` was "default" serialization format, and we was familiar with serde family, so we decide to keep it as format for evm instruction. As a drawback of fast production release, our evm types are serialized as a hex string instead of binnary data, which increase memory footprints.
 
 But we have plan change this format in future to `borsch`, which will allow better compatibility with JS clients.
 
 ## Single storage for data
 
 Currently all evm implementation are singlethread. Moreover, any transaction in evm world, can refer to any address, even it can compute address
-and evaluate it from computed value, so it is complicated task to seperate evm storage into multiple independent parts with rw-lock mechanism as in solana.
+and evaluate it from computed value, so it is complicated task to separate evm storage into multiple independent parts with rw-lock mechanism as in solana.
 
 Solana has transaction and account size limitation. It expect transaction size to be less than ipv6 MTU 1280 bytes, in order to process and distribute transactions faster.
 For account, they have hand-written database, which can handle multiple versions of some account, but they limit account size to be 10MB max.
@@ -138,7 +138,7 @@ Original state machine was later simplified in code, and now Empty and Active ar
 
 `Incoming` is handled as empty, if state_updates.is_empty() && executed_transactions.is_empty(). See `is_active_changes` method.
 
-In shorts, the difference betwee Incoming and Committed can be sumarized in table:
+In shorts, the difference between Incoming and Committed can be sumarized in table:
 
 |                              | Incoming | Committed |
 | ---------------------------- | -------- | --------- |
@@ -155,7 +155,7 @@ In shorts, the difference betwee Incoming and Committed can be sumarized in tabl
 
 State persistent:
 `Incoming` and `Committed` Also has wrappers `EvmBackend<Incoming>`\ `EvmBackend<Committed>` the difference between them is that
-`Incoming` and `Committed` only save fields that can be persisted, and EvmBackend also add refference to global KVS.
+`Incoming` and `Committed` only save fields that can be persisted, and EvmBackend also add reference to global KVS.
 
 `EvmState` - is a type that monomorphize this two states and provide highlevel wrapper for bank to work with.
 Methods that correspond to state transition: `EvmState::try_commit` `EvmState::new_from_parent`
