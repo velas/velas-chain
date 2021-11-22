@@ -1103,6 +1103,14 @@ pub fn main() {
                 .help("Use DIR as ledger location"),
         )
         .arg(
+            Arg::with_name("evm_state_archive_path")
+                .long("evm-state-archive")
+                .value_name("DIR")
+                .takes_value(true)
+                .help("Use DIR as evm-state archive location"),
+        )
+        
+        .arg(
             Arg::with_name("entrypoint")
                 .short("n")
                 .long("entrypoint")
@@ -1899,6 +1907,23 @@ pub fn main() {
             .after_help("Note: If this command exits with a non-zero status \
                          then this not a good time for a restart")
         )
+        .subcommand(
+            SubCommand::with_name("merge-evm-state-subarchive")
+            .about("Merge one archive to another")
+            .arg(
+                Arg::with_name("evm-state-path")
+                    .takes_value(true)
+                    .index(1)
+                    .value_name("PATH")
+                    .help("Path to evm-state database that should be merged into archive")
+            )
+            .arg(
+                Arg::with_name("restore_backup")
+                    .takes_value(false)
+                    .long("restore-backup")
+                    .help("Notify that evm-state-path is actually path to rocksdb backup")
+            )
+        )
         .get_matches();
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
@@ -2006,6 +2031,20 @@ pub fn main() {
             });
             return;
         }
+        ("merge-evm-state-subarchive", Some(subcommand_matches)) => {
+            let evm_state_path = value_t_or_exit!(subcommand_matches, "evm-state-path", String);
+            let restore_backup = subcommand_matches.is_present("restore_backup");
+
+            let admin_client = admin_rpc_service::connect(&ledger_path);
+            admin_rpc_service::runtime()
+                .block_on(async move { admin_client.await?.merge_evm_state(evm_state_path, restore_backup).await })
+                .unwrap_or_else(|err| {
+                    println!("set log filter failed: {}", err);
+                    exit(1);
+            });
+            return;
+        }
+        
         _ => unreachable!(),
     };
 
@@ -2392,6 +2431,15 @@ pub fn main() {
     let _logger_thread = redirect_stderr_to_file(logfile);
 
     info!("{} {}", crate_name!(), solana_version::version!());
+
+    let evm_state_archive = matches.value_of("evm_state_archive_path").map(|path| {
+        info!("Opening evm archive storage");
+        evm_state::Storage::open_persistent(
+            path, false, // gc disabled
+        )
+        .expect("Cannot open evm archive folder")
+    });
+
     info!("Starting validator with: {:#?}", std::env::args_os());
 
     let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
@@ -2403,6 +2451,7 @@ pub fn main() {
             validator_exit: validator_config.validator_exit.clone(),
             start_progress: start_progress.clone(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
+            archive_evm_state: evm_state_archive.clone(),
         },
     );
 
@@ -2541,6 +2590,7 @@ pub fn main() {
         &validator_config,
         should_check_duplicate_instance,
         start_progress,
+        evm_state_archive,
     );
 
     if let Some(filename) = init_complete_file {

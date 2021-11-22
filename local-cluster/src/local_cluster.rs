@@ -218,6 +218,7 @@ impl LocalCluster {
             &leader_config,
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
+            None,
         );
 
         let mut validators = HashMap::new();
@@ -360,6 +361,7 @@ impl LocalCluster {
             &config,
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
+            None,
         );
 
         let validator_pubkey = validator_keypair.pubkey();
@@ -676,6 +678,7 @@ impl Cluster for LocalCluster {
             &safe_clone_config(&cluster_validator_info.config),
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
+            None,
         );
         cluster_validator_info.validator = Some(restarted_node);
         cluster_validator_info
