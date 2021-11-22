@@ -163,6 +163,7 @@ pub struct JsonRpcRequestProcessor {
     max_slots: Arc<MaxSlots>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
+    evm_state_archive: Option<evm_state::Storage>,
 }
 impl Metadata for JsonRpcRequestProcessor {}
 
@@ -250,6 +251,7 @@ impl JsonRpcRequestProcessor {
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
+        evm_state_archive: Option<evm_state::Storage>,
     ) -> (Self, Receiver<TransactionInfo>) {
         let (sender, receiver) = channel();
         (
@@ -271,6 +273,7 @@ impl JsonRpcRequestProcessor {
                 max_slots,
                 leader_schedule_cache,
                 max_complete_transaction_status_slot,
+                evm_state_archive,
             },
             receiver,
         )
@@ -314,6 +317,26 @@ impl JsonRpcRequestProcessor {
             max_slots: Arc::new(MaxSlots::default()),
             leader_schedule_cache: Arc::new(LeaderScheduleCache::new_from_bank(bank)),
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
+            evm_state_archive: None,
+        }
+    }
+
+    pub fn evm_state_archive_storage(&self) -> &Option<evm_state::Storage> {
+        &self.evm_state_archive
+    }
+
+    pub fn evm_state_archive(&self) -> Option<evm_state::EvmBackend<evm_state::Incomming>> {
+        // TODO: timestamp
+        // TODO: block_hashes history
+        let arhive = self.evm_state_archive.clone()?;
+        let bank = self.bank(Some(CommitmentConfig::processed()));
+        let state_ref = bank.evm_state.read().expect("state was poisoned");
+        match state_ref.new_from_parent(bank.clock().unix_timestamp, true) {
+            evm_state::EvmState::Incomming(mut i) => {
+                i.kvs = arhive;
+                Some(i)
+            }
+            _ => unreachable!(),
         }
     }
 
@@ -4350,6 +4373,7 @@ pub mod tests {
             max_slots,
             Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
             max_complete_transaction_status_slot,
+            None,
         );
         SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
 
@@ -5930,6 +5954,7 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
+            None,
         );
         SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
 
@@ -6207,6 +6232,7 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
+            None,
         );
         SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
         assert_eq!(
@@ -7633,6 +7659,7 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
+            None,
         );
 
         let mut io = MetaIoHandler::default();

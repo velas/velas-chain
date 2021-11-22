@@ -20,10 +20,6 @@ use solana_runtime::bank::Bank;
 use std::cell::RefCell;
 const GAS_PRICE: u64 = 3;
 
-const DEFAULT_COMITTMENT: Option<CommitmentConfig> = Some(CommitmentConfig {
-    commitment: CommitmentLevel::Processed,
-});
-
 fn block_to_state_root(block: Option<BlockId>, meta: &JsonRpcRequestProcessor) -> Option<H256> {
     let block_id = block.unwrap_or_default();
 
@@ -54,6 +50,12 @@ fn block_to_state_root(block: Option<BlockId>, meta: &JsonRpcRequestProcessor) -
                 .unwrap_or(true)
         })
         .map(|(b, _)| b.header.state_root)
+        .filter(|state_root| {
+            meta.evm_state_archive_storage()
+                .as_ref()
+                .map(|s| s.check_root_exist(*state_root))
+                == Some(true)
+        })
 }
 
 fn block_parse_confirmed_num(
@@ -216,8 +218,7 @@ impl BasicERPC for BasicErpcImpl {
         let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
             block: block.unwrap_or_default(),
         })?;
-        let bank = meta.bank(Some(CommitmentConfig::processed()));
-        let evm_state = bank.evm_state.read().expect("Evm state poisoned");
+        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         let account = evm_state
             .get_account_state_at(root, address.0)
             .unwrap_or_default();
@@ -234,8 +235,7 @@ impl BasicERPC for BasicErpcImpl {
         let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
             block: block.unwrap_or_default(),
         })?;
-        let bank = meta.bank(Some(CommitmentConfig::processed()));
-        let evm_state = bank.evm_state.read().expect("Evm state poisoned");
+        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         Ok(Hex(evm_state
             .get_storage_at(root, address.0, data.0)
             .unwrap_or_default()))
@@ -250,8 +250,7 @@ impl BasicERPC for BasicErpcImpl {
         let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
             block: block.unwrap_or_default(),
         })?;
-        let bank = meta.bank(Some(CommitmentConfig::processed()));
-        let evm_state = bank.evm_state.read().expect("Evm state poisoned");
+        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         let account = evm_state
             .get_account_state_at(root, address.0)
             .unwrap_or_default();
@@ -267,8 +266,7 @@ impl BasicERPC for BasicErpcImpl {
         let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
             block: block.unwrap_or_default(),
         })?;
-        let bank = meta.bank(Some(CommitmentConfig::processed()));
-        let evm_state = bank.evm_state.read().expect("Evm state poisoned");
+        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         let account = evm_state
             .get_account_state_at(root, address.0)
             .unwrap_or_default();
@@ -562,10 +560,9 @@ impl BasicERPC for BasicErpcImpl {
 
     fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
         const MAX_NUM_BLOCKS: u64 = 2000;
-        let bank = meta.bank(None);
-
-        let evm_lock = bank.evm_state.read().expect("Evm lock poisoned");
-        let block_num = evm_lock.block_number();
+        let block_num = meta
+            .get_last_available_evm_block()
+            .ok_or(Error::ArchiveNotSupported)?;
         let to = block_parse_confirmed_num(log_filter.to_block, &meta).unwrap_or(block_num);
         let from = block_parse_confirmed_num(log_filter.from_block, &meta).unwrap_or(block_num);
         if to > from + MAX_NUM_BLOCKS {
@@ -647,17 +644,9 @@ fn call_many(
     txs: &[(RPCTransaction, Vec<solana_sdk::pubkey::Pubkey>)],
     saved_root: Option<H256>,
 ) -> Result<Vec<TxOutput>, Error> {
-    let bank = meta.bank(DEFAULT_COMITTMENT);
-    let evm_state = bank
-        .evm_state
-        .read()
-        .expect("meta bank EVM state was poisoned");
+    let bank = meta.bank(Some(CommitmentConfig::processed()));
+    let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
 
-    let evm_state = evm_state.clone();
-    let evm_state = match evm_state.new_from_parent(bank.clock().unix_timestamp, false) {
-        evm_state::EvmState::Incomming(i) => i,
-        evm_state::EvmState::Committed(_) => unreachable!(),
-    };
     let evm_state = if let Some(root) = saved_root {
         evm_state
             .new_incomming_for_root(root)
@@ -671,6 +660,7 @@ fn call_many(
         ..Default::default()
     };
 
+    //TODO: Hashes actual to saved root
     let last_hashes = bank.evm_hashes();
     let mut executor = evm_state::Executor::with_config(
         evm_state,

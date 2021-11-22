@@ -2157,6 +2157,12 @@ impl Bank {
                 self.update_recent_evm_blockhashes_locked(&w_evm_blockhash_queue);
             }
         }
+
+        self.evm_state
+            .write()
+            .expect("evm state was poisoned")
+            .register_slot(self.slot)
+            .expect("failed to mark slot reference");
     }
 
     pub fn rehash(&self) {
@@ -5389,6 +5395,22 @@ impl Drop for Bank {
                 // 2. At startup when replaying blockstore and there's no
                 // AccountsBackgroundService to perform cleanups yet.
                 self.rc.accounts.purge_slot(self.slot());
+                let evm_state = self.evm_state.read().unwrap();
+                let storage = evm_state.kvs();
+                let slot = self.slot();
+                let handle_evm_error = move || -> evm_state::storage::Result<()> {
+                    if let Some(h) = storage.purge_slot(slot)? {
+                        let mut hashes = vec![h];
+                        while !hashes.is_empty() {
+                            hashes = storage.gc_remove_references(&hashes)?
+                        }
+                    }
+                    Ok(())
+                };
+                if let Err(e) = handle_evm_error() {
+                    error!("Cannot purge evm_state slot: {}, error: {}", self.slot(), e)
+                    //TODO: Save last hashes list, to perform cleanup if it was recoverable error.
+                }
             }
         }
     }

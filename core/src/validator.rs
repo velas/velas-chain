@@ -310,6 +310,7 @@ impl Validator {
         config: &ValidatorConfig,
         should_check_duplicate_instance: bool,
         start_progress: Arc<RwLock<ValidatorStartProgress>>,
+        evm_state_archive: Option<evm_state::Storage>,
     ) -> Self {
         let id = identity_keypair.pubkey();
         assert_eq!(id, node.info.id);
@@ -562,6 +563,7 @@ impl Validator {
                     max_slots.clone(),
                     leader_schedule_cache.clone(),
                     max_complete_transaction_status_slot,
+                    evm_state_archive,
                 )),
                 if config.rpc_config.minimal_api {
                     None
@@ -1621,6 +1623,7 @@ mod tests {
             &config,
             true, // should_check_duplicate_instance
             start_progress.clone(),
+            None,
         );
         assert_eq!(
             *start_progress.read().unwrap(),

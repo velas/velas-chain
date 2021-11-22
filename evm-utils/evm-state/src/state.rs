@@ -148,6 +148,7 @@ impl EvmBackend<Incomming> {
     /// Be sure to commit_block manually after calling this method,
     /// because it clear pending state, and is_active_changes cannot detect any state changes.
     fn flush_changes(&mut self) {
+        //todo: do in one tx
         let mut state = &mut self.state;
         let r = RocksHandle::new(RocksDatabaseHandle::new(self.kvs.db()));
 
@@ -191,6 +192,9 @@ impl EvmBackend<Incomming> {
                 let storage_patch = storage.to_trie().into_patch();
                 let storage_root = storage_tries.apply(storage_patch);
                 account.storage_root = storage_root;
+                self.kvs
+                    .gc_register_root_link(storage_root)
+                    .expect("Unable to increment reference counter.");
 
                 accounts.insert(&address, &account);
             } else {
@@ -200,10 +204,6 @@ impl EvmBackend<Incomming> {
 
         let accounts_patch = accounts.to_trie().into_patch();
         let new_root = account_tries.apply(accounts_patch);
-
-        // for (hash, receipt) in std::mem::take(&mut self.receipts) {
-        //     self.kvs.set::<Receipts>(hash, receipt);
-        // }
 
         state.state_root = new_root;
     }
@@ -343,6 +343,20 @@ impl EvmBackend<Incomming> {
             self.ext_storage(address, storage);
         }
         self.flush_changes()
+    }
+
+    pub fn get_account_state_at(&self, root: H256, address: H160) -> Option<AccountState> {
+        if !self.kvs().check_root_exist(root) {
+            return None;
+        }
+        self.get_account_state_from_kvs(root, address)
+    }
+
+    pub fn get_storage_at(&self, root: H256, address: H160, index: H256) -> Option<H256> {
+        if !self.kvs().check_root_exist(root) {
+            return None;
+        }
+        self.get_storage_from_kvs(root, address, index)
     }
 
     pub fn new_incomming_for_root(mut self, root: H256) -> Option<Self> {
@@ -614,6 +628,10 @@ impl EvmState {
 
         EvmState::Incomming(b)
     }
+    // Request Unique reference to make sure caller own evm-state instance.
+    pub fn register_slot(&mut self, slot: u64) -> Result<(), anyhow::Error> {
+        Ok(self.kvs().register_slot(slot, self.last_root())?)
+    }
 
     pub fn load_from<P: AsRef<Path>>(
         path: P,
@@ -621,7 +639,9 @@ impl EvmState {
     ) -> Result<Self, anyhow::Error> {
         info!("Open EVM storage {}", path.as_ref().display());
 
-        let kvs = KVS::open_persistent(path)?;
+        let kvs = KVS::open_persistent(
+            path, true, // enable gc
+        )?;
 
         Ok(match evm_persist_feilds.into() {
             EvmPersistState::Incomming(i) => EvmBackend::new(i, kvs).into(),
@@ -699,24 +719,6 @@ impl EvmState {
         }
     }
 
-    pub fn get_account_state_at(&self, root: H256, address: H160) -> Option<AccountState> {
-        if !self.kvs().check_root_exist(root) {
-            return None;
-        }
-        match self {
-            Self::Incomming(i) => i.get_account_state_from_kvs(root, address),
-            Self::Committed(c) => c.get_account_state_from_kvs(root, address),
-        }
-    }
-    pub fn get_storage_at(&self, root: H256, address: H160, index: H256) -> Option<H256> {
-        if !self.kvs().check_root_exist(root) {
-            return None;
-        }
-        match self {
-            Self::Incomming(i) => i.get_storage_from_kvs(root, address, index),
-            Self::Committed(c) => c.get_storage_from_kvs(root, address, index),
-        }
-    }
     // Count of processed transction since last commit, or previous if state is committed.
     pub fn processed_tx_len(&self) -> usize {
         match self {

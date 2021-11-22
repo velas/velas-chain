@@ -9,7 +9,7 @@ use {
     solana_sdk::signature::{read_keypair_file, Keypair, Signer},
     std::{
         net::SocketAddr,
-        path::Path,
+        path::{Path, PathBuf},
         sync::{Arc, RwLock},
         thread::{self, Builder},
         time::{Duration, SystemTime},
@@ -23,6 +23,7 @@ pub struct AdminRpcRequestMetadata {
     pub start_progress: Arc<RwLock<ValidatorStartProgress>>,
     pub validator_exit: Arc<RwLock<ValidatorExit>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
+    pub archive_evm_state: Option<evm_state::Storage>,
 }
 impl Metadata for AdminRpcRequestMetadata {}
 
@@ -47,6 +48,9 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "addAuthorizedVoter")]
     fn add_authorized_voter(&self, meta: Self::Metadata, keypair_file: String) -> Result<()>;
+
+    #[rpc(meta, name = "mergeEvmState")]
+    fn merge_evm_state(&self, meta: Self::Metadata, path: String, backup: bool) -> Result<()>;
 
     #[rpc(meta, name = "removeAllAuthorizedVoters")]
     fn remove_all_authorized_voters(&self, meta: Self::Metadata) -> Result<()>;
@@ -118,6 +122,49 @@ impl AdminRpc for AdminRpcImpl {
             authorized_voter_keypairs.push(Arc::new(authorized_voter));
             Ok(())
         }
+    }
+
+    fn merge_evm_state(&self, meta: Self::Metadata, path: String, backup: bool) -> Result<()> {
+        info!("Merging evm state: {}, backup: {}", path, backup);
+        let archive_evm_state = if let Some(archive_evm_state) = &meta.archive_evm_state {
+            archive_evm_state
+        } else {
+            error!("Archive storage not found, but merge evm state request received.");
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Archive storage not found",
+            ));
+        };
+        let tmp_backup_dir =
+            tempfile::tempdir_in(archive_evm_state.get_inner_location()).map_err(|e| {
+                jsonrpc_core::Error::invalid_params(format!(
+                    "Cannot create archive storage subfolder {}",
+                    e
+                ))
+            })?;
+        let path = if backup {
+            let db_dir = tmp_backup_dir.as_ref().join("restored-db");
+            evm_state::Storage::restore_from(&path, &db_dir).map_err(|e| {
+                jsonrpc_core::Error::invalid_params(format!(
+                    "Cannot restore backup for merge database {}",
+                    e
+                ))
+            })?;
+            db_dir
+        } else {
+            PathBuf::from(path)
+        };
+        let merge_storage = evm_state::Storage::open_persistent(path, false).map_err(|e| {
+            jsonrpc_core::Error::invalid_params(format!("Cannot open merge database {}", e))
+        })?;
+
+        archive_evm_state
+            .merge_from_db(&merge_storage)
+            .map_err(|e| {
+                jsonrpc_core::Error::invalid_params(format!(
+                    "Merge database was not finalized {}",
+                    e
+                ))
+            })
     }
 
     fn remove_all_authorized_voters(&self, meta: Self::Metadata) -> Result<()> {

@@ -61,6 +61,9 @@ pub enum Error {
     #[snafu(display("Failed to find block {:?}", block))]
     BlockNotFound { block: BlockId },
 
+    #[snafu(display("Validator node didn't support archive history"))]
+    ArchiveNotSupported,
+
     #[snafu(display("Failed to find state for block {:?}", block))]
     StateNotFoundForBlock { block: BlockId },
 
@@ -167,6 +170,7 @@ const KEY_NOT_FOUND_RPC_ERROR: i64 = 2003;
 const FATAL_EVM_ERROR: i64 = 2004;
 const GAS_PRICE_TOO_LOW: i64 = 2005;
 const TRANSACTION_REPLACED: i64 = 2006;
+const ARCHIVE_NOT_SUPPORTED_ERROR: i64 = 2007;
 
 const EVM_EXECUTION_ERROR: i64 = 3; // from geth docs
 const ERROR_EVM_BASE_SUBCODE: i64 = 100; //reserved place for evm errors range: 100 - 200
@@ -210,6 +214,7 @@ impl From<Error> for JRpcError {
                 }
             }
             Error::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &err),
+            Error::ArchiveNotSupported => internal_error(ARCHIVE_NOT_SUPPORTED_ERROR, &err),
             Error::StateNotFoundForBlock { .. } => internal_error(STATE_NOT_FOUND_RPC_ERROR, &err),
             Error::StateRootNotFound { .. } => internal_error(STATE_NOT_FOUND_RPC_ERROR, &err),
             Error::KeyNotFound { .. } => internal_error(KEY_NOT_FOUND_RPC_ERROR, &err),
