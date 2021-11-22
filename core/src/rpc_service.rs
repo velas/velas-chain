@@ -278,6 +278,7 @@ impl JsonRpcService {
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         current_transaction_status_slot: Arc<AtomicU64>,
+        evm_state_archive: Option<evm_state::Storage>,
     ) -> Self {
         info!("rpc bound to {:?}", rpc_addr);
         info!("rpc configuration: {:?}", config);
@@ -359,6 +360,7 @@ impl JsonRpcService {
             max_slots,
             leader_schedule_cache,
             current_transaction_status_slot,
+            evm_state_archive,
         );
 
         let leader_info =
@@ -528,6 +530,7 @@ mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
+            None,
         );
         let thread = rpc_service.thread_hdl.thread();
         assert_eq!(thread.name().unwrap(), "solana-jsonrpc");

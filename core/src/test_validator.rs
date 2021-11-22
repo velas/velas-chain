@@ -514,6 +514,7 @@ impl TestValidator {
             &validator_config,
             true, // should_check_duplicate_instance
             config.start_progress.clone(),
+            None,
         ));
 
         // Needed to avoid panics in `solana-responder-gossip` in tests that create a number of

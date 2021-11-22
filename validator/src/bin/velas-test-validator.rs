@@ -511,6 +511,7 @@ fn main() {
             start_time: std::time::SystemTime::now(),
             validator_exit: genesis.validator_exit.clone(),
             authorized_voter_keypairs: genesis.authorized_voter_keypairs.clone(),
+            archive_evm_state: None,
         },
     );
     let dashboard = if output == Output::Dashboard {
