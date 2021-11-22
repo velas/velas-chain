@@ -268,6 +268,23 @@ impl AbsRequestHandler {
         for pruned_slot in self.pruned_banks_receiver.try_iter() {
             count += 1;
             bank.rc.accounts.purge_slot(pruned_slot);
+
+            let evm_state = bank.evm_state.read().unwrap();
+            let storage = evm_state.kvs();
+            let slot = bank.slot();
+            let handle_evm_error = move || -> evm_state::storage::Result<()> {
+                if let Some(h) = storage.purge_slot(slot)? {
+                    let mut hashes = vec![h];
+                    while !hashes.is_empty() {
+                        hashes = storage.gc_remove_references(&hashes)?
+                    }
+                }
+                Ok(())
+            };
+            if let Err(e) = handle_evm_error() {
+                error!("Cannot purge evm_state slot: {}, error: {}", bank.slot(), e)
+                //TODO: Save last hashes list, to perform cleanup if it was recoverable error.
+            }
         }
 
         count

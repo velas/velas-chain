@@ -8032,6 +8032,7 @@ dependencies = [
  "clap",
  "console 0.11.3",
  "core_affinity",
+ "evm-state",
  "fd-lock",
  "indicatif",
  "jsonrpc-core",
@@ -8061,6 +8062,7 @@ dependencies = [
  "solana-version",
  "solana-vote-program",
  "symlink",
+ "tempfile",
 ]
 
 [[package]]

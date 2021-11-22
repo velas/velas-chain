@@ -88,7 +88,10 @@ impl EvmStateSubCommand for App<'_, '_> {
 
 pub fn process_evm_state_command(ledger_path: &Path, matches: &ArgMatches<'_>) -> Result<()> {
     let evm_state_path = ledger_path.join("evm-state");
-    let storage = Storage::open_persistent(evm_state_path)?;
+    let storage = Storage::open_persistent(
+        evm_state_path,
+        true, // enable gc
+    )?;
 
     match matches.subcommand() {
         ("purge", Some(matches)) => {
@@ -138,8 +141,11 @@ pub fn process_evm_state_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let root = value_t_or_exit!(matches, ROOT_ARG.name, H256);
             let destination = value_t_or_exit!(matches, "destination", PathBuf);
 
-            ensure!(storage.check_root_exist(root));
-            let destination = Storage::open_persistent(destination)?;
+            assert!(storage.check_root_exist(root));
+            let destination = Storage::open_persistent(
+                destination,
+                true, // enable gc
+            )?;
 
             let source = storage.clone();
             let streamer = inspectors::streamer::AccountsStreamer {
