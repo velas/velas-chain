@@ -170,6 +170,9 @@ mod tests {
             Hash::default(),
             ArchiveFormat::TarBzip2,
             SnapshotVersion::default(),
+            evm_state::empty_trie_hash(),
+            evm_state::storage::Storage::create_temporary()
+                .expect("Unable to create temporary EVM state storage"),
         );
 
         // Make tarball from packageable snapshot
