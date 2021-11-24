@@ -266,7 +266,8 @@ impl EvmBridge {
         let block_num = match block {
             BlockId::Num(block) => block.0,
             BlockId::RelativeId(BlockRelId::Latest) => {
-                proxy_evm_rpc!(self.rpc_client, EthBlockNumber)?
+                let num: Hex<u64> = proxy_evm_rpc!(self.rpc_client, EthBlockNumber)?;
+                num.0
             }
             _ => return Err(Error::BlockNotFound { block }),
         };
