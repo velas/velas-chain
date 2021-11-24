@@ -285,6 +285,9 @@ mod tests {
                 storages: vec![],
                 archive_format: ArchiveFormat::TarBzip2,
                 snapshot_version: SnapshotVersion::default(),
+                evm_root: evm_state::empty_trie_hash(),
+                evm_db: evm_state::storage::Storage::create_temporary()
+                    .expect("Unable to create temporary EVM state storage"),
             };
 
             AccountsHashVerifier::process_accounts_package(

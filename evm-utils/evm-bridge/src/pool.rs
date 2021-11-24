@@ -668,33 +668,29 @@ mod tests {
 
     #[test]
     fn test_recoverable_nonce() {
-        fn create_proxy_error(message: String) -> evm_rpc::Error {
+        fn create_proxy_error(message: impl AsRef<str>) -> evm_rpc::Error {
             evm_rpc::Error::ProxyRpcError {
-                source: jsonrpc_core::Error::invalid_params(message),
+                source: jsonrpc_core::Error::invalid_params(message.as_ref().to_string()),
             }
         }
 
-        let e = create_proxy_error(format!(
-            "Transaction nonce 1687 differs from nonce in state 1686"
-        ));
-        assert_eq!(is_recoverable_error(&e), true);
+        let e = create_proxy_error("Transaction nonce 1687 differs from nonce in state 1686");
+        assert!(is_recoverable_error(&e));
 
-        let e = create_proxy_error(format!("Transaction nonce 1 differs from nonce in state 0"));
-        assert_eq!(is_recoverable_error(&e), true);
+        let e = create_proxy_error("Transaction nonce 1 differs from nonce in state 0");
+        assert!(is_recoverable_error(&e));
 
-        let e = create_proxy_error(format!(
-            "HasPrefix:Transaction nonce 1687 differs from nonce in state 1686. And sufix"
-        ));
-        assert_eq!(is_recoverable_error(&e), true);
+        let e = create_proxy_error(
+            "HasPrefix:Transaction nonce 1687 differs from nonce in state 1686. And sufix",
+        );
+        assert!(is_recoverable_error(&e));
 
-        let e = create_proxy_error(format!("Any other text"));
-        assert_eq!(is_recoverable_error(&e), false);
+        let e = create_proxy_error("Any other text");
+        assert!(!is_recoverable_error(&e));
 
         // outdated transaction
-        let e = create_proxy_error(format!(
-            "Transaction nonce 1685 differs from nonce in state 1686"
-        ));
-        assert_eq!(is_recoverable_error(&e), false);
+        let e = create_proxy_error("Transaction nonce 1685 differs from nonce in state 1686");
+        assert!(!is_recoverable_error(&e));
     }
 
     #[test]
@@ -838,7 +834,7 @@ mod tests {
     }
 
     fn import(pool: &mut Pool, tx: PooledTransaction) {
-        pool.import(tx, &mut MyScoring).unwrap();
+        pool.import(tx, &MyScoring).unwrap();
     }
 
     fn pending_msgs<R>(pool: &Pool, ready: R) -> Vec<String>

@@ -560,7 +560,7 @@ mod transaction_roots {
 
     #[cfg(test)]
     mod test {
-        use triedb::{FixedMemoryTrieMut, TrieMut};
+        use triedb::TrieMut;
 
         use super::*;
 
@@ -584,7 +584,7 @@ mod transaction_roots {
                 trie.insert(&U256::from(i), &receipt);
 
                 let trie = trie.to_trie();
-                let root = trie.root();
+                root = trie.root();
                 let patch = trie.into_patch();
                 trie_c.apply(patch);
             }
