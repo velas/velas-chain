@@ -41,6 +41,7 @@ pub fn load(
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+    verify_evm_state: bool,
 ) -> LoadResult {
     if let Some(snapshot_config) = snapshot_config.as_ref() {
         info!(
@@ -75,6 +76,7 @@ pub fn load(
                     Some(&crate::builtins::get(process_options.bpf_jit)),
                     process_options.account_indexes.clone(),
                     process_options.accounts_db_caching_enabled,
+                    verify_evm_state,
                 )
                 .expect("Load from snapshot failed");
                 if let Some(shrink_paths) = shrink_paths {

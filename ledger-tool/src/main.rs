@@ -675,6 +675,7 @@ fn load_bank_forks(
     blockstore: &Blockstore,
     process_options: ProcessOptions,
     snapshot_archive_path: Option<PathBuf>,
+    verify_evm_state: bool,
 ) -> bank_forks_utils::LoadResult {
     let snapshot_path = blockstore
         .ledger_path()
@@ -731,6 +732,7 @@ fn load_bank_forks(
         process_options,
         None,
         None,
+        verify_evm_state,
     )
 }
 
@@ -1548,6 +1550,7 @@ fn main() {
                 &blockstore,
                 process_options,
                 snapshot_archive_path,
+                false,
             ) {
                 Ok((bank_forks, _leader_schedule_cache, _snapshot_hash)) => {
                     println!(
@@ -1623,6 +1626,7 @@ fn main() {
                 &blockstore,
                 process_options,
                 snapshot_archive_path,
+                false,
             ) {
                 Ok((bank_forks, _leader_schedule_cache, _snapshot_hash)) => {
                     println!("{}", &bank_forks.working_bank().hash());
@@ -1797,6 +1801,7 @@ fn main() {
                 &blockstore,
                 process_options,
                 snapshot_archive_path,
+                true,
             )
             .unwrap_or_else(|err| {
                 eprintln!("Ledger verification failed: {:?}", err);
@@ -1829,6 +1834,7 @@ fn main() {
                 &blockstore,
                 process_options,
                 snapshot_archive_path,
+                false,
             ) {
                 Ok((bank_forks, _leader_schedule_cache, _snapshot_hash)) => {
                     let dot = graph_forks(&bank_forks, arg_matches.is_present("include_all_votes"));
@@ -1929,6 +1935,7 @@ fn main() {
                     ..ProcessOptions::default()
                 },
                 snapshot_archive_path,
+                true,
             ) {
                 Ok((bank_forks, _leader_schedule_cache, _snapshot_hash)) => {
                     let mut bank = bank_forks
@@ -2157,6 +2164,7 @@ fn main() {
                 &blockstore,
                 process_options,
                 snapshot_archive_path,
+                false,
             ) {
                 Ok((bank_forks, _leader_schedule_cache, _snapshot_hash)) => {
                     let slot = bank_forks.working_bank().slot();
@@ -2215,6 +2223,7 @@ fn main() {
                 &blockstore,
                 process_options,
                 snapshot_archive_path,
+                false,
             ) {
                 Ok((bank_forks, _leader_schedule_cache, _snapshot_hash)) => {
                     let slot = bank_forks.working_bank().slot();

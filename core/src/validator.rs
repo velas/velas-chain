@@ -134,6 +134,7 @@ pub struct ValidatorConfig {
     pub tpu_coalesce_ms: u64,
     pub validator_exit: Arc<RwLock<ValidatorExit>>,
     pub no_wait_for_vote_to_start_leader: bool,
+    pub verify_evm_state: bool,
 }
 
 impl Default for ValidatorConfig {
@@ -190,6 +191,7 @@ impl Default for ValidatorConfig {
             tpu_coalesce_ms: DEFAULT_TPU_COALESCE_MS,
             validator_exit: Arc::new(RwLock::new(ValidatorExit::default())),
             no_wait_for_vote_to_start_leader: true,
+            verify_evm_state: false,
         }
     }
 }
@@ -1163,6 +1165,7 @@ fn new_banks_from_ledger(
         transaction_history_services
             .cache_block_meta_sender
             .as_ref(),
+        config.verify_evm_state,
     )
     .unwrap_or_else(|err| {
         error!("Failed to load ledger: {:?}", err);

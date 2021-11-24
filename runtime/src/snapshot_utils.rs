@@ -630,6 +630,7 @@ pub fn bank_from_archive<P: AsRef<Path>>(
     additional_builtins: Option<&Builtins>,
     account_indexes: AccountSecondaryIndexes,
     accounts_db_caching_enabled: bool,
+    verify_evm_state: bool,
 ) -> Result<Bank> {
     // Untar the snapshot into a temporary directory
     let unpack_dir = tempfile::Builder::new()
@@ -662,6 +663,7 @@ pub fn bank_from_archive<P: AsRef<Path>>(
         additional_builtins,
         account_indexes,
         accounts_db_caching_enabled,
+        verify_evm_state,
     )?;
 
     if !bank.verify_snapshot_bank() {
@@ -812,6 +814,7 @@ fn rebuild_bank_from_snapshots(
     additional_builtins: Option<&Builtins>,
     account_indexes: AccountSecondaryIndexes,
     accounts_db_caching_enabled: bool,
+    verify_evm_state: bool,
 ) -> Result<Bank> {
     info!("snapshot version: {}", snapshot_version);
 
@@ -866,8 +869,7 @@ fn rebuild_bank_from_snapshots(
         }?)
     })?;
 
-    // Verify EVM state
-    {
+    if verify_evm_state {
         use evm_state::storage::{
             inspectors::verifier::{AccountsVerifier, StoragesTriesVerifier},
             walker::Walker,

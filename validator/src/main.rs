@@ -1801,6 +1801,12 @@ pub fn main() {
                 .help("Disables duplicate instance check")
                 .hidden(true),
         )
+        .arg(
+            Arg::with_name("verify_evm_state")
+                .long("verify-evm-state")
+                .takes_value(false)
+                .help("Verify EVM state from snapshot")
+        )
         .after_help("The default subcommand is run")
         .subcommand(
             SubCommand::with_name("exit")
@@ -2187,6 +2193,8 @@ pub fn main() {
         accounts_db_use_index_hash_calculation: matches.is_present("accounts_db_index_hashing"),
         tpu_coalesce_ms,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
+        verify_evm_state: matches.is_present("verify_evm_state"),
+
         ..ValidatorConfig::default()
     };
 
