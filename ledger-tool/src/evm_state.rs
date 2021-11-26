@@ -5,11 +5,19 @@ use clap::{value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand};
 use log::*;
 use solana_clap_utils::ArgConstant;
 
-use evm_state::{
-    storage::{inspectors, walker::Walker, Storage},
-    H256,
+use evm_state::storage::{
+    inspectors::verifier::{AccountsVerifier, HashVerifier},
+    inspectors::NoopInspector,
+    walker::Walker,
 };
 use rayon::prelude::*;
+
+use evm_state::{
+    storage::cleaner,
+    storage::{inspectors, Storage},
+    H256,
+};
+// use rayon::prelude::*;
 
 pub trait EvmStateSubCommand {
     fn evm_state_subcommand(self) -> Self;
@@ -94,24 +102,35 @@ pub fn process_evm_state_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 info!("Dry run, do nothing after collecting keys ...");
             }
 
-            let mut accounts_state_walker =
-                Walker::new(db, inspectors::memorizer::AccountsKeysCollector::default());
-            accounts_state_walker.traverse(root)?;
-            accounts_state_walker.inspector.summarize();
+            let trie_collector =
+                std::sync::Arc::new(inspectors::memorizer::TrieCollector::default());
+            let accounts = {
+                let accounts_state_walker = Walker::new_sec_encoding(
+                    db,
+                    trie_collector.clone(),
+                    inspectors::memorizer::AccountStorageRootsCollector::default(),
+                );
+                accounts_state_walker.traverse(root)?;
+                accounts_state_walker.data_inspector.inner.summarize();
 
-            let mut storages_walker =
-                Walker::new(db, inspectors::memorizer::StoragesKeysCollector::default());
-            for storage_root in &accounts_state_walker.inspector.storage_roots {
-                storages_walker.traverse(*storage_root)?;
-            }
-            storages_walker.inspector.summarize();
+                println!("Account trie nodes info:");
+                trie_collector.summarize();
+                let storages_walker = Walker::new_raw(db, trie_collector.clone(), NoopInspector);
+                for storage_root in accounts_state_walker
+                    .data_inspector
+                    .inner
+                    .storage_roots
+                    .iter()
+                {
+                    storages_walker.traverse(*storage_root)?;
+                }
+                println!("Total trie nodes info:");
+                storages_walker.trie_inspector.summarize();
+                accounts_state_walker.data_inspector.inner
+            };
 
             if !is_dry_run {
-                let cleaner = inspectors::cleaner::Cleaner::new_with(
-                    db,
-                    accounts_state_walker.inspector,
-                    storages_walker.inspector,
-                );
+                let cleaner = cleaner::Cleaner::new_with(db, trie_collector, accounts);
                 cleaner.cleanup()?;
             }
         }
@@ -127,7 +146,7 @@ pub fn process_evm_state_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 source,
                 destination,
             };
-            let mut walker = Walker::new(storage, streamer);
+            let walker = Walker::new_shared(storage, streamer);
             walker.traverse(root)?;
         }
         ("verify", Some(matches)) => {
@@ -136,18 +155,18 @@ pub fn process_evm_state_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             assert!(storage.check_root_exist(root));
             let db = storage.db();
 
-            let verifier = inspectors::verifier::AccountsVerifier::new(storage.clone());
-            let mut walker = Walker::new(db, verifier);
+            let accounts_verifier = AccountsVerifier::new(storage.clone());
+            let walker = Walker::new_sec_encoding(db, HashVerifier, accounts_verifier);
             walker.traverse(root)?;
 
             walker
-                .inspector
+                .data_inspector
+                .inner
                 .storage_roots
                 .into_par_iter()
                 .try_for_each(|storage_root| {
-                    let verifier = inspectors::verifier::StoragesTriesVerifier::default();
-                    Walker::new(db, verifier).traverse(storage_root)
-                })?;
+                    Walker::new_raw(db, HashVerifier, NoopInspector).traverse(storage_root)
+                })?
         }
         unhandled => panic!("Unhandled {:?}", unhandled),
     }
