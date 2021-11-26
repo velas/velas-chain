@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use evm_state::Block;
+use evm_state::{Block, ChangedState};
 
 pub type EvmRecorderReceiver = Receiver<Block>;
 pub type EvmRecorderSender = Sender<Block>;

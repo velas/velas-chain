@@ -13,7 +13,7 @@ use crate::{
     consensus::{
         ComputedBankState, Stake, SwitchForkDecision, Tower, VotedStakes, SWITCH_FORK_THRESHOLD,
     },
-    evm_services::EvmRecorderSender,
+    evm_services::{EvmRecorderSender, EvmStateRecorderSender},
     fork_choice::{ForkChoice, SelectVoteAndResetForkResult},
     heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
     latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
@@ -124,6 +124,7 @@ pub struct ReplayStageConfig {
     pub rewards_recorder_sender: Option<RewardsRecorderSender>,
     pub cache_block_meta_sender: Option<CacheBlockMetaSender>,
     pub evm_block_recorder_sender: Option<EvmRecorderSender>,
+    pub evm_state_recorder_sender: Option<EvmStateRecorderSender>,
     pub bank_notification_sender: Option<BankNotificationSender>,
     pub wait_for_vote_to_start_leader: bool,
 }
@@ -307,6 +308,7 @@ impl ReplayStage {
             rewards_recorder_sender,
             cache_block_meta_sender,
             evm_block_recorder_sender,
+            evm_state_recorder_sender,
             bank_notification_sender,
             wait_for_vote_to_start_leader,
         } = config;
@@ -391,6 +393,7 @@ impl ReplayStage {
                         &rewards_recorder_sender,
                         &subscriptions,
                         &evm_block_recorder_sender,
+                        &evm_state_recorder_sender,
                         &mut duplicate_slots_tracker,
                         &gossip_duplicate_confirmed_slots,
                         &ancestors,
@@ -1676,6 +1679,7 @@ impl ReplayStage {
         rewards_recorder_sender: &Option<RewardsRecorderSender>,
         subscriptions: &Arc<RpcSubscriptions>,
         evm_block_recorder_sender: &Option<EvmRecorderSender>,
+        evm_state_recorder_sender: &Option<EvmStateRecorderSender>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
         gossip_duplicate_confirmed_slots: &GossipDuplicateConfirmedSlots,
         ancestors: &HashMap<Slot, HashSet<Slot>>,
@@ -1812,7 +1816,12 @@ impl ReplayStage {
                         );
                     }
                 }
-                Self::record_evm_block(&bank, subscriptions, evm_block_recorder_sender);
+                Self::record_evm_block(
+                    &bank,
+                    subscriptions,
+                    evm_block_recorder_sender,
+                    evm_state_recorder_sender,
+                );
                 Self::record_rewards(&bank, rewards_recorder_sender);
             } else {
                 trace!(
@@ -2505,6 +2514,7 @@ impl ReplayStage {
         bank: &Bank,
         subscriptions: &Arc<RpcSubscriptions>,
         evm_block_recorder_sender: &Option<EvmRecorderSender>,
+        evm_state_recorder_sender: &Option<EvmStateRecorderSender>,
     ) {
         if let Some(evm_block_recorder_sender) = evm_block_recorder_sender {
             let block = bank.evm_block();
@@ -2513,6 +2523,15 @@ impl ReplayStage {
                 evm_block_recorder_sender
                     .send(block)
                     .unwrap_or_else(|err| warn!("evm_block_recorder_sender failed: {:?}", err));
+            }
+        }
+
+        if let Some(evm_state_recorder_sender) = evm_state_recorder_sender {
+            let state = bank.evm_state_change();
+            if let Some(state) = state {
+                evm_state_recorder_sender
+                    .send(state)
+                    .unwrap_or_else(|err| warn!("evm_state_recorder_sender failed: {:?}", err));
             }
         }
     }
