@@ -778,6 +778,7 @@ pub struct Bank {
 
     pub evm_chain_id: u64,
     pub evm_state: RwLock<evm_state::EvmState>,
+    pub evm_changed_list: RwLock<Option<evm_state::ChangedState>>,
 
     /// Hash of this Bank's state. Only meaningful after freezing.
     hash: RwLock<Hash>,
@@ -1102,6 +1103,7 @@ impl Bank {
             epoch,
             evm_chain_id: parent.evm_chain_id,
             evm_state: RwLock::new(evm_state),
+            evm_changed_list: RwLock::new(None),
             blockhash_queue: RwLock::new(parent.blockhash_queue.read().unwrap().clone()),
             evm_blockhashes: RwLock::new(parent.evm_blockhashes.read().unwrap().clone()),
 
@@ -1260,6 +1262,7 @@ impl Bank {
             src: new(),
             evm_chain_id: genesis_config.evm_chain_id,
             evm_state: RwLock::new(evm_state),
+            evm_changed_list: RwLock::new(None),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             evm_blockhashes: RwLock::new(fields.evm_blockhashes),
             ancestors: fields.ancestors,
@@ -1395,6 +1398,12 @@ impl Bank {
 
     pub fn evm_block(&self) -> Option<evm_state::Block> {
         self.evm_state.read().unwrap().get_block()
+    }
+    pub fn evm_state_change(&self) -> Option<evm_state::ChangedState> {
+        self.evm_changed_list
+            .read()
+            .expect("change list was poisoned")
+            .clone()
     }
 
     pub fn collector_id(&self) -> &Pubkey {
@@ -2127,7 +2136,9 @@ impl Bank {
     }
 
     pub fn commit_evm(&self) {
+        let last_root = self.evm_state.read().unwrap().last_root();
         let mut measure = Measure::start("commit-evm-block-ms");
+
         let hash = self
             .evm_state
             .write()
@@ -2151,7 +2162,11 @@ impl Bank {
             .write()
             .expect("evm blockchashes poisoned");
 
-        if let Some(hash) = hash {
+        if let Some((hash, changes)) = hash {
+            *self
+                .evm_changed_list
+                .write()
+                .expect("change list was poisoned") = Some(changes);
             w_evm_blockhash_queue.insert_hash(hash);
             if self.fix_recent_blockhashes_sysvar_evm() {
                 self.update_recent_evm_blockhashes_locked(&w_evm_blockhash_queue);

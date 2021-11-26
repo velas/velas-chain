@@ -2434,6 +2434,7 @@ pub fn main() {
 
     let evm_state_archive = matches.value_of("evm_state_archive_path").map(|path| {
         info!("Opening evm archive storage");
+        validator_config.enable_evm_archive = true;
         evm_state::Storage::open_persistent(
             path, false, // gc disabled
         )

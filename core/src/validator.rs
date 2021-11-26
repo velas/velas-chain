@@ -11,7 +11,9 @@ use crate::{
     completed_data_sets_service::CompletedDataSetsService,
     consensus::{reconcile_blockstore_roots_with_tower, Tower},
     contact_info::ContactInfo,
-    evm_services::{EvmRecorderSender, EvmRecorderService},
+    evm_services::{
+        EvmRecorderSender, EvmRecorderService, EvmStateRecorderSender, EvmStateRecorderService,
+    },
     gossip_service::GossipService,
     max_slots::MaxSlots,
     optimistically_confirmed_bank_tracker::{
@@ -135,6 +137,7 @@ pub struct ValidatorConfig {
     pub validator_exit: Arc<RwLock<ValidatorExit>>,
     pub no_wait_for_vote_to_start_leader: bool,
     pub verify_evm_state: bool,
+    pub enable_evm_archive: bool,
 }
 
 impl Default for ValidatorConfig {
@@ -192,6 +195,7 @@ impl Default for ValidatorConfig {
             validator_exit: Arc::new(RwLock::new(ValidatorExit::default())),
             no_wait_for_vote_to_start_leader: true,
             verify_evm_state: false,
+            enable_evm_archive: false,
         }
     }
 }
@@ -262,6 +266,8 @@ struct TransactionHistoryServices {
     cache_block_meta_service: Option<CacheBlockMetaService>,
     evm_block_recorder_sender: Option<EvmRecorderSender>,
     evm_block_recorder_service: Option<EvmRecorderService>,
+    evm_state_recorder_sender: Option<EvmStateRecorderSender>,
+    evm_state_recorder_service: Option<EvmStateRecorderService>,
 }
 
 pub struct Validator {
@@ -274,6 +280,7 @@ pub struct Validator {
     cache_block_meta_service: Option<CacheBlockMetaService>,
     sample_performance_service: Option<SamplePerformanceService>,
     evm_block_recorder_service: Option<EvmRecorderService>,
+    evm_state_recorder_service: Option<EvmStateRecorderService>,
     gossip_service: GossipService,
     serve_repair_service: ServeRepairService,
     completed_data_sets_service: CompletedDataSetsService,
@@ -403,6 +410,8 @@ impl Validator {
                 cache_block_meta_service,
                 evm_block_recorder_sender,
                 evm_block_recorder_service,
+                evm_state_recorder_sender,
+                evm_state_recorder_service,
             },
             tower,
         ) = new_banks_from_ledger(
@@ -728,6 +737,7 @@ impl Validator {
             rewards_recorder_sender,
             cache_block_meta_sender,
             evm_block_recorder_sender,
+            evm_state_recorder_sender,
             snapshot_config_and_pending_package,
             vote_tracker.clone(),
             retransmit_slots_sender,
@@ -795,6 +805,7 @@ impl Validator {
             snapshot_packager_service,
             completed_data_sets_service,
             evm_block_recorder_service,
+            evm_state_recorder_service,
             tpu,
             tvu,
             poh_recorder,
@@ -1143,6 +1154,7 @@ fn new_banks_from_ledger(
                 blockstore.clone(),
                 exit,
                 config.rpc_config.enable_cpi_and_log_storage,
+                config.enable_evm_archive,
             )
         } else {
             TransactionHistoryServices::default()
@@ -1330,6 +1342,7 @@ fn initialize_rpc_transaction_history_services(
     blockstore: Arc<Blockstore>,
     exit: &Arc<AtomicBool>,
     enable_cpi_and_log_storage: bool,
+    archive_evm_state: bool,
 ) -> TransactionHistoryServices {
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
@@ -1368,6 +1381,20 @@ fn initialize_rpc_transaction_history_services(
         exit,
     ));
 
+    let (evm_state_recorder_service, evm_state_recorder_sender) = if archive_evm_state {
+        let (evm_state_recorder_sender, evm_state_recorder_receiver) = unbounded();
+        let evm_state_recorder_sender = Some(evm_state_recorder_sender);
+        (
+            Some(EvmStateRecorderService::new(
+                evm_state_recorder_receiver,
+                exit,
+            )),
+            evm_state_recorder_sender,
+        )
+    } else {
+        (None, None)
+    };
+
     TransactionHistoryServices {
         transaction_status_sender,
         transaction_status_service,
@@ -1378,6 +1405,8 @@ fn initialize_rpc_transaction_history_services(
         cache_block_meta_service,
         evm_block_recorder_sender,
         evm_block_recorder_service,
+        evm_state_recorder_sender,
+        evm_state_recorder_service,
     }
 }
 
@@ -1702,6 +1731,7 @@ mod tests {
                     &config,
                     true, // should_check_duplicate_instance
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
+                    None,
                 )
             })
             .collect();
