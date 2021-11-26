@@ -871,7 +871,8 @@ fn rebuild_bank_from_snapshots(
 
     if verify_evm_state {
         use evm_state::storage::{
-            inspectors::verifier::{AccountsVerifier, StoragesTriesVerifier},
+            inspectors::verifier::{AccountsVerifier, HashVerifier},
+            inspectors::NoopInspector,
             walker::Walker,
         };
         use rayon::prelude::*;
@@ -883,7 +884,7 @@ fn rebuild_bank_from_snapshots(
         info!("Verifying EVM state root {:?} ...", last_root);
 
         let accounts_verifier = AccountsVerifier::new(storage.clone());
-        let mut walker = Walker::new(storage.db(), accounts_verifier);
+        let walker = Walker::new_sec_encoding(storage.db(), HashVerifier, accounts_verifier);
         let mut measure = Measure::start("verifying accounts");
         walker
             .traverse(last_root)
@@ -893,11 +894,12 @@ fn rebuild_bank_from_snapshots(
 
         let mut measure = Measure::start("verifying storages");
         walker
-            .inspector
+            .data_inspector
+            .inner
             .storage_roots
             .into_par_iter()
             .try_for_each(|storage_root| {
-                Walker::new(storage.db(), StoragesTriesVerifier::default()).traverse(storage_root)
+                Walker::new_raw(storage.db(), HashVerifier, NoopInspector).traverse(storage_root)
             })
             .map(|_| measure.stop())
             .map_err(SnapshotError::EvmStateError)?;

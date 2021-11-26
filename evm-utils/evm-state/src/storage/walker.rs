@@ -1,37 +1,55 @@
-use std::{borrow::Borrow, marker::PhantomData};
+use std::{borrow::Borrow, sync::Arc};
 
 use primitive_types::H256;
-use rlp::{Decodable, Rlp};
+use rlp::Rlp;
 use triedb::merkle::{MerkleNode, MerkleValue};
 
 use anyhow::{anyhow, Result};
 use log::*;
+use triedb::merkle::nibble::NibbleVec;
 
-use super::inspectors::Inspector;
+use super::inspectors::{encoding, TrieDataInsectorRaw, TrieInspector};
 
-pub struct Walker<DB, T, I> {
+pub struct Walker<DB, TI, DI> {
     db: DB,
-    pub inspector: I,
-    _data: PhantomData<T>,
+    pub trie_inspector: TI,
+    pub data_inspector: DI,
 }
 
-impl<DB, T, I> Walker<DB, T, I> {
-    pub fn new(db: DB, inspector: I) -> Self {
+impl<DB, I, K, V> Walker<DB, Arc<I>, encoding::SecTrie<Arc<I>, K, V>> {
+    // Create walker with shared inspector that allow cloning.
+    pub fn new_shared(db: DB, inspector: I) -> Self {
+        let inspector = Arc::new(inspector);
+
+        Self::new_raw(db, inspector.clone(), encoding::SecTrie::new(inspector))
+    }
+}
+
+impl<DB, TI, DI, K, V> Walker<DB, TI, encoding::SecTrie<DI, K, V>> {
+    pub fn new_sec_encoding(db: DB, trie_inspector: TI, data_inspector: DI) -> Self {
+        Self::new_raw(db, trie_inspector, encoding::SecTrie::new(data_inspector))
+    }
+}
+impl<DB, TI, DI> Walker<DB, TI, DI> {
+    pub fn new_raw(db: DB, trie_inspector: TI, data_inspector: DI) -> Self {
         Self {
             db,
-            inspector,
-            _data: PhantomData,
+            trie_inspector,
+            data_inspector,
         }
     }
 }
 
-impl<DB, T, I> Walker<DB, T, I>
+impl<DB, TI, DI> Walker<DB, TI, DI>
 where
     DB: Borrow<rocksdb::DB>,
-    T: Decodable,
-    I: Inspector<T>,
+    TI: TrieInspector,
+    DI: TrieDataInsectorRaw,
 {
-    pub fn traverse(&mut self, hash: H256) -> Result<()> {
+    pub fn traverse(&self, hash: H256) -> Result<()> {
+        self.traverse_inner(Default::default(), hash)
+    }
+    pub fn traverse_inner(&self, nimble: NibbleVec, hash: H256) -> Result<()> {
         debug!("traversing {:?} ...", hash);
         if hash != triedb::empty_trie_hash() {
             let db = self.db.borrow();
@@ -40,14 +58,15 @@ where
                 .ok_or_else(|| anyhow!("hash {:?} not found in database"))?;
             trace!("raw bytes: {:?}", bytes);
 
-            self.inspector.inspect_raw(hash, &bytes)?;
-
             let rlp = Rlp::new(bytes.as_slice());
             trace!("rlp: {:?}", rlp);
             let node = MerkleNode::decode(&rlp)?;
             debug!("node: {:?}", node);
 
-            self.process_node(node)?;
+            self.process_node(nimble, &node)?;
+
+            // process node after inspection, to copy root later than it's data, to make sure that all roots are correct links
+            self.trie_inspector.inspect_node(hash, &bytes)?;
         } else {
             debug!("skip empty trie");
         }
@@ -55,38 +74,37 @@ where
         Ok(())
     }
 
-    fn process_node(&mut self, node: MerkleNode) -> Result<()> {
+    fn process_node(&self, mut nibble: NibbleVec, node: &MerkleNode) -> Result<()> {
         match node {
-            MerkleNode::Leaf(_nibbles, data) => {
-                let rlp = Rlp::new(data);
-                trace!("rlp: {:?}", rlp);
-                let t = T::decode(&rlp)?;
-                // TODO: debug T
-                self.inspector.inspect_typed(&t)?;
-                Ok(())
+            MerkleNode::Leaf(nibbles, data) => {
+                nibble.extend_from_slice(&*nibbles);
+                let key = triedb::merkle::nibble::into_key(&nibble);
+                self.data_inspector.inspect_data_raw(key, data)
             }
-            MerkleNode::Extension(_nibbles, value) => self.process_value(value),
+            MerkleNode::Extension(nibbles, value) => {
+                nibble.extend_from_slice(&*nibbles);
+                self.process_value(nibble, value)
+            }
             MerkleNode::Branch(values, mb_data) => {
                 if let Some(data) = mb_data {
-                    let rlp = Rlp::new(data);
-                    trace!("rlp: {:?}", rlp);
-                    let t = T::decode(&rlp)?;
-                    // TODO: debug T
-                    self.inspector.inspect_typed(&t)?;
+                    let key = triedb::merkle::nibble::into_key(&nibble);
+                    self.data_inspector.inspect_data_raw(key, data)?;
                 }
-                for value in values {
-                    self.process_value(value)?;
+                for (id, value) in values.into_iter().enumerate() {
+                    let mut cloned_nibble = nibble.clone();
+                    cloned_nibble.push(id.into());
+                    self.process_value(cloned_nibble, value)?;
                 }
                 Ok(())
             }
         }
     }
 
-    fn process_value(&mut self, value: MerkleValue) -> Result<()> {
+    fn process_value(&self, nibble: NibbleVec, value: &MerkleValue) -> Result<()> {
         match value {
             MerkleValue::Empty => Ok(()),
-            MerkleValue::Full(node) => self.process_node(*node),
-            MerkleValue::Hash(hash) => self.traverse(hash),
+            MerkleValue::Full(node) => self.process_node(nibble, node),
+            MerkleValue::Hash(hash) => self.traverse_inner(nibble, *hash),
         }
     }
 }

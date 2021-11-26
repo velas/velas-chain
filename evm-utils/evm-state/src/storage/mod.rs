@@ -288,3 +288,90 @@ pub fn default_db_opts() -> Options {
     opts.create_missing_column_families(true);
     opts
 }
+
+pub mod cleaner {
+    use super::inspectors::memorizer;
+    use std::borrow::Borrow;
+    use std::convert::TryFrom;
+
+    use primitive_types::H256;
+
+    use anyhow::{anyhow, Result};
+    use log::*;
+
+    use super::{Codes, SubStorage};
+
+    pub struct Cleaner<DB, T> {
+        db: DB,
+        trie_nodes: T,
+        accounts: memorizer::AccountStorageRootsCollector,
+    }
+
+    impl<DB, T> Cleaner<DB, T>
+    where
+        T: AsRef<memorizer::TrieCollector>,
+    {
+        pub fn new_with(
+            db: DB,
+            trie_nodes: T,
+            accounts: memorizer::AccountStorageRootsCollector,
+        ) -> Self {
+            Self {
+                db,
+                trie_nodes,
+                accounts,
+            }
+        }
+
+        pub fn cleanup(self) -> Result<()>
+        where
+            DB: Borrow<rocksdb::DB>,
+        {
+            let db = self.db.borrow();
+
+            let trie_nodes = self.trie_nodes.as_ref();
+            // Cleanup unused trie keys in default column family
+            {
+                let mut batch = rocksdb::WriteBatch::default();
+
+                for (key, _data) in db.iterator(rocksdb::IteratorMode::Start) {
+                    let bytes = <&[u8; 32]>::try_from(key.as_ref())?;
+                    let key = H256::from(bytes);
+                    if trie_nodes.trie_keys.contains(&key) {
+                        continue; // skip this key
+                    } else {
+                        batch.delete(key);
+                    }
+                }
+
+                let batch_size = batch.len();
+                db.write(batch)?;
+                info!("{} keys was removed", batch_size);
+            }
+
+            // Cleanup unused Account Code keys
+            {
+                let column_name = Codes::COLUMN_NAME;
+                let codes_cf = db
+                    .cf_handle(column_name)
+                    .ok_or_else(|| anyhow!("Codes Column Family '{}' not found", column_name))?;
+                let mut batch = rocksdb::WriteBatch::default();
+
+                for (key, _data) in db.iterator_cf(codes_cf, rocksdb::IteratorMode::Start) {
+                    let code_hash = rlp::decode(&key)?; // NOTE: keep in sync with ::storage mod
+                    if self.accounts.code_hashes.contains(&code_hash) {
+                        continue; // skip this key
+                    } else {
+                        batch.delete_cf(codes_cf, key);
+                    }
+                }
+
+                let batch_size = batch.len();
+                db.write(batch)?;
+                info!("{} code keys was removed", batch_size);
+            }
+
+            Ok(())
+        }
+    }
+}
