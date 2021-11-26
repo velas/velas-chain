@@ -195,6 +195,66 @@ impl Storage {
         (*self.db).borrow()
     }
 
+    pub fn flush_changes(&self, state_root: H256, state_updates: crate::ChangedState) -> H256 {
+        use triedb::{
+            gc::TrieCollection,
+            rocksdb::{RocksDatabaseHandle, RocksHandle},
+        };
+        let r = RocksHandle::new(RocksDatabaseHandle::new(self.db()));
+
+        let mut storage_tries = TrieCollection::new(r.clone(), crate::StaticEntries::default());
+        let mut account_tries = TrieCollection::new(r, crate::StaticEntries::default());
+
+        let mut accounts =
+            FixedSecureTrieMut::<_, H160, Account>::new(account_tries.trie_for(state_root));
+
+        for (address, (state, storages)) in state_updates {
+            if let Maybe::Just(AccountState {
+                nonce,
+                balance,
+                code,
+            }) = state
+            {
+                let mut account = accounts.get(&address).unwrap_or_default();
+
+                account.nonce = nonce;
+                account.balance = balance;
+
+                if !code.is_empty() {
+                    let code_hash = code.hash();
+                    self.set::<Codes>(code_hash, code);
+                    account.code_hash = code_hash;
+                }
+
+                let mut storage = FixedSecureTrieMut::<_, H256, U256>::new(
+                    storage_tries.trie_for(account.storage_root),
+                );
+
+                for (index, value) in storages {
+                    if value != H256::default() {
+                        let value = U256::from_big_endian(&value[..]);
+                        storage.insert(&index, &value);
+                    } else {
+                        storage.delete(&index);
+                    }
+                }
+
+                let storage_patch = storage.to_trie().into_patch();
+                let storage_root = storage_tries.apply(storage_patch);
+                account.storage_root = storage_root;
+                self.gc_register_root_link(storage_root)
+                    .expect("Unable to increment reference counter.");
+
+                accounts.insert(&address, &account);
+            } else {
+                accounts.delete(&address);
+            }
+        }
+
+        let accounts_patch = accounts.to_trie().into_patch();
+        account_tries.apply(accounts_patch)
+    }
+
     pub fn merge_from_db(&self, other_db: &Self) -> Result<()> {
         assert!(!self.gc_enabled, "Cannot merge to db with rc counters");
         assert!(

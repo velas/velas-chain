@@ -10,12 +10,7 @@ use evm::{ExitReason, ExitRevert};
 use log::*;
 
 use primitive_types::H256;
-use triedb::{
-    empty_trie_hash,
-    gc::{ItemCounter, TrieCollection},
-    rocksdb::{RocksDatabaseHandle, RocksHandle, RocksMemoryTrieMut},
-    FixedSecureTrieMut,
-};
+use triedb::{empty_trie_hash, gc::ItemCounter, rocksdb::RocksMemoryTrieMut, FixedSecureTrieMut};
 
 use crate::{
     storage::{Codes, Storage as KVS},
@@ -27,6 +22,8 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_GAS_LIMIT: u64 = 300_000_000;
 /// Dont load to many account to memory, to avoid OOM.
 pub const MAX_IN_MEMORY_EVM_ACCOUNTS: usize = 10000;
+
+pub type ChangedState = HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Committed {
@@ -57,7 +54,7 @@ pub struct Incomming {
     pub(crate) state_root: H256,
     pub(crate) last_block_hash: H256,
     /// Maybe::Nothing indicates removed account
-    pub(crate) state_updates: HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>,
+    pub(crate) state_updates: ChangedState,
 
     /// Transactions that was processed but wasn't committed.
     /// Transactions should be ordered by execution order on all validators.
@@ -150,60 +147,10 @@ impl EvmBackend<Incomming> {
     fn flush_changes(&mut self) {
         //todo: do in one tx
         let mut state = &mut self.state;
-        let r = RocksHandle::new(RocksDatabaseHandle::new(self.kvs.db()));
-
-        let mut storage_tries = TrieCollection::new(r.clone(), StaticEntries::default());
-        let mut account_tries = TrieCollection::new(r, StaticEntries::default());
-
-        let mut accounts =
-            FixedSecureTrieMut::<_, H160, Account>::new(account_tries.trie_for(state.state_root));
-
-        for (address, (state, storages)) in state.state_updates.drain() {
-            if let Maybe::Just(AccountState {
-                nonce,
-                balance,
-                code,
-            }) = state
-            {
-                let mut account = accounts.get(&address).unwrap_or_default();
-
-                account.nonce = nonce;
-                account.balance = balance;
-
-                if !code.is_empty() {
-                    let code_hash = code.hash();
-                    self.kvs.set::<Codes>(code_hash, code);
-                    account.code_hash = code_hash;
-                }
-
-                let mut storage = FixedSecureTrieMut::<_, H256, U256>::new(
-                    storage_tries.trie_for(account.storage_root),
-                );
-
-                for (index, value) in storages {
-                    if value != H256::default() {
-                        let value = U256::from_big_endian(&value[..]);
-                        storage.insert(&index, &value);
-                    } else {
-                        storage.delete(&index);
-                    }
-                }
-
-                let storage_patch = storage.to_trie().into_patch();
-                let storage_root = storage_tries.apply(storage_patch);
-                account.storage_root = storage_root;
-                self.kvs
-                    .gc_register_root_link(storage_root)
-                    .expect("Unable to increment reference counter.");
-
-                accounts.insert(&address, &account);
-            } else {
-                accounts.delete(&address);
-            }
-        }
-
-        let accounts_patch = accounts.to_trie().into_patch();
-        let new_root = account_tries.apply(accounts_patch);
+        let new_root = self.kvs.flush_changes(
+            state.state_root,
+            std::mem::replace(&mut state.state_updates, Default::default()),
+        );
 
         state.state_root = new_root;
     }
@@ -345,26 +292,25 @@ impl EvmBackend<Incomming> {
         self.flush_changes()
     }
 
-    pub fn get_account_state_at(&self, root: H256, address: H160) -> Option<AccountState> {
-        if !self.kvs().check_root_exist(root) {
-            return None;
-        }
-        self.get_account_state_from_kvs(root, address)
-    }
-
-    pub fn get_storage_at(&self, root: H256, address: H160, index: H256) -> Option<H256> {
-        if !self.kvs().check_root_exist(root) {
-            return None;
-        }
-        self.get_storage_from_kvs(root, address, index)
-    }
-
     pub fn new_incomming_for_root(mut self, root: H256) -> Option<Self> {
         if !self.kvs().check_root_exist(root) || self.state.is_active_changes() {
             return None;
         }
         self.state.state_root = root;
         Some(self)
+    }
+
+    pub fn get_account_state_at(&self, root: H256, address: H160) -> Option<AccountState> {
+        if !self.kvs.check_root_exist(root) {
+            return None;
+        }
+        self.get_account_state_from_kvs(root, address)
+    }
+    pub fn get_storage_at(&self, root: H256, address: H160, index: H256) -> Option<H256> {
+        if !self.kvs.check_root_exist(root) {
+            return None;
+        }
+        self.get_storage_from_kvs(root, address, index)
     }
 
     fn take(&mut self) -> Self {
@@ -680,7 +626,7 @@ impl EvmState {
         &mut self,
         slot: u64,
         last_blockhash: [u8; 32],
-    ) -> Result<Option<H256>, anyhow::Error> {
+    ) -> Result<Option<(H256, ChangedState)>, anyhow::Error> {
         match self {
             EvmState::Committed(committed) => Err(anyhow::Error::msg(format!(
                 "Commit called on already committed block = {:?}.",
@@ -693,11 +639,12 @@ impl EvmState {
                         incomming.state.block_number
                     );
                     let native_blockhash = H256::from_slice(&last_blockhash);
+                    let changes = incomming.state.state_updates.clone();
                     let committed = incomming.take().commit_block(slot, native_blockhash);
                     let last_hash = committed.state.block.hash();
                     let mut new_backend = committed.into();
                     std::mem::swap(self, &mut new_backend);
-                    Ok(Some(last_hash))
+                    Ok(Some((last_hash, changes)))
                 } else {
                     Ok(None)
                 }
