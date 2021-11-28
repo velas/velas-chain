@@ -36,6 +36,7 @@ fixed-hash = "0.7.0"
 impl-rlp = "0.3.0"
 derivative = "2.2"
 dashmap= "4.0"
+rayon="1.5"
 
 [dev-dependencies]
 criterion = "0.3.3"

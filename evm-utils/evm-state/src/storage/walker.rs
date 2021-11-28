@@ -42,9 +42,9 @@ impl<DB, TI, DI> Walker<DB, TI, DI> {
 
 impl<DB, TI, DI> Walker<DB, TI, DI>
 where
-    DB: Borrow<rocksdb::DB>,
-    TI: TrieInspector,
-    DI: TrieDataInsectorRaw,
+    DB: Borrow<rocksdb::DB> + Sync + Send,
+    TI: TrieInspector + Sync + Send,
+    DI: TrieDataInsectorRaw + Sync + Send,
 {
     pub fn traverse(&self, hash: H256) -> Result<()> {
         self.traverse_inner(Default::default(), hash)
@@ -86,16 +86,32 @@ where
                 self.process_value(nibble, value)
             }
             MerkleNode::Branch(values, mb_data) => {
-                if let Some(data) = mb_data {
-                    let key = triedb::merkle::nibble::into_key(&nibble);
-                    self.data_inspector.inspect_data_raw(key, data)?;
+                // lack of copy on result, forces setting array manually
+                let mut values_result = [
+                    None, None, None, None, None, None, None, None, None, None, None, None, None,
+                    None, None, None,
+                ];
+                let result = rayon::scope(|s| {
+                    for (id, (value, result)) in
+                        values.into_iter().zip(&mut values_result).enumerate()
+                    {
+                        let mut cloned_nibble = nibble.clone();
+                        s.spawn(move |_| {
+                            cloned_nibble.push(id.into());
+                            *result = Some(self.process_value(cloned_nibble, value))
+                        });
+                    }
+                    if let Some(data) = mb_data {
+                        let key = triedb::merkle::nibble::into_key(&nibble);
+                        self.data_inspector.inspect_data_raw(key, data)
+                    } else {
+                        Ok(())
+                    }
+                });
+                for result in values_result {
+                    result.unwrap()?
                 }
-                for (id, value) in values.into_iter().enumerate() {
-                    let mut cloned_nibble = nibble.clone();
-                    cloned_nibble.push(id.into());
-                    self.process_value(cloned_nibble, value)?;
-                }
-                Ok(())
+                result
             }
         }
     }
