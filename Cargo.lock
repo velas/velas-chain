@@ -1770,6 +1770,7 @@ dependencies = [
  "quickcheck_macros 0.9.1",
  "rand 0.6.1",
  "rand 0.8.4",
+ "rayon",
  "rlp",
  "rocksdb",
  "secp256k1",
