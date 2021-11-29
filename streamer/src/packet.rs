@@ -27,7 +27,12 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
         );
         match recv_mmsg(socket, &mut obj.packets[i..]) {
             Err(_) if i > 0 => {
-                if start.elapsed().as_millis() as u64 > max_wait_ms {
+                if Instant::now()
+                    .checked_duration_since(start)
+                    .unwrap_or_default()
+                    .as_millis() as u64
+                    > max_wait_ms
+                {
                     break;
                 }
             }
@@ -43,7 +48,13 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
                 i += npkts;
                 // Try to batch into big enough buffers
                 // will cause less re-shuffling later on.
-                if start.elapsed().as_millis() as u64 > max_wait_ms || i >= PACKETS_PER_BATCH {
+                if Instant::now()
+                    .checked_duration_since(start)
+                    .unwrap_or_default()
+                    .as_millis() as u64
+                    > max_wait_ms
+                    || i >= PACKETS_PER_BATCH
+                {
                     break;
                 }
             }
