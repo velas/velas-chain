@@ -292,7 +292,6 @@ pub fn default_db_opts() -> Options {
 pub mod cleaner {
     use super::inspectors::memorizer;
     use std::borrow::Borrow;
-    use std::convert::TryFrom;
 
     use primitive_types::H256;
 
@@ -335,8 +334,8 @@ pub mod cleaner {
                 let mut batch = rocksdb::WriteBatch::default();
 
                 for (key, _data) in db.iterator(rocksdb::IteratorMode::Start) {
-                    let bytes = <&[u8; 32]>::try_from(key.as_ref())?;
-                    let key = H256::from(bytes);
+                    let key =
+                        <H256 as super::inspectors::encoding::TryFromSlice>::try_from_slice(&key)?;
                     if trie_nodes.trie_keys.contains(&key) {
                         continue; // skip this key
                     } else {

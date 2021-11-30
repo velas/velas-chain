@@ -1,15 +1,14 @@
 use std::borrow::Borrow;
 
-use primitive_types::H256;
+use std::sync::Arc;
 
 use anyhow::{bail, ensure, Result};
 use log::*;
+use primitive_types::H256;
 
 use super::walker::Walker;
 use super::{Codes, Storage};
 use crate::types::{Account, Code};
-
-use std::sync::Arc;
 
 pub trait TrieInspector {
     fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> Result<bool>;
@@ -82,9 +81,12 @@ pub mod encoding {
         where
             Self: Sized,
         {
-            if slice.len() != 32 {
-                bail!("Cannot get H256 from slice len:{}", slice.len())
-            }
+            ensure!(
+                slice.len() == 32,
+                "Cannot get H256 from slice len:{}",
+                slice.len()
+            );
+
             Ok(H256::from_slice(slice))
         }
     }
@@ -103,7 +105,10 @@ pub mod encoding {
 pub mod memorizer {
     use super::*;
     use dashmap::DashSet;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        fmt::Display,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     #[derive(Default)]
     pub struct AccountStorageRootsCollector {
@@ -132,10 +137,10 @@ pub mod memorizer {
         fn inspect_node<Data: AsRef<[u8]>>(&self, key: H256, data: Data) -> Result<bool> {
             let is_new_key = self.trie_keys.insert(key);
             self.node_size
-                .fetch_add(data.as_ref().len(), Ordering::AcqRel);
+                .fetch_add(data.as_ref().len(), Ordering::Relaxed);
             if is_new_key {
                 self.unique_node_size
-                    .fetch_add(data.as_ref().len(), Ordering::AcqRel);
+                    .fetch_add(data.as_ref().len(), Ordering::Relaxed);
             }
             Ok(is_new_key)
         }
@@ -156,12 +161,13 @@ pub mod memorizer {
     }
 
     impl TrieCollector {
-        pub fn summarize(&self) {
+        pub fn summarize<T: Display>(&self, header: T) {
             info!(
-                "Trie nodes summary: \
+                "Trie {} nodes summary: \
                        trie keys: {}, \
                        data size: {}, \
                        unique data size: {}",
+                header,
                 self.trie_keys.len(),
                 self.node_size.load(Ordering::Relaxed),
                 self.unique_node_size.load(Ordering::Relaxed),

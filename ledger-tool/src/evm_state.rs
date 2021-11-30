@@ -113,8 +113,7 @@ pub fn process_evm_state_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 accounts_state_walker.traverse(root)?;
                 accounts_state_walker.data_inspector.inner.summarize();
 
-                info!("Account trie nodes info:");
-                trie_collector.summarize();
+                trie_collector.summarize("Account");
                 let storages_walker = Walker::new_raw(db, trie_collector.clone(), NoopInspector);
                 for storage_root in accounts_state_walker
                     .data_inspector
@@ -124,8 +123,7 @@ pub fn process_evm_state_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 {
                     storages_walker.traverse(*storage_root)?;
                 }
-                info!("Total trie nodes info:");
-                storages_walker.trie_inspector.summarize();
+                trie_collector.summarize("Total");
                 accounts_state_walker.data_inspector.inner
             };
 
