@@ -49,7 +49,7 @@ where
     pub fn traverse(&self, hash: H256) -> Result<()> {
         self.traverse_inner(Default::default(), hash)
     }
-    pub fn traverse_inner(&self, nimble: NibbleVec, hash: H256) -> Result<()> {
+    pub fn traverse_inner(&self, nibble: NibbleVec, hash: H256) -> Result<()> {
         debug!("traversing {:?} ...", hash);
         if hash != triedb::empty_trie_hash() {
             let db = self.db.borrow();
@@ -63,7 +63,7 @@ where
             let node = MerkleNode::decode(&rlp)?;
             debug!("node: {:?}", node);
 
-            self.process_node(nimble, &node)?;
+            self.process_node(nibble, &node)?;
 
             // process node after inspection, to copy root later than it's data, to make sure that all roots are correct links
             self.trie_inspector.inspect_node(hash, &bytes)?;
@@ -92,12 +92,12 @@ where
                     None, None, None,
                 ];
                 let result = rayon::scope(|s| {
-                    for (id, (value, result)) in
+                    for (nibbl, (value, result)) in
                         values.into_iter().zip(&mut values_result).enumerate()
                     {
                         let mut cloned_nibble = nibble.clone();
                         s.spawn(move |_| {
-                            cloned_nibble.push(id.into());
+                            cloned_nibble.push(nibbl.into());
                             *result = Some(self.process_value(cloned_nibble, value))
                         });
                     }
