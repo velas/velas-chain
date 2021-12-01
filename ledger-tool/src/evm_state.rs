@@ -150,7 +150,7 @@ pub fn process_evm_state_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let source = storage.clone();
             let streamer = inspectors::streamer::AccountsStreamer {
                 source,
-                destination,
+                destinations: &[destination],
             };
             let walker = Walker::new_shared(storage, streamer);
             walker.traverse(root)?;

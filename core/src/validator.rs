@@ -137,7 +137,6 @@ pub struct ValidatorConfig {
     pub validator_exit: Arc<RwLock<ValidatorExit>>,
     pub no_wait_for_vote_to_start_leader: bool,
     pub verify_evm_state: bool,
-    pub enable_evm_archive: bool,
 }
 
 impl Default for ValidatorConfig {
@@ -195,7 +194,6 @@ impl Default for ValidatorConfig {
             validator_exit: Arc::new(RwLock::new(ValidatorExit::default())),
             no_wait_for_vote_to_start_leader: true,
             verify_evm_state: false,
-            enable_evm_archive: false,
         }
     }
 }
@@ -424,6 +422,7 @@ impl Validator {
             config.enforce_ulimit_nofile,
             &start_progress,
             config.no_poh_speed_test,
+            evm_state_archive.clone(),
         );
 
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
@@ -900,6 +899,12 @@ impl Validator {
                 .expect("evm_block_recorder_service");
         }
 
+        if let Some(evm_state_recorder_service) = self.evm_state_recorder_service {
+            evm_state_recorder_service
+                .join()
+                .expect("evm_state_recorder_service");
+        }
+
         if let Some(s) = self.snapshot_packager_service {
             s.join().expect("snapshot_packager_service");
         }
@@ -1059,6 +1064,7 @@ fn new_banks_from_ledger(
     enforce_ulimit_nofile: bool,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
     no_poh_speed_test: bool,
+    evm_archive: Option<evm_state::Storage>,
 ) -> (
     GenesisConfig,
     BankForks,
@@ -1154,7 +1160,7 @@ fn new_banks_from_ledger(
                 blockstore.clone(),
                 exit,
                 config.rpc_config.enable_cpi_and_log_storage,
-                config.enable_evm_archive,
+                evm_archive,
             )
         } else {
             TransactionHistoryServices::default()
@@ -1342,7 +1348,7 @@ fn initialize_rpc_transaction_history_services(
     blockstore: Arc<Blockstore>,
     exit: &Arc<AtomicBool>,
     enable_cpi_and_log_storage: bool,
-    archive_evm_state: bool,
+    archive_evm_state: Option<evm_state::Storage>,
 ) -> TransactionHistoryServices {
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
@@ -1381,19 +1387,21 @@ fn initialize_rpc_transaction_history_services(
         exit,
     ));
 
-    let (evm_state_recorder_service, evm_state_recorder_sender) = if archive_evm_state {
-        let (evm_state_recorder_sender, evm_state_recorder_receiver) = unbounded();
-        let evm_state_recorder_sender = Some(evm_state_recorder_sender);
-        (
-            Some(EvmStateRecorderService::new(
-                evm_state_recorder_receiver,
-                exit,
-            )),
-            evm_state_recorder_sender,
-        )
-    } else {
-        (None, None)
-    };
+    let (evm_state_recorder_service, evm_state_recorder_sender) =
+        if let Some(archive) = archive_evm_state {
+            let (evm_state_recorder_sender, evm_state_recorder_receiver) = unbounded();
+            let evm_state_recorder_sender = Some(evm_state_recorder_sender);
+            (
+                Some(EvmStateRecorderService::new(
+                    evm_state_recorder_receiver,
+                    archive,
+                    exit,
+                )),
+                evm_state_recorder_sender,
+            )
+        } else {
+            (None, None)
+        };
 
     TransactionHistoryServices {
         transaction_status_sender,

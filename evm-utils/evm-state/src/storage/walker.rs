@@ -42,7 +42,7 @@ impl<DB, TI, DI> Walker<DB, TI, DI> {
 
 impl<DB, TI, DI> Walker<DB, TI, DI>
 where
-    DB: Borrow<rocksdb::DB> + Sync + Send,
+    DB: Borrow<super::DB> + Sync + Send,
     TI: TrieInspector + Sync + Send,
     DI: TrieDataInsectorRaw + Sync + Send,
 {

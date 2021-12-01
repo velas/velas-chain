@@ -24,8 +24,8 @@ impl PoolListener {
                 }
             });
         } else if let Err(e) = tx
-                .hash_sender
-                .blocking_send(Err(evm_rpc::Error::TransactionRemoved {}))
+            .hash_sender
+            .blocking_send(Err(evm_rpc::Error::TransactionRemoved {}))
         {
             warn!(
                 "PoolListener failed to notify tx sender about transaction, error:{:?}",

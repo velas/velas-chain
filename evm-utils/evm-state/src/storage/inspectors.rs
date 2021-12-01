@@ -175,61 +175,61 @@ pub mod memorizer {
 pub mod streamer {
     use super::*;
 
-    pub struct AccountsStreamer {
+    pub struct AccountsStreamer<'a> {
         pub source: Storage,
-        pub destination: Storage,
+        pub destinations: &'a [Storage],
     }
 
-    impl TrieInspector for AccountsStreamer {
+    impl<'a> TrieInspector for AccountsStreamer<'a> {
         fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> Result<bool> {
-            let destination = self.destination.db();
-            destination.put(trie_key, node)?;
+            for destination in self.destinations {
+                destination.db().put(trie_key, node.as_ref())?;
+            }
             Ok(false)
         }
     }
 
-    impl DataInspector<H256, Account> for AccountsStreamer {
+    impl<'a> DataInspector<H256, Account> for AccountsStreamer<'a> {
         fn inspect_data(&self, _key: H256, account: Account) -> Result<()> {
             let source = self.source.borrow();
-            let destination = self.destination.borrow();
 
             // - Account Storage
             let walker = Walker::new_raw(
                 source,
-                StoragesKeysStreamer::new(destination),
+                StoragesKeysStreamer::new(self.destinations),
                 NoopInspector,
             );
             walker.traverse(account.storage_root)?;
 
-            // - Account Code
-            let code_hash = account.code_hash;
-            if let Some(code_data) = self.source.get::<Codes>(code_hash) {
-                self.destination.set::<Codes>(code_hash, code_data);
-            } else {
-                assert_eq!(code_hash, Code::empty().hash());
+            for destination in self.destinations {
+                // - Account Code
+                let code_hash = account.code_hash;
+                if let Some(code_data) = self.source.get::<Codes>(code_hash) {
+                    destination.set::<Codes>(code_hash, code_data);
+                } else {
+                    assert_eq!(code_hash, Code::empty().hash());
+                }
             }
 
             Ok(())
         }
     }
 
-    pub struct StoragesKeysStreamer<Destination> {
-        destination: Destination,
+    pub struct StoragesKeysStreamer<'a> {
+        destinations: &'a [Storage],
     }
 
-    impl<Destination> StoragesKeysStreamer<Destination> {
-        fn new(destination: Destination) -> Self {
-            Self { destination }
+    impl<'a> StoragesKeysStreamer<'a> {
+        fn new(destinations: &'a [Storage]) -> Self {
+            Self { destinations }
         }
     }
 
-    impl<Destination> TrieInspector for StoragesKeysStreamer<Destination>
-    where
-        Destination: Borrow<rocksdb::DB>,
-    {
+    impl<'a> TrieInspector for StoragesKeysStreamer<'a> {
         fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> Result<bool> {
-            let destination = self.destination.borrow();
-            destination.put(trie_key, node)?;
+            for destination in self.destinations {
+                destination.db().put(trie_key, node.as_ref())?;
+            }
             Ok(true)
         }
     }
