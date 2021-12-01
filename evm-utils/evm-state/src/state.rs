@@ -10,7 +10,7 @@ use evm::{ExitReason, ExitRevert};
 use log::*;
 
 use primitive_types::H256;
-use triedb::{empty_trie_hash, gc::ItemCounter, rocksdb::RocksMemoryTrieMut, FixedSecureTrieMut};
+use triedb::empty_trie_hash;
 
 use crate::{
     storage::{Codes, Storage as KVS},
@@ -463,11 +463,13 @@ impl<State> EvmBackend<State> {
         )
     }
     pub fn get_storage_from_kvs(&self, root: H256, address: H160, index: H256) -> Option<H256> {
+        self.kvs.counters_cf();
         self.kvs
             .typed_for(root)
             .get(&address)
             .and_then(|Account { storage_root, .. }| {
-                FixedSecureTrieMut::new(RocksMemoryTrieMut::new(self.kvs.db(), storage_root))
+                self.kvs
+                    .typed_for(storage_root)
                     .get(&index)
                     .map(|value: U256| {
                         let mut encoded = H256::default();
@@ -479,7 +481,7 @@ impl<State> EvmBackend<State> {
 }
 
 impl EvmBackend<Committed> {
-    fn kvs(&self) -> &KVS {
+    pub fn kvs(&self) -> &KVS {
         &self.kvs
     }
     pub fn last_root(&self) -> H256 {
@@ -672,18 +674,6 @@ impl EvmState {
             Self::Incomming(i) => i.state.executed_transactions.len(),
             Self::Committed(c) => c.state.committed_transactions.len(),
         }
-    }
-}
-
-#[derive(Default)]
-pub struct StaticEntries {}
-
-impl ItemCounter for StaticEntries {
-    fn increase(&mut self, _: H256) -> usize {
-        1
-    }
-    fn decrease(&mut self, _: H256) -> usize {
-        1
     }
 }
 

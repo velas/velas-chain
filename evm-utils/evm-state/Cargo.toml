@@ -9,8 +9,10 @@ evm = { git = "https://github.com/velas/evm", branch = "add-traces", features = 
 secp256k1 = { version = "0.19.0", features = ["recovery", "global-context"] }
 # force rand version, because 0.6.5 break compatibility with secp256k1
 rand2 = { version = "=0.6.1", package = "rand" }
-rocksdb = { version = "0.16.0", default-features = false }
-triedb = { git = "https://github.com/velas/triedb", branch = "fix/remove-before-add", features = ["rocksdb"] }
+rocksdb = { git = "https://github.com/velas/rust-rocksdb", branch = "transaction", version = "0.17.0", default-features = false }
+# rocksdb = { version = "0.16.0", default-features = false }
+# triedb = { git = "https://github.com/velas/triedb", branch = "fix/remove-before-add", features = ["rocksdb"] }
+triedb = { path = "../../../triedb",  features = ["rocksdb"] }
 
 primitive-types = "0.8.0"
 keccak-hash = "0.6"
