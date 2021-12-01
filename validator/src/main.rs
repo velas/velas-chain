@@ -1109,7 +1109,6 @@ pub fn main() {
                 .takes_value(true)
                 .help("Use DIR as evm-state archive location"),
         )
-        
         .arg(
             Arg::with_name("entrypoint")
                 .short("n")
@@ -2037,14 +2036,19 @@ pub fn main() {
 
             let admin_client = admin_rpc_service::connect(&ledger_path);
             admin_rpc_service::runtime()
-                .block_on(async move { admin_client.await?.merge_evm_state(evm_state_path, restore_backup).await })
+                .block_on(async move {
+                    admin_client
+                        .await?
+                        .merge_evm_state(evm_state_path, restore_backup)
+                        .await
+                })
                 .unwrap_or_else(|err| {
                     println!("set log filter failed: {}", err);
                     exit(1);
-            });
+                });
             return;
         }
-        
+
         _ => unreachable!(),
     };
 
@@ -2337,6 +2341,13 @@ pub fn main() {
                     exit(1)
                 })
             });
+    match snapshot_version {
+        SnapshotVersion::V1_5_0 => {}
+        v => {
+            eprintln!("This snapshot version is not valid, version: {:?}", v);
+            exit(1)
+        }
+    }
     validator_config.snapshot_config = Some(SnapshotConfig {
         snapshot_interval_slots: if snapshot_interval_slots > 0 {
             snapshot_interval_slots
@@ -2434,7 +2445,6 @@ pub fn main() {
 
     let evm_state_archive = matches.value_of("evm_state_archive_path").map(|path| {
         info!("Opening evm archive storage");
-        validator_config.enable_evm_archive = true;
         evm_state::Storage::open_persistent(
             path, false, // gc disabled
         )
