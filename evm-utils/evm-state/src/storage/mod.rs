@@ -1,6 +1,7 @@
 use std::{
     array::TryFromSliceError,
     borrow::Borrow,
+    convert::TryInto,
     fs,
     io::Error as IoError,
     path::{Path, PathBuf},
@@ -26,7 +27,7 @@ use crate::{
 };
 use triedb::{
     empty_trie_hash,
-    gc::TrieCollection,
+    gc::{DbCounter, TrieCollection},
     rocksdb::{RocksDatabaseHandle, RocksHandle, RocksMemoryTrieMut},
     FixedSecureTrieMut,
 };
@@ -112,6 +113,7 @@ impl Storage {
         let descriptors = if gc_enabled {
             vec![
                 ColumnFamilyDescriptor::new(Codes::COLUMN_NAME, db_opts.clone()),
+                ColumnFamilyDescriptor::new(SlotsRoots::COLUMN_NAME, db_opts.clone()),
                 ColumnFamilyDescriptor::new(
                     ReferenceCounter::COLUMN_NAME,
                     reference_counter_opts(),
@@ -278,13 +280,7 @@ impl Storage {
 
         let mut accounts_patch = accounts.to_trie().into_patch();
         accounts_patch.change.merge(&storage_patches);
-        db_trie.apply_increase(accounts_patch, |a| {
-            if let Ok(account) = rlp::decode::<Account>(a) {
-                vec![account.storage_root]
-            } else {
-                vec![] // this trie is mixed collection, and can contain storage values among with accounts
-            }
-        })
+        db_trie.apply_increase(accounts_patch, account_extractor)
     }
 
     pub fn merge_from_db(&self, other_db: &Self) -> Result<()> {
@@ -314,10 +310,12 @@ impl Storage {
         if !self.gc_enabled {
             return Ok(0);
         }
-        todo!()
-        // let mut tx = self.db().transaction();
-        // let trie = self.rocksdb_trie_handle();
-        // trie.get_counter_in_tx()
+        let mut tx = self.db().transaction();
+        let trie = self.rocksdb_trie_handle();
+        Ok(trie
+            .db
+            .get_counter_in_tx(&mut tx, link)
+            .map(|v| v.try_into().unwrap_or_default())?)
     }
 
     // Because solana handle each bank independently.
@@ -328,9 +326,26 @@ impl Storage {
         if !self.gc_enabled {
             return Ok(None);
         }
-        // let root = self.take_root_by_slot(slot)?;// remove by slot
-        // self.gc_remove_root(root)? // decrement reference counter, in workst case some roots would be with invalid counter.
-        todo!()
+        let slots_cf = self.cf::<SlotsRoots>();
+        let mut tx = self.db().transaction();
+        let trie = self.rocksdb_trie_handle();
+        let val = tx.get_cf(slots_cf, &slot.to_be_bytes())?;
+        let remove_root = if let Some(root) = val {
+            let root = H256::from_slice(root.as_ref());
+            trie.db.decrease(&mut tx, root)?;
+
+            // Return root if it counter == 0
+            if trie.db.get_counter_in_tx(&mut tx, root)? <= 0 {
+                Some(root)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        tx.delete_cf(slots_cf, &slot.to_be_bytes())?;
+        tx.commit()?;
+        Ok(remove_root)
     }
 
     /// Our garbage collection counts only references of child objects.
@@ -348,9 +363,34 @@ impl Storage {
         if !self.gc_enabled {
             return Ok(());
         }
-        self.gc_register_root_link(root)?; // increment reference counter
-                                           // self.insert_root_by_slot(slot,root); // insert by root
-        todo!()
+        let slots_cf = self.cf::<SlotsRoots>();
+        let trie = self.rocksdb_trie_handle();
+        let mut tx = self.db().transaction();
+
+        if tx.get_cf(slots_cf, &slot.to_be_bytes())?.is_some() {
+            error!("Slot was already registered slot {}", slot);
+            return Ok(());
+        }
+        tx.put_cf(slots_cf, &slot.to_be_bytes(), root.as_ref())?;
+        trie.db.increase(&mut tx, root)?;
+        Ok(tx.commit()?)
+    }
+
+    pub fn gc_try_cleanup_account_hashes(&self, removes: &[H256]) -> Result<Vec<H256>> {
+        if !self.gc_enabled {
+            return Ok(vec![]);
+        }
+        Ok(self
+            .rocksdb_trie_handle()
+            .gc_cleanup_layer(removes, account_extractor))
+    }
+}
+
+fn account_extractor(data: &[u8]) -> Vec<H256> {
+    if let Ok(account) = rlp::decode::<Account>(data) {
+        vec![account.storage_root]
+    } else {
+        vec![] // this trie is mixed collection, and can contain storage values among with accounts
     }
 }
 
@@ -379,11 +419,18 @@ pub trait SubStorage {
     type Value: Serialize + DeserializeOwned;
 }
 
+pub enum SlotsRoots {}
+impl SubStorage for SlotsRoots {
+    const COLUMN_NAME: &'static str = "slots_roots";
+    type Key = u64;
+    type Value = H256;
+}
+
 pub enum ReferenceCounter {}
 impl SubStorage for ReferenceCounter {
     const COLUMN_NAME: &'static str = "reference_counter";
     type Key = H256;
-    type Value = u64;
+    type Value = i64;
 }
 pub enum Codes {}
 impl SubStorage for Codes {

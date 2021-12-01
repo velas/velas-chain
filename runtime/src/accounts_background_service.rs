@@ -276,7 +276,7 @@ impl AbsRequestHandler {
                 if let Some(h) = storage.purge_slot(slot)? {
                     let mut hashes = vec![h];
                     while !hashes.is_empty() {
-                        hashes = storage.gc_remove_references(&hashes)?
+                        hashes = storage.gc_try_cleanup_account_hashes(&hashes)?
                     }
                 }
                 Ok(())
