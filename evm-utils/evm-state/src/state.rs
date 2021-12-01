@@ -514,6 +514,15 @@ pub enum EvmPersistState {
     Committed(Committed),
     Incomming(Incomming), // Usually bank will never try to freeze banks with persist state.
 }
+impl EvmPersistState {
+    pub fn last_root(&self) -> H256 {
+        match self {
+            EvmPersistState::Committed(c) => c.block.state_root,
+            EvmPersistState::Incomming(i) => i.state_root,
+        }
+    }
+}
+
 impl Default for EvmPersistState {
     fn default() -> Self {
         Self::Incomming(Incomming::default())
@@ -529,7 +538,7 @@ impl EvmState {
             fs::create_dir(&evm_state)?;
         }
 
-        Self::load_from(evm_state, Incomming::default())
+        Self::load_from(evm_state, Incomming::default(), false)
     }
 
     pub fn new_from_genesis(
@@ -556,6 +565,7 @@ impl EvmState {
         Self::load_from(
             evm_state,
             Incomming::new(1, root_hash, H256::zero(), timestamp, version),
+            false,
         )
     }
 
@@ -584,12 +594,11 @@ impl EvmState {
     pub fn load_from<P: AsRef<Path>>(
         path: P,
         evm_persist_feilds: impl Into<EvmPersistState>,
+        gc_enabled: bool,
     ) -> Result<Self, anyhow::Error> {
         info!("Open EVM storage {}", path.as_ref().display());
 
-        let kvs = KVS::open_persistent(
-            path, true, // enable gc
-        )?;
+        let kvs = KVS::open_persistent(path, gc_enabled)?;
 
         Ok(match evm_persist_feilds.into() {
             EvmPersistState::Incomming(i) => EvmBackend::new(i, kvs).into(),

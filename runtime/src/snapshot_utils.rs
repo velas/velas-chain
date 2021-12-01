@@ -43,12 +43,14 @@ pub const MAX_SNAPSHOTS: usize = 8; // Save some snapshots but not too many
 const EVM_STATE_DIR: &str = "evm-state";
 const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const VERSION_STRING_V1_4_0: &str = "1.4.0";
-const DEFAULT_SNAPSHOT_VERSION: SnapshotVersion = SnapshotVersion::V1_4_0;
+const VERSION_STRING_V1_5_0: &str = "1.5.0";
+const DEFAULT_SNAPSHOT_VERSION: SnapshotVersion = SnapshotVersion::V1_5_0;
 const TMP_SNAPSHOT_PREFIX: &str = "tmp-snapshot-";
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SnapshotVersion {
     V1_4_0,
+    V1_5_0,
 }
 
 impl Default for SnapshotVersion {
@@ -67,6 +69,7 @@ impl From<SnapshotVersion> for &'static str {
     fn from(snapshot_version: SnapshotVersion) -> &'static str {
         match snapshot_version {
             SnapshotVersion::V1_4_0 => VERSION_STRING_V1_4_0,
+            SnapshotVersion::V1_5_0 => VERSION_STRING_V1_5_0,
         }
     }
 }
@@ -86,6 +89,7 @@ impl FromStr for SnapshotVersion {
         };
         match version_string {
             VERSION_STRING_V1_4_0 => Ok(SnapshotVersion::V1_4_0),
+            VERSION_STRING_V1_5_0 => Ok(SnapshotVersion::V1_5_0),
             _ => Err("unsupported snapshot version"),
         }
     }
@@ -555,6 +559,7 @@ pub fn add_snapshot<P: AsRef<Path>>(
     let bank_snapshot_serializer = move |stream: &mut BufWriter<File>| -> Result<()> {
         let evm_version = match snapshot_version {
             SnapshotVersion::V1_4_0 => EvmStateVersion::V1_4_0,
+            SnapshotVersion::V1_5_0 => EvmStateVersion::V1_5_0,
         };
         bank_to_stream(evm_version, stream.by_ref(), bank, snapshot_storages)?;
         Ok(())
@@ -833,78 +838,31 @@ fn rebuild_bank_from_snapshots(
         .pop()
         .ok_or_else(|| get_io_error("No snapshots found in snapshots directory"))?;
 
-    // EVM State load
-    if evm_state_path.exists() {
-        warn!(
-            "deleting existing evm state folder {}",
-            evm_state_path.display()
-        );
-        fs::remove_dir_all(&evm_state_path)?;
-    }
-    let mut measure = Measure::start("EVM state database restore");
-    evm_state::Storage::restore_from(root_paths.evm_state_backup_path, &evm_state_path)
-        .expect("Unable to restore EVM state underlying database from storage backup");
-    measure.stop();
-    info!("{}", measure);
-
     info!(
         "Loading bank from {}",
         &root_paths.snapshot_file_path.display()
     );
     let bank = deserialize_snapshot_data_file(&root_paths.snapshot_file_path, |mut stream| {
-        Ok(match snapshot_version_enum {
-            SnapshotVersion::V1_4_0 => bank_from_stream(
-                evm_state_path,
-                EvmStateVersion::V1_4_0,
-                &mut stream,
-                account_paths,
-                unpacked_append_vec_map,
-                genesis_config,
-                frozen_account_pubkeys,
-                debug_keys,
-                additional_builtins,
-                account_indexes,
-                accounts_db_caching_enabled,
-            ),
-        }?)
-    })?;
-
-    if verify_evm_state {
-        use evm_state::storage::{
-            inspectors::verifier::{AccountsVerifier, HashVerifier},
-            inspectors::NoopInspector,
-            walker::Walker,
+        let evm_version = match snapshot_version_enum {
+            SnapshotVersion::V1_4_0 => EvmStateVersion::V1_4_0,
+            SnapshotVersion::V1_5_0 => EvmStateVersion::V1_5_0,
         };
-        use rayon::prelude::*;
-
-        let evm_state = bank.evm_state.read().unwrap();
-        let storage = evm_state.kvs().clone();
-        let last_root = evm_state.last_root();
-
-        info!("Verifying EVM state root {:?} ...", last_root);
-
-        let accounts_verifier = AccountsVerifier::new(storage.clone());
-        let walker = Walker::new_sec_encoding(storage.db(), HashVerifier, accounts_verifier);
-        let mut measure = Measure::start("verifying accounts");
-        walker
-            .traverse(last_root)
-            .map(|_| measure.stop())
-            .map_err(SnapshotError::EvmStateError)?;
-        info!("{}", measure);
-
-        let mut measure = Measure::start("verifying storages");
-        walker
-            .data_inspector
-            .inner
-            .storage_roots
-            .into_par_iter()
-            .try_for_each(|storage_root| {
-                Walker::new_raw(storage.db(), HashVerifier, NoopInspector).traverse(storage_root)
-            })
-            .map(|_| measure.stop())
-            .map_err(SnapshotError::EvmStateError)?;
-        info!("{}", measure);
-    }
+        Ok(bank_from_stream(
+            evm_state_path,
+            evm_version,
+            &mut stream,
+            account_paths,
+            unpacked_append_vec_map,
+            genesis_config,
+            frozen_account_pubkeys,
+            debug_keys,
+            additional_builtins,
+            account_indexes,
+            accounts_db_caching_enabled,
+            &root_paths.evm_state_backup_path,
+            !verify_evm_state,
+        )?)
+    })?;
 
     let status_cache_path = unpacked_snapshots_dir.join(SNAPSHOT_STATUS_CACHE_FILE_NAME);
     let slot_deltas = deserialize_snapshot_data_file(&status_cache_path, |stream| {

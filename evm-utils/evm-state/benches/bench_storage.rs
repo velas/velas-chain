@@ -155,7 +155,7 @@ fn fill_new_db_then_backup(c: &mut Criterion) {
                 |b, _params| {
                     b.iter_batched(
                         || {
-                            let evm_state = EvmState::load_from(&dir, persist_state.clone())
+                            let evm_state = EvmState::load_from(&dir, persist_state.clone(), false)
                                 .expect("Unable to create new EVM state in temporary directory");
 
                             let empty_dir = tempdir().unwrap();
@@ -229,7 +229,7 @@ fn fill_new_db_then_backup_and_then_backup_again(c: &mut Criterion) {
             |b, _params| {
                 b.iter_batched(
                     || {
-                        let evm_state = EvmState::load_from(&dir, persist_state.clone())
+                        let evm_state = EvmState::load_from(&dir, persist_state.clone(), false)
                             .expect("Unable to create new EVM state in temporary directory");
                         let _ = evm_state.make_backup().unwrap();
                         let mut state = match evm_state {
