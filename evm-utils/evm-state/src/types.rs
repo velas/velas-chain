@@ -479,12 +479,10 @@ impl<T> From<Maybe<T>> for Option<T> {
 
 mod transaction_roots {
 
-    use crate::state::StaticEntries;
     use crate::{Log, TransactionReceipt, H256, U256};
     use ethbloom::Bloom;
     use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
-    use std::collections::HashMap;
-    use triedb::gc::TrieCollection;
+    use triedb::gc::{MapWithCounterCached, TrieCollection};
     use triedb::{FixedTrieMut, TrieMut};
 
     #[derive(Clone, Debug)]
@@ -532,17 +530,23 @@ mod transaction_roots {
     }
 
     pub fn transactions_root<'a>(receipts: impl Iterator<Item = &'a TransactionReceipt>) -> H256 {
-        let trie_c = TrieCollection::new(HashMap::new(), StaticEntries::default());
-        let mut trie = FixedTrieMut::<_, U256, _>::new(trie_c.trie_for(triedb::empty_trie_hash()));
+        let mut trie_c = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut root = triedb::empty_trie_hash();
         for (i, receipt) in receipts.enumerate() {
+            let mut trie = FixedTrieMut::<_, U256, _>::new(trie_c.trie_for(root));
             let transaction_in_receipt = &receipt.transaction;
             trie.insert(&U256::from(i), transaction_in_receipt);
+            let trie = trie.to_trie();
+            root = trie.root();
+            let patch = trie.into_patch();
+            trie_c.apply_increase(patch, |_| vec![]);
         }
-        trie.root()
+        root
     }
 
     pub fn receipts_root<'a>(receipts: impl Iterator<Item = &'a TransactionReceipt>) -> H256 {
-        let mut trie_c = TrieCollection::new(HashMap::new(), StaticEntries::default());
+        let mut trie_c = TrieCollection::new(MapWithCounterCached::default());
         let mut root = triedb::empty_trie_hash();
         for (i, receipt) in receipts.enumerate() {
             let mut trie = FixedTrieMut::<_, U256, EthereumReceipt>::new(trie_c.trie_for(root));
@@ -552,7 +556,7 @@ mod transaction_roots {
             let trie = trie.to_trie();
             root = trie.root();
             let patch = trie.into_patch();
-            trie_c.apply(patch);
+            trie_c.apply_increase(patch, |_| vec![]);
         }
 
         root
@@ -574,7 +578,7 @@ mod transaction_roots {
             };
             let receipts = std::iter::from_fn(|| Some(receipt.clone())).take(129);
 
-            let mut trie_c = TrieCollection::new(HashMap::new(), StaticEntries::default());
+            let mut trie_c = TrieCollection::new(MapWithCounterCached::default());
             let mut root = triedb::empty_trie_hash();
 
             for (i, receipt) in receipts.enumerate() {
@@ -586,7 +590,7 @@ mod transaction_roots {
                 let trie = trie.to_trie();
                 root = trie.root();
                 let patch = trie.into_patch();
-                trie_c.apply(patch);
+                trie_c.apply_increase(patch, |_| vec![]);
             }
         }
     }

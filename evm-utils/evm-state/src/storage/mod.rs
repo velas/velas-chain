@@ -14,8 +14,9 @@ use log::*;
 use rlp::{Decodable, Encodable};
 use rocksdb::{
     backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
-    ColumnFamily, ColumnFamilyDescriptor, Env, Options, DB,
+    ColumnFamily, ColumnFamilyDescriptor, Env, OptimisticTransactionDB, Options,
 };
+type DB = OptimisticTransactionDB;
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 
@@ -23,7 +24,12 @@ use crate::{
     transactions::{Transaction, TransactionReceipt},
     types::*,
 };
-use triedb::{empty_trie_hash, rocksdb::RocksMemoryTrieMut, FixedSecureTrieMut};
+use triedb::{
+    empty_trie_hash,
+    gc::TrieCollection,
+    rocksdb::{RocksDatabaseHandle, RocksHandle, RocksMemoryTrieMut},
+    FixedSecureTrieMut,
+};
 
 pub mod inspectors;
 pub mod walker;
@@ -94,31 +100,36 @@ impl Storage {
     pub fn create_temporary() -> Result<Self> {
         Self::open(Location::Temporary(Arc::new(TempDir::new()?)), false)
     }
+    pub fn create_temporary_gc() -> Result<Self> {
+        Self::open(Location::Temporary(Arc::new(TempDir::new()?)), true)
+    }
 
     // without gc_enabled
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {
         let db_opts = default_db_opts()?;
 
         // TODO: if gc_enabled remove deprecated columns, and add gc column
-        let descriptors: &[_] = if gc_enabled {
-            &[
-                Codes::COLUMN_NAME,
-                ReferenceCounter::COLUMN_NAME,
+        let descriptors = if gc_enabled {
+            vec![
+                ColumnFamilyDescriptor::new(Codes::COLUMN_NAME, db_opts.clone()),
+                ColumnFamilyDescriptor::new(
+                    ReferenceCounter::COLUMN_NAME,
+                    reference_counter_opts(),
+                ),
                 // Make sure to reflect changes in `merge_from_db`
             ]
         } else {
-            &[
+            [
                 Codes::COLUMN_NAME,
                 Transactions::COLUMN_NAME,
                 Receipts::COLUMN_NAME,
                 TransactionHashesPerBlock::COLUMN_NAME,
                 // Make sure to reflect changes in `merge_from_db`
             ]
-        };
-
-        let descriptors = descriptors
             .iter()
-            .map(|column| ColumnFamilyDescriptor::new(*column, db_opts.clone()));
+            .map(|column| ColumnFamilyDescriptor::new(*column, db_opts.clone()))
+            .collect()
+        };
 
         let db = DB::open_cf_descriptors(&db_opts, &location, descriptors)?;
 
@@ -138,7 +149,7 @@ impl Storage {
             // TODO: measure
             engine.purge_old_backups(HARD_BACKUPS_COUNT)?;
         }
-        engine.create_new_backup_flush(self.db.as_ref(), true)?;
+        engine.create_new_backup_flush(&self.db.0, true)?;
         Ok(backup_dir)
     }
 
@@ -183,7 +194,19 @@ impl Storage {
         &self,
         root: H256,
     ) -> FixedSecureTrieMut<RocksMemoryTrieMut<&DB>, K, V> {
-        FixedSecureTrieMut::new(RocksMemoryTrieMut::new(self.db.as_ref(), root))
+        if let Some(cf) = self.counters_cf() {
+            FixedSecureTrieMut::new(RocksMemoryTrieMut::new(self.db.as_ref(), root, cf))
+        } else {
+            FixedSecureTrieMut::new(RocksMemoryTrieMut::without_counter(self.db.as_ref(), root))
+        }
+    }
+
+    pub fn rocksdb_trie_handle(&self) -> RocksHandle<&DB> {
+        if let Some(cf) = self.counters_cf() {
+            RocksHandle::new(RocksDatabaseHandle::new(self.db(), cf))
+        } else {
+            RocksHandle::new(RocksDatabaseHandle::without_counter(self.db()))
+        }
     }
 
     // Returns evm state subdirectory that can be used temporary used by extern users.
@@ -195,18 +218,21 @@ impl Storage {
         (*self.db).borrow()
     }
 
+    pub fn counters_cf(&self) -> Option<&ColumnFamily> {
+        if !self.gc_enabled {
+            return None;
+        }
+        Some(self.cf::<ReferenceCounter>())
+    }
+
     pub fn flush_changes(&self, state_root: H256, state_updates: crate::ChangedState) -> H256 {
-        use triedb::{
-            gc::TrieCollection,
-            rocksdb::{RocksDatabaseHandle, RocksHandle},
-        };
-        let r = RocksHandle::new(RocksDatabaseHandle::new(self.db()));
+        let r = self.rocksdb_trie_handle();
 
-        let mut storage_tries = TrieCollection::new(r.clone(), crate::StaticEntries::default());
-        let mut account_tries = TrieCollection::new(r, crate::StaticEntries::default());
+        let mut db_trie = TrieCollection::new(r);
 
+        let mut storage_patches = triedb::Change::default();
         let mut accounts =
-            FixedSecureTrieMut::<_, H160, Account>::new(account_tries.trie_for(state_root));
+            FixedSecureTrieMut::<_, H160, Account>::new(db_trie.trie_for(state_root));
 
         for (address, (state, storages)) in state_updates {
             if let Maybe::Just(AccountState {
@@ -227,7 +253,7 @@ impl Storage {
                 }
 
                 let mut storage = FixedSecureTrieMut::<_, H256, U256>::new(
-                    storage_tries.trie_for(account.storage_root),
+                    db_trie.trie_for(account.storage_root),
                 );
 
                 for (index, value) in storages {
@@ -240,10 +266,9 @@ impl Storage {
                 }
 
                 let storage_patch = storage.to_trie().into_patch();
-                let storage_root = storage_tries.apply(storage_patch);
+                let storage_root = storage_patch.root;
+                storage_patches.merge(&storage_patch.change);
                 account.storage_root = storage_root;
-                self.gc_register_root_link(storage_root)
-                    .expect("Unable to increment reference counter.");
 
                 accounts.insert(&address, &account);
             } else {
@@ -251,8 +276,15 @@ impl Storage {
             }
         }
 
-        let accounts_patch = accounts.to_trie().into_patch();
-        account_tries.apply(accounts_patch)
+        let mut accounts_patch = accounts.to_trie().into_patch();
+        accounts_patch.change.merge(&storage_patches);
+        db_trie.apply_increase(accounts_patch, |a| {
+            if let Ok(account) = rlp::decode::<Account>(a) {
+                vec![account.storage_root]
+            } else {
+                vec![] // this trie is mixed collection, and can contain storage values among with accounts
+            }
+        })
     }
 
     pub fn merge_from_db(&self, other_db: &Self) -> Result<()> {
@@ -278,43 +310,14 @@ impl Storage {
         Ok(())
     }
 
-    /// Our garbage collection counts only references of child objects.
-    /// Because root_hash has no parents it should be handled separately.
-    ///
-    /// Increment root_link reference counter.
-    ///
-    /// This operation is used in two cases:
-    /// 1. When our root tree is modified, and new root_hash is produced.
-    /// 2. When we insert new account_state object - this object contain reference to storage_root, which should be registered too.
-    pub(crate) fn gc_register_root_link(&self, root_link: H256) -> Result<()> {
-        if !self.gc_enabled {
-            return Ok(());
-        }
-        // merge
-        todo!()
-    }
-
     pub fn gc_count(&self, link: H256) -> Result<u64> {
         if !self.gc_enabled {
             return Ok(0);
         }
         todo!()
-    }
-
-    /// Start gc cleanup routine.
-    /// - Checks if reference has 0 references in GC.
-    /// - Find all child nodes, and decrement their reference counter.
-    /// - Collect all child nodes with reference counter == 0.
-    /// - Remove reference object.
-    /// - Return Array of child objectswith reference counter == 0.
-    ///
-    /// Note: This method could be called in background and uses atomic transaction.
-    /// If any of objects it's references is changed (for example any link is incremented) it will return error and revert.
-    pub fn gc_remove_references(&self, reference: &[H256]) -> Result<Vec<H256>> {
-        if !self.gc_enabled {
-            return Ok(vec![]);
-        }
-        todo!()
+        // let mut tx = self.db().transaction();
+        // let trie = self.rocksdb_trie_handle();
+        // trie.get_counter_in_tx()
     }
 
     // Because solana handle each bank independently.
@@ -329,6 +332,15 @@ impl Storage {
         // self.gc_remove_root(root)? // decrement reference counter, in workst case some roots would be with invalid counter.
         todo!()
     }
+
+    /// Our garbage collection counts only references of child objects.
+    /// Because root_hash has no parents it should be handled separately.
+    ///
+    /// Increment root_link reference counter.
+    ///
+    /// This operation is used in two cases:
+    /// 1. When our root tree is modified, and new root_hash is produced.
+    /// 2. When we insert new account_state object - this object contain reference to storage_root, which should be registered too. (this one was inlined)
 
     // Save info. slot -> root_hash
     // Increment root_hash references counter.
@@ -549,4 +561,10 @@ pub mod cleaner {
             Ok(())
         }
     }
+}
+
+pub fn reference_counter_opts() -> Options {
+    let mut opts = Options::default();
+    opts.set_merge_operator_associative("inc_counter", triedb::rocksdb::merge_counter);
+    opts
 }

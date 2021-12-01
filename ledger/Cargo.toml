@@ -60,9 +60,12 @@ evm-state = { path = "../evm-utils/evm-state" }
 [dependencies.rocksdb]
 # Avoid the vendored bzip2 within rocksdb-sys that can cause linker conflicts
 # when also using the bzip2 crate
-version = "0.16.0"
+# version = "0.16.0"
 default-features = false
 features = ["lz4"]
+git = "https://github.com/velas/rust-rocksdb"
+branch = "transaction"
+version = "0.17.0"
 
 [dev-dependencies]
 assert_matches = "1.3.0"
