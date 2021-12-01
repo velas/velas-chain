@@ -203,6 +203,152 @@ fn criterion_benchmark(c: &mut Criterion) {
         });
     });
 
+    group.bench_function("call_hello_with_executor_recreate_and_commit", |b| {
+        let mut executor =
+            Executor::with_config(Default::default(), Default::default(), Default::default());
+
+        let exit_reason = executor.with_executor(
+            |_, _, _, _| None,
+            |executor| {
+                executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
+            },
+        );
+        assert!(matches!(
+            exit_reason,
+            ExitReason::Succeed(ExitSucceed::Returned)
+        ));
+
+        let state = executor.deconstruct();
+        let committed = state.commit_block(0, Default::default());
+        let mut updated_state = Some(committed.next_incomming(0));
+
+        let contract_address = TransactionAction::Create.address(contract, U256::zero());
+        let mut rng = secp256k1::rand::thread_rng();
+        let user_key = secp256k1::key::SecretKey::new(&mut rng);
+        let caller = user_key.to_address();
+
+        let tx = UnsignedTransaction {
+            nonce: 0.into(),
+            gas_price: 0.into(),
+            gas_limit: u64::max_value().into(),
+            action: TransactionAction::Call(contract_address),
+            value: 0.into(),
+            input: data.to_vec(),
+        };
+        b.iter(|| {
+            let mut executor = Executor::with_config(
+                updated_state.as_ref().unwrap().clone(),
+                Default::default(),
+                Default::default(),
+            );
+
+            let ExecutionResult {
+                exit_reason,
+                exit_data,
+                ..
+            } = black_box(executor.transaction_execute_unsinged(
+                caller,
+                tx.clone(),
+                true,
+                |_, _, _, _| None,
+            ))
+            .unwrap();
+            updated_state = Some(
+                updated_state
+                    .take()
+                    .unwrap()
+                    .commit_block(1, H256::zero())
+                    .next_incomming(0),
+            );
+
+            assert!(matches!(
+                exit_reason,
+                ExitReason::Succeed(ExitSucceed::Returned)
+            ));
+            assert_eq!(exit_data, expected_result)
+        });
+    });
+
+    group.bench_function(
+        "call_hello_with_executor_recreate_and_commit_with_gc",
+        |b| {
+            let backend = EvmBackend::new(
+                Incomming::default(),
+                Storage::create_temporary_gc().unwrap(),
+            );
+            let mut executor =
+                Executor::with_config(Default::default(), Default::default(), Default::default());
+
+            let exit_reason = executor.with_executor(
+                |_, _, _, _| None,
+                |executor| {
+                    executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
+                },
+            );
+            assert!(matches!(
+                exit_reason,
+                ExitReason::Succeed(ExitSucceed::Returned)
+            ));
+
+            let state = executor.deconstruct();
+            let committed = state.commit_block(0, Default::default());
+            let mut updated_state = Some(committed.next_incomming(0));
+
+            let contract_address = TransactionAction::Create.address(contract, U256::zero());
+            let mut rng = secp256k1::rand::thread_rng();
+            let user_key = secp256k1::key::SecretKey::new(&mut rng);
+            let caller = user_key.to_address();
+
+            let tx = UnsignedTransaction {
+                nonce: 0.into(),
+                gas_price: 0.into(),
+                gas_limit: u64::max_value().into(),
+                action: TransactionAction::Call(contract_address),
+                value: 0.into(),
+                input: data.to_vec(),
+            };
+            let mut slot = 1;
+            b.iter(|| {
+                let mut executor = Executor::with_config(
+                    updated_state.as_ref().unwrap().clone(),
+                    Default::default(),
+                    Default::default(),
+                );
+
+                let ExecutionResult {
+                    exit_reason,
+                    exit_data,
+                    ..
+                } = black_box(executor.transaction_execute_unsinged(
+                    caller,
+                    tx.clone(),
+                    true,
+                    |_, _, _, _| None,
+                ))
+                .unwrap();
+                let state = updated_state.take().unwrap();
+
+                let root_before = state.last_root();
+                let block = state.commit_block(slot, H256::zero()).next_incomming(0);
+
+                if block.last_root() != root_before {
+                    // register and remove root link
+                    block.kvs().register_slot(slot, root_before).unwrap();
+                    block.kvs().purge_slot(slot).unwrap();
+                }
+
+                slot += 1;
+                updated_state = Some(block);
+
+                assert!(matches!(
+                    exit_reason,
+                    ExitReason::Succeed(ExitSucceed::Returned)
+                ));
+                assert_eq!(exit_data, expected_result)
+            });
+        },
+    );
+
     group.bench_function("call_hello_with_signature_verify_single_key", |b| {
         let mut executor =
             Executor::with_config(Default::default(), Default::default(), Default::default());
