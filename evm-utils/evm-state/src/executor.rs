@@ -512,6 +512,7 @@ pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b5060043
 
 #[cfg(test)]
 mod tests {
+    use ethabi::Token;
     use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
@@ -629,7 +630,7 @@ mod tests {
     fn handle_duplicate_txs() {
         let _logger = simple_logger::SimpleLogger::new().init();
 
-        let chain_id = 0xeba;
+        let chain_id = TEST_CHAIN_ID;
         let evm_config = EvmConfig {
             chain_id,
             ..EvmConfig::default()
@@ -664,7 +665,7 @@ mod tests {
     fn handle_duplicate_txs_unsigned() {
         let _logger = simple_logger::SimpleLogger::new().init();
 
-        let chain_id = 0xeba;
+        let chain_id = TEST_CHAIN_ID;
         let evm_config = EvmConfig {
             chain_id,
             ..EvmConfig::default()
@@ -697,6 +698,91 @@ mod tests {
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash } if tx_hash == hash
         ));
+    }
+
+    #[test]
+    fn handle_execute_and_commit() {
+        for gc in [true, false] {
+            println!("Executing with gc_enabled={}", gc);
+            let _logger = simple_logger::SimpleLogger::new().init();
+
+            let chain_id = TEST_CHAIN_ID;
+            let evm_config = EvmConfig {
+                chain_id,
+                ..EvmConfig::default()
+            };
+            let storage = if gc {
+                Storage::create_temporary_gc()
+            } else {
+                Storage::create_temporary()
+            };
+            let backend = EvmBackend::new(Incomming::default(), storage.unwrap());
+            let mut executor = Executor::with_config(backend, Default::default(), evm_config);
+
+            let code = hex::decode(METACOIN_CODE).unwrap();
+
+            let mut alice = Persona::new();
+            let create_tx = alice.create(&code);
+            assert!(matches!(
+                executor
+                    .transaction_execute(create_tx.clone(), noop_precompile)
+                    .unwrap()
+                    .exit_reason,
+                ExitReason::Succeed(ExitSucceed::Returned)
+            ));
+            let slot = 1;
+            let backend = executor
+                .deconstruct()
+                .commit_block(slot, H256::zero())
+                .next_incomming(0);
+
+            let first_root = backend.last_root();
+            backend.kvs().register_slot(slot, first_root).unwrap();
+
+            let mut executor = Executor::with_config(backend, Default::default(), evm_config);
+            let contract_address = create_tx.address().unwrap();
+
+            alice.nonce += 1;
+            let call_tx = alice.call(
+                contract_address,
+                &metacoin::GET_BALANCE
+                    .encode_input(&[Token::Address(alice.address())])
+                    .unwrap(),
+            );
+
+            let ExecutionResult {
+                exit_reason,
+                exit_data: bytes,
+                ..
+            } = executor
+                .transaction_execute(call_tx, noop_precompile)
+                .unwrap();
+
+            assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
+            assert_eq!(
+                metacoin::GET_BALANCE.decode_output(&bytes).unwrap(),
+                vec![Token::Uint(U256::from(INITIAL_BALANCE))]
+            );
+            let backend = executor
+                .deconstruct()
+                .commit_block(2, H256::zero())
+                .next_incomming(0);
+
+            let root = backend.last_root();
+            assert!(backend.kvs().check_root_exist(root));
+            assert!(backend.kvs().check_root_exist(first_root));
+            if gc {
+                let hash = backend.kvs().purge_slot(slot).unwrap().unwrap();
+                backend
+                    .kvs()
+                    .gc_try_cleanup_account_hashes(&[hash])
+                    .unwrap(); // remove only root
+                               // on gc it will be removed
+                assert!(!backend.kvs().check_root_exist(first_root));
+            } else {
+                assert!(backend.kvs().check_root_exist(first_root));
+            }
+        }
     }
 
     #[test]
