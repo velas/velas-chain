@@ -41,7 +41,7 @@ tokio = { version = "1", features = ["full"] }
 
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
-triedb = { git = "https://github.com/velas/triedb", branch = "fix/remove-before-add", features = ["rocksdb"] }
+triedb = { path = "../../triedb",  features = ["rocksdb"] }
 rlp = "0.5.0"
 anyhow = "1.0.43"
 rayon = "1.5.0"

@@ -6,21 +6,42 @@ use tempfile::tempdir;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
-use evm_state::{types::BlockNum, EvmBackend, EvmState, Incomming};
+use evm_state::{types::BlockNum, AccountProvider, EvmBackend, EvmState, Incomming, Storage};
 
 mod utils;
 
 #[derive(Clone, Display)]
 #[display(
-    fmt = "total slots {}, squash each {} slot, {} accounts per 100k slots",
+    fmt = "slots {}, squash each {}, {} accounts per 100k slots, gc={}",
     n_slots,
     squash_each,
-    accounts_per_100k
+    accounts_per_100k,
+    with_gc
 )]
 struct Params {
     n_slots: BlockNum,
     squash_each: BlockNum,
     accounts_per_100k: usize,
+    with_gc: bool,
+}
+
+impl Params {
+    fn new(n_slots: BlockNum, squash_each: BlockNum, accounts_per_100k: usize) -> Vec<Params> {
+        vec![
+            Params {
+                n_slots,
+                squash_each,
+                accounts_per_100k,
+                with_gc: false,
+            },
+            Params {
+                n_slots,
+                squash_each,
+                accounts_per_100k,
+                with_gc: true,
+            },
+        ]
+    }
 }
 
 fn add_some_and_advance(state: &mut EvmBackend<Incomming>, params: &Params) {
@@ -48,7 +69,54 @@ fn add_some_and_advance(state: &mut EvmBackend<Incomming>, params: &Params) {
 
         let committed = state.clone().commit_block(slot, Default::default());
         *state = committed.next_incomming(0);
+
+        state.kvs().register_slot(slot, state.last_root()).unwrap();
+
+        if params.with_gc {
+            if slot % params.squash_each == 0 {
+                for remove_slot in (slot - params.squash_each)..slot {
+                    let mut elems: Vec<_> = state
+                        .kvs()
+                        .purge_slot(remove_slot)
+                        .unwrap()
+                        .into_iter()
+                        .collect();
+                    while !elems.is_empty() {
+                        elems = state.kvs().gc_try_cleanup_account_hashes(&elems).unwrap()
+                    }
+                }
+            }
+        }
     }
+}
+
+fn fill_bd_with_gc_squash(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fill_bd_with_gc_squash");
+    group.sample_size(10);
+
+    vec![(100_00, 100, 1_000), (1_000_00, 1_000, 1_000)]
+        .into_iter()
+        .flat_map(|(n_slots, squash_each, accounts_per_100k)| {
+            Params::new(n_slots, squash_each, accounts_per_100k)
+        })
+        .for_each(|params| {
+            let _persist = group.bench_with_input(
+                BenchmarkId::from_parameter(&params),
+                &params,
+                |b, _params| {
+                    b.iter(|| {
+                        let dir = tempdir().unwrap();
+                        let evm_state = EvmState::new(&dir)
+                            .expect("Unable to create new EVM state in temporary directory");
+                        let mut state = match evm_state {
+                            EvmState::Incomming(i) => i,
+                            _ => unreachable!(),
+                        };
+                        add_some_and_advance(&mut state, &params);
+                    })
+                },
+            );
+        });
 }
 
 fn fill_new_db_then_backup(c: &mut Criterion) {
@@ -61,6 +129,7 @@ fn fill_new_db_then_backup(c: &mut Criterion) {
             n_slots,
             squash_each,
             accounts_per_100k,
+            with_gc: false,
         })
         .for_each(|params| {
             let dir = tempdir().unwrap();
@@ -124,11 +193,13 @@ fn fill_new_db_then_backup_and_then_backup_again(c: &mut Criterion) {
                     n_slots,
                     squash_each,
                     accounts_per_100k,
+                    with_gc: false,
                 },
                 Params {
                     n_slots: another_n_slots,
                     squash_each,
                     accounts_per_100k,
+                    with_gc: false,
                 },
             )
         },
@@ -136,12 +207,14 @@ fn fill_new_db_then_backup_and_then_backup_again(c: &mut Criterion) {
     .for_each(|(params1, params2)| {
         let dir = tempdir().unwrap();
 
-        let evm_state =
-            EvmState::new(&dir).expect("Unable to create new EVM state in temporary directory");
-        let mut state = match evm_state {
-            EvmState::Incomming(i) => i,
-            _ => unreachable!(),
-        };
+        let mut state = EvmBackend::new(
+            Incomming::default(),
+            Storage::open_persistent(
+                &dir, true, // gc_enabled = true
+            )
+            .unwrap(),
+        );
+
         add_some_and_advance(&mut state, &params1);
         let evm_state = EvmState::Incomming(state);
         assert!(
@@ -181,5 +254,6 @@ criterion_group!(
     evm_save,
     fill_new_db_then_backup,
     fill_new_db_then_backup_and_then_backup_again,
+    fill_bd_with_gc_squash,
 );
 criterion_main!(evm_save);
