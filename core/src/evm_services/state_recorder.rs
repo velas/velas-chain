@@ -1,5 +1,4 @@
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
-use solana_ledger::blockstore::Blockstore;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -9,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use evm_state::{Block, ChangedState, Storage};
+use evm_state::{ChangedState, Storage, H256};
 
 pub type EvmStateRecorderReceiver = Receiver<(H256, ChangedState)>;
 pub type EvmStateRecorderSender = Sender<(H256, ChangedState)>;
@@ -22,8 +21,8 @@ impl EvmStateRecorderService {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(
         evm_recorder_receiver: EvmStateRecorderReceiver,
-        exit: &Arc<AtomicBool>,
         archive: Storage,
+        exit: &Arc<AtomicBool>,
     ) -> Self {
         let exit = exit.clone();
         let thread_hdl = Builder::new()
@@ -33,7 +32,7 @@ impl EvmStateRecorderService {
                     break;
                 }
                 if let Err(RecvTimeoutError::Disconnected) =
-                    write_evm_record(&archive, &evm_recorder_receiver)
+                    Self::write_evm_record(&archive, &evm_recorder_receiver)
                 {
                     break;
                 }

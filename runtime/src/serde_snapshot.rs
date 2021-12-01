@@ -16,7 +16,7 @@ use {
     bincode,
     bincode::{config::Options, Error},
     log::*,
-    serde::{de::DeserializeOwned, Deserialize, Serialize},
+    serde::{de::DeserializeOwned, de::Error as _, Deserialize, Serialize},
     solana_sdk::{
         clock::{Epoch, Slot, UnixTimestamp},
         epoch_schedule::EpochSchedule,
@@ -47,6 +47,7 @@ mod tests;
 mod utils;
 
 use future::Context as TypeContextFuture;
+use solana_measure::measure::Measure;
 #[allow(unused_imports)]
 use utils::{serialize_iter_as_map, serialize_iter_as_seq, serialize_iter_as_tuple};
 
@@ -59,9 +60,19 @@ pub(crate) use crate::accounts_db::{SnapshotStorage, SnapshotStorages};
 // NOTE(velas):
 // - old enum `SerdeStyle` was removed as single variant enum
 // - this enum should be treated as new, EVM only related enum without any previous history
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum EvmStateVersion {
     V1_4_0,
+    V1_5_0,
+}
+
+impl EvmStateVersion {
+    pub fn support_gc(&self) -> bool {
+        match self {
+            Self::V1_4_0 => false, // old snapshot support only archive mode
+            Self::V1_5_0 => true,
+        }
+    }
 }
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
@@ -133,33 +144,30 @@ pub(crate) fn bank_from_stream<R>(
     additional_builtins: Option<&Builtins>,
     account_indexes: AccountSecondaryIndexes,
     caching_enabled: bool,
+    evm_state_backup_path: &Path,
+    skip_purge_verify: bool,
 ) -> std::result::Result<Bank, Error>
 where
     R: Read,
 {
-    macro_rules! INTO {
-        ($x:ident) => {{
-            let (bank_fields, accounts_db_fields) = $x::deserialize_bank_fields(stream)?;
-
-            let bank = reconstruct_bank_from_fields(
-                bank_fields,
-                accounts_db_fields,
-                genesis_config,
-                frozen_account_pubkeys,
-                evm_state_path,
-                account_paths,
-                unpacked_append_vec_map,
-                debug_keys,
-                additional_builtins,
-                account_indexes,
-                caching_enabled,
-            )?;
-            Ok(bank)
-        }};
-    }
-    match evm_state_version {
-        EvmStateVersion::V1_4_0 => INTO!(TypeContextFuture),
-    }
+    let (bank_fields, accounts_db_fields) = TypeContextFuture::deserialize_bank_fields(stream)?;
+    reconstruct_bank_from_fields(
+        bank_fields,
+        accounts_db_fields,
+        genesis_config,
+        frozen_account_pubkeys,
+        evm_state_path,
+        account_paths,
+        unpacked_append_vec_map,
+        debug_keys,
+        additional_builtins,
+        account_indexes,
+        caching_enabled,
+        evm_state_backup_path,
+        evm_state_version.support_gc(),
+        skip_purge_verify,
+        true, // enable gc
+    )
     .map_err(|err| {
         warn!("bankrc_from_stream error: {:?}", err);
         err
@@ -175,21 +183,21 @@ pub(crate) fn bank_to_stream<W>(
 where
     W: Write,
 {
-    macro_rules! INTO {
-        ($x:ident) => {
-            bincode::serialize_into(
-                stream,
-                &SerializableBankAndStorage::<$x> {
-                    bank,
-                    snapshot_storages,
-                    phantom: std::marker::PhantomData::default(),
-                },
-            )
-        };
+    let gc_enabled = bank.evm_state.read().unwrap().kvs().gc_enabled();
+    if evm_version.support_gc() != gc_enabled {
+        return Err(Error::custom(format!(
+            "Snapshot gc config is different from config in storage storage_gc={}, version={:?}",
+            gc_enabled, evm_version
+        )));
     }
-    match evm_version {
-        EvmStateVersion::V1_4_0 => INTO!(TypeContextFuture),
-    }
+    bincode::serialize_into(
+        stream,
+        &SerializableBankAndStorage::<TypeContextFuture> {
+            bank,
+            snapshot_storages,
+            phantom: std::marker::PhantomData::default(),
+        },
+    )
     .map_err(|err| {
         warn!("bankrc_to_stream error: {:?}", err);
         err
@@ -243,6 +251,12 @@ fn reconstruct_bank_from_fields<E>(
     additional_builtins: Option<&Builtins>,
     account_indexes: AccountSecondaryIndexes,
     caching_enabled: bool,
+    evm_state_backup_path: &Path,
+    // true if we restoring from full backup, or from gc
+    load_full_backup: bool,
+    skip_purge_verify: bool,
+    // true if gc should be enabled
+    enable_gc: bool,
 ) -> Result<Bank, Error>
 where
     E: SerializableStorage,
@@ -258,9 +272,70 @@ where
     accounts_db.freeze_accounts(&bank_fields.ancestors, frozen_account_pubkeys);
 
     let bank_rc = BankRc::new(Accounts::new_empty(accounts_db), bank_fields.slot);
-    let evm_state =
-        evm_state::EvmState::load_from(evm_state_path, bank_fields.evm_persist_feilds.clone())
-            .expect("Unable to open EVM state storage");
+    // EVM State load
+    if evm_state_path.exists() {
+        warn!(
+            "deleting existing evm state folder {}",
+            evm_state_path.display()
+        );
+        std::fs::remove_dir_all(&evm_state_path)?;
+    }
+
+    info!(
+        "Restoring evm-state snapshot, for root = {}, skip_purge_verify = {}, snapshot_gc = {}, our_state_gc = {}.",
+        bank_fields.evm_persist_feilds.last_root(),
+        skip_purge_verify,
+        load_full_backup,
+        enable_gc
+    );
+
+    // if we force verify, or our gc settings is not equal to settings in snapshot
+    if !skip_purge_verify || enable_gc != load_full_backup {
+        let mut tmp_evm_state_path_parent = evm_state_path.to_path_buf();
+        tmp_evm_state_path_parent.pop();
+        let tmp_dir = tempfile::TempDir::new_in(tmp_evm_state_path_parent)?;
+        let mut measure = Measure::start("EVM tmp state database restore");
+        evm_state::Storage::restore_from(evm_state_backup_path, &tmp_dir.path()).map_err(|e| {
+            Error::custom(format!("Unable to restore tmp evm backup storage {}", e))
+        })?;
+        measure.stop();
+        info!("{}", measure);
+        let src =
+            evm_state::Storage::open_persistent(tmp_dir.path(), load_full_backup).map_err(|e| {
+                Error::custom(format!("Unable to restore tmp evm backup storage {}", e))
+            })?;
+
+        let destination = evm_state::Storage::open_persistent(evm_state_path, enable_gc)
+            .map_err(|e| Error::custom(format!("Unable to open destination evm-state {}", e)))?;
+
+        let mut measure = Measure::start("EVM snapshot purging");
+        evm_state::storage::copy_and_purge(
+            src,
+            &[destination], // TODO: Add archive storage
+            bank_fields.evm_persist_feilds.last_root(),
+        )
+        .map_err(|e| Error::custom(format!("Unable to copy_and_purge storage {}", e)))?;
+        measure.stop();
+        info!("{}", measure);
+    } else {
+        let mut measure = Measure::start("EVM state database restore");
+        evm_state::Storage::restore_from(evm_state_backup_path, &evm_state_path)
+            .map_err(|e| Error::custom(format!("Unable to restore evm backup storage {}", e)))?;
+        measure.stop();
+        info!("{}", measure);
+    }
+
+    let evm_state = evm_state::EvmState::load_from(
+        evm_state_path,
+        bank_fields.evm_persist_feilds.clone(),
+        enable_gc,
+    )
+    .map_err(|e| Error::custom(format!("Unable to open EVM state storage {}", e)))?;
+
+    evm_state
+        .kvs()
+        .register_slot(bank_fields.slot, bank_fields.evm_persist_feilds.last_root())
+        .map_err(|e| Error::custom(format!("Unable to register slot for evm root {}", e)))?;
     let bank = Bank::new_from_fields(
         evm_state,
         bank_rc,

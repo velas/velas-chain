@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use sha3::{Digest, Keccak256};
-use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
+use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::keyed_account::KeyedAccount;
 
 use crate::rpc::JsonRpcRequestProcessor;

@@ -35,7 +35,7 @@ use triedb::{
 pub mod inspectors;
 pub mod walker;
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub use rocksdb; // avoid mess with dependencies for another crates
 
 type BincodeOpts = WithOtherEndian<DefaultOptions, BigEndian>;
@@ -103,6 +103,10 @@ impl Storage {
     }
     pub fn create_temporary_gc() -> Result<Self> {
         Self::open(Location::Temporary(Arc::new(TempDir::new()?)), true)
+    }
+
+    pub fn gc_enabled(&self) -> bool {
+        self.gc_enabled
     }
 
     // without gc_enabled
@@ -559,14 +563,14 @@ pub mod cleaner {
 
         pub fn cleanup(self) -> Result<()>
         where
-            DB: Borrow<rocksdb::DB>,
+            DB: Borrow<crate::storage::DB>,
         {
             let db = self.db.borrow();
 
             let trie_nodes = self.trie_nodes.as_ref();
             // Cleanup unused trie keys in default column family
             {
-                let mut batch = rocksdb::WriteBatch::default();
+                let mut batch = rocksdb::WriteBatchWithTransaction::<true>::default();
 
                 for (key, _data) in db.iterator(rocksdb::IteratorMode::Start) {
                     let key =
@@ -589,7 +593,7 @@ pub mod cleaner {
                 let codes_cf = db
                     .cf_handle(column_name)
                     .ok_or_else(|| anyhow!("Codes Column Family '{}' not found", column_name))?;
-                let mut batch = rocksdb::WriteBatch::default();
+                let mut batch = rocksdb::WriteBatchWithTransaction::<true>::default();
 
                 for (key, _data) in db.iterator_cf(codes_cf, rocksdb::IteratorMode::Start) {
                     let code_hash = rlp::decode(&key)?; // NOTE: keep in sync with ::storage mod
@@ -608,6 +612,23 @@ pub mod cleaner {
             Ok(())
         }
     }
+}
+
+pub fn copy_and_purge<'a>(
+    src: Storage,
+    destinations: &'a [Storage],
+    root: H256,
+) -> Result<(), anyhow::Error> {
+    anyhow::ensure!(src.check_root_exist(root), "Root does not exist");
+
+    let source = src.clone();
+    let streamer = inspectors::streamer::AccountsStreamer {
+        source,
+        destinations,
+    };
+    let walker = walker::Walker::new_shared(src, streamer);
+    walker.traverse(root)?;
+    Ok(())
 }
 
 pub fn reference_counter_opts() -> Options {

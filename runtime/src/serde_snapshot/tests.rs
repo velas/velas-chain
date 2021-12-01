@@ -195,6 +195,7 @@ fn test_bank_serialize_style(evm_version: EvmStateVersion) {
     let mut reader = std::io::BufReader::new(&buf[rdr.position() as usize..]);
 
     let evm_state_dir = TempDir::new().unwrap();
+    let evm_backup_state_path = TempDir::new().unwrap();
     // Create a new set of directories for this bank's accounts
     let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
     let ref_sc = StatusCacheRc::default();
@@ -215,6 +216,8 @@ fn test_bank_serialize_style(evm_version: EvmStateVersion) {
         None,
         AccountSecondaryIndexes::default(),
         false,
+        evm_backup_state_path.path(),
+        true,
     )
     .unwrap();
     dbank.src = ref_sc;
@@ -263,6 +266,10 @@ fn test_bank_serialize_newer() {
     test_bank_serialize_style(EvmStateVersion::V1_4_0)
 }
 
+#[test]
+fn test_bank_serialize_newer() {
+    test_bank_serialize_style(EvmStateVersion::V1_5_0)
+}
 #[cfg(all(test, RUSTC_WITH_SPECIALIZATION))]
 mod test_bank_serialize {
     use super::*;

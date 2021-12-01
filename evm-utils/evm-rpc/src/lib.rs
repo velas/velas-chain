@@ -54,7 +54,6 @@ pub struct RPCLogFilter {
     pub topics: Option<Vec<Option<RPCTopicFilter>>>,
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCLog {
