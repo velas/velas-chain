@@ -2957,8 +2957,7 @@ dependencies = [
 [[package]]
 name = "librocksdb-sys"
 version = "6.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c309a9d2470844aceb9a4a098cf5286154d20596868b75a6b36357d2bb9ca25d"
+source = "git+https://github.com/velas/rust-rocksdb?branch=transaction#d9ce7cd3bab79c7659c797c96944ae181e1bb825"
 dependencies = [
  "bindgen",
  "cc",
@@ -4464,9 +4463,8 @@ dependencies = [
 
 [[package]]
 name = "rocksdb"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c749134fda8bfc90d0de643d59bfc841dcb3ac8a1062e12b6754bd60235c48b3"
+version = "0.17.0"
+source = "git+https://github.com/velas/rust-rocksdb?branch=transaction#d9ce7cd3bab79c7659c797c96944ae181e1bb825"
 dependencies = [
  "libc",
  "librocksdb-sys",
@@ -7718,8 +7716,11 @@ dependencies = [
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/velas/triedb?branch=fix/remove-before-add#03560916900d11cf2b67e314ca7d7f247fe0b386"
 dependencies = [
+ "anyhow",
+ "dashmap",
+ "derivative",
+ "log 0.4.14",
  "primitive-types",
  "rlp",
  "rocksdb",
