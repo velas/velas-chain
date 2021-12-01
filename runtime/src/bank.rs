@@ -778,7 +778,7 @@ pub struct Bank {
 
     pub evm_chain_id: u64,
     pub evm_state: RwLock<evm_state::EvmState>,
-    pub evm_changed_list: RwLock<Option<evm_state::ChangedState>>,
+    pub evm_changed_list: RwLock<Option<(evm_state::H256, evm_state::ChangedState)>>,
 
     /// Hash of this Bank's state. Only meaningful after freezing.
     hash: RwLock<Hash>,
@@ -1399,7 +1399,7 @@ impl Bank {
     pub fn evm_block(&self) -> Option<evm_state::Block> {
         self.evm_state.read().unwrap().get_block()
     }
-    pub fn evm_state_change(&self) -> Option<evm_state::ChangedState> {
+    pub fn evm_state_change(&self) -> Option<(evm_state::H256, evm_state::ChangedState)> {
         self.evm_changed_list
             .read()
             .expect("change list was poisoned")
@@ -2136,6 +2136,7 @@ impl Bank {
     }
 
     pub fn commit_evm(&self) {
+<<<<<<< HEAD
         let last_root = self.evm_state.read().unwrap().last_root();
         let mut measure = Measure::start("commit-evm-block-ms");
 
@@ -2151,6 +2152,7 @@ impl Bank {
 
         inc_new_counter_info!("commit-evm-block-ms", measure.as_ms() as usize);
 
+        let new_root = self.evm_state.read().unwrap().last_root();
         debug!(
             "Set evm state root to {:?} at block {}",
             self.evm_state.read().unwrap().last_root(),
@@ -2166,7 +2168,7 @@ impl Bank {
             *self
                 .evm_changed_list
                 .write()
-                .expect("change list was poisoned") = Some(changes);
+                .expect("change list was poisoned") = Some((new_root, changes));
             w_evm_blockhash_queue.insert_hash(hash);
             if self.fix_recent_blockhashes_sysvar_evm() {
                 self.update_recent_evm_blockhashes_locked(&w_evm_blockhash_queue);
@@ -5417,7 +5419,7 @@ impl Drop for Bank {
                     if let Some(h) = storage.purge_slot(slot)? {
                         let mut hashes = vec![h];
                         while !hashes.is_empty() {
-                            hashes = storage.gc_remove_references(&hashes)?
+                            hashes = storage.gc_try_cleanup_account_hashes(&hashes)?
                         }
                     }
                     Ok(())

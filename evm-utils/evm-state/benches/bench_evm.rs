@@ -220,28 +220,29 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         let state = executor.deconstruct();
         let committed = state.commit_block(0, Default::default());
-        let mut updated_state = Some(committed.next_incomming(0));
+        let mut updated_state = committed.next_incomming(0);
 
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
         let mut rng = secp256k1::rand::thread_rng();
         let user_key = secp256k1::key::SecretKey::new(&mut rng);
         let caller = user_key.to_address();
 
-        let tx = UnsignedTransaction {
-            nonce: 0.into(),
-            gas_price: 0.into(),
-            gas_limit: u64::max_value().into(),
-            action: TransactionAction::Call(contract_address),
-            value: 0.into(),
-            input: data.to_vec(),
-        };
+        let mut slot = 0;
         b.iter(|| {
             let mut executor = Executor::with_config(
-                updated_state.as_ref().unwrap().clone(),
+                updated_state.clone(),
                 Default::default(),
                 Default::default(),
             );
 
+            let tx = UnsignedTransaction {
+                nonce: slot.into(),
+                gas_price: 0.into(),
+                gas_limit: u64::max_value().into(),
+                action: TransactionAction::Call(contract_address),
+                value: 0.into(),
+                input: data.to_vec(),
+            };
             let ExecutionResult {
                 exit_reason,
                 exit_data,
@@ -253,19 +254,17 @@ fn criterion_benchmark(c: &mut Criterion) {
                 |_, _, _, _| None,
             ))
             .unwrap();
-            updated_state = Some(
-                updated_state
-                    .take()
-                    .unwrap()
-                    .commit_block(1, H256::zero())
-                    .next_incomming(0),
-            );
+            updated_state = executor
+                .deconstruct()
+                .commit_block(slot, H256::zero())
+                .next_incomming(0);
 
             assert!(matches!(
                 exit_reason,
                 ExitReason::Succeed(ExitSucceed::Returned)
             ));
-            assert_eq!(exit_data, expected_result)
+            assert_eq!(exit_data, expected_result);
+            slot += 1;
         });
     });
 
@@ -277,7 +276,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 Storage::create_temporary_gc().unwrap(),
             );
             let mut executor =
-                Executor::with_config(Default::default(), Default::default(), Default::default());
+                Executor::with_config(backend, Default::default(), Default::default());
 
             let exit_reason = executor.with_executor(
                 |_, _, _, _| None,
@@ -292,28 +291,29 @@ fn criterion_benchmark(c: &mut Criterion) {
 
             let state = executor.deconstruct();
             let committed = state.commit_block(0, Default::default());
-            let mut updated_state = Some(committed.next_incomming(0));
+            let mut updated_state = committed.next_incomming(0);
 
             let contract_address = TransactionAction::Create.address(contract, U256::zero());
             let mut rng = secp256k1::rand::thread_rng();
             let user_key = secp256k1::key::SecretKey::new(&mut rng);
             let caller = user_key.to_address();
 
-            let tx = UnsignedTransaction {
-                nonce: 0.into(),
-                gas_price: 0.into(),
-                gas_limit: u64::max_value().into(),
-                action: TransactionAction::Call(contract_address),
-                value: 0.into(),
-                input: data.to_vec(),
-            };
-            let mut slot = 1;
+            let mut slot = 0;
             b.iter(|| {
                 let mut executor = Executor::with_config(
-                    updated_state.as_ref().unwrap().clone(),
+                    updated_state.clone(),
                     Default::default(),
                     Default::default(),
                 );
+
+                let tx = UnsignedTransaction {
+                    nonce: slot.into(),
+                    gas_price: 0.into(),
+                    gas_limit: u64::max_value().into(),
+                    action: TransactionAction::Call(contract_address),
+                    value: 0.into(),
+                    input: data.to_vec(),
+                };
 
                 let ExecutionResult {
                     exit_reason,
@@ -326,19 +326,102 @@ fn criterion_benchmark(c: &mut Criterion) {
                     |_, _, _, _| None,
                 ))
                 .unwrap();
-                let state = updated_state.take().unwrap();
+                let state = executor.deconstruct();
 
                 let root_before = state.last_root();
                 let block = state.commit_block(slot, H256::zero()).next_incomming(0);
 
-                if block.last_root() != root_before {
-                    // register and remove root link
-                    block.kvs().register_slot(slot, root_before).unwrap();
-                    block.kvs().purge_slot(slot).unwrap();
+                // register and remove root link
+
+                if slot != 0 {
+                    // skip gc at first slot
+                    let removed_root = block.kvs().purge_slot(slot).unwrap().unwrap();
+                    assert_eq!(removed_root, root_before);
+                    let mut elems = vec![removed_root];
+                    while !elems.is_empty() {
+                        elems = block.kvs().gc_try_cleanup_account_hashes(&elems).unwrap()
+                    }
                 }
+                slot += 1;
+
+                block.kvs().register_slot(slot, block.last_root()).unwrap();
+                updated_state = block;
+
+                assert!(matches!(
+                    exit_reason,
+                    ExitReason::Succeed(ExitSucceed::Returned)
+                ));
+                assert_eq!(exit_data, expected_result)
+            });
+        },
+    );
+
+    group.bench_function(
+        "call_hello_with_executor_recreate_and_commit_with_gc_no_purge",
+        |b| {
+            let backend = EvmBackend::new(
+                Incomming::default(),
+                Storage::create_temporary_gc().unwrap(),
+            );
+            let mut executor =
+                Executor::with_config(backend, Default::default(), Default::default());
+
+            let exit_reason = executor.with_executor(
+                |_, _, _, _| None,
+                |executor| {
+                    executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
+                },
+            );
+            assert!(matches!(
+                exit_reason,
+                ExitReason::Succeed(ExitSucceed::Returned)
+            ));
+
+            let state = executor.deconstruct();
+            let committed = state.commit_block(0, Default::default());
+            let mut updated_state = committed.next_incomming(0);
+
+            let contract_address = TransactionAction::Create.address(contract, U256::zero());
+            let mut rng = secp256k1::rand::thread_rng();
+            let user_key = secp256k1::key::SecretKey::new(&mut rng);
+            let caller = user_key.to_address();
+
+            let mut slot = 0;
+            b.iter(|| {
+                let mut executor = Executor::with_config(
+                    updated_state.clone(),
+                    Default::default(),
+                    Default::default(),
+                );
+
+                let tx = UnsignedTransaction {
+                    nonce: slot.into(),
+                    gas_price: 0.into(),
+                    gas_limit: u64::max_value().into(),
+                    action: TransactionAction::Call(contract_address),
+                    value: 0.into(),
+                    input: data.to_vec(),
+                };
+
+                let ExecutionResult {
+                    exit_reason,
+                    exit_data,
+                    ..
+                } = black_box(executor.transaction_execute_unsinged(
+                    caller,
+                    tx.clone(),
+                    true,
+                    |_, _, _, _| None,
+                ))
+                .unwrap();
+                let state = executor.deconstruct();
+
+                let block = state.commit_block(slot, H256::zero()).next_incomming(0);
 
                 slot += 1;
-                updated_state = Some(block);
+
+                block.kvs().register_slot(slot, block.last_root()).unwrap();
+                updated_state = block;
 
                 assert!(matches!(
                     exit_reason,
