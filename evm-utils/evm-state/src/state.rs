@@ -147,10 +147,9 @@ impl EvmBackend<Incomming> {
     fn flush_changes(&mut self) {
         //todo: do in one tx
         let mut state = &mut self.state;
-        let new_root = self.kvs.flush_changes(
-            state.state_root,
-            std::mem::replace(&mut state.state_updates, Default::default()),
-        );
+        let new_root = self
+            .kvs
+            .flush_changes(state.state_root, std::mem::take(&mut state.state_updates));
 
         state.state_root = new_root;
     }

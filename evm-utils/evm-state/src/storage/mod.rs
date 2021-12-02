@@ -615,9 +615,9 @@ pub mod cleaner {
     }
 }
 
-pub fn copy_and_purge<'a>(
+pub fn copy_and_purge(
     src: Storage,
-    destinations: &'a [Storage],
+    destinations: &[Storage],
     root: H256,
 ) -> Result<(), anyhow::Error> {
     anyhow::ensure!(src.check_root_exist(root), "Root does not exist");
@@ -629,6 +629,12 @@ pub fn copy_and_purge<'a>(
     };
     let walker = walker::Walker::new_shared(src, streamer);
     walker.traverse(root)?;
+    // during walking AccountsStreamer increase link to all nodes.
+    // Root should be decreased, because it has no parent for now, and outer caller will increase it's count.
+    for destination in destinations {
+        let trie = destination.rocksdb_trie_handle();
+        trie.db.decrease_atomic(root)?;
+    }
     Ok(())
 }
 

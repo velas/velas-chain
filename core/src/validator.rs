@@ -305,6 +305,7 @@ pub(crate) fn abort() -> ! {
 }
 
 impl Validator {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mut node: Node,
         identity_keypair: &Arc<Keypair>,
@@ -1054,6 +1055,7 @@ fn post_process_restored_tower(
 }
 
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 fn new_banks_from_ledger(
     validator_identity: &Pubkey,
     vote_account: &Pubkey,
