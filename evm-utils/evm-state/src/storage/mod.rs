@@ -390,7 +390,6 @@ impl Storage {
 
         let slots_cf = self.cf::<SlotsRoots>();
         let mut collect_slots = vec![];
-        let mut cleanup_roots = vec![];
         for (k, _v) in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
             let mut slot_arr = [0; 8];
             slot_arr.copy_from_slice(&k[0..8]);
@@ -402,14 +401,11 @@ impl Storage {
             if slot == keep_slot {
                 continue;
             }
-            self.purge_slot(slot)?.map(|root| cleanup_roots.push(root));
-        }
 
-        let mut elems: Vec<_> = cleanup_roots;
-        while !elems.is_empty() {
-            elems = self.gc_try_cleanup_account_hashes(&elems)?
+            if let Some(root) = self.purge_slot(slot)? {
+                RootCleanup::new(&self, vec![root]).cleanup()?
+            }
         }
-
         Ok(())
     }
 
@@ -428,6 +424,39 @@ fn account_extractor(data: &[u8]) -> Vec<H256> {
         vec![account.storage_root]
     } else {
         vec![] // this trie is mixed collection, and can contain storage values among with accounts
+    }
+}
+
+pub struct RootCleanup<'a> {
+    storage: &'a Storage,
+    elems: Vec<H256>,
+}
+
+impl<'a> RootCleanup<'a> {
+    pub fn new(storage: &'a Storage, roots: Vec<H256>) -> Self {
+        Self {
+            elems: roots,
+            storage,
+        }
+    }
+    pub fn cleanup(&mut self) -> Result<()> {
+        const MAX_ELEMS: usize = 200;
+        while !self.elems.is_empty() {
+            let total_elems = self.elems.len();
+            let num_elems = usize::min(self.elems.len(), MAX_ELEMS);
+
+            let elems: Vec<_> = self.elems.drain(0..num_elems).collect();
+            let new_elems = self.storage.gc_try_cleanup_account_hashes(&elems)?;
+
+            info!(
+                "Cleaning up {} elems, total elems in queue {}, adding elems {}",
+                num_elems,
+                total_elems,
+                new_elems.len()
+            );
+            self.elems.extend_from_slice(&new_elems);
+        }
+        Ok(())
     }
 }
 
