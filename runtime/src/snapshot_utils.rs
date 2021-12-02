@@ -150,7 +150,7 @@ impl Ord for SlotSnapshotPaths {
 }
 
 pub fn package_snapshot<P: AsRef<Path>, Q: AsRef<Path>>(
-    bank: &Bank,
+    bank: Arc<Bank>,
     snapshot_files: &SlotSnapshotPaths,
     snapshot_path: Q,
     status_cache_slot_deltas: Vec<BankSlotDelta>,
@@ -187,6 +187,7 @@ pub fn package_snapshot<P: AsRef<Path>, Q: AsRef<Path>>(
     let evm = bank.evm_state.read().unwrap();
     let evm_db = evm.kvs().clone();
     let evm_root = evm.last_root();
+    drop(evm);
     let package = AccountsPackagePre::new(
         bank.slot(),
         bank.block_height(),
@@ -201,6 +202,7 @@ pub fn package_snapshot<P: AsRef<Path>, Q: AsRef<Path>>(
         hash_for_testing,
         evm_root,
         evm_db,
+        bank,
     );
 
     Ok(package)
@@ -944,7 +946,7 @@ pub fn purge_old_snapshots(snapshot_path: &Path) {
 
 // Gather the necessary elements for a snapshot of the given `root_bank`
 pub fn snapshot_bank(
-    root_bank: &Bank,
+    root_bank: Arc<Bank>,
     status_cache_slot_deltas: Vec<BankSlotDelta>,
     accounts_package_sender: &AccountsPackageSender,
     snapshot_path: &Path,
@@ -955,7 +957,7 @@ pub fn snapshot_bank(
 ) -> Result<()> {
     let storages: Vec<_> = root_bank.get_snapshot_storages();
     let mut add_snapshot_time = Measure::start("add-snapshot-ms");
-    add_snapshot(snapshot_path, root_bank, &storages, snapshot_version)?;
+    add_snapshot(snapshot_path, &root_bank, &storages, snapshot_version)?;
     add_snapshot_time.stop();
     inc_new_counter_info!("add-snapshot-ms", add_snapshot_time.as_ms() as usize);
 
@@ -986,7 +988,7 @@ pub fn snapshot_bank(
 /// Bank will be frozen during the process.
 pub fn bank_to_snapshot_archive<P: AsRef<Path>, Q: AsRef<Path>>(
     snapshot_path: P,
-    bank: &Bank,
+    bank: Arc<Bank>,
     snapshot_version: Option<SnapshotVersion>,
     snapshot_package_output_path: Q,
     archive_format: ArchiveFormat,
@@ -1004,12 +1006,13 @@ pub fn bank_to_snapshot_archive<P: AsRef<Path>, Q: AsRef<Path>>(
     let temp_dir = tempfile::tempdir_in(snapshot_path)?;
 
     let storages: Vec<_> = bank.get_snapshot_storages();
-    let slot_snapshot_paths = add_snapshot(&temp_dir, bank, &storages, snapshot_version)?;
+    let slot_snapshot_paths = add_snapshot(&temp_dir, &bank, &storages, snapshot_version)?;
+    let deltas = bank.src.slot_deltas(&bank.src.roots());
     let package = package_snapshot(
         bank,
         &slot_snapshot_paths,
         &temp_dir,
-        bank.src.slot_deltas(&bank.src.roots()),
+        deltas,
         snapshot_package_output_path,
         storages,
         archive_format,
@@ -1065,6 +1068,7 @@ pub fn process_accounts_package_pre(
         accounts_package.snapshot_version,
         accounts_package.evm_root,
         accounts_package.evm_db,
+        accounts_package.bank,
     )
 }
 

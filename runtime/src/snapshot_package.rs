@@ -1,8 +1,10 @@
+use crate::bank::Bank;
 use crate::bank_forks::ArchiveFormat;
 use crate::snapshot_utils::SnapshotVersion;
 use crate::{accounts_db::SnapshotStorages, bank::BankSlotDelta};
 use solana_sdk::clock::Slot;
 use solana_sdk::hash::Hash;
+use std::sync::Arc;
 use std::{
     path::PathBuf,
     sync::mpsc::{Receiver, SendError, Sender},
@@ -28,6 +30,8 @@ pub struct AccountsPackagePre {
     pub hash_for_testing: Option<Hash>,
     pub evm_root: evm_state::H256,
     pub evm_db: evm_state::storage::Storage,
+    // TODO: Replace root/db/bank by root-guard.
+    pub bank: Arc<Bank>,
 }
 
 impl AccountsPackagePre {
@@ -46,6 +50,7 @@ impl AccountsPackagePre {
         hash_for_testing: Option<Hash>,
         evm_root: evm_state::H256,
         evm_db: evm_state::storage::Storage,
+        bank: Arc<Bank>,
     ) -> Self {
         Self {
             slot,
@@ -61,6 +66,7 @@ impl AccountsPackagePre {
             hash_for_testing,
             evm_root,
             evm_db,
+            bank,
         }
     }
 }
@@ -77,6 +83,7 @@ pub struct AccountsPackage {
     pub snapshot_version: SnapshotVersion,
     pub evm_root: evm_state::H256,
     pub evm_db: evm_state::storage::Storage,
+    pub bank: Arc<Bank>,
 }
 
 impl AccountsPackage {
@@ -93,6 +100,7 @@ impl AccountsPackage {
         snapshot_version: SnapshotVersion,
         evm_root: evm_state::H256,
         evm_db: evm_state::storage::Storage,
+        bank: Arc<Bank>,
     ) -> Self {
         Self {
             slot,
@@ -106,6 +114,7 @@ impl AccountsPackage {
             snapshot_version,
             evm_root,
             evm_db,
+            bank,
         }
     }
 }
