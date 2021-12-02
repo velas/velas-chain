@@ -1226,7 +1226,7 @@ fn new_banks_from_ledger(
 
         let archive_file = solana_runtime::snapshot_utils::bank_to_snapshot_archive(
             ledger_path,
-            &bank_forks.root_bank(),
+            bank_forks.root_bank(),
             None,
             &snapshot_config.snapshot_package_output_path,
             snapshot_config.archive_format,

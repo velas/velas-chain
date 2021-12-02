@@ -53,6 +53,9 @@ pub enum Error {
     Key(#[from] TryFromSliceError),
     #[error("Internal IO error: {0:?}")]
     Internal(#[from] IoError),
+
+    #[error("Root not found: {0:?}")]
+    RootNotFound(H256),
 }
 
 const BACKUP_SUBDIR: &str = "backup";
@@ -386,10 +389,13 @@ impl Storage {
     }
 
     pub fn cleanup_slots(&self, keep_slot: u64, root: H256) -> Result<()> {
-        self.register_slot(keep_slot, root)?;
+        if !self.check_root_exist(root) {
+            return Err(Error::RootNotFound(root));
+        }
 
         let slots_cf = self.cf::<SlotsRoots>();
         let mut collect_slots = vec![];
+        let mut cleanup_roots = vec![];
         for (k, _v) in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
             let mut slot_arr = [0; 8];
             slot_arr.copy_from_slice(&k[0..8]);
@@ -401,12 +407,10 @@ impl Storage {
             if slot == keep_slot {
                 continue;
             }
-
-            if let Some(root) = self.purge_slot(slot)? {
-                RootCleanup::new(&self, vec![root]).cleanup()?
-            }
+            self.purge_slot(slot)?.map(|root| cleanup_roots.push(root));
         }
-        Ok(())
+
+        RootCleanup::new(&self, cleanup_roots).cleanup()
     }
 
     pub fn gc_try_cleanup_account_hashes(&self, removes: &[H256]) -> Result<Vec<H256>> {
