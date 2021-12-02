@@ -2111,7 +2111,7 @@ fn main() {
 
                     let archive_file = snapshot_utils::bank_to_snapshot_archive(
                         ledger_path,
-                        &bank,
+                        bank.clone(),
                         Some(snapshot_version),
                         output_directory,
                         ArchiveFormat::TarZstd,
