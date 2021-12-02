@@ -15,9 +15,8 @@ use log::*;
 use rlp::{Decodable, Encodable};
 use rocksdb::{
     backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
-    ColumnFamily, ColumnFamilyDescriptor, Env, OptimisticTransactionDB, Options,
+    ColumnFamily, ColumnFamilyDescriptor, Env, IteratorMode, OptimisticTransactionDB, Options,
 };
-type DB = OptimisticTransactionDB;
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 
@@ -38,6 +37,7 @@ pub mod walker;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub use rocksdb; // avoid mess with dependencies for another crates
 
+type DB = OptimisticTransactionDB;
 type BincodeOpts = WithOtherEndian<DefaultOptions, BigEndian>;
 lazy_static! {
     static ref CODER: BincodeOpts = DefaultOptions::new().with_big_endian();
@@ -336,17 +336,21 @@ impl Storage {
         let val = tx.get_cf(slots_cf, &slot.to_be_bytes())?;
         let remove_root = if let Some(root) = val {
             let root = H256::from_slice(root.as_ref());
-            trie.db.decrease(&mut tx, root)?;
 
-            // Return root if it counter == 0
-            if trie.db.get_counter_in_tx(&mut tx, root)? <= 0 {
+            let counter = trie.db.get_counter_in_tx(&mut tx, root)?;
+            info!("Purge slot:{} root:{}, counter:{}", slot, root, counter);
+            trie.db.decrease(&mut tx, root)?;
+            // Return root if it counter was == 1
+            if counter <= 1 {
                 Some(root)
             } else {
                 None
             }
         } else {
+            info!("Purge slot:{} without root data.", slot);
             None
         };
+
         tx.delete_cf(slots_cf, &slot.to_be_bytes())?;
         tx.commit()?;
         Ok(remove_root)
@@ -371,6 +375,7 @@ impl Storage {
         let trie = self.rocksdb_trie_handle();
         let mut tx = self.db().transaction();
 
+        info!("Register slot:{} root:{}", slot, root);
         if tx.get_cf(slots_cf, &slot.to_be_bytes())?.is_some() {
             error!("Slot was already registered slot {}", slot);
             return Ok(());
@@ -378,6 +383,34 @@ impl Storage {
         tx.put_cf(slots_cf, &slot.to_be_bytes(), root.as_ref())?;
         trie.db.increase(&mut tx, root)?;
         Ok(tx.commit()?)
+    }
+
+    pub fn cleanup_slots(&self, keep_slot: u64, root: H256) -> Result<()> {
+        self.register_slot(keep_slot, root)?;
+
+        let slots_cf = self.cf::<SlotsRoots>();
+        let mut collect_slots = vec![];
+        let mut cleanup_roots = vec![];
+        for (k, _v) in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
+            let mut slot_arr = [0; 8];
+            slot_arr.copy_from_slice(&k[0..8]);
+            let slot = u64::from_be_bytes(slot_arr);
+            collect_slots.push(slot);
+        }
+
+        for slot in collect_slots {
+            if slot == keep_slot {
+                continue;
+            }
+            self.purge_slot(slot)?.map(|root| cleanup_roots.push(root));
+        }
+
+        let mut elems: Vec<_> = cleanup_roots;
+        while !elems.is_empty() {
+            elems = self.gc_try_cleanup_account_hashes(&elems)?
+        }
+
+        Ok(())
     }
 
     pub fn gc_try_cleanup_account_hashes(&self, removes: &[H256]) -> Result<Vec<H256>> {
