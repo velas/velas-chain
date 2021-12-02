@@ -166,7 +166,7 @@ impl SnapshotRequestHandler {
                 // Generate an accounts package
                 let mut snapshot_time = Measure::start("snapshot_time");
                 let r = snapshot_utils::snapshot_bank(
-                    &snapshot_root_bank,
+                    snapshot_root_bank.clone(),
                     status_cache_slot_deltas,
                     &self.accounts_package_sender,
                     &self.snapshot_config.snapshot_path,
