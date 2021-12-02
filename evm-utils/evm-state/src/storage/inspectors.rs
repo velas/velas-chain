@@ -187,6 +187,9 @@ pub mod streamer {
     impl<'a> TrieInspector for AccountsStreamer<'a> {
         fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> Result<bool> {
             for destination in self.destinations {
+                // if we process this node, then it's a root or a parrent that point to this node - increase reference
+                let trie = destination.rocksdb_trie_handle();
+                trie.db.increase_atomic(trie_key)?;
                 destination.db().put(trie_key, node.as_ref())?;
             }
             Ok(false)
@@ -232,6 +235,9 @@ pub mod streamer {
     impl<'a> TrieInspector for StoragesKeysStreamer<'a> {
         fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> Result<bool> {
             for destination in self.destinations {
+                // if we process this node, then it's a root or a parrent that point to this node - increase reference
+                let trie = destination.rocksdb_trie_handle();
+                trie.db.increase_atomic(trie_key)?;
                 destination.db().put(trie_key, node.as_ref())?;
             }
             Ok(true)

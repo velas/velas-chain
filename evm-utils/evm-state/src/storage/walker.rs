@@ -93,7 +93,7 @@ where
                 ];
                 let result = rayon::scope(|s| {
                     for (nibbl, (value, result)) in
-                        values.into_iter().zip(&mut values_result).enumerate()
+                        values.iter().zip(&mut values_result).enumerate()
                     {
                         let mut cloned_nibble = nibble.clone();
                         s.spawn(move |_| {
