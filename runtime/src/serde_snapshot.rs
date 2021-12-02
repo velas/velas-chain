@@ -334,8 +334,9 @@ where
 
     evm_state
         .kvs()
-        .register_slot(bank_fields.slot, bank_fields.evm_persist_feilds.last_root())
+        .cleanup_slots(bank_fields.slot, bank_fields.evm_persist_feilds.last_root())
         .map_err(|e| Error::custom(format!("Unable to register slot for evm root {}", e)))?;
+
     let bank = Bank::new_from_fields(
         evm_state,
         bank_rc,

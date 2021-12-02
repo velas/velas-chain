@@ -271,9 +271,8 @@ impl AbsRequestHandler {
 
             let evm_state = bank.evm_state.read().unwrap();
             let storage = evm_state.kvs();
-            let slot = bank.slot();
             let handle_evm_error = move || -> evm_state::storage::Result<()> {
-                if let Some(h) = storage.purge_slot(slot)? {
+                if let Some(h) = storage.purge_slot(pruned_slot)? {
                     let mut hashes = vec![h];
                     while !hashes.is_empty() {
                         hashes = storage.gc_try_cleanup_account_hashes(&hashes)?
@@ -282,7 +281,7 @@ impl AbsRequestHandler {
                 Ok(())
             };
             if let Err(e) = handle_evm_error() {
-                error!("Cannot purge evm_state slot: {}, error: {}", bank.slot(), e)
+                error!("Cannot purge evm_state slot: {}, error: {}", pruned_slot, e)
                 //TODO: Save last hashes list, to perform cleanup if it was recoverable error.
             }
         }

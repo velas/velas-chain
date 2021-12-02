@@ -215,10 +215,11 @@ impl BasicERPC for BasicErpcImpl {
         address: Hex<Address>,
         block: Option<BlockId>,
     ) -> Result<Hex<U256>, Error> {
+
+        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
             block: block.unwrap_or_default(),
         })?;
-        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         let account = evm_state
             .get_account_state_at(root, address.0)
             .unwrap_or_default();
@@ -232,10 +233,10 @@ impl BasicERPC for BasicErpcImpl {
         data: Hex<H256>,
         block: Option<BlockId>,
     ) -> Result<Hex<H256>, Error> {
+        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
             block: block.unwrap_or_default(),
         })?;
-        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         Ok(Hex(evm_state
             .get_storage_at(root, address.0, data.0)
             .unwrap_or_default()))
@@ -247,10 +248,10 @@ impl BasicERPC for BasicErpcImpl {
         address: Hex<Address>,
         block: Option<BlockId>,
     ) -> Result<Hex<U256>, Error> {
+        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
             block: block.unwrap_or_default(),
         })?;
-        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         let account = evm_state
             .get_account_state_at(root, address.0)
             .unwrap_or_default();
@@ -263,10 +264,10 @@ impl BasicERPC for BasicErpcImpl {
         address: Hex<Address>,
         block: Option<BlockId>,
     ) -> Result<Bytes, Error> {
+        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
             block: block.unwrap_or_default(),
         })?;
-        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
         let account = evm_state
             .get_account_state_at(root, address.0)
             .unwrap_or_default();
