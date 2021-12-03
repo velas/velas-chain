@@ -50,7 +50,7 @@ impl EvmStateRecorderService {
         let (state_root, state_updates) =
             evm_records_receiver.recv_timeout(Duration::from_secs(1))?;
         if !storage.check_root_exist(state_root) {
-            debug!(
+            warn!(
                 "Root not found in archive, skip writing root:{} , updates:{:?}",
                 state_root, state_updates
             );
