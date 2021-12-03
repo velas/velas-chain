@@ -7716,7 +7716,7 @@ dependencies = [
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/velas/triedb?branch=feat/gc-simple#c5e326e0311ce389582c0af33ca58ff513540889"
+source = "git+https://github.com/velas/triedb?branch=feat/gc-simple#c1c3d34bcff46f8792b72676ce1700118a0e2d15"
 dependencies = [
  "anyhow",
  "dashmap",
