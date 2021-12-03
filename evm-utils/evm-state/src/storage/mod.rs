@@ -237,7 +237,7 @@ impl Storage {
     pub fn flush_changes(&self, state_root: H256, state_updates: crate::ChangedState) -> H256 {
         let r = self.rocksdb_trie_handle();
 
-        let mut db_trie = TrieCollection::new(r);
+        let db_trie = TrieCollection::new(r);
 
         let mut storage_patches = triedb::Change::default();
         let mut accounts =
@@ -412,7 +412,7 @@ impl Storage {
 
         let mut cleaner = RootCleanup::new(&self, cleanup_roots);
         //TODO: This cleanup can be removed after debuggin memort leak in snapshot.
-        cleaner.cleanup_empty_coutners()?;
+        cleaner.cleanup_empty_counters()?;
         cleaner.cleanup()
     }
 
@@ -423,6 +423,20 @@ impl Storage {
         Ok(self
             .rocksdb_trie_handle()
             .gc_cleanup_layer(removes, account_extractor))
+    }
+    pub fn list_roots(&self) {
+        if !self.gc_enabled {
+            println!("Gc is not enabled");
+            return;
+        }
+        let slots_cf = self.cf::<SlotsRoots>();
+        for (k, v) in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
+            let mut slot_arr = [0; 8];
+            slot_arr.copy_from_slice(&k[0..8]);
+            let slot = u64::from_be_bytes(slot_arr);
+
+            println!("Found root for slot: {} => {:?}", slot, hex::encode(&v))
+        }
     }
 }
 
@@ -447,7 +461,7 @@ impl<'a> RootCleanup<'a> {
         }
     }
 
-    pub fn cleanup_empty_coutners(&self) -> Result<()> {
+    pub fn cleanup_empty_counters(&self) -> Result<()> {
         const REPORT_EACH_N: usize = 500;
         info!("Cleaning up empty counters");
         let mut num_counters = 0;
@@ -622,6 +636,8 @@ pub fn default_db_opts() -> Result<Options> {
 }
 
 pub mod cleaner {
+    use crate::storage::ReferenceCounter;
+
     use super::inspectors::memorizer;
     use std::borrow::Borrow;
     use std::convert::TryFrom;
@@ -701,6 +717,27 @@ pub mod cleaner {
                 let batch_size = batch.len();
                 db.write(batch)?;
                 info!("{} code keys was removed", batch_size);
+            }
+
+            {
+                let column_name = ReferenceCounter::COLUMN_NAME;
+                if let Some(counters_cf) = db.cf_handle(column_name) {
+                    let mut batch = rocksdb::WriteBatchWithTransaction::<true>::default();
+
+                    for (key, _data) in db.iterator_cf(counters_cf, rocksdb::IteratorMode::Start) {
+                        let bytes = <&[u8; 32]>::try_from(key.as_ref())?;
+                        let key = H256::from(bytes);
+                        if trie_nodes.trie_keys.contains(&key) {
+                            continue; // skip this key
+                        } else {
+                            batch.delete_cf(counters_cf, key);
+                        }
+                    }
+
+                    let batch_size = batch.len();
+                    db.write(batch)?;
+                    info!("{} counters was removed", batch_size);
+                }
             }
 
             Ok(())

@@ -81,6 +81,9 @@ impl EvmStateSubCommand for App<'_, '_> {
                                 .takes_value(true)
                                 .help(ROOT_ARG.help),
                         ),
+                )
+                .subcommand(
+                    SubCommand::with_name("list-roots").about("List roots in gc counter table"),
                 ),
         )
     }
@@ -136,6 +139,9 @@ pub fn process_evm_state_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 let cleaner = cleaner::Cleaner::new_with(db, trie_collector, accounts);
                 cleaner.cleanup()?;
             }
+        }
+        ("list-roots", Some(_)) => {
+            storage.list_roots();
         }
         ("copy", Some(matches)) => {
             let root = value_t_or_exit!(matches, ROOT_ARG.name, H256);
