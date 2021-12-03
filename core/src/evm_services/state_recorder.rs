@@ -51,8 +51,9 @@ impl EvmStateRecorderService {
             evm_records_receiver.recv_timeout(Duration::from_secs(1))?;
         if !storage.check_root_exist(state_root) {
             warn!(
-                "Root not found in archive, skip writing root:{} , updates:{:?}",
-                state_root, state_updates
+                "Root not found in archive, skip writing root:{} , updates_len:{:?}",
+                state_root,
+                state_updates.len()
             );
             return Ok(());
         }
