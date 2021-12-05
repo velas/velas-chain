@@ -63,11 +63,16 @@ impl Precompile for EcRecover {
             .expect("Serialization of static data should be determenistic and never fail.")
     }
 
+    #[cfg(not(feature = "pricefix"))]
     fn price(source: &[u8]) -> u64 {
-        // FIXME: Pricer::Const { price: 3000 }
-        // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.21 (204)
         let num_words = (source.len() / 32) as u64;
         60 + 12 * num_words
+    }
+
+    #[cfg(feature = "pricefix")]
+    fn price(_source: &[u8]) -> u64 {
+        // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.21 (204)
+        3000
     }
 
     fn implementation(source: &[u8], _cx: PrecompileContext) -> Result<Vec<u8>> {
@@ -139,10 +144,15 @@ impl Precompile for Ripemd160 {
             .expect("Serialization of static data should be determenistic and never fail.")
     }
 
+    #[cfg(not(feature = "pricefix"))]
     fn price(source: &[u8]) -> u64 {
-        // FIXME: linear_price(source, 600, 120, 32)
-        // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.22 (219)
         linear_price(source, 60, 12, 32)
+    }
+
+    #[cfg(feature = "pricefix")]
+    fn price(source: &[u8]) -> u64 {
+        // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.22 (219)
+        linear_price(source, 600, 102, 32)
     }
 
     fn implementation(source: &[u8], _cx: PrecompileContext) -> Result<Vec<u8>> {
@@ -566,7 +576,6 @@ impl Precompile for Blake2F {
     }
 
     fn price(source: &[u8]) -> u64 {
-        // FIXME: set correct value
         const GAS_PER_ROUND: u64 = 1;
 
         const FOUR: usize = std::mem::size_of::<u32>();
@@ -636,6 +645,13 @@ impl Precompile for Blake2F {
     }
 }
 
+#[cfg(feature = "pricefix")]
+fn linear_price(source: &[u8], base: u64, per_word: u64, word_len: usize) -> u64 {
+    let num_words = ((source.len() + word_len - 1) / word_len) as u64;
+    base + per_word * num_words
+}
+
+#[cfg(not(feature = "pricefix"))]
 fn linear_price(source: &[u8], base: u64, per_word: u64, word_len: usize) -> u64 {
     let num_words = (source.len() / word_len) as u64;
     base + per_word * num_words

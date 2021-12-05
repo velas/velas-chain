@@ -265,6 +265,11 @@ mod test {
             );
             let result = result.unwrap().unwrap();
             println!("{}", hex::encode(&result.1));
+
+            #[cfg(not(feature = "pricefix"))]
+            assert_eq!(result, (ExitSucceed::Returned, input.to_vec(), 15));
+
+            #[cfg(feature = "pricefix")]
             assert_eq!(result, (ExitSucceed::Returned, input.to_vec(), 18));
         })
     }
@@ -311,6 +316,19 @@ mod test {
             );
             let result = result.unwrap().unwrap();
             println!("{}", hex::encode(&result.1));
+
+            #[cfg(not(feature = "pricefix"))]
+            assert_eq!(
+                result,
+                (
+                    ExitSucceed::Returned,
+                    hex!("0000000000000000000000009c1185a5c5e9fc54612808977ee8f548b2258d31")
+                        .to_vec(),
+                    60
+                )
+            );
+
+            #[cfg(feature = "pricefix")]
             assert_eq!(
                 result,
                 (
@@ -344,6 +362,11 @@ mod test {
             );
             let result = result.unwrap().unwrap();
             println!("{}", hex::encode(&result.1));
+
+            #[cfg(not(feature = "pricefix"))]
+            assert_eq!(result, (ExitSucceed::Returned, vec![], 108));
+
+            #[cfg(feature = "pricefix")]
             assert_eq!(result, (ExitSucceed::Returned, vec![], 3000));
         });
 
@@ -358,6 +381,19 @@ mod test {
             );
             let result = result.unwrap().unwrap();
             println!("{}", hex::encode(&result.1));
+
+            #[cfg(not(feature = "pricefix"))]
+            assert_eq!(
+                result,
+                (
+                    ExitSucceed::Returned,
+                    hex!("000000000000000000000000c08b5542d177ac6686946920409741463a15dddb")
+                        .to_vec(),
+                    108
+                )
+            );
+
+            #[cfg(feature = "pricefix")]
             assert_eq!(
                 result,
                 (
