@@ -4329,13 +4329,12 @@ dependencies = [
 
 [[package]]
 name = "reed-solomon-erasure"
-version = "4.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2c731e17db5fc27f61467e1e92ffad63d0340bf27dda01ba1e7cfe350cec488"
+version = "4.0.2"
+source = "git+https://github.com/velas/reed-solomon-erasure.git?branch=avx-buildfix#4db2f51790ad8470944aaf3850fc054667e17e41"
 dependencies = [
  "cc",
  "libc",
- "smallvec 0.6.14",
+ "smallvec 1.6.1",
 ]
 
 [[package]]
