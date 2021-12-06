@@ -344,7 +344,10 @@ fn criterion_benchmark(c: &mut Criterion) {
                 }
                 slot += 1;
 
-                block.kvs().register_slot(slot, block.last_root()).unwrap();
+                block
+                    .kvs()
+                    .register_slot(slot, block.last_root(), false)
+                    .unwrap();
                 updated_state = block;
 
                 assert!(matches!(
@@ -420,7 +423,10 @@ fn criterion_benchmark(c: &mut Criterion) {
 
                 slot += 1;
 
-                block.kvs().register_slot(slot, block.last_root()).unwrap();
+                block
+                    .kvs()
+                    .register_slot(slot, block.last_root(), false)
+                    .unwrap();
                 updated_state = block;
 
                 assert!(matches!(
