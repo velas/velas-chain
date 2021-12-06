@@ -370,7 +370,7 @@ impl Storage {
 
     // Save info. slot -> root_hash
     // Increment root_hash references counter.
-    pub fn register_slot(&self, slot: u64, root: H256) -> Result<()> {
+    pub fn register_slot(&self, slot: u64, root: H256, reset_slot_root: bool) -> Result<()> {
         if !self.gc_enabled {
             return Ok(());
         }
@@ -379,13 +379,30 @@ impl Storage {
         let mut tx = self.db().transaction();
 
         info!("Register slot:{} root:{}", slot, root);
-        if tx.get_cf(slots_cf, &slot.to_be_bytes())?.is_some() {
-            error!("Slot was already registered slot {}", slot);
-            return Ok(());
-        }
+        let purge_root = if let Some(data) = tx.get_cf(slots_cf, &slot.to_be_bytes())? {
+            let purge_root = H256::from_slice(data.as_ref());
+            if !reset_slot_root {
+                error!(
+                    "Slot was already registered, but reset_slot_root wasn't set, slot: {}, previous: {}, new:{}",
+                    slot, purge_root, root
+                );
+                return Ok(());
+            }
+            Some(purge_root)
+        } else {
+            None
+        };
         tx.put_cf(slots_cf, &slot.to_be_bytes(), root.as_ref())?;
         trie.db.increase(&mut tx, root)?;
-        Ok(tx.commit()?)
+        tx.commit()?;
+
+        if let Some(purge_root) = purge_root {
+            let trie = self.rocksdb_trie_handle();
+            if trie.gc_unpin_root(purge_root) {
+                RootCleanup::new(&self, vec![purge_root]).cleanup()?;
+            }
+        }
+        Ok(())
     }
 
     pub fn cleanup_slots(&self, keep_slot: u64, root: H256) -> Result<()> {

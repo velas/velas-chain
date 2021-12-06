@@ -70,7 +70,10 @@ fn add_some_and_advance(state: &mut EvmBackend<Incomming>, params: &Params) {
         let committed = state.clone().commit_block(slot, Default::default());
         *state = committed.next_incomming(0);
 
-        state.kvs().register_slot(slot, state.last_root()).unwrap();
+        state
+            .kvs()
+            .register_slot(slot, state.last_root(), false)
+            .unwrap();
 
         if params.with_gc {
             if slot % params.squash_each == 0 {

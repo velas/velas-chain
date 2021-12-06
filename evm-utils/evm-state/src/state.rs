@@ -587,7 +587,11 @@ impl EvmState {
     }
     // Request Unique reference to make sure caller own evm-state instance.
     pub fn register_slot(&mut self, slot: u64) -> Result<(), anyhow::Error> {
-        Ok(self.kvs().register_slot(slot, self.last_root())?)
+        Ok(self.kvs().register_slot(slot, self.last_root(), false)?)
+    }
+    // Mark changed state in slot.
+    pub fn reregister_slot(&mut self, slot: u64) -> Result<(), anyhow::Error> {
+        Ok(self.kvs().register_slot(slot, self.last_root(), true)?)
     }
 
     pub fn load_from<P: AsRef<Path>>(

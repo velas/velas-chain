@@ -273,10 +273,9 @@ impl AbsRequestHandler {
             let storage = evm_state.kvs();
             let handle_evm_error = move || -> evm_state::storage::Result<()> {
                 if let Some(h) = storage.purge_slot(pruned_slot)? {
-                    let mut hashes = vec![h];
-                    while !hashes.is_empty() {
-                        hashes = storage.gc_try_cleanup_account_hashes(&hashes)?
-                    }
+                    // TODO: Rewrite it as long lived RootCleanupService.
+                    let mut cleaner = evm_state::storage::RootCleanup::new(storage, vec![h]);
+                    cleaner.cleanup()?
                 }
                 Ok(())
             };
