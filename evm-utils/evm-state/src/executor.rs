@@ -737,7 +737,10 @@ mod tests {
                 .next_incomming(0);
 
             let first_root = backend.last_root();
-            backend.kvs().register_slot(slot, first_root).unwrap();
+            backend
+                .kvs()
+                .register_slot(slot, first_root, false)
+                .unwrap();
 
             let mut executor = Executor::with_config(backend, Default::default(), evm_config);
             let contract_address = create_tx.address().unwrap();

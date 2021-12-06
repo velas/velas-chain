@@ -1090,11 +1090,15 @@ impl Bank {
 
         let spv_compatibility = parent.fix_spv_proofs_evm();
 
-        let evm_state = parent
+        let mut evm_state = parent
             .evm_state
             .read()
             .expect("parent evm state was poisoned")
             .new_from_parent(parent.clock().unix_timestamp, spv_compatibility);
+
+        evm_state
+            .register_slot(slot)
+            .expect("failed to mark slot reference");
 
         let mut new = Bank {
             rc,
@@ -2169,17 +2173,17 @@ impl Bank {
                 .evm_changed_list
                 .write()
                 .expect("change list was poisoned") = Some((new_root, changes));
+
+            self.evm_state
+                .write()
+                .expect("evm state was poisoned")
+                .reregister_slot(self.slot())
+                .expect("Failed to change slot");
             w_evm_blockhash_queue.insert_hash(hash);
             if self.fix_recent_blockhashes_sysvar_evm() {
                 self.update_recent_evm_blockhashes_locked(&w_evm_blockhash_queue);
             }
         }
-
-        self.evm_state
-            .write()
-            .expect("evm state was poisoned")
-            .register_slot(self.slot)
-            .expect("failed to mark slot reference");
     }
 
     pub fn rehash(&self) {
@@ -5417,10 +5421,8 @@ impl Drop for Bank {
                 let slot = self.slot();
                 let handle_evm_error = move || -> evm_state::storage::Result<()> {
                     if let Some(h) = storage.purge_slot(slot)? {
-                        let mut hashes = vec![h];
-                        while !hashes.is_empty() {
-                            hashes = storage.gc_try_cleanup_account_hashes(&hashes)?
-                        }
+                        let mut cleaner = evm_state::storage::RootCleanup::new(storage, vec![h]);
+                        cleaner.cleanup()?
                     }
                     Ok(())
                 };
