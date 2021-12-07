@@ -215,7 +215,7 @@ pub fn evm_transfer(
     let tx = evm::UnsignedTransaction {
         nonce,
         gas_price: 1.into(),
-        gas_limit: 30000.into(),
+        gas_limit: 21000.into(),
         action: evm::TransactionAction::Call(to),
         value,
         input: vec![],

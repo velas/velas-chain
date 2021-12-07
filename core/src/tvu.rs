@@ -426,6 +426,7 @@ pub mod tests {
             None,
             None,
             None,
+            None,
             Arc::new(VoteTracker::new(&bank)),
             retransmit_slots_sender,
             gossip_verified_vote_hash_receiver,
