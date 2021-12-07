@@ -578,7 +578,7 @@ mod transaction_roots {
             };
             let receipts = std::iter::from_fn(|| Some(receipt.clone())).take(129);
 
-            let mut trie_c = TrieCollection::new(MapWithCounterCached::default());
+            let trie_c = TrieCollection::new(MapWithCounterCached::default());
             let mut root = triedb::empty_trie_hash();
 
             for (i, receipt) in receipts.enumerate() {

@@ -480,7 +480,7 @@ impl<'a> RootCleanup<'a> {
 
     pub fn cleanup_empty_counters(&self) -> Result<()> {
         const REPORT_EACH_N: usize = 500;
-        info!("Cleaning up empty counters");
+        debug!("Cleaning up empty counters");
         let mut num_counters = 0;
         let reference_counter_cf = self.storage.cf::<ReferenceCounter>();
         for (k, v) in self
@@ -497,7 +497,7 @@ impl<'a> RootCleanup<'a> {
             }
         }
 
-        info!("Removed {} counters total.", num_counters);
+        debug!("Removed {} counters total.", num_counters);
         Ok(())
     }
 
@@ -510,7 +510,7 @@ impl<'a> RootCleanup<'a> {
             let elems: Vec<_> = self.elems.drain(0..num_elems).collect();
             let new_elems = self.storage.gc_try_cleanup_account_hashes(&elems)?;
 
-            info!(
+            debug!(
                 "Cleaning up {} elems, total elems in queue {}, adding elems {}",
                 num_elems,
                 total_elems,
