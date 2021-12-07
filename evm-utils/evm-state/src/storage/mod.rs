@@ -428,8 +428,6 @@ impl Storage {
         }
 
         let mut cleaner = RootCleanup::new(&self, cleanup_roots);
-        //TODO: This cleanup can be removed after debuggin memort leak in snapshot.
-        cleaner.cleanup_empty_counters()?;
         cleaner.cleanup()
     }
 
@@ -476,29 +474,6 @@ impl<'a> RootCleanup<'a> {
             elems: roots,
             storage,
         }
-    }
-
-    pub fn cleanup_empty_counters(&self) -> Result<()> {
-        const REPORT_EACH_N: usize = 500;
-        debug!("Cleaning up empty counters");
-        let mut num_counters = 0;
-        let reference_counter_cf = self.storage.cf::<ReferenceCounter>();
-        for (k, v) in self
-            .storage
-            .db
-            .iterator_cf(reference_counter_cf, IteratorMode::Start)
-        {
-            if &*v == &[0; 8] {
-                num_counters += 1;
-                self.storage.db.delete_cf(reference_counter_cf, &k)?;
-                if num_counters % REPORT_EACH_N == 0 {
-                    info!("Removed {} counters", num_counters);
-                }
-            }
-        }
-
-        debug!("Removed {} counters total.", num_counters);
-        Ok(())
     }
 
     pub fn cleanup(&mut self) -> Result<()> {

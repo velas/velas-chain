@@ -318,6 +318,7 @@ pub fn archive_snapshot_package(snapshot_package: &AccountsPackage) -> Result<()
         let snapshot_hardlink_dir = snapshot_tmpdir.join(slot.to_string());
 
         let evm_target = snapshot_hardlink_dir.join(EVM_STATE_DIR);
+        std::fs::create_dir_all(&evm_target)?;
         let mut evm_state_backup = Measure::start("evm-state-backup-ms");
         let backup_path = snapshot_package
             .evm_db

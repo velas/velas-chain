@@ -245,7 +245,7 @@ mod tests {
             .pop()
             .expect("no snapshots found in path");
         let snapshot_package = snapshot_utils::package_snapshot(
-            last_bank,
+            last_bank.clone(),
             &last_slot_snapshot_path,
             snapshot_path,
             last_bank.src.slot_deltas(&last_bank.src.roots()),
@@ -376,8 +376,9 @@ mod tests {
                 }
             };
 
+            bank_forks.insert(bank);
             snapshot_utils::snapshot_bank(
-                &bank,
+                bank_forks[slot].clone(),
                 vec![],
                 package_sender,
                 snapshot_path,
@@ -388,7 +389,6 @@ mod tests {
             )
             .unwrap();
 
-            bank_forks.insert(bank);
             if slot == saved_slot as u64 {
                 // Find the relevant snapshot storages
                 let snapshot_storage_files: HashSet<_> = bank_forks[slot]

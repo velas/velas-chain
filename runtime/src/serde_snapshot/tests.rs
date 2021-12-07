@@ -156,7 +156,7 @@ fn test_accounts_serialize_style() {
 
 #[cfg(test)]
 fn test_bank_serialize_style(evm_version: EvmStateVersion) {
-    solana_logger::setup();
+    solana_logger::setup_with_default("trace");
     let (genesis_config, _) = create_genesis_config(500);
     let bank0 = Arc::new(Bank::new(&genesis_config));
     let bank1 = Bank::new_from_parent(&bank0, &Pubkey::default(), 1);
@@ -196,6 +196,13 @@ fn test_bank_serialize_style(evm_version: EvmStateVersion) {
 
     let evm_state_dir = TempDir::new().unwrap();
     let evm_backup_state_path = TempDir::new().unwrap();
+    bank2
+        .evm_state
+        .read()
+        .unwrap()
+        .kvs()
+        .backup(Some(evm_backup_state_path.as_ref().to_path_buf()))
+        .unwrap();
     // Create a new set of directories for this bank's accounts
     let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
     let ref_sc = StatusCacheRc::default();
@@ -259,11 +266,6 @@ pub(crate) fn reconstruct_accounts_db_via_serialization(
 #[test]
 fn test_accounts_serialize_newer() {
     test_accounts_serialize_style()
-}
-
-#[test]
-fn test_bank_serialize_newer() {
-    test_bank_serialize_style(EvmStateVersion::V1_4_0)
 }
 
 #[test]

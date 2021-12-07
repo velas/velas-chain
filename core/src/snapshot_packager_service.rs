@@ -73,6 +73,9 @@ impl SnapshotPackagerService {
 mod tests {
     use super::*;
     use bincode::serialize_into;
+    use solana_ledger::genesis_utils::create_genesis_config;
+    use solana_ledger::genesis_utils::GenesisConfigInfo;
+    use solana_runtime::bank::Bank;
     use solana_runtime::{
         accounts_db::AccountStorageEntry,
         bank::BankSlotDelta,
@@ -154,6 +157,12 @@ mod tests {
             fs::hard_link(&snapshots_path, &link_path).unwrap();
         }
 
+        let GenesisConfigInfo {
+            genesis_config, ..
+        } = create_genesis_config(10_000);
+        // Create bank
+        let bank = Arc::new(Bank::new(&genesis_config));
+
         // Create a packageable snapshot
         let output_tar_path = snapshot_utils::get_snapshot_archive_path(
             snapshot_package_output_path,
@@ -173,6 +182,7 @@ mod tests {
             evm_state::empty_trie_hash(),
             evm_state::storage::Storage::create_temporary()
                 .expect("Unable to create temporary EVM state storage"),
+            bank,
         );
 
         // Make tarball from packageable snapshot

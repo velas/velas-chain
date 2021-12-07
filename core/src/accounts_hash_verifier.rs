@@ -219,6 +219,9 @@ mod tests {
     use super::*;
     use crate::cluster_info::make_accounts_hashes_message;
     use crate::contact_info::ContactInfo;
+    use solana_ledger::genesis_utils::create_genesis_config;
+    use solana_ledger::genesis_utils::GenesisConfigInfo;
+    use solana_runtime::bank::Bank;
     use solana_runtime::bank_forks::ArchiveFormat;
     use solana_runtime::snapshot_utils::SnapshotVersion;
     use solana_sdk::{
@@ -270,6 +273,10 @@ mod tests {
         let cluster_info = ClusterInfo::new_with_invalid_keypair(contact_info);
         let cluster_info = Arc::new(cluster_info);
 
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        // Create bank
+        let bank = Arc::new(Bank::new(&genesis_config));
+
         let trusted_validators = HashSet::new();
         let exit = Arc::new(AtomicBool::new(false));
         let mut hashes = vec![];
@@ -288,6 +295,7 @@ mod tests {
                 evm_root: evm_state::empty_trie_hash(),
                 evm_db: evm_state::storage::Storage::create_temporary()
                     .expect("Unable to create temporary EVM state storage"),
+                bank: bank.clone(),
             };
 
             AccountsHashVerifier::process_accounts_package(
