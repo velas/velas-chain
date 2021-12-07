@@ -705,7 +705,7 @@ impl Default for Incomming {
 }
 impl Default for EvmBackend<Incomming> {
     fn default() -> Self {
-        let kvs = KVS::create_temporary().expect("Unable to create temporary storage");
+        let kvs = KVS::create_temporary_gc().expect("Unable to create temporary storage");
         let state = Incomming::default();
         EvmBackend { state, kvs }
     }

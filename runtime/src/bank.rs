@@ -4432,6 +4432,11 @@ impl Bank {
             );
         }
         self.feature_builtins = Arc::new(builtins.feature_builtins);
+        self.evm_state
+            .write()
+            .expect("poisoned state")
+            .reregister_slot(self.slot())
+            .expect("cannot register slot");
 
         self.apply_feature_activations(true);
     }
@@ -8987,15 +8992,17 @@ pub(crate) mod tests {
 
         let mut rng = evm_state::rand::thread_rng();
         let sender = evm_state::SecretKey::new(&mut rng);
+        let sender_addr = sender.to_address();
+        let init_balance = 10000000.into();
         {
             // force changing evm_state account
             let mut evm_state = bank0.evm_state.write().unwrap();
             match &mut *evm_state {
                 evm_state::EvmState::Incomming(i) => {
                     i.set_initial(vec![(
-                        sender.to_address(),
+                        sender_addr,
                         evm_state::MemoryAccount {
-                            balance: 10000000.into(),
+                            balance: init_balance,
                             ..Default::default()
                         },
                     )]);
@@ -9008,6 +9015,13 @@ pub(crate) mod tests {
                 .unwrap();
         }
         let pubkey: evm_state::H160 = H256::random().into();
+        {
+            let evm_state = bank0.evm_state.read().unwrap();
+            assert_eq!(
+                evm_state.get_account_state(sender_addr).unwrap().balance,
+                init_balance
+            );
+        }
         info!("transfer 1 {} mint: {}", pubkey, mint_keypair.pubkey());
         bank0
             .transfer_evm(1_000, &mint_keypair, &sender, &pubkey)
@@ -9015,8 +9029,17 @@ pub(crate) mod tests {
 
         let bank0_state = bank0.hash_internal_state();
         let bank0 = Arc::new(bank0);
+
         // Checkpointing should result in a new state while freezing the parent
         let bank2 = Bank::new_from_parent(&bank0, &solana_sdk::pubkey::new_rand(), 1);
+
+        {
+            let evm_state = bank2.evm_state.read().unwrap();
+            assert_eq!(
+                evm_state.get_account_state(sender_addr).unwrap().balance,
+                init_balance - 21000 - 1000
+            );
+        }
         assert_ne!(bank0_state, bank2.hash_internal_state());
         // Checkpointing should modify the checkpoint's state when freezed
         assert_ne!(bank0_state, bank0.hash_internal_state());
@@ -9039,6 +9062,81 @@ pub(crate) mod tests {
         bank2.update_accounts_hash();
         assert!(bank2.verify_bank_hash());
         assert!(bank3.verify_bank_hash());
+        drop(bank0);
+        drop(bank2);
+        let evm_state = bank3.evm_state.read().unwrap();
+        assert_eq!(
+            evm_state.get_account_state(sender_addr).unwrap().balance,
+            init_balance - 21000 - 1000
+        );
+    }
+
+    #[test]
+    fn test_bank_transfer_evm_release_lock_panic() {
+        solana_logger::setup_with("trace");
+        let (genesis_config, mint_keypair) = create_genesis_config(2_000);
+        let bank0 = Bank::new(&genesis_config);
+
+        let mut rng = evm_state::rand::thread_rng();
+        let sender = evm_state::SecretKey::new(&mut rng);
+        let sender_addr = sender.to_address();
+        let init_balance = 10000000.into();
+        {
+            // force changing evm_state account
+            let mut evm_state = bank0.evm_state.write().unwrap();
+            match &mut *evm_state {
+                evm_state::EvmState::Incomming(i) => {
+                    i.set_initial(vec![(
+                        sender_addr,
+                        evm_state::MemoryAccount {
+                            balance: init_balance,
+                            ..Default::default()
+                        },
+                    )]);
+                }
+                _ => panic!("Not exepcetd state"),
+            }
+
+            evm_state
+                .try_commit(bank0.slot(), bank0.last_blockhash().0)
+                .unwrap();
+        }
+        let pubkey: evm_state::H160 = H256::random().into();
+        {
+            let evm_state = bank0.evm_state.read().unwrap();
+            assert_eq!(
+                evm_state.get_account_state(sender_addr).unwrap().balance,
+                init_balance
+            );
+        }
+        info!("transfer 1 {} mint: {}", pubkey, mint_keypair.pubkey());
+        bank0
+            .transfer_evm(1_000, &mint_keypair, &sender, &pubkey)
+            .unwrap();
+
+        let bank0 = Arc::new(bank0);
+
+        // Checkpointing should result in a new state while freezing the parent
+        let bank2 = Bank::new_from_parent(&bank0, &solana_sdk::pubkey::new_rand(), 1);
+
+        drop(bank0);
+        {
+            let evm_state = bank2.evm_state.read().unwrap();
+            assert_eq!(
+                evm_state.get_account_state(sender_addr).unwrap().balance,
+                init_balance - 21000 - 1000
+            );
+        }
+        let evm_state = bank2.evm_state.read().unwrap().clone();
+        {
+            assert_eq!(
+                evm_state.get_account_state(sender_addr).unwrap().balance,
+                init_balance - 21000 - 1000
+            );
+        }
+        drop(bank2);
+
+        std::panic::catch_unwind(|| evm_state.get_account_state(sender_addr)).unwrap_err();
     }
 
     #[test]
