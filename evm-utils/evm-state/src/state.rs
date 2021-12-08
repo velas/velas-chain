@@ -537,7 +537,7 @@ impl EvmState {
             fs::create_dir(&evm_state)?;
         }
 
-        Self::load_from(evm_state, Incomming::default(), false)
+        Self::load_from(evm_state, Incomming::default(), true)
     }
 
     pub fn new_from_genesis(
@@ -564,7 +564,7 @@ impl EvmState {
         Self::load_from(
             evm_state,
             Incomming::new(1, root_hash, H256::zero(), timestamp, version),
-            false,
+            true, // enable gc in newest version of genesis
         )
     }
 
