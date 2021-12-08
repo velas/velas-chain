@@ -14,24 +14,76 @@ use evm_rpc::{
     BlockId, BlockRelId, Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt,
     RPCTopicFilter, RPCTransaction,
 };
-use evm_state::{AccountProvider, Address, Gas, LogFilter, TransactionAction, H256, U256};
+use evm_state::{
+    AccountProvider, AccountState, Address, Gas, LogFilter, TransactionAction, H160, H256, U256,
+};
 use snafu::ResultExt;
 use solana_runtime::bank::Bank;
 use std::cell::RefCell;
+use std::sync::Arc;
 const GAS_PRICE: u64 = 3;
 
-fn block_to_state_root(block: Option<BlockId>, meta: &JsonRpcRequestProcessor) -> Option<H256> {
+pub struct StateRootWithBank {
+    pub state_root: Option<H256>,
+    pub bank: Option<Arc<Bank>>,
+}
+
+impl StateRootWithBank {
+    pub fn get_account_state_at(
+        &self,
+        meta: &JsonRpcRequestProcessor,
+        address: H160,
+    ) -> Result<Option<AccountState>, Error> {
+        assert!(self.state_root.is_some());
+
+        let root = *self.state_root.as_ref().unwrap();
+        if let Some(bank) = &self.bank {
+            let evm = bank.evm_state.read().unwrap();
+
+            assert!(evm.last_root() == root, "we store bank with invalid root");
+            return Ok(evm.get_account_state(address));
+        }
+        let archive_evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
+        Ok(archive_evm_state.get_account_state_at(root, address))
+    }
+
+    pub fn get_storage_at(
+        &self,
+        meta: &JsonRpcRequestProcessor,
+        address: H160,
+        idx: H256,
+    ) -> Result<Option<H256>, Error> {
+        assert!(self.state_root.is_some());
+        let root = *self.state_root.as_ref().unwrap();
+        if let Some(bank) = &self.bank {
+            let evm = bank.evm_state.read().unwrap();
+
+            assert!(evm.last_root() == root, "we store bank with invalid root");
+            return Ok(evm.get_storage(address, idx));
+        }
+        let archive_evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
+        Ok(archive_evm_state.get_storage_at(root, address, idx))
+    }
+}
+
+fn block_to_state_root(
+    block: Option<BlockId>,
+    meta: &JsonRpcRequestProcessor,
+) -> StateRootWithBank {
     let block_id = block.unwrap_or_default();
 
     let mut found_block_hash = None;
 
     let block_num = match block_id {
         BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
-            meta.get_last_available_evm_block().unwrap_or_else(|| {
-                let bank = meta.bank(Some(CommitmentConfig::processed()));
-                let evm = bank.evm_state.read().unwrap();
-                evm.block_number().saturating_sub(1)
-            })
+            let bank = meta.bank(Some(CommitmentConfig::processed()));
+            let evm = bank.evm_state.read().unwrap();
+            let last_root = evm.last_root();
+            drop(evm);
+            return StateRootWithBank {
+                state_root: Some(last_root),
+                bank: Some(bank),
+            };
         }
         BlockId::RelativeId(BlockRelId::Earliest) | BlockId::Num(Hex(0)) => {
             meta.get_frist_available_evm_block()
@@ -39,23 +91,29 @@ fn block_to_state_root(block: Option<BlockId>, meta: &JsonRpcRequestProcessor) -
         BlockId::Num(num) => num.0,
         BlockId::BlockHash { block_hash } => {
             found_block_hash = Some(block_hash.0);
-            meta.get_evm_block_id_by_hash(block_hash.0)?
+            if let Some(num) = meta.get_evm_block_id_by_hash(block_hash.0) {
+                num
+            } else {
+                return StateRootWithBank {
+                    state_root: None,
+                    bank: None,
+                };
+            }
         }
     };
-    meta.get_evm_block_by_id(block_num) // TODO: don't request full block.
-        .filter(|(b, _)| {
-            // if requested specific block hash, check that block with this hash is not in reorged fork
-            found_block_hash
-                .map(|block_hash| b.header.hash() == block_hash)
-                .unwrap_or(true)
-        })
-        .map(|(b, _)| b.header.state_root)
-        .filter(|state_root| {
-            meta.evm_state_archive_storage()
-                .as_ref()
-                .map(|s| s.check_root_exist(*state_root))
-                == Some(true)
-        })
+    StateRootWithBank {
+        state_root: meta
+            .get_evm_block_by_id(block_num) // TODO: don't request full block.
+            .filter(|(b, _)| {
+                // if requested specific block hash, check that block with this hash is not in reorged fork
+                found_block_hash
+                    .map(|block_hash| b.header.hash() == block_hash)
+                    .unwrap_or(true)
+            })
+            .map(|(b, _)| b.header.state_root),
+
+        bank: None,
+    }
 }
 
 fn block_parse_confirmed_num(
@@ -215,13 +273,9 @@ impl BasicERPC for BasicErpcImpl {
         address: Hex<Address>,
         block: Option<BlockId>,
     ) -> Result<Hex<U256>, Error> {
-
-        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
-        let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
-            block: block.unwrap_or_default(),
-        })?;
-        let account = evm_state
-            .get_account_state_at(root, address.0)
+        let state = block_to_state_root(block, &meta);
+        let account = state
+            .get_account_state_at(&meta, address.0)?
             .unwrap_or_default();
         Ok(Hex(account.balance))
     }
@@ -233,13 +287,11 @@ impl BasicERPC for BasicErpcImpl {
         data: Hex<H256>,
         block: Option<BlockId>,
     ) -> Result<Hex<H256>, Error> {
-        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
-        let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
-            block: block.unwrap_or_default(),
-        })?;
-        Ok(Hex(evm_state
-            .get_storage_at(root, address.0, data.0)
-            .unwrap_or_default()))
+        let state = block_to_state_root(block, &meta);
+        let storage = state
+            .get_storage_at(&meta, address.0, data.0)?
+            .unwrap_or_default();
+        Ok(Hex(storage))
     }
 
     fn transaction_count(
@@ -248,12 +300,9 @@ impl BasicERPC for BasicErpcImpl {
         address: Hex<Address>,
         block: Option<BlockId>,
     ) -> Result<Hex<U256>, Error> {
-        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
-        let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
-            block: block.unwrap_or_default(),
-        })?;
-        let account = evm_state
-            .get_account_state_at(root, address.0)
+        let state = block_to_state_root(block, &meta);
+        let account = state
+            .get_account_state_at(&meta, address.0)?
             .unwrap_or_default();
         Ok(Hex(account.nonce))
     }
@@ -264,12 +313,9 @@ impl BasicERPC for BasicErpcImpl {
         address: Hex<Address>,
         block: Option<BlockId>,
     ) -> Result<Bytes, Error> {
-        let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
-        let root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
-            block: block.unwrap_or_default(),
-        })?;
-        let account = evm_state
-            .get_account_state_at(root, address.0)
+        let state = block_to_state_root(block, &meta);
+        let account = state
+            .get_account_state_at(&meta, address.0)?
             .unwrap_or_default();
         Ok(Bytes(account.code.into()))
     }
@@ -403,11 +449,15 @@ impl BasicERPC for BasicErpcImpl {
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| into_native_error(e, false))?;
-        let saved_root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
-            block: block.unwrap_or_default(),
-        })?;
+        let saved_state = block_to_state_root(block, &meta);
 
-        let result = call(meta, tx, Some(saved_root), meta_keys)?;
+        if saved_state.state_root.is_none() {
+            return Err(Error::BlockNotFound {
+                block: block.unwrap_or_default(),
+            });
+        }
+
+        let result = call(meta, tx, saved_state, meta_keys)?;
         Ok(Bytes(result.exit_data))
     }
 
@@ -438,9 +488,12 @@ impl BasicERPC for BasicErpcImpl {
         tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
         block: Option<BlockId>,
     ) -> Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
-        let saved_root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
-            block: block.unwrap_or_default(),
-        })?;
+        let saved_state = block_to_state_root(block, &meta);
+        if saved_state.state_root.is_none() {
+            return Err(Error::BlockNotFound {
+                block: block.unwrap_or_default(),
+            });
+        }
         let mut txs = Vec::new();
         let mut txs_meta = Vec::new();
 
@@ -459,7 +512,7 @@ impl BasicERPC for BasicErpcImpl {
             txs_meta.push(meta);
         }
 
-        let traces = call_many(meta, &txs, Some(saved_root))?.into_iter();
+        let traces = call_many(meta, &txs, saved_state)?.into_iter();
 
         let mut result = Vec::new();
         for (output, meta_tx) in traces.zip(txs_meta) {
@@ -552,10 +605,13 @@ impl BasicERPC for BasicErpcImpl {
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| into_native_error(e, false))?;
-        let saved_root = block_to_state_root(block, &meta).ok_or(Error::BlockNotFound {
-            block: block.unwrap_or_default(),
-        })?;
-        let result = call(meta, tx, Some(saved_root), meta_keys)?;
+        let saved_state = block_to_state_root(block, &meta);
+        if saved_state.state_root.is_none() {
+            return Err(Error::BlockNotFound {
+                block: block.unwrap_or_default(),
+            });
+        }
+        let result = call(meta, tx, saved_state, meta_keys)?;
         Ok(Hex(result.used_gas.into()))
     }
 
@@ -615,10 +671,10 @@ struct TxOutput {
 fn call(
     meta: JsonRpcRequestProcessor,
     tx: RPCTransaction,
-    saved_root: Option<H256>,
+    saved_state: StateRootWithBank,
     meta_keys: Vec<solana_sdk::pubkey::Pubkey>,
 ) -> Result<TxOutput, Error> {
-    let outputs = call_many(meta, &[(tx, meta_keys)], saved_root)?;
+    let outputs = call_many(meta, &[(tx, meta_keys)], saved_state)?;
 
     let TxOutput {
         exit_reason,
@@ -643,17 +699,28 @@ fn call(
 fn call_many(
     meta: JsonRpcRequestProcessor,
     txs: &[(RPCTransaction, Vec<solana_sdk::pubkey::Pubkey>)],
-    saved_root: Option<H256>,
+    saved_state: StateRootWithBank,
 ) -> Result<Vec<TxOutput>, Error> {
-    let bank = meta.bank(Some(CommitmentConfig::processed()));
-    let evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
+    // if we already found bank with some root, or we just cannot find state_root - use latest.
+    let use_latest_state = saved_state.bank.is_some() || saved_state.state_root.is_none();
+    let bank = saved_state
+        .bank
+        .unwrap_or_else(|| meta.bank(Some(CommitmentConfig::processed())));
 
-    let evm_state = if let Some(root) = saved_root {
-        evm_state
+    let evm_state = if use_latest_state {
+        // keep current bank to allow simulating on latest state without archive
+        match bank.evm_state.read().unwrap().clone() {
+            evm_state::EvmState::Incomming(i) => i,
+            evm_state::EvmState::Committed(c) => {
+                c.next_incomming(bank.clock().unix_timestamp as u64)
+            }
+        }
+    } else {
+        let root = saved_state.state_root.unwrap();
+        meta.evm_state_archive()
+            .ok_or(Error::ArchiveNotSupported)?
             .new_incomming_for_root(root)
             .ok_or(Error::StateRootNotFound { state: root })?
-    } else {
-        evm_state
     };
 
     let estimate_config = evm_state::EvmConfig {
