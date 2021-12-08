@@ -716,8 +716,10 @@ pub mod cleaner {
                     let mut batch = rocksdb::WriteBatchWithTransaction::<true>::default();
 
                     for (key, _data) in db.iterator_cf(counters_cf, rocksdb::IteratorMode::Start) {
-                        let bytes = <&[u8; 32]>::try_from(key.as_ref())?;
-                        let key = H256::from(bytes);
+                        let key =
+                            <H256 as super::inspectors::encoding::TryFromSlice>::try_from_slice(
+                                &key,
+                            )?;
                         if trie_nodes.trie_keys.contains(&key) {
                             continue; // skip this key
                         } else {
