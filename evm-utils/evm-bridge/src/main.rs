@@ -243,7 +243,7 @@ impl EvmBridge {
             });
         }
 
-        let tx = PooledTransaction::new(tx, meta_keys, Some(sender))
+        let tx = PooledTransaction::new(tx, meta_keys, sender)
             .map_err(|source| evm_rpc::Error::EvmStateError { source })?;
         let tx = match self.pool.import(tx) {
             // tx was already processed on this bridge, return hash.
