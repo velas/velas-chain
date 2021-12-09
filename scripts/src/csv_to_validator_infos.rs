@@ -10,6 +10,7 @@ use std::process;
 
 #[derive(Debug, Deserialize)]
 struct ValidatorRecord {
+    #[allow(dead_code)] // this is part of deserialize schema, but it is not used in output
     id: u64,
     tokens: f64,
     adjective: String,

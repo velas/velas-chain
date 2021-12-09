@@ -42,9 +42,9 @@ jobs:
       - name: install dependencies
         run: |
           apt-get update
-          apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang      
+          apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang jq zsh wget
+          wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          chmod a+x /usr/local/bin/yq
       - name: Run cargo test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
+        run: scripts/cargo-test-group.sh default
 

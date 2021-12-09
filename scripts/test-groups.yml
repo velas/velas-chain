@@ -1,7 +1,24 @@
 evm: 
   items: 
     - ".*evm.*"
-  
+
+default:
+  items: 
+    - ".*evm.*"
+    - "core"
+    - "runtime"
+    - "genesis"
+    - "install"
+    - "ledger"
+    - "net"
+    - "ledger-tool"
+    - "account.*"
+    - "bank.*"
+    - "cli.*"
+    - "program.*"
+    
+
+
 long-tests:
     items:
       - "core"
