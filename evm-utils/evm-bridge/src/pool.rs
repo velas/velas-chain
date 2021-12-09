@@ -261,7 +261,7 @@ impl PooledTransaction {
     pub fn new(
         transaction: evm::Transaction,
         meta_keys: HashSet<Pubkey>,
-        hash_sender: Option<mpsc::Sender<EvmResult<Hex<H256>>>>,
+        hash_sender: mpsc::Sender<EvmResult<Hex<H256>>>,
     ) -> Result<Self, evm_state::error::Error> {
         let hash = transaction.tx_id_hash();
         let sender = transaction.caller()?;
@@ -271,7 +271,23 @@ impl PooledTransaction {
             sender,
             hash,
             meta_keys,
-            hash_sender,
+            hash_sender: Some(hash_sender),
+        })
+    }
+
+    pub fn reimported(
+        transaction: evm::Transaction,
+        meta_keys: HashSet<Pubkey>,
+    ) -> Result<Self, evm_state::error::Error> {
+        let hash = transaction.tx_id_hash();
+        let sender = transaction.caller()?;
+
+        Ok(Self {
+            inner: transaction,
+            sender,
+            hash,
+            meta_keys,
+            hash_sender: None,
         })
     }
 
@@ -478,7 +494,7 @@ pub async fn worker_signature_checker(bridge: Arc<EvmBridge>) {
                             Some(cached) => {
                                 warn!("Redeploying transaction {}", &hash);
                                 if let Ok(pooled_tx) =
-                                    PooledTransaction::new(cached.evm_tx, cached.meta_keys, None)
+                                    PooledTransaction::reimported(cached.evm_tx, cached.meta_keys)
                                 {
                                     match bridge.pool.import(pooled_tx) {
                                         Ok(tx) => {
