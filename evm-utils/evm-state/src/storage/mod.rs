@@ -26,8 +26,8 @@ use crate::{
 };
 use triedb::{
     empty_trie_hash,
-    gc::{DbCounter, TrieCollection},
-    rocksdb::{RocksDatabaseHandle, RocksHandle, RocksMemoryTrieMut},
+    gc::{DatabaseTrieMut, DbCounter, TrieCollection},
+    rocksdb::{RocksDatabaseHandle, RocksHandle},
     FixedSecureTrieMut,
 };
 
@@ -202,12 +202,10 @@ impl Storage {
     pub fn typed_for<K: AsRef<[u8]>, V: Encodable + Decodable>(
         &self,
         root: H256,
-    ) -> FixedSecureTrieMut<RocksMemoryTrieMut<&DB>, K, V> {
-        if let Some(cf) = self.counters_cf() {
-            FixedSecureTrieMut::new(RocksMemoryTrieMut::new(self.db.as_ref(), root, cf))
-        } else {
-            FixedSecureTrieMut::new(RocksMemoryTrieMut::without_counter(self.db.as_ref(), root))
-        }
+    ) -> FixedSecureTrieMut<DatabaseTrieMut<RocksHandle<&DB>>, K, V> {
+        let handle = self.rocksdb_trie_handle();
+
+        FixedSecureTrieMut::new(DatabaseTrieMut::trie_for(handle, root))
     }
 
     pub fn rocksdb_trie_handle(&self) -> RocksHandle<&DB> {
@@ -286,8 +284,10 @@ impl Storage {
         }
 
         let mut accounts_patch = accounts.to_trie().into_patch();
-        accounts_patch.change.merge(&storage_patches);
-        db_trie.apply_increase(accounts_patch, account_extractor)
+        accounts_patch.change.merge_child(&storage_patches);
+        db_trie
+            .apply_increase(accounts_patch, account_extractor)
+            .leak_root()
     }
 
     pub fn merge_from_db(&self, other_db: &Self) -> Result<()> {
