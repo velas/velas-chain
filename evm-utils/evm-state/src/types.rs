@@ -483,7 +483,7 @@ mod transaction_roots {
     use ethbloom::Bloom;
     use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
     use triedb::gc::{MapWithCounterCached, TrieCollection};
-    use triedb::{FixedTrieMut, TrieMut};
+    use triedb::FixedTrieMut;
 
     #[derive(Clone, Debug)]
     pub struct EthereumReceipt {
@@ -530,42 +530,47 @@ mod transaction_roots {
     }
 
     pub fn transactions_root<'a>(receipts: impl Iterator<Item = &'a TransactionReceipt>) -> H256 {
+        fn no_childs(_: &[u8]) -> Vec<H256> {
+            vec![]
+        }
         let trie_c = TrieCollection::new(MapWithCounterCached::default());
 
-        let mut root = triedb::empty_trie_hash();
+        let mut root = trie_c.empty_guard(no_childs);
         for (i, receipt) in receipts.enumerate() {
-            let mut trie = FixedTrieMut::<_, U256, _>::new(trie_c.trie_for(root));
+            let mut trie = FixedTrieMut::<_, U256, _>::new(trie_c.trie_for(root.root));
             let transaction_in_receipt = &receipt.transaction;
             trie.insert(&U256::from(i), transaction_in_receipt);
             let trie = trie.to_trie();
-            root = trie.root();
+
             let patch = trie.into_patch();
-            trie_c.apply_increase(patch, |_| vec![]);
+            root = trie_c.apply_increase(patch, no_childs);
         }
-        root
+        root.root
     }
 
     pub fn receipts_root<'a>(receipts: impl Iterator<Item = &'a TransactionReceipt>) -> H256 {
-        let trie_c = TrieCollection::new(MapWithCounterCached::default());
-        let mut root = triedb::empty_trie_hash();
+        fn no_childs(_: &[u8]) -> Vec<H256> {
+            vec![]
+        }
+        let database = MapWithCounterCached::default();
+        let trie_c = TrieCollection::new(database);
+        let mut root = trie_c.empty_guard(no_childs);
         for (i, receipt) in receipts.enumerate() {
-            let mut trie = FixedTrieMut::<_, U256, EthereumReceipt>::new(trie_c.trie_for(root));
+            let mut trie =
+                FixedTrieMut::<_, U256, EthereumReceipt>::new(trie_c.trie_for(root.root));
             let ethereum_receipt: EthereumReceipt = receipt.into();
             trie.insert(&U256::from(i), &ethereum_receipt);
 
             let trie = trie.to_trie();
-            root = trie.root();
             let patch = trie.into_patch();
-            trie_c.apply_increase(patch, |_| vec![]);
+            root = trie_c.apply_increase(patch, no_childs);
         }
 
-        root
+        root.root
     }
 
     #[cfg(test)]
     mod test {
-        use triedb::TrieMut;
-
         use super::*;
 
         #[test]
@@ -578,19 +583,23 @@ mod transaction_roots {
             };
             let receipts = std::iter::from_fn(|| Some(receipt.clone())).take(129);
 
-            let trie_c = TrieCollection::new(MapWithCounterCached::default());
-            let mut root = triedb::empty_trie_hash();
+            fn no_childs(_: &[u8]) -> Vec<H256> {
+                vec![]
+            }
+            let database = MapWithCounterCached::default();
+            let trie_c = TrieCollection::new(database);
+            let mut root = trie_c.empty_guard(no_childs);
 
             for (i, receipt) in receipts.enumerate() {
-                let mut trie = FixedTrieMut::<_, U256, EthereumReceipt>::new(trie_c.trie_for(root));
+                let mut trie =
+                    FixedTrieMut::<_, U256, EthereumReceipt>::new(trie_c.trie_for(root.root));
                 println!("receipt: {:?}", i);
                 // let ethereum_receipt: EthereumReceipt = receipt.into();
                 trie.insert(&U256::from(i), &receipt);
 
                 let trie = trie.to_trie();
-                root = trie.root();
                 let patch = trie.into_patch();
-                trie_c.apply_increase(patch, |_| vec![]);
+                root = trie_c.apply_increase(patch, no_childs);
             }
         }
     }
