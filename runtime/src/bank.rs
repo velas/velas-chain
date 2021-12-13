@@ -2142,6 +2142,7 @@ impl Bank {
     pub fn commit_evm(&self) {
         let apply_start = std::time::Instant::now();
 
+        let old_root = self.evm_state.read().unwrap().last_root();
         let hash = self
             .evm_state
             .write()
@@ -2153,7 +2154,6 @@ impl Bank {
             apply_start.elapsed().as_micros()
         );
 
-        let new_root = self.evm_state.read().unwrap().last_root();
         debug!(
             "Set evm state root to {:?} at block {}",
             self.evm_state.read().unwrap().last_root(),
@@ -2169,7 +2169,7 @@ impl Bank {
             *self
                 .evm_changed_list
                 .write()
-                .expect("change list was poisoned") = Some((new_root, changes));
+                .expect("change list was poisoned") = Some((old_root, changes));
 
             self.evm_state
                 .write()

@@ -20,6 +20,10 @@ pub type LoadResult = result::Result<
     BlockstoreProcessorError,
 >;
 
+use evm_state::{ChangedState, H256};
+
+pub type EvmStateRecorderSender = crossbeam_channel::Sender<(H256, ChangedState)>;
+
 fn to_loadresult(
     brp: BlockstoreProcessorResult,
     snapshot_hash: Option<(Slot, Hash)>,
@@ -40,6 +44,7 @@ pub fn load(
     snapshot_config: Option<&SnapshotConfig>,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
+    evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     verify_evm_state: bool,
     evm_archive: Option<evm_state::Storage>,
@@ -105,6 +110,7 @@ pub fn load(
                         &process_options,
                         &VerifyRecyclers::default(),
                         transaction_status_sender,
+                        evm_state_recorder_sender,
                         cache_block_meta_sender,
                     ),
                     Some(deserialized_snapshot_hash),
