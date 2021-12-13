@@ -42,6 +42,7 @@ pub fn load(
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     verify_evm_state: bool,
+    evm_archive: Option<evm_state::Storage>,
 ) -> LoadResult {
     if let Some(snapshot_config) = snapshot_config.as_ref() {
         info!(
@@ -77,6 +78,7 @@ pub fn load(
                     process_options.account_indexes.clone(),
                     process_options.accounts_db_caching_enabled,
                     verify_evm_state,
+                    evm_archive,
                 )
                 .expect("Load from snapshot failed");
                 if let Some(shrink_paths) = shrink_paths {

@@ -225,6 +225,7 @@ fn test_bank_serialize_style(evm_version: EvmStateVersion) {
         false,
         evm_backup_state_path.path(),
         true,
+        None,
     )
     .unwrap();
     dbank.src = ref_sc;
