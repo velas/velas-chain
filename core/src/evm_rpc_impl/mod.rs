@@ -9,7 +9,7 @@ use evm_rpc::error::EvmStateError;
 use evm_rpc::{
     basic::BasicERPC,
     chain_mock::ChainMockERPC,
-    error::{into_native_error, Error},
+    error::{into_native_error, BlockNotFound, Error},
     trace::TraceMeta,
     BlockId, BlockRelId, Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt,
     RPCTopicFilter, RPCTransaction,
@@ -17,6 +17,7 @@ use evm_rpc::{
 use evm_state::{
     AccountProvider, AccountState, Address, Gas, LogFilter, TransactionAction, H160, H256, U256,
 };
+use snafu::ensure;
 use snafu::ResultExt;
 use solana_runtime::bank::Bank;
 use std::cell::RefCell;
@@ -274,6 +275,13 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<BlockId>,
     ) -> Result<Hex<U256>, Error> {
         let state = block_to_state_root(block, &meta);
+        ensure!(
+            state.state_root.is_some(),
+            BlockNotFound {
+                block: block.unwrap_or_default()
+            }
+        );
+
         let account = state
             .get_account_state_at(&meta, address.0)?
             .unwrap_or_default();
@@ -288,6 +296,12 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<BlockId>,
     ) -> Result<Hex<H256>, Error> {
         let state = block_to_state_root(block, &meta);
+        ensure!(
+            state.state_root.is_some(),
+            BlockNotFound {
+                block: block.unwrap_or_default()
+            }
+        );
         let storage = state
             .get_storage_at(&meta, address.0, data.0)?
             .unwrap_or_default();
@@ -301,6 +315,12 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<BlockId>,
     ) -> Result<Hex<U256>, Error> {
         let state = block_to_state_root(block, &meta);
+        ensure!(
+            state.state_root.is_some(),
+            BlockNotFound {
+                block: block.unwrap_or_default()
+            }
+        );
         let account = state
             .get_account_state_at(&meta, address.0)?
             .unwrap_or_default();
@@ -314,6 +334,12 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<BlockId>,
     ) -> Result<Bytes, Error> {
         let state = block_to_state_root(block, &meta);
+        ensure!(
+            state.state_root.is_some(),
+            BlockNotFound {
+                block: block.unwrap_or_default()
+            }
+        );
         let account = state
             .get_account_state_at(&meta, address.0)?
             .unwrap_or_default();

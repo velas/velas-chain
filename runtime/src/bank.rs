@@ -2144,6 +2144,7 @@ impl Bank {
         let last_root = self.evm_state.read().unwrap().last_root();
         let mut measure = Measure::start("commit-evm-block-ms");
 
+        let old_root = self.evm_state.read().unwrap().last_root();
         let hash = self
             .evm_state
             .write()
@@ -2156,7 +2157,6 @@ impl Bank {
 
         inc_new_counter_info!("commit-evm-block-ms", measure.as_ms() as usize);
 
-        let new_root = self.evm_state.read().unwrap().last_root();
         debug!(
             "Set evm state root to {:?} at block {}",
             self.evm_state.read().unwrap().last_root(),
@@ -2172,7 +2172,7 @@ impl Bank {
             *self
                 .evm_changed_list
                 .write()
-                .expect("change list was poisoned") = Some((new_root, changes));
+                .expect("change list was poisoned") = Some((old_root, changes));
 
             self.evm_state
                 .write()

@@ -1,4 +1,5 @@
 use crate::{
+    bank_forks_utils::EvmStateRecorderSender,
     block_error::BlockError,
     blockstore::Blockstore,
     blockstore_db::BlockstoreError,
@@ -418,6 +419,7 @@ pub fn process_blockstore(
         &opts,
         &recyclers,
         None,
+        None,
         cache_block_meta_sender,
     )
 }
@@ -429,6 +431,7 @@ pub(crate) fn process_blockstore_from_root(
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
     transaction_status_sender: Option<&TransactionStatusSender>,
+    evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
 ) -> BlockstoreProcessorResult {
     do_process_blockstore_from_root(
@@ -437,6 +440,7 @@ pub(crate) fn process_blockstore_from_root(
         opts,
         recyclers,
         transaction_status_sender,
+        evm_state_recorder_sender,
         cache_block_meta_sender,
     )
 }
@@ -447,6 +451,7 @@ fn do_process_blockstore_from_root(
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
     transaction_status_sender: Option<&TransactionStatusSender>,
+    evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
 ) -> BlockstoreProcessorResult {
     info!("processing ledger from slot {}...", bank.slot());
@@ -510,6 +515,7 @@ fn do_process_blockstore_from_root(
                 opts,
                 recyclers,
                 transaction_status_sender,
+                evm_state_recorder_sender,
                 cache_block_meta_sender,
                 &mut timing,
             )?;
@@ -898,6 +904,7 @@ fn load_frozen_forks(
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
     transaction_status_sender: Option<&TransactionStatusSender>,
+    evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     timing: &mut ExecuteTimings,
 ) -> result::Result<Vec<Arc<Bank>>, BlockstoreProcessorError> {
@@ -956,6 +963,7 @@ fn load_frozen_forks(
                 recyclers,
                 &mut progress,
                 transaction_status_sender,
+                evm_state_recorder_sender,
                 cache_block_meta_sender,
                 None,
                 timing,
@@ -1131,6 +1139,7 @@ fn process_single_slot(
     recyclers: &VerifyRecyclers,
     progress: &mut ConfirmationProgress,
     transaction_status_sender: Option<&TransactionStatusSender>,
+    evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut ExecuteTimings,
@@ -1151,7 +1160,17 @@ fn process_single_slot(
     })?;
 
     bank.freeze(); // all banks handled by this routine are created from complete slots
+
     cache_block_meta(bank, cache_block_meta_sender);
+
+    if let Some(evm_state_recorder_sender) = evm_state_recorder_sender {
+        let state = bank.evm_state_change();
+        if let Some(state) = state {
+            evm_state_recorder_sender
+                .send(state)
+                .unwrap_or_else(|err| warn!("evm_state_recorder_sender failed: {:?}", err));
+        }
+    }
 
     Ok(())
 }
@@ -3121,9 +3140,16 @@ pub mod tests {
         bank1.squash();
 
         // Test process_blockstore_from_root() from slot 1 onwards
-        let (bank_forks, _leader_schedule) =
-            do_process_blockstore_from_root(&blockstore, bank1, &opts, &recyclers, None, None)
-                .unwrap();
+        let (bank_forks, _leader_schedule) = do_process_blockstore_from_root(
+            &blockstore,
+            bank1,
+            &opts,
+            &recyclers,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![5, 6]);
         assert_eq!(bank_forks.working_bank().slot(), 6);
