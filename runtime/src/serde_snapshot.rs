@@ -146,6 +146,7 @@ pub(crate) fn bank_from_stream<R>(
     caching_enabled: bool,
     evm_state_backup_path: &Path,
     skip_purge_verify: bool,
+    evm_archive: Option<evm_state::Storage>,
 ) -> std::result::Result<Bank, Error>
 where
     R: Read,
@@ -167,6 +168,7 @@ where
         evm_state_version.support_gc(),
         skip_purge_verify,
         true, // enable gc
+        evm_archive,
     )
     .map_err(|err| {
         warn!("bankrc_from_stream error: {:?}", err);
@@ -257,6 +259,7 @@ fn reconstruct_bank_from_fields<E>(
     skip_purge_verify: bool,
     // true if gc should be enabled
     enable_gc: bool,
+    evm_archive: Option<evm_state::Storage>,
 ) -> Result<Bank, Error>
 where
     E: SerializableStorage,
@@ -309,9 +312,20 @@ where
             .map_err(|e| Error::custom(format!("Unable to open destination evm-state {}", e)))?;
 
         let mut measure = Measure::start("EVM snapshot purging");
+
+        // vars to save temp arrays for copy_and_purge
+        let (archive_dest, regular_dest);
+        let destination: &[_] = if let Some(evm_archive) = evm_archive {
+            info!("Copying current evm state to archive during evm purging.");
+            archive_dest = [destination, evm_archive];
+            &archive_dest
+        } else {
+            regular_dest = [destination];
+            &regular_dest
+        };
         evm_state::storage::copy_and_purge(
             src,
-            &[destination], // TODO: Add archive storage
+            &destination,
             bank_fields.evm_persist_feilds.last_root(),
         )
         .map_err(|e| Error::custom(format!("Unable to copy_and_purge storage {}", e)))?;
@@ -323,6 +337,19 @@ where
             .map_err(|e| Error::custom(format!("Unable to restore evm backup storage {}", e)))?;
         measure.stop();
         info!("{}", measure);
+        if let Some(evm_archive) = evm_archive {
+            info!("Copying current evm state to archive.");
+            let src =
+                evm_state::Storage::open_persistent(evm_state_path, enable_gc).map_err(|e| {
+                    Error::custom(format!("Unable to restore tmp evm backup storage {}", e))
+                })?;
+            evm_state::storage::copy_and_purge(
+                src,
+                &[evm_archive],
+                bank_fields.evm_persist_feilds.last_root(),
+            )
+            .map_err(|e| Error::custom(format!("Unable to copy_and_purge storage {}", e)))?;
+        };
     }
 
     let evm_state = evm_state::EvmState::load_from(

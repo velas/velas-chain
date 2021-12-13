@@ -1162,7 +1162,7 @@ fn new_banks_from_ledger(
                 blockstore.clone(),
                 exit,
                 config.rpc_config.enable_cpi_and_log_storage,
-                evm_archive,
+                evm_archive.clone(),
             )
         } else {
             TransactionHistoryServices::default()
@@ -1188,6 +1188,7 @@ fn new_banks_from_ledger(
             .cache_block_meta_sender
             .as_ref(),
         config.verify_evm_state,
+        evm_archive,
     )
     .unwrap_or_else(|err| {
         error!("Failed to load ledger: {:?}", err);

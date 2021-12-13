@@ -178,6 +178,7 @@ mod tests {
             AccountSecondaryIndexes::default(),
             false,
             false,
+            None,
         )
         .unwrap();
 
