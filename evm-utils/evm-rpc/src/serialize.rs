@@ -239,6 +239,9 @@ impl<'de, T: FormatHex> de::Visitor<'de> for HexVisitor<T> {
     where
         E: de::Error,
     {
+        if s.len() < 3 || &s[..2] != "0x" {
+            return Err(de::Error::invalid_value(de::Unexpected::Str(s), &self));
+        }
         match T::from_hex(&s[2..]) {
             Ok(d) if &s[..2] == "0x" => Ok(Hex(d)),
             _ => Err(de::Error::invalid_value(de::Unexpected::Str(s), &self)),
