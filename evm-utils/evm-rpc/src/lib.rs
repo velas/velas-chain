@@ -580,7 +580,7 @@ pub mod trace {
         }
     }
 
-    #[derive(Default, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Default, Clone, Serialize, Deserialize)]
     pub struct TraceMeta {
         pub meta_keys: Option<Vec<String>>,
         pub transaction_hash: Option<H256>,
