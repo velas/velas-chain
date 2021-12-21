@@ -30,6 +30,7 @@ use jsonrpc_http_server::*;
 use serde_json::json;
 use snafu::ResultExt;
 
+use derivative::*;
 use solana_evm_loader_program::scope::*;
 use solana_sdk::{
     clock::MS_PER_TICK, fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE, pubkey::Pubkey,
@@ -43,6 +44,13 @@ use solana_client::{
     rpc_request::{RpcRequest, RpcResponseErrorData},
     rpc_response::Response as RpcResponse,
     rpc_response::*,
+};
+
+use tracing_attributes::instrument;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{
+    filter::{LevelFilter, Targets},
+    layer::{Layer, SubscriberExt},
 };
 
 use ::tokio;
@@ -176,10 +184,14 @@ macro_rules! proxy_evm_rpc {
 
 }
 
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct EvmBridge {
     evm_chain_id: u64,
     key: solana_sdk::signature::Keypair,
     accounts: HashMap<evm_state::Address, evm_state::SecretKey>,
+
+    #[derivative(Debug = "ignore")]
     rpc_client: RpcClient,
     verbose_errors: bool,
     simulate: bool,
@@ -312,15 +324,18 @@ impl EvmBridge {
     }
 }
 
+#[derive(Debug)]
 pub struct BridgeErpcImpl;
 
 impl BridgeERPC for BridgeErpcImpl {
     type Metadata = Arc<EvmBridge>;
 
+    #[instrument]
     fn accounts(&self, meta: Self::Metadata) -> EvmResult<Vec<Hex<Address>>> {
         Ok(meta.accounts.iter().map(|(k, _)| Hex(*k)).collect())
     }
 
+    #[instrument]
     fn sign(&self, meta: Self::Metadata, address: Hex<Address>, data: Bytes) -> EvmResult<Bytes> {
         let secret_key = meta
             .accounts
@@ -340,6 +355,7 @@ impl BridgeERPC for BridgeErpcImpl {
         Ok(sig_data_arr.to_vec().into())
     }
 
+    #[instrument]
     fn sign_transaction(
         &self,
         meta: Self::Metadata,
@@ -383,6 +399,7 @@ impl BridgeERPC for BridgeErpcImpl {
         Box::pin(future)
     }
 
+    #[instrument]
     fn send_transaction(
         &self,
         meta: Self::Metadata,
@@ -436,6 +453,7 @@ impl BridgeERPC for BridgeErpcImpl {
         Box::pin(future)
     }
 
+    #[instrument]
     fn send_raw_transaction(
         &self,
         meta: Self::Metadata,
@@ -471,6 +489,7 @@ impl BridgeERPC for BridgeErpcImpl {
         Box::pin(future)
     }
 
+    #[instrument]
     fn compilers(&self, _meta: Self::Metadata) -> EvmResult<Vec<String>> {
         Ok(vec![])
     }
@@ -480,54 +499,78 @@ pub struct GeneralErpcProxy;
 impl GeneralERPC for GeneralErpcProxy {
     type Metadata = Arc<EvmBridge>;
 
+    #[instrument]
     fn client_version(&self, _meta: Self::Metadata) -> EvmResult<String> {
         Ok(String::from("SolanaEvm/v0.1.0"))
     }
 
+    #[instrument]
     fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> EvmResult<Hex<H256>> {
         Ok(Hex(H256::from_slice(
             Keccak256::digest(bytes.0.as_slice()).as_slice(),
         )))
     }
 
+    #[instrument]
     fn network_id(&self, meta: Self::Metadata) -> EvmResult<String> {
         // NOTE: also we can get chain id from meta, but expects the same value
         Ok(format!("{}", meta.evm_chain_id))
     }
 
+    #[instrument]
     // TODO: Add network info
     fn is_listening(&self, _meta: Self::Metadata) -> EvmResult<bool> {
         Ok(true)
     }
 
+    #[instrument]
     fn peer_count(&self, _meta: Self::Metadata) -> EvmResult<Hex<usize>> {
         Ok(Hex(0))
     }
 
+    #[instrument]
     fn chain_id(&self, meta: Self::Metadata) -> EvmResult<Hex<u64>> {
         Ok(Hex(meta.evm_chain_id))
     }
 
+    #[instrument]
+    fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> EvmResult<Hex<H256>> {
+        Ok(Hex(H256::from_slice(
+            Keccak256::digest(bytes.0.as_slice()).as_slice(),
+        )))
+    }
+
+    #[instrument]
+    fn client_version(&self, _meta: Self::Metadata) -> EvmResult<String> {
+        Ok(String::from("VelasEvm/v0.5.0"))
+    }
+
+    #[instrument]
     fn protocol_version(&self, _meta: Self::Metadata) -> EvmResult<String> {
         Ok(solana_version::semver!().into())
     }
 
+    #[instrument]
     fn is_syncing(&self, meta: Self::Metadata) -> EvmResult<bool> {
         proxy_evm_rpc!(meta.rpc_client, EthSyncing)
     }
 
+    #[instrument]
     fn coinbase(&self, _meta: Self::Metadata) -> EvmResult<Hex<Address>> {
         Ok(Hex(Address::from_low_u64_be(0)))
     }
 
+    #[instrument]
     fn is_mining(&self, _meta: Self::Metadata) -> EvmResult<bool> {
         Ok(false)
     }
 
+    #[instrument]
     fn hashrate(&self, _meta: Self::Metadata) -> EvmResult<Hex<U256>> {
         Ok(Hex(U256::zero()))
     }
 
+    #[instrument]
     fn gas_price(&self, meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
         Ok(Hex(meta.min_gas_price))
     }
@@ -537,11 +580,13 @@ pub struct ChainErpcProxy;
 impl ChainERPC for ChainErpcProxy {
     type Metadata = Arc<EvmBridge>;
 
+    #[instrument]
     // The same as get_slot
     fn block_number(&self, meta: Self::Metadata) -> BoxFuture<EvmResult<Hex<usize>>> {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthBlockNumber)))
     }
 
+    #[instrument]
     fn balance(
         &self,
         meta: Self::Metadata,
@@ -551,6 +596,7 @@ impl ChainERPC for ChainErpcProxy {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetBalance, address, block)))
     }
 
+    #[instrument]
     fn storage_at(
         &self,
         meta: Self::Metadata,
@@ -561,6 +607,7 @@ impl ChainERPC for ChainErpcProxy {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetStorageAt, address, data, block)))
     }
 
+    #[instrument]
     fn transaction_count(
         &self,
         meta: Self::Metadata,
@@ -576,6 +623,7 @@ impl ChainERPC for ChainErpcProxy {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetTransactionCount, address, block)))
     }
 
+    #[instrument]
     fn block_transaction_count_by_number(
         &self,
         meta: Self::Metadata,
@@ -588,6 +636,7 @@ impl ChainERPC for ChainErpcProxy {
         )))
     }
 
+    #[instrument]
     fn block_transaction_count_by_hash(
         &self,
         meta: Self::Metadata,
@@ -600,6 +649,7 @@ impl ChainERPC for ChainErpcProxy {
         )))
     }
 
+    #[instrument]
     fn code(
         &self,
         meta: Self::Metadata,
@@ -609,6 +659,7 @@ impl ChainERPC for ChainErpcProxy {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetCode, address, block)))
     }
 
+    #[instrument]
     fn block_by_hash(
         &self,
         meta: Self::Metadata,
@@ -623,6 +674,7 @@ impl ChainERPC for ChainErpcProxy {
         }
     }
 
+    #[instrument]
     fn block_by_number(
         &self,
         meta: Self::Metadata,
@@ -637,6 +689,7 @@ impl ChainERPC for ChainErpcProxy {
         }
     }
 
+    #[instrument]
     fn transaction_by_hash(
         &self,
         meta: Self::Metadata,
@@ -653,6 +706,7 @@ impl ChainERPC for ChainErpcProxy {
             .map(|o: Option<_>| o.map(compatibility::patch_tx))))
     }
 
+    #[instrument]
     fn transaction_by_block_hash_and_index(
         &self,
         meta: Self::Metadata,
@@ -667,6 +721,7 @@ impl ChainERPC for ChainErpcProxy {
         )))
     }
 
+    #[instrument]
     fn transaction_by_block_number_and_index(
         &self,
         meta: Self::Metadata,
@@ -681,6 +736,7 @@ impl ChainERPC for ChainErpcProxy {
         )))
     }
 
+    #[instrument]
     fn transaction_receipt(
         &self,
         meta: Self::Metadata,
@@ -689,6 +745,7 @@ impl ChainERPC for ChainErpcProxy {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetTransactionReceipt, tx_hash)))
     }
 
+    #[instrument]
     fn call(
         &self,
         meta: Self::Metadata,
@@ -699,6 +756,7 @@ impl ChainERPC for ChainErpcProxy {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthCall, tx, block, meta_keys)))
     }
 
+    #[instrument]
     fn estimate_gas(
         &self,
         meta: Self::Metadata,
@@ -709,6 +767,7 @@ impl ChainERPC for ChainErpcProxy {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block, meta_keys)))
     }
 
+    #[instrument]
     fn logs(&self, meta: Self::Metadata, mut log_filter: RPCLogFilter) -> BoxFuture<EvmResult<Vec<RPCLog>>> {
         let starting_block = match meta.block_to_number(log_filter.from_block) {
             Ok(res) => res,
@@ -771,6 +830,7 @@ impl ChainERPC for ChainErpcProxy {
         })
     }
 
+    #[instrument]
     fn uncle_by_block_hash_and_index(
         &self,
         _meta: Self::Metadata,
@@ -780,6 +840,7 @@ impl ChainERPC for ChainErpcProxy {
         Ok(None)
     }
 
+    #[instrument]
     fn uncle_by_block_number_and_index(
         &self,
         _meta: Self::Metadata,
@@ -789,6 +850,7 @@ impl ChainERPC for ChainErpcProxy {
         Ok(None)
     }
 
+    #[instrument]
     fn block_uncles_count_by_hash(
         &self,
         _meta: Self::Metadata,
@@ -797,6 +859,7 @@ impl ChainERPC for ChainErpcProxy {
         Ok(Hex(0))
     }
 
+    #[instrument]
     fn block_uncles_count_by_number(
         &self,
         _meta: Self::Metadata,
@@ -810,6 +873,7 @@ pub struct TraceErpcProxy;
 impl TraceERPC for TraceErpcProxy {
     type Metadata = Arc<EvmBridge>;
 
+    #[instrument]
     fn trace_call(
         &self,
         meta: Self::Metadata,
@@ -821,6 +885,7 @@ impl TraceERPC for TraceErpcProxy {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthTraceCall, tx, traces, block, meta_info)))
     }
 
+    #[instrument]
     fn trace_call_many(
         &self,
         meta: Self::Metadata,
@@ -830,6 +895,7 @@ impl TraceERPC for TraceErpcProxy {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthTraceCallMany, tx_traces, block)))
     }
 
+    #[instrument]
     fn trace_replay_transaction(
         &self,
         meta: Self::Metadata,
@@ -846,6 +912,7 @@ impl TraceERPC for TraceErpcProxy {
         )))
     }
 
+    #[instrument]
     fn trace_replay_block(
         &self,
         meta: Self::Metadata,
@@ -969,13 +1036,41 @@ const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 #[paw::main]
 #[tokio::main]
 async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
-    solana_logger::setup_with_default("info,evm=debug,rpc=trace");
+    env_logger::init();
     let min_gas_price = args.min_gas_price_or_default();
     let keyfile_path = args
         .keyfile
         .unwrap_or_else(|| solana_cli_config::Config::default().keypair_path);
     let server_path = args.rpc_address;
     let binding_address = args.binding_address;
+
+    let fmt_filter = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|rust_log| match rust_log.parse::<Targets>() {
+            Ok(targets) => Some(targets),
+            Err(e) => {
+                eprintln!("failed to parse `RUST_LOG={:?}`: {}", rust_log, e);
+                None
+            }
+        })
+        .unwrap_or_else(|| Targets::default().with_default(LevelFilter::ERROR));
+
+    let tracer = opentelemetry_jaeger::new_pipeline()
+        .with_service_name("evm-bridge")
+        .install_simple()
+        .unwrap();
+    let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+    let registry = tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(fmt_filter))
+        .with(opentelemetry);
+
+    #[cfg(feature = "console")]
+    let registry = {
+        let console_layer = console_subscriber::spawn();
+        registry.with(console_layer)
+    };
+
+    registry.try_init().unwrap();
 
     let meta = EvmBridge::new(
         args.evm_chain_id,
