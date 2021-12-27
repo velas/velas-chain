@@ -330,6 +330,8 @@ impl Storage {
     /// Mark slot as removed, also find root_hash that correspond to this bank, and decrement its counter.
     /// Return root_hash if it counter == 0 after removing
     pub fn purge_slot(&self, slot: u64) -> Result<Option<H256>> {
+        // TODO: clever retry on purge slot failure (if transaction conflict).
+        // TODO: also make some retry on RootCleanup manager.
         if !self.gc_enabled {
             return Ok(None);
         }
@@ -362,12 +364,12 @@ impl Storage {
     /// Our garbage collection counts only references of child objects.
     /// Because root_hash has no parents it should be handled separately.
     ///
-    /// Increment root_link reference counter.
+    /// This method introduce a link between slot and root.
+    /// Increment root_link reference counter, and mark slot.
     ///
     /// This operation is used in two cases:
-    /// 1. When our root tree is modified, and new root_hash is produced.
-    /// 2. When we insert new account_state object - this object contain reference to storage_root, which should be registered too. (this one was inlined)
-
+    /// 1. When new bank is created.
+    /// 2. When bank change it's root (reset_slot_root flag is provided).
     // Save info. slot -> root_hash
     // Increment root_hash references counter.
     pub fn register_slot(&self, slot: u64, root: H256, reset_slot_root: bool) -> Result<()> {
@@ -376,12 +378,14 @@ impl Storage {
         }
         let slots_cf = self.cf::<SlotsRoots>();
         let trie = self.rocksdb_trie_handle();
-        let mut tx = self.db().transaction();
 
         info!("Register slot:{} root:{}", slot, root);
-        let purge_root = if let Some(data) = tx.get_cf(slots_cf, &slot.to_be_bytes())? {
+
+        const NUM_RETRY: usize = 500; // ~10ms-100ms
+        let purge_root = if let Some(data) = self.db().get_cf(slots_cf, &slot.to_be_bytes())? {
             let purge_root = H256::from_slice(data.as_ref());
-            if !reset_slot_root {
+            // root should be changed only on purpose, and changed to different value
+            if !reset_slot_root || root == purge_root {
                 error!(
                     "Slot was already registered, but reset_slot_root wasn't set, slot: {}, previous: {}, new:{}",
                     slot, purge_root, root
@@ -392,13 +396,32 @@ impl Storage {
         } else {
             None
         };
-        tx.put_cf(slots_cf, &slot.to_be_bytes(), root.as_ref())?;
-        trie.db.increase(&mut tx, root)?;
-        tx.commit()?;
+
+        let retry = || -> Result<_> {
+            let mut tx = self.db().transaction();
+            tx.put_cf(slots_cf, &slot.to_be_bytes(), root.as_ref())?;
+            trie.db.increase(&mut tx, root)?;
+            tx.commit()?;
+            Ok(())
+        };
+        let mut complete = None;
+        for retry_count in 0..NUM_RETRY {
+            complete = Some(retry().map(|v| (v, retry_count)));
+            match complete.as_ref().unwrap() {
+                Ok(_) => break,
+                Err(e) => log::trace!(
+                    "Error during transaction execution retry_count:{} reason:{}",
+                    retry_count + 1,
+                    e
+                ),
+            }
+        }
+        complete.expect("Retry should save completion artifact.")?;
 
         if let Some(purge_root) = purge_root {
             let trie = self.rocksdb_trie_handle();
             if trie.gc_unpin_root(purge_root) {
+                // TODO: Propagate cleanup to outer level.
                 RootCleanup::new(&self, vec![purge_root]).cleanup()?;
             }
         }
