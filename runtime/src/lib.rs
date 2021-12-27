@@ -29,6 +29,7 @@ mod native_loader;
 pub mod rent_collector;
 pub mod secondary_index;
 pub mod serde_snapshot;
+pub mod shared_buffer_reader;
 pub mod snapshot_package;
 pub mod snapshot_utils;
 pub mod stakes;
@@ -37,6 +38,7 @@ mod system_instruction_processor;
 pub mod transaction_batch;
 pub mod vote_account;
 pub mod vote_sender_types;
+pub mod waitable_condvar;
 
 #[macro_use]
 extern crate solana_metrics;

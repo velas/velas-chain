@@ -8,7 +8,7 @@ use {
         fs::{self, File},
         io::{BufReader, Read},
         path::{
-            Component::{CurDir, Normal},
+            Component::{self, CurDir, Normal},
             Path, PathBuf,
         },
         time::Instant,
@@ -83,6 +83,12 @@ fn check_unpack_result(unpack_result: bool, path: String) -> Result<()> {
     Ok(())
 }
 
+pub enum UnpackPath<'a> {
+    Valid(&'a Path),
+    Ignore,
+    Invalid,
+}
+
 fn unpack_archive<'a, A: Read, C>(
     archive: &mut Archive<A>,
     apparent_limit_size: u64,
@@ -91,7 +97,7 @@ fn unpack_archive<'a, A: Read, C>(
     mut entry_checker: C,
 ) -> Result<()>
 where
-    C: FnMut(&[&str], tar::EntryType) -> Option<&'a Path>,
+    C: FnMut(&[&str], tar::EntryType) -> UnpackPath<'a>,
 {
     let mut apparent_total_size: u64 = 0;
     let mut actual_total_size: u64 = 0;
@@ -129,14 +135,17 @@ where
 
         let parts: Vec<_> = parts.map(|p| p.unwrap()).collect();
         let unpack_dir = match entry_checker(parts.as_slice(), kind) {
-            None => {
+            UnpackPath::Invalid => {
                 return Err(UnpackError::Archive(format!(
                     "extra entry found: {:?} {:?}",
                     path_str,
                     entry.header().entry_type(),
                 )));
             }
-            Some(unpack_dir) => unpack_dir,
+            UnpackPath::Ignore => {
+                continue;
+            }
+            UnpackPath::Valid(unpack_dir) => unpack_dir,
         };
 
         apparent_total_size = checked_total_size_sum(
@@ -151,9 +160,14 @@ where
         )?;
         total_count = checked_total_count_increment(total_count, limit_count)?;
 
-        // unpack_in does its own sanitization
-        // ref: https://docs.rs/tar/*/tar/struct.Entry.html#method.unpack_in
-        check_unpack_result(entry.unpack_in(unpack_dir)?, path_str)?;
+        let target = sanitize_path(&entry.path()?, unpack_dir)?; // ? handles file system errors
+        if target.is_none() {
+            continue; // skip it
+        }
+        let target = target.unwrap();
+
+        let unpack = entry.unpack(target);
+        check_unpack_result(unpack.map(|_unpack| true)?, path_str)?;
 
         // Sanitize permissions.
         let mode = match entry.header().entry_type() {
@@ -189,16 +203,104 @@ where
     }
 }
 
-// Map from AppendVec file name to unpacked file system location
+// return Err on file system error
+// return Some(path) if path is good
+// return None if we should skip this file
+fn sanitize_path(entry_path: &Path, dst: &Path) -> Result<Option<PathBuf>> {
+    // We cannot call unpack_in because it errors if we try to use 2 account paths.
+    // So, this code is borrowed from unpack_in
+    // ref: https://docs.rs/tar/*/tar/struct.Entry.html#method.unpack_in
+    let mut file_dst = dst.to_path_buf();
+    const SKIP: Result<Option<PathBuf>> = Ok(None);
+    {
+        let path = entry_path;
+        for part in path.components() {
+            match part {
+                // Leading '/' characters, root paths, and '.'
+                // components are just ignored and treated as "empty
+                // components"
+                Component::Prefix(..) | Component::RootDir | Component::CurDir => continue,
+
+                // If any part of the filename is '..', then skip over
+                // unpacking the file to prevent directory traversal
+                // security issues.  See, e.g.: CVE-2001-1267,
+                // CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
+                Component::ParentDir => return SKIP,
+
+                Component::Normal(part) => file_dst.push(part),
+            }
+        }
+    }
+
+    // Skip cases where only slashes or '.' parts were seen, because
+    // this is effectively an empty filename.
+    if *dst == *file_dst {
+        return SKIP;
+    }
+
+    // Skip entries without a parent (i.e. outside of FS root)
+    let parent = match file_dst.parent() {
+        Some(p) => p,
+        None => return SKIP,
+    };
+
+    fs::create_dir_all(parent)?;
+
+    // Here we are different than untar_in. The code for tar::unpack_in internally calling unpack is a little different.
+    // ignore return value here
+    validate_inside_dst(dst, parent)?;
+    let target = parent.join(entry_path.file_name().unwrap());
+
+    Ok(Some(target))
+}
+
+// copied from:
+// https://github.com/alexcrichton/tar-rs/blob/d90a02f582c03dfa0fd11c78d608d0974625ae5d/src/entry.rs#L781
+fn validate_inside_dst(dst: &Path, file_dst: &Path) -> Result<PathBuf> {
+    // Abort if target (canonical) parent is outside of `dst`
+    let canon_parent = file_dst.canonicalize().map_err(|err| {
+        UnpackError::Archive(format!(
+            "{} while canonicalizing {}",
+            err,
+            file_dst.display()
+        ))
+    })?;
+    let canon_target = dst.canonicalize().map_err(|err| {
+        UnpackError::Archive(format!("{} while canonicalizing {}", err, dst.display()))
+    })?;
+    if !canon_parent.starts_with(&canon_target) {
+        return Err(UnpackError::Archive(format!(
+            "trying to unpack outside of destination path: {}",
+            canon_target.display()
+        )));
+    }
+    Ok(canon_target)
+}
+
+/// Map from AppendVec file name to unpacked file system location
 pub type UnpackedAppendVecMap = HashMap<String, PathBuf>;
+
+// select/choose only 'index' out of each # of 'divisions' of total items.
+pub struct ParallelSelector {
+    pub index: usize,
+    pub divisions: usize,
+}
+
+impl ParallelSelector {
+    pub fn select_index(&self, index: usize) -> bool {
+        index % self.divisions == self.index
+    }
+}
 
 pub fn unpack_snapshot<A: Read>(
     archive: &mut Archive<A>,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
+    parallel_selector: Option<ParallelSelector>,
 ) -> Result<UnpackedAppendVecMap> {
     assert!(!account_paths.is_empty());
     let mut unpacked_append_vec_map = UnpackedAppendVecMap::new();
+    let mut i = 0;
 
     unpack_archive(
         archive,
@@ -207,19 +309,31 @@ pub fn unpack_snapshot<A: Read>(
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_COUNT,
         |parts, kind| {
             if is_valid_snapshot_archive_entry(parts, kind) {
+                i += 1;
+                match &parallel_selector {
+                    Some(parallel_selector) => {
+                        if !parallel_selector.select_index(i - 1) {
+                            return UnpackPath::Ignore;
+                        }
+                    }
+                    None => {}
+                };
                 if let ["accounts", file] = parts {
                     // Randomly distribute the accounts files about the available `account_paths`,
                     let path_index = thread_rng().gen_range(0, account_paths.len());
-                    account_paths.get(path_index).map(|path_buf| {
+                    match account_paths.get(path_index).map(|path_buf| {
                         unpacked_append_vec_map
                             .insert(file.to_string(), path_buf.join("accounts").join(file));
                         path_buf.as_path()
-                    })
+                    }) {
+                        Some(path) => UnpackPath::Valid(path),
+                        None => UnpackPath::Invalid,
+                    }
                 } else {
-                    Some(ledger_dir)
+                    UnpackPath::Valid(ledger_dir)
                 }
             } else {
-                None
+                UnpackPath::Invalid
             }
         },
     )
@@ -231,7 +345,7 @@ fn all_digits(v: &str) -> bool {
         return false;
     }
     for x in v.chars() {
-        if !x.is_numeric() {
+        if !x.is_digit(10) {
             return false;
         }
     }
@@ -242,7 +356,7 @@ fn like_storage(v: &str) -> bool {
     let mut periods = 0;
     let mut saw_numbers = false;
     for x in v.chars() {
-        if !x.is_numeric() {
+        if !x.is_digit(10) {
             if x == '.' {
                 if periods > 0 || !saw_numbers {
                     return false;
@@ -338,9 +452,9 @@ fn unpack_genesis<A: Read>(
         MAX_GENESIS_ARCHIVE_UNPACKED_COUNT,
         |p, k| {
             if is_valid_genesis_archive_entry(p, k) {
-                Some(unpack_dir)
+                UnpackPath::Valid(unpack_dir)
             } else {
-                None
+                UnpackPath::Invalid
             }
         },
     )
@@ -365,9 +479,11 @@ fn is_valid_genesis_archive_entry(parts: &[&str], kind: tar::EntryType) -> bool 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use assert_matches::assert_matches;
-    use tar::{Builder, Header};
+    use {
+        super::*,
+        assert_matches::assert_matches,
+        tar::{Builder, Header},
+    };
 
     #[test]
     fn test_archive_is_valid_entry() {
@@ -395,27 +511,6 @@ mod tests {
             &["accounts"],
             tar::EntryType::Directory
         ));
-        assert!(is_valid_snapshot_archive_entry(
-            &["snapshots", "3", "evm-state"],
-            tar::EntryType::Directory
-        ));
-
-        assert!(is_valid_snapshot_archive_entry(
-            &["snapshots", "3", "evm-state", "meta"],
-            tar::EntryType::Directory
-        ));
-        assert!(is_valid_snapshot_archive_entry(
-            &["snapshots", "3", "evm-state", "meta", "1"],
-            tar::EntryType::Regular
-        ));
-        assert!(is_valid_snapshot_archive_entry(
-            &["snapshots", "3", "evm-state", "shared"],
-            tar::EntryType::Directory
-        ));
-        assert!(is_valid_snapshot_archive_entry(
-            &["snapshots", "3", "evm-state", "shared", "01.zst"],
-            tar::EntryType::Regular
-        ));
         assert!(!is_valid_snapshot_archive_entry(
             &["accounts", ""],
             tar::EntryType::Regular
@@ -431,6 +526,10 @@ mod tests {
         ));
         assert!(!is_valid_snapshot_archive_entry(
             &["snapshots", "0x"],
+            tar::EntryType::Directory
+        ));
+        assert!(!is_valid_snapshot_archive_entry(
+            &["snapshots", "①"],
             tar::EntryType::Directory
         ));
         assert!(!is_valid_snapshot_archive_entry(
@@ -479,6 +578,10 @@ mod tests {
             &["accounts", "232323"],
             tar::EntryType::Regular
         ));
+        assert!(!is_valid_snapshot_archive_entry(
+            &["accounts", "৬.¾"],
+            tar::EntryType::Regular
+        ));
     }
 
     #[test]
@@ -512,11 +615,11 @@ mod tests {
             &["aaaa"],
             tar::EntryType::GNUSparse,
         ));
-        assert!(is_valid_genesis_archive_entry(
+        assert!(!is_valid_genesis_archive_entry(
             &["rocksdb"],
             tar::EntryType::Regular
         ));
-        assert!(is_valid_genesis_archive_entry(
+        assert!(!is_valid_genesis_archive_entry(
             &["rocksdb"],
             tar::EntryType::GNUSparse,
         ));
@@ -528,11 +631,11 @@ mod tests {
             &["rocksdb", "foo", "bar"],
             tar::EntryType::Directory,
         ));
-        assert!(is_valid_genesis_archive_entry(
+        assert!(!is_valid_genesis_archive_entry(
             &["rocksdb", "foo", "bar"],
             tar::EntryType::Regular
         ));
-        assert!(is_valid_genesis_archive_entry(
+        assert!(!is_valid_genesis_archive_entry(
             &["rocksdb", "foo", "bar"],
             tar::EntryType::GNUSparse
         ));
@@ -556,7 +659,7 @@ mod tests {
 
     fn finalize_and_unpack_snapshot(archive: tar::Builder<Vec<u8>>) -> Result<()> {
         with_finalize_and_unpack(archive, |a, b| {
-            unpack_snapshot(a, b, &[PathBuf::new()]).map(|_| ())
+            unpack_snapshot(a, b, &[PathBuf::new()], None).map(|_| ())
         })
     }
 

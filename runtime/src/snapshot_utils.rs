@@ -3,10 +3,12 @@ use crate::{
     accounts_index::AccountSecondaryIndexes,
     bank::{Bank, BankSlotDelta, Builtins},
     bank_forks::ArchiveFormat,
+    hardened_unpack::ParallelSelector,
     hardened_unpack::{unpack_snapshot, UnpackError, UnpackedAppendVecMap},
     serde_snapshot::{
         bank_from_stream, bank_to_stream, EvmStateVersion, SnapshotStorage, SnapshotStorages,
     },
+    shared_buffer_reader::{SharedBuffer, SharedBufferReader},
     snapshot_package::{
         AccountsPackage, AccountsPackagePre, AccountsPackageSendError, AccountsPackageSender,
     },
@@ -16,6 +18,7 @@ use bzip2::bufread::BzDecoder;
 use evm_state::AccountProvider;
 use flate2::read::GzDecoder;
 use log::*;
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::ThreadPool;
 use regex::Regex;
 use solana_measure::measure::Measure;
@@ -651,6 +654,7 @@ pub fn bank_from_archive<P: AsRef<Path>>(
         unpack_dir.as_ref(),
         account_paths,
         archive_format,
+        PARALLEL_UNTAR_READERS_DEFAULT,
     )?;
 
     let mut measure = Measure::start("bank rebuild from snapshot");
@@ -776,38 +780,80 @@ pub fn purge_old_snapshot_archives<P: AsRef<Path>>(snapshot_output_dir: P) {
     }
 }
 
+// From testing, 4 seems to be a sweet spot for ranges of 60M-360M accounts and 16-64 cores. This may need to be tuned later.
+const PARALLEL_UNTAR_READERS_DEFAULT: usize = 4;
+
+fn unpack_snapshot_local<T: 'static + Read + std::marker::Send, F: Fn() -> T>(
+    reader: F,
+    ledger_dir: &Path,
+    account_paths: &[PathBuf],
+    parallel_archivers: usize,
+) -> Result<UnpackedAppendVecMap> {
+    assert!(parallel_archivers > 0);
+    // a shared 'reader' that reads the decompressed stream once, keeps some history, and acts as a reader for multiple parallel archive readers
+    let shared_buffer = SharedBuffer::new(reader());
+
+    // allocate all readers before any readers start reading
+    let readers = (0..parallel_archivers)
+        .into_iter()
+        .map(|_| SharedBufferReader::new(&shared_buffer))
+        .collect::<Vec<_>>();
+
+    // create 'parallel_archivers' # of parallel workers, each responsible for 1/parallel_archivers of all the files to extract.
+    let all_unpacked_append_vec_map = readers
+        .into_par_iter()
+        .enumerate()
+        .map(|(index, reader)| {
+            let parallel_selector = Some(ParallelSelector {
+                index,
+                divisions: parallel_archivers,
+            });
+            let mut archive = Archive::new(reader);
+            unpack_snapshot(&mut archive, ledger_dir, account_paths, parallel_selector)
+        })
+        .collect::<Vec<_>>();
+    let mut unpacked_append_vec_map = UnpackedAppendVecMap::new();
+    for h in all_unpacked_append_vec_map {
+        unpacked_append_vec_map.extend(h?);
+    }
+
+    Ok(unpacked_append_vec_map)
+}
+
 fn untar_snapshot_in<P: AsRef<Path>>(
     snapshot_tar: P,
     unpack_dir: &Path,
     account_paths: &[PathBuf],
     archive_format: ArchiveFormat,
+    parallel_divisions: usize,
 ) -> Result<UnpackedAppendVecMap> {
-    let mut measure = Measure::start("snapshot untar");
-    let tar_name = File::open(&snapshot_tar)?;
+    let open_file = || File::open(&snapshot_tar).unwrap();
     let account_paths_map = match archive_format {
-        ArchiveFormat::TarBzip2 => {
-            let tar = BzDecoder::new(BufReader::new(tar_name));
-            let mut archive = Archive::new(tar);
-            unpack_snapshot(&mut archive, unpack_dir, account_paths)?
-        }
-        ArchiveFormat::TarGzip => {
-            let tar = GzDecoder::new(BufReader::new(tar_name));
-            let mut archive = Archive::new(tar);
-            unpack_snapshot(&mut archive, unpack_dir, account_paths)?
-        }
-        ArchiveFormat::TarZstd => {
-            let tar = zstd::stream::read::Decoder::new(BufReader::new(tar_name))?;
-            let mut archive = Archive::new(tar);
-            unpack_snapshot(&mut archive, unpack_dir, account_paths)?
-        }
-        ArchiveFormat::Tar => {
-            let tar = BufReader::new(tar_name);
-            let mut archive = Archive::new(tar);
-            unpack_snapshot(&mut archive, unpack_dir, account_paths)?
-        }
+        ArchiveFormat::TarBzip2 => unpack_snapshot_local(
+            || BzDecoder::new(BufReader::new(open_file())),
+            unpack_dir,
+            account_paths,
+            parallel_divisions,
+        )?,
+        ArchiveFormat::TarGzip => unpack_snapshot_local(
+            || GzDecoder::new(BufReader::new(open_file())),
+            unpack_dir,
+            account_paths,
+            parallel_divisions,
+        )?,
+        ArchiveFormat::TarZstd => unpack_snapshot_local(
+            || zstd::stream::read::Decoder::new(BufReader::new(open_file())).unwrap(),
+            unpack_dir,
+            account_paths,
+            parallel_divisions,
+        )?,
+        ArchiveFormat::Tar => unpack_snapshot_local(
+            || BufReader::new(open_file()),
+            unpack_dir,
+            account_paths,
+            parallel_divisions,
+        )?,
     };
-    measure.stop();
-    info!("{}", measure);
     Ok(account_paths_map)
 }
 
@@ -921,6 +967,7 @@ pub fn verify_snapshot_archive<P, Q, R>(
         unpack_dir,
         &[unpack_dir.to_path_buf()],
         archive_format,
+        1,
     )
     .unwrap();
 
