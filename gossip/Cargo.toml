@@ -16,7 +16,7 @@ solana-core = { path = "../core", version = "=1.6.14" }
 solana-logger = { path = "../logger", version = "=1.6.14" }
 solana-net-utils = { path = "../net-utils", version = "=1.6.14" }
 solana-sdk = { path = "../sdk", version = "=1.6.14" }
-solana-version = { path = "../version", version = "=0.4.3" }
+solana-version = { path = "../version", version = "=0.4.4" }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
