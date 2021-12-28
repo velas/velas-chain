@@ -217,8 +217,10 @@ impl Storage {
     }
 
     // Returns evm state subdirectory that can be used temporary used by extern users.
-    pub fn get_inner_location(&self) -> PathBuf {
-        self.location.as_ref().join(CUSTOM_LOCATION)
+    pub fn get_inner_location(&self) -> Result<PathBuf> {
+        let location = self.location.as_ref().join(CUSTOM_LOCATION);
+        std::fs::create_dir_all(&location)?;
+        Ok(location)
     }
 
     pub fn db(&self) -> &DB {

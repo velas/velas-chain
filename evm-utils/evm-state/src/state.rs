@@ -299,17 +299,21 @@ impl EvmBackend<Incomming> {
         Some(self)
     }
 
-    pub fn get_account_state_at(&self, root: H256, address: H160) -> Option<AccountState> {
+    pub fn get_account_state_at(
+        &self,
+        root: H256,
+        address: H160,
+    ) -> Result<Option<AccountState>, anyhow::Error> {
         if !self.kvs.check_root_exist(root) {
-            return None;
+            anyhow::bail!("Failed to find root in storage, root: {}", root);
         }
-        self.get_account_state_from_kvs(root, address)
+        Ok(self.get_account_state_from_kvs(root, address))
     }
-    pub fn get_storage_at(&self, root: H256, address: H160, index: H256) -> Option<H256> {
+    pub fn get_storage_at(&self, root: H256, address: H160, index: H256) ->  Result<Option<H256>, anyhow::Error> {
         if !self.kvs.check_root_exist(root) {
-            return None;
+            anyhow::bail!("Failed to find root in storage, root: {}", root);
         }
-        self.get_storage_from_kvs(root, address, index)
+        Ok(self.get_storage_from_kvs(root, address, index))
     }
 
     fn take(&mut self) -> Self {

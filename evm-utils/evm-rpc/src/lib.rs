@@ -1,6 +1,7 @@
 #![allow(clippy::upper_case_acronyms)]
 
 use std::collections::HashMap;
+use std::fmt;
 
 use jsonrpc_core::BoxFuture;
 use jsonrpc_derive::rpc;
@@ -330,12 +331,35 @@ pub enum BlockId {
     RelativeId(BlockRelId),
 }
 
+impl fmt::Display for BlockId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Num(n) => write!(f, "{}", n.format_hex()),
+            Self::BlockHash { block_hash } => {
+                write!(f, "{{ block_hash:{} }}", block_hash.format_hex())
+            }
+            Self::RelativeId(id) => write!(f, "{}", id),
+        }
+    }
+}
+
 #[derive(Eq, PartialEq, Serialize, Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub enum BlockRelId {
     Latest,
     Pending,
     Earliest,
+}
+
+impl fmt::Display for BlockRelId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let str_id = match self {
+            Self::Latest => "latest",
+            Self::Pending => "pending",
+            Self::Earliest => "earliest",
+        };
+        write!(f, "{}", str_id)
+    }
 }
 
 impl Default for BlockId {
@@ -1189,6 +1213,35 @@ mod test {
         let block : BlockId = serde_json::from_str("{\"blockHash\":\"0xdededededededededededededededededededededededededededededededede\"}").unwrap();
         assert!(
             matches!(block, BlockId::BlockHash{block_hash} if block_hash == Hex(H256::repeat_byte(0xde)))
+        );
+    }
+
+    #[test]
+    fn format_block_id() {
+        assert_eq!(BlockRelId::Pending.to_string(), "pending");
+        assert_eq!(BlockRelId::Latest.to_string(), "latest");
+        assert_eq!(BlockRelId::Earliest.to_string(), "earliest");
+
+        assert_eq!(
+            BlockId::RelativeId(BlockRelId::Pending).to_string(),
+            "pending"
+        );
+        assert_eq!(
+            BlockId::RelativeId(BlockRelId::Latest).to_string(),
+            "latest"
+        );
+        assert_eq!(
+            BlockId::RelativeId(BlockRelId::Earliest).to_string(),
+            "earliest"
+        );
+
+        assert_eq!(BlockId::Num(0xab.into()).to_string(), "0xab");
+        assert_eq!(
+            BlockId::BlockHash {
+                block_hash: Hex(H256::repeat_byte(0xde))
+            }
+            .to_string(),
+            r"{ block_hash:0xdededededededededededededededededededededededededededededededede }"
         );
     }
 }
