@@ -134,14 +134,22 @@ impl AdminRpc for AdminRpcImpl {
                 "Archive storage not found",
             ));
         };
-        let tmp_backup_dir =
-            tempfile::tempdir_in(archive_evm_state.get_inner_location()).map_err(|e| {
+
+        // Increase variable lifetime, and force drop after merging.
+        let tmp_backup_dir;
+        let path = if backup {
+            let inner_location = archive_evm_state.get_inner_location().map_err(|e| {
+                jsonrpc_core::Error::invalid_params(format!(
+                    "Cannot get temporary inner location folder {}",
+                    e
+                ))
+            })?;
+            tmp_backup_dir = tempfile::tempdir_in(inner_location).map_err(|e| {
                 jsonrpc_core::Error::invalid_params(format!(
                     "Cannot create archive storage subfolder {}",
                     e
                 ))
             })?;
-        let path = if backup {
             let db_dir = tmp_backup_dir.as_ref().join("restored-db");
             evm_state::Storage::restore_from(&path, &db_dir).map_err(|e| {
                 jsonrpc_core::Error::invalid_params(format!(

@@ -27,6 +27,7 @@ const GAS_PRICE: u64 = 3;
 pub struct StateRootWithBank {
     pub state_root: Option<H256>,
     pub bank: Option<Arc<Bank>>,
+    pub block: BlockId,
 }
 
 impl StateRootWithBank {
@@ -45,7 +46,9 @@ impl StateRootWithBank {
             return Ok(evm.get_account_state(address));
         }
         let archive_evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
-        Ok(archive_evm_state.get_account_state_at(root, address))
+        archive_evm_state
+            .get_account_state_at(root, address)
+            .map_err(|_| Error::StateNotFoundForBlock { block: self.block }) // wrap error to typed
     }
 
     pub fn get_storage_at(
@@ -63,7 +66,9 @@ impl StateRootWithBank {
             return Ok(evm.get_storage(address, idx));
         }
         let archive_evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
-        Ok(archive_evm_state.get_storage_at(root, address, idx))
+        archive_evm_state
+            .get_storage_at(root, address, idx)
+            .map_err(|_| Error::StateNotFoundForBlock { block: self.block }) // wrap error to typed
     }
 }
 
@@ -84,6 +89,7 @@ fn block_to_state_root(
             return StateRootWithBank {
                 state_root: Some(last_root),
                 bank: Some(bank),
+                block: block_id,
             };
         }
         BlockId::RelativeId(BlockRelId::Earliest) | BlockId::Num(Hex(0)) => {
@@ -98,6 +104,7 @@ fn block_to_state_root(
                 return StateRootWithBank {
                     state_root: None,
                     bank: None,
+                    block: block_id,
                 };
             }
         }
@@ -114,6 +121,7 @@ fn block_to_state_root(
             .map(|(b, _)| b.header.state_root),
 
         bank: None,
+        block: block_id,
     }
 }
 
@@ -746,7 +754,9 @@ fn call_many(
         meta.evm_state_archive()
             .ok_or(Error::ArchiveNotSupported)?
             .new_incomming_for_root(root)
-            .ok_or(Error::StateRootNotFound { state: root })?
+            .ok_or(Error::StateNotFoundForBlock {
+                block: saved_state.block,
+            })?
     };
 
     let estimate_config = evm_state::EvmConfig {
