@@ -65,7 +65,7 @@ pub fn redirect_stderr_to_file(logfile: Option<String>) -> Option<JoinHandle<()>
         }
     };
 
-    solana_logger::setup_with_default("solana=info");
+    solana_logger::setup_with_default("info,solana_metrics=warn");
     logger_thread
 }
 
