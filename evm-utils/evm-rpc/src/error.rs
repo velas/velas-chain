@@ -1,7 +1,7 @@
 use std::num::ParseIntError;
 
 use crate::BlockId;
-use evm_state::{ExitError, ExitFatal, ExitRevert, H256, U256};
+use evm_state::{ExitError, ExitFatal, ExitRevert, U256};
 use jsonrpc_core::Error as JRpcError;
 use rlp::DecoderError;
 use rustc_hex::FromHexError;
@@ -64,11 +64,8 @@ pub enum Error {
     #[snafu(display("Validator node didn't support archive history"))]
     ArchiveNotSupported,
 
-    #[snafu(display("Failed to find state for block {:?}", block))]
+    #[snafu(display("Failed to find archive state for block {}", block))]
     StateNotFoundForBlock { block: BlockId },
-
-    #[snafu(display("Failed to find state root {}", state))]
-    StateRootNotFound { state: H256 },
 
     #[snafu(display("Failed to process native chain request: {}", source))]
     ProxyRpcError { source: JRpcError },
@@ -216,7 +213,6 @@ impl From<Error> for JRpcError {
             Error::BlockNotFound { .. } => internal_error(BLOCK_NOT_FOUND_RPC_ERROR, &err),
             Error::ArchiveNotSupported => internal_error(ARCHIVE_NOT_SUPPORTED_ERROR, &err),
             Error::StateNotFoundForBlock { .. } => internal_error(STATE_NOT_FOUND_RPC_ERROR, &err),
-            Error::StateRootNotFound { .. } => internal_error(STATE_NOT_FOUND_RPC_ERROR, &err),
             Error::KeyNotFound { .. } => internal_error(KEY_NOT_FOUND_RPC_ERROR, &err),
             Error::Unimplemented {} => {
                 let mut error = Self::invalid_request();
