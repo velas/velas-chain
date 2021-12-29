@@ -1,6 +1,7 @@
 use std::{
     array::TryFromSliceError,
     borrow::Borrow,
+    collections::BTreeSet,
     convert::TryInto,
     fs,
     io::Error as IoError,
@@ -112,12 +113,19 @@ impl Storage {
         self.gc_enabled
     }
 
-    // without gc_enabled
+    // List of cfs, that was deprecated.
+    fn deprecated_cfs() -> &'static [&'static str] {
+        &[
+            Receipts::COLUMN_NAME,
+            TransactionHashesPerBlock::COLUMN_NAME,
+            Transactions::COLUMN_NAME,
+        ]
+    }
+
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {
         let db_opts = default_db_opts()?;
 
-        // TODO: if gc_enabled remove deprecated columns, and add gc column
-        let descriptors = if gc_enabled {
+        let mut descriptors = if gc_enabled {
             vec![
                 ColumnFamilyDescriptor::new(Codes::COLUMN_NAME, db_opts.clone()),
                 ColumnFamilyDescriptor::new(SlotsRoots::COLUMN_NAME, db_opts.clone()),
@@ -125,22 +133,38 @@ impl Storage {
                     ReferenceCounter::COLUMN_NAME,
                     reference_counter_opts(),
                 ),
-                // Make sure to reflect changes in `merge_from_db`
+                // Make sure to reflect new columns in `merge_from_db`
             ]
         } else {
             [
                 Codes::COLUMN_NAME,
-                Transactions::COLUMN_NAME,
-                Receipts::COLUMN_NAME,
-                TransactionHashesPerBlock::COLUMN_NAME,
-                // Make sure to reflect changes in `merge_from_db`
+                // Make sure to reflect new columns in `merge_from_db`
             ]
             .iter()
             .map(|column| ColumnFamilyDescriptor::new(*column, db_opts.clone()))
             .collect()
         };
 
-        let db = DB::open_cf_descriptors(&db_opts, &location, descriptors)?;
+        // find deprecated cfs and remove them at first startup
+        let exist_cfs: BTreeSet<_> = DB::list_cf(&db_opts, &location)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+
+        let mut cleanup_cfs = Vec::new();
+        for d in Self::deprecated_cfs() {
+            if exist_cfs.contains(*d) {
+                cleanup_cfs.push(*d);
+                descriptors.push(ColumnFamilyDescriptor::new(*d, db_opts.clone()))
+            }
+        }
+
+        let mut db = DB::open_cf_descriptors(&db_opts, &location, descriptors)?;
+
+        for removed_cf in cleanup_cfs {
+            info!("Perform cleanup of deprecated cf: {}", removed_cf);
+            db.drop_cf(removed_cf)?
+        }
 
         Ok(Self {
             db: Arc::new(DbWithClose(db)),
