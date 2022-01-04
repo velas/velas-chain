@@ -9,6 +9,8 @@ on:
 jobs:  
   checks:
     name: check
+    container:
+      image: ubuntu:20.04
     runs-on: build
     steps:
       - uses: actions/checkout@v2
@@ -30,6 +32,8 @@ jobs:
           args: -- -Dwarnings
   test:
     name: test
+    container:
+      image: ubuntu:20.04
     runs-on: build
     steps:
       - uses: actions/checkout@v2
