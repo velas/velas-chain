@@ -36,7 +36,10 @@ impl StateRootWithBank {
         meta: &JsonRpcRequestProcessor,
         address: H160,
     ) -> Result<Option<AccountState>, Error> {
-        assert!(self.state_root.is_some());
+        ensure!(
+            self.state_root.is_some(),
+            BlockNotFound { block: self.block }
+        );
 
         let root = *self.state_root.as_ref().unwrap();
         if let Some(bank) = &self.bank {
@@ -57,7 +60,11 @@ impl StateRootWithBank {
         address: H160,
         idx: H256,
     ) -> Result<Option<H256>, Error> {
-        assert!(self.state_root.is_some());
+        ensure!(
+            self.state_root.is_some(),
+            BlockNotFound { block: self.block }
+        );
+
         let root = *self.state_root.as_ref().unwrap();
         if let Some(bank) = &self.bank {
             let evm = bank.evm_state.read().unwrap();
@@ -283,12 +290,6 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<BlockId>,
     ) -> Result<Hex<U256>, Error> {
         let state = block_to_state_root(block, &meta);
-        ensure!(
-            state.state_root.is_some(),
-            BlockNotFound {
-                block: block.unwrap_or_default()
-            }
-        );
 
         let account = state
             .get_account_state_at(&meta, address.0)?
@@ -304,12 +305,7 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<BlockId>,
     ) -> Result<Hex<H256>, Error> {
         let state = block_to_state_root(block, &meta);
-        ensure!(
-            state.state_root.is_some(),
-            BlockNotFound {
-                block: block.unwrap_or_default()
-            }
-        );
+
         let storage = state
             .get_storage_at(&meta, address.0, data.0)?
             .unwrap_or_default();
@@ -323,12 +319,7 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<BlockId>,
     ) -> Result<Hex<U256>, Error> {
         let state = block_to_state_root(block, &meta);
-        ensure!(
-            state.state_root.is_some(),
-            BlockNotFound {
-                block: block.unwrap_or_default()
-            }
-        );
+
         let account = state
             .get_account_state_at(&meta, address.0)?
             .unwrap_or_default();
@@ -342,12 +333,7 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<BlockId>,
     ) -> Result<Bytes, Error> {
         let state = block_to_state_root(block, &meta);
-        ensure!(
-            state.state_root.is_some(),
-            BlockNotFound {
-                block: block.unwrap_or_default()
-            }
-        );
+
         let account = state
             .get_account_state_at(&meta, address.0)?
             .unwrap_or_default();
@@ -485,12 +471,6 @@ impl BasicERPC for BasicErpcImpl {
             .map_err(|e| into_native_error(e, false))?;
         let saved_state = block_to_state_root(block, &meta);
 
-        if saved_state.state_root.is_none() {
-            return Err(Error::BlockNotFound {
-                block: block.unwrap_or_default(),
-            });
-        }
-
         let result = call(meta, tx, saved_state, meta_keys)?;
         Ok(Bytes(result.exit_data))
     }
@@ -523,11 +503,7 @@ impl BasicERPC for BasicErpcImpl {
         block: Option<BlockId>,
     ) -> Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
         let saved_state = block_to_state_root(block, &meta);
-        if saved_state.state_root.is_none() {
-            return Err(Error::BlockNotFound {
-                block: block.unwrap_or_default(),
-            });
-        }
+
         let mut txs = Vec::new();
         let mut txs_meta = Vec::new();
 
@@ -640,11 +616,6 @@ impl BasicERPC for BasicErpcImpl {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| into_native_error(e, false))?;
         let saved_state = block_to_state_root(block, &meta);
-        if saved_state.state_root.is_none() {
-            return Err(Error::BlockNotFound {
-                block: block.unwrap_or_default(),
-            });
-        }
         let result = call(meta, tx, saved_state, meta_keys)?;
         Ok(Hex(result.used_gas.into()))
     }
