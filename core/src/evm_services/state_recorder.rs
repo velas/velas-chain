@@ -45,7 +45,7 @@ impl EvmStateRecorderService {
         storage: &Storage,
         evm_records_receiver: &EvmStateRecorderReceiver,
     ) -> Result<(), RecvTimeoutError> {
-        // TODO2: merge snapshot to archive after load
+        // TODO: use changed nodes as state_updates, instead of changed accounts (to avoid recalculation of hashes)
 
         let (state_root, state_updates) =
             evm_records_receiver.recv_timeout(Duration::from_secs(1))?;
