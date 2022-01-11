@@ -2036,7 +2036,7 @@ impl JsonRpcRequestProcessor {
         Ok(logs)
     }
 
-    pub fn get_frist_available_evm_block(&self) -> u64 {
+    pub fn get_first_available_evm_block(&self) -> u64 {
         let block = self
             .blockstore
             .get_first_available_evm_block()

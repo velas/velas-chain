@@ -325,7 +325,7 @@ where
         };
         evm_state::storage::copy_and_purge(
             src,
-            &destination,
+            destination,
             bank_fields.evm_persist_feilds.last_root(),
         )
         .map_err(|e| Error::custom(format!("Unable to copy_and_purge storage {}", e)))?;

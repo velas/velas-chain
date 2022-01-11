@@ -182,7 +182,7 @@ impl Storage {
             // TODO: measure
             engine.purge_old_backups(HARD_BACKUPS_COUNT)?;
         }
-        engine.create_new_backup_flush(&self.db.0, true)?;
+        engine.create_new_backup_flush(self.db.as_ref(), true)?;
         Ok(backup_dir)
     }
 
@@ -448,7 +448,7 @@ impl Storage {
             let trie = self.rocksdb_trie_handle();
             if trie.gc_unpin_root(purge_root) {
                 // TODO: Propagate cleanup to outer level.
-                RootCleanup::new(&self, vec![purge_root]).cleanup()?;
+                RootCleanup::new(self, vec![purge_root]).cleanup()?;
             }
         }
         Ok(())
@@ -473,10 +473,12 @@ impl Storage {
             if slot == keep_slot {
                 continue;
             }
-            self.purge_slot(slot)?.map(|root| cleanup_roots.push(root));
+            if let Some(root) = self.purge_slot(slot)? {
+                cleanup_roots.push(root)
+            }
         }
 
-        let mut cleaner = RootCleanup::new(&self, cleanup_roots);
+        let mut cleaner = RootCleanup::new(self, cleanup_roots);
         cleaner.cleanup()
     }
 

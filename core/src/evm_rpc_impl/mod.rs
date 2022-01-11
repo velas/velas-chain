@@ -9,7 +9,7 @@ use evm_rpc::error::EvmStateError;
 use evm_rpc::{
     basic::BasicERPC,
     chain_mock::ChainMockERPC,
-    error::{into_native_error, BlockNotFound, Error},
+    error::{into_native_error, BlockNotFound, Error, StateNotFoundForBlock},
     trace::TraceMeta,
     BlockId, BlockRelId, Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt,
     RPCTopicFilter, RPCTransaction,
@@ -49,9 +49,13 @@ impl StateRootWithBank {
             return Ok(evm.get_account_state(address));
         }
         let archive_evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
-        archive_evm_state
+        ensure!(
+            archive_evm_state.kvs().check_root_exist(root),
+            StateNotFoundForBlock { block: self.block }
+        );
+        Ok(archive_evm_state
             .get_account_state_at(root, address)
-            .map_err(|_| Error::StateNotFoundForBlock { block: self.block }) // wrap error to typed
+            .unwrap_or_default())
     }
 
     pub fn get_storage_at(
@@ -73,9 +77,13 @@ impl StateRootWithBank {
             return Ok(evm.get_storage(address, idx));
         }
         let archive_evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
-        archive_evm_state
+        ensure!(
+            archive_evm_state.kvs().check_root_exist(root),
+            StateNotFoundForBlock { block: self.block }
+        );
+        Ok(archive_evm_state
             .get_storage_at(root, address, idx)
-            .map_err(|_| Error::StateNotFoundForBlock { block: self.block }) // wrap error to typed
+            .unwrap_or_default())
     }
 }
 
@@ -100,7 +108,7 @@ fn block_to_state_root(
             };
         }
         BlockId::RelativeId(BlockRelId::Earliest) | BlockId::Num(Hex(0)) => {
-            meta.get_frist_available_evm_block()
+            meta.get_first_available_evm_block()
         }
         BlockId::Num(num) => num.0,
         BlockId::BlockHash { block_hash } => {
@@ -139,7 +147,7 @@ fn block_parse_confirmed_num(
     let block = block.unwrap_or_default();
     match block {
         BlockId::BlockHash { .. } => None,
-        BlockId::RelativeId(BlockRelId::Earliest) => Some(meta.get_frist_available_evm_block()),
+        BlockId::RelativeId(BlockRelId::Earliest) => Some(meta.get_first_available_evm_block()),
         BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
             Some(meta.get_last_available_evm_block().unwrap_or_else(|| {
                 let bank = meta.bank(Some(CommitmentConfig::processed()));

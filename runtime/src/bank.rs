@@ -2140,8 +2140,6 @@ impl Bank {
     }
 
     pub fn commit_evm(&self) {
-<<<<<<< HEAD
-        let last_root = self.evm_state.read().unwrap().last_root();
         let mut measure = Measure::start("commit-evm-block-ms");
 
         let old_root = self.evm_state.read().unwrap().last_root();

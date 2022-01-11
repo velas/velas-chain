@@ -1132,6 +1132,7 @@ where
 
 // Processes and replays the contents of a single slot, returns Error
 // if failed to play the slot
+#[allow(clippy::too_many_arguments)]
 fn process_single_slot(
     blockstore: &Blockstore,
     bank: &Arc<Bank>,
