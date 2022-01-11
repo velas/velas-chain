@@ -2896,6 +2896,12 @@ impl Bank {
                 error_counters.account_in_use
             );
         }
+        if 0 != error_counters.evm_account_in_use {
+            inc_new_counter_info!(
+                "bank-process_transactions-evm_account_in_use",
+                error_counters.evm_account_in_use
+            );
+        }
         if 0 != error_counters.account_loaded_twice {
             inc_new_counter_info!(
                 "bank-process_transactions-account_loaded_twice",
@@ -3104,17 +3110,27 @@ impl Bank {
         Option<evm_state::EvmBackend<evm_state::Incomming>>,
     ) {
         let hashed_txs = batch.hashed_transactions();
+        let evm_txs_len = hashed_txs
+            .iter()
+            .filter(|tx| tx.transaction().message().is_modify_evm_state())
+            .count();
         debug!("processing transactions: {}", hashed_txs.len());
         inc_new_counter_info!("bank-process_transactions", hashed_txs.len());
+        inc_new_counter_info!("bank-evm-process_transactions", evm_txs_len);
         let mut error_counters = ErrorCounters::default();
 
         let retryable_txs: Vec<_> = batch
             .lock_results()
             .iter()
             .enumerate()
-            .filter_map(|(index, res)| match res {
+            .zip(hashed_txs)
+            .filter_map(|((index, res), tx)| match res {
                 Err(TransactionError::AccountInUse) => {
-                    error_counters.account_in_use += 1;
+                    if tx.transaction().message().is_modify_evm_state() {
+                        error_counters.evm_account_in_use += 1
+                    } else {
+                        error_counters.account_in_use += 1
+                    }
                     Some(index)
                 }
                 Err(_) => None,
