@@ -437,10 +437,12 @@ pub fn set_panic_hook(program: &'static str) {
                 Some(location) => location.to_string(),
                 None => "?".to_string(),
             };
+            let ct = thread::current();
+            let thread_name = ct.name().unwrap_or("?");
             submit(
                 DataPoint::new("panic")
                     .add_field_str("program", program)
-                    .add_field_str("thread", thread::current().name().unwrap_or("?"))
+                    .add_field_str("thread", thread_name)
                     // The 'one' field exists to give Kapacitor Alerts a numerical value
                     // to filter on
                     .add_field_i64("one", 1)
@@ -452,8 +454,11 @@ pub fn set_panic_hook(program: &'static str) {
             // Flush metrics immediately
             flush();
 
-            // Exit cleanly so the process don't limp along in a half-dead state
-            std::process::exit(1);
+            // Keep only rpc threads to avoid DoS on panic
+            if thread_name != "velas-rpc" {
+                // Exit cleanly so the process don't limp along in a half-dead state
+                std::process::exit(1);
+            }
         }));
     });
 }

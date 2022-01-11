@@ -389,14 +389,14 @@ impl JsonRpcService {
                 .core_threads(rpc_threads)
                 .threaded_scheduler()
                 .enable_all()
-                .thread_name("sol-rpc-el")
+                .thread_name("velas-rpc")
                 .build()
                 .unwrap()
         };
 
         let (close_handle_sender, close_handle_receiver) = channel();
         let thread_hdl = Builder::new()
-            .name("solana-jsonrpc".to_string())
+            .name("velas-jsonrpc".to_string())
             .spawn(move || {
                 let mut io = MetaIoHandler::default();
 
