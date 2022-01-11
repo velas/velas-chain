@@ -110,6 +110,7 @@ pub enum ScanStorageResult<R, B> {
 pub struct ErrorCounters {
     pub total: usize,
     pub account_in_use: usize,
+    pub evm_account_in_use: usize,
     pub account_loaded_twice: usize,
     pub account_not_found: usize,
     pub blockhash_not_found: usize,
