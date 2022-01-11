@@ -14,17 +14,16 @@ jobs:
     runs-on: build
     steps:
       - uses: actions/checkout@v2
+      - name: install dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive  apt-get -q -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang      
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
-          override: true
+          toolchain: 1.55
           components: clippy
-      - name: install dependencies
-        run: |
-          apt-get update
-          apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang      
       - name: Run cargo clippy
         uses: actions-rs/cargo@v1
         with:
@@ -32,21 +31,22 @@ jobs:
           args: -- -Dwarnings
   test:
     name: test
-    container:
-      image: ubuntu:20.04
-    runs-on: build
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - name: install dependencies
+        run: |
+          sudo apt-get update
+          DEBIAN_FRONTEND=noninteractive sudo apt-get -q -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang      
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
-          override: true
-      - name: install dependencies
+          toolchain: 1.55
+      - name: Setting limits
         run: |
-          apt-get update
-          apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang      
+          sudo sysctl -w fs.file-max=5000000
+          sudo sysctl -w vm.max_map_count=5000000
       - name: Run cargo test
         uses: actions-rs/cargo@v1
         with:
