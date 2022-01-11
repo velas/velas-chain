@@ -61,6 +61,7 @@ impl Executors {
 pub struct ExecuteDetailsTimings {
     pub serialize_us: u64,
     pub create_vm_us: u64,
+    pub create_evm_executor_us: u64,
     pub execute_us: u64,
     pub deserialize_us: u64,
     pub changed_account_count: u64,
@@ -73,6 +74,7 @@ impl ExecuteDetailsTimings {
     pub fn accumulate(&mut self, other: &ExecuteDetailsTimings) {
         self.serialize_us += other.serialize_us;
         self.create_vm_us += other.create_vm_us;
+        self.create_evm_executor_us += other.create_evm_executor_us;
         self.execute_us += other.execute_us;
         self.deserialize_us += other.deserialize_us;
         self.changed_account_count += other.changed_account_count;
@@ -429,6 +431,7 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
             })
         }
     }
+
     fn update_timing(
         &mut self,
         serialize_us: u64,

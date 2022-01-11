@@ -2127,17 +2127,18 @@ impl Bank {
     }
 
     pub fn commit_evm(&self) {
-        let apply_start = std::time::Instant::now();
+        let mut measure = Measure::start("commit-evm-block-ms");
         let hash = self
             .evm_state
             .write()
             .expect("evm state was poisoned")
             .try_commit(self.slot(), self.last_blockhash().0)
             .expect("failed to commit evm");
-        debug!(
-            "EVM state commit takes {} us",
-            apply_start.elapsed().as_micros()
-        );
+
+        measure.stop();
+        debug!("EVM state commit took {}", measure);
+
+        inc_new_counter_info!("commit-evm-block-ms", measure.as_ms() as usize);
 
         debug!(
             "Set evm state root to {:?} at block {}",
@@ -3202,6 +3203,7 @@ impl Bank {
                         None
                     };
 
+                    let mut evm_create_executor = Measure::start("evm_create_executor");
                     // Create evm_executor only if evm_state account is locked.
                     // Executor can be used to execute multiple transactions, but currently executor only created for single tx.
                     let evm_executor = if tx.message.is_modify_evm_state() {
@@ -3222,6 +3224,9 @@ impl Bank {
                     } else {
                         None
                     };
+                    evm_create_executor.stop();
+
+                    timings.details.create_evm_executor_us += evm_create_executor.as_us();
 
                     // Create reference counted pointer, to pass evm executor trought InvokeContext.
                     // Without Rc/RefCell we need to somehow provide mutable evm executor from InvokeContext,
