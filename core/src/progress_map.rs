@@ -74,6 +74,11 @@ impl ReplaySlotStats {
                 i64
             ),
             (
+                "create_evm_executor_us",
+                self.execute_timings.details.create_evm_executor_us,
+                i64
+            ),
+            (
                 "execute_inner_us",
                 self.execute_timings.details.execute_us,
                 i64
