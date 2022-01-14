@@ -55,7 +55,7 @@ where
             let db = self.db.borrow();
             let bytes = db
                 .get(hash)?
-                .ok_or_else(|| anyhow!("hash {:?} not found in database"))?;
+                .ok_or_else(|| anyhow!("hash {:?} not found in database", hash))?;
             trace!("raw bytes: {:?}", bytes);
 
             let rlp = Rlp::new(bytes.as_slice());

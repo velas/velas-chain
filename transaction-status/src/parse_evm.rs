@@ -77,7 +77,7 @@ pub fn parse_evm(
             check_num_stake_accounts(&instruction.accounts, 2)?;
             let info = json!({
                 "fromNativeAccount": account_keys[instruction.accounts[1] as usize].to_string(),
-                "toEvmAccount": evm_address.to_string(),
+                "toEvmAccount": format!("{:?}", evm_address),
                 "lamports": lamports,
             });
             Ok(ParsedInstructionEnum {

@@ -309,7 +309,7 @@ impl EvmProcessor {
 
         ic_msg!(
             invoke_context,
-            "SwapNativeToEther: Sending tokens from native to evm chain from={},to={}",
+            "SwapNativeToEther: Sending tokens from native to evm chain from={},to={:?}",
             user.unsigned_key(),
             evm_address
         );
