@@ -3013,7 +3013,7 @@ version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 dependencies = [
- "spin",
+ "spin 0.5.2",
 ]
 
 [[package]]
@@ -3047,6 +3047,12 @@ dependencies = [
  "cfg-if 1.0.0",
  "winapi 0.3.9",
 ]
+
+[[package]]
+name = "libm"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7d73b3f436185384286bd8098d17ec07c9a7d2388a6599f824d8502b529702a"
 
 [[package]]
 name = "librocksdb-sys"
@@ -4449,10 +4455,16 @@ dependencies = [
 
 [[package]]
 name = "reed-solomon-erasure"
-version = "4.0.2"
-source = "git+https://github.com/velas/reed-solomon-erasure.git?branch=avx-buildfix#4db2f51790ad8470944aaf3850fc054667e17e41"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7170bac0d8306941e101df0caaa6518b10bc4232dd36c34f1cb78b8a063024db"
 dependencies = [
+ "cc",
+ "libc",
+ "libm",
+ "parking_lot 0.11.2",
  "smallvec 1.8.0",
+ "spin 0.9.2",
 ]
 
 [[package]]
@@ -4543,7 +4555,7 @@ dependencies = [
  "cc",
  "libc",
  "once_cell",
- "spin",
+ "spin 0.5.2",
  "untrusted",
  "web-sys",
  "winapi 0.3.9",
@@ -6920,6 +6932,12 @@ name = "spin"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
+
+[[package]]
+name = "spin"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "511254be0c5bcf062b019a6c89c01a664aa359ded62f78aa72c6fc137c0590e5"
 
 [[package]]
 name = "spl-associated-token-account"
