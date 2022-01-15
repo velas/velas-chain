@@ -890,7 +890,7 @@ const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 #[paw::main]
 #[tokio::main]
 async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    solana_logger::setup_with_default("info,evm=debug,rpc=trace");
     let min_gas_price = args.min_gas_price_or_default();
     let keyfile_path = args
         .keyfile

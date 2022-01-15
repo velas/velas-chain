@@ -1764,7 +1764,7 @@ impl ClusterInfo {
         match gossip.crds.trim(cap, &keep, stakes, timestamp()) {
             Err(err) => {
                 self.stats.trim_crds_table_failed.add_relaxed(1);
-                error!("crds table trim failed: {:?}", err);
+                debug!("crds table trim failed: {:?}", err);
             }
             Ok(num_purged) => {
                 self.stats
