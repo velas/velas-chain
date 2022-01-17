@@ -84,6 +84,7 @@ fn main() {
             time.as_us() / iterations as u64
         );
 
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "aarch64_apple_darwin")))]
         if is_x86_feature_detected!("avx2") && entry::api().is_some() {
             let mut time = Measure::start("time");
             for _ in 0..iterations {
@@ -99,6 +100,7 @@ fn main() {
             );
         }
 
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "aarch64_apple_darwin")))]
         if is_x86_feature_detected!("avx512f") && entry::api().is_some() {
             let mut time = Measure::start("time");
             for _ in 0..iterations {
