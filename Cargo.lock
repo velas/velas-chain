@@ -2596,18 +2596,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-timeout"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbb958482e8c7be4bc3cf272a766a2b0bf1a6755e7a6ae777f017a31d11b13b1"
-dependencies = [
- "hyper 0.14.16",
- "pin-project-lite 0.2.8",
- "tokio 1.15.0",
- "tokio-io-timeout",
-]
-
-[[package]]
 name = "hyper-tls"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4066,17 +4054,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e6984d2f1a23009bd270b8bb56d0926810a3d483f59c987d77969e9d8e840b2"
 dependencies = [
  "bytes 1.1.0",
- "prost-derive 0.7.0",
-]
-
-[[package]]
-name = "prost"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "444879275cb4fd84958b1a1d5420d15e6fcf7c235fe47f053c9c2a80aceb6001"
-dependencies = [
- "bytes 1.1.0",
- "prost-derive 0.9.0",
+ "prost-derive",
 ]
 
 [[package]]
@@ -4093,26 +4071,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost-derive"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9cc1a3263e07e0bf68e96268f37665207b49560d98739662cdfaae215c720fe"
-dependencies = [
- "anyhow",
- "itertools 0.10.3",
- "proc-macro2 1.0.36",
- "quote 1.0.14",
- "syn 1.0.85",
-]
-
-[[package]]
 name = "prost-types"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b518d7cdd93dab1d1122cf07fa9a60771836c668dde9d9e2a139f957f0d9f1bb"
 dependencies = [
  "bytes 1.1.0",
- "prost 0.7.0",
+ "prost",
 ]
 
 [[package]]
@@ -5993,7 +5958,7 @@ dependencies = [
  "log 0.4.14",
  "matches",
  "num_cpus",
- "prost 0.7.0",
+ "prost",
  "rand 0.7.3",
  "rand_chacha 0.2.2",
  "rayon",
@@ -6700,7 +6665,7 @@ dependencies = [
  "futures 0.3.19",
  "goauth",
  "log 0.4.14",
- "prost 0.7.0",
+ "prost",
  "prost-types",
  "rand_core 0.6.3",
  "serde",
@@ -6721,7 +6686,7 @@ dependencies = [
  "bincode",
  "bs58 0.3.1",
  "evm-state",
- "prost 0.7.0",
+ "prost",
  "rlp",
  "serde",
  "serde_derive",
@@ -7540,16 +7505,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-io-timeout"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30b74022ada614a1b4834de765f9bb43877f910cc8ce4be40e89042c9223a8bf"
-dependencies = [
- "pin-project-lite 0.2.8",
- "tokio 1.15.0",
-]
-
-[[package]]
 name = "tokio-macros"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7785,9 +7740,9 @@ dependencies = [
 
 [[package]]
 name = "tonic"
-version = "0.6.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff08f4649d10a70ffa3522ca559031285d8e421d727ac85c60825761818f5d0a"
+checksum = "2ac42cd97ac6bd2339af5bcabf105540e21e45636ec6fa6aae5e85d44db31be0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -7799,17 +7754,15 @@ dependencies = [
  "http",
  "http-body 0.4.4",
  "hyper 0.14.16",
- "hyper-timeout",
  "percent-encoding 2.1.0",
  "pin-project",
- "prost 0.9.0",
- "prost-derive 0.9.0",
+ "prost",
+ "prost-derive",
  "tokio 1.15.0",
  "tokio-rustls 0.22.0",
  "tokio-stream",
  "tokio-util 0.6.9",
  "tower",
- "tower-layer",
  "tower-service",
  "tracing",
  "tracing-futures",
