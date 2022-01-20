@@ -558,7 +558,7 @@ impl BasicERPC for BasicErpcImpl {
         match tx {
             Ok(Some(tx)) => {
                 let block = if let Some(block) = tx.block_number {
-                    block.0.as_u64().into()
+                    block.0.as_u64().saturating_sub(1).into()
                 } else {
                     return Ok(None);
                 };
