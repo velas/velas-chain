@@ -1948,65 +1948,58 @@ impl JsonRpcRequestProcessor {
             .collect();
         blocks_from_db.dedup();
 
-        if blocks_from_db.is_empty() {
-            blockstore_request_time += blockstore_request.elapsed();
-            let bigtable_request = Instant::now();
-            trace!("requesting bigtable = {}..{}", starting_block, ending_block);
-            let blocks = self.get_evm_blocks_from_bigtable(starting_block, ending_block);
-
-            trace!("bigtable_return = {:?}", blocks);
-            bigtable_request_time += bigtable_request.elapsed();
-            info!(
-                "Get evm blocks by ids, bigtable_time = {:?}, blockstore_time = {:?}",
-                bigtable_request_time, blockstore_request_time
-            );
-            return blocks;
-        }
-
         let mut missing_block = starting_block;
         let mut blocks = Vec::new();
         for block_num in &blocks_from_db {
             let block = self.blockstore.get_evm_block(*block_num).ok();
 
-            // shortcut for case where we got all items in local db.
-            if missing_block == *block_num && block.is_some() {
-                trace!("found missing block");
-                missing_block += 1;
-                blocks.push(
-                    block
-                        .expect("This should not panic beacause we check that option is some")
-                        .0,
-                );
-                continue;
-            }
-
-            let ending_block = if block.is_none() {
-                // confirmed block is missing, just request single block
+            if block.is_none() {
+                // confirmed block is missing, skip this block
                 warn!(
                     "Found EVM block that exist only in unconfirmed case block_id:{}",
                     block_num
                 );
-                *block_num
-            } else {
-                block_num - 1
-            };
-            blockstore_request_time += blockstore_request.elapsed();
-            let bigtable_request = Instant::now();
-            trace!("requesting bigtable = {}..{}", missing_block, ending_block);
-            let blocks_bigtable = self.get_evm_blocks_from_bigtable(missing_block, ending_block)?;
-            trace!("bigtable_return = {:?}", blocks_bigtable);
-            blocks.extend(blocks_bigtable);
-            bigtable_request_time += bigtable_request.elapsed();
-            blockstore_request = Instant::now();
+                continue;
+            }
+
+            let block = block.expect("None is handled before");
+
+            if missing_block != *block_num {
+                let ending_block = block_num - 1;
+                blockstore_request_time += blockstore_request.elapsed();
+                let bigtable_request = Instant::now();
+                trace!("requesting bigtable = {}..{}", missing_block, ending_block);
+                let blocks_bigtable =
+                    self.get_evm_blocks_from_bigtable(missing_block, ending_block)?;
+                trace!("bigtable_return = {:?}", blocks_bigtable);
+                blocks.extend(blocks_bigtable);
+                bigtable_request_time += bigtable_request.elapsed();
+                blockstore_request = Instant::now();
+            }
 
             // we requested blocks in range missing_block..block_num,
             // not including block_num, because it is already found in db.
-            if let Some(block) = block {
-                blocks.push(block.0)
-            }
+
+            blocks.push(block.0);
 
             missing_block = block_num + 1; // go to the next
         }
+
+        // in case we skip some blocks, request remaining from bigtable.
+        if missing_block != ending_block {
+            blockstore_request_time += blockstore_request.elapsed();
+            let bigtable_request = Instant::now();
+            trace!(
+                "requesting remaining from bigtable = {}..{}",
+                missing_block,
+                ending_block
+            );
+            let blocks_bigtable = self.get_evm_blocks_from_bigtable(missing_block, ending_block)?;
+            trace!("bigtable_return = {:?}", blocks);
+            blocks.extend(blocks_bigtable);
+            bigtable_request_time += bigtable_request.elapsed();
+        };
+
         info!(
             "Get evm blocks by ids, bigtable_time = {:?}, blockstore_time = {:?}",
             bigtable_request_time, blockstore_request_time
