@@ -1507,6 +1507,7 @@ fn report_target_features() {
         }
     );
 
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "aarch64_apple_darwin")))]
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         // Validator binaries built on a machine with AVX support will generate invalid opcodes
