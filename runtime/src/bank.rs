@@ -2596,6 +2596,11 @@ impl Bank {
         tick_height % self.ticks_per_slot == 0
     }
 
+    pub fn evm_burn_fee_activated(&self) -> bool {
+        self.feature_set
+            .is_active(&feature_set::velas::burn_fee::id())
+    }
+
     pub fn demote_sysvar_write_locks(&self) -> bool {
         self.feature_set
             .is_active(&feature_set::demote_sysvar_write_locks::id())
@@ -3240,7 +3245,10 @@ impl Bank {
                             let evm_executor = evm_state::Executor::with_config(
                                 state.clone(),
                                 evm_state::ChainContext::new(last_hashes),
-                                evm_state::EvmConfig::new(self.evm_chain_id),
+                                evm_state::EvmConfig::new(
+                                    self.evm_chain_id,
+                                    self.evm_burn_fee_activated(),
+                                ),
                             );
                             Some(evm_executor)
                         } else {

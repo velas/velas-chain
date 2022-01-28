@@ -6,6 +6,7 @@ use super::account_structure::AccountStructure;
 use super::instructions::{EvmBigTransaction, EvmInstruction};
 use super::precompiles;
 use super::scope::*;
+use evm_state::U256;
 use log::*;
 
 use evm::{gweis_to_lamports, Executor, ExitReason};
@@ -18,6 +19,8 @@ use solana_sdk::{keyed_account::KeyedAccount, program_utils::limited_deserialize
 
 use super::error::EvmError;
 use super::tx_chunks::TxChunks;
+
+pub const BURN_ADDR: evm_state::H160 = evm_state::H160::zero();
 
 /// Return the next AccountInfo or a NotEnoughAccountKeys error
 pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
@@ -50,9 +53,9 @@ impl EvmProcessor {
             .is_feature_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id());
         let ignore_reset_on_cleared = invoke_context
             .is_feature_active(&solana_sdk::feature_set::velas::ignore_reset_on_cleared::id());
-        let free_ownership_require_signer = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas::free_ownership_require_signer::id());
-
+        let free_ownership_require_signer = invoke_context.is_feature_active(
+            &solana_sdk::feature_set::velas::free_ownership_require_signer::id(),
+        );
 
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
@@ -102,9 +105,12 @@ impl EvmProcessor {
             EvmInstruction::EvmBigTransaction(big_tx) => {
                 self.process_big_tx(executor, invoke_context, accounts, big_tx, unsigned_tx_fix)
             }
-            EvmInstruction::FreeOwnership {} => {
-                self.process_free_ownership(executor, invoke_context, accounts, free_ownership_require_signer)
-            }
+            EvmInstruction::FreeOwnership {} => self.process_free_ownership(
+                executor,
+                invoke_context,
+                accounts,
+                free_ownership_require_signer,
+            ),
             EvmInstruction::SwapNativeToEther {
                 lamports,
                 evm_address,
@@ -182,7 +188,14 @@ impl EvmProcessor {
         );
         let sender = accounts.users.first();
 
-        self.handle_transaction_result(invoke_context, accounts, sender, tx_gas_price, result)
+        self.handle_transaction_result(
+            executor,
+            invoke_context,
+            accounts,
+            sender,
+            tx_gas_price,
+            result,
+        )
     }
 
     fn process_authorized_tx(
@@ -259,7 +272,14 @@ impl EvmProcessor {
         );
         let sender = accounts.first();
 
-        self.handle_transaction_result(invoke_context, accounts, sender, tx_gas_price, result)
+        self.handle_transaction_result(
+            executor,
+            invoke_context,
+            accounts,
+            sender,
+            tx_gas_price,
+            result,
+        )
     }
 
     fn process_free_ownership(
@@ -463,6 +483,7 @@ impl EvmProcessor {
                 }
 
                 self.handle_transaction_result(
+                    executor,
                     invoke_context,
                     accounts,
                     sender,
@@ -551,6 +572,7 @@ impl EvmProcessor {
 
                 self.cleanup_storage(invoke_context, storage, program_account)?;
                 self.handle_transaction_result(
+                    executor,
                     invoke_context,
                     accounts,
                     Some(program_account),
@@ -588,6 +610,7 @@ impl EvmProcessor {
     // refund fee
     pub fn handle_transaction_result(
         &self,
+        executor: &mut Executor,
         invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         sender: Option<&KeyedAccount>,
@@ -616,9 +639,30 @@ impl EvmProcessor {
             return Err(EvmError::RevertTransaction);
         }
 
-        let fee = tx_gas_price * result.used_gas;
+        let full_fee = tx_gas_price * result.used_gas;
+
+        let burn_fee = executor.config().burn_gas_price * result.used_gas;
+
+        if full_fee < burn_fee {
+            ic_msg!(
+                invoke_context,
+                "Transaction execution error: fee less than need to burn (burn_gas_price = {})",
+                executor.config().burn_gas_price
+            );
+            return Err(EvmError::OverflowInRefund);
+        }
+
+        // refund only remaining part
+        let refund_fee = full_fee - burn_fee;
+
+        if burn_fee > U256::zero() {
+            // we already withdraw gas_price during transaction_execute,
+            // if burn_fixed_fee is activated, we should deposit to burn addr (0x00..00)
+            executor.deposit(BURN_ADDR, burn_fee)
+        };
+
         if let Some(payer) = sender {
-            let (fee, _) = gweis_to_lamports(fee);
+            let (fee, _) = gweis_to_lamports(refund_fee);
             ic_msg!(
                 invoke_context,
                 "Refunding transaction fee to transaction sender fee:{:?}, sender:{}",

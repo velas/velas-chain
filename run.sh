@@ -73,9 +73,9 @@ else
     --hashes-per-tick sleep \
     --faucet-lamports 500000000000000000 \
     --bootstrap-validator \
-      "$validator_identity" \
-      "$validator_vote_account" \
-      "$validator_stake_account" \
+    "$validator_identity" \
+    "$validator_vote_account" \
+    "$validator_stake_account" \
     --ledger "$ledgerDir" \
     --cluster-type "$SOLANA_RUN_SH_CLUSTER_TYPE" \
     $SPL_GENESIS_ARGS \
@@ -118,6 +118,7 @@ args=(
     --account-index velas-accounts-storages
     --account-index velas-accounts-owners
     --account-index velas-accounts-operationals
+    --evm-state-archive "$ledgerDir"/archive-evm
 )
 # shellcheck disable=SC2086
 velas-validator "${args[@]}" $SOLANA_RUN_SH_VALIDATOR_ARGS &

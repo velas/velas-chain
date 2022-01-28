@@ -111,6 +111,10 @@ impl Executor {
         self.evm_backend.state.block_version >= BlockVersion::VersionConsistentHashes
     }
 
+    pub fn config(&self) -> &EvmConfig {
+        &self.config
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn transaction_execute_raw<F>(
         &mut self,
@@ -158,6 +162,11 @@ impl Executor {
 
         ensure!(
             gas_price <= U256::from(u64::MAX),
+            GasPriceOutOfBounds { gas_price }
+        );
+
+        ensure!(
+            gas_price >= self.config.burn_gas_price,
             GasPriceOutOfBounds { gas_price }
         );
 
@@ -737,7 +746,7 @@ mod tests {
             let create_tx = alice.create(&code);
             assert!(matches!(
                 executor
-                    .transaction_execute(create_tx.clone(), noop_precompile)
+                    .transaction_execute(create_tx.clone(), noop_precompile())
                     .unwrap()
                     .exit_reason,
                 ExitReason::Succeed(ExitSucceed::Returned)
@@ -770,7 +779,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, noop_precompile)
+                .transaction_execute(call_tx, noop_precompile())
                 .unwrap();
 
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
@@ -798,6 +807,48 @@ mod tests {
                 assert!(backend.kvs().check_root_exist(first_root));
             }
         }
+    }
+
+    #[test]
+    fn handle_burn_fee() {
+        let _logger = simple_logger::SimpleLogger::new().init();
+
+        let chain_id = 0xeba;
+        let evm_config = EvmConfig {
+            chain_id,
+            ..EvmConfig::new(chain_id, true)
+        };
+        let mut executor =
+            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+
+        let alice = Persona::new();
+        let mut create_tx = alice.unsigned(TransactionAction::Call(H160::zero()), &[]);
+
+        create_tx.gas_limit = 300_000.into();
+        let address = alice.address();
+
+        executor.deposit(
+            address,
+            create_tx.gas_limit * U256::from(crate::BURN_GAS_PRICE),
+        );
+        assert_eq!(
+            executor
+                .transaction_execute_unsinged(address, create_tx.clone(), true, noop_precompile())
+                .unwrap_err(),
+            Error::GasPriceOutOfBounds {
+                gas_price: 0.into()
+            }
+        );
+
+        create_tx.gas_price = crate::BURN_GAS_PRICE.into();
+
+        assert_eq!(
+            executor
+                .transaction_execute_unsinged(address, create_tx, true, noop_precompile())
+                .unwrap()
+                .exit_reason,
+            ExitReason::Succeed(ExitSucceed::Stopped)
+        );
     }
 
     #[test]

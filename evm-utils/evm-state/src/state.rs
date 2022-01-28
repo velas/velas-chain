@@ -20,6 +20,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_GAS_LIMIT: u64 = 300_000_000;
+
+pub const BURN_GAS_PRICE: u64 = 2_000_000_000; // 2 lamports per gas.
 /// Dont load to many account to memory, to avoid OOM.
 pub const MAX_IN_MEMORY_EVM_ACCOUNTS: usize = 10000;
 
@@ -309,7 +311,12 @@ impl EvmBackend<Incomming> {
         }
         Ok(self.get_account_state_from_kvs(root, address))
     }
-    pub fn get_storage_at(&self, root: H256, address: H160, index: H256) ->  Result<Option<H256>, anyhow::Error> {
+    pub fn get_storage_at(
+        &self,
+        root: H256,
+        address: H160,
+        index: H256,
+    ) -> Result<Option<H256>, anyhow::Error> {
         if !self.kvs.check_root_exist(root) {
             anyhow::bail!("Failed to find root in storage, root: {}", root);
         }

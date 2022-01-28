@@ -91,7 +91,8 @@ pub enum Error {
     #[snafu(display("Gas used={} exceed gas_limit={}", used_gas, gas_limit,))]
     GasUsedOutOfBounds { used_gas: U256, gas_limit: U256 },
     #[snafu(display(
-        "Gas price should not exceed U64::MAX, provided_gas_price={}",
+        "Gas price should not exceed U64::MAX, and be more than BURN_GAS_PRICE({}), provided_gas_price={}",
+        crate::BURN_GAS_PRICE,
         gas_price,
     ))]
     GasPriceOutOfBounds { gas_price: U256 },

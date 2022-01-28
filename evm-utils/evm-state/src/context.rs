@@ -63,6 +63,7 @@ pub struct EvmConfig {
     pub force_chain_id: bool,
     /// Executor should be called with estimate purposes (count transaction in worst scenario).
     pub estimate: bool,
+    pub burn_gas_price: U256,
 }
 
 impl Default for EvmConfig {
@@ -73,16 +74,21 @@ impl Default for EvmConfig {
             chain_id: crate::TEST_CHAIN_ID,
             force_chain_id: true,
             estimate: false,
+            burn_gas_price: U256::zero(),
         }
     }
 }
 
 impl EvmConfig {
-    pub fn new(chain_id: u64) -> EvmConfig {
-        Self {
+    pub fn new(chain_id: u64, basic_burn_gas_price: bool) -> EvmConfig {
+        let mut this = Self {
             chain_id,
             ..Default::default()
+        };
+        if basic_burn_gas_price {
+            this.burn_gas_price = crate::BURN_GAS_PRICE.into();
         }
+        this
     }
     pub(crate) fn to_evm_params(self) -> evm::Config {
         evm::Config {
