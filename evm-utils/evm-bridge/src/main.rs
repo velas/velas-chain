@@ -182,6 +182,7 @@ pub struct EvmBridge {
     max_logs_blocks: u64,
     pool: EthPool<SystemClock>,
     min_gas_price: U256,
+    pipeline_nonce: bool
 }
 
 impl EvmBridge {
@@ -194,6 +195,7 @@ impl EvmBridge {
         simulate: bool,
         max_logs_blocks: u64,
         min_gas_price: U256,
+        pipeline_nonce: bool
     ) -> Self {
         info!("EVM chain id {}", evm_chain_id);
 
@@ -226,6 +228,7 @@ impl EvmBridge {
             max_logs_blocks,
             pool,
             min_gas_price,
+            pipeline_nonce
         }
     }
 
@@ -647,21 +650,27 @@ impl BasicERPC for BasicErpcProxy {
     fn call(
         &self,
         meta: Self::Metadata,
-        tx: RPCTransaction,
+        mut tx: RPCTransaction,
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
     ) -> EvmResult<Bytes> {
+        if meta.as_ref().pipeline_nonce {
+            tx.nonce = None;
+        }
         proxy_evm_rpc!(meta.rpc_client, EthCall, tx, block, meta_keys)
     }
 
     fn trace_call(
         &self,
         meta: Self::Metadata,
-        tx: RPCTransaction,
+        mut tx: RPCTransaction,
         traces: Vec<String>,
         block: Option<BlockId>,
         meta_info: Option<TraceMeta>,
     ) -> EvmResult<evm_rpc::trace::TraceResultsWithTransactionHash> {
+        if meta.as_ref().pipeline_nonce {
+            tx.nonce = None;
+        }
         proxy_evm_rpc!(meta.rpc_client, EthTraceCall, tx, traces, block, meta_info)
     }
 
@@ -709,10 +718,13 @@ impl BasicERPC for BasicErpcProxy {
     fn estimate_gas(
         &self,
         meta: Self::Metadata,
-        tx: RPCTransaction,
+        mut tx: RPCTransaction,
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
     ) -> EvmResult<Hex<Gas>> {
+        if meta.as_ref().pipeline_nonce {
+            tx.nonce = None;
+        }
         proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block, meta_keys)
     }
 
@@ -849,6 +861,8 @@ struct Args {
     /// Maximum number of blocks to return in eth_getLogs rpc.
     #[structopt(long = "max-logs-block-count", default_value = "500")]
     max_logs_blocks: u64,
+    #[structopt(short = "p", long = "pipeline-nonce")]
+    pipeline_nonce: bool
 }
 
 impl Args {
@@ -907,6 +921,7 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         !args.no_simulate, // invert argument
         args.max_logs_blocks,
         min_gas_price,
+        args.pipeline_nonce
     );
     let meta = Arc::new(meta);
 
