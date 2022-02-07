@@ -1783,6 +1783,34 @@ impl Blockstore {
         }))
     }
 
+    ///
+    /// Return reverse iterator over evm blocks.
+    /// There can be more than one block with same block number and different slot numbers.
+    ///
+    /// TODO: naming (check evm_blocks_iterator: same naming, different semantic)
+    pub fn evm_blocks_reverse_iterator(
+        &self,
+    ) -> Result<impl Iterator<Item = ((evm::BlockNum, Option<Slot>), evm::BlockHeader)> + '_> {
+        Ok(self
+            .evm_blocks_cf
+            .iter(IteratorMode::End)?
+            .map(move |(block_num, block_header)| {
+                (
+                    block_num,
+                    self.evm_blocks_cf
+                        .deserialize_protobuf_or_bincode::<evm::BlockHeader>(&block_header)
+                        .unwrap_or_else(|e| {
+                            panic!(
+                            "Could not deserialize BlockHeader for block_num {} slot {:?}: {:?}",
+                            block_num.0, block_num.1, e
+                        )
+                        })
+                        .try_into()
+                        .expect("Convertation should always pass"),
+                )
+            }))
+    }
+
     pub fn get_block_height(&self, slot: Slot) -> Result<Option<u64>> {
         datapoint_info!(
             "blockstore-rpc-api",

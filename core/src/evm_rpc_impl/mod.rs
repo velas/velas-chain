@@ -149,7 +149,7 @@ fn block_parse_confirmed_num(
         BlockId::BlockHash { .. } => None,
         BlockId::RelativeId(BlockRelId::Earliest) => Some(meta.get_first_available_evm_block()),
         BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
-            Some(meta.get_last_available_evm_block().unwrap_or_else(|| {
+            Some(meta.get_last_confirmed_evm_block().unwrap_or_else(|| {
                 let bank = meta.bank(Some(CommitmentConfig::processed()));
                 let evm = bank.evm_state.read().unwrap();
                 evm.block_number().saturating_sub(1)

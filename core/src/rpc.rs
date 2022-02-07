@@ -2061,6 +2061,15 @@ impl JsonRpcRequestProcessor {
             .unwrap_or(None)
     }
 
+    ///
+    /// Get last evm block which has respective native chain block rooted
+    pub fn get_last_confirmed_evm_block(&self) -> Option<u64> {
+        self.blockstore
+            .evm_blocks_reverse_iterator().ok()?
+            .find(|(_, header)| self.blockstore.is_root(header.native_chain_slot))
+            .map(|((block_num, _), _)| block_num)
+    }
+
     pub fn get_evm_receipt_by_hash(
         &self,
         hash: evm_state::H256,
