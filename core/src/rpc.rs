@@ -2087,7 +2087,15 @@ impl JsonRpcRequestProcessor {
         receipt
     }
     pub fn get_evm_block_by_id(&self, id: evm_state::BlockNum) -> Option<(evm_state::Block, bool)> {
-        let get_block_from_bigtable = || {
+        let block = self.blockstore.get_evm_block(id).ok();
+        if block.is_some() {
+            return block;
+        }
+
+        let last_evm_block = self.get_last_available_evm_block();
+        if last_evm_block.is_none()
+            || matches!(last_evm_block, Some(last_evm_block) if id <= last_evm_block)
+        {
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
                 let bigtable_block = self
                     .runtime
@@ -2101,21 +2109,6 @@ impl JsonRpcRequestProcessor {
                     (b, !above_our_chain)
                 });
             }
-            None
-        };
-
-        if let Some(last_evm_block) = self.get_last_available_evm_block() {
-            if id <= last_evm_block {
-                let block = self.blockstore.get_evm_block(id).ok();
-
-                if block.is_none() {
-                    return get_block_from_bigtable();
-                }
-                return block;
-            }
-        }
-        else {
-            return get_block_from_bigtable();
         }
         None
     }
