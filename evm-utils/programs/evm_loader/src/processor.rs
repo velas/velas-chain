@@ -3,11 +3,12 @@ use std::fmt::Write;
 use std::ops::DerefMut;
 
 use super::account_structure::AccountStructure;
-use super::instructions::{EvmBigTransaction, EvmInstruction};
+use super::instructions::{EvmBigTransaction, EvmInstruction, EVM_INSTRUCTION_BORSH_PREFIX};
 use super::precompiles;
 use super::scope::*;
 use log::*;
 
+use borsh::BorshDeserialize;
 use evm::{gweis_to_lamports, Executor, ExitReason};
 use solana_sdk::account::AccountSharedData;
 use solana_sdk::ic_msg;
@@ -81,7 +82,12 @@ impl EvmProcessor {
 
         let accounts = AccountStructure::new(evm_state_account, keyed_accounts);
 
-        let ix = limited_deserialize(data)?;
+        let ix = if data.starts_with(EVM_INSTRUCTION_BORSH_PREFIX) {
+            BorshDeserialize::deserialize(&mut &data[..])
+                .map_err(|_| InstructionError::InvalidInstructionData)?
+        } else {
+            limited_deserialize(data)?
+        };
         trace!("Run evm exec with ix = {:?}.", ix);
         let result = match ix {
             EvmInstruction::EvmTransaction { evm_tx } => {
@@ -1620,7 +1626,7 @@ mod test {
                     .or_insert_with(|| RefCell::new(account_by_key(acc.pubkey)));
             }
 
-            let data: EvmInstruction = limited_deserialize(&ix.data).unwrap();
+            let data: EvmInstruction = BorshDeserialize::deserialize(&mut ix.data.as_slice()).unwrap();
             println!("Executing = {:?}", data);
             let keyed_accounts: Vec<_> = ix
                 .accounts

@@ -56,7 +56,7 @@ pub fn send_raw_tx(
         account_metas.push(AccountMeta::new(gas_collector, false))
     }
 
-    Instruction::new_with_bincode(
+    Instruction::new_with_borsh(
         crate::ID,
         &EvmInstruction::EvmTransaction { evm_tx },
         account_metas,
@@ -73,7 +73,7 @@ pub fn authorized_tx(
     ];
 
     let from = evm_address_for_program(sender);
-    Instruction::new_with_bincode(
+    Instruction::new_with_borsh(
         crate::ID,
         &EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx },
         account_metas,
@@ -90,7 +90,7 @@ pub(crate) fn transfer_native_to_evm(
         AccountMeta::new(owner, true),
     ];
 
-    Instruction::new_with_bincode(
+    Instruction::new_with_borsh(
         crate::ID,
         &EvmInstruction::SwapNativeToEther {
             lamports,
@@ -106,7 +106,7 @@ pub fn free_ownership(owner: solana::Address) -> solana::Instruction {
         AccountMeta::new(owner, true),
     ];
 
-    Instruction::new_with_bincode(crate::ID, &EvmInstruction::FreeOwnership {}, account_metas)
+    Instruction::new_with_borsh(crate::ID, &EvmInstruction::FreeOwnership {}, account_metas)
 }
 
 pub fn big_tx_allocate(storage: &solana::Address, size: usize) -> solana::Instruction {
@@ -117,7 +117,7 @@ pub fn big_tx_allocate(storage: &solana::Address, size: usize) -> solana::Instru
 
     let big_tx = EvmBigTransaction::EvmTransactionAllocate { size: size as u64 };
 
-    Instruction::new_with_bincode(
+    Instruction::new_with_borsh(
         crate::ID,
         &EvmInstruction::EvmBigTransaction(big_tx),
         account_metas,
@@ -135,7 +135,7 @@ pub fn big_tx_write(storage: &solana::Address, offset: u64, chunk: Vec<u8>) -> s
         data: chunk,
     };
 
-    Instruction::new_with_bincode(
+    Instruction::new_with_borsh(
         crate::ID,
         &EvmInstruction::EvmBigTransaction(big_tx),
         account_metas,
@@ -157,7 +157,7 @@ pub fn big_tx_execute(
 
     let big_tx = EvmBigTransaction::EvmTransactionExecute {};
 
-    Instruction::new_with_bincode(
+    Instruction::new_with_borsh(
         crate::ID,
         &EvmInstruction::EvmBigTransaction(big_tx),
         account_metas,

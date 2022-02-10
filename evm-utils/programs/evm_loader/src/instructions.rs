@@ -1,5 +1,7 @@
 use super::scope::*;
+use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
+use std::io;
 
 /// Solana blockchain limit amount of data that transaction can have.
 /// To get around this limitation, we use design that is similar to LoaderInstruction in sdk.
@@ -18,6 +20,76 @@ pub enum EvmBigTransaction {
     /// Execute merged unsigned transaction, in order to do this, user should make sure that transaction is successfully writed.
     EvmTransactionExecuteUnsigned { from: evm::Address },
 }
+
+impl BorshSerialize for EvmBigTransaction {
+    #[inline]
+    fn serialize<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+        match self {
+            EvmBigTransaction::EvmTransactionAllocate { size } => {
+                writer.write_all(&[0u8])?;
+                BorshSerialize::serialize(size, writer)
+            }
+            EvmBigTransaction::EvmTransactionWrite { offset, data } => {
+                writer.write_all(&[1u8])?;
+                BorshSerialize::serialize(offset, writer)?;
+                BorshSerialize::serialize(data, writer)
+            }
+            EvmBigTransaction::EvmTransactionExecute {} => writer.write_all(&[2u8]),
+            EvmBigTransaction::EvmTransactionExecuteUnsigned { from } => {
+                writer.write_all(&[3u8])?;
+                writer.write_all(from.as_bytes())
+            }
+        }
+    }
+
+    #[inline]
+    fn is_u8() -> bool {
+        false
+    }
+}
+
+impl BorshDeserialize for EvmBigTransaction {
+    #[inline]
+    fn deserialize(buf: &mut &[u8]) -> io::Result<Self> {
+        if buf.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty buffer"));
+        }
+        let tag = buf[0];
+        *buf = &buf[1..];
+        match tag {
+            0 => Ok(EvmBigTransaction::EvmTransactionAllocate {
+                size: BorshDeserialize::deserialize(buf)?,
+            }),
+            1 => Ok(EvmBigTransaction::EvmTransactionWrite {
+                offset: BorshDeserialize::deserialize(buf)?,
+                data: BorshDeserialize::deserialize(buf)?,
+            }),
+            2 => Ok(EvmBigTransaction::EvmTransactionExecute {}),
+            3 => {
+                if buf.len() < evm::Address::len_bytes() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid buffer size",
+                    ));
+                }
+                let address = evm::Address::from_slice(&buf[..evm::Address::len_bytes()]);
+                *buf = &buf[evm::Address::len_bytes()..];
+                Ok(EvmBigTransaction::EvmTransactionExecuteUnsigned { from: address })
+            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unexpected enum tag",
+            )),
+        }
+    }
+
+    #[inline]
+    fn is_u8() -> bool {
+        false
+    }
+}
+
+pub const EVM_INSTRUCTION_BORSH_PREFIX: &[u8] = &[255u8];
 
 #[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum EvmInstruction {
@@ -73,6 +145,109 @@ pub enum EvmInstruction {
         from: evm::Address,
         unsigned_tx: evm::UnsignedTransaction,
     },
+}
+
+impl BorshSerialize for EvmInstruction {
+    #[inline]
+    fn serialize<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+        writer.write_all(EVM_INSTRUCTION_BORSH_PREFIX)?;
+        match self {
+            EvmInstruction::EvmTransaction { evm_tx } => {
+                writer.write_all(&[0u8])?;
+                BorshSerialize::serialize(evm_tx, writer)
+            }
+            EvmInstruction::SwapNativeToEther {
+                lamports,
+                evm_address,
+            } => {
+                writer.write_all(&[1u8])?;
+                BorshSerialize::serialize(lamports, writer)?;
+                writer.write_all(evm_address.as_bytes())
+            }
+            EvmInstruction::FreeOwnership {} => writer.write_all(&[2u8]),
+            EvmInstruction::EvmBigTransaction(tx) => {
+                writer.write_all(&[3u8])?;
+                BorshSerialize::serialize(tx, writer)
+            }
+            EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => {
+                writer.write_all(&[4u8])?;
+                writer.write_all(from.as_bytes())?;
+                BorshSerialize::serialize(unsigned_tx, writer)
+            }
+        }
+    }
+
+    #[inline]
+    fn is_u8() -> bool {
+        false
+    }
+}
+
+impl BorshDeserialize for EvmInstruction {
+    #[inline]
+    fn deserialize(buf: &mut &[u8]) -> io::Result<Self> {
+        if buf.len() < 2 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid buffer size",
+            ));
+        }
+        if !buf.starts_with(EVM_INSTRUCTION_BORSH_PREFIX) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "first byte should always be 0xff for evm instruction",
+            ));
+        }
+        let tag = buf[1]; // first byte is 0xff, the second is enum tag
+        *buf = &buf[2..];
+        match tag {
+            0 => Ok(EvmInstruction::EvmTransaction {
+                evm_tx: BorshDeserialize::deserialize(buf)?,
+            }),
+            1 => {
+                let lamports: u64 = BorshDeserialize::deserialize(buf)?;
+                if buf.len() < evm::Address::len_bytes() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid buffer size",
+                    ));
+                }
+                let evm_address = evm::Address::from_slice(&buf[..evm::Address::len_bytes()]);
+                *buf = &buf[evm::Address::len_bytes()..];
+                Ok(EvmInstruction::SwapNativeToEther {
+                    lamports,
+                    evm_address,
+                })
+            }
+            2 => Ok(EvmInstruction::FreeOwnership {}),
+            3 => Ok(EvmInstruction::EvmBigTransaction(
+                BorshDeserialize::deserialize(buf)?,
+            )),
+            4 => {
+                if buf.len() < evm::Address::len_bytes() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid buffer size",
+                    ));
+                }
+                let from = evm::Address::from_slice(&buf[..evm::Address::len_bytes()]);
+                *buf = &buf[evm::Address::len_bytes()..];
+                Ok(EvmInstruction::EvmAuthorizedTransaction {
+                    from,
+                    unsigned_tx: BorshDeserialize::deserialize(buf)?,
+                })
+            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unexpected enum tag",
+            )),
+        }
+    }
+
+    #[inline]
+    fn is_u8() -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -403,5 +578,351 @@ mod test {
         let data = EvmInstruction::EvmTransaction { evm_tx: tx.0 };
         let data = bincode::serialize(&data).unwrap();
         assert_eq!(&*data, &[0, 1, 2, 3])
+    }
+
+    #[test]
+    fn test_serialize_big_transaction_allocate_with_borsh() {
+        let size = 27;
+        let big_tx = EvmBigTransaction::EvmTransactionAllocate { size };
+        let mut buf: Vec<u8> = vec![];
+        BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
+
+        let tag = [0u8];
+        let size_in_bytes = size.to_le_bytes();
+
+        let result_data = [&tag[..], &size_in_bytes[..]].concat();
+        assert_eq!(buf, result_data)
+    }
+
+    #[test]
+    fn test_serialize_big_transaction_write_with_borsh() {
+        let input = vec![1, 2, 3, 4];
+        let offset = 27;
+        let big_tx = EvmBigTransaction::EvmTransactionWrite {
+            offset,
+            data: input.clone(),
+        };
+        let mut buf: Vec<u8> = vec![];
+        BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
+
+        let tag = [1u8];
+        let offset_in_bytes = offset.to_le_bytes();
+        let input_size_in_bytes = (input.len() as u32).to_le_bytes();
+
+        let result_data = [
+            &tag[..],
+            &offset_in_bytes[..],
+            &input_size_in_bytes[..],
+            &input[..],
+        ]
+        .concat();
+        assert_eq!(buf, result_data)
+    }
+
+    #[test]
+    fn test_serialize_big_transaction_execute_with_borsh() {
+        let big_tx = EvmBigTransaction::EvmTransactionExecute {};
+        let mut buf: Vec<u8> = vec![];
+        BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
+
+        let tag = [2u8];
+        assert_eq!(buf, tag)
+    }
+
+    #[test]
+    fn test_serialize_big_transaction_execute_unsigned_with_borsh() {
+        let from = H160::repeat_byte(0x1);
+        let big_tx = EvmBigTransaction::EvmTransactionExecuteUnsigned { from };
+        let mut buf: Vec<u8> = vec![];
+        BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
+
+        let tag = [3u8];
+        let from_in_bytes = from.as_bytes();
+
+        let result_data = [&tag[..], &from_in_bytes[..]].concat();
+        assert_eq!(buf, result_data)
+    }
+
+    #[test]
+    fn test_deserialize_big_transaction_with_borsh() {
+        let big_tx = hex::decode("000000000000000001").unwrap();
+        assert_eq!(
+            <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &big_tx[..]).unwrap(),
+            EvmBigTransaction::EvmTransactionAllocate {
+                size: 72057594037927936
+            }
+        );
+
+        let big_tx = hex::decode("01adde00000000000006000000424038030638").unwrap();
+        assert_eq!(
+            <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &big_tx[..]).unwrap(),
+            EvmBigTransaction::EvmTransactionWrite {
+                offset: 57005,
+                data: vec![66, 64, 56, 3, 6, 56]
+            }
+        );
+
+        let big_tx = hex::decode("02").unwrap();
+        assert_eq!(
+            <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &big_tx[..]).unwrap(),
+            EvmBigTransaction::EvmTransactionExecute {}
+        );
+
+        let big_tx = hex::decode("030505050505050505050505050505050505050505").unwrap();
+        assert_eq!(
+            <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &big_tx[..]).unwrap(),
+            EvmBigTransaction::EvmTransactionExecuteUnsigned {
+                from: H160::repeat_byte(5)
+            }
+        );
+    }
+
+    #[test]
+    fn test_deserialize_big_transaction_from_invalid_data_should_fail() {
+        let empty_instruction = vec![];
+        assert_eq!(
+            <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &empty_instruction[..])
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::InvalidInput,
+        );
+
+        let invalid_instruction = hex::decode("03").unwrap();
+        assert_eq!(
+            <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &invalid_instruction[..])
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::InvalidInput,
+        );
+
+        let invalid_instruction = hex::decode("04").unwrap();
+        assert_eq!(
+            <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &invalid_instruction[..])
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::InvalidInput,
+        );
+    }
+
+    #[test]
+    fn test_serialize_evm_instruction_transaction_with_borsh() {
+        let evm_tx = evm::Transaction {
+            nonce: evm::U256::from(1),
+            gas_price: evm::U256::from(10),
+            gas_limit: evm::U256::from(100),
+            action: evm::TransactionAction::Create,
+            value: evm::U256::from(5),
+            signature: evm::TransactionSignature {
+                v: 20,
+                r: H256::from_low_u64_be(6),
+                s: H256::from_low_u64_be(6),
+            },
+            input: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        };
+        let data = EvmInstruction::EvmTransaction { evm_tx };
+        let result = hex::decode("ff00\
+        0100000000000000000000000000000000000000000000000000000000000000\
+        0a00000000000000000000000000000000000000000000000000000000000000\
+        6400000000000000000000000000000000000000000000000000000000000000\
+        01\
+        0500000000000000000000000000000000000000000000000000000000000000\
+        140000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000006\
+        0a00000000010203040506070809").unwrap();
+        let mut buf = vec![];
+        BorshSerialize::serialize(&data, &mut buf).unwrap();
+        assert_eq!(buf, result);
+    }
+
+    #[test]
+    fn test_serialize_evm_instruction_swap_to_ether_with_borsh() {
+        let data = EvmInstruction::SwapNativeToEther {
+            lamports: 1000,
+            evm_address: H160::repeat_byte(0x1),
+        };
+        let result = hex::decode(
+            "ff01\
+        e803000000000000\
+        0101010101010101010101010101010101010101",
+        )
+        .unwrap();
+        let mut buf = vec![];
+        BorshSerialize::serialize(&data, &mut buf).unwrap();
+        assert_eq!(buf, result);
+    }
+
+    #[test]
+    fn test_serialize_evm_instruction_free_ownership_with_borsh() {
+        let data = EvmInstruction::FreeOwnership {};
+        let result = hex::decode("ff02").unwrap();
+        let mut buf = vec![];
+        BorshSerialize::serialize(&data, &mut buf).unwrap();
+        assert_eq!(buf, result);
+    }
+
+    #[test]
+    fn test_serialize_evm_instruction_evm_big_transaction_with_borsh() {
+        let data = EvmInstruction::EvmBigTransaction(EvmBigTransaction::EvmTransactionWrite {
+            offset: 16,
+            data: vec![1, 2, 3, 4],
+        });
+        let result = hex::decode(
+            "ff03\
+        01\
+        1000000000000000\
+        0400000001020304",
+        )
+        .unwrap();
+        let mut buf = vec![];
+        BorshSerialize::serialize(&data, &mut buf).unwrap();
+        assert_eq!(buf, result);
+    }
+
+    #[test]
+    fn test_serialize_evm_instruction_evm_authorized_transaction_with_borsh() {
+        let data = EvmInstruction::EvmAuthorizedTransaction {
+            from: H160::repeat_byte(0x1),
+            unsigned_tx: evm::UnsignedTransaction {
+                nonce: evm::U256::from(10),
+                gas_price: evm::U256::from(20),
+                gas_limit: evm::U256::from(30),
+                action: evm::TransactionAction::Create,
+                value: evm::U256::from(40),
+                input: vec![10, 20, 30, 40],
+            },
+        };
+        let result = hex::decode(
+            "ff04\
+        0101010101010101010101010101010101010101\
+        0a00000000000000000000000000000000000000000000000000000000000000\
+        1400000000000000000000000000000000000000000000000000000000000000\
+        1e00000000000000000000000000000000000000000000000000000000000000\
+        01\
+        2800000000000000000000000000000000000000000000000000000000000000\
+        040000000a141e28",
+        )
+        .unwrap();
+        let mut buf = vec![];
+        BorshSerialize::serialize(&data, &mut buf).unwrap();
+        assert_eq!(buf, result);
+    }
+
+    #[test]
+    fn test_deserialize_evm_instrtion_with_borsh() {
+        let instruction = hex::decode("ff00\
+        0100000000000000000000000000000000000000000000000000000000000000\
+        0a00000000000000000000000000000000000000000000000000000000000000\
+        6400000000000000000000000000000000000000000000000000000000000000\
+        001111111111111111111111111111111111111111\
+        0500000000000000000000000000000000000000000000000000000000000000\
+        140000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000006\
+        0a000000534951394a0e250c1722").unwrap();
+        assert_eq!(
+            <EvmInstruction as BorshDeserialize>::deserialize(&mut &instruction[..]).unwrap(),
+            EvmInstruction::EvmTransaction {
+                evm_tx: evm::Transaction {
+                    nonce: evm::U256::from(1),
+                    gas_price: evm::U256::from(10),
+                    gas_limit: evm::U256::from(100),
+                    action: evm::TransactionAction::Call(H160::repeat_byte(0x11)),
+                    value: evm::U256::from(5),
+                    signature: evm::TransactionSignature {
+                        v: 20,
+                        r: H256::from_low_u64_be(6),
+                        s: H256::from_low_u64_be(6),
+                    },
+                    input: vec![83, 73, 81, 57, 74, 14, 37, 12, 23, 34],
+                }
+            }
+        );
+
+        let instruction = hex::decode(
+            "ff01\
+        e803000000000000\
+        ffffffffffffffffffffffffffffffffffffffff",
+        )
+        .unwrap();
+        assert_eq!(
+            <EvmInstruction as BorshDeserialize>::deserialize(&mut &instruction[..]).unwrap(),
+            EvmInstruction::SwapNativeToEther {
+                lamports: 1000,
+                evm_address: H160::repeat_byte(0xff),
+            }
+        );
+
+        let instruction = hex::decode("ff02").unwrap();
+        assert_eq!(
+            <EvmInstruction as BorshDeserialize>::deserialize(&mut &instruction[..]).unwrap(),
+            EvmInstruction::FreeOwnership {}
+        );
+
+        let instruction = hex::decode(
+            "ff04\
+        0101010101010101010101010101010101010101\
+        0001000000000000000000000000000000000000000000000000000000000000\
+        0001000000000000000000000000000000000000000000000000000000000000\
+        0001000000000000000000000000000000000000000000000000000000000000\
+        01\
+        0001000000000000000000000000000000000000000000000000000000000000\
+        040000000a141e28",
+        )
+        .unwrap();
+        assert_eq!(
+            <EvmInstruction as BorshDeserialize>::deserialize(&mut &instruction[..]).unwrap(),
+            EvmInstruction::EvmAuthorizedTransaction {
+                from: H160::repeat_byte(0x1),
+                unsigned_tx: evm::UnsignedTransaction {
+                    nonce: evm::U256::from(256),
+                    gas_price: evm::U256::from(256),
+                    gas_limit: evm::U256::from(256),
+                    action: evm::TransactionAction::Create,
+                    value: evm::U256::from(256),
+                    input: vec![10, 20, 30, 40],
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn test_deserialize_evm_instruction_from_invalid_data_should_fail() {
+        let empty_instruction = vec![];
+        assert_eq!(
+            <EvmInstruction as BorshDeserialize>::deserialize(&mut &empty_instruction[..])
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::InvalidInput,
+        );
+
+        let invalid_instruction = hex::decode("ff").unwrap();
+        assert_eq!(
+            <EvmInstruction as BorshDeserialize>::deserialize(&mut &invalid_instruction[..])
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::InvalidInput,
+        );
+
+        let invalid_instruction =
+            hex::decode("01e803000000000000ffffffffffffffffffffffffffffffffffffffff").unwrap();
+        assert_eq!(
+            <EvmInstruction as BorshDeserialize>::deserialize(&mut &invalid_instruction[..])
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::InvalidInput,
+        );
+
+        let invalid_instruction =
+            hex::decode("ff01e803000000000000ffffffffffffffffffffffffffffffffffffff").unwrap();
+        assert_eq!(
+            <EvmInstruction as BorshDeserialize>::deserialize(&mut &invalid_instruction[..])
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::InvalidInput,
+        );
     }
 }

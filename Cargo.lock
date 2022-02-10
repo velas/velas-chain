@@ -1746,6 +1746,7 @@ dependencies = [
  "anyhow",
  "auto_enums",
  "bincode",
+ "borsh 0.8.2",
  "bytes 0.6.0",
  "criterion",
  "derivative",
@@ -5640,6 +5641,7 @@ version = "0.1.0"
 dependencies = [
  "assert_matches",
  "bincode",
+ "borsh 0.8.2",
  "byteorder",
  "crc32fast",
  "ethabi",
