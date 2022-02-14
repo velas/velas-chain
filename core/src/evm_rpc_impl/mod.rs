@@ -149,7 +149,7 @@ fn block_parse_confirmed_num(
         BlockId::BlockHash { .. } => None,
         BlockId::RelativeId(BlockRelId::Earliest) => Some(meta.get_first_available_evm_block()),
         BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
-            Some(meta.get_last_available_evm_block().unwrap_or_else(|| {
+            Some(meta.get_last_confirmed_evm_block().unwrap_or_else(|| {
                 let bank = meta.bank(Some(CommitmentConfig::processed()));
                 let evm = bank.evm_state.read().unwrap();
                 evm.block_number().saturating_sub(1)
@@ -558,7 +558,7 @@ impl BasicERPC for BasicErpcImpl {
         match tx {
             Ok(Some(tx)) => {
                 let block = if let Some(block) = tx.block_number {
-                    block.0.as_u64().into()
+                    block.0.as_u64().saturating_sub(1).into()
                 } else {
                     return Ok(None);
                 };

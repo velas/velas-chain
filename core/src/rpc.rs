@@ -2061,6 +2061,15 @@ impl JsonRpcRequestProcessor {
             .unwrap_or(None)
     }
 
+    ///
+    /// Get last evm block which has respective native chain block rooted
+    pub fn get_last_confirmed_evm_block(&self) -> Option<u64> {
+        self.blockstore
+            .evm_blocks_reverse_iterator().ok()?
+            .find(|(_, header)| self.blockstore.is_root(header.native_chain_slot))
+            .map(|((block_num, _), _)| block_num)
+    }
+
     pub fn get_evm_receipt_by_hash(
         &self,
         hash: evm_state::H256,
@@ -2088,8 +2097,14 @@ impl JsonRpcRequestProcessor {
     }
     pub fn get_evm_block_by_id(&self, id: evm_state::BlockNum) -> Option<(evm_state::Block, bool)> {
         let block = self.blockstore.get_evm_block(id).ok();
+        if block.is_some() {
+            return block;
+        }
 
-        if block.is_none() {
+        let last_evm_block = self.get_last_available_evm_block();
+        if last_evm_block.is_none()
+            || matches!(last_evm_block, Some(last_evm_block) if id <= last_evm_block)
+        {
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
                 let bigtable_block = self
                     .runtime
@@ -2104,7 +2119,7 @@ impl JsonRpcRequestProcessor {
                 });
             }
         }
-        block
+        None
     }
 
     pub fn get_evm_block_id_by_hash(&self, hash: evm_state::H256) -> Option<u64> {
