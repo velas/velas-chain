@@ -395,6 +395,10 @@ impl EvmProcessor {
 
         let mut tx_chunks = TxChunks::new(storage.data.as_mut_slice());
 
+        let borsh_serialization_enabled = invoke_context.is_feature_active(
+            &solana_sdk::feature_set::velas::evm_instruction_borsh_serialization::id(),
+        );
+
         match big_tx {
             EvmBigTransaction::EvmTransactionAllocate { size } => {
                 tx_chunks.init(size as usize).map_err(|e| {
@@ -434,14 +438,28 @@ impl EvmProcessor {
                 let bytes = tx_chunks.take();
 
                 debug!("Trying to deserialize tx chunks byte = {:?}", bytes);
-                let tx: evm::Transaction = bincode::deserialize(&bytes).map_err(|e| {
-                    ic_msg!(
-                        invoke_context,
-                        "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
-                        e
-                    );
-                    EvmError::DeserializationError
-                })?;
+                let tx: evm::Transaction = match (borsh_serialization_enabled, bytes.split_first()) {
+                    (true, Some((&prefix, borsh_data))) if prefix == EVM_INSTRUCTION_BORSH_PREFIX => {
+                        BorshDeserialize::deserialize(&mut &borsh_data[..]).map_err(|e| {
+                            ic_msg!(
+                                invoke_context,
+                                "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
+                                e
+                            );
+                            EvmError::DeserializationError
+                        })?
+                    }
+                    _ => {
+                        bincode::deserialize(&bytes).map_err(|e| {
+                            ic_msg!(
+                                invoke_context,
+                                "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
+                                e
+                            );
+                            EvmError::DeserializationError
+                        })?
+                    }
+                };
 
                 debug!("Executing EVM tx = {:?}", tx);
                 ic_msg!(
@@ -484,15 +502,28 @@ impl EvmProcessor {
                 let bytes = tx_chunks.take();
 
                 debug!("Trying to deserialize tx chunks byte = {:?}", bytes);
-                let unsigned_tx: evm::UnsignedTransaction =
-                    bincode::deserialize(&bytes).map_err(|e| {
-                        ic_msg!(
-                            invoke_context,
-                            "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
-                            e
-                        );
-                        EvmError::DeserializationError
-                    })?;
+                let unsigned_tx: evm::UnsignedTransaction = match (borsh_serialization_enabled, bytes.split_first()) {
+                    (true, Some((&prefix, borsh_data))) if prefix == EVM_INSTRUCTION_BORSH_PREFIX => {
+                        BorshDeserialize::deserialize(&mut &borsh_data[..]).map_err(|e| {
+                            ic_msg!(
+                                invoke_context,
+                                "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
+                                e
+                            );
+                            EvmError::DeserializationError
+                        })?
+                    }
+                    _ => {
+                        bincode::deserialize(&bytes).map_err(|e| {
+                            ic_msg!(
+                                invoke_context,
+                                "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
+                                e
+                            );
+                            EvmError::DeserializationError
+                        })?
+                    }
+                };
 
                 debug!("Executing EVM tx = {:?}", unsigned_tx);
                 // TODO: Gas limit?

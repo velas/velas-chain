@@ -8,6 +8,7 @@ use std::{
 };
 
 use ::tokio::sync::mpsc;
+use borsh::BorshSerialize;
 use evm_rpc::{error::into_native_error, Bytes, Hex, RPCTransaction};
 use evm_state::{Address, TransactionAction, H160, H256, U256};
 use listener::PoolListener;
@@ -466,8 +467,8 @@ fn deploy_big_tx(
 
     debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
-    let tx_bytes =
-        bincode::serialize(&tx).map_err(|e| into_native_error(e, bridge.verbose_errors))?;
+    let mut tx_bytes: Vec<u8> = vec![];
+    BorshSerialize::serialize(&tx, &mut tx_bytes).map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     debug!(
         "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
