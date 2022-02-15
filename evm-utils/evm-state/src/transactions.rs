@@ -1,12 +1,10 @@
-use std::io;
-use borsh::{BorshSerialize, BorshDeserialize};
+use borsh::{BorshSerialize, BorshDeserialize, BorshSchema};
 use evm::backend::Log;
 use primitive_types::{H160, H256, U256};
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::str::FromStr;
-use std::mem::size_of;
 
 use crate::error::*;
 use secp256k1::{
@@ -23,6 +21,7 @@ pub type Gas = U256;
 const UNSIGNED_TX_MARKER: u8 = 0x1;
 
 /// Etherium transaction.
+#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct Transaction {
     pub nonce: U256,
@@ -104,73 +103,7 @@ impl Transaction {
     }
 }
 
-impl BorshSerialize for Transaction {
-    #[inline]
-    fn serialize<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
-        let mut buf: [u8; 32] = [0; 32];
-        self.nonce.to_little_endian(&mut buf);
-        writer.write_all(&buf)?;
-        self.gas_price.to_little_endian(&mut buf);
-        writer.write_all(&buf)?;
-        self.gas_limit.to_little_endian(&mut buf);
-        writer.write_all(&buf)?;
-        BorshSerialize::serialize(&self.action, writer)?;
-        self.value.to_little_endian(&mut buf);
-        writer.write_all(&buf)?;
-        BorshSerialize::serialize(&self.signature, writer)?;
-        BorshSerialize::serialize(&self.input, writer)?;
-        Ok(())
-    }
-
-    #[inline]
-    fn is_u8() -> bool {
-        false
-    }
-}
-
-impl BorshDeserialize for Transaction {
-    #[inline]
-    fn deserialize(buf: &mut &[u8]) -> io::Result<Self> {
-        if buf.len() < (size_of::<U256>() * 3) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid buffer size",
-            ));
-        }
-        let nonce = U256::from_little_endian(&buf[..size_of::<U256>()]);
-        *buf = &buf[size_of::<U256>()..];
-        let gas_price = Gas::from_little_endian(&buf[..size_of::<Gas>()]);
-        *buf = &buf[size_of::<Gas>()..];
-        let gas_limit = Gas::from_little_endian(&buf[..size_of::<Gas>()]);
-        *buf = &buf[size_of::<Gas>()..];
-        let action: TransactionAction = BorshDeserialize::deserialize(buf)?;
-        if buf.len() < size_of::<U256>() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid buffer size",
-            ));
-        }
-        let value = U256::from_little_endian(&buf[..size_of::<U256>()]);
-        *buf = &buf[size_of::<U256>()..];
-        let signature: TransactionSignature = BorshDeserialize::deserialize(buf)?;
-        let input: Vec<u8> = BorshDeserialize::deserialize(buf)?;
-        Ok(Transaction {
-            nonce,
-            gas_price,
-            gas_limit,
-            action,
-            value,
-            signature,
-            input,
-        })
-    }
-
-    #[inline]
-    fn is_u8() -> bool {
-        false
-    }
-}
-
+#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct UnsignedTransaction {
     pub nonce: U256,
@@ -236,70 +169,7 @@ impl UnsignedTransaction {
     }
 }
 
-impl BorshSerialize for UnsignedTransaction {
-    #[inline]
-    fn serialize<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
-        let mut buf: [u8; 32] = [0; 32];
-        self.nonce.to_little_endian(&mut buf);
-        writer.write_all(&buf)?;
-        self.gas_price.to_little_endian(&mut buf);
-        writer.write_all(&buf)?;
-        self.gas_limit.to_little_endian(&mut buf);
-        writer.write_all(&buf)?;
-        BorshSerialize::serialize(&self.action, writer)?;
-        self.value.to_little_endian(&mut buf);
-        writer.write_all(&buf)?;
-        BorshSerialize::serialize(&self.input, writer)?;
-        Ok(())
-    }
-
-    #[inline]
-    fn is_u8() -> bool {
-        false
-    }
-}
-
-impl BorshDeserialize for UnsignedTransaction {
-    #[inline]
-    fn deserialize(buf: &mut &[u8]) -> io::Result<Self> {
-        if buf.len() < (size_of::<U256>() * 3) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid buffer size",
-            ));
-        }
-        let nonce = U256::from_little_endian(&buf[..size_of::<U256>()]);
-        *buf = &buf[size_of::<U256>()..];
-        let gas_price = U256::from_little_endian(&buf[..size_of::<U256>()]);
-        *buf = &buf[size_of::<U256>()..];
-        let gas_limit = U256::from_little_endian(&buf[..size_of::<U256>()]);
-        *buf = &buf[size_of::<U256>()..];
-        let action: TransactionAction = BorshDeserialize::deserialize(buf)?;
-        if buf.len() < size_of::<U256>() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid buffer size",
-            ));
-        }
-        let value = U256::from_little_endian(&buf[..size_of::<U256>()]);
-        *buf = &buf[size_of::<U256>()..];
-        let input: Vec<u8> = BorshDeserialize::deserialize(buf)?;
-        Ok(UnsignedTransaction {
-            nonce,
-            gas_price,
-            gas_limit,
-            action,
-            value,
-            input,
-        })
-    }
-
-    #[inline]
-    fn is_u8() -> bool {
-        false
-    }
-}
-
+#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum TransactionAction {
     Call(Address),
@@ -323,65 +193,7 @@ impl TransactionAction {
     }
 }
 
-impl BorshSerialize for TransactionAction {
-    #[inline]
-    fn serialize<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
-        match self {
-            TransactionAction::Call(address) => {
-                writer.write_all(&[0u8])?;
-                writer.write_all(address.as_bytes())
-            },
-            TransactionAction::Create => {
-                writer.write_all(&[1u8])
-            },
-        }
-    }
-
-    #[inline]
-    fn is_u8() -> bool {
-        false
-    }
-}
-
-impl BorshDeserialize for TransactionAction {
-    #[inline]
-    fn deserialize(buf: &mut &[u8]) -> io::Result<Self> {
-        if buf.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "empty buffer",
-            ));
-        }
-        let tag = buf[0];
-        *buf = &buf[1..];
-        match tag {
-            0 => {
-                if buf.len() < Address::len_bytes() {
-                    Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "invalid buffer size",
-                    ))
-                }
-                else {
-                    let address = Address::from_slice(&buf[..Address::len_bytes()]);
-                    *buf = &buf[Address::len_bytes()..];
-                    Ok(TransactionAction::Call(address))
-                }
-            },
-            1 => Ok(TransactionAction::Create),
-            _ => Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "unexpected enum tag",
-            )),
-        }
-    }
-
-    #[inline]
-    fn is_u8() -> bool {
-        false
-    }
-}
-
+#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct TransactionSignature {
     pub v: u64,
@@ -435,46 +247,6 @@ impl TransactionSignature {
         sig[32..64].copy_from_slice(self.s.as_bytes());
 
         RecoverableSignature::from_compact(&sig, RecoveryId::from_i32(self.standard_v() as i32)?)
-    }
-}
-
-impl BorshSerialize for TransactionSignature {
-    #[inline]
-    fn serialize<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
-        BorshSerialize::serialize(&self.v, writer)?;
-        writer.write_all(&self.r.as_bytes())?;
-        writer.write_all(&self.s.as_bytes())?;
-        Ok(())
-    }
-
-    #[inline]
-    fn is_u8() -> bool {
-        false
-    }
-}
-
-impl BorshDeserialize for TransactionSignature {
-    #[inline]
-    fn deserialize(buf: &mut &[u8]) -> io::Result<Self> {
-        let total_size = size_of::<u64>() + (2 * size_of::<H256>());
-        if buf.len() < total_size {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid buffer size",
-            ));
-        }
-        let sig = TransactionSignature {
-            v: BorshDeserialize::deserialize(buf)?,
-            r: H256::from_slice(&buf[..size_of::<H256>()]),
-            s: H256::from_slice(&buf[size_of::<H256>()..(2 * size_of::<H256>())]),
-        };
-        *buf = &buf[(2 * size_of::<H256>())..];
-        Ok(sig)
-    }
-
-    #[inline]
-    fn is_u8() -> bool {
-        false
     }
 }
 

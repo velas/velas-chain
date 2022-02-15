@@ -51,6 +51,9 @@ impl EvmProcessor {
             .is_feature_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id());
         let ignore_reset_on_cleared = invoke_context
             .is_feature_active(&solana_sdk::feature_set::velas::ignore_reset_on_cleared::id());
+        let borsh_serialization_enabled = invoke_context.is_feature_active(
+            &solana_sdk::feature_set::velas::evm_instruction_borsh_serialization::id(),
+        );
 
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
@@ -82,11 +85,12 @@ impl EvmProcessor {
 
         let accounts = AccountStructure::new(evm_state_account, keyed_accounts);
 
-        let ix = if data.starts_with(EVM_INSTRUCTION_BORSH_PREFIX) {
-            BorshDeserialize::deserialize(&mut &data[..])
-                .map_err(|_| InstructionError::InvalidInstructionData)?
-        } else {
-            limited_deserialize(data)?
+        let ix = match (borsh_serialization_enabled, data.split_first()) {
+            (true, Some((&prefix, borsh_data))) if prefix == EVM_INSTRUCTION_BORSH_PREFIX => {
+                BorshDeserialize::deserialize(&mut &borsh_data[..])
+                    .map_err(|_| InstructionError::InvalidInstructionData)?
+            }
+            _ => limited_deserialize(data)?,
         };
         trace!("Run evm exec with ix = {:?}.", ix);
         let result = match ix {
@@ -1626,7 +1630,7 @@ mod test {
                     .or_insert_with(|| RefCell::new(account_by_key(acc.pubkey)));
             }
 
-            let data: EvmInstruction = BorshDeserialize::deserialize(&mut ix.data.as_slice()).unwrap();
+            let data: EvmInstruction = BorshDeserialize::deserialize(&mut &ix.data[1..]).unwrap();
             println!("Executing = {:?}", data);
             let keyed_accounts: Vec<_> = ix
                 .accounts

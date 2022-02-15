@@ -173,6 +173,10 @@ pub mod velas {
     pub mod ignore_reset_on_cleared {
         solana_sdk::declare_id!("HC6ZH7Dx92Q5dwVLYAaK3SPNCDc1L7Wq41Zuc7FU1mR1");
     }
+
+    pub mod evm_instruction_borsh_serialization {
+        solana_sdk::declare_id!("11111111111111111111111111111111");
+    }
 }
 lazy_static! {
     /// Map of feature identifiers to user-visible description
@@ -223,6 +227,7 @@ lazy_static! {
             (velas::evm_new_error_handling::id(), "EVM new error handling."),
             (velas::unsigned_tx_fix::id(), "Authorized transaction hash fixed."),
             (velas::ignore_reset_on_cleared::id(), "Don't reset evm_swap address balance, when it already swapped, to avoid empty blocks."),
+            (velas::evm_instruction_borsh_serialization::id(), "Support for Borsh serialization for EVM instructions."),
             /*************** ADD NEW FEATURES HERE ***************/
         ]
     ).collect();
