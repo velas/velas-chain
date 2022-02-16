@@ -17,6 +17,7 @@ use once_cell::sync::Lazy;
 use serde_json::json;
 use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
 use solana_evm_loader_program::{
+    instructions::EVM_INSTRUCTION_BORSH_PREFIX,
     scope::{evm, solana},
     tx_chunks::TxChunks,
 };
@@ -362,7 +363,8 @@ fn process_tx(
     sender: H160,
     mut meta_keys: HashSet<Pubkey>,
 ) -> EvmResult<Hex<H256>> {
-    let bytes = bincode::serialize(&tx).unwrap();
+    let mut bytes: Vec<u8> = vec![EVM_INSTRUCTION_BORSH_PREFIX];
+    BorshSerialize::serialize(&tx, &mut bytes).unwrap();
 
     let rpc_tx = RPCTransaction::from_transaction(tx.clone().into())?;
 
@@ -467,7 +469,7 @@ fn deploy_big_tx(
 
     debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
-    let mut tx_bytes: Vec<u8> = vec![];
+    let mut tx_bytes: Vec<u8> = vec![EVM_INSTRUCTION_BORSH_PREFIX];
     BorshSerialize::serialize(&tx, &mut tx_bytes).map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     debug!(

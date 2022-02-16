@@ -45,6 +45,8 @@ use instructions::{EvmBigTransaction, EvmInstruction, EVM_INSTRUCTION_BORSH_PREF
 use scope::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 
+/// Create an evm instruction and add EVM_INSTRUCTION_BORSH_PREFIX prefix
+/// at the beginning of instruction data to mark Borsh encoding
 pub fn create_evm_instruction_with_borsh(
     program_id: solana_sdk::pubkey::Pubkey,
     data: &EvmInstruction,
