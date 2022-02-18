@@ -749,6 +749,12 @@ impl LedgerStorage {
                 };
                 Ok(block)
             })
+            .take_while(|block| {
+                match block {
+                    Ok(block) => block.header.block_number <= last_block,
+                    Err(_) => true,
+                }
+            })
             .collect();
         Ok(deserialized_blocks?)
     }
