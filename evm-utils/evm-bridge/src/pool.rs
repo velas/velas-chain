@@ -330,6 +330,10 @@ impl VerifiedTransaction for PooledTransaction {
     fn sender(&self) -> &Self::Sender {
         &self.sender
     }
+
+    fn has_zero_gas_price(&self) -> bool {
+        self.gas_price == U256::zero()
+    }
 }
 
 impl Deref for PooledTransaction {

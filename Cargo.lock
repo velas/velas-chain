@@ -7767,8 +7767,8 @@ dependencies = [
 
 [[package]]
 name = "txpool"
-version = "1.0.0-alpha"
-source = "git+https://github.com/velas/transaction-pool?tag=v1.0.0-alpha#2f532dd0c1f7db02bea86e5d492d0eb428fcfe00"
+version = "1.0.0-alpha.2"
+source = "git+https://github.com/velas/transaction-pool?branch=upstream-update#3814bbc83d63118785824b806f163f7a62a8de9f"
 dependencies = [
  "log 0.4.14",
  "smallvec 0.6.14",
