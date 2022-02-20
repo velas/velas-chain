@@ -1964,6 +1964,8 @@ impl JsonRpcRequestProcessor {
 
             let block = block.expect("None is handled before");
 
+            // we requested blocks in range missing_block..block_num,
+            // not including block_num, because it is already found in local db.
             if missing_block != *block_num {
                 let ending_block = block_num - 1;
                 blockstore_request_time += blockstore_request.elapsed();
@@ -1977,16 +1979,13 @@ impl JsonRpcRequestProcessor {
                 blockstore_request = Instant::now();
             }
 
-            // we requested blocks in range missing_block..block_num,
-            // not including block_num, because it is already found in db.
-
             blocks.push(block.0);
 
             missing_block = block_num + 1; // go to the next
         }
 
         // in case we skip some blocks, request remaining from bigtable.
-        if missing_block != ending_block {
+        if missing_block <= ending_block {
             blockstore_request_time += blockstore_request.elapsed();
             let bigtable_request = Instant::now();
             trace!(
@@ -1995,7 +1994,7 @@ impl JsonRpcRequestProcessor {
                 ending_block
             );
             let blocks_bigtable = self.get_evm_blocks_from_bigtable(missing_block, ending_block)?;
-            trace!("bigtable_return = {:?}", blocks);
+            trace!("bigtable_return = {:?}", blocks_bigtable);
             blocks.extend(blocks_bigtable);
             bigtable_request_time += bigtable_request.elapsed();
         };
@@ -2058,7 +2057,8 @@ impl JsonRpcRequestProcessor {
     /// Get last evm block which has respective native chain block rooted
     pub fn get_last_confirmed_evm_block(&self) -> Option<u64> {
         self.blockstore
-            .evm_blocks_reverse_iterator().ok()?
+            .evm_blocks_reverse_iterator()
+            .ok()?
             .find(|(_, header)| self.blockstore.is_root(header.native_chain_slot))
             .map(|((block_num, _), _)| block_num)
     }
