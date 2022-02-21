@@ -321,7 +321,7 @@ fn generate_system_txs(
             let tx_call = tx_call.sign(&from.1, chain_id);
 
             from.2 += 1;
-            let ix = solana_evm_loader_program::send_raw_tx(from.0.pubkey(), tx_call, None);
+            let ix = solana_evm_loader_program::send_raw_tx(from.0.pubkey(), tx_call, None, false);
 
             let message = Message::new(&[ix], Some(&from.0.pubkey()));
 

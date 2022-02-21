@@ -416,7 +416,7 @@ fn process_tx(
     }
 
     let mut ix =
-        solana_evm_loader_program::send_raw_tx(bridge.key.pubkey(), tx, Some(bridge.key.pubkey()));
+        solana_evm_loader_program::send_raw_tx(bridge.key.pubkey(), tx, Some(bridge.key.pubkey()), false);
 
     // Add meta accounts as additional arguments
     for account in meta_keys {
@@ -584,6 +584,7 @@ fn deploy_big_tx(
         &[solana_evm_loader_program::big_tx_execute(
             &storage_pubkey,
             Some(&payer_pubkey),
+            false,
         )],
         Some(&payer_pubkey),
         &signers,

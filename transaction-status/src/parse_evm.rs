@@ -23,8 +23,9 @@ pub fn parse_evm(
         }
     }
 
+    // TODO: should we serialize take_fee_from_native_account?
     match evm_instruction {
-        EvmInstruction::EvmTransaction { evm_tx } => {
+        EvmInstruction::EvmTransaction { evm_tx, .. } => {
             let info = if instruction.accounts.len() >= 2 {
                 json!({
                     "bridgeAccount":  account_keys[instruction.accounts[1] as usize].to_string(),
@@ -45,7 +46,7 @@ pub fn parse_evm(
                 info,
             })
         }
-        EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx, take_fee_from_native_account } => {
+        EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx, .. } => {
             check_num_stake_accounts(&instruction.accounts, 2)?;
             let tx = evm_state::UnsignedTransactionWithCaller {
                 caller: from,
@@ -58,7 +59,6 @@ pub fn parse_evm(
                 "transaction": RPCTransaction::from_transaction(tx.into()).map_err(|_|ParseInstructionError::InstructionKeyMismatch(
                     ParsableProgram::Evm,
                 ))?,
-                "takeFeeFromNativeAccount": take_fee_from_native_account,
             });
 
             Ok(ParsedInstructionEnum {
@@ -112,7 +112,7 @@ pub fn parse_evm(
                 })
             }
 
-            EvmBigTransaction::EvmTransactionExecute {} => {
+            EvmBigTransaction::EvmTransactionExecute { .. } => {
                 check_num_stake_accounts(&instruction.accounts, 2)?;
                 let info = if instruction.accounts.len() >= 3 {
                     json!({
@@ -130,7 +130,7 @@ pub fn parse_evm(
                     info,
                 })
             }
-            EvmBigTransaction::EvmTransactionExecuteUnsigned { from } => {
+            EvmBigTransaction::EvmTransactionExecuteUnsigned { from, .. } => {
                 check_num_stake_accounts(&instruction.accounts, 2)?;
                 let info = if instruction.accounts.len() >= 3 {
                     json!({

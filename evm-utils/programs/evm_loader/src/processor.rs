@@ -94,8 +94,8 @@ impl EvmProcessor {
         };
         trace!("Run evm exec with ix = {:?}.", ix);
         let result = match ix {
-            EvmInstruction::EvmTransaction { evm_tx } => {
-                self.process_raw_tx(executor, invoke_context, accounts, evm_tx, false)
+            EvmInstruction::EvmTransaction { evm_tx, take_fee_from_native_account } => {
+                self.process_raw_tx(executor, invoke_context, accounts, evm_tx, take_fee_from_native_account)
             }
             EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx, take_fee_from_native_account } => self
                 .process_authorized_tx(
@@ -105,10 +105,10 @@ impl EvmProcessor {
                     from,
                     unsigned_tx,
                     unsigned_tx_fix,
-                    false, // TODO: add tests (passing 'true' doesn't break any)
+                    take_fee_from_native_account, // TODO: add tests (passing 'true' doesn't break any)
                 ),
             EvmInstruction::EvmBigTransaction(big_tx) => {
-                self.process_big_tx(executor, invoke_context, accounts, big_tx, unsigned_tx_fix, false)
+                self.process_big_tx(executor, invoke_context, accounts, big_tx, unsigned_tx_fix)
             }
             EvmInstruction::FreeOwnership {} => {
                 self.process_free_ownership(executor, invoke_context, accounts)
@@ -395,7 +395,6 @@ impl EvmProcessor {
         accounts: AccountStructure,
         big_tx: EvmBigTransaction,
         unsigned_tx_fix: bool,
-        take_fee_from_native_account: bool,
     ) -> Result<(), EvmError> {
         debug!("executing big_tx = {:?}", big_tx);
 
@@ -457,7 +456,7 @@ impl EvmProcessor {
                 Ok(())
             }
 
-            EvmBigTransaction::EvmTransactionExecute {} => {
+            EvmBigTransaction::EvmTransactionExecute { take_fee_from_native_account } => {
                 debug!("Tx chunks crc = {:#x}", tx_chunks.crc());
 
                 let bytes = tx_chunks.take();
@@ -524,7 +523,7 @@ impl EvmProcessor {
                     result,
                 )
             }
-            EvmBigTransaction::EvmTransactionExecuteUnsigned { from } => {
+            EvmBigTransaction::EvmTransactionExecuteUnsigned { from, take_fee_from_native_account } => {
                 if !unsigned_tx_fix {
                     ic_msg!(
                         invoke_context,
@@ -796,7 +795,7 @@ mod test {
     #[test]
     fn serialize_deserialize_eth_ix() {
         let tx = dummy_eth_tx();
-        let sol_ix = EvmInstruction::EvmTransaction { evm_tx: tx };
+        let sol_ix = EvmInstruction::EvmTransaction { evm_tx: tx, take_fee_from_native_account: false };
         let ser = bincode::serialize(&sol_ix).unwrap();
         assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
     }
@@ -829,7 +828,8 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_create.clone()
+                    evm_tx: tx_create.clone(),
+                    take_fee_from_native_account: false,
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -856,7 +856,7 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call, take_fee_from_native_account: false }).unwrap(),
                 &mut invoke_context,
                 false,
             )
@@ -907,7 +907,7 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create }).unwrap(),
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create, take_fee_from_native_account: false }).unwrap(),
                 &mut mock,
                 false,
             )
@@ -961,7 +961,8 @@ mod test {
                 &crate::ID,
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_1_sign.clone()
+                    evm_tx: tx_1_sign.clone(),
+                    take_fee_from_native_account: false,
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -976,7 +977,7 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_0_sign }).unwrap(),
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_0_sign, take_fee_from_native_account: false }).unwrap(),
                 &mut invoke_context,
                 false,
             )
@@ -991,6 +992,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
                     evm_tx: tx_0_shadow_sign,
+                    take_fee_from_native_account: false,
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -1005,7 +1007,7 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_1_sign }).unwrap(),
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_1_sign, take_fee_from_native_account: false }).unwrap(),
                 &mut invoke_context,
                 false,
             )
@@ -1042,7 +1044,7 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_0_sign }).unwrap(),
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_0_sign, take_fee_from_native_account: false }).unwrap(),
                 &mut invoke_context,
                 false,
             )
@@ -1098,7 +1100,7 @@ mod test {
                 .process_instruction(
                     &crate::ID,
                     &keyed_accounts,
-                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create })
+                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create, take_fee_from_native_account: false })
                         .unwrap(),
                     &mut invoke_context,
                     false,
@@ -1146,7 +1148,7 @@ mod test {
                 .process_instruction(
                     &crate::ID,
                     &keyed_accounts,
-                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
+                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call, take_fee_from_native_account: false })
                         .unwrap(),
                     &mut invoke_context,
                     false,
@@ -1339,7 +1341,7 @@ mod test {
                 .process_instruction(
                     &crate::ID,
                     &keyed_accounts,
-                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
+                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call, take_fee_from_native_account: false })
                         .unwrap(),
                     &mut invoke_context,
                     false,
@@ -1476,7 +1478,7 @@ mod test {
             let result = processor.process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call, take_fee_from_native_account: false }).unwrap(),
                 &mut invoke_context,
                 false,
             );
@@ -1617,7 +1619,7 @@ mod test {
             let result = processor.process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap(),
+                &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call, take_fee_from_native_account: false }).unwrap(),
                 &mut invoke_context,
                 false,
             );
@@ -1654,7 +1656,7 @@ mod test {
         vec![
             crate::transfer_native_to_evm(signer, 1, tx_call.address().unwrap()),
             crate::free_ownership(signer),
-            crate::send_raw_tx(signer, tx_call, None),
+            crate::send_raw_tx(signer, tx_call, None, false),
             crate::authorized_tx(signer, unsigned_tx, false),
         ]
     }
@@ -1813,7 +1815,7 @@ mod test {
                     .process_instruction(
                         &crate::ID,
                         &keyed_accounts,
-                        &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create })
+                        &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create, take_fee_from_native_account: false })
                             .unwrap(),
                         &mut invoke_context,
                         false,
@@ -1851,7 +1853,7 @@ mod test {
                 let result = processor.process_instruction(
                     &crate::ID,
                     &keyed_accounts,
-                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call })
+                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call, take_fee_from_native_account: false })
                         .unwrap(),
                     &mut invoke_context,
                     false,
@@ -1928,7 +1930,7 @@ mod test {
         let keyed_accounts = [evm_keyed_account, user_keyed_account];
 
         let dummy_address = tx_create.address().unwrap();
-        let ix = crate::send_raw_tx(user_id, tx_create, None);
+        let ix = crate::send_raw_tx(user_id, tx_create, None, false);
 
         let mut invoke_context = MockInvokeContext::with_evm(executor);
         processor

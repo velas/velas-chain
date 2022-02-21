@@ -62,6 +62,7 @@ pub fn send_raw_tx(
     signer: solana::Address,
     evm_tx: evm::Transaction,
     gas_collector: Option<solana::Address>,
+    take_fee_from_native_account: bool,
 ) -> solana::Instruction {
     let mut account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
@@ -73,7 +74,7 @@ pub fn send_raw_tx(
 
     create_evm_instruction_with_borsh(
         crate::ID,
-        &EvmInstruction::EvmTransaction { evm_tx },
+        &EvmInstruction::EvmTransaction { evm_tx, take_fee_from_native_account },
         account_metas,
     )
 }
@@ -165,6 +166,7 @@ pub fn big_tx_write(storage: &solana::Address, offset: u64, chunk: Vec<u8>) -> s
 pub fn big_tx_execute(
     storage: &solana::Address,
     gas_collector: Option<&solana::Address>,
+    take_fee_from_native_account: bool,
 ) -> solana::Instruction {
     let mut account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
@@ -175,7 +177,7 @@ pub fn big_tx_execute(
         account_metas.push(AccountMeta::new(*gas_collector, false))
     }
 
-    let big_tx = EvmBigTransaction::EvmTransactionExecute {};
+    let big_tx = EvmBigTransaction::EvmTransactionExecute { take_fee_from_native_account };
 
     create_evm_instruction_with_borsh(
         crate::ID,

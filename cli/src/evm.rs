@@ -194,7 +194,7 @@ impl EvmCliCommand {
             }
             // Hidden commands
             Self::SendRawTx { raw_tx } => {
-                send_raw_tx(rpc_client, config, raw_tx)?;
+                send_raw_tx(rpc_client, config, raw_tx, false)?;
             }
             Self::CreateDummy {
                 tx_file,
@@ -329,7 +329,7 @@ fn send_raw_tx<P: AsRef<Path>>(
     let tx: evm::Transaction = solana_sdk::program_utils::limited_deserialize(&bytes)?;
     debug!("loaded tx: {:?}", tx);
 
-    let ix = solana_evm_loader_program::send_raw_tx(signer.pubkey(), tx, None);
+    let ix = solana_evm_loader_program::send_raw_tx(signer.pubkey(), tx, None, false);
     let msg = Message::new(&[ix], Some(&signer.pubkey()));
     let mut tx = Transaction::new_unsigned(msg);
 

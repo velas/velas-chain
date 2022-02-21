@@ -31,10 +31,10 @@ pub enum EvmBigTransaction {
     EvmTransactionWrite { offset: u64, data: Vec<u8> },
 
     /// Execute merged transaction, in order to do this, user should make sure that transaction is successfully writed.
-    EvmTransactionExecute {},
+    EvmTransactionExecute { take_fee_from_native_account: bool },
 
     /// Execute merged unsigned transaction, in order to do this, user should make sure that transaction is successfully writed.
-    EvmTransactionExecuteUnsigned { from: evm::Address },
+    EvmTransactionExecuteUnsigned { from: evm::Address, take_fee_from_native_account: bool },
 }
 
 impl From<OldEvmBigTransaction> for EvmBigTransaction {
@@ -46,9 +46,9 @@ impl From<OldEvmBigTransaction> for EvmBigTransaction {
             OldEvmBigTransaction::EvmTransactionWrite { offset, data } => {
                 Self::EvmTransactionWrite { offset, data }
             }
-            OldEvmBigTransaction::EvmTransactionExecute {} => Self::EvmTransactionExecute {},
+            OldEvmBigTransaction::EvmTransactionExecute {} => Self::EvmTransactionExecute { take_fee_from_native_account: false },
             OldEvmBigTransaction::EvmTransactionExecuteUnsigned { from } => {
-                Self::EvmTransactionExecuteUnsigned { from }
+                Self::EvmTransactionExecuteUnsigned { from, take_fee_from_native_account: false }
             }
         }
     }
@@ -63,8 +63,8 @@ impl Into<OldEvmBigTransaction> for EvmBigTransaction {
             Self::EvmTransactionWrite { offset, data } => {
                 OldEvmBigTransaction::EvmTransactionWrite { offset, data }
             }
-            Self::EvmTransactionExecute {} => OldEvmBigTransaction::EvmTransactionExecute {},
-            Self::EvmTransactionExecuteUnsigned { from } => {
+            Self::EvmTransactionExecute { take_fee_from_native_account } => OldEvmBigTransaction::EvmTransactionExecute {},
+            Self::EvmTransactionExecuteUnsigned { from, take_fee_from_native_account } => {
                 OldEvmBigTransaction::EvmTransactionExecuteUnsigned { from }
             }
         }
@@ -93,7 +93,10 @@ pub enum EvmInstruction {
     /// account_key[0] - `[writable]`. EVM state account, used for lock.
     /// account_key[1] - `[readable]`. Optional argument, used in case tokens swaps from EVM back to native.
     ///
-    EvmTransaction { evm_tx: evm::Transaction },
+    EvmTransaction {
+        evm_tx: evm::Transaction,
+        take_fee_from_native_account: bool,
+    },
 
     /// Transfer native lamports to ethereum.
     ///
@@ -145,7 +148,7 @@ pub enum EvmInstruction {
 impl From<OldEvmInstruction> for EvmInstruction {
     fn from(other: OldEvmInstruction) -> Self {
         match other {
-            OldEvmInstruction::EvmTransaction { evm_tx } => Self::EvmTransaction { evm_tx },
+            OldEvmInstruction::EvmTransaction { evm_tx } => Self::EvmTransaction { evm_tx, take_fee_from_native_account: false },
             OldEvmInstruction::SwapNativeToEther {
                 lamports,
                 evm_address,
@@ -171,7 +174,7 @@ impl From<OldEvmInstruction> for EvmInstruction {
 impl Into<OldEvmInstruction> for EvmInstruction {
     fn into(self) -> OldEvmInstruction {
         match self {
-            Self::EvmTransaction { evm_tx } => OldEvmInstruction::EvmTransaction { evm_tx },
+            Self::EvmTransaction { evm_tx, take_fee_from_native_account } => OldEvmInstruction::EvmTransaction { evm_tx },
             Self::SwapNativeToEther {
                 lamports,
                 evm_address,
@@ -494,6 +497,7 @@ mod test {
         let ix =
             EvmInstruction::EvmBigTransaction(EvmBigTransaction::EvmTransactionExecuteUnsigned {
                 from,
+                take_fee_from_native_account: false,
             });
 
         let data = bincode::serialize(&ix).unwrap();
@@ -517,7 +521,7 @@ mod test {
     #[quickcheck]
     #[ignore]
     fn test_serialize_transaction(tx: Generator<evm::Transaction>) {
-        let data = EvmInstruction::EvmTransaction { evm_tx: tx.0 };
+        let data = EvmInstruction::EvmTransaction { evm_tx: tx.0, take_fee_from_native_account: false };
         let data = bincode::serialize(&data).unwrap();
         assert_eq!(&*data, &[0, 1, 2, 3])
     }
@@ -563,25 +567,28 @@ mod test {
 
     #[test]
     fn test_serialize_big_transaction_execute_with_borsh() {
-        let big_tx = EvmBigTransaction::EvmTransactionExecute {};
+        let big_tx = EvmBigTransaction::EvmTransactionExecute { take_fee_from_native_account: false };
         let mut buf: Vec<u8> = vec![];
         BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
 
         let tag = [2u8];
-        assert_eq!(buf, tag)
+        let take_fee_from_native_account = [0];
+        let result_data = [&tag[..], &take_fee_from_native_account[..]].concat();
+        assert_eq!(buf, result_data);
     }
 
     #[test]
     fn test_serialize_big_transaction_execute_unsigned_with_borsh() {
         let from = H160::repeat_byte(0x1);
-        let big_tx = EvmBigTransaction::EvmTransactionExecuteUnsigned { from };
+        let big_tx = EvmBigTransaction::EvmTransactionExecuteUnsigned { from, take_fee_from_native_account: false };
         let mut buf: Vec<u8> = vec![];
         BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
 
         let tag = [3u8];
         let from_in_bytes = from.as_bytes();
+        let take_fee_from_native_account = [0];
 
-        let result_data = [&tag[..], &from_in_bytes[..]].concat();
+        let result_data = [&tag[..], &from_in_bytes[..], &take_fee_from_native_account[..]].concat();
         assert_eq!(buf, result_data)
     }
 
@@ -604,17 +611,18 @@ mod test {
             }
         );
 
-        let big_tx = hex::decode("02").unwrap();
+        let big_tx = hex::decode("0200").unwrap();
         assert_eq!(
             <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &big_tx[..]).unwrap(),
-            EvmBigTransaction::EvmTransactionExecute {}
+            EvmBigTransaction::EvmTransactionExecute { take_fee_from_native_account: false }
         );
 
-        let big_tx = hex::decode("030505050505050505050505050505050505050505").unwrap();
+        let big_tx = hex::decode("03050505050505050505050505050505050505050500").unwrap();
         assert_eq!(
             <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &big_tx[..]).unwrap(),
             EvmBigTransaction::EvmTransactionExecuteUnsigned {
-                from: H160::repeat_byte(5)
+                from: H160::repeat_byte(5),
+                take_fee_from_native_account: false
             }
         );
     }
@@ -664,7 +672,7 @@ mod test {
             },
             input: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         };
-        let data = EvmInstruction::EvmTransaction { evm_tx };
+        let data = EvmInstruction::EvmTransaction { evm_tx, take_fee_from_native_account: false };
         let result = hex::decode("00\
         0100000000000000000000000000000000000000000000000000000000000000\
         0a00000000000000000000000000000000000000000000000000000000000000\
@@ -672,7 +680,8 @@ mod test {
         01\
         0500000000000000000000000000000000000000000000000000000000000000\
         140000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000006\
-        0a00000000010203040506070809").unwrap();
+        0a00000000010203040506070809\
+        00").unwrap();
         let mut buf = vec![];
         BorshSerialize::serialize(&data, &mut buf).unwrap();
         assert_eq!(buf, result);
@@ -756,7 +765,8 @@ mod test {
         001111111111111111111111111111111111111111\
         0500000000000000000000000000000000000000000000000000000000000000\
         140000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000006\
-        0a000000534951394a0e250c1722").unwrap();
+        0a000000534951394a0e250c1722\
+        00").unwrap();
         assert_eq!(
             <EvmInstruction as BorshDeserialize>::deserialize(&mut &instruction[..]).unwrap(),
             EvmInstruction::EvmTransaction {
@@ -772,7 +782,8 @@ mod test {
                         s: H256::from_low_u64_be(6),
                     },
                     input: vec![83, 73, 81, 57, 74, 14, 37, 12, 23, 34],
-                }
+                },
+                take_fee_from_native_account: false,
             }
         );
 
