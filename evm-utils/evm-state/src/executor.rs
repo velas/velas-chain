@@ -123,6 +123,7 @@ impl Executor {
         value: U256,
         tx_chain_id: Option<u64>,
         tx_hash: H256,
+        withdraw_fee: bool,
         mut precompiles: F,
     ) -> Result<ExecutionResult, Error>
     where
@@ -214,8 +215,7 @@ impl Executor {
         let fee = executor.fee(gas_price);
         let mut executor_state = executor.into_state();
 
-        let burn_fee = matches!(exit_reason, ExitReason::Succeed(_));
-        if burn_fee {
+        if withdraw_fee && matches!(exit_reason, ExitReason::Succeed(_)) {
             // Burn the fee, if transaction executed correctly
             executor_state
                 .withdraw(caller, fee)
@@ -254,6 +254,7 @@ impl Executor {
         caller: H160,
         tx: UnsignedTransaction,
         calculate_tx_hash_with_caller: bool,
+        withdraw_fee: bool,
         precompiles: F,
     ) -> Result<ExecutionResult, Error>
     where
@@ -278,6 +279,7 @@ impl Executor {
             tx.value,
             Some(chain_id),
             tx_hash,
+            withdraw_fee,
             precompiles,
         )?;
 
@@ -288,6 +290,7 @@ impl Executor {
     pub fn transaction_execute<F>(
         &mut self,
         evm_tx: Transaction,
+        withdraw_fee: bool,
         precompiles: F,
     ) -> Result<ExecutionResult, Error>
     where
@@ -313,6 +316,7 @@ impl Executor {
             value,
             evm_tx.signature.chain_id(),
             tx_hash,
+            withdraw_fee,
             precompiles,
         )?;
 
@@ -645,7 +649,7 @@ mod tests {
         let create_tx = create_tx.sign(&alice.secret, Some(chain_id));
         assert!(matches!(
             executor
-                .transaction_execute(create_tx.clone(), noop_precompile)
+                .transaction_execute(create_tx.clone(), true, noop_precompile)
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -654,7 +658,7 @@ mod tests {
         let hash = create_tx.tx_id_hash();
         assert!(matches!(
             executor
-                .transaction_execute(create_tx, noop_precompile)
+                .transaction_execute(create_tx, true, noop_precompile)
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash } if tx_hash == hash
         ));
@@ -683,6 +687,7 @@ mod tests {
                     alice.address(),
                     create_tx.clone(),
                     false,
+                    true,
                     noop_precompile
                 )
                 .unwrap()
@@ -693,7 +698,7 @@ mod tests {
         let hash = create_tx.signing_hash(Some(chain_id));
         assert!(matches!(
             executor
-            .transaction_execute_unsinged(alice.address(), create_tx, false, noop_precompile)
+            .transaction_execute_unsinged(alice.address(), create_tx, false, true, noop_precompile)
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash } if tx_hash == hash
         ));
@@ -719,7 +724,7 @@ mod tests {
         let address = alice.address();
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx.clone(), true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx.clone(), true, true, noop_precompile)
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -737,7 +742,7 @@ mod tests {
 
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx, true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx, true, true, noop_precompile)
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash: hash }
         );
@@ -764,7 +769,7 @@ mod tests {
         let wrong_tx = create_tx.clone().sign(&alice.secret, None);
         assert!(matches!(
             dbg!(executor
-                .transaction_execute(wrong_tx, noop_precompile)
+                .transaction_execute(wrong_tx, true, noop_precompile)
                 .unwrap_err()),
             Error::WrongChainId {
                 chain_id: err_chain_id,
@@ -777,7 +782,7 @@ mod tests {
             .sign(&alice.secret, Some(another_chain_id));
         assert!(matches!(
             executor
-                .transaction_execute(wrong_tx, noop_precompile)
+                .transaction_execute(wrong_tx, true, noop_precompile)
                 .unwrap_err(),
             Error::WrongChainId {
                 chain_id: err_chain_id,
@@ -788,7 +793,7 @@ mod tests {
         let create_tx = create_tx.sign(&alice.secret, Some(chain_id));
         assert!(matches!(
             executor
-                .transaction_execute(create_tx, noop_precompile)
+                .transaction_execute(create_tx, true, noop_precompile)
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -815,7 +820,7 @@ mod tests {
 
         assert!(matches!(
             executor
-                .transaction_execute(create_tx, noop_precompile)
+                .transaction_execute(create_tx, true, noop_precompile)
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -835,7 +840,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(call_tx, noop_precompile)
+            .transaction_execute(call_tx, true, noop_precompile)
             .unwrap();
 
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
@@ -865,7 +870,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(send_tx, noop_precompile)
+            .transaction_execute(send_tx, true, noop_precompile)
             .unwrap();
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
         assert_eq!(
@@ -889,7 +894,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(call_tx, noop_precompile)
+            .transaction_execute(call_tx, true, noop_precompile)
             .unwrap();
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
         assert_eq!(
@@ -913,7 +918,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(call_tx, noop_precompile)
+            .transaction_execute(call_tx, true, noop_precompile)
             .unwrap();
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
         assert_eq!(
@@ -949,7 +954,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(send_tx, noop_precompile)
+                .transaction_execute(send_tx, true, noop_precompile)
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -973,7 +978,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, noop_precompile)
+                .transaction_execute(call_tx, true, noop_precompile)
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -997,7 +1002,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, noop_precompile)
+                .transaction_execute(call_tx, true, noop_precompile)
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1027,7 +1032,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(send_tx, noop_precompile)
+                .transaction_execute(send_tx, true, noop_precompile)
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1051,7 +1056,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, noop_precompile)
+                .transaction_execute(call_tx, true, noop_precompile)
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1075,7 +1080,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, noop_precompile)
+                .transaction_execute(call_tx, true, noop_precompile)
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1128,6 +1133,7 @@ mod tests {
                     input: data.to_vec(),
                 },
                 false, /* calculate_tx_hash_with_caller */
+                true,
                 noop_precompile,
             )
             .unwrap();

@@ -95,9 +95,9 @@ impl EvmProcessor {
         trace!("Run evm exec with ix = {:?}.", ix);
         let result = match ix {
             EvmInstruction::EvmTransaction { evm_tx } => {
-                self.process_raw_tx(executor, invoke_context, accounts, evm_tx)
+                self.process_raw_tx(executor, invoke_context, accounts, evm_tx, false)
             }
-            EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => self
+            EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx, take_fee_from_native_account } => self
                 .process_authorized_tx(
                     executor,
                     invoke_context,
@@ -105,9 +105,10 @@ impl EvmProcessor {
                     from,
                     unsigned_tx,
                     unsigned_tx_fix,
+                    false, // TODO: add tests (passing 'true' doesn't break any)
                 ),
             EvmInstruction::EvmBigTransaction(big_tx) => {
-                self.process_big_tx(executor, invoke_context, accounts, big_tx, unsigned_tx_fix)
+                self.process_big_tx(executor, invoke_context, accounts, big_tx, unsigned_tx_fix, false)
             }
             EvmInstruction::FreeOwnership {} => {
                 self.process_free_ownership(executor, invoke_context, accounts)
@@ -171,6 +172,7 @@ impl EvmProcessor {
         invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         evm_tx: evm::Transaction,
+        take_fee_from_native_account: bool,
     ) -> Result<(), EvmError> {
         // TODO: Handle gas price in EVM Bridge
 
@@ -182,12 +184,23 @@ impl EvmProcessor {
             evm_tx.value,
             evm_tx.action
         );
+        let sender = accounts.first();
+        let withdraw_fee_from_evm = !take_fee_from_native_account || sender.is_none();
         let tx_gas_price = evm_tx.gas_price;
         let result = executor.transaction_execute(
             evm_tx,
+            withdraw_fee_from_evm,
             precompiles::entrypoint(accounts, executor.support_precompile()),
         );
-        let sender = accounts.users.first();
+        // TODO: maybe move below code to handle_transaction_result()
+        if let (false, Ok(result)) = (withdraw_fee_from_evm, &result) {
+            let fee = tx_gas_price * result.used_gas;
+            let (fee, _) = gweis_to_lamports(fee);
+            sender.unwrap()
+                .try_account_ref_mut()
+                .map_err(|_| EvmError::BorrowingFailed)?
+                .lamports -= fee; // TODO: check if this panics, maybe return error on overflow
+        }
 
         self.handle_transaction_result(invoke_context, accounts, sender, tx_gas_price, result)
     }
@@ -200,6 +213,7 @@ impl EvmProcessor {
         from: evm::Address,
         unsigned_tx: evm::UnsignedTransaction,
         unsigned_tx_fix: bool,
+        take_fee_from_native_account: bool,
     ) -> Result<(), EvmError> {
         // TODO: Check that it is from program?
         // TODO: Gas limit?
@@ -257,14 +271,24 @@ impl EvmProcessor {
             }
         }
 
+        let sender = accounts.first();
+        let withdraw_fee_from_evm = !take_fee_from_native_account || sender.is_none();
         let tx_gas_price = unsigned_tx.gas_price;
         let result = executor.transaction_execute_unsinged(
             from,
             unsigned_tx,
             unsigned_tx_fix,
+            withdraw_fee_from_evm,
             precompiles::entrypoint(accounts, executor.support_precompile()),
         );
-        let sender = accounts.first();
+        if let (false, Ok(result)) = (withdraw_fee_from_evm, &result) {
+            let fee = tx_gas_price * result.used_gas;
+            let (fee, _) = gweis_to_lamports(fee);
+            sender.unwrap()
+                .try_account_ref_mut()
+                .map_err(|_| EvmError::BorrowingFailed)?
+                .lamports -= fee; // TODO: check if this panics
+        }
 
         self.handle_transaction_result(invoke_context, accounts, sender, tx_gas_price, result)
     }
@@ -371,6 +395,7 @@ impl EvmProcessor {
         accounts: AccountStructure,
         big_tx: EvmBigTransaction,
         unsigned_tx_fix: bool,
+        take_fee_from_native_account: bool,
     ) -> Result<(), EvmError> {
         debug!("executing big_tx = {:?}", big_tx);
 
@@ -470,13 +495,23 @@ impl EvmProcessor {
                     tx.value,
                     tx.action
                 );
+                let sender = accounts.users.get(1);
+                let withdraw_fee_from_evm = !take_fee_from_native_account || sender.is_none();
                 let tx_gas_price = tx.gas_price;
                 let result = executor.transaction_execute(
                     tx,
+                    withdraw_fee_from_evm,
                     precompiles::entrypoint(accounts, executor.support_precompile()),
                 );
+                if let (false, Ok(result)) = (withdraw_fee_from_evm, &result) {
+                    let fee = tx_gas_price * result.used_gas;
+                    let (fee, _) = gweis_to_lamports(fee);
+                    sender.unwrap()
+                        .try_account_ref_mut()
+                        .map_err(|_| EvmError::BorrowingFailed)?
+                        .lamports -= fee; // TODO: check if this panics
+                }
 
-                let sender = accounts.users.get(1);
                 if unsigned_tx_fix {
                     self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
                 }
@@ -573,13 +608,23 @@ impl EvmProcessor {
                         return Err(EvmError::AuthorizedTransactionIncorrectOwner);
                     }
                 }
+                let withdraw_fee_from_evm = !take_fee_from_native_account;
                 let tx_gas_price = unsigned_tx.gas_price;
                 let result = executor.transaction_execute_unsinged(
                     from,
                     unsigned_tx,
                     unsigned_tx_fix,
+                    withdraw_fee_from_evm,
                     precompiles::entrypoint(accounts, executor.support_precompile()),
                 );
+                if let (false, Ok(result)) = (withdraw_fee_from_evm, &result) {
+                    let fee = tx_gas_price * result.used_gas;
+                    let (fee, _) = gweis_to_lamports(fee);
+                    program_account
+                        .try_account_ref_mut()
+                        .map_err(|_| EvmError::BorrowingFailed)?
+                        .lamports -= fee; // TODO: check if this panics
+                }
 
                 self.cleanup_storage(invoke_context, storage, program_account)?;
                 self.handle_transaction_result(
@@ -1610,7 +1655,7 @@ mod test {
             crate::transfer_native_to_evm(signer, 1, tx_call.address().unwrap()),
             crate::free_ownership(signer),
             crate::send_raw_tx(signer, tx_call, None),
-            crate::authorized_tx(signer, unsigned_tx),
+            crate::authorized_tx(signer, unsigned_tx, false),
         ]
     }
 
@@ -1910,7 +1955,7 @@ mod test {
             crate::evm_address_for_program(user_id),
             U256::from(2) * 300000,
         );
-        let ix = crate::authorized_tx(user_id, unsigned_tx);
+        let ix = crate::authorized_tx(user_id, unsigned_tx, false);
 
         println!("Keyed accounts = {:?}", &keyed_accounts);
 

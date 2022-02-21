@@ -45,7 +45,7 @@ pub fn parse_evm(
                 info,
             })
         }
-        EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => {
+        EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx, take_fee_from_native_account } => {
             check_num_stake_accounts(&instruction.accounts, 2)?;
             let tx = evm_state::UnsignedTransactionWithCaller {
                 caller: from,
@@ -58,6 +58,7 @@ pub fn parse_evm(
                 "transaction": RPCTransaction::from_transaction(tx.into()).map_err(|_|ParseInstructionError::InstructionKeyMismatch(
                     ParsableProgram::Evm,
                 ))?,
+                "takeFeeFromNativeAccount": take_fee_from_native_account,
             });
 
             Ok(ParsedInstructionEnum {

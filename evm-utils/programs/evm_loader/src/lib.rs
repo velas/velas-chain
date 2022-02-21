@@ -5,6 +5,7 @@ pub mod tx_chunks;
 
 pub mod error;
 pub mod instructions;
+pub mod old_instructions;
 pub mod precompiles;
 pub mod processor;
 pub mod solana_extension;
@@ -80,6 +81,7 @@ pub fn send_raw_tx(
 pub fn authorized_tx(
     sender: solana::Address,
     unsigned_tx: evm::UnsignedTransaction,
+    take_fee_from_native_account: bool,
 ) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
@@ -89,7 +91,11 @@ pub fn authorized_tx(
     let from = evm_address_for_program(sender);
     create_evm_instruction_with_borsh(
         crate::ID,
-        &EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx },
+        &EvmInstruction::EvmAuthorizedTransaction {
+            from,
+            unsigned_tx,
+            take_fee_from_native_account,
+        },
         account_metas,
     )
 }
