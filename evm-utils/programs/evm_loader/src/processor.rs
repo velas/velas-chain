@@ -85,8 +85,10 @@ impl EvmProcessor {
 
         let accounts = AccountStructure::new(evm_state_account, keyed_accounts);
 
+        let mut borsh_serialization_used = false;
         let ix = match (borsh_serialization_enabled, data.split_first()) {
             (true, Some((&prefix, borsh_data))) if prefix == EVM_INSTRUCTION_BORSH_PREFIX => {
+                borsh_serialization_used = true;
                 BorshDeserialize::deserialize(&mut &borsh_data[..])
                     .map_err(|_| InstructionError::InvalidInstructionData)?
             }
@@ -107,7 +109,7 @@ impl EvmProcessor {
                     unsigned_tx_fix,
                 ),
             EvmInstruction::EvmBigTransaction(big_tx) => {
-                self.process_big_tx(executor, invoke_context, accounts, big_tx, unsigned_tx_fix)
+                self.process_big_tx(executor, invoke_context, accounts, big_tx, unsigned_tx_fix, borsh_serialization_used)
             }
             EvmInstruction::FreeOwnership {} => {
                 self.process_free_ownership(executor, invoke_context, accounts)
@@ -371,6 +373,7 @@ impl EvmProcessor {
         accounts: AccountStructure,
         big_tx: EvmBigTransaction,
         unsigned_tx_fix: bool,
+        deserialize_chunks_with_borsh: bool,
     ) -> Result<(), EvmError> {
         debug!("executing big_tx = {:?}", big_tx);
 
@@ -394,10 +397,6 @@ impl EvmProcessor {
             .map_err(|_| EvmError::BorrowingFailed)?;
 
         let mut tx_chunks = TxChunks::new(storage.data.as_mut_slice());
-
-        let borsh_serialization_enabled = invoke_context.is_feature_active(
-            &solana_sdk::feature_set::velas::evm_instruction_borsh_serialization::id(),
-        );
 
         match big_tx {
             EvmBigTransaction::EvmTransactionAllocate { size } => {
@@ -438,27 +437,25 @@ impl EvmProcessor {
                 let bytes = tx_chunks.take();
 
                 debug!("Trying to deserialize tx chunks byte = {:?}", bytes);
-                let tx: evm::Transaction = match (borsh_serialization_enabled, bytes.split_first()) {
-                    (true, Some((&prefix, borsh_data))) if prefix == EVM_INSTRUCTION_BORSH_PREFIX => {
-                        BorshDeserialize::deserialize(&mut &borsh_data[..]).map_err(|e| {
-                            ic_msg!(
-                                invoke_context,
-                                "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
-                                e
-                            );
-                            EvmError::DeserializationError
-                        })?
-                    }
-                    _ => {
-                        bincode::deserialize(&bytes).map_err(|e| {
-                            ic_msg!(
-                                invoke_context,
-                                "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
-                                e
-                            );
-                            EvmError::DeserializationError
-                        })?
-                    }
+                let tx: evm::Transaction = if deserialize_chunks_with_borsh {
+                    BorshDeserialize::deserialize(&mut bytes.as_slice()).map_err(|e| {
+                        ic_msg!(
+                            invoke_context,
+                            "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
+                            e
+                        );
+                        EvmError::DeserializationError
+                    })?
+                }
+                else {
+                    bincode::deserialize(&bytes).map_err(|e| {
+                        ic_msg!(
+                            invoke_context,
+                            "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
+                            e
+                        );
+                        EvmError::DeserializationError
+                    })?
                 };
 
                 debug!("Executing EVM tx = {:?}", tx);
@@ -502,27 +499,25 @@ impl EvmProcessor {
                 let bytes = tx_chunks.take();
 
                 debug!("Trying to deserialize tx chunks byte = {:?}", bytes);
-                let unsigned_tx: evm::UnsignedTransaction = match (borsh_serialization_enabled, bytes.split_first()) {
-                    (true, Some((&prefix, borsh_data))) if prefix == EVM_INSTRUCTION_BORSH_PREFIX => {
-                        BorshDeserialize::deserialize(&mut &borsh_data[..]).map_err(|e| {
-                            ic_msg!(
-                                invoke_context,
-                                "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
-                                e
-                            );
-                            EvmError::DeserializationError
-                        })?
-                    }
-                    _ => {
-                        bincode::deserialize(&bytes).map_err(|e| {
-                            ic_msg!(
-                                invoke_context,
-                                "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
-                                e
-                            );
-                            EvmError::DeserializationError
-                        })?
-                    }
+                let unsigned_tx: evm::UnsignedTransaction = if deserialize_chunks_with_borsh {
+                    BorshDeserialize::deserialize(&mut bytes.as_slice()).map_err(|e| {
+                        ic_msg!(
+                            invoke_context,
+                            "BigTransaction::EvmTransactionExecuteUnsigned: Tx chunks deserialize error: {:?}",
+                            e
+                        );
+                        EvmError::DeserializationError
+                    })?
+                }
+                else {
+                    bincode::deserialize(&bytes).map_err(|e| {
+                        ic_msg!(
+                            invoke_context,
+                            "BigTransaction::EvmTransactionExecuteUnsigned: Tx chunks deserialize error: {:?}",
+                            e
+                        );
+                        EvmError::DeserializationError
+                    })?
                 };
 
                 debug!("Executing EVM tx = {:?}", unsigned_tx);
