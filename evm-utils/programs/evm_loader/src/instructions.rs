@@ -34,7 +34,10 @@ pub enum EvmBigTransaction {
     EvmTransactionExecute { take_fee_from_native_account: bool },
 
     /// Execute merged unsigned transaction, in order to do this, user should make sure that transaction is successfully writed.
-    EvmTransactionExecuteUnsigned { from: evm::Address, take_fee_from_native_account: bool },
+    EvmTransactionExecuteUnsigned {
+        from: evm::Address,
+        take_fee_from_native_account: bool,
+    },
 }
 
 impl From<OldEvmBigTransaction> for EvmBigTransaction {
@@ -46,9 +49,14 @@ impl From<OldEvmBigTransaction> for EvmBigTransaction {
             OldEvmBigTransaction::EvmTransactionWrite { offset, data } => {
                 Self::EvmTransactionWrite { offset, data }
             }
-            OldEvmBigTransaction::EvmTransactionExecute {} => Self::EvmTransactionExecute { take_fee_from_native_account: false },
+            OldEvmBigTransaction::EvmTransactionExecute {} => Self::EvmTransactionExecute {
+                take_fee_from_native_account: false,
+            },
             OldEvmBigTransaction::EvmTransactionExecuteUnsigned { from } => {
-                Self::EvmTransactionExecuteUnsigned { from, take_fee_from_native_account: false }
+                Self::EvmTransactionExecuteUnsigned {
+                    from,
+                    take_fee_from_native_account: false,
+                }
             }
         }
     }
@@ -63,8 +71,8 @@ impl Into<OldEvmBigTransaction> for EvmBigTransaction {
             Self::EvmTransactionWrite { offset, data } => {
                 OldEvmBigTransaction::EvmTransactionWrite { offset, data }
             }
-            Self::EvmTransactionExecute { take_fee_from_native_account } => OldEvmBigTransaction::EvmTransactionExecute {},
-            Self::EvmTransactionExecuteUnsigned { from, take_fee_from_native_account } => {
+            Self::EvmTransactionExecute { .. } => OldEvmBigTransaction::EvmTransactionExecute {},
+            Self::EvmTransactionExecuteUnsigned { from, .. } => {
                 OldEvmBigTransaction::EvmTransactionExecuteUnsigned { from }
             }
         }
@@ -148,7 +156,10 @@ pub enum EvmInstruction {
 impl From<OldEvmInstruction> for EvmInstruction {
     fn from(other: OldEvmInstruction) -> Self {
         match other {
-            OldEvmInstruction::EvmTransaction { evm_tx } => Self::EvmTransaction { evm_tx, take_fee_from_native_account: false },
+            OldEvmInstruction::EvmTransaction { evm_tx } => Self::EvmTransaction {
+                evm_tx,
+                take_fee_from_native_account: false,
+            },
             OldEvmInstruction::SwapNativeToEther {
                 lamports,
                 evm_address,
@@ -174,7 +185,7 @@ impl From<OldEvmInstruction> for EvmInstruction {
 impl Into<OldEvmInstruction> for EvmInstruction {
     fn into(self) -> OldEvmInstruction {
         match self {
-            Self::EvmTransaction { evm_tx, take_fee_from_native_account } => OldEvmInstruction::EvmTransaction { evm_tx },
+            Self::EvmTransaction { evm_tx, .. } => OldEvmInstruction::EvmTransaction { evm_tx },
             Self::SwapNativeToEther {
                 lamports,
                 evm_address,
@@ -521,7 +532,10 @@ mod test {
     #[quickcheck]
     #[ignore]
     fn test_serialize_transaction(tx: Generator<evm::Transaction>) {
-        let data = EvmInstruction::EvmTransaction { evm_tx: tx.0, take_fee_from_native_account: false };
+        let data = EvmInstruction::EvmTransaction {
+            evm_tx: tx.0,
+            take_fee_from_native_account: false,
+        };
         let data = bincode::serialize(&data).unwrap();
         assert_eq!(&*data, &[0, 1, 2, 3])
     }
@@ -567,7 +581,9 @@ mod test {
 
     #[test]
     fn test_serialize_big_transaction_execute_with_borsh() {
-        let big_tx = EvmBigTransaction::EvmTransactionExecute { take_fee_from_native_account: false };
+        let big_tx = EvmBigTransaction::EvmTransactionExecute {
+            take_fee_from_native_account: false,
+        };
         let mut buf: Vec<u8> = vec![];
         BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
 
@@ -580,7 +596,10 @@ mod test {
     #[test]
     fn test_serialize_big_transaction_execute_unsigned_with_borsh() {
         let from = H160::repeat_byte(0x1);
-        let big_tx = EvmBigTransaction::EvmTransactionExecuteUnsigned { from, take_fee_from_native_account: false };
+        let big_tx = EvmBigTransaction::EvmTransactionExecuteUnsigned {
+            from,
+            take_fee_from_native_account: false,
+        };
         let mut buf: Vec<u8> = vec![];
         BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
 
@@ -588,7 +607,12 @@ mod test {
         let from_in_bytes = from.as_bytes();
         let take_fee_from_native_account = [0];
 
-        let result_data = [&tag[..], &from_in_bytes[..], &take_fee_from_native_account[..]].concat();
+        let result_data = [
+            &tag[..],
+            &from_in_bytes[..],
+            &take_fee_from_native_account[..],
+        ]
+        .concat();
         assert_eq!(buf, result_data)
     }
 
@@ -614,7 +638,9 @@ mod test {
         let big_tx = hex::decode("0200").unwrap();
         assert_eq!(
             <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &big_tx[..]).unwrap(),
-            EvmBigTransaction::EvmTransactionExecute { take_fee_from_native_account: false }
+            EvmBigTransaction::EvmTransactionExecute {
+                take_fee_from_native_account: false
+            }
         );
 
         let big_tx = hex::decode("03050505050505050505050505050505050505050500").unwrap();
@@ -672,7 +698,10 @@ mod test {
             },
             input: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         };
-        let data = EvmInstruction::EvmTransaction { evm_tx, take_fee_from_native_account: false };
+        let data = EvmInstruction::EvmTransaction {
+            evm_tx,
+            take_fee_from_native_account: false,
+        };
         let result = hex::decode("00\
         0100000000000000000000000000000000000000000000000000000000000000\
         0a00000000000000000000000000000000000000000000000000000000000000\

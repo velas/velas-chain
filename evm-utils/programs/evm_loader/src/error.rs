@@ -56,6 +56,9 @@ pub enum EvmError {
 
     #[snafu(display("This instruction is not supported yet."))]
     InstructionNotSupportedYet,
+
+    #[snafu(display("Native account has not enough tokens."))]
+    NativeAccountInsufficientFunds, // TODO: can we merge this with SwapInsufficient?
 }
 
 impl<E> DecodeError<E> for EvmError {
