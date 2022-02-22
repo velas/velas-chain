@@ -785,7 +785,7 @@ fn call_inner(
             value,
             Some(tx_chain_id),
             tx_hash,
-            true, // TODO: what should we use here?
+            true,
             solana_evm_loader_program::precompiles::simulation_entrypoint(
                 executor.support_precompile(),
                 evm_state_balance,

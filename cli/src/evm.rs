@@ -20,7 +20,7 @@ use crate::cli::{CliCommand, CliCommandInfo, CliConfig, CliError};
 
 use evm_rpc::Hex;
 use evm_state::{self as evm, FromKey};
-use solana_evm_loader_program::scope::evm::gweis_to_lamports;
+use solana_evm_loader_program::{FeePayerType, scope::evm::gweis_to_lamports};
 
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
@@ -194,7 +194,7 @@ impl EvmCliCommand {
             }
             // Hidden commands
             Self::SendRawTx { raw_tx } => {
-                send_raw_tx(rpc_client, config, raw_tx, false)?;
+                send_raw_tx(rpc_client, config, raw_tx)?;
             }
             Self::CreateDummy {
                 tx_file,
@@ -329,7 +329,7 @@ fn send_raw_tx<P: AsRef<Path>>(
     let tx: evm::Transaction = solana_sdk::program_utils::limited_deserialize(&bytes)?;
     debug!("loaded tx: {:?}", tx);
 
-    let ix = solana_evm_loader_program::send_raw_tx(signer.pubkey(), tx, None, false);
+    let ix = solana_evm_loader_program::send_raw_tx(signer.pubkey(), tx, None, solana_evm_loader_program::FeePayerType::Evm);
     let msg = Message::new(&[ix], Some(&signer.pubkey()));
     let mut tx = Transaction::new_unsigned(msg);
 

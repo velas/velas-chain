@@ -3,7 +3,7 @@ use std::fmt::Write;
 use std::ops::DerefMut;
 
 use super::account_structure::AccountStructure;
-use super::instructions::{EvmBigTransaction, EvmInstruction, EVM_INSTRUCTION_BORSH_PREFIX};
+use super::instructions::{FeePayerType, EvmBigTransaction, EvmInstruction, EVM_INSTRUCTION_BORSH_PREFIX};
 use super::precompiles;
 use super::scope::*;
 use log::*;
@@ -99,18 +99,18 @@ impl EvmProcessor {
         let result = match ix {
             EvmInstruction::EvmTransaction {
                 evm_tx,
-                take_fee_from_native_account,
+                fee_type,
             } => self.process_raw_tx(
                 executor,
                 invoke_context,
                 accounts,
                 evm_tx,
-                take_fee_from_native_account,
+                fee_type,
             ),
             EvmInstruction::EvmAuthorizedTransaction {
                 from,
                 unsigned_tx,
-                take_fee_from_native_account,
+                fee_type,
             } => self.process_authorized_tx(
                 executor,
                 invoke_context,
@@ -118,7 +118,7 @@ impl EvmProcessor {
                 from,
                 unsigned_tx,
                 unsigned_tx_fix,
-                take_fee_from_native_account, // TODO: add tests (passing 'true' doesn't break any)
+                fee_type, // TODO: add tests (passing 'Native' doesn't break any)
             ),
             EvmInstruction::EvmBigTransaction(big_tx) => {
                 self.process_big_tx(executor, invoke_context, accounts, big_tx, unsigned_tx_fix, borsh_serialization_used)
@@ -185,7 +185,7 @@ impl EvmProcessor {
         invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         evm_tx: evm::Transaction,
-        take_fee_from_native_account: bool,
+        fee_type: FeePayerType,
     ) -> Result<(), EvmError> {
         // TODO: Handle gas price in EVM Bridge
 
@@ -198,7 +198,7 @@ impl EvmProcessor {
             evm_tx.action
         );
         let sender = accounts.first();
-        let withdraw_fee_from_evm = !take_fee_from_native_account || sender.is_none();
+        let withdraw_fee_from_evm = fee_type.is_evm() || sender.is_none();
         let tx_gas_price = evm_tx.gas_price;
         let result = executor.transaction_execute(
             evm_tx,
@@ -221,7 +221,7 @@ impl EvmProcessor {
         from: evm::Address,
         unsigned_tx: evm::UnsignedTransaction,
         unsigned_tx_fix: bool,
-        take_fee_from_native_account: bool,
+        fee_type: FeePayerType,
     ) -> Result<(), EvmError> {
         // TODO: Check that it is from program?
         // TODO: Gas limit?
@@ -280,7 +280,7 @@ impl EvmProcessor {
         }
 
         let sender = accounts.first();
-        let withdraw_fee_from_evm = !take_fee_from_native_account || sender.is_none();
+        let withdraw_fee_from_evm = fee_type.is_evm() || sender.is_none();
         let tx_gas_price = unsigned_tx.gas_price;
         let result = executor.transaction_execute_unsinged(
             from,
@@ -456,9 +456,7 @@ impl EvmProcessor {
                 Ok(())
             }
 
-            EvmBigTransaction::EvmTransactionExecute {
-                take_fee_from_native_account,
-            } => {
+            EvmBigTransaction::EvmTransactionExecute { fee_type } => {
                 debug!("Tx chunks crc = {:#x}", tx_chunks.crc());
 
                 let bytes = tx_chunks.take();
@@ -495,7 +493,7 @@ impl EvmProcessor {
                     tx.action
                 );
                 let sender = accounts.users.get(1);
-                let withdraw_fee_from_evm = !take_fee_from_native_account || sender.is_none();
+                let withdraw_fee_from_evm = fee_type.is_evm() || sender.is_none();
                 let tx_gas_price = tx.gas_price;
                 let result = executor.transaction_execute(
                     tx,
@@ -520,7 +518,7 @@ impl EvmProcessor {
             }
             EvmBigTransaction::EvmTransactionExecuteUnsigned {
                 from,
-                take_fee_from_native_account,
+                fee_type,
             } => {
                 if !unsigned_tx_fix {
                     ic_msg!(
@@ -603,7 +601,7 @@ impl EvmProcessor {
                         return Err(EvmError::AuthorizedTransactionIncorrectOwner);
                     }
                 }
-                let withdraw_fee_from_evm = !take_fee_from_native_account;
+                let withdraw_fee_from_evm = fee_type.is_evm();
                 let tx_gas_price = unsigned_tx.gas_price;
                 let result = executor.transaction_execute_unsinged(
                     from,
@@ -806,7 +804,7 @@ mod test {
         let tx = dummy_eth_tx();
         let sol_ix = EvmInstruction::EvmTransaction {
             evm_tx: tx,
-            take_fee_from_native_account: false,
+            fee_type: FeePayerType::Evm,
         };
         let ser = bincode::serialize(&sol_ix).unwrap();
         assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
@@ -841,7 +839,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
                     evm_tx: tx_create.clone(),
-                    take_fee_from_native_account: false,
+                    fee_type: FeePayerType::Evm,
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -870,7 +868,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
                     evm_tx: tx_call,
-                    take_fee_from_native_account: false
+                    fee_type: FeePayerType::Evm
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -925,7 +923,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
                     evm_tx: tx_create,
-                    take_fee_from_native_account: false
+                    fee_type: FeePayerType::Evm
                 })
                 .unwrap(),
                 &mut mock,
@@ -982,7 +980,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
                     evm_tx: tx_1_sign.clone(),
-                    take_fee_from_native_account: false,
+                    fee_type: FeePayerType::Evm,
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -999,7 +997,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
                     evm_tx: tx_0_sign,
-                    take_fee_from_native_account: false
+                    fee_type: FeePayerType::Evm
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -1016,7 +1014,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
                     evm_tx: tx_0_shadow_sign,
-                    take_fee_from_native_account: false,
+                    fee_type: FeePayerType::Evm,
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -1033,7 +1031,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
                     evm_tx: tx_1_sign,
-                    take_fee_from_native_account: false
+                    fee_type: FeePayerType::Evm
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -1074,7 +1072,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
                     evm_tx: tx_0_sign,
-                    take_fee_from_native_account: false
+                    fee_type: FeePayerType::Evm
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -1134,7 +1132,7 @@ mod test {
                     &keyed_accounts,
                     &bincode::serialize(&EvmInstruction::EvmTransaction {
                         evm_tx: tx_create,
-                        take_fee_from_native_account: false
+                        fee_type: FeePayerType::Evm
                     })
                     .unwrap(),
                     &mut invoke_context,
@@ -1185,7 +1183,7 @@ mod test {
                     &keyed_accounts,
                     &bincode::serialize(&EvmInstruction::EvmTransaction {
                         evm_tx: tx_call,
-                        take_fee_from_native_account: false
+                        fee_type: FeePayerType::Evm
                     })
                     .unwrap(),
                     &mut invoke_context,
@@ -1381,7 +1379,7 @@ mod test {
                     &keyed_accounts,
                     &bincode::serialize(&EvmInstruction::EvmTransaction {
                         evm_tx: tx_call,
-                        take_fee_from_native_account: false
+                        fee_type: FeePayerType::Evm
                     })
                     .unwrap(),
                     &mut invoke_context,
@@ -1521,7 +1519,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
                     evm_tx: tx_call,
-                    take_fee_from_native_account: false,
+                    fee_type: FeePayerType::Evm,
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -1666,7 +1664,7 @@ mod test {
                 &keyed_accounts,
                 &bincode::serialize(&EvmInstruction::EvmTransaction {
                     evm_tx: tx_call,
-                    take_fee_from_native_account: false,
+                    fee_type: FeePayerType::Evm,
                 })
                 .unwrap(),
                 &mut invoke_context,
@@ -1705,8 +1703,8 @@ mod test {
         vec![
             crate::transfer_native_to_evm(signer, 1, tx_call.address().unwrap()),
             crate::free_ownership(signer),
-            crate::send_raw_tx(signer, tx_call, None, false),
-            crate::authorized_tx(signer, unsigned_tx, false),
+            crate::send_raw_tx(signer, tx_call, None, FeePayerType::Evm),
+            crate::authorized_tx(signer, unsigned_tx, FeePayerType::Evm),
         ]
     }
 
@@ -1866,7 +1864,7 @@ mod test {
                         &keyed_accounts,
                         &bincode::serialize(&EvmInstruction::EvmTransaction {
                             evm_tx: tx_create,
-                            take_fee_from_native_account: false
+                            fee_type: FeePayerType::Evm
                         })
                         .unwrap(),
                         &mut invoke_context,
@@ -1907,7 +1905,7 @@ mod test {
                     &keyed_accounts,
                     &bincode::serialize(&EvmInstruction::EvmTransaction {
                         evm_tx: tx_call,
-                        take_fee_from_native_account: false,
+                        fee_type: FeePayerType::Evm,
                     })
                     .unwrap(),
                     &mut invoke_context,
@@ -1985,7 +1983,7 @@ mod test {
         let keyed_accounts = [evm_keyed_account, user_keyed_account];
 
         let dummy_address = tx_create.address().unwrap();
-        let ix = crate::send_raw_tx(user_id, tx_create, None, false);
+        let ix = crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Evm);
 
         let mut invoke_context = MockInvokeContext::with_evm(executor);
         processor
@@ -2012,7 +2010,7 @@ mod test {
             crate::evm_address_for_program(user_id),
             U256::from(2) * 300000,
         );
-        let ix = crate::authorized_tx(user_id, unsigned_tx, false);
+        let ix = crate::authorized_tx(user_id, unsigned_tx, FeePayerType::Evm);
 
         println!("Keyed accounts = {:?}", &keyed_accounts);
 

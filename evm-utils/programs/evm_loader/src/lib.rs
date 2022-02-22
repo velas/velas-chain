@@ -42,7 +42,7 @@ pub mod scope {
         };
     }
 }
-use instructions::{EvmBigTransaction, EvmInstruction, EVM_INSTRUCTION_BORSH_PREFIX};
+use instructions::{FeePayerType, EvmBigTransaction, EvmInstruction, EVM_INSTRUCTION_BORSH_PREFIX};
 use scope::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 
@@ -62,7 +62,7 @@ pub fn send_raw_tx(
     signer: solana::Address,
     evm_tx: evm::Transaction,
     gas_collector: Option<solana::Address>,
-    take_fee_from_native_account: bool,
+    fee_type: FeePayerType,
 ) -> solana::Instruction {
     let mut account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
@@ -74,7 +74,7 @@ pub fn send_raw_tx(
 
     create_evm_instruction_with_borsh(
         crate::ID,
-        &EvmInstruction::EvmTransaction { evm_tx, take_fee_from_native_account },
+        &EvmInstruction::EvmTransaction { evm_tx, fee_type },
         account_metas,
     )
 }
@@ -82,7 +82,7 @@ pub fn send_raw_tx(
 pub fn authorized_tx(
     sender: solana::Address,
     unsigned_tx: evm::UnsignedTransaction,
-    take_fee_from_native_account: bool,
+    fee_type: FeePayerType,
 ) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
@@ -95,7 +95,7 @@ pub fn authorized_tx(
         &EvmInstruction::EvmAuthorizedTransaction {
             from,
             unsigned_tx,
-            take_fee_from_native_account,
+            fee_type,
         },
         account_metas,
     )
@@ -166,7 +166,7 @@ pub fn big_tx_write(storage: &solana::Address, offset: u64, chunk: Vec<u8>) -> s
 pub fn big_tx_execute(
     storage: &solana::Address,
     gas_collector: Option<&solana::Address>,
-    take_fee_from_native_account: bool,
+    fee_type: FeePayerType,
 ) -> solana::Instruction {
     let mut account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
@@ -177,7 +177,7 @@ pub fn big_tx_execute(
         account_metas.push(AccountMeta::new(*gas_collector, false))
     }
 
-    let big_tx = EvmBigTransaction::EvmTransactionExecute { take_fee_from_native_account };
+    let big_tx = EvmBigTransaction::EvmTransactionExecute { fee_type };
 
     create_evm_instruction_with_borsh(
         crate::ID,

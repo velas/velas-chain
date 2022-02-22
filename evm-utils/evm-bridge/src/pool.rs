@@ -17,6 +17,7 @@ use once_cell::sync::Lazy;
 use serde_json::json;
 use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
 use solana_evm_loader_program::{
+    instructions::FeePayerType,
     scope::{evm, solana},
     tx_chunks::TxChunks,
 };
@@ -414,8 +415,12 @@ fn process_tx(
         }
     }
 
-    let mut ix =
-        solana_evm_loader_program::send_raw_tx(bridge.key.pubkey(), tx, Some(bridge.key.pubkey()), false);
+    let mut ix = solana_evm_loader_program::send_raw_tx(
+        bridge.key.pubkey(),
+        tx,
+        Some(bridge.key.pubkey()),
+        FeePayerType::Evm,
+    );
 
     // Add meta accounts as additional arguments
     for account in meta_keys {
@@ -469,7 +474,8 @@ fn deploy_big_tx(
     debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
     let mut tx_bytes = vec![];
-    BorshSerialize::serialize(&tx, &mut tx_bytes).map_err(|e| into_native_error(e, bridge.verbose_errors))?;
+    BorshSerialize::serialize(&tx, &mut tx_bytes)
+        .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     debug!(
         "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
@@ -583,7 +589,7 @@ fn deploy_big_tx(
         &[solana_evm_loader_program::big_tx_execute(
             &storage_pubkey,
             Some(&payer_pubkey),
-            false,
+            FeePayerType::Evm,
         )],
         Some(&payer_pubkey),
         &signers,

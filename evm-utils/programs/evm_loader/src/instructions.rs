@@ -5,6 +5,33 @@ use serde::{Deserialize, Serialize};
 
 pub const EVM_INSTRUCTION_BORSH_PREFIX: u8 = 255u8;
 
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    BorshSchema,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+)]
+pub enum FeePayerType {
+    Evm,
+    Native,
+}
+
+impl FeePayerType {
+    pub fn is_evm(&self) -> bool {
+        *self == FeePayerType::Evm
+    }
+    pub fn is_native(&self) -> bool {
+        *self == FeePayerType::Native
+    }
+}
+
 /// Solana blockchain limit amount of data that transaction can have.
 /// To get around this limitation, we use design that is similar to LoaderInstruction in sdk.
 
@@ -31,12 +58,12 @@ pub enum EvmBigTransaction {
     EvmTransactionWrite { offset: u64, data: Vec<u8> },
 
     /// Execute merged transaction, in order to do this, user should make sure that transaction is successfully writed.
-    EvmTransactionExecute { take_fee_from_native_account: bool },
+    EvmTransactionExecute { fee_type: FeePayerType },
 
     /// Execute merged unsigned transaction, in order to do this, user should make sure that transaction is successfully writed.
     EvmTransactionExecuteUnsigned {
         from: evm::Address,
-        take_fee_from_native_account: bool,
+        fee_type: FeePayerType,
     },
 }
 
@@ -50,12 +77,12 @@ impl From<OldEvmBigTransaction> for EvmBigTransaction {
                 Self::EvmTransactionWrite { offset, data }
             }
             OldEvmBigTransaction::EvmTransactionExecute {} => Self::EvmTransactionExecute {
-                take_fee_from_native_account: false,
+                fee_type: FeePayerType::Evm,
             },
             OldEvmBigTransaction::EvmTransactionExecuteUnsigned { from } => {
                 Self::EvmTransactionExecuteUnsigned {
                     from,
-                    take_fee_from_native_account: false,
+                    fee_type: FeePayerType::Evm,
                 }
             }
         }
@@ -103,7 +130,7 @@ pub enum EvmInstruction {
     ///
     EvmTransaction {
         evm_tx: evm::Transaction,
-        take_fee_from_native_account: bool,
+        fee_type: FeePayerType,
     },
 
     /// Transfer native lamports to ethereum.
@@ -149,7 +176,7 @@ pub enum EvmInstruction {
     EvmAuthorizedTransaction {
         from: evm::Address,
         unsigned_tx: evm::UnsignedTransaction,
-        take_fee_from_native_account: bool,
+        fee_type: FeePayerType,
     },
 }
 
@@ -158,7 +185,7 @@ impl From<OldEvmInstruction> for EvmInstruction {
         match other {
             OldEvmInstruction::EvmTransaction { evm_tx } => Self::EvmTransaction {
                 evm_tx,
-                take_fee_from_native_account: false,
+                fee_type: FeePayerType::Evm,
             },
             OldEvmInstruction::SwapNativeToEther {
                 lamports,
@@ -175,7 +202,7 @@ impl From<OldEvmInstruction> for EvmInstruction {
                 Self::EvmAuthorizedTransaction {
                     from,
                     unsigned_tx,
-                    take_fee_from_native_account: false,
+                    fee_type: FeePayerType::Evm,
                 }
             }
         }
@@ -333,7 +360,7 @@ mod test {
         let data = EvmInstruction::EvmAuthorizedTransaction {
             from: addr.0,
             unsigned_tx: tx.0.clone(),
-            take_fee_from_native_account: false,
+            fee_type: FeePayerType::Evm,
         };
 
         fn custom_serialize(
@@ -409,7 +436,7 @@ mod test {
                 value: 100.into(),
                 input: vec![],
             },
-            take_fee_from_native_account: false,
+            fee_type: FeePayerType::Evm,
         };
         let result = hex::decode("040000002a0000000000000030783030303030303030303030303030303030\
         303030303030303030303030303030303030303030303003000000000000003078310300000000000000\
@@ -427,7 +454,7 @@ mod test {
                 value: 555.into(),
                 input: b"test".to_vec(),
             },
-            take_fee_from_native_account: false,
+            fee_type: FeePayerType::Evm,
         };
         let result = hex::decode("040000002a00000000000000307831313131313131313131313131313131313131\
         3131313131313131313131313131313131313131310500000000000000307833303904000000000000003078\
@@ -450,7 +477,7 @@ mod test {
                 value: 555.into(),
                 input: b"test".to_vec(),
             },
-            take_fee_from_native_account: false,
+            fee_type: FeePayerType::Evm,
         };
         let result = hex::decode("040000002a00000000000000307861636330366230313831626365363436653938353\
         4336562313534623165343063663538323762620500000000000000307833303904000000000000003078323108\
@@ -508,7 +535,7 @@ mod test {
         let ix =
             EvmInstruction::EvmBigTransaction(EvmBigTransaction::EvmTransactionExecuteUnsigned {
                 from,
-                take_fee_from_native_account: false,
+                fee_type: FeePayerType::Evm,
             });
 
         let data = bincode::serialize(&ix).unwrap();
@@ -534,7 +561,7 @@ mod test {
     fn test_serialize_transaction(tx: Generator<evm::Transaction>) {
         let data = EvmInstruction::EvmTransaction {
             evm_tx: tx.0,
-            take_fee_from_native_account: false,
+            fee_type: FeePayerType::Evm,
         };
         let data = bincode::serialize(&data).unwrap();
         assert_eq!(&*data, &[0, 1, 2, 3])
@@ -582,14 +609,14 @@ mod test {
     #[test]
     fn test_serialize_big_transaction_execute_with_borsh() {
         let big_tx = EvmBigTransaction::EvmTransactionExecute {
-            take_fee_from_native_account: false,
+            fee_type: FeePayerType::Native,
         };
         let mut buf: Vec<u8> = vec![];
         BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
 
         let tag = [2u8];
-        let take_fee_from_native_account = [0];
-        let result_data = [&tag[..], &take_fee_from_native_account[..]].concat();
+        let fee_type = [1];
+        let result_data = [&tag[..], &fee_type[..]].concat();
         assert_eq!(buf, result_data);
     }
 
@@ -598,21 +625,16 @@ mod test {
         let from = H160::repeat_byte(0x1);
         let big_tx = EvmBigTransaction::EvmTransactionExecuteUnsigned {
             from,
-            take_fee_from_native_account: false,
+            fee_type: FeePayerType::Evm,
         };
         let mut buf: Vec<u8> = vec![];
         BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
 
         let tag = [3u8];
         let from_in_bytes = from.as_bytes();
-        let take_fee_from_native_account = [0];
+        let fee_type = [0];
 
-        let result_data = [
-            &tag[..],
-            &from_in_bytes[..],
-            &take_fee_from_native_account[..],
-        ]
-        .concat();
+        let result_data = [&tag[..], &from_in_bytes[..], &fee_type[..]].concat();
         assert_eq!(buf, result_data)
     }
 
@@ -639,7 +661,7 @@ mod test {
         assert_eq!(
             <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &big_tx[..]).unwrap(),
             EvmBigTransaction::EvmTransactionExecute {
-                take_fee_from_native_account: false
+                fee_type: FeePayerType::Evm
             }
         );
 
@@ -648,7 +670,7 @@ mod test {
             <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &big_tx[..]).unwrap(),
             EvmBigTransaction::EvmTransactionExecuteUnsigned {
                 from: H160::repeat_byte(5),
-                take_fee_from_native_account: false
+                fee_type: FeePayerType::Evm
             }
         );
     }
@@ -700,7 +722,7 @@ mod test {
         };
         let data = EvmInstruction::EvmTransaction {
             evm_tx,
-            take_fee_from_native_account: false,
+            fee_type: FeePayerType::Evm,
         };
         let result = hex::decode("00\
         0100000000000000000000000000000000000000000000000000000000000000\
@@ -766,7 +788,7 @@ mod test {
                 value: evm::U256::from(40),
                 input: vec![10, 20, 30, 40],
             },
-            take_fee_from_native_account: false,
+            fee_type: FeePayerType::Evm,
         };
         let result = hex::decode(
             "04\
@@ -812,7 +834,7 @@ mod test {
                     },
                     input: vec![83, 73, 81, 57, 74, 14, 37, 12, 23, 34],
                 },
-                take_fee_from_native_account: false,
+                fee_type: FeePayerType::Evm,
             }
         );
 
@@ -856,7 +878,7 @@ mod test {
                     value: evm::U256::from(256),
                     input: vec![10, 20, 30, 40],
                 },
-                take_fee_from_native_account: false,
+                fee_type: FeePayerType::Evm,
             }
         );
     }
