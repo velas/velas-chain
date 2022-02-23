@@ -740,6 +740,7 @@ fn call_many(
 
     let estimate_config = evm_state::EvmConfig {
         estimate: true,
+        chain_id: bank.evm_chain_id,
         ..Default::default()
     };
 
