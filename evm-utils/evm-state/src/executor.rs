@@ -168,14 +168,16 @@ impl Executor {
         );
 
         let max_fee = gas_limit * gas_price;
-        ensure!(
-            max_fee + value <= state_account.balance,
-            CantPayTheBills {
-                value,
-                max_fee,
-                state_balance: state_account.balance,
-            }
-        );
+        if withdraw_fee {
+            ensure!(
+                max_fee + value <= state_account.balance,
+                CantPayTheBills {
+                    value,
+                    max_fee,
+                    state_balance: state_account.balance,
+                }
+            );
+        }
 
         let config = self.config.to_evm_params();
         let transaction_context = TransactionContext::new(gas_price.as_u64(), caller);
@@ -496,6 +498,14 @@ impl Executor {
     pub fn chain_id(&self) -> u64 {
         self.config.chain_id
     }
+
+    pub fn balance(&self, addr: H160) -> U256 {
+        self.evm_backend
+            .get_account_state(addr)
+            .unwrap_or_default()
+            .balance
+    }
+
     pub fn nonce(&self, addr: H160) -> U256 {
         self.evm_backend
             .get_account_state(addr)
@@ -724,7 +734,13 @@ mod tests {
         let address = alice.address();
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx.clone(), true, true, noop_precompile)
+                .transaction_execute_unsinged(
+                    address,
+                    create_tx.clone(),
+                    true,
+                    true,
+                    noop_precompile
+                )
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
