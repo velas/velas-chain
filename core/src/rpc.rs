@@ -11,6 +11,7 @@ use crate::{
     validator::ValidatorExit,
 };
 use bincode::{config::Options, serialize};
+use jsonrpc_core::BoxFuture;
 use jsonrpc_core::{types::error, Error, Metadata, Result};
 use jsonrpc_derive::rpc;
 use serde::{Deserialize, Serialize};
@@ -82,6 +83,7 @@ use std::{
     cmp::{max, min},
     collections::{HashMap, HashSet},
     convert::TryFrom,
+    future::ready,
     net::SocketAddr,
     str::FromStr,
     sync::{
@@ -428,14 +430,14 @@ impl JsonRpcRequestProcessor {
         })
     }
 
-    pub fn get_inflation_reward(
+    pub async fn get_inflation_reward(
         &self,
         addresses: Vec<Pubkey>,
         config: Option<RpcEpochConfig>,
     ) -> Result<Vec<Option<RpcInflationReward>>> {
         let config = config.unwrap_or_default();
         let epoch_schedule = self.get_epoch_schedule();
-        let first_available_block = self.get_first_available_block();
+        let first_available_block = self.get_first_available_block().await;
         let epoch = config.epoch.unwrap_or_else(|| {
             epoch_schedule
                 .get_epoch(self.get_slot(config.commitment))
@@ -460,7 +462,8 @@ impl JsonRpcRequestProcessor {
         }
 
         let first_confirmed_block_in_epoch = *self
-            .get_confirmed_blocks_with_limit(first_slot_in_epoch, 1, config.commitment)?
+            .get_confirmed_blocks_with_limit(first_slot_in_epoch, 1, config.commitment)
+            .await?
             .get(0)
             .ok_or(RpcCustomError::BlockNotAvailable {
                 slot: first_slot_in_epoch,
@@ -470,7 +473,8 @@ impl JsonRpcRequestProcessor {
             .get_confirmed_block(
                 first_confirmed_block_in_epoch,
                 Some(RpcConfirmedBlockConfig::rewards_with_commitment(config.commitment).into()),
-            ) {
+            )
+            .await {
             first_confirmed_block
         } else {
             return Err(RpcCustomError::BlockNotAvailable {
@@ -933,7 +937,7 @@ impl JsonRpcRequestProcessor {
         Ok(())
     }
 
-    pub fn get_confirmed_block(
+    pub async fn get_confirmed_block(
         &self,
         slot: Slot,
         config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
@@ -959,9 +963,7 @@ impl JsonRpcRequestProcessor {
                 let result = self.blockstore.get_rooted_block(slot, true);
                 if result.is_err() {
                     if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                        let bigtable_result = self
-                            .runtime
-                            .block_on(bigtable_ledger_storage.get_confirmed_block(slot));
+                        let bigtable_result = bigtable_ledger_storage.get_confirmed_block(slot).await;
                         self.check_bigtable_result(&bigtable_result)?;
                         return Ok(bigtable_result.ok().map(|confirmed_block| {
                             confirmed_block.configure(encoding, transaction_details, show_rewards)
@@ -1008,7 +1010,7 @@ impl JsonRpcRequestProcessor {
         Err(RpcCustomError::BlockNotAvailable { slot }.into())
     }
 
-    pub fn get_confirmed_blocks(
+    pub async fn get_confirmed_blocks(
         &self,
         start_slot: Slot,
         end_slot: Option<Slot>,
@@ -1047,12 +1049,9 @@ impl JsonRpcRequestProcessor {
             // [start_slot..end_slot] can be fetched from BigTable. This range should not ever run
             // into unfinalized confirmed blocks due to MAX_GET_CONFIRMED_BLOCKS_RANGE
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                return self
-                    .runtime
-                    .block_on(
-                        bigtable_ledger_storage
-                            .get_confirmed_blocks(start_slot, (end_slot - start_slot) as usize + 1), // increment limit by 1 to ensure returned range is inclusive of both start_slot and end_slot
-                    )
+                return bigtable_ledger_storage
+                    .get_confirmed_blocks(start_slot, (end_slot - start_slot) as usize + 1) // increment limit by 1 to ensure returned range is inclusive of both start_slot and end_slot
+                    .await
                     .map(|mut bigtable_blocks| {
                         bigtable_blocks.retain(|&slot| slot <= end_slot);
                         bigtable_blocks
@@ -1089,7 +1088,7 @@ impl JsonRpcRequestProcessor {
         Ok(blocks)
     }
 
-    pub fn get_confirmed_blocks_with_limit(
+    pub async fn get_confirmed_blocks_with_limit(
         &self,
         start_slot: Slot,
         limit: usize,
@@ -1112,9 +1111,9 @@ impl JsonRpcRequestProcessor {
             // range can be fetched from BigTable. This range should not ever run into unfinalized
             // confirmed blocks due to MAX_GET_CONFIRMED_BLOCKS_RANGE
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                return Ok(self
-                    .runtime
-                    .block_on(bigtable_ledger_storage.get_confirmed_blocks(start_slot, limit))
+                return Ok(bigtable_ledger_storage
+                    .get_confirmed_blocks(start_slot, limit)
+                    .await
                     .unwrap_or_default());
             }
         }
@@ -1153,7 +1152,7 @@ impl JsonRpcRequestProcessor {
         Ok(blocks)
     }
 
-    pub fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
+    pub async fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
         if slot
             <= self
                 .block_commitment_cache
@@ -1165,9 +1164,7 @@ impl JsonRpcRequestProcessor {
             self.check_blockstore_root(&result, slot)?;
             if result.is_err() || matches!(result, Ok(None)) {
                 if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                    let bigtable_result = self
-                        .runtime
-                        .block_on(bigtable_ledger_storage.get_confirmed_block(slot));
+                    let bigtable_result = bigtable_ledger_storage.get_confirmed_block(slot).await;
                     self.check_bigtable_result(&bigtable_result)?;
                     return Ok(bigtable_result
                         .ok()
@@ -1212,7 +1209,7 @@ impl JsonRpcRequestProcessor {
         Some(status)
     }
 
-    pub fn get_signature_statuses(
+    pub async fn get_signature_statuses(
         &self,
         signatures: Vec<Signature>,
         config: Option<RpcSignatureStatusConfig>,
@@ -1232,7 +1229,7 @@ impl JsonRpcRequestProcessor {
             let status = if let Some(status) = self.get_transaction_status(signature, &bank) {
                 Some(status)
             } else if self.config.enable_rpc_transaction_history && search_transaction_history {
-                self.blockstore
+                let transaction_status = self.blockstore
                     .get_rooted_transaction_status(signature)
                     .map_err(|_| Error::internal_error())?
                     .filter(|(slot, _status_meta)| {
@@ -1251,17 +1248,19 @@ impl JsonRpcRequestProcessor {
                             err,
                             confirmation_status: Some(TransactionConfirmationStatus::Finalized),
                         }
-                    })
-                    .or_else(|| {
-                        if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                            self.runtime
-                                .block_on(bigtable_ledger_storage.get_signature_status(&signature))
-                                .map(Some)
-                                .unwrap_or(None)
-                        } else {
-                            None
-                        }
-                    })
+                    });
+                if matches!(transaction_status, Some(_)) {
+                    transaction_status
+                } else {
+                    if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                        bigtable_ledger_storage.get_signature_status(&signature)
+                            .await
+                            .map(Some)
+                            .unwrap_or(None)
+                    } else {
+                        None
+                    }
+                }
             } else {
                 None
             };
@@ -1307,7 +1306,7 @@ impl JsonRpcRequestProcessor {
         })
     }
 
-    pub fn get_confirmed_transaction(
+    pub async fn get_confirmed_transaction(
         &self,
         signature: Signature,
         config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
@@ -1355,9 +1354,8 @@ impl JsonRpcRequestProcessor {
                 }
                 None => {
                     if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                        return Ok(self
-                            .runtime
-                            .block_on(bigtable_ledger_storage.get_confirmed_transaction(&signature))
+                        return Ok(bigtable_ledger_storage.get_confirmed_transaction(&signature)
+                            .await
                             .unwrap_or(None)
                             .map(|confirmed| confirmed.encode(encoding)));
                     }
@@ -1393,7 +1391,7 @@ impl JsonRpcRequestProcessor {
         }
     }
 
-    pub fn get_confirmed_signatures_for_address2(
+    pub async fn get_confirmed_signatures_for_address2(
         &self,
         address: Pubkey,
         mut before: Option<Signature>,
@@ -1429,14 +1427,12 @@ impl JsonRpcRequestProcessor {
                         before = results.last().map(|x| x.signature);
                     }
 
-                    let bigtable_results = self.runtime.block_on(
-                        bigtable_ledger_storage.get_confirmed_signatures_for_address(
-                            &address,
-                            before.as_ref(),
-                            until.as_ref(),
-                            limit,
-                        ),
-                    );
+                    let bigtable_results = bigtable_ledger_storage.get_confirmed_signatures_for_address(
+                        &address,
+                        before.as_ref(),
+                        until.as_ref(),
+                        limit,
+                    ).await;
                     match bigtable_results {
                         Ok(bigtable_results) => {
                             results.extend(bigtable_results.into_iter().map(|x| x.0));
@@ -1471,16 +1467,15 @@ impl JsonRpcRequestProcessor {
         }
     }
 
-    pub fn get_first_available_block(&self) -> Slot {
+    pub async fn get_first_available_block(&self) -> Slot {
         let slot = self
             .blockstore
             .get_first_available_block()
             .unwrap_or_default();
 
         if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-            let bigtable_slot = self
-                .runtime
-                .block_on(bigtable_ledger_storage.get_first_available_block())
+            let bigtable_slot = bigtable_ledger_storage.get_first_available_block()
+                .await
                 .unwrap_or(None)
                 .unwrap_or(slot);
 
@@ -2768,8 +2763,8 @@ pub mod rpc_minimal {
 }
 
 // Full RPC interface that an API node is expected to provide
-// (rpc_minimal should also be provided by an API node)
 pub mod rpc_full {
+// (rpc_minimal should also be provided by an API node)
     use super::*;
     #[rpc]
     pub trait Full {
@@ -2813,7 +2808,7 @@ pub mod rpc_full {
             meta: Self::Metadata,
             address_strs: Vec<String>,
             config: Option<RpcEpochConfig>,
-        ) -> Result<Vec<Option<RpcInflationReward>>>;
+        ) -> BoxFuture<Result<Vec<Option<RpcInflationReward>>>>;
 
         #[rpc(meta, name = "getInflationGovernor")]
         fn get_inflation_governor(
@@ -2882,7 +2877,7 @@ pub mod rpc_full {
             meta: Self::Metadata,
             signature_strs: Vec<String>,
             config: Option<RpcSignatureStatusConfig>,
-        ) -> Result<RpcResponse<Vec<Option<TransactionStatus>>>>;
+        ) -> BoxFuture<Result<RpcResponse<Vec<Option<TransactionStatus>>>>>;
 
         #[rpc(meta, name = "getMaxRetransmitSlot")]
         fn get_max_retransmit_slot(&self, meta: Self::Metadata) -> Result<Slot>;
@@ -2961,11 +2956,11 @@ pub mod rpc_full {
             meta: Self::Metadata,
             slot: Slot,
             config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
-        ) -> Result<Option<UiConfirmedBlock>>;
+        ) -> BoxFuture<Result<Option<UiConfirmedBlock>>>;
 
         #[rpc(meta, name = "getBlockTime")]
         fn get_block_time(&self, meta: Self::Metadata, slot: Slot)
-            -> Result<Option<UnixTimestamp>>;
+            -> BoxFuture<Result<Option<UnixTimestamp>>>;
 
         #[rpc(meta, name = "getConfirmedBlocks")]
         fn get_confirmed_blocks(
@@ -2974,7 +2969,7 @@ pub mod rpc_full {
             start_slot: Slot,
             config: Option<RpcConfirmedBlocksConfigWrapper>,
             commitment: Option<CommitmentConfig>,
-        ) -> Result<Vec<Slot>>;
+        ) -> BoxFuture<Result<Vec<Slot>>>;
 
         #[rpc(meta, name = "getConfirmedBlocksWithLimit")]
         fn get_confirmed_blocks_with_limit(
@@ -2983,7 +2978,7 @@ pub mod rpc_full {
             start_slot: Slot,
             limit: usize,
             commitment: Option<CommitmentConfig>,
-        ) -> Result<Vec<Slot>>;
+        ) -> BoxFuture<Result<Vec<Slot>>>;
 
         #[rpc(meta, name = "getConfirmedTransaction")]
         fn get_confirmed_transaction(
@@ -2991,7 +2986,7 @@ pub mod rpc_full {
             meta: Self::Metadata,
             signature_str: String,
             config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
-        ) -> Result<Option<EncodedConfirmedTransaction>>;
+        ) -> BoxFuture<Result<Option<EncodedConfirmedTransaction>>>;
 
         // DEPRECATED
         #[rpc(meta, name = "getConfirmedSignaturesForAddress")]
@@ -3009,10 +3004,10 @@ pub mod rpc_full {
             meta: Self::Metadata,
             address: String,
             config: Option<RpcGetConfirmedSignaturesForAddress2Config>,
-        ) -> Result<Vec<RpcConfirmedTransactionStatusWithSignature>>;
+        ) -> BoxFuture<Result<Vec<RpcConfirmedTransactionStatusWithSignature>>>;
 
         #[rpc(meta, name = "getFirstAvailableBlock")]
-        fn get_first_available_block(&self, meta: Self::Metadata) -> Result<Slot>;
+        fn get_first_available_block(&self, meta: Self::Metadata) -> BoxFuture<Result<Slot>>;
 
         #[rpc(meta, name = "getStakeActivation")]
         fn get_stake_activation(
@@ -3348,22 +3343,25 @@ pub mod rpc_full {
             meta: Self::Metadata,
             signature_strs: Vec<String>,
             config: Option<RpcSignatureStatusConfig>,
-        ) -> Result<RpcResponse<Vec<Option<TransactionStatus>>>> {
+        ) -> BoxFuture<Result<RpcResponse<Vec<Option<TransactionStatus>>>>> {
             debug!(
                 "get_signature_statuses rpc request received: {:?}",
                 signature_strs.len()
             );
             if signature_strs.len() > MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS {
-                return Err(Error::invalid_params(format!(
+                return Box::pin(ready(Err(Error::invalid_params(format!(
                     "Too many inputs provided; max {}",
-                    MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS
-                )));
+                    MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS)))));
             }
             let mut signatures: Vec<Signature> = vec![];
             for signature_str in signature_strs {
-                signatures.push(verify_signature(&signature_str)?);
+                match verify_signature(&signature_str) {
+                    Ok(sig) => signatures.push(sig),
+                    Err(err) => return Box::pin(ready(Err(err))),
+                }
+                
             }
-            meta.get_signature_statuses(signatures, config)
+            Box::pin(async move { meta.get_signature_statuses(signatures, config).await })
         }
 
         fn get_max_retransmit_slot(&self, meta: Self::Metadata) -> Result<Slot> {
@@ -3650,9 +3648,9 @@ pub mod rpc_full {
             meta: Self::Metadata,
             slot: Slot,
             config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
-        ) -> Result<Option<UiConfirmedBlock>> {
+        ) -> BoxFuture<Result<Option<UiConfirmedBlock>>> {
             debug!("get_confirmed_block rpc request received: {:?}", slot);
-            meta.get_confirmed_block(slot, config)
+            Box::pin(async move { meta.get_confirmed_block(slot, config).await })
         }
 
         fn get_confirmed_blocks(
@@ -3661,14 +3659,16 @@ pub mod rpc_full {
             start_slot: Slot,
             config: Option<RpcConfirmedBlocksConfigWrapper>,
             commitment: Option<CommitmentConfig>,
-        ) -> Result<Vec<Slot>> {
+        ) -> BoxFuture<Result<Vec<Slot>>> {
             let (end_slot, maybe_commitment) =
                 config.map(|config| config.unzip()).unwrap_or_default();
             debug!(
                 "get_confirmed_blocks rpc request received: {}-{:?}",
                 start_slot, end_slot
             );
-            meta.get_confirmed_blocks(start_slot, end_slot, commitment.or(maybe_commitment))
+            Box::pin(async move {
+                meta.get_confirmed_blocks(start_slot, end_slot, commitment.or(maybe_commitment)).await
+            })
         }
 
         fn get_confirmed_blocks_with_limit(
@@ -3677,20 +3677,22 @@ pub mod rpc_full {
             start_slot: Slot,
             limit: usize,
             commitment: Option<CommitmentConfig>,
-        ) -> Result<Vec<Slot>> {
+        ) -> BoxFuture<Result<Vec<Slot>>> {
             debug!(
                 "get_confirmed_blocks_with_limit rpc request received: {}-{}",
                 start_slot, limit,
             );
-            meta.get_confirmed_blocks_with_limit(start_slot, limit, commitment)
+            Box::pin(async move {
+                meta.get_confirmed_blocks_with_limit(start_slot, limit, commitment).await
+            })
         }
 
         fn get_block_time(
             &self,
             meta: Self::Metadata,
             slot: Slot,
-        ) -> Result<Option<UnixTimestamp>> {
-            meta.get_block_time(slot)
+        ) -> BoxFuture<Result<Option<UnixTimestamp>>> {
+            Box::pin(async move { meta.get_block_time(slot).await })
         }
 
         fn get_confirmed_transaction(
@@ -3698,13 +3700,17 @@ pub mod rpc_full {
             meta: Self::Metadata,
             signature_str: String,
             config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
-        ) -> Result<Option<EncodedConfirmedTransaction>> {
+        ) -> BoxFuture<Result<Option<EncodedConfirmedTransaction>>> {
             debug!(
                 "get_confirmed_transaction rpc request received: {:?}",
                 signature_str
             );
-            let signature = verify_signature(&signature_str)?;
-            meta.get_confirmed_transaction(signature, config)
+            match verify_signature(&signature_str) {
+                Ok(sig) => {
+                    Box::pin(async move { meta.get_confirmed_transaction(sig, config).await })
+                },
+                Err(err) => Box::pin(ready(Err(err))),
+            }
         }
 
         fn get_confirmed_signatures_for_address(
@@ -3743,41 +3749,54 @@ pub mod rpc_full {
             meta: Self::Metadata,
             address: String,
             config: Option<RpcGetConfirmedSignaturesForAddress2Config>,
-        ) -> Result<Vec<RpcConfirmedTransactionStatusWithSignature>> {
-            let address = verify_pubkey(&address)?;
+        ) -> BoxFuture<Result<Vec<RpcConfirmedTransactionStatusWithSignature>>> {
+            let address = match verify_pubkey(&address) {
+                Ok(address) => address,
+                Err(err) => return Box::pin(ready(Err(err))),
+            };
 
             let config = config.unwrap_or_default();
-            let before = config
+            let before = match config
                 .before
+                .as_ref()
                 .map(|ref before| verify_signature(before))
-                .transpose()?;
-            let until = config
+                .transpose() {
+                Ok(before) => before,
+                Err(err) => return Box::pin(ready(Err(err))),
+            };
+            let until = match config
                 .until
+                .as_ref()
                 .map(|ref until| verify_signature(until))
-                .transpose()?;
+                .transpose() {
+                Ok(until) => until,
+                Err(err) => return Box::pin(ready(Err(err))),
+            };
             let limit = config
                 .limit
                 .unwrap_or(MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT);
 
             if limit == 0 || limit > MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT {
-                return Err(Error::invalid_params(format!(
+                return Box::pin(ready(Err(Error::invalid_params(format!(
                     "Invalid limit; max {}",
                     MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT
-                )));
+                )))));
             }
 
-            meta.get_confirmed_signatures_for_address2(
-                address,
-                before,
-                until,
-                limit,
-                config.commitment,
-            )
+            Box::pin(async move {
+                meta.get_confirmed_signatures_for_address2(
+                    address,
+                    before,
+                    until,
+                    limit,
+                    config.commitment,
+                ).await
+            })
         }
 
-        fn get_first_available_block(&self, meta: Self::Metadata) -> Result<Slot> {
+        fn get_first_available_block(&self, meta: Self::Metadata) -> BoxFuture<Result<Slot>> {
             debug!("get_first_available_block rpc request received");
-            Ok(meta.get_first_available_block())
+            Box::pin(async move { Ok(meta.get_first_available_block().await) })
         }
 
         fn get_block_production(
@@ -3888,7 +3907,7 @@ pub mod rpc_full {
             meta: Self::Metadata,
             address_strs: Vec<String>,
             config: Option<RpcEpochConfig>,
-        ) -> Result<Vec<Option<RpcInflationReward>>> {
+        ) -> BoxFuture<Result<Vec<Option<RpcInflationReward>>>> {
             debug!(
                 "get_inflation_reward rpc request received: {:?}",
                 address_strs.len()
@@ -3896,10 +3915,13 @@ pub mod rpc_full {
 
             let mut addresses: Vec<Pubkey> = vec![];
             for address_str in address_strs {
-                addresses.push(verify_pubkey(&address_str)?);
+                match verify_pubkey(&address_str) {
+                    Ok(address) => addresses.push(address),
+                    Err(err) => return Box::pin(ready(Err(err))),
+                }
             }
 
-            meta.get_inflation_reward(addresses, config)
+            Box::pin(async move { meta.get_inflation_reward(addresses, config).await })
         }
 
         fn get_token_account_balance(
