@@ -17,11 +17,11 @@ use evm_rpc::{
 use evm_state::{
     AccountProvider, AccountState, Address, Gas, LogFilter, TransactionAction, H160, H256, U256,
 };
+use jsonrpc_core::BoxFuture;
 use snafu::ensure;
 use snafu::ResultExt;
 use solana_runtime::bank::Bank;
-use std::cell::RefCell;
-use std::sync::Arc;
+use std::{cell::RefCell, future::ready, sync::Arc};
 const GAS_PRICE: u64 = 3;
 
 pub struct StateRootWithBank {
@@ -87,7 +87,7 @@ impl StateRootWithBank {
     }
 }
 
-fn block_to_state_root(
+async fn block_to_state_root(
     block: Option<BlockId>,
     meta: &JsonRpcRequestProcessor,
 ) -> StateRootWithBank {
@@ -108,12 +108,12 @@ fn block_to_state_root(
             };
         }
         BlockId::RelativeId(BlockRelId::Earliest) | BlockId::Num(Hex(0)) => {
-            meta.get_first_available_evm_block()
+            meta.get_first_available_evm_block().await
         }
         BlockId::Num(num) => num.0,
         BlockId::BlockHash { block_hash } => {
             found_block_hash = Some(block_hash.0);
-            if let Some(num) = meta.get_evm_block_id_by_hash(block_hash.0) {
+            if let Some(num) = meta.get_evm_block_id_by_hash(block_hash.0).await {
                 num
             } else {
                 return StateRootWithBank {
@@ -127,6 +127,7 @@ fn block_to_state_root(
     StateRootWithBank {
         state_root: meta
             .get_evm_block_by_id(block_num) // TODO: don't request full block.
+            .await
             .filter(|(b, _)| {
                 // if requested specific block hash, check that block with this hash is not in reorged fork
                 found_block_hash
@@ -140,14 +141,16 @@ fn block_to_state_root(
     }
 }
 
-fn block_parse_confirmed_num(
+async fn block_parse_confirmed_num(
     block: Option<BlockId>,
     meta: &JsonRpcRequestProcessor,
 ) -> Option<u64> {
     let block = block.unwrap_or_default();
     match block {
         BlockId::BlockHash { .. } => None,
-        BlockId::RelativeId(BlockRelId::Earliest) => Some(meta.get_first_available_evm_block()),
+        BlockId::RelativeId(BlockRelId::Earliest) => {
+            Some(meta.get_first_available_evm_block().await)
+        },
         BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
             Some(meta.get_last_confirmed_evm_block().unwrap_or_else(|| {
                 let bank = meta.bank(Some(CommitmentConfig::processed()));
@@ -286,9 +289,11 @@ pub struct BasicErpcImpl;
 impl BasicERPC for BasicErpcImpl {
     type Metadata = JsonRpcRequestProcessor;
 
-    fn block_number(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error> {
-        let block = block_parse_confirmed_num(None, &meta).unwrap_or(0);
-        Ok(Hex(block as usize))
+    fn block_number(&self, meta: Self::Metadata) -> BoxFuture<Result<Hex<usize>, Error>> {
+        Box::pin(async move {
+            let block = block_parse_confirmed_num(None, &meta).await.unwrap_or(0);
+            Ok(Hex(block as usize))
+        })
     }
 
     fn balance(
@@ -296,13 +301,15 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         address: Hex<Address>,
         block: Option<BlockId>,
-    ) -> Result<Hex<U256>, Error> {
-        let state = block_to_state_root(block, &meta);
-
-        let account = state
-            .get_account_state_at(&meta, address.0)?
-            .unwrap_or_default();
-        Ok(Hex(account.balance))
+    ) -> BoxFuture<Result<Hex<U256>, Error>> {
+        Box::pin(async move {
+            let state = block_to_state_root(block, &meta).await;
+    
+            let account = state
+                .get_account_state_at(&meta, address.0)?
+                .unwrap_or_default();
+            Ok(Hex(account.balance))
+        })
     }
 
     fn storage_at(
@@ -311,13 +318,15 @@ impl BasicERPC for BasicErpcImpl {
         address: Hex<Address>,
         data: Hex<H256>,
         block: Option<BlockId>,
-    ) -> Result<Hex<H256>, Error> {
-        let state = block_to_state_root(block, &meta);
-
-        let storage = state
-            .get_storage_at(&meta, address.0, data.0)?
-            .unwrap_or_default();
-        Ok(Hex(storage))
+    ) -> BoxFuture<Result<Hex<H256>, Error>> {
+        Box::pin(async move {
+            let state = block_to_state_root(block, &meta).await;
+    
+            let storage = state
+                .get_storage_at(&meta, address.0, data.0)?
+                .unwrap_or_default();
+            Ok(Hex(storage))
+        })
     }
 
     fn transaction_count(
@@ -325,13 +334,15 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         address: Hex<Address>,
         block: Option<BlockId>,
-    ) -> Result<Hex<U256>, Error> {
-        let state = block_to_state_root(block, &meta);
-
-        let account = state
-            .get_account_state_at(&meta, address.0)?
-            .unwrap_or_default();
-        Ok(Hex(account.nonce))
+    ) -> BoxFuture<Result<Hex<U256>, Error>> {
+        Box::pin(async move {
+            let state = block_to_state_root(block, &meta).await;
+    
+            let account = state
+                .get_account_state_at(&meta, address.0)?
+                .unwrap_or_default();
+            Ok(Hex(account.nonce))
+        })
     }
 
     fn code(
@@ -339,13 +350,15 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         address: Hex<Address>,
         block: Option<BlockId>,
-    ) -> Result<Bytes, Error> {
-        let state = block_to_state_root(block, &meta);
-
-        let account = state
-            .get_account_state_at(&meta, address.0)?
-            .unwrap_or_default();
-        Ok(Bytes(account.code.into()))
+    ) -> BoxFuture<Result<Bytes, Error>> {
+        Box::pin(async move {
+            let state = block_to_state_root(block, &meta).await;
+    
+            let account = state
+                .get_account_state_at(&meta, address.0)?
+                .unwrap_or_default();
+            Ok(Bytes(account.code.into()))
+        })
     }
 
     fn block_by_hash(
@@ -353,22 +366,24 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         block_hash: Hex<H256>,
         full: bool,
-    ) -> Result<Option<RPCBlock>, Error> {
+    ) -> BoxFuture<Result<Option<RPCBlock>, Error>> {
         debug!("Requested hash = {:?}", block_hash.0);
-        let block = match meta.get_evm_block_id_by_hash(block_hash.0) {
-            None => {
-                error!("Not found block for hash:{}", block_hash);
-                return Ok(None);
-            }
-            Some(b) => match meta.get_evm_block_by_id(b) {
-                // check that found block only in valid fork.
-                Some(block) if block.0.header.hash() == block_hash.0 => b,
-                _ => return Ok(None),
-            },
-        };
-        debug!("Found block = {:?}", block);
-
-        self.block_by_number(meta, block.into(), full)
+        Box::pin(async move {
+            let block = match meta.get_evm_block_id_by_hash(block_hash.0).await {
+                None => {
+                    error!("Not found block for hash:{}", block_hash);
+                    return Ok(None);
+                }
+                Some(b) => match meta.get_evm_block_by_id(b).await {
+                    // check that found block only in valid fork.
+                    Some(block) if block.0.header.hash() == block_hash.0 => b,
+                    _ => return Ok(None),
+                },
+            };
+            debug!("Found block = {:?}", block);
+    
+            block_by_number(meta, block.into(), full).await
+        })
     }
 
     fn block_by_number(
@@ -376,69 +391,32 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         block: BlockId,
         full: bool,
-    ) -> Result<Option<RPCBlock>, Error> {
-        let num = block_parse_confirmed_num(Some(block), &meta);
-        // TODO: Inline evm_state lookups, and request only solana headers.
-        let (block, confirmed) = match num.and_then(|block_num| meta.get_evm_block_by_id(block_num))
-        {
-            None => {
-                error!("Error requesting block:{:?} ({:?}) not found", block, num);
-                return Ok(None);
-            }
-            Some(b) => b,
-        };
-
-        let bank = meta.bank(None);
-        let chain_id = bank.evm_chain_id;
-
-        let block_hash = block.header.hash();
-        let transactions = if full {
-            let txs = block
-                .transactions
-                .into_iter()
-                .filter_map(|(hash, receipt)| {
-                    RPCTransaction::new_from_receipt(receipt, hash, block_hash, chain_id).ok()
-                })
-                .collect();
-            Either::Right(txs)
-        } else {
-            let txs = block
-                .transactions
-                .into_iter()
-                .map(|(k, _v)| Hex(k))
-                .collect();
-            Either::Left(txs)
-        };
-
-        Ok(Some(RPCBlock::new_from_head(
-            block.header,
-            confirmed,
-            transactions,
-        )))
+    ) -> BoxFuture<Result<Option<RPCBlock>, Error>> {
+        Box::pin(block_by_number(meta, block, full))
     }
 
     fn transaction_by_hash(
         &self,
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
-    ) -> Result<Option<RPCTransaction>, Error> {
+    ) -> BoxFuture<Result<Option<RPCTransaction>, Error>> {
         let bank = meta.bank(None);
         let chain_id = bank.evm_chain_id;
-        let receipt = meta.get_evm_receipt_by_hash(tx_hash.0);
-
-        Ok(match receipt {
-            Some(receipt) => {
-                let (block, _) = meta.get_evm_block_by_id(receipt.block_number).ok_or({
-                    Error::BlockNotFound {
-                        block: receipt.block_number.into(),
-                    }
-                })?;
-                let block_hash = block.header.hash();
-                Some(RPCTransaction::new_from_receipt(
-                    receipt, tx_hash.0, block_hash, chain_id,
-                )?)
-            }
-            None => None,
+        Box::pin(async move {
+            Ok(match meta.get_evm_receipt_by_hash(tx_hash.0).await {
+                Some(receipt) => {
+                    let (block, _) = meta.get_evm_block_by_id(receipt.block_number)
+                        .await
+                        .ok_or({
+                            Error::BlockNotFound { block: receipt.block_number.into() }
+                        })?;
+                    let block_hash = block.header.hash();
+                    Some(RPCTransaction::new_from_receipt(
+                        receipt, tx_hash.0, block_hash, chain_id,
+                    )?)
+                }
+                None => None,
+            })
         })
     }
 
@@ -446,21 +424,22 @@ impl BasicERPC for BasicErpcImpl {
         &self,
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
-    ) -> Result<Option<RPCReceipt>, Error> {
-        let receipt = meta.get_evm_receipt_by_hash(tx_hash.0);
-        Ok(match receipt {
-            Some(receipt) => {
-                let (block, _) = meta.get_evm_block_by_id(receipt.block_number).ok_or({
-                    Error::BlockNotFound {
-                        block: receipt.block_number.into(),
-                    }
-                })?;
-                let block_hash = block.header.hash();
-                Some(RPCReceipt::new_from_receipt(
-                    receipt, tx_hash.0, block_hash, None,
-                )?)
-            }
-            None => None,
+    ) -> BoxFuture<Result<Option<RPCReceipt>, Error>> {
+        Box::pin(async move {
+            Ok(match meta.get_evm_receipt_by_hash(tx_hash.0).await {
+                Some(receipt) => {
+                    let (block, _) = meta.get_evm_block_by_id(receipt.block_number)
+                        .await
+                        .ok_or({
+                            Error::BlockNotFound { block: receipt.block_number.into() }
+                        })?;
+                    let block_hash = block.header.hash();
+                    Some(RPCReceipt::new_from_receipt(
+                        receipt, tx_hash.0, block_hash, None,
+                    )?)
+                }
+                None => None,
+            })
         })
     }
 
@@ -470,17 +449,22 @@ impl BasicERPC for BasicErpcImpl {
         tx: RPCTransaction,
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
-    ) -> Result<Bytes, Error> {
-        let meta_keys = meta_keys
+    ) -> BoxFuture<Result<Bytes, Error>> {
+        let meta_keys = match meta_keys
             .into_iter()
             .flatten()
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| into_native_error(e, false))?;
-        let saved_state = block_to_state_root(block, &meta);
+            .map_err(|e| into_native_error(e, false)) {
+            Ok(keys) => keys,
+            Err(err) => return Box::pin(ready(Err(err))),
+        };
+        Box::pin(async move {
+            let saved_state = block_to_state_root(block, &meta).await;
 
-        let result = call(meta, tx, saved_state, meta_keys)?;
-        Ok(Bytes(result.exit_data))
+            let result = call(meta, tx, saved_state, meta_keys)?;
+            Ok(Bytes(result.exit_data))
+        })
     }
 
     fn gas_price(&self, _meta: Self::Metadata) -> Result<Hex<Gas>, Error> {
@@ -496,12 +480,14 @@ impl BasicERPC for BasicErpcImpl {
         traces: Vec<String>, //TODO: check trace = ["trace"]
         block: Option<BlockId>,
         meta_info: Option<TraceMeta>,
-    ) -> Result<evm_rpc::trace::TraceResultsWithTransactionHash, Error> {
-        Ok(self
-            .trace_call_many(meta, vec![(tx, traces, meta_info)], block)?
-            .into_iter()
-            .next()
-            .expect("One item should be returned"))
+    ) -> BoxFuture<Result<evm_rpc::trace::TraceResultsWithTransactionHash, Error>> {
+        Box::pin(async move {
+            Ok(trace_call_many(meta, vec![(tx, traces, meta_info)], block)
+                .await?
+                .into_iter()
+                .next()
+                .expect("One item should be returned"))
+        })
     }
 
     fn trace_call_many(
@@ -509,41 +495,8 @@ impl BasicERPC for BasicErpcImpl {
         meta: Self::Metadata,
         tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
         block: Option<BlockId>,
-    ) -> Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
-        let saved_state = block_to_state_root(block, &meta);
-
-        let mut txs = Vec::new();
-        let mut txs_meta = Vec::new();
-
-        // TODO: Handle Vec<String> - traces array, check that it contain "trace" string.
-        for (t, _, meta) in tx_traces {
-            let meta = meta.unwrap_or_default();
-            let meta_keys = meta
-                .meta_keys
-                .iter()
-                .flatten()
-                .map(|s| solana_sdk::pubkey::Pubkey::from_str(s))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| into_native_error(e, false))?;
-
-            txs.push((t, meta_keys));
-            txs_meta.push(meta);
-        }
-
-        let traces = call_many(meta, &txs, saved_state)?.into_iter();
-
-        let mut result = Vec::new();
-        for (output, meta_tx) in traces.zip(txs_meta) {
-            result.push(evm_rpc::trace::TraceResultsWithTransactionHash {
-                trace: output.traces.into_iter().map(From::from).collect(),
-                output: output.exit_data.into(),
-                transaction_hash: meta_tx.transaction_hash.map(Hex),
-                transaction_index: meta_tx.transaction_index.map(Hex),
-                block_hash: meta_tx.block_hash.map(Hex),
-                block_number: meta_tx.block_number.map(Hex),
-            })
-        }
-        Ok(result)
+    ) -> BoxFuture<Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error>> {
+        Box::pin(trace_call_many(meta, tx_traces, block))
     }
 
     fn trace_replay_transaction(
@@ -552,26 +505,31 @@ impl BasicERPC for BasicErpcImpl {
         tx_hash: Hex<H256>,
         traces: Vec<String>,
         meta_info: Option<TraceMeta>,
-    ) -> Result<Option<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
+    ) -> BoxFuture<Result<Option<evm_rpc::trace::TraceResultsWithTransactionHash>, Error>> {
         let mut meta_info = meta_info.unwrap_or_default();
-        let tx = self.transaction_by_hash(meta.clone(), tx_hash);
-        match tx {
-            Ok(Some(tx)) => {
-                let block = if let Some(block) = tx.block_number {
-                    block.0.as_u64().saturating_sub(1).into()
-                } else {
-                    return Ok(None);
-                };
-                meta_info.transaction_hash = tx.hash.map(|v| v.0);
-                meta_info.transaction_index = tx.transaction_index.map(|v| v.0);
-                meta_info.block_number = tx.block_number.map(|v| v.0);
-                meta_info.block_hash = tx.block_hash.map(|v| v.0);
-                let result = self.trace_call(meta, tx, traces, Some(block), Some(meta_info))?;
-                Ok(Some(result))
+        let tx_future = self.transaction_by_hash(meta.clone(), tx_hash);
+        Box::pin(async move {
+            match tx_future.await {
+                Ok(Some(tx)) => {
+                    let block = if let Some(block) = tx.block_number {
+                        block.0.as_u64().saturating_sub(1).into()
+                    } else {
+                        return Ok(None);
+                    };
+                    meta_info.transaction_hash = tx.hash.map(|v| v.0);
+                    meta_info.transaction_index = tx.transaction_index.map(|v| v.0);
+                    meta_info.block_number = tx.block_number.map(|v| v.0);
+                    meta_info.block_hash = tx.block_hash.map(|v| v.0);
+                    Ok(Some(trace_call_many(meta, vec![(tx, traces, Some(meta_info))], Some(block))
+                        .await?
+                        .into_iter()
+                        .next()
+                        .expect("One item should be returned")))
+                },
+                Ok(None) => Ok(None),
+                Err(e) => Err(e),
             }
-            Ok(None) => Ok(None),
-            Err(e) => Err(e),
-        }
+        })
     }
 
     fn trace_replay_block(
@@ -580,34 +538,36 @@ impl BasicERPC for BasicErpcImpl {
         block_num: BlockId,
         traces: Vec<String>,
         meta_info: Option<TraceMeta>,
-    ) -> Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
-        let block = if let Some(block) = self.block_by_number(meta.clone(), block_num, true)? {
-            block
-        } else {
-            return Err(Error::StateNotFoundForBlock { block: block_num });
-        };
-        let txs = match block.transactions {
-            Either::Right(txs) => txs,
-            _ => return Err(Error::Unimplemented {}),
-        };
-        let meta_info = meta_info.unwrap_or_default();
-        let transactions = txs
-            .into_iter()
-            .map(|tx| {
-                let mut meta_info = meta_info.clone();
-                meta_info.transaction_hash = tx.hash.map(|v| v.0);
-                meta_info.transaction_index = tx.transaction_index.map(|v| v.0);
-                meta_info.block_number = tx.block_number.map(|v| v.0);
-                meta_info.block_hash = tx.block_hash.map(|v| v.0);
-                (tx, traces.clone(), Some(meta_info))
-            })
-            .collect();
-        // execute on pervious block
-        self.trace_call_many(
-            meta,
-            transactions,
-            Some(block.number.as_u64().saturating_sub(1).into()),
-        )
+    ) -> BoxFuture<Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error>> {
+        Box::pin(async move {
+            let block = if let Some(block) = block_by_number(meta.clone(), block_num, true).await? {
+                block
+            } else {
+                return Err(Error::StateNotFoundForBlock { block: block_num });
+            };
+            let txs = match block.transactions {
+                Either::Right(txs) => txs,
+                _ => return Err(Error::Unimplemented {}),
+            };
+            let meta_info = meta_info.unwrap_or_default();
+            let transactions = txs
+                .into_iter()
+                .map(|tx| {
+                    let mut meta_info = meta_info.clone();
+                    meta_info.transaction_hash = tx.hash.map(|v| v.0);
+                    meta_info.transaction_index = tx.transaction_index.map(|v| v.0);
+                    meta_info.block_number = tx.block_number.map(|v| v.0);
+                    meta_info.block_hash = tx.block_hash.map(|v| v.0);
+                    (tx, traces.clone(), Some(meta_info))
+                })
+                .collect();
+            // execute on pervious block
+            trace_call_many(
+                meta,
+                transactions,
+                Some(block.number.as_u64().saturating_sub(1).into()),
+            ).await
+        })
     }
 
     fn estimate_gas(
@@ -616,61 +576,69 @@ impl BasicERPC for BasicErpcImpl {
         tx: RPCTransaction,
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
-    ) -> Result<Hex<Gas>, Error> {
-        let meta_keys = meta_keys
-            .into_iter()
-            .flatten()
-            .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| into_native_error(e, false))?;
-        let saved_state = block_to_state_root(block, &meta);
-        let result = call(meta, tx, saved_state, meta_keys)?;
-        Ok(Hex(result.used_gas.into()))
-    }
-
-    fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> Result<Vec<RPCLog>, Error> {
-        const MAX_NUM_BLOCKS: u64 = 2000;
-        let block_num = meta
-            .get_last_available_evm_block()
-            .ok_or(Error::ArchiveNotSupported)?;
-        let to = block_parse_confirmed_num(log_filter.to_block, &meta).unwrap_or(block_num);
-        let from = block_parse_confirmed_num(log_filter.from_block, &meta).unwrap_or(block_num);
-        if to > from + MAX_NUM_BLOCKS {
-            warn!(
-                "Log filter, block range is too big, reducing, to={}, from={}",
-                to, from
-            );
-            return Err(Error::InvalidBlocksRange {
-                starting: from,
-                ending: to,
-                batch_size: Some(MAX_NUM_BLOCKS),
-            });
-        }
-
-        let filter = LogFilter {
-            address: log_filter
-                .address
-                .map(|k| match k {
-                    Either::Left(v) => v.into_iter().map(|k| k.0).collect(),
-                    Either::Right(k) => vec![k.0],
-                })
-                .unwrap_or_default(),
-            topics: log_filter
-                .topics
+    ) -> BoxFuture<Result<Hex<Gas>, Error>> {
+        Box::pin(async move {
+            let meta_keys = meta_keys
                 .into_iter()
                 .flatten()
-                .map(RPCTopicFilter::into_topics)
-                .collect(),
-            from_block: from,
-            to_block: to,
-        };
-        debug!("filter = {:?}", filter);
+                .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| into_native_error(e, false))?;
+            let saved_state = block_to_state_root(block, &meta).await;
+            let result = call(meta, tx, saved_state, meta_keys)?;
+            Ok(Hex(result.used_gas.into()))
+        })
+    }
 
-        let logs = meta.filter_logs(filter).map_err(|e| {
-            debug!("filter_logs error = {:?}", e);
-            into_native_error(e, false)
-        })?;
-        Ok(logs.into_iter().map(|l| l.into()).collect())
+    fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> BoxFuture<Result<Vec<RPCLog>, Error>> {
+        Box::pin(async move {
+            const MAX_NUM_BLOCKS: u64 = 2000;
+            let block_num = meta
+                .get_last_available_evm_block()
+                .ok_or(Error::ArchiveNotSupported)?;
+            let to = block_parse_confirmed_num(log_filter.to_block, &meta)
+                .await
+                .unwrap_or(block_num);
+            let from = block_parse_confirmed_num(log_filter.from_block, &meta)
+                .await
+                .unwrap_or(block_num);
+            if to > from + MAX_NUM_BLOCKS {
+                warn!(
+                    "Log filter, block range is too big, reducing, to={}, from={}",
+                    to, from
+                );
+                return Err(Error::InvalidBlocksRange {
+                    starting: from,
+                    ending: to,
+                    batch_size: Some(MAX_NUM_BLOCKS),
+                });
+            }
+    
+            let filter = LogFilter {
+                address: log_filter
+                    .address
+                    .map(|k| match k {
+                        Either::Left(v) => v.into_iter().map(|k| k.0).collect(),
+                        Either::Right(k) => vec![k.0],
+                    })
+                    .unwrap_or_default(),
+                topics: log_filter
+                    .topics
+                    .into_iter()
+                    .flatten()
+                    .map(RPCTopicFilter::into_topics)
+                    .collect(),
+                from_block: from,
+                to_block: to,
+            };
+            debug!("filter = {:?}", filter);
+    
+            let logs = meta.filter_logs(filter).await.map_err(|e| {
+                debug!("filter_logs error = {:?}", e);
+                into_native_error(e, false)
+            })?;
+            Ok(logs.into_iter().map(|l| l.into()).collect())
+        })
     }
 }
 
@@ -873,4 +841,93 @@ fn call_inner(
         used_gas,
         traces,
     })
+}
+
+async fn block_by_number(
+    meta: JsonRpcRequestProcessor,
+    block: BlockId,
+    full: bool,
+) -> Result<Option<RPCBlock>, Error> {
+    let num = block_parse_confirmed_num(Some(block), &meta).await;
+    let evm_block = match num {
+        Some(block_num) => meta.get_evm_block_by_id(block_num).await,
+        None => None,
+    };
+    // TODO: Inline evm_state lookups, and request only solana headers.
+    let (block, confirmed) = match evm_block {
+        None => {
+            error!("Error requesting block:{:?} ({:?}) not found", block, num);
+            return Ok(None);
+        }
+        Some(b) => b,
+    };
+
+    let bank = meta.bank(None);
+    let chain_id = bank.evm_chain_id;
+
+    let block_hash = block.header.hash();
+    let transactions = if full {
+        let txs = block
+            .transactions
+            .into_iter()
+            .filter_map(|(hash, receipt)| {
+                RPCTransaction::new_from_receipt(receipt, hash, block_hash, chain_id).ok()
+            })
+            .collect();
+        Either::Right(txs)
+    } else {
+        let txs = block
+            .transactions
+            .into_iter()
+            .map(|(k, _v)| Hex(k))
+            .collect();
+        Either::Left(txs)
+    };
+
+    Ok(Some(RPCBlock::new_from_head(
+        block.header,
+        confirmed,
+        transactions,
+    )))
+}
+
+async fn trace_call_many(
+    meta: JsonRpcRequestProcessor,
+    tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
+    block: Option<BlockId>,
+) -> Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
+    let saved_state = block_to_state_root(block, &meta).await;
+    
+    let mut txs = Vec::new();
+    let mut txs_meta = Vec::new();
+
+    // TODO: Handle Vec<String> - traces array, check that it contain "trace" string.
+    for (t, _, meta) in tx_traces {
+        let meta = meta.unwrap_or_default();
+        let meta_keys = meta
+            .meta_keys
+            .iter()
+            .flatten()
+            .map(|s| solana_sdk::pubkey::Pubkey::from_str(s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| into_native_error(e, false))?;
+
+        txs.push((t, meta_keys));
+        txs_meta.push(meta);
+    }
+
+    let traces = call_many(meta, &txs, saved_state)?.into_iter();
+
+    let mut result = Vec::new();
+    for (output, meta_tx) in traces.zip(txs_meta) {
+        result.push(evm_rpc::trace::TraceResultsWithTransactionHash {
+            trace: output.traces.into_iter().map(From::from).collect(),
+            output: output.exit_data.into(),
+            transaction_hash: meta_tx.transaction_hash.map(Hex),
+            transaction_index: meta_tx.transaction_index.map(Hex),
+            block_hash: meta_tx.block_hash.map(Hex),
+            block_number: meta_tx.block_number.map(Hex),
+        })
+    }
+    Ok(result)
 }

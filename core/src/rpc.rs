@@ -11,8 +11,7 @@ use crate::{
     validator::ValidatorExit,
 };
 use bincode::{config::Options, serialize};
-use jsonrpc_core::BoxFuture;
-use jsonrpc_core::{types::error, Error, Metadata, Result};
+use jsonrpc_core::{types::error, BoxFuture, Error, Metadata, Result};
 use jsonrpc_derive::rpc;
 use serde::{Deserialize, Serialize};
 use solana_account_decoder::{
@@ -1895,18 +1894,15 @@ impl JsonRpcRequestProcessor {
     // Evm scope
     //
 
-    pub fn get_evm_blocks_from_bigtable(
+    pub async fn get_evm_blocks_from_bigtable(
         &self,
         starting_block: evm_state::BlockNum,
         ending_block: evm_state::BlockNum,
     ) -> solana_ledger::blockstore_db::Result<Vec<evm_state::Block>> {
         if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-            let bigtable_blocks = self
-                .runtime
-                .block_on(
-                    bigtable_ledger_storage
-                        .get_evm_confirmed_full_blocks(starting_block, ending_block),
-                )
+            let bigtable_blocks = bigtable_ledger_storage
+                .get_evm_confirmed_full_blocks(starting_block, ending_block)
+                .await
                 .map_err(|e| {
                     warn!("Bigtable return error: {}", e);
                     BlockstoreError::SlotCleanedUp
@@ -1921,7 +1917,7 @@ impl JsonRpcRequestProcessor {
     /// Request blocks from bigtable if no confirmed block found in local db.
     /// Returns error if any gaps found.
     ///
-    pub fn get_evm_blocks_by_ids(
+    pub async fn get_evm_blocks_by_ids(
         &self,
         starting_block: evm_state::BlockNum,
         ending_block: evm_state::BlockNum,
@@ -1943,6 +1939,24 @@ impl JsonRpcRequestProcessor {
             .collect();
         blocks_from_db.dedup();
 
+<<<<<<< HEAD
+=======
+        if blocks_from_db.is_empty() {
+            blockstore_request_time += blockstore_request.elapsed();
+            let bigtable_request = Instant::now();
+            trace!("requesting bigtable = {}..{}", starting_block, ending_block);
+            let blocks = self.get_evm_blocks_from_bigtable(starting_block, ending_block).await;
+
+            trace!("bigtable_return = {:?}", blocks);
+            bigtable_request_time += bigtable_request.elapsed();
+            info!(
+                "Get evm blocks by ids, bigtable_time = {:?}, blockstore_time = {:?}",
+                bigtable_request_time, blockstore_request_time
+            );
+            return blocks;
+        }
+
+>>>>>>> 2d2b225c5 (Fix(rpc): fix EVM related rpc)
         let mut missing_block = starting_block;
         let mut blocks = Vec::new();
         for block_num in &blocks_from_db {
@@ -1988,7 +2002,7 @@ impl JsonRpcRequestProcessor {
                 missing_block,
                 ending_block
             );
-            let blocks_bigtable = self.get_evm_blocks_from_bigtable(missing_block, ending_block)?;
+            let blocks_bigtable = self.get_evm_blocks_from_bigtable(missing_block, ending_block).await?;
             trace!("bigtable_return = {:?}", blocks_bigtable);
             blocks.extend(blocks_bigtable);
             bigtable_request_time += bigtable_request.elapsed();
@@ -2001,7 +2015,7 @@ impl JsonRpcRequestProcessor {
         Ok(blocks)
     }
 
-    pub fn filter_logs(
+    pub async fn filter_logs(
         &self,
         filter: evm_state::LogFilter,
     ) -> solana_ledger::blockstore_db::Result<Vec<evm_state::LogWithLocation>> {
@@ -2013,7 +2027,7 @@ impl JsonRpcRequestProcessor {
         filter_request_time += filter_request.elapsed();
 
         let mut logs = Vec::new();
-        for block in self.get_evm_blocks_by_ids(filter.from_block, filter.to_block)? {
+        for block in self.get_evm_blocks_by_ids(filter.from_block, filter.to_block).await? {
             let filter_request = Instant::now();
             logs.extend(Blockstore::filter_block_logs(&block, &masks, &filter)?);
             filter_request_time += filter_request.elapsed();
@@ -2023,16 +2037,15 @@ impl JsonRpcRequestProcessor {
         Ok(logs)
     }
 
-    pub fn get_first_available_evm_block(&self) -> u64 {
+    pub async fn get_first_available_evm_block(&self) -> u64 {
         let block = self
             .blockstore
             .get_first_available_evm_block()
             .unwrap_or_default();
 
         if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-            let bigtable_block = self
-                .runtime
-                .block_on(bigtable_ledger_storage.get_evm_first_available_block())
+            let bigtable_block = bigtable_ledger_storage.get_evm_first_available_block()
+                .await
                 .unwrap_or(None)
                 .unwrap_or(block);
 
@@ -2048,6 +2061,7 @@ impl JsonRpcRequestProcessor {
             .unwrap_or(None)
     }
 
+<<<<<<< HEAD
     ///
     /// Get last evm block which has respective native chain block rooted
     pub fn get_last_confirmed_evm_block(&self) -> Option<u64> {
@@ -2059,6 +2073,9 @@ impl JsonRpcRequestProcessor {
     }
 
     pub fn get_evm_receipt_by_hash(
+=======
+    pub async fn get_evm_receipt_by_hash(
+>>>>>>> 2d2b225c5 (Fix(rpc): fix EVM related rpc)
         &self,
         hash: evm_state::H256,
     ) -> Option<evm_state::TransactionReceipt> {
@@ -2074,16 +2091,16 @@ impl JsonRpcRequestProcessor {
             .unwrap_or_default();
         if receipt.is_none() {
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                let bigtable_receipt = self
-                    .runtime
-                    .block_on(bigtable_ledger_storage.get_evm_confirmed_receipt(&hash))
+                let bigtable_receipt = bigtable_ledger_storage
+                    .get_evm_confirmed_receipt(&hash)
+                    .await
                     .unwrap_or(None);
                 return bigtable_receipt;
             }
         }
         receipt
     }
-    pub fn get_evm_block_by_id(&self, id: evm_state::BlockNum) -> Option<(evm_state::Block, bool)> {
+    pub async fn get_evm_block_by_id(&self, id: evm_state::BlockNum) -> Option<(evm_state::Block, bool)> {
         let block = self.blockstore.get_evm_block(id).ok();
         if block.is_some() {
             return block;
@@ -2094,9 +2111,9 @@ impl JsonRpcRequestProcessor {
             || matches!(last_evm_block, Some(last_evm_block) if id <= last_evm_block)
         {
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                let bigtable_block = self
-                    .runtime
-                    .block_on(bigtable_ledger_storage.get_evm_confirmed_full_block(id))
+                let bigtable_block = bigtable_ledger_storage
+                    .get_evm_confirmed_full_block(id)
+                    .await
                     .ok();
 
                 // bigtable store only confirmed slots
@@ -2110,16 +2127,16 @@ impl JsonRpcRequestProcessor {
         None
     }
 
-    pub fn get_evm_block_id_by_hash(&self, hash: evm_state::H256) -> Option<u64> {
+    pub async fn get_evm_block_id_by_hash(&self, hash: evm_state::H256) -> Option<u64> {
         let block = self
             .blockstore
             .read_evm_block_id_by_hash(hash)
             .unwrap_or_default();
         if block.is_none() {
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                let bigtable_block = self
-                    .runtime
-                    .block_on(bigtable_ledger_storage.get_evm_block_by_hash(hash))
+                let bigtable_block = bigtable_ledger_storage
+                    .get_evm_block_by_hash(hash)
+                    .await
                     .ok();
 
                 return bigtable_block;

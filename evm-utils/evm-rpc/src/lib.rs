@@ -603,7 +603,7 @@ pub mod basic {
         type Metadata;
 
         #[rpc(meta, name = "eth_blockNumber")]
-        fn block_number(&self, meta: Self::Metadata) -> Result<Hex<usize>, Error>;
+        fn block_number(&self, meta: Self::Metadata) -> BoxFuture<Result<Hex<usize>, Error>>;
 
         #[rpc(meta, name = "eth_getBalance")]
         fn balance(
@@ -611,7 +611,7 @@ pub mod basic {
             meta: Self::Metadata,
             address: Hex<Address>,
             block: Option<BlockId>,
-        ) -> Result<Hex<U256>, Error>;
+        ) -> BoxFuture<Result<Hex<U256>, Error>>;
 
         #[rpc(meta, name = "eth_getStorageAt")]
         fn storage_at(
@@ -620,7 +620,7 @@ pub mod basic {
             address: Hex<Address>,
             data: Hex<H256>,
             block: Option<BlockId>,
-        ) -> Result<Hex<H256>, Error>;
+        ) -> BoxFuture<Result<Hex<H256>, Error>>;
 
         #[rpc(meta, name = "eth_getTransactionCount")]
         fn transaction_count(
@@ -628,7 +628,7 @@ pub mod basic {
             meta: Self::Metadata,
             address: Hex<Address>,
             block: Option<BlockId>,
-        ) -> Result<Hex<U256>, Error>;
+        ) -> BoxFuture<Result<Hex<U256>, Error>>;
 
         #[rpc(meta, name = "eth_getCode")]
         fn code(
@@ -636,7 +636,7 @@ pub mod basic {
             meta: Self::Metadata,
             address: Hex<Address>,
             block: Option<BlockId>,
-        ) -> Result<Bytes, Error>;
+        ) -> BoxFuture<Result<Bytes, Error>>;
 
         #[rpc(meta, name = "eth_getBlockByHash")]
         fn block_by_hash(
@@ -644,7 +644,7 @@ pub mod basic {
             meta: Self::Metadata,
             block_hash: Hex<H256>,
             full: bool,
-        ) -> Result<Option<RPCBlock>, Error>;
+        ) -> BoxFuture<Result<Option<RPCBlock>, Error>>;
 
         #[rpc(meta, name = "eth_getBlockByNumber")]
         fn block_by_number(
@@ -652,21 +652,21 @@ pub mod basic {
             meta: Self::Metadata,
             block: BlockId,
             full: bool,
-        ) -> Result<Option<RPCBlock>, Error>;
+        ) -> BoxFuture<Result<Option<RPCBlock>, Error>>;
 
         #[rpc(meta, name = "eth_getTransactionByHash")]
         fn transaction_by_hash(
             &self,
             meta: Self::Metadata,
             tx_hash: Hex<H256>,
-        ) -> Result<Option<RPCTransaction>, Error>;
+        ) -> BoxFuture<Result<Option<RPCTransaction>, Error>>;
 
         #[rpc(meta, name = "eth_getTransactionReceipt")]
         fn transaction_receipt(
             &self,
             meta: Self::Metadata,
             tx_hash: Hex<H256>,
-        ) -> Result<Option<RPCReceipt>, Error>;
+        ) -> BoxFuture<Result<Option<RPCReceipt>, Error>>;
 
         #[rpc(meta, name = "eth_call")]
         fn call(
@@ -675,7 +675,7 @@ pub mod basic {
             tx: RPCTransaction,
             block: Option<BlockId>,
             meta_keys: Option<Vec<String>>,
-        ) -> Result<Bytes, Error>;
+        ) -> BoxFuture<Result<Bytes, Error>>;
 
         #[rpc(meta, name = "eth_gasPrice")]
         fn gas_price(&self, meta: Self::Metadata) -> Result<Hex<Gas>, Error>;
@@ -688,7 +688,7 @@ pub mod basic {
             traces: Vec<String>,
             block: Option<BlockId>,
             meta_info: Option<TraceMeta>,
-        ) -> Result<trace::TraceResultsWithTransactionHash, Error>;
+        ) -> BoxFuture<Result<trace::TraceResultsWithTransactionHash, Error>>;
 
         #[rpc(meta, name = "trace_callMany")]
         fn trace_call_many(
@@ -696,7 +696,7 @@ pub mod basic {
             meta: Self::Metadata,
             tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
             block: Option<BlockId>,
-        ) -> Result<Vec<trace::TraceResultsWithTransactionHash>, Error>;
+        ) -> BoxFuture<Result<Vec<trace::TraceResultsWithTransactionHash>, Error>>;
 
         #[rpc(meta, name = "trace_replayTransaction")]
         fn trace_replay_transaction(
@@ -705,7 +705,7 @@ pub mod basic {
             tx_hash: Hex<H256>,
             traces: Vec<String>,
             meta_info: Option<TraceMeta>,
-        ) -> Result<Option<trace::TraceResultsWithTransactionHash>, Error>;
+        ) -> BoxFuture<Result<Option<trace::TraceResultsWithTransactionHash>, Error>>;
 
         #[rpc(meta, name = "trace_replayBlockTransactions")]
         fn trace_replay_block(
@@ -714,7 +714,7 @@ pub mod basic {
             block: BlockId,
             traces: Vec<String>,
             meta_info: Option<TraceMeta>,
-        ) -> Result<Vec<trace::TraceResultsWithTransactionHash>, Error>;
+        ) -> BoxFuture<Result<Vec<trace::TraceResultsWithTransactionHash>, Error>>;
 
         #[rpc(meta, name = "eth_estimateGas")]
         fn estimate_gas(
@@ -723,14 +723,14 @@ pub mod basic {
             tx: RPCTransaction,
             block: Option<BlockId>,
             meta_keys: Option<Vec<String>>,
-        ) -> Result<Hex<Gas>, Error>;
+        ) -> BoxFuture<Result<Hex<Gas>, Error>>;
 
         #[rpc(meta, name = "eth_getLogs")]
         fn logs(
             &self,
             meta: Self::Metadata,
             log_filter: RPCLogFilter,
-        ) -> Result<Vec<RPCLog>, Error>;
+        ) -> BoxFuture<Result<Vec<RPCLog>, Error>>;
     }
 }
 
