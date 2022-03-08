@@ -35,7 +35,6 @@ use std::{
     sync::{mpsc::channel, Arc, Mutex, RwLock},
     thread::{self, Builder, JoinHandle},
 };
-use tokio::runtime;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
 const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
@@ -293,9 +292,17 @@ impl JsonRpcService {
         )));
 
         let tpu_address = cluster_info.my_contact_info().tpu;
+
+        // sadly, some parts of our current rpc implemention block the jsonrpc's
+        // _socket-listening_ event loop for too long, due to (blocking) long IO or intesive CPU,
+        // causing no further processing of incoming requests and ultimatily innocent clients timing-out.
+        // So create a (shared) multi-threaded event_loop for jsonrpc and set its .threads() to 1,
+        // so that we avoid the single-threaded event loops from being created automatically by
+        // jsonrpc for threads when .threads(N > 1) is given.
         let runtime = Arc::new(
-            runtime::Builder::new_multi_thread()
-                .thread_name("rpc-runtime")
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(rpc_threads)
+                .thread_name("velas-rpc")
                 .enable_all()
                 .build()
                 .expect("Runtime"),
@@ -350,7 +357,6 @@ impl JsonRpcService {
             health.clone(),
             cluster_info.clone(),
             genesis_hash,
-            runtime,
             bigtable_ledger_storage,
             optimistically_confirmed_bank,
             largest_accounts_cache,
@@ -375,21 +381,6 @@ impl JsonRpcService {
         let test_request_processor = request_processor.clone();
 
         let ledger_path = ledger_path.to_path_buf();
-
-        // sadly, some parts of our current rpc implemention block the jsonrpc's
-        // _socket-listening_ event loop for too long, due to (blocking) long IO or intesive CPU,
-        // causing no further processing of incoming requests and ultimatily innocent clients timing-out.
-        // So create a (shared) multi-threaded event_loop for jsonrpc and set its .threads() to 1,
-        // so that we avoid the single-threaded event loops from being created automatically by
-        // jsonrpc for threads when .threads(N > 1) is given.
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(rpc_threads)
-                .thread_name("velas-rpc")
-                .enable_all()
-                .build()
-                .expect("Runtime"),
-        );
 
         let (close_handle_sender, close_handle_receiver) = channel();
         let thread_hdl = Builder::new()
@@ -627,7 +618,6 @@ mod tests {
             create_bank_forks(),
             RpcHealth::stub(),
         );
-
         // File does not exist => request should fail.
         let action = rrm.process_file_get("/genesis.tar.bz2");
         if let RequestMiddlewareAction::Respond { response, .. } = action {

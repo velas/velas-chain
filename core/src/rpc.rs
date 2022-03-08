@@ -92,7 +92,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::runtime::Runtime;
 use velas_account_program::{VelasAccountType, ACCOUNT_LEN as VELAS_ACCOUNT_SIZE};
 use velas_relying_party_program::RelyingPartyData;
 
@@ -157,7 +156,6 @@ pub struct JsonRpcRequestProcessor {
     cluster_info: Arc<ClusterInfo>,
     genesis_hash: Hash,
     transaction_sender: Arc<Mutex<Sender<TransactionInfo>>>,
-    runtime: Arc<Runtime>,
     bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
     optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
@@ -245,7 +243,6 @@ impl JsonRpcRequestProcessor {
         health: Arc<RpcHealth>,
         cluster_info: Arc<ClusterInfo>,
         genesis_hash: Hash,
-        runtime: Arc<Runtime>,
         bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
@@ -267,7 +264,6 @@ impl JsonRpcRequestProcessor {
                 cluster_info,
                 genesis_hash,
                 transaction_sender: Arc::new(Mutex::new(sender)),
-                runtime,
                 bigtable_ledger_storage,
                 optimistically_confirmed_bank,
                 largest_accounts_cache,
@@ -309,7 +305,6 @@ impl JsonRpcRequestProcessor {
             cluster_info,
             genesis_hash,
             transaction_sender: Arc::new(Mutex::new(sender)),
-            runtime: Arc::new(Runtime::new().expect("Runtime")),
             bigtable_ledger_storage: None,
             optimistically_confirmed_bank: Arc::new(RwLock::new(OptimisticallyConfirmedBank {
                 bank: bank.clone(),
@@ -4413,7 +4408,6 @@ pub mod tests {
             RpcHealth::stub(),
             cluster_info.clone(),
             Hash::default(),
-            Arc::new(tokio::runtime::Runtime::new().unwrap()),
             None,
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
@@ -5994,7 +5988,6 @@ pub mod tests {
             health.clone(),
             cluster_info,
             Hash::default(),
-            Arc::new(tokio::runtime::Runtime::new().unwrap()),
             None,
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
@@ -6272,7 +6265,6 @@ pub mod tests {
             RpcHealth::stub(),
             cluster_info,
             Hash::default(),
-            Arc::new(tokio::runtime::Runtime::new().unwrap()),
             None,
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
@@ -7699,7 +7691,6 @@ pub mod tests {
             RpcHealth::stub(),
             cluster_info,
             Hash::default(),
-            Arc::new(tokio::runtime::Runtime::new().unwrap()),
             None,
             optimistically_confirmed_bank.clone(),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
