@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn test_process_file_get() {
-        let mut runtime = tokio_02::runtime::Runtime::new().unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
 
         let ledger_path = get_tmp_ledger_path!();
         std::fs::create_dir(&ledger_path).unwrap();

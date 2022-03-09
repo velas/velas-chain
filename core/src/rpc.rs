@@ -1934,24 +1934,6 @@ impl JsonRpcRequestProcessor {
             .collect();
         blocks_from_db.dedup();
 
-<<<<<<< HEAD
-=======
-        if blocks_from_db.is_empty() {
-            blockstore_request_time += blockstore_request.elapsed();
-            let bigtable_request = Instant::now();
-            trace!("requesting bigtable = {}..{}", starting_block, ending_block);
-            let blocks = self.get_evm_blocks_from_bigtable(starting_block, ending_block).await;
-
-            trace!("bigtable_return = {:?}", blocks);
-            bigtable_request_time += bigtable_request.elapsed();
-            info!(
-                "Get evm blocks by ids, bigtable_time = {:?}, blockstore_time = {:?}",
-                bigtable_request_time, blockstore_request_time
-            );
-            return blocks;
-        }
-
->>>>>>> 2d2b225c5 (Fix(rpc): fix EVM related rpc)
         let mut missing_block = starting_block;
         let mut blocks = Vec::new();
         for block_num in &blocks_from_db {
@@ -1976,7 +1958,7 @@ impl JsonRpcRequestProcessor {
                 let bigtable_request = Instant::now();
                 trace!("requesting bigtable = {}..{}", missing_block, ending_block);
                 let blocks_bigtable =
-                    self.get_evm_blocks_from_bigtable(missing_block, ending_block)?;
+                    self.get_evm_blocks_from_bigtable(missing_block, ending_block).await?;
                 trace!("bigtable_return = {:?}", blocks_bigtable);
                 blocks.extend(blocks_bigtable);
                 bigtable_request_time += bigtable_request.elapsed();
@@ -2056,7 +2038,6 @@ impl JsonRpcRequestProcessor {
             .unwrap_or(None)
     }
 
-<<<<<<< HEAD
     ///
     /// Get last evm block which has respective native chain block rooted
     pub fn get_last_confirmed_evm_block(&self) -> Option<u64> {
@@ -2067,10 +2048,7 @@ impl JsonRpcRequestProcessor {
             .map(|((block_num, _), _)| block_num)
     }
 
-    pub fn get_evm_receipt_by_hash(
-=======
     pub async fn get_evm_receipt_by_hash(
->>>>>>> 2d2b225c5 (Fix(rpc): fix EVM related rpc)
         &self,
         hash: evm_state::H256,
     ) -> Option<evm_state::TransactionReceipt> {
