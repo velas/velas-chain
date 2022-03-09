@@ -3,6 +3,7 @@ mod sol_proxy;
 
 use log::*;
 use solana_sdk::commitment_config::CommitmentConfig;
+use std::future::ready;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::thread::sleep;
@@ -545,8 +546,8 @@ impl BasicERPC for BasicErpcProxy {
     type Metadata = Arc<EvmBridge>;
 
     // The same as get_slot
-    fn block_number(&self, meta: Self::Metadata) -> EvmResult<Hex<usize>> {
-        proxy_evm_rpc!(meta.rpc_client, EthBlockNumber)
+    fn block_number(&self, meta: Self::Metadata) -> BoxFuture<EvmResult<Hex<usize>>> {
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthBlockNumber)))
     }
 
     fn balance(
@@ -554,8 +555,8 @@ impl BasicERPC for BasicErpcProxy {
         meta: Self::Metadata,
         address: Hex<Address>,
         block: Option<BlockId>,
-    ) -> EvmResult<Hex<U256>> {
-        proxy_evm_rpc!(meta.rpc_client, EthGetBalance, address, block)
+    ) -> BoxFuture<EvmResult<Hex<U256>>> {
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetBalance, address, block)))
     }
 
     fn storage_at(
@@ -564,8 +565,8 @@ impl BasicERPC for BasicErpcProxy {
         address: Hex<Address>,
         data: Hex<H256>,
         block: Option<BlockId>,
-    ) -> EvmResult<Hex<H256>> {
-        proxy_evm_rpc!(meta.rpc_client, EthGetStorageAt, address, data, block)
+    ) -> BoxFuture<EvmResult<Hex<H256>>> {
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetStorageAt, address, data, block)))
     }
 
     fn transaction_count(
@@ -573,14 +574,14 @@ impl BasicERPC for BasicErpcProxy {
         meta: Self::Metadata,
         address: Hex<Address>,
         block: Option<BlockId>,
-    ) -> EvmResult<Hex<U256>> {
+    ) -> BoxFuture<EvmResult<Hex<U256>>> {
         if matches!(block, Some(BlockId::RelativeId(BlockRelId::Pending))) {
             if let Some(tx_count) = meta.pool.transaction_count(&address.0) {
-                return Ok(Hex(tx_count));
+                return Box::pin(ready(Ok(Hex(tx_count))));
             }
         }
 
-        proxy_evm_rpc!(meta.rpc_client, EthGetTransactionCount, address, block)
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetTransactionCount, address, block)))
     }
 
     fn code(
@@ -588,8 +589,8 @@ impl BasicERPC for BasicErpcProxy {
         meta: Self::Metadata,
         address: Hex<Address>,
         block: Option<BlockId>,
-    ) -> EvmResult<Bytes> {
-        proxy_evm_rpc!(meta.rpc_client, EthGetCode, address, block)
+    ) -> BoxFuture<EvmResult<Bytes>> {
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetCode, address, block)))
     }
 
     fn block_by_hash(
@@ -597,12 +598,12 @@ impl BasicERPC for BasicErpcProxy {
         meta: Self::Metadata,
         block_hash: Hex<H256>,
         full: bool,
-    ) -> EvmResult<Option<RPCBlock>> {
+    ) -> BoxFuture<EvmResult<Option<RPCBlock>>> {
         if block_hash == Hex(H256::zero()) {
-            Ok(Some(RPCBlock::default()))
+            Box::pin(ready(Ok(Some(RPCBlock::default()))))
         } else {
-            proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
-                .map(|o: Option<_>| o.map(compatibility::patch_block))
+            Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
+                .map(|o: Option<_>| o.map(compatibility::patch_block))))
         }
     }
 
@@ -611,12 +612,12 @@ impl BasicERPC for BasicErpcProxy {
         meta: Self::Metadata,
         block: BlockId,
         full: bool,
-    ) -> EvmResult<Option<RPCBlock>> {
+    ) -> BoxFuture<EvmResult<Option<RPCBlock>>> {
         if block == BlockId::Num(0x0.into()) {
-            Ok(Some(RPCBlock::default()))
+            Box::pin(ready(Ok(Some(RPCBlock::default()))))
         } else {
-            proxy_evm_rpc!(meta.rpc_client, EthGetBlockByNumber, block, full)
-                .map(|o: Option<_>| o.map(compatibility::patch_block))
+            Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetBlockByNumber, block, full)
+                .map(|o: Option<_>| o.map(compatibility::patch_block))))
         }
     }
 
@@ -624,24 +625,24 @@ impl BasicERPC for BasicErpcProxy {
         &self,
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
-    ) -> EvmResult<Option<RPCTransaction>> {
+    ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
         // TODO: chain all possible outcomes properly
         if let Some(tx) = meta.pool.transaction_by_hash(tx_hash) {
             if let Ok(tx) = RPCTransaction::from_transaction((**tx).clone().into()) {
-                // TODO: shoud we `patch` tx?
-                return Ok(Some(tx));
+                // TODO: should we `patch` tx?
+                return Box::pin(ready(Ok(Some(tx))));
             }
         }
-        proxy_evm_rpc!(meta.rpc_client, EthGetTransactionByHash, tx_hash)
-            .map(|o: Option<_>| o.map(compatibility::patch_tx))
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetTransactionByHash, tx_hash)
+            .map(|o: Option<_>| o.map(compatibility::patch_tx))))
     }
 
     fn transaction_receipt(
         &self,
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
-    ) -> EvmResult<Option<RPCReceipt>> {
-        proxy_evm_rpc!(meta.rpc_client, EthGetTransactionReceipt, tx_hash)
+    ) -> BoxFuture<EvmResult<Option<RPCReceipt>>> {
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetTransactionReceipt, tx_hash)))
     }
 
     fn call(
@@ -650,8 +651,8 @@ impl BasicERPC for BasicErpcProxy {
         tx: RPCTransaction,
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
-    ) -> EvmResult<Bytes> {
-        proxy_evm_rpc!(meta.rpc_client, EthCall, tx, block, meta_keys)
+    ) -> BoxFuture<EvmResult<Bytes>> {
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthCall, tx, block, meta_keys)))
     }
 
     fn trace_call(
@@ -661,8 +662,8 @@ impl BasicERPC for BasicErpcProxy {
         traces: Vec<String>,
         block: Option<BlockId>,
         meta_info: Option<TraceMeta>,
-    ) -> EvmResult<evm_rpc::trace::TraceResultsWithTransactionHash> {
-        proxy_evm_rpc!(meta.rpc_client, EthTraceCall, tx, traces, block, meta_info)
+    ) -> BoxFuture<EvmResult<evm_rpc::trace::TraceResultsWithTransactionHash>> {
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthTraceCall, tx, traces, block, meta_info)))
     }
 
     fn trace_call_many(
@@ -670,8 +671,8 @@ impl BasicERPC for BasicErpcProxy {
         meta: Self::Metadata,
         tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
         block: Option<BlockId>,
-    ) -> EvmResult<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>> {
-        proxy_evm_rpc!(meta.rpc_client, EthTraceCallMany, tx_traces, block)
+    ) -> BoxFuture<EvmResult<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>>> {
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthTraceCallMany, tx_traces, block)))
     }
 
     fn trace_replay_transaction(
@@ -680,14 +681,14 @@ impl BasicERPC for BasicErpcProxy {
         tx_hash: Hex<H256>,
         traces: Vec<String>,
         meta_info: Option<TraceMeta>,
-    ) -> EvmResult<Option<trace::TraceResultsWithTransactionHash>> {
-        proxy_evm_rpc!(
+    ) -> BoxFuture<EvmResult<Option<trace::TraceResultsWithTransactionHash>>> {
+        Box::pin(ready(proxy_evm_rpc!(
             meta.rpc_client,
             EthTraceReplayTransaction,
             tx_hash,
             traces,
             meta_info
-        )
+        )))
     }
 
     fn trace_replay_block(
@@ -696,14 +697,14 @@ impl BasicERPC for BasicErpcProxy {
         block: BlockId,
         traces: Vec<String>,
         meta_info: Option<TraceMeta>,
-    ) -> EvmResult<Vec<trace::TraceResultsWithTransactionHash>> {
-        proxy_evm_rpc!(
+    ) -> BoxFuture<EvmResult<Vec<trace::TraceResultsWithTransactionHash>>> {
+        Box::pin(ready(proxy_evm_rpc!(
             meta.rpc_client,
             EthTraceReplayBlock,
             block,
             traces,
             meta_info
-        )
+        )))
     }
 
     fn estimate_gas(
@@ -712,42 +713,41 @@ impl BasicERPC for BasicErpcProxy {
         tx: RPCTransaction,
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
-    ) -> EvmResult<Hex<Gas>> {
-        proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block, meta_keys)
+    ) -> BoxFuture<EvmResult<Hex<Gas>>> {
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block, meta_keys)))
     }
 
-    fn logs(&self, meta: Self::Metadata, mut log_filter: RPCLogFilter) -> EvmResult<Vec<RPCLog>> {
-        let starting_block = meta.block_to_number(log_filter.from_block)?;
-        let ending_block = meta.block_to_number(log_filter.to_block)?;
+    fn logs(&self, meta: Self::Metadata, mut log_filter: RPCLogFilter) -> BoxFuture<EvmResult<Vec<RPCLog>>> {
+        let starting_block = match meta.block_to_number(log_filter.from_block) {
+            Ok(res) => res,
+            Err(err) => return Box::pin(ready(Err(err))),
+        };
+        let ending_block = match meta.block_to_number(log_filter.to_block) {
+            Ok(res) => res,
+            Err(err) => return Box::pin(ready(Err(err))),
+        };
 
         if ending_block < starting_block {
-            return Err(Error::InvalidBlocksRange {
+            return Box::pin(ready(Err(Error::InvalidBlocksRange {
                 starting: starting_block,
                 ending: ending_block,
                 batch_size: None,
-            });
+            })));
         }
 
         // request more than we can provide
         if ending_block > starting_block + meta.max_logs_blocks {
-            return Err(Error::InvalidBlocksRange {
+            return Box::pin(ready(Err(Error::InvalidBlocksRange {
                 starting: starting_block,
                 ending: ending_block,
                 batch_size: Some(meta.max_logs_blocks),
-            });
+            })));
         }
 
         let mut starting = starting_block;
 
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .thread_name("get-logs-runner")
-            .build()
-            .map_err(|details| Error::RuntimeError {
-                details: details.to_string(),
-            })?;
-
         // make execution parallel
-        rt.block_on(async {
+        Box::pin(async move {
             let mut collector = Vec::new();
             while starting <= ending_block {
                 let ending = (starting.saturating_add(MAX_NUM_BLOCKS_IN_BATCH)).min(ending_block);

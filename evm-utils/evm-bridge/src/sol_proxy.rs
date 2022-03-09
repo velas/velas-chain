@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::{future::ready, sync::Arc};
 
-use jsonrpc_core::Result;
+use jsonrpc_core::{BoxFuture, Result};
 use log::*;
 use serde_json::json;
 
@@ -226,13 +226,13 @@ impl rpc::rpc_full::Full for FullRpcSolProxy {
         meta: Self::Metadata,
         signature_strs: Vec<String>,
         config: Option<RpcSignatureStatusConfig>,
-    ) -> Result<Response<Vec<Option<TransactionStatus>>>> {
-        proxy_sol_rpc!(
+    ) -> BoxFuture<Result<Response<Vec<Option<TransactionStatus>>>>> {
+        Box::pin(ready(proxy_sol_rpc!(
             meta.rpc_client,
             GetSignatureStatuses,
             signature_strs,
             config
-        )
+        )))
     }
 
     fn get_total_supply(
@@ -280,8 +280,8 @@ impl rpc::rpc_full::Full for FullRpcSolProxy {
         meta: Self::Metadata,
         address_strs: Vec<String>,
         config: Option<RpcEpochConfig>,
-    ) -> Result<Vec<Option<RpcInflationReward>>> {
-        proxy_sol_rpc!(meta.rpc_client, GetInflationReward, address_strs, config)
+    ) -> BoxFuture<Result<Vec<Option<RpcInflationReward>>>> {
+        Box::pin(ready(proxy_sol_rpc!(meta.rpc_client, GetInflationReward, address_strs, config)))
     }
 
     fn send_transaction(
@@ -319,8 +319,8 @@ impl rpc::rpc_full::Full for FullRpcSolProxy {
         meta: Self::Metadata,
         slot: Slot,
         config: Option<RpcEncodingConfigWrapper<RpcConfirmedBlockConfig>>,
-    ) -> Result<Option<UiConfirmedBlock>> {
-        proxy_sol_rpc!(meta.rpc_client, GetConfirmedBlock, slot, config)
+    ) -> BoxFuture<Result<Option<UiConfirmedBlock>>> {
+        Box::pin(ready(proxy_sol_rpc!(meta.rpc_client, GetConfirmedBlock, slot, config)))
     }
 
     fn get_confirmed_blocks(
@@ -329,18 +329,18 @@ impl rpc::rpc_full::Full for FullRpcSolProxy {
         start_slot: Slot,
         config: Option<RpcConfirmedBlocksConfigWrapper>,
         commitment: Option<CommitmentConfig>,
-    ) -> Result<Vec<Slot>> {
-        proxy_sol_rpc!(
+    ) -> BoxFuture<Result<Vec<Slot>>> {
+        Box::pin(ready(proxy_sol_rpc!(
             meta.rpc_client,
             GetConfirmedBlocks,
             start_slot,
             config,
             commitment
-        )
+        )))
     }
 
-    fn get_block_time(&self, meta: Self::Metadata, slot: Slot) -> Result<Option<UnixTimestamp>> {
-        proxy_sol_rpc!(meta.rpc_client, GetBlockTime, slot)
+    fn get_block_time(&self, meta: Self::Metadata, slot: Slot) -> BoxFuture<Result<Option<UnixTimestamp>>> {
+        Box::pin(ready(proxy_sol_rpc!(meta.rpc_client, GetBlockTime, slot)))
     }
 
     fn get_confirmed_transaction(
@@ -348,13 +348,13 @@ impl rpc::rpc_full::Full for FullRpcSolProxy {
         meta: Self::Metadata,
         signature_str: String,
         config: Option<RpcEncodingConfigWrapper<RpcConfirmedTransactionConfig>>,
-    ) -> Result<Option<EncodedConfirmedTransaction>> {
-        proxy_sol_rpc!(
+    ) -> BoxFuture<Result<Option<EncodedConfirmedTransaction>>> {
+        Box::pin(ready(proxy_sol_rpc!(
             meta.rpc_client,
             GetConfirmedTransaction,
             signature_str,
             config
-        )
+        )))
     }
 
     fn get_confirmed_signatures_for_address(
@@ -378,17 +378,17 @@ impl rpc::rpc_full::Full for FullRpcSolProxy {
         meta: Self::Metadata,
         address: String,
         config: Option<RpcGetConfirmedSignaturesForAddress2Config>,
-    ) -> Result<Vec<RpcConfirmedTransactionStatusWithSignature>> {
-        proxy_sol_rpc!(
+    ) -> BoxFuture<Result<Vec<RpcConfirmedTransactionStatusWithSignature>>> {
+        Box::pin(ready(proxy_sol_rpc!(
             meta.rpc_client,
             GetConfirmedSignaturesForAddress2,
             address,
             config
-        )
+        )))
     }
 
-    fn get_first_available_block(&self, meta: Self::Metadata) -> Result<Slot> {
-        proxy_sol_rpc!(meta.rpc_client, GetFirstAvailableBlock)
+    fn get_first_available_block(&self, meta: Self::Metadata) -> BoxFuture<Result<Slot>> {
+        Box::pin(ready(proxy_sol_rpc!(meta.rpc_client, GetFirstAvailableBlock)))
     }
 
     fn get_stake_activation(
@@ -523,14 +523,14 @@ impl rpc::rpc_full::Full for FullRpcSolProxy {
         start_slot: Slot,
         limit: usize,
         commitment: Option<CommitmentConfig>,
-    ) -> Result<Vec<Slot>> {
-        proxy_sol_rpc!(
+    ) -> BoxFuture<Result<Vec<Slot>>> {
+        Box::pin(ready(proxy_sol_rpc!(
             meta.rpc_client,
             GetConfirmedBlocksWithLimit,
             start_slot,
             limit,
             commitment
-        )
+        )))
     }
 
     fn get_slot_leaders(
