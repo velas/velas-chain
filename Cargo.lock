@@ -2958,7 +2958,7 @@ dependencies = [
 [[package]]
 name = "librocksdb-sys"
 version = "6.20.3"
-source = "git+https://github.com/velas/rust-rocksdb?branch=transaction#d9ce7cd3bab79c7659c797c96944ae181e1bb825"
+source = "git+https://github.com/velas/rust-rocksdb?branch=transaction#bbd2d97e9e8b8d5cfb5118e4fc7998b21d860779"
 dependencies = [
  "bindgen",
  "cc",
@@ -4464,7 +4464,7 @@ dependencies = [
 [[package]]
 name = "rocksdb"
 version = "0.17.0"
-source = "git+https://github.com/velas/rust-rocksdb?branch=transaction#d9ce7cd3bab79c7659c797c96944ae181e1bb825"
+source = "git+https://github.com/velas/rust-rocksdb?branch=transaction#bbd2d97e9e8b8d5cfb5118e4fc7998b21d860779"
 dependencies = [
  "libc",
  "librocksdb-sys",
