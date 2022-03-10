@@ -725,27 +725,27 @@ impl LedgerStorage {
 
         // Bigtable only allow requests where start_key strictly less then end_key.
         // Special case for requesting single row.
+
+        let first_block_key = slot_to_key(first_block);
         let evm_full_blocks = if first_block == last_block {
-            let row_key = slot_to_key(first_block);
-            trace!("Requesting single block from bigtable {}", row_key);
+            trace!("Requesting single block from bigtable {}", first_block_key);
             vec![(
-                row_key.clone(),
+                first_block_key.clone(),
                 bigtable
-                    .get_single_row_data("evm-full-blocks", row_key)
+                    .get_single_row_data("evm-full-blocks", first_block_key)
                     .await?,
             )]
         } else {
-            let first_block = slot_to_key(first_block);
             let last_block = slot_to_key(last_block);
             trace!(
                 "Requesting multiple blocks from bigtable {}..{}",
-                first_block,
+                first_block_key,
                 last_block
             );
             bigtable
                 .get_row_data(
                     "evm-full-blocks",
-                    Some(first_block),
+                    Some(first_block_key),
                     Some(last_block),
                     MAX_GET_CONFIRMED_BLOCKS_RANGE,
                 )
