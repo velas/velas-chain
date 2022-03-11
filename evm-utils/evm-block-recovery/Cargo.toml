@@ -1,0 +1,14 @@
+[package]
+name = "evm-block-recovery"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dotenv = "0.15.0"
+env_logger = "0.9.0"
+evm-state = { path = "../evm-state" }
+log = "0.4.14"
+solana-sdk = { path = "../../sdk", version = "=1.6.14" }
+solana-storage-bigtable = { path = "../../storage-bigtable", version = "=1.6.14" }
+solana-transaction-status = { path = "../../transaction-status", version = "=1.6.14" }
+tokio = { version = "1", features = ["full"] }
