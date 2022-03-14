@@ -1698,15 +1698,15 @@ pub fn main() {
         )
         .arg(
             Arg::with_name("no_bpf_jit")
+                .hidden(true)
                 .long("no-bpf-jit")
                 .takes_value(false)
                 .help("Disable the just-in-time compiler and instead use the interpreter for BPF"),
         )
         .arg(
-            // legacy nop argument
+            // return back argument doe to lack of jit tests
             Arg::with_name("bpf_jit")
                 .long("bpf-jit")
-                .hidden(true)
                 .takes_value(false)
                 .conflicts_with("no_bpf_jit")
         )
@@ -2218,7 +2218,7 @@ pub fn main() {
         poh_verify: !matches.is_present("skip_poh_verify"),
         debug_keys,
         contact_debug_interval,
-        bpf_jit: !matches.is_present("no_bpf_jit"),
+        bpf_jit: matches.is_present("bpf_jit"),
         send_transaction_retry_ms: value_t_or_exit!(matches, "rpc_send_transaction_retry_ms", u64),
         send_transaction_leader_forward_count: value_t_or_exit!(
             matches,
