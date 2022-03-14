@@ -1,5 +1,6 @@
 use evm_state::BlockNum;
-use solana_sdk::clock::Slot;
+use solana_evm_loader_program::instructions::EvmInstruction;
+use solana_sdk::{clock::Slot, instruction::CompiledInstruction};
 use solana_storage_bigtable::LedgerStorage;
 use solana_transaction_status::TransactionWithStatusMeta;
 
@@ -17,25 +18,27 @@ async fn main() {
     let mut missing_blocks = Vec::new();
 
     missing_blocks.extend(
-        find_uncommitted_blocks(&bigtable, 15662810, 30)
+        find_evm_uncommitted_blocks(&bigtable, 15662810, 30)
             .await
             .unwrap(),
     );
     missing_blocks.extend(
-        find_uncommitted_blocks(&bigtable, 15880820, 20)
+        find_evm_uncommitted_blocks(&bigtable, 15880820, 20)
             .await
             .unwrap(),
     );
     missing_blocks.extend(
-        find_uncommitted_blocks(&bigtable, 17206780, 10)
+        find_evm_uncommitted_blocks(&bigtable, 17206780, 10)
             .await
             .unwrap(),
     );
 
-    println!("Missing blocks: {missing_blocks:?}");
+    // println!("Missing blocks: {missing_blocks:?}");
+
+    extract_evm_transactions(&bigtable, 15662812).await.unwrap();
 }
 
-async fn find_uncommitted_blocks(
+async fn find_evm_uncommitted_blocks(
     ledger: &LedgerStorage,
     start_block: BlockNum,
     limit: usize,
@@ -60,14 +63,32 @@ async fn find_uncommitted_blocks(
     Ok(result)
 }
 
-async fn _read_block(ledger: &LedgerStorage, slot: Slot) {
-    let block = ledger.get_confirmed_block(slot).await.unwrap();
+async fn extract_evm_transactions(ledger: &LedgerStorage, slot: Slot) -> Result<Option<Vec<evm::Transaction>>, ()> {
+    // let block = ledger.get_confirmed_block(slot).await.unwrap();
+    let evm_header = ledger.get_evm_confirmed_full_block(12).await.unwrap();
+    let slot = evm_header.header.native_chain_slot;
+    let native_block = ledger.get_confirmed_block(slot).await.unwrap();
 
-    for TransactionWithStatusMeta { transaction, .. } in block.transactions {
-        for instruction in transaction.message.instructions {
-            // let CompiledInstruction { program_id_index, accounts, data } = instruction;
-            let _id = instruction.program_id(&[STATIC_PROGRAM_ID]);
-            // ...
+    for TransactionWithStatusMeta { transaction, .. } in native_block.transactions {
+        for CompiledInstruction { data, program_id_index } in transaction.message.instructions {
+            if transaction.message.account_keys[program_id_index] == STATIC_PROGRAM_ID {
+                let evm_instruction: EvmInstruction = bincode::deserialize(&data).unwrap();
+                match evm_instruction {
+                    EvmInstruction::EvmTransaction { evm_tx } => {
+                        result.push(evm_tx)
+                    },
+                    EvmInstruction::SwapNativeToEther { lamports, evm_address } => todo!(),
+                    EvmInstruction::FreeOwnership {  } => todo!(),
+                    EvmInstruction::EvmBigTransaction(_) => todo!(),
+                    EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => todo!(),
+                }
+                log::info!("Deserialized evm instruction: {evm_instruction:?}");
+            }
         }
     }
+    // result == evm_header.transactions.map((a,b) b).
+    Ok(())
 }
+
+// let CompiledInstruction { program_id_index, accounts, data } = instruction;
+// let _id = instruction.program_id(&[STATIC_PROGRAM_ID]);

@@ -1668,10 +1668,12 @@ dependencies = [
 name = "evm-block-recovery"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "dotenv",
  "env_logger 0.9.0",
  "evm-state",
  "log 0.4.14",
+ "solana-evm-loader-program",
  "solana-sdk",
  "solana-storage-bigtable",
  "solana-transaction-status",
