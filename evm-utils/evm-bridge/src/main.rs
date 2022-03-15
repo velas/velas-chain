@@ -706,6 +706,24 @@ impl BasicERPC for BasicErpcProxy {
         )
     }
 
+    fn recover_block_header(
+        &self,
+        meta: Self::Metadata,
+        txs: Vec<(RPCTransaction, Vec<String>)>,
+        last_hashes: Vec<H256>,
+        block_header: BlockHeader,
+        state_root: H256,
+    ) -> EvmResult<BlockHeader> {
+        proxy_evm_rpc!(
+            meta.rpc_client,
+            EthRecoverBlockHeader,
+            txs,
+            last_hashes,
+            block_header,
+            state_root
+        )
+    }
+
 
 
     fn estimate_gas(
