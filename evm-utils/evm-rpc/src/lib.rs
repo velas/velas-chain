@@ -12,7 +12,8 @@ use snafu::ResultExt;
 mod serialize;
 use self::error::EvmStateError;
 use evm_state::{
-    Address, ExitSucceed, Gas, LogFilterTopicEntry, LogWithLocation, TransactionInReceipt,
+    Address, BlockHeader, ExitSucceed, Gas, LogFilterTopicEntry, LogWithLocation,
+    TransactionInReceipt,
 };
 
 pub mod error;
@@ -715,6 +716,16 @@ pub mod basic {
             traces: Vec<String>,
             meta_info: Option<TraceMeta>,
         ) -> Result<Vec<trace::TraceResultsWithTransactionHash>, Error>;
+
+        #[rpc(meta, name = "eth_recoverBlockHeader")]
+        fn recover_block_header(
+            &self,
+            meta: Self::Metadata,
+            txs: Vec<(RPCTransaction, Vec<String>)>,
+            last_hashes: Vec<H256>,
+            block_header: BlockHeader,
+            state_root: H256,
+        ) -> Result<BlockHeader, Error>;
 
         #[rpc(meta, name = "eth_estimateGas")]
         fn estimate_gas(
