@@ -1,10 +1,12 @@
-use evm_state::BlockNum;
+use evm_state as evm;
 use solana_evm_loader_program::instructions::EvmInstruction;
-use solana_sdk::{clock::Slot, instruction::CompiledInstruction};
+use solana_sdk::instruction::CompiledInstruction;
 use solana_storage_bigtable::LedgerStorage;
-use solana_transaction_status::TransactionWithStatusMeta;
+use solana_transaction_status::{ConfirmedBlock, TransactionWithStatusMeta};
 
 use solana_sdk::evm_loader::ID as STATIC_PROGRAM_ID;
+
+// TODO: better error handling
 
 #[tokio::main]
 async fn main() {
@@ -15,41 +17,51 @@ async fn main() {
         .await
         .expect("Failed to connect to storage");
 
-    let mut missing_blocks = Vec::new();
+    // start_block: 15662810, limit: 30
+    // start_block: 15880820, limit: 20
+    // start_block: 17206780, limit: 10
 
-    missing_blocks.extend(
-        find_evm_uncommitted_blocks(&bigtable, 15662810, 30)
-            .await
-            .unwrap(),
-    );
-    missing_blocks.extend(
-        find_evm_uncommitted_blocks(&bigtable, 15880820, 20)
-            .await
-            .unwrap(),
-    );
-    missing_blocks.extend(
-        find_evm_uncommitted_blocks(&bigtable, 17206780, 10)
-            .await
-            .unwrap(),
-    );
+    let blocks = bigtable
+        .get_evm_confirmed_blocks(15662810, 30)
+        .await
+        .unwrap();
 
-    // println!("Missing blocks: {missing_blocks:?}");
+    let missing_blocks = find_evm_uncommitted_blocks(blocks);
 
-    extract_evm_transactions(&bigtable, 15662812).await.unwrap();
+    if missing_blocks.is_empty() {
+        log::info!("Nothing to recover, exiting...");
+        return;
+    }
+
+    let recovery_starting_slot = bigtable
+        .get_evm_confirmed_full_block(missing_blocks[0] - 1)
+        .await
+        .unwrap()
+        .header
+        .native_chain_slot;
+
+    let mut recovered_blocks = Vec::new();
+
+    let mut recovery_slot = recovery_starting_slot;
+
+    while recovered_blocks.len() < missing_blocks.len() {
+        let native_block = bigtable.get_confirmed_block(recovery_slot).await.unwrap();
+
+        let evm_txs = extract_evm_transactions(native_block);
+
+        match evm_txs {
+            Some(txs) => recovered_blocks.push((recovery_slot, txs)),
+            None => (),
+        }
+
+        recovery_slot += 1;
+    }
+
+    log::info!("Recovered blocks: {:?}", recovered_blocks);
 }
 
-async fn find_evm_uncommitted_blocks(
-    ledger: &LedgerStorage,
-    start_block: BlockNum,
-    limit: usize,
-) -> Result<Vec<BlockNum>, ()> {
+fn find_evm_uncommitted_blocks(blocks: Vec<evm::BlockNum>) -> Vec<evm::BlockNum> {
     let mut result = Vec::new();
-
-    let blocks = ledger
-        .get_evm_confirmed_blocks(start_block, limit)
-        .await
-        .map_err(|_| ())?;
-
     for i in 0..blocks.len() - 1 {
         let previous = blocks[i];
         let current = blocks[i + 1];
@@ -60,35 +72,62 @@ async fn find_evm_uncommitted_blocks(
         }
     }
 
-    Ok(result)
+    result
 }
 
-async fn extract_evm_transactions(ledger: &LedgerStorage, slot: Slot) -> Result<Option<Vec<evm::Transaction>>, ()> {
-    // let block = ledger.get_confirmed_block(slot).await.unwrap();
-    let evm_header = ledger.get_evm_confirmed_full_block(12).await.unwrap();
-    let slot = evm_header.header.native_chain_slot;
-    let native_block = ledger.get_confirmed_block(slot).await.unwrap();
+fn extract_evm_transactions(native_block: ConfirmedBlock) -> Option<Vec<evm::Transaction>> {
+    let mut evm_txs = Vec::new();
 
     for TransactionWithStatusMeta { transaction, .. } in native_block.transactions {
-        for CompiledInstruction { data, program_id_index } in transaction.message.instructions {
-            if transaction.message.account_keys[program_id_index] == STATIC_PROGRAM_ID {
+        for CompiledInstruction {
+            data,
+            program_id_index,
+            ..
+        } in transaction.message.instructions
+        {
+            if transaction.message.account_keys[program_id_index as usize] == STATIC_PROGRAM_ID {
                 let evm_instruction: EvmInstruction = bincode::deserialize(&data).unwrap();
                 match evm_instruction {
                     EvmInstruction::EvmTransaction { evm_tx } => {
-                        result.push(evm_tx)
-                    },
-                    EvmInstruction::SwapNativeToEther { lamports, evm_address } => todo!(),
-                    EvmInstruction::FreeOwnership {  } => todo!(),
-                    EvmInstruction::EvmBigTransaction(_) => todo!(),
-                    EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => todo!(),
+                        log::info!("Found EVM transaction: {evm_tx:?}");
+                        evm_txs.push(evm_tx);
+                    }
+                    instr => log::trace!("Skipping parsed instruction: {instr:?}"),
                 }
-                log::info!("Deserialized evm instruction: {evm_instruction:?}");
             }
         }
     }
-    // result == evm_header.transactions.map((a,b) b).
-    Ok(())
+
+    if evm_txs.len() > 0 {
+        Some(evm_txs)
+    } else {
+        None
+    }
 }
 
-// let CompiledInstruction { program_id_index, accounts, data } = instruction;
-// let _id = instruction.program_id(&[STATIC_PROGRAM_ID]);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_missing_blocks() {
+        let confirmed_blocks = vec![1, 2, 3, 8, 9, 10];
+        assert_eq!(
+            find_evm_uncommitted_blocks(confirmed_blocks),
+            vec![4, 5, 6, 7]
+        )
+    }
+
+    // should we handle this case properly?
+    #[test]
+    fn test_find_missing_blocks_multirange() {
+        let confirmed_blocks = vec![1, 2, 5, 6, 9, 10];
+        assert_eq!(
+            find_evm_uncommitted_blocks(confirmed_blocks),
+            vec![3, 4, 7, 8]
+        );
+        assert!(false)
+    }
+
+    // TODO: test `extract_evm_transactions` function
+}
