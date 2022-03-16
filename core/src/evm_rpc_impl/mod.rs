@@ -623,15 +623,18 @@ impl BasicERPC for BasicErpcImpl {
         block_header: BlockHeader,
         state_root: H256,
     ) -> Result<BlockHeader, Error> {
-        let evm_state = meta
+        let mut evm_state = meta
             .evm_state_archive()
             .ok_or(Error::ArchiveNotSupported)?
             .new_incomming_for_root(state_root)
             .ok_or(Error::StateNotFoundForBlock {
                 block: BlockId::Num(Hex(block_header.block_number)),
             })?;
+        evm_state.state.block_number = block_header.block_number;
+        evm_state.state.timestamp = block_header.timestamp;
+        evm_state.state.last_block_hash = block_header.parent_hash;
 
-        let estimate_config = evm_state::EvmConfig {
+        let evm_config = evm_state::EvmConfig {
             chain_id: meta.bank(None).evm_chain_id,
             estimate: false,
             ..Default::default()
@@ -641,7 +644,7 @@ impl BasicERPC for BasicErpcImpl {
         let mut executor = evm_state::Executor::with_config(
             evm_state,
             evm_state::ChainContext::new(last_hashes),
-            estimate_config,
+            evm_config,
         );
 
         debug!("running evm executor = {:?}", executor);
@@ -829,8 +832,7 @@ fn simulate_transaction(
     let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
     let input = tx.input.map(|a| a.0).unwrap_or_else(Vec::new);
     let gas_limit = tx.gas.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
-    // On estimate set gas price to zero, to avoid out of funds errors.
-    let gas_price = u64::MIN.into();
+    let gas_price = tx.gas_price.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
 
     let nonce = tx
         .nonce
