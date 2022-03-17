@@ -22,7 +22,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: 1.55
+          toolchain: 1.59
           components: clippy
       - name: Run cargo clippy
         uses: actions-rs/cargo@v1
@@ -42,7 +42,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: 1.55
+          toolchain: 1.59
       - name: Setting limits
         run: |
           sudo sysctl -w fs.file-max=5000000
