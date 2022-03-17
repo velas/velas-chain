@@ -13,13 +13,13 @@ use evm_rpc::{
     chain_mock::ChainMockERPC,
     error::{into_native_error, BlockNotFound, Error, StateNotFoundForBlock},
     trace::TraceMeta,
-    BlockId, BlockRelId, Bytes, Either, FormatHex, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt,
+    BlockId, BlockRelId, Bytes, Either, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt,
     RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{
     AccountProvider, AccountState, Address, BlockHeader, ExecutionResult, Gas, LogFilter,
     Transaction, TransactionAction, TransactionInReceipt, TransactionReceipt, TransactionSignature,
-    H160, H256, U256,
+    UnsignedTransactionWithCaller, H160, H256, U256,
 };
 use snafu::ensure;
 use snafu::ResultExt;
@@ -640,7 +640,9 @@ impl BasicERPC for BasicErpcImpl {
             ..Default::default()
         };
 
-        let last_hashes = last_hashes.try_into().map_err(|_| Error::InvalidParams {})?;
+        let last_hashes = last_hashes
+            .try_into()
+            .map_err(|_| Error::InvalidParams {})?;
         let mut executor = evm_state::Executor::with_config(
             evm_state,
             evm_state::ChainContext::new(last_hashes),
@@ -888,9 +890,11 @@ fn simulate_transaction(
     };
 
     // system transfers always set s = 0x1
+    let mut is_native_swap = false;
     if Some(Hex(U256::from(0x1))) == tx.s {
         // check if it native swap, then predeposit, amount, to pass transaction
         if caller == *ETH_TO_VLX_ADDR {
+            is_native_swap = true;
             let amount = value + gas_limit * gas_price;
             executor.deposit(caller, amount)
         }
@@ -901,7 +905,7 @@ fn simulate_transaction(
         .map(|(user_account, pk)| KeyedAccount::new(pk, false, user_account))
         .collect();
 
-    let result = executor
+    let mut result = executor
         .transaction_execute_raw(
             caller,
             nonce,
@@ -920,6 +924,15 @@ fn simulate_transaction(
         )
         .with_context(|| EvmStateError)?;
 
+    let mut bytes: [u8; 32] = [0; 32];
+    tx.r.ok_or(Error::InvalidParams {})?
+        .0
+        .to_big_endian(&mut bytes);
+    let r = H256::from_slice(&bytes);
+    tx.s.ok_or(Error::InvalidParams {})?
+        .0
+        .to_big_endian(&mut bytes);
+    let s = H256::from_slice(&bytes);
     let transaction = Transaction {
         nonce,
         gas_price,
@@ -928,14 +941,8 @@ fn simulate_transaction(
         value,
         signature: TransactionSignature {
             v: *tx.v.ok_or(Error::InvalidParams {})?,
-            r: tx
-                .r
-                .map(|r| H256::from_hex(&r.format_hex()))
-                .ok_or(Error::InvalidParams {})??,
-            s: tx
-                .s
-                .map(|s| H256::from_hex(&s.format_hex()))
-                .ok_or(Error::InvalidParams {})??,
+            r,
+            s,
         },
         input,
     };
@@ -943,8 +950,19 @@ fn simulate_transaction(
     let tx_hashes = executor.evm_backend.get_executed_transactions();
     assert!(!tx_hashes.contains(&tx_hash));
 
+    let transaction = if is_native_swap {
+        result.used_gas = 0;
+        TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller {
+            unsigned_tx: transaction.into(),
+            caller: *ETH_TO_VLX_ADDR,
+            chain_id: tx_chain_id,
+            signed_compatible: true,
+        })
+    } else {
+        TransactionInReceipt::Signed(transaction)
+    };
     let receipt = TransactionReceipt::new(
-        TransactionInReceipt::Signed(transaction),
+        transaction,
         result.used_gas,
         executor.evm_backend.block_number(),
         tx_hashes.len() as u64 + 1,
