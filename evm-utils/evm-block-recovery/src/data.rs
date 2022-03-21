@@ -17,7 +17,7 @@ impl EvmBlockRange {
 
 #[derive(Debug)]
 pub struct EvmContent {
-    instructions: Vec<EvmInstruction>,
+    pub instructions: Vec<EvmInstruction>,
 }
 
 impl EvmContent {
@@ -31,19 +31,10 @@ impl EvmContent {
                 ..
             } in transaction.message.instructions
             {
+                // FreeOwnership will not be included with following filter
                 if transaction.message.account_keys[program_id_index as usize] == STATIC_PROGRAM_ID
                 {
                     let evm_instruction: EvmInstruction = bincode::deserialize(&data).unwrap();
-                    // match evm_instruction {
-                    //     EvmInstruction::EvmTransaction { evm_tx } => todo!(),
-                    //     EvmInstruction::SwapNativeToEther {
-                    //         lamports,
-                    //         evm_address,
-                    //     } => todo!(),
-                    //     EvmInstruction::FreeOwnership {} => todo!(),
-                    //     EvmInstruction::EvmBigTransaction(_) => todo!(),
-                    //     EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => todo!(),
-                    // }
                     instructions.push(evm_instruction);
                 }
             }
@@ -52,23 +43,53 @@ impl EvmContent {
         Self { instructions }
     }
 
-    // pub fn instr_evm_transaction(&self) -> Vec<evm::Transaction> {
-    //     self.instructions
-    //         .iter()
-    //         .filter_map(|i| match i {
-    //             EvmInstruction::EvmTransaction { evm_tx } => Some(evm_tx),
-    //             _ => None,
-    //         })
-    //         .collect()
-    // }
+    pub fn instr_evm_transaction(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter(|i| match i {
+                EvmInstruction::EvmTransaction { .. } => true,
+                _ => false,
+            })
+            .count()
+    }
 
-    // pub fn instr_swap_native_to_ether(&self) -> Vec<(u64, H160)> {
-    //     self.instructions
-    //         .into_iter()
-    //         .filter_map(|i| match i {
-    //             EvmInstruction::SwapNativeToEther { lamports, evm_address } => Some((lamports, evm_address)),
-    //             _ => None,
-    //         })
-    //         .collect()
-    // }
+    pub fn instr_evm_swap_to_native(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter(|i| match i {
+                EvmInstruction::SwapNativeToEther { .. } => true,
+                _ => false,
+            })
+            .count()
+    }
+
+    pub fn instr_evm_free_ownership(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter(|i| match i {
+                EvmInstruction::FreeOwnership {} => true,
+                _ => false,
+            })
+            .count()
+    }
+
+    pub fn instr_evm_big_transaction(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter(|i| match i {
+                EvmInstruction::EvmBigTransaction(_) => true,
+                _ => false,
+            })
+            .count()
+    }
+
+    pub fn instr_evm_authorized_transaction(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter(|i| match i {
+                EvmInstruction::EvmAuthorizedTransaction { .. } => true,
+                _ => false,
+            })
+            .count()
+    }
 }

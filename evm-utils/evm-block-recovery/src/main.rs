@@ -15,14 +15,31 @@ async fn main() {
         .await
         .expect("Failed to connect to storage");
 
-    let recovery_starting_slot = bigtable
-        .get_evm_confirmed_full_block(17206785)
-        .await
-        .unwrap()
-        .header
-        .native_chain_slot;
+    let mut results = String::new();
+    results.push_str("Slot,EvmTransaction,SwapNativeToEther,FreeOwnership,EvmBigTransaction,EvmAuthorizedTransaction\n");
 
-    println!("SLOT: {recovery_starting_slot}");
+    let mut native_blocks = vec![];
+    native_blocks.extend(53183621..=53183644);
+    native_blocks.extend(53414856..=53414871);
+    native_blocks.extend(54832538..=54832540);
+
+    for slot in native_blocks {
+        let native_block = bigtable.get_confirmed_block(slot as u64).await.unwrap();
+        let evm_content = data::EvmContent::from_native_block(native_block);
+
+        results.push_str(&format!(
+            "{},{},{},{},{},{}",
+            slot,
+            evm_content.instr_evm_transaction(),
+            evm_content.instr_evm_swap_to_native(),
+            evm_content.instr_evm_free_ownership(),
+            evm_content.instr_evm_big_transaction(),
+            evm_content.instr_evm_authorized_transaction()
+        ));
+        results.push('\n');
+
+        std::fs::write("/tmp/block_result.csv", &results).unwrap();
+    }
 }
 
 async fn integrity_check(ledger: &LedgerStorage) {}
