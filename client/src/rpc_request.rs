@@ -100,12 +100,14 @@ pub enum RpcRequest {
     EthTraceCallMany,
     EthTraceReplayTransaction,
     EthTraceReplayBlock,
-    EthRecoverBlockHeader,
 
     /// Velas Account scope
     GetVelasAccountsByOperationalKey,
     GetVelasAccountsByOwnerKey,
     GetVelasRelyingPartiesByOwnerKey,
+
+    /// Debug
+    DebugRecoverBlockHeader,
 }
 
 #[allow(deprecated)]
@@ -189,12 +191,12 @@ impl fmt::Display for RpcRequest {
             RpcRequest::EthTraceCallMany => "trace_callMany",
             RpcRequest::EthTraceReplayTransaction => "trace_replayTransaction",
             RpcRequest::EthTraceReplayBlock => "trace_replayBlockTransactions",
-            RpcRequest::EthRecoverBlockHeader => "eth_recoverBlockHeader",
             RpcRequest::EthEstimateGas => "eth_estimateGas",
             RpcRequest::EthGetLogs => "eth_getLogs",
             RpcRequest::GetVelasAccountsByOperationalKey => "getVelasAccountsByOperationalKey",
             RpcRequest::GetVelasAccountsByOwnerKey => "getVelasAccountsByOwnerKey",
             RpcRequest::GetVelasRelyingPartiesByOwnerKey => "getVelasRelyingPartiesByOwnerKey",
+            RpcRequest::DebugRecoverBlockHeader => "debug_recoverBlockHeader",
         };
 
         write!(f, "{}", method)

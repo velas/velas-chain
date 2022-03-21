@@ -717,7 +717,7 @@ pub mod basic {
             meta_info: Option<TraceMeta>,
         ) -> Result<Vec<trace::TraceResultsWithTransactionHash>, Error>;
 
-        #[rpc(meta, name = "eth_recoverBlockHeader")]
+        #[rpc(meta, name = "debug_recoverBlockHeader")]
         fn recover_block_header(
             &self,
             meta: Self::Metadata,
