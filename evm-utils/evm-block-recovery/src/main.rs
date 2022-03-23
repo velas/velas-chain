@@ -1,8 +1,10 @@
 pub mod data;
+pub mod routines;
 
-use data::EvmBlockRange;
 use evm_state as evm;
 use solana_storage_bigtable::LedgerStorage;
+
+use crate::data::{EvmBlockRange, EvmContent};
 
 // TODO: better error handling
 
@@ -15,6 +17,10 @@ async fn main() {
         .await
         .expect("Failed to connect to storage");
 
+    // println!("{:?}", routines::integrity_check(&bigtable, 15_000_042).await);
+}
+
+async fn print_native_to_csv(ledger: &LedgerStorage) {
     let mut results = String::new();
     results.push_str("Slot,EvmTransaction,SwapNativeToEther,FreeOwnership,EvmBigTransaction,EvmAuthorizedTransaction\n");
 
@@ -24,7 +30,7 @@ async fn main() {
     native_blocks.extend(54832538..=54832540);
 
     for slot in native_blocks {
-        let native_block = bigtable.get_confirmed_block(slot as u64).await.unwrap();
+        let native_block = ledger.get_confirmed_block(slot as u64).await.unwrap();
         let evm_content = data::EvmContent::from_native_block(native_block);
 
         results.push_str(&format!(
@@ -38,17 +44,11 @@ async fn main() {
         ));
         results.push('\n');
 
-        std::fs::write("/tmp/block_result.csv", &results).unwrap();
+        std::fs::write("/home/maksimv/Desktop/block_result.csv", &results).unwrap();
     }
 }
 
-async fn integrity_check(ledger: &LedgerStorage) {}
-
 async fn main_recovery(ledger: &LedgerStorage) {
-    // start_block: 15662810, limit: 30
-    // start_block: 15880820, limit: 20
-    // start_block: 17206780, limit: 10
-
     let blocks = ledger.get_evm_confirmed_blocks(15662810, 30).await.unwrap();
 
     let missing_blocks = find_evm_uncommitted_blocks(blocks);
@@ -72,12 +72,7 @@ async fn main_recovery(ledger: &LedgerStorage) {
     while recovered_blocks.len() < missing_blocks.len() {
         let native_block = ledger.get_confirmed_block(recovery_slot).await.unwrap();
 
-        let evm_txs = data::EvmContent::from_native_block(native_block);
-
-        // match evm_txs {
-        //     Some(txs) => recovered_blocks.push((recovery_slot, txs)),
-        //     None => (),
-        // }
+        let evm_txs = EvmContent::from_native_block(native_block);
 
         recovery_slot += 1;
     }
@@ -93,7 +88,7 @@ fn find_evm_uncommitted_blocks(blocks: Vec<evm::BlockNum>) -> Vec<EvmBlockRange>
 
         if current - previous != 1 {
             log::info!("Found missing block(s): {previous}, ...missing block(s)..., {current}");
-            result.push(EvmBlockRange::new(previous + 1, current - 1));
+            result.push(data::EvmBlockRange::new(previous + 1, current - 1));
         }
     }
 

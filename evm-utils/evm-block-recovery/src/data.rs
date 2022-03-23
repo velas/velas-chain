@@ -46,50 +46,35 @@ impl EvmContent {
     pub fn instr_evm_transaction(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|i| match i {
-                EvmInstruction::EvmTransaction { .. } => true,
-                _ => false,
-            })
+            .filter(|i| matches!(i, EvmInstruction::EvmTransaction { .. }))
             .count()
     }
 
     pub fn instr_evm_swap_to_native(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|i| match i {
-                EvmInstruction::SwapNativeToEther { .. } => true,
-                _ => false,
-            })
+            .filter(|i| matches!(i, EvmInstruction::SwapNativeToEther { .. }))
             .count()
     }
 
     pub fn instr_evm_free_ownership(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|i| match i {
-                EvmInstruction::FreeOwnership {} => true,
-                _ => false,
-            })
+            .filter(|i| matches!(i, EvmInstruction::FreeOwnership {  }))
             .count()
     }
 
     pub fn instr_evm_big_transaction(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|i| match i {
-                EvmInstruction::EvmBigTransaction(_) => true,
-                _ => false,
-            })
+            .filter(|i| matches!(i, EvmInstruction::EvmBigTransaction(_)))
             .count()
     }
 
     pub fn instr_evm_authorized_transaction(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|i| match i {
-                EvmInstruction::EvmAuthorizedTransaction { .. } => true,
-                _ => false,
-            })
+            .filter(|i| matches!(i, EvmInstruction::EvmAuthorizedTransaction { .. }))
             .count()
     }
 }
