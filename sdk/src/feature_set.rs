@@ -181,6 +181,10 @@ pub mod velas {
     pub mod burn_fee {
         solana_sdk::declare_id!("CjdrowBMM3drcSSciwPVpAWz4hBqWAKSLj9Ea9PD1vip");
     }
+
+    pub mod evm_instruction_borsh_serialization {
+        solana_sdk::declare_id!("11111111111111111111111111111111");
+    }
 }
 lazy_static! {
     /// Map of feature identifiers to user-visible description
@@ -233,6 +237,7 @@ lazy_static! {
             (velas::ignore_reset_on_cleared::id(), "Don't reset evm_swap address balance, when it already swapped, to avoid empty blocks."),
             (velas::free_ownership_require_signer::id(), "Free ownership require signer."),
             (velas::burn_fee::id(), "Burn fee during transaction execution."),
+            (velas::evm_instruction_borsh_serialization::id(), "Support for Borsh serialization for EVM instructions."),
 
 
             /*************** ADD NEW FEATURES HERE ***************/

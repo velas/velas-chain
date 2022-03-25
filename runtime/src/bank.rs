@@ -4276,7 +4276,12 @@ impl Bank {
             n.into(),
             Some(self.evm_chain_id),
         );
-        let ix = solana_evm_loader_program::send_raw_tx(fee_payer.pubkey(), evm_tx, None);
+        let ix = solana_evm_loader_program::send_raw_tx(
+            fee_payer.pubkey(),
+            evm_tx,
+            None,
+            solana_evm_loader_program::instructions::FeePayerType::Evm,
+        );
         let tx = Transaction::new_signed_with_payer(
             &[ix],
             Some(&fee_payer.pubkey()),
@@ -8312,6 +8317,7 @@ pub(crate) mod tests {
                 from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(nonce).0,
                 None,
+                solana_evm_loader_program::instructions::FeePayerType::Evm,
             );
             let message = Message::new(&[instruction], Some(&from_pubkey));
             Transaction::new(&[from_keypair], message, hash)
@@ -8370,6 +8376,7 @@ pub(crate) mod tests {
                 from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(nonce).0,
                 None,
+                solana_evm_loader_program::instructions::FeePayerType::Evm,
             );
             let message = Message::new(&[instruction], Some(&from_pubkey));
             Transaction::new(&[from_keypair], message, hash)
@@ -8482,6 +8489,7 @@ pub(crate) mod tests {
                 from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(nonce).0,
                 None,
+                solana_evm_loader_program::instructions::FeePayerType::Evm,
             );
 
             let message = Message::new(&[instruction], Some(&from_pubkey));
@@ -8641,6 +8649,7 @@ pub(crate) mod tests {
                 from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(nonce).0,
                 None,
+                solana_evm_loader_program::instructions::FeePayerType::Evm,
             );
             instructions.push(instruction);
             let s = Keypair::new();

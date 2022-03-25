@@ -1,8 +1,11 @@
+extern crate core;
+
 mod account_structure;
 pub mod tx_chunks;
 
 pub mod error;
 pub mod instructions;
+pub mod old_instructions;
 pub mod precompiles;
 pub mod processor;
 pub mod solana_extension;
@@ -39,14 +42,27 @@ pub mod scope {
         };
     }
 }
-use instructions::{EvmBigTransaction, EvmInstruction};
+use instructions::{FeePayerType, EvmBigTransaction, EvmInstruction, EVM_INSTRUCTION_BORSH_PREFIX};
 use scope::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
+
+/// Create an evm instruction and add EVM_INSTRUCTION_BORSH_PREFIX prefix
+/// at the beginning of instruction data to mark Borsh encoding
+pub fn create_evm_instruction_with_borsh(
+    program_id: solana_sdk::pubkey::Pubkey,
+    data: &EvmInstruction,
+    accounts: Vec<AccountMeta>,
+) -> solana::Instruction {
+    let mut res = Instruction::new_with_borsh(program_id, data, accounts);
+    res.data.insert(0, EVM_INSTRUCTION_BORSH_PREFIX);
+    res
+}
 
 pub fn send_raw_tx(
     signer: solana::Address,
     evm_tx: evm::Transaction,
     gas_collector: Option<solana::Address>,
+    fee_type: FeePayerType,
 ) -> solana::Instruction {
     let mut account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
@@ -56,9 +72,9 @@ pub fn send_raw_tx(
         account_metas.push(AccountMeta::new(gas_collector, false))
     }
 
-    Instruction::new_with_bincode(
+    create_evm_instruction_with_borsh(
         crate::ID,
-        &EvmInstruction::EvmTransaction { evm_tx },
+        &EvmInstruction::EvmTransaction { evm_tx, fee_type },
         account_metas,
     )
 }
@@ -66,6 +82,7 @@ pub fn send_raw_tx(
 pub fn authorized_tx(
     sender: solana::Address,
     unsigned_tx: evm::UnsignedTransaction,
+    fee_type: FeePayerType,
 ) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
@@ -73,9 +90,13 @@ pub fn authorized_tx(
     ];
 
     let from = evm_address_for_program(sender);
-    Instruction::new_with_bincode(
+    create_evm_instruction_with_borsh(
         crate::ID,
-        &EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx },
+        &EvmInstruction::EvmAuthorizedTransaction {
+            from,
+            unsigned_tx,
+            fee_type,
+        },
         account_metas,
     )
 }
@@ -90,7 +111,7 @@ pub(crate) fn transfer_native_to_evm(
         AccountMeta::new(owner, true),
     ];
 
-    Instruction::new_with_bincode(
+    create_evm_instruction_with_borsh(
         crate::ID,
         &EvmInstruction::SwapNativeToEther {
             lamports,
@@ -106,7 +127,7 @@ pub fn free_ownership(owner: solana::Address) -> solana::Instruction {
         AccountMeta::new(owner, true),
     ];
 
-    Instruction::new_with_bincode(crate::ID, &EvmInstruction::FreeOwnership {}, account_metas)
+    create_evm_instruction_with_borsh(crate::ID, &EvmInstruction::FreeOwnership {}, account_metas)
 }
 
 pub fn big_tx_allocate(storage: &solana::Address, size: usize) -> solana::Instruction {
@@ -117,7 +138,7 @@ pub fn big_tx_allocate(storage: &solana::Address, size: usize) -> solana::Instru
 
     let big_tx = EvmBigTransaction::EvmTransactionAllocate { size: size as u64 };
 
-    Instruction::new_with_bincode(
+    create_evm_instruction_with_borsh(
         crate::ID,
         &EvmInstruction::EvmBigTransaction(big_tx),
         account_metas,
@@ -135,7 +156,7 @@ pub fn big_tx_write(storage: &solana::Address, offset: u64, chunk: Vec<u8>) -> s
         data: chunk,
     };
 
-    Instruction::new_with_bincode(
+    create_evm_instruction_with_borsh(
         crate::ID,
         &EvmInstruction::EvmBigTransaction(big_tx),
         account_metas,
@@ -145,6 +166,7 @@ pub fn big_tx_write(storage: &solana::Address, offset: u64, chunk: Vec<u8>) -> s
 pub fn big_tx_execute(
     storage: &solana::Address,
     gas_collector: Option<&solana::Address>,
+    fee_type: FeePayerType,
 ) -> solana::Instruction {
     let mut account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
@@ -155,9 +177,9 @@ pub fn big_tx_execute(
         account_metas.push(AccountMeta::new(*gas_collector, false))
     }
 
-    let big_tx = EvmBigTransaction::EvmTransactionExecute {};
+    let big_tx = EvmBigTransaction::EvmTransactionExecute { fee_type };
 
-    Instruction::new_with_bincode(
+    create_evm_instruction_with_borsh(
         crate::ID,
         &EvmInstruction::EvmBigTransaction(big_tx),
         account_metas,
