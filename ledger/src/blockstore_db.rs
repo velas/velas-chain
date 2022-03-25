@@ -1,7 +1,7 @@
 use crate::blockstore_meta;
 use bincode::{deserialize, serialize};
 use byteorder::{BigEndian, ByteOrder};
-use columns::{EvmBlockHeader, EvmHeaderIndexByHash, EvmTransactionReceipts};
+use columns::{EvmBlockHeader, EvmHeaderIndexByHash, EvmHeaderIndexBySlot, EvmTransactionReceipts};
 use evm_state::H256;
 use log::*;
 use prost::Message;
@@ -79,6 +79,7 @@ const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
 const EVM_HEADERS: &str = "evm_headers";
 const EVM_BLOCK_BY_HASH: &str = "evm_block_by_hash";
+const EVM_BLOCK_BY_SLOT: &str = "evm_block_by_slot";
 const EVM_TRANSACTIONS: &str = "evm_transactions";
 
 #[derive(Error, Debug)]
@@ -125,47 +126,47 @@ pub enum IteratorMode<Index> {
 pub mod columns {
     #[derive(Debug)]
     /// The slot metadata column
-    pub struct SlotMeta;
+    pub struct SlotMeta;//
 
     #[derive(Debug)]
     /// The orphans column
-    pub struct Orphans;
+    pub struct Orphans;//
 
     #[derive(Debug)]
     /// The dead slots column
-    pub struct DeadSlots;
+    pub struct DeadSlots;//
 
     #[derive(Debug)]
     /// The duplicate slots column
-    pub struct DuplicateSlots;
+    pub struct DuplicateSlots;//
 
     #[derive(Debug)]
     /// The erasure meta column
-    pub struct ErasureMeta;
+    pub struct ErasureMeta;//
 
     #[derive(Debug)]
     /// The root column
-    pub struct Root;
+    pub struct Root;//
 
     #[derive(Debug)]
     /// The index column
-    pub struct Index;
+    pub struct Index;//
 
     #[derive(Debug)]
     /// The shred data column
-    pub struct ShredData;
+    pub struct ShredData;//
 
     #[derive(Debug)]
     /// The shred erasure code column
-    pub struct ShredCode;
+    pub struct ShredCode;//
 
     #[derive(Debug)]
     /// The transaction status column
-    pub struct TransactionStatus;
+    pub struct TransactionStatus;//
 
     #[derive(Debug)]
     /// The address signatures column
-    pub struct AddressSignatures;
+    pub struct AddressSignatures;//
 
     #[derive(Debug)]
     /// The transaction status index column
@@ -173,7 +174,7 @@ pub mod columns {
 
     #[derive(Debug)]
     /// The rewards column
-    pub struct Rewards;
+    pub struct Rewards;//
 
     #[derive(Debug)]
     /// The blocktime column
@@ -193,6 +194,9 @@ pub mod columns {
     #[derive(Debug)]
     /// The evm block header by Hash.
     pub struct EvmHeaderIndexByHash;
+
+    #[derive(Debug)]
+    pub struct EvmHeaderIndexBySlot;
 
     #[derive(Debug)]
     /// The evm transaction with statuses.
@@ -382,6 +386,10 @@ impl Rocks {
             EvmHeaderIndexByHash::NAME,
             get_cf_options::<EvmHeaderIndexByHash>(&access_type, &oldest_slot),
         );
+        let evm_headers_by_slot_cf_descriptor = ColumnFamilyDescriptor::new(
+            EvmHeaderIndexBySlot::NAME,
+            get_cf_options::<EvmHeaderIndexBySlot>(&access_type, &oldest_slot),
+        );
         let evm_transactions_cf_descriptor = ColumnFamilyDescriptor::new(
             EvmTransactionReceipts::NAME,
             get_cf_options::<EvmTransactionReceipts>(&access_type, &oldest_slot),
@@ -413,6 +421,10 @@ impl Rocks {
             (
                 EvmHeaderIndexByHash::NAME,
                 evm_headers_by_hash_cf_descriptor,
+            ),
+            (
+                EvmHeaderIndexBySlot::NAME,
+                evm_headers_by_slot_cf_descriptor,
             ),
         ];
         let cf_names: Vec<_> = cfs.iter().map(|c| c.0).collect();
@@ -456,7 +468,9 @@ impl Rocks {
             for cf_name in cf_names {
                 // this special column family must be excluded from LedgerCleanupService's rocksdb
                 // compactions
-                if cf_name == TransactionStatusIndex::NAME {
+                if cf_name == TransactionStatusIndex::NAME || cf_name == EvmTransactionReceipts::NAME
+                    || cf_name == EvmHeaderIndexByHash::NAME || cf_name == EvmHeaderIndexBySlot::NAME
+                    || cf_name == EvmBlockHeader::NAME {
                     continue;
                 }
 
@@ -539,6 +553,7 @@ impl Rocks {
             EvmBlockHeader::NAME,
             EvmTransactionReceipts::NAME,
             EvmHeaderIndexByHash::NAME,
+            EvmHeaderIndexBySlot::NAME,
         ]
     }
 
@@ -1035,6 +1050,16 @@ impl ProtobufColumn for columns::EvmHeaderIndexByHash {
     type Type = evm_state::BlockNum;
 }
 
+impl SlotColumn for columns::EvmHeaderIndexBySlot {}
+
+impl ColumnName for columns::EvmHeaderIndexBySlot {
+    const NAME: &'static str = EVM_BLOCK_BY_SLOT;
+}
+
+impl ProtobufColumn for columns::EvmHeaderIndexBySlot {
+    type Type = evm_state::BlockNum;
+}
+
 impl Column for columns::EvmTransactionReceipts {
     type Index = EvmTransactionReceiptsIndex;
 
@@ -1496,6 +1521,10 @@ fn get_cf_options<C: 'static + Column + ColumnName>(
     // compactions....
     if matches!(access_type, AccessType::PrimaryOnly)
         && C::NAME != columns::TransactionStatusIndex::NAME
+        && C::NAME != columns::EvmTransactionReceipts::NAME
+        && C::NAME != columns::EvmHeaderIndexByHash::NAME
+        && C::NAME != columns::EvmHeaderIndexBySlot::NAME
+        && C::NAME != columns::EvmBlockHeader::NAME
     {
         options.set_compaction_filter_factory(PurgedSlotFilterFactory::<C> {
             oldest_slot: oldest_slot.clone(),

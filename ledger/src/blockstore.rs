@@ -159,6 +159,7 @@ pub struct Blockstore {
     evm_blocks_cf: LedgerColumn<cf::EvmBlockHeader>,
     evm_transactions_cf: LedgerColumn<cf::EvmTransactionReceipts>,
     evm_blocks_by_hash_cf: LedgerColumn<cf::EvmHeaderIndexByHash>,
+    evm_blocks_by_slot_cf: LedgerColumn<cf::EvmHeaderIndexBySlot>,
 }
 
 pub struct IndexMetaWorkingSetEntry {
@@ -328,6 +329,7 @@ impl Blockstore {
         let evm_blocks_cf = db.column();
         let evm_transactions_cf = db.column();
         let evm_blocks_by_hash_cf = db.column();
+        let evm_blocks_by_slot_cf = db.column();
 
         let db = Arc::new(db);
 
@@ -385,6 +387,7 @@ impl Blockstore {
             evm_blocks_cf,
             evm_transactions_cf,
             evm_blocks_by_hash_cf,
+            evm_blocks_by_slot_cf,
         };
         if initialize_transaction_status_index {
             blockstore.initialize_transaction_status_index()?;
@@ -2725,7 +2728,8 @@ impl Blockstore {
             (block.block_number, Some(block.native_chain_slot)),
             &proto_block,
         )?;
-        self.write_evm_block_id_by_hash(block.native_chain_slot, block.hash(), block.block_number)
+        self.write_evm_block_id_by_hash(block.native_chain_slot, block.hash(), block.block_number)?;
+        self.write_evm_block_id_by_slot(block.native_chain_slot, block.block_number)
     }
 
     ///
@@ -2767,6 +2771,15 @@ impl Blockstore {
         } else {
             Ok(result)
         }
+    }
+
+    pub fn write_evm_block_id_by_slot(&self, slot: Slot, id: evm_state::BlockNum) -> Result<()> {
+        self.evm_blocks_by_slot_cf.put_protobuf(slot, &id)
+    }
+
+    pub fn read_evm_block_id_by_slot(&self, slot: Slot) -> Result<Option<evm_state::BlockNum>> {
+        self.evm_blocks_by_slot_cf
+            .get_protobuf_or_bincode::<evm_state::BlockNum>(slot)
     }
 
     /// Try to search for evm transaction in next indexes:
