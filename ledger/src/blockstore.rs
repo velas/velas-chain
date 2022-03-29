@@ -1814,6 +1814,48 @@ impl Blockstore {
             }))
     }
 
+    pub fn evm_block_by_slot_iterator(
+        &self,
+        from: Slot,
+    ) -> Result<impl Iterator<Item = (Slot, evm::BlockNum)> + '_> {
+        Ok(self
+            .evm_blocks_by_slot_cf
+            .iter(IteratorMode::From(from, IteratorDirection::Forward))?
+            .map(move |(slot, data)| {
+                (
+                    slot,
+                    self.evm_blocks_by_slot_cf
+                        .deserialize_protobuf_or_bincode::<evm::BlockNum>(&data)
+                        .unwrap_or_else(|e| {
+                            panic!("Could not deserialize block_num for slot {}: {:?}", slot, e)
+                        })
+                        .try_into()
+                        .expect("Convertation should always pass"),
+                )
+            }))
+    }
+
+    pub fn evm_block_by_slot_reverse_iterator(
+        &self,
+        from: Slot,
+    ) -> Result<impl Iterator<Item = (Slot, evm::BlockNum)> + '_> {
+        Ok(self
+            .evm_blocks_by_slot_cf
+            .iter(IteratorMode::From(from, IteratorDirection::Reverse))?
+            .map(move |(slot, data)| {
+                (
+                    slot,
+                    self.evm_blocks_by_slot_cf
+                        .deserialize_protobuf_or_bincode::<evm::BlockNum>(&data)
+                        .unwrap_or_else(|e| {
+                            panic!("Could not deserialize block_num for slot {}: {:?}", slot, e)
+                        })
+                        .try_into()
+                        .expect("Convertation should always pass"),
+                )
+            }))
+    }
+
     pub fn get_block_height(&self, slot: Slot) -> Result<Option<u64>> {
         datapoint_info!(
             "blockstore-rpc-api",
