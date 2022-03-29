@@ -153,7 +153,11 @@ impl Blockstore {
                 .is_ok()
             & self
                 .db
-                .delete_range_cf::<cf::DuplicateSlots>(&mut write_batch, from_slot, to_slot_inclusive)
+                .delete_range_cf::<cf::DuplicateSlots>(
+                    &mut write_batch,
+                    from_slot,
+                    to_slot_inclusive,
+                )
                 .is_ok()
             & self
                 .db
@@ -185,36 +189,28 @@ impl Blockstore {
                 .is_ok()
             & self
                 .db
-                .delete_range_cf::<cf::EvmHeaderIndexBySlot>(&mut write_batch, from_slot, to_slot_inclusive)
+                .delete_range_cf::<cf::EvmHeaderIndexBySlot>(
+                    &mut write_batch,
+                    from_slot,
+                    to_slot_inclusive,
+                )
                 .is_ok();
 
-        let first_slot = self
-            .db
-            .iter::<cf::EvmHeaderIndexBySlot>(IteratorMode::From(
-                from_slot,
-                IteratorDirection::Forward,
-            ))?
-            .next();
-        let last_slot = self
-            .db
-            .iter::<cf::EvmHeaderIndexBySlot>(IteratorMode::From(
-                to_slot,
-                IteratorDirection::Reverse,
-            ))?
-            .next();
+        let first_slot = self.evm_block_by_slot_iterator(from_slot)?.next();
+        let last_slot = self.evm_block_by_slot_reverse_iterator(to_slot)?.next();
         // Get evm blocks with slots in range [from_slot; to_slot] and
         // use block_number of those blocks to clear respective records from EvmBlockHeader column
         if matches!((&first_slot, &last_slot),
             (Some(first_slot), Some(last_slot)) if first_slot.0 <= to_slot && last_slot.0 >= from_slot)
         {
-            let first_block_num = self.evm_blocks_by_slot_cf
-                .deserialize_protobuf_or_bincode::<evm::BlockNum>(&first_slot.unwrap().1)?;
-            let last_block_num = self.evm_blocks_by_slot_cf
-                .deserialize_protobuf_or_bincode::<evm::BlockNum>(&last_slot.unwrap().1)?;
-            columns_purged &= write_batch.delete_range_cf::<cf::EvmBlockHeader>(
-                self.db.cf_handle::<cf::EvmBlockHeader>(),
-                cf::EvmBlockHeader::as_index(first_block_num),
-                cf::EvmBlockHeader::as_index(last_block_num.checked_add(1).unwrap_or(u64::MAX)))
+            let first_block_num = first_slot.unwrap().1;
+            let last_block_num = last_slot.unwrap().1;
+            columns_purged &= write_batch
+                .delete_range_cf::<cf::EvmBlockHeader>(
+                    self.db.cf_handle::<cf::EvmBlockHeader>(),
+                    cf::EvmBlockHeader::as_index(first_block_num),
+                    cf::EvmBlockHeader::as_index(last_block_num.checked_add(1).unwrap_or(u64::MAX)),
+                )
                 .is_ok();
         }
 
@@ -462,10 +458,7 @@ pub mod tests {
         get_tmp_ledger_path,
     };
     use bincode::serialize;
-    use evm_state::{
-        BlockHeader, ExitReason, ExitSucceed, TransactionAction, TransactionInReceipt,
-        TransactionReceipt, UnsignedTransaction, UnsignedTransactionWithCaller,
-    };
+    use evm_state::{BlockHeader, BlockNum, ExitReason, ExitSucceed, TransactionAction, TransactionInReceipt, TransactionReceipt, UnsignedTransaction, UnsignedTransactionWithCaller};
     use solana_sdk::{
         hash::{hash, Hash},
         message::Message,
@@ -480,13 +473,6 @@ pub mod tests {
             .next()
             .map(|(slot, _)| slot >= min_slot)
             .unwrap_or(true)
-            & blockstore
-                .db
-                .iter::<cf::Orphans>(IteratorMode::Start)
-                .unwrap()
-                .next()
-                .map(|(slot, _)| slot >= min_slot)
-                .unwrap_or(true)
             & blockstore
                 .db
                 .iter::<cf::Root>(IteratorMode::Start)
@@ -528,6 +514,13 @@ pub mod tests {
                 .unwrap()
                 .next()
                 .map(|((slot, _), _)| slot >= min_slot)
+                .unwrap_or(true)
+            & blockstore
+                .db
+                .iter::<cf::Orphans>(IteratorMode::Start)
+                .unwrap()
+                .next()
+                .map(|(slot, _)| slot >= min_slot)
                 .unwrap_or(true)
             & blockstore
                 .db
@@ -1322,7 +1315,7 @@ pub mod tests {
         Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
     }
 
-    fn create_dummy_transaction() -> UnsignedTransaction {
+    fn create_dummy_evm_transaction() -> UnsignedTransaction {
         UnsignedTransaction {
             nonce: Default::default(),
             gas_price: Default::default(),
@@ -1330,6 +1323,24 @@ pub mod tests {
             action: TransactionAction::Create,
             value: Default::default(),
             input: vec![],
+        }
+    }
+
+    fn create_dummy_evm_block(block_num: BlockNum, native_slot: Slot) -> BlockHeader {
+        BlockHeader {
+            parent_hash: Default::default(),
+            state_root: Default::default(),
+            native_chain_hash: Default::default(),
+            transactions: vec![],
+            transactions_root: Default::default(),
+            receipts_root: Default::default(),
+            logs_bloom: Default::default(),
+            block_number: block_num,
+            gas_limit: 0,
+            gas_used: 0,
+            timestamp: 0,
+            native_chain_slot: native_slot,
+            version: Default::default(),
         }
     }
 
@@ -1342,7 +1353,7 @@ pub mod tests {
         let mut tx_hashes = vec![];
 
         for block_num in 0..5 {
-            let transaction = create_dummy_transaction();
+            let transaction = create_dummy_evm_transaction();
             let receipt = TransactionReceipt {
                 transaction: TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller {
                     unsigned_tx: transaction.clone(),
@@ -1418,21 +1429,7 @@ pub mod tests {
         let blockstore = Blockstore::open(&blockstore_path).unwrap();
 
         for block_num in 0..5 {
-            let evm_block = BlockHeader {
-                parent_hash: Default::default(),
-                state_root: Default::default(),
-                native_chain_hash: Default::default(),
-                transactions: vec![],
-                transactions_root: Default::default(),
-                receipts_root: Default::default(),
-                logs_bloom: Default::default(),
-                block_number: block_num,
-                gas_limit: 0,
-                gas_used: 0,
-                timestamp: 0,
-                native_chain_slot: block_num,
-                version: Default::default(),
-            };
+            let evm_block = create_dummy_evm_block(block_num, block_num);
             let proto_block = evm_block.clone().into();
             blockstore
                 .evm_blocks_cf
@@ -1468,7 +1465,7 @@ pub mod tests {
         let blockstore = Blockstore::open(&blockstore_path).unwrap();
 
         for block_num in 0..2 {
-            let transaction = create_dummy_transaction();
+            let transaction = create_dummy_evm_transaction();
             let receipt = TransactionReceipt {
                 transaction: TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller {
                     unsigned_tx: transaction.clone(),
@@ -1551,22 +1548,7 @@ pub mod tests {
         let blockstore_path = get_tmp_ledger_path!();
         let blockstore = Blockstore::open(&blockstore_path).unwrap();
 
-        let evm_block = BlockHeader {
-            parent_hash: Default::default(),
-            state_root: Default::default(),
-            native_chain_hash: Default::default(),
-            transactions: vec![],
-            transactions_root: Default::default(),
-            receipts_root: Default::default(),
-            logs_bloom: Default::default(),
-            block_number: 1,
-            gas_limit: 0,
-            gas_used: 0,
-            timestamp: 0,
-            native_chain_slot: 5,
-            version: Default::default(),
-        };
-        blockstore.write_evm_block_header(&evm_block).unwrap();
+        blockstore.write_evm_block_header(&create_dummy_evm_block(1, 5)).unwrap();
 
         // check that tha data we have starts from slot 5
         test_all_empty_or_min(&blockstore, 5);
@@ -1574,6 +1556,27 @@ pub mod tests {
         blockstore.purge_and_compact_slots(0, 4);
         // check that tha data we have still starts from slot 5
         test_all_empty_or_min(&blockstore, 5);
+
+        drop(blockstore);
+        Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
+    }
+
+    #[test]
+    fn test_purge_evm_blocks_with_shift_between_slot_and_blocknum() {
+        let blockstore_path = get_tmp_ledger_path!();
+        let blockstore = Blockstore::open(&blockstore_path).unwrap();
+
+        blockstore.write_evm_block_header(&create_dummy_evm_block(1, 1)).unwrap();
+        blockstore.write_evm_block_header(&create_dummy_evm_block(2, 2)).unwrap();
+        blockstore.write_evm_block_header(&create_dummy_evm_block(3, 100)).unwrap();
+        blockstore.write_evm_block_header(&create_dummy_evm_block(4, 101)).unwrap();
+
+        blockstore.purge_and_compact_slots(0, 99);
+        { // check that blocks 1, 2 are deleted and blocks 3, 4 are still in blockstore
+            let mut evm_blocks_iterator = blockstore.evm_blocks_iterator(0).unwrap();
+            assert_eq!(evm_blocks_iterator.next().unwrap().1.block_number, 3);
+            assert_eq!(evm_blocks_iterator.next().unwrap().1.block_number, 4);
+        }
 
         drop(blockstore);
         Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");

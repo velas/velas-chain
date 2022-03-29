@@ -126,47 +126,47 @@ pub enum IteratorMode<Index> {
 pub mod columns {
     #[derive(Debug)]
     /// The slot metadata column
-    pub struct SlotMeta;//
+    pub struct SlotMeta;
 
     #[derive(Debug)]
     /// The orphans column
-    pub struct Orphans;//
+    pub struct Orphans;
 
     #[derive(Debug)]
     /// The dead slots column
-    pub struct DeadSlots;//
+    pub struct DeadSlots;
 
     #[derive(Debug)]
     /// The duplicate slots column
-    pub struct DuplicateSlots;//
+    pub struct DuplicateSlots;
 
     #[derive(Debug)]
     /// The erasure meta column
-    pub struct ErasureMeta;//
+    pub struct ErasureMeta;
 
     #[derive(Debug)]
     /// The root column
-    pub struct Root;//
+    pub struct Root;
 
     #[derive(Debug)]
     /// The index column
-    pub struct Index;//
+    pub struct Index;
 
     #[derive(Debug)]
     /// The shred data column
-    pub struct ShredData;//
+    pub struct ShredData;
 
     #[derive(Debug)]
     /// The shred erasure code column
-    pub struct ShredCode;//
+    pub struct ShredCode;
 
     #[derive(Debug)]
     /// The transaction status column
-    pub struct TransactionStatus;//
+    pub struct TransactionStatus;
 
     #[derive(Debug)]
     /// The address signatures column
-    pub struct AddressSignatures;//
+    pub struct AddressSignatures;
 
     #[derive(Debug)]
     /// The transaction status index column
@@ -174,7 +174,7 @@ pub mod columns {
 
     #[derive(Debug)]
     /// The rewards column
-    pub struct Rewards;//
+    pub struct Rewards;
 
     #[derive(Debug)]
     /// The blocktime column
@@ -469,8 +469,7 @@ impl Rocks {
                 // this special column family must be excluded from LedgerCleanupService's rocksdb
                 // compactions
                 if cf_name == TransactionStatusIndex::NAME || cf_name == EvmTransactionReceipts::NAME
-                    || cf_name == EvmHeaderIndexByHash::NAME || cf_name == EvmHeaderIndexBySlot::NAME
-                    || cf_name == EvmBlockHeader::NAME {
+                    || cf_name == EvmHeaderIndexByHash::NAME || cf_name == EvmBlockHeader::NAME {
                     continue;
                 }
 
@@ -1523,7 +1522,6 @@ fn get_cf_options<C: 'static + Column + ColumnName>(
         && C::NAME != columns::TransactionStatusIndex::NAME
         && C::NAME != columns::EvmTransactionReceipts::NAME
         && C::NAME != columns::EvmHeaderIndexByHash::NAME
-        && C::NAME != columns::EvmHeaderIndexBySlot::NAME
         && C::NAME != columns::EvmBlockHeader::NAME
     {
         options.set_compaction_filter_factory(PurgedSlotFilterFactory::<C> {
