@@ -31,11 +31,9 @@ impl EvmContent {
                 ..
             } in transaction.message.instructions
             {
-                // FreeOwnership will not be included with following filter
                 if transaction.message.account_keys[program_id_index as usize] == STATIC_PROGRAM_ID
                 {
-                    let evm_instruction: EvmInstruction = bincode::deserialize(&data).unwrap();
-                    instructions.push(evm_instruction);
+                    instructions.push(bincode::deserialize(&data).unwrap());
                 }
             }
         }
@@ -60,7 +58,7 @@ impl EvmContent {
     pub fn instr_evm_free_ownership(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|i| matches!(i, EvmInstruction::FreeOwnership {  }))
+            .filter(|i| matches!(i, EvmInstruction::FreeOwnership {}))
             .count()
     }
 

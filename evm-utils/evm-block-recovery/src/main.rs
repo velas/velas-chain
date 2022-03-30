@@ -1,6 +1,7 @@
 pub mod data;
 pub mod routines;
 
+use evm::TransactionInReceipt;
 use evm_state as evm;
 use solana_storage_bigtable::LedgerStorage;
 
@@ -10,15 +11,42 @@ use crate::data::{EvmBlockRange, EvmContent};
 
 #[tokio::main]
 async fn main() {
-    dotenv::dotenv().expect("`.env` file expected");
     env_logger::init();
+    dotenv::dotenv().expect("`.env` file expected");
 
     let bigtable = LedgerStorage::new(false, None)
         .await
         .expect("Failed to connect to storage");
 
-    // println!("{:?}", routines::integrity_check(&bigtable, 15_000_042).await);
+    let evm_block_header = bigtable
+        .get_evm_confirmed_full_block(15662812)
+        .await
+        .unwrap()
+        .header;
+
+    println!("BLOCK HEADER:\n{}\n", serde_json::to_string_pretty(&evm_block_header).unwrap());
+
+    let native_block = bigtable.get_confirmed_block(evm_block_header.native_chain_slot).await.unwrap();
+    let evm_content = data::EvmContent::from_native_block(native_block);
+    
+    let e = evm_content.instructions.into_iter().nth(0).unwrap();
+    
+    match e {
+        solana_evm_loader_program::instructions::EvmInstruction::EvmTransaction { evm_tx } => {
+            let tx = evm_rpc::RPCTransaction::from_transaction(TransactionInReceipt::Signed(evm_tx)).unwrap();
+            println!("RPCTransaction:\n{}\n", serde_json::to_string_pretty(&tx).unwrap());
+        },
+        _ => panic!("Unexpected EVM Instruction"),
+    }
 }
+
+// println!("{:?}", routines::integrity_check(&bigtable, 15_000_042).await);
+
+// let native_block = bigtable.get_confirmed_block(112321).await.unwrap();
+// let evm_block = bigtable
+//     .get_evm_confirmed_full_block(1232123)
+//     .await
+//     .unwrap();
 
 async fn print_native_to_csv(ledger: &LedgerStorage) {
     let mut results = String::new();
