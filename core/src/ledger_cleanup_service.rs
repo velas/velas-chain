@@ -188,6 +188,12 @@ impl LedgerCleanupService {
 
         let (slots_to_clean, purge_first_slot, lowest_cleanup_slot, total_shreds) =
             Self::find_slots_to_clean(blockstore, root, max_ledger_shreds);
+        let mut last_purged_block_num = 0;
+        if let Ok(mut iter) = blockstore.evm_block_by_slot_reverse_iterator(lowest_cleanup_slot) {
+            if let Some(item) = iter.next() {
+                last_purged_block_num = item.1;
+            }
+        }
 
         if slots_to_clean {
             let purge_complete = Arc::new(AtomicBool::new(false));
@@ -225,6 +231,7 @@ impl LedgerCleanupService {
                     // transaction_status and address_signatures CFs. These are fine because they
                     // don't require strong consistent view for their operation.
                     blockstore.set_max_expired_slot(lowest_cleanup_slot);
+                    blockstore.set_max_expired_block_num(last_purged_block_num);
 
                     purge_time.stop();
                     info!("{}", purge_time);

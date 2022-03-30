@@ -1,5 +1,6 @@
 use super::*;
 use std::time::Instant;
+use evm_state::BlockNum;
 
 #[derive(Default)]
 pub struct PurgeStats {
@@ -43,6 +44,11 @@ impl Blockstore {
         // with Slot::default() for initial compaction filter behavior consistency
         let to_slot = to_slot.checked_add(1).unwrap();
         self.db.set_oldest_slot(to_slot);
+    }
+
+    pub fn set_max_expired_block_num(&self, last_purged_block_num: BlockNum) {
+        let oldest_block_num = last_purged_block_num.checked_add(1).unwrap();
+        self.db.set_oldest_slot(oldest_block_num);
     }
 
     pub fn purge_and_compact_slots(&self, from_slot: Slot, to_slot: Slot) {
