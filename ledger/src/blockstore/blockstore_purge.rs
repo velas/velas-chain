@@ -1637,4 +1637,39 @@ pub mod tests {
         drop(blockstore);
         Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
     }
+
+    #[test]
+    fn test_evm_blocks_compaction() {
+        let blockstore_path = get_tmp_ledger_path!();
+        let blockstore = Blockstore::open(&blockstore_path).unwrap();
+
+        blockstore
+            .write_evm_block_header(&create_dummy_evm_block(1, 1))
+            .unwrap();
+        blockstore
+            .write_evm_block_header(&create_dummy_evm_block(2, 2))
+            .unwrap();
+        blockstore
+            .write_evm_block_header(&create_dummy_evm_block(3, 100))
+            .unwrap();
+        blockstore
+            .write_evm_block_header(&create_dummy_evm_block(4, 101))
+            .unwrap();
+
+        // simulate purge up to slot 99 but leave data in storage
+        blockstore.set_max_expired_slot(99);
+        blockstore.set_max_expired_block_num(2);
+
+        // simulate periodic compaction for evm blocks
+        blockstore.evm_blocks_cf.compact_range(u64::MIN, u64::MAX).unwrap();
+        {
+            // check that only "purged" blocks were deleted by compaction
+            let mut evm_blocks_iterator = blockstore.evm_blocks_iterator(0).unwrap();
+            assert_eq!(evm_blocks_iterator.next().unwrap().1.block_number, 3);
+            assert_eq!(evm_blocks_iterator.next().unwrap().1.block_number, 4);
+        }
+
+        drop(blockstore);
+        Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
+    }
 }
