@@ -7267,7 +7267,7 @@ pub mod tests {
                 blockstore.set_max_expired_slot(lowest_cleanup_slot);
                 // force compaction filters to run across whole key range.
                 blockstore
-                    .compact_storage(Slot::min_value(), Slot::max_value())
+                    .compact_storage(Slot::min_value(), Slot::max_value(), None)
                     .unwrap();
             }
 

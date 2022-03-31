@@ -1,6 +1,6 @@
 use super::*;
-use std::time::Instant;
 use evm_state::BlockNum;
+use std::time::Instant;
 
 #[derive(Default)]
 pub struct PurgeStats {
@@ -52,8 +52,22 @@ impl Blockstore {
     }
 
     pub fn purge_and_compact_slots(&self, from_slot: Slot, to_slot: Slot) {
+        let mut evm_block_compaction_range = None;
+        if let (Ok(mut iter_first), Ok(mut iter_last)) = (
+            self.evm_block_by_slot_iterator(from_slot),
+            self.evm_block_by_slot_reverse_iterator(to_slot),
+        ) {
+            if let (Some(item1), Some(item2)) = (iter_first.next(), iter_last.next()) {
+                if item1.0 <= to_slot && item2.0 >= from_slot {
+                    // ensure that evm blocks we found are in range
+                    // add 1 because range for compaction is exclusive
+                    let to = item2.1.checked_add(1).unwrap_or(BlockNum::MAX);
+                    evm_block_compaction_range = Some((item1.1, to));
+                }
+            }
+        }
         self.purge_slots(from_slot, to_slot, PurgeType::Exact);
-        if let Err(e) = self.compact_storage(from_slot, to_slot) {
+        if let Err(e) = self.compact_storage(from_slot, to_slot, evm_block_compaction_range) {
             // This error is not fatal and indicates an internal error?
             error!(
                 "Error: {:?}; Couldn't compact storage from {:?} to {:?}",
@@ -261,7 +275,12 @@ impl Blockstore {
         Ok(columns_purged)
     }
 
-    pub fn compact_storage(&self, from_slot: Slot, to_slot: Slot) -> Result<bool> {
+    pub fn compact_storage(
+        &self,
+        from_slot: Slot,
+        to_slot: Slot,
+        evm_block_range: Option<(BlockNum, BlockNum)>,
+    ) -> Result<bool> {
         if self.no_compaction {
             info!("compact_storage: compaction disabled");
             return Ok(false);
@@ -332,7 +351,24 @@ impl Blockstore {
             && self
                 .block_height_cf
                 .compact_range(from_slot, to_slot)
-                .unwrap_or(false);
+                .unwrap_or(false)
+            && self
+                .evm_blocks_by_slot_cf
+                .compact_range(from_slot, to_slot)
+                .unwrap_or(false)
+            && self
+                .evm_blocks_by_hash_cf
+                .compact_range(0, 2)
+                .unwrap_or(false)
+            && self
+                .evm_transactions_cf
+                .compact_range(0, 2)
+                .unwrap_or(false)
+            && match evm_block_range {
+                Some((from, to)) => self.evm_blocks_cf.compact_range(from, to),
+                None => self.evm_blocks_cf.compact_range(u64::MIN, u64::MAX),
+            }
+            .unwrap_or(false);
         compact_timer.stop();
         if !result {
             info!("compact_storage incomplete");
@@ -464,7 +500,10 @@ pub mod tests {
         get_tmp_ledger_path,
     };
     use bincode::serialize;
-    use evm_state::{BlockHeader, BlockNum, ExitReason, ExitSucceed, TransactionAction, TransactionInReceipt, TransactionReceipt, UnsignedTransaction, UnsignedTransactionWithCaller};
+    use evm_state::{
+        BlockHeader, BlockNum, ExitReason, ExitSucceed, TransactionAction, TransactionInReceipt,
+        TransactionReceipt, UnsignedTransaction, UnsignedTransactionWithCaller,
+    };
     use solana_sdk::{
         hash::{hash, Hash},
         message::Message,
@@ -1554,7 +1593,9 @@ pub mod tests {
         let blockstore_path = get_tmp_ledger_path!();
         let blockstore = Blockstore::open(&blockstore_path).unwrap();
 
-        blockstore.write_evm_block_header(&create_dummy_evm_block(1, 5)).unwrap();
+        blockstore
+            .write_evm_block_header(&create_dummy_evm_block(1, 5))
+            .unwrap();
 
         // check that tha data we have starts from slot 5
         test_all_empty_or_min(&blockstore, 5);
@@ -1572,13 +1613,22 @@ pub mod tests {
         let blockstore_path = get_tmp_ledger_path!();
         let blockstore = Blockstore::open(&blockstore_path).unwrap();
 
-        blockstore.write_evm_block_header(&create_dummy_evm_block(1, 1)).unwrap();
-        blockstore.write_evm_block_header(&create_dummy_evm_block(2, 2)).unwrap();
-        blockstore.write_evm_block_header(&create_dummy_evm_block(3, 100)).unwrap();
-        blockstore.write_evm_block_header(&create_dummy_evm_block(4, 101)).unwrap();
+        blockstore
+            .write_evm_block_header(&create_dummy_evm_block(1, 1))
+            .unwrap();
+        blockstore
+            .write_evm_block_header(&create_dummy_evm_block(2, 2))
+            .unwrap();
+        blockstore
+            .write_evm_block_header(&create_dummy_evm_block(3, 100))
+            .unwrap();
+        blockstore
+            .write_evm_block_header(&create_dummy_evm_block(4, 101))
+            .unwrap();
 
         blockstore.purge_and_compact_slots(0, 99);
-        { // check that blocks 1, 2 are deleted and blocks 3, 4 are still in blockstore
+        {
+            // check that blocks 1, 2 are deleted and blocks 3, 4 are still in blockstore
             let mut evm_blocks_iterator = blockstore.evm_blocks_iterator(0).unwrap();
             assert_eq!(evm_blocks_iterator.next().unwrap().1.block_number, 3);
             assert_eq!(evm_blocks_iterator.next().unwrap().1.block_number, 4);
