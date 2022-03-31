@@ -48,7 +48,7 @@ impl Blockstore {
 
     pub fn set_max_expired_block_num(&self, last_purged_block_num: BlockNum) {
         let oldest_block_num = last_purged_block_num.checked_add(1).unwrap();
-        self.db.set_oldest_slot(oldest_block_num);
+        self.db.set_oldest_block_num(oldest_block_num);
     }
 
     pub fn purge_and_compact_slots(&self, from_slot: Slot, to_slot: Slot) {
