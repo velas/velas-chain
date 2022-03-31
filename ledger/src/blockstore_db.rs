@@ -203,7 +203,7 @@ pub mod columns {
     pub struct EvmTransactionReceipts;
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct EvmTransactionReceiptsIndex {
     pub index: u64,
     pub hash: H256,
@@ -485,7 +485,7 @@ impl Rocks {
                 // this special column family must be excluded from LedgerCleanupService's rocksdb
                 // compactions
                 if cf_name == TransactionStatusIndex::NAME || cf_name == EvmTransactionReceipts::NAME
-                    || cf_name == EvmHeaderIndexByHash::NAME || cf_name == EvmBlockHeader::NAME {
+                    || cf_name == EvmHeaderIndexByHash::NAME {
                     continue;
                 }
 
@@ -1051,6 +1051,10 @@ impl Column for columns::EvmHeaderIndexByHash {
     fn as_index(index: u64) -> Self::Index {
         (index, H256::default())
     }
+
+    fn slot(_index: Self::Index) -> Slot {
+        unimplemented!()
+    }
 }
 
 impl ColumnName for columns::EvmHeaderIndexByHash {
@@ -1136,6 +1140,10 @@ impl Column for columns::EvmTransactionReceipts {
             block_num: 0,
             slot: None,
         }
+    }
+
+    fn slot(_index: Self::Index) -> Slot {
+        unimplemented!()
     }
 }
 
