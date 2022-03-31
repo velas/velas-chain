@@ -749,9 +749,39 @@ dependencies = [
  "atty",
  "bitflags",
  "strsim 0.8.0",
- "textwrap",
+ "textwrap 0.11.0",
  "unicode-width",
  "vec_map",
+]
+
+[[package]]
+name = "clap"
+version = "3.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8c93436c21e4698bacadf42917db28b23017027a4deccb35dbe47a7e7840123"
+dependencies = [
+ "atty",
+ "bitflags",
+ "clap_derive",
+ "indexmap",
+ "lazy_static 1.4.0",
+ "os_str_bytes",
+ "strsim 0.10.0",
+ "termcolor",
+ "textwrap 0.15.0",
+]
+
+[[package]]
+name = "clap_derive"
+version = "3.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da95d038ede1a964ce99f49cbe27a7fb538d1da595e4b4f70b8c8f338d17bf16"
+dependencies = [
+ "heck 0.4.0",
+ "proc-macro-error",
+ "proc-macro2 1.0.28",
+ "quote 1.0.9",
+ "syn 1.0.74",
 ]
 
 [[package]]
@@ -891,7 +921,7 @@ checksum = "1604dafd25fba2fe2d5895a9da139f8dc9b319a5fe5354ca137cbbce4e178d10"
 dependencies = [
  "atty",
  "cast",
- "clap",
+ "clap 2.33.3",
  "criterion-plot",
  "csv",
  "itertools 0.10.1",
@@ -1669,6 +1699,7 @@ name = "evm-block-recovery"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "clap 3.1.6",
  "dotenv",
  "env_logger 0.9.0",
  "evm-rpc",
@@ -2306,6 +2337,12 @@ checksum = "6d621efb26863f0e9924c6ac577e8275e5e6b77455db64ffa6c65c904e9e132c"
 dependencies = [
  "unicode-segmentation",
 ]
+
+[[package]]
+name = "heck"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2540771e65fc8cb83cd6e8a237f70c319bd5c29f78ed1084ba5d50eeac86f7f9"
 
 [[package]]
 name = "hermit-abi"
@@ -3513,6 +3550,15 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "os_str_bytes"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e22443d1643a904602595ba1cd8f7d896afe56d26712531c5ff73a15b2fbf64"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -5113,7 +5159,7 @@ dependencies = [
 name = "solana-accounts-bench"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "crossbeam-channel 0.4.4",
  "log 0.4.14",
  "rand 0.7.3",
@@ -5129,7 +5175,7 @@ dependencies = [
 name = "solana-accounts-cluster-bench"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "log 0.4.14",
  "rand 0.7.3",
  "rayon",
@@ -5153,7 +5199,7 @@ dependencies = [
 name = "solana-banking-bench"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "crossbeam-channel 0.4.4",
  "log 0.4.14",
  "rand 0.7.3",
@@ -5222,7 +5268,7 @@ dependencies = [
 name = "solana-bench-exchange"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "itertools 0.9.0",
  "log 0.4.14",
  "num-derive",
@@ -5250,7 +5296,7 @@ dependencies = [
 name = "solana-bench-streamer"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "solana-clap-utils",
  "solana-logger 1.6.14",
  "solana-net-utils",
@@ -5263,7 +5309,7 @@ name = "solana-bench-tps"
 version = "1.6.14"
 dependencies = [
  "bincode",
- "clap",
+ "clap 2.33.3",
  "log 0.4.14",
  "rayon",
  "serde_json",
@@ -5289,7 +5335,7 @@ name = "solana-bench-tps-evm"
 version = "1.0.0"
 dependencies = [
  "bincode",
- "clap",
+ "clap 2.33.3",
  "log 0.4.14",
  "rand_isaac",
  "rayon",
@@ -5356,7 +5402,7 @@ version = "1.6.14"
 dependencies = [
  "bzip2",
  "cargo_metadata",
- "clap",
+ "clap 2.33.3",
  "solana-download-utils",
  "solana-sdk",
  "tar",
@@ -5367,7 +5413,7 @@ name = "solana-cargo-test-bpf"
 version = "1.6.14"
 dependencies = [
  "cargo_metadata",
- "clap",
+ "clap 2.33.3",
 ]
 
 [[package]]
@@ -5375,7 +5421,7 @@ name = "solana-clap-utils"
 version = "1.6.14"
 dependencies = [
  "chrono",
- "clap",
+ "clap 2.33.3",
  "rpassword",
  "solana-remote-wallet",
  "solana-sdk",
@@ -5395,7 +5441,7 @@ dependencies = [
  "bincode",
  "bs58",
  "chrono",
- "clap",
+ "clap 2.33.3",
  "console 0.11.3",
  "criterion-stats",
  "ctrlc",
@@ -5481,7 +5527,7 @@ dependencies = [
  "base64 0.13.0",
  "bincode",
  "bs58",
- "clap",
+ "clap 2.33.3",
  "derivative",
  "evm-rpc",
  "evm-state",
@@ -5649,7 +5695,7 @@ name = "solana-dos"
 version = "1.6.14"
 dependencies = [
  "bincode",
- "clap",
+ "clap 2.33.3",
  "log 0.4.14",
  "rand 0.7.3",
  "rayon",
@@ -5738,7 +5784,7 @@ version = "1.6.14"
 dependencies = [
  "bincode",
  "byteorder",
- "clap",
+ "clap 2.33.3",
  "log 0.4.14",
  "serde",
  "serde_derive",
@@ -5820,7 +5866,7 @@ version = "1.6.14"
 dependencies = [
  "base64 0.12.3",
  "chrono",
- "clap",
+ "clap 2.33.3",
  "evm-rpc",
  "evm-state",
  "log 0.4.14",
@@ -5849,7 +5895,7 @@ name = "solana-keygen"
 version = "1.6.14"
 dependencies = [
  "bs58",
- "clap",
+ "clap 2.33.3",
  "dirs-next",
  "num_cpus",
  "solana-clap-utils",
@@ -5926,7 +5972,7 @@ dependencies = [
  "assert_cmd",
  "bs58",
  "bytecount",
- "clap",
+ "clap 2.33.3",
  "csv",
  "evm-rpc",
  "evm-state",
@@ -5996,7 +6042,7 @@ name = "solana-log-analyzer"
 version = "1.6.14"
 dependencies = [
  "byte-unit",
- "clap",
+ "clap 2.33.3",
  "serde",
  "serde_json",
  "solana-clap-utils",
@@ -6039,7 +6085,7 @@ dependencies = [
 name = "solana-merkle-root-bench"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "log 0.4.14",
  "solana-logger 1.6.14",
  "solana-measure",
@@ -6076,7 +6122,7 @@ dependencies = [
 name = "solana-net-shaper"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "rand 0.7.3",
  "serde",
  "serde_json",
@@ -6089,7 +6135,7 @@ name = "solana-net-utils"
 version = "1.6.14"
 dependencies = [
  "bincode",
- "clap",
+ "clap 2.33.3",
  "log 0.4.14",
  "nix 0.19.1",
  "rand 0.7.3",
@@ -6159,7 +6205,7 @@ dependencies = [
 name = "solana-poh-bench"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "log 0.4.14",
  "rand 0.7.3",
  "rayon",
@@ -6272,7 +6318,7 @@ name = "solana-ramp-tps"
 version = "1.6.14"
 dependencies = [
  "bzip2",
- "clap",
+ "clap 2.33.3",
  "log 0.4.14",
  "reqwest",
  "serde",
@@ -6488,7 +6534,7 @@ dependencies = [
 name = "solana-stake-accounts"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "solana-clap-utils",
  "solana-cli-config",
  "solana-client",
@@ -6502,7 +6548,7 @@ dependencies = [
 name = "solana-stake-monitor"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "console 0.11.3",
  "log 0.4.14",
  "serde",
@@ -6526,7 +6572,7 @@ dependencies = [
 name = "solana-stake-o-matic"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "log 0.4.14",
  "reqwest",
  "semver 0.9.0",
@@ -6616,7 +6662,7 @@ dependencies = [
 name = "solana-store-tool"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "log 0.4.14",
  "solana-logger 1.6.14",
  "solana-measure",
@@ -6644,7 +6690,7 @@ dependencies = [
 name = "solana-sys-tuner"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "libc",
  "log 0.4.14",
  "nix 0.19.1",
@@ -6662,7 +6708,7 @@ version = "1.6.14"
 dependencies = [
  "bincode",
  "chrono",
- "clap",
+ "clap 2.33.3",
  "console 0.11.3",
  "csv",
  "ctrlc",
@@ -6777,7 +6823,7 @@ dependencies = [
 name = "solana-watchtower"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "humantime",
  "log 0.4.14",
  "solana-clap-utils",
@@ -6936,7 +6982,7 @@ version = "0.3.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69b041cdcb67226aca307e6e7be44c8806423d83e018bd662360a93dabce4d71"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "lazy_static 1.4.0",
  "paw",
  "structopt-derive",
@@ -6948,7 +6994,7 @@ version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7813934aecf5f51a54775e00068c237de98489463968231a51746bbbc03f9c10"
 dependencies = [
- "heck",
+ "heck 0.3.3",
  "proc-macro-error",
  "proc-macro2 1.0.28",
  "quote 1.0.9",
@@ -7134,6 +7180,12 @@ checksum = "d326610f408c7a4eb6f51c37c330e496b08506c9457c9d34287ecc38809fb060"
 dependencies = [
  "unicode-width",
 ]
+
+[[package]]
+name = "textwrap"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1141d4d61095b28419e22cb0bbf02755f5e54e0526f97f1e3d1d160e60885fb"
 
 [[package]]
 name = "thiserror"
@@ -8015,7 +8067,7 @@ dependencies = [
 name = "velas-gossip"
 version = "1.6.14"
 dependencies = [
- "clap",
+ "clap 2.33.3",
  "solana-clap-utils",
  "solana-core",
  "solana-logger 1.6.14",
@@ -8032,7 +8084,7 @@ dependencies = [
  "bincode",
  "bzip2",
  "chrono",
- "clap",
+ "clap 2.33.3",
  "console 0.11.3",
  "ctrlc",
  "dirs-next",
@@ -8075,7 +8127,7 @@ dependencies = [
  "base64 0.12.3",
  "bincode",
  "chrono",
- "clap",
+ "clap 2.33.3",
  "console 0.11.3",
  "core_affinity",
  "evm-state",
