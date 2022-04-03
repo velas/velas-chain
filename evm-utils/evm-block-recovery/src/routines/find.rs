@@ -3,7 +3,7 @@ use solana_storage_bigtable::LedgerStorage;
 
 use crate::data::{EvmBlockRange, EvmContent};
 
-pub async fn command(ledger: &LedgerStorage, start_block: BlockNum, limit: usize) {
+pub async fn find(ledger: &LedgerStorage, start_block: BlockNum, limit: usize) {
     let blocks = ledger
         .get_evm_confirmed_blocks(start_block, limit)
         .await

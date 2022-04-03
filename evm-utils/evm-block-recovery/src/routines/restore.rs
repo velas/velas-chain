@@ -3,7 +3,7 @@ use solana_storage_bigtable::LedgerStorage;
 
 use crate::data::EvmContent;
 
-pub async fn command(ledger: &LedgerStorage, _block: BlockNum, dry_run: bool) {
+pub async fn restore(ledger: &LedgerStorage, _block: BlockNum, dry_run: bool) {
     let evm_block_header = ledger
         .get_evm_confirmed_full_block(15662812)
         .await

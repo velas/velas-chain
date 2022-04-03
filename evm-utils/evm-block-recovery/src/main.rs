@@ -32,9 +32,14 @@ enum Commands {
         #[clap(short, long)]
         dry_run: bool,
     },
-
     /// Checks consistency of EVM block and related native block
     Check {
+        /// EVM Block number
+        #[clap(short = 'b', long = "evm-block")]
+        block: u64,
+    },
+    /// Temporary command for testing purposes
+    Temp {
         /// EVM Block number
         #[clap(short = 'b', long = "evm-block")]
         block: u64,
@@ -52,10 +57,9 @@ async fn main() {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Find { start, limit } => routines::find::command(&ledger, start, limit).await,
-        Commands::Restore { block, dry_run } => {
-            routines::restore::command(&ledger, block, dry_run).await
-        }
+        Commands::Find { start, limit } => routines::find(&ledger, start, limit).await,
+        Commands::Restore { block, dry_run } => routines::restore(&ledger, block, dry_run).await,
         Commands::Check { block } => todo!(),
+        Commands::Temp { block } => routines::temp(&ledger, block).await,
     }
 }
