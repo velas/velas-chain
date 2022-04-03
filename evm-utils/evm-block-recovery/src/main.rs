@@ -22,23 +22,24 @@ enum Commands {
         start: u64,
         /// Limit of blocks to search
         #[clap(long)]
-        limit: u64
+        limit: usize,
     },
     /// Restores metadata of specified EVM Block
     Restore {
         /// EVM Block number
         #[clap(short = 'b', long = "evm-block")]
-        block: u64
+        block: u64,
+        #[clap(short, long)]
+        dry_run: bool,
     },
 
     /// Checks consistency of EVM block and related native block
     Check {
         /// EVM Block number
         #[clap(short = 'b', long = "evm-block")]
-        block: u64
-    }
+        block: u64,
+    },
 }
-
 
 #[tokio::main]
 async fn main() {
@@ -51,8 +52,10 @@ async fn main() {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Find { start, limit } => todo!(),
-        Commands::Restore { block } => todo!(),
+        Commands::Find { start, limit } => routines::find::command(&ledger, start, limit).await,
+        Commands::Restore { block, dry_run } => {
+            routines::restore::command(&ledger, block, dry_run).await
+        }
         Commands::Check { block } => todo!(),
     }
 }

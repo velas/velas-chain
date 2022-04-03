@@ -1,15 +1,18 @@
 use evm_state::BlockNum;
 use solana_storage_bigtable::LedgerStorage;
 
-use crate::data::{EvmContent, EvmBlockRange};
+use crate::data::{EvmBlockRange, EvmContent};
 
-pub async fn recovery(ledger: &LedgerStorage) {
-    let blocks = ledger.get_evm_confirmed_blocks(15662810, 30).await.unwrap();
+pub async fn command(ledger: &LedgerStorage, start_block: BlockNum, limit: usize) {
+    let blocks = ledger
+        .get_evm_confirmed_blocks(start_block, limit)
+        .await
+        .unwrap();
 
     let missing_blocks = find_evm_uncommitted_blocks(blocks);
 
     if missing_blocks.is_empty() {
-        log::info!("Nothing to recover, exiting...");
+        log::info!("Nothing to recover...");
         return;
     }
 
@@ -78,6 +81,4 @@ mod tests {
             ]
         );
     }
-
-    // TODO: test `extract_evm_transactions` function
 }
