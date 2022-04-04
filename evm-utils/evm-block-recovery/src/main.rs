@@ -1,5 +1,6 @@
 pub mod data;
 pub mod routines;
+pub mod extensions;
 
 use clap::{Parser, Subcommand};
 use solana_storage_bigtable::LedgerStorage;
@@ -47,7 +48,7 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     env_logger::init();
     dotenv::dotenv().expect("`.env` file expected");
 
@@ -57,9 +58,17 @@ async fn main() {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Find { start, limit } => routines::find(&ledger, start, limit).await,
-        Commands::Restore { block, dry_run } => routines::restore(&ledger, block, dry_run).await,
+        Commands::Find { start, limit } => {
+            routines::find(&ledger, start, limit).await
+        },
+        Commands::Restore { block, dry_run } => { 
+            routines::restore(&ledger, block, dry_run).await?;
+        },
         Commands::Check { block } => todo!(),
-        Commands::Temp { block } => routines::temp(&ledger, block).await,
+        Commands::Temp { block } => {
+            routines::temp(&ledger, block).await?;
+        },
     }
+
+    Ok(())
 }

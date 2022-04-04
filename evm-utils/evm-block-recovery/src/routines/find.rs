@@ -16,26 +16,26 @@ pub async fn find(ledger: &LedgerStorage, start_block: BlockNum, limit: usize) {
         return;
     }
 
-    let recovery_starting_slot = ledger
-        .get_evm_confirmed_full_block(missing_blocks[0].first - 1)
-        .await
-        .unwrap()
-        .header
-        .native_chain_slot;
+    // let recovery_starting_slot = ledger
+    //     .get_evm_confirmed_full_block(missing_blocks[0].first - 1)
+    //     .await
+    //     .unwrap()
+    //     .header
+    //     .native_chain_slot;
 
-    let mut recovered_blocks: Vec<u64> = Vec::new();
+    // let mut recovered_blocks: Vec<u64> = Vec::new();
 
-    let mut recovery_slot = recovery_starting_slot;
+    // let mut recovery_slot = recovery_starting_slot;
 
-    while recovered_blocks.len() < missing_blocks.len() {
-        let native_block = ledger.get_confirmed_block(recovery_slot).await.unwrap();
+    // while recovered_blocks.len() < missing_blocks.len() {
+    //     let native_block = ledger.get_confirmed_block(recovery_slot).await.unwrap();
 
-        let evm_txs = EvmContent::from_native_block(native_block);
+    //     let evm_txs = EvmContent::from_native_block(native_block);
 
-        recovery_slot += 1;
-    }
+    //     recovery_slot += 1;
+    // }
 
-    log::info!("Recovered blocks: {:?}", recovered_blocks);
+    // log::info!("Recovered blocks: {:?}", recovered_blocks);
 }
 
 fn find_evm_uncommitted_blocks(blocks: Vec<BlockNum>) -> Vec<EvmBlockRange> {
