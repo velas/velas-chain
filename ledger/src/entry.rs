@@ -498,6 +498,7 @@ impl EntrySlice for [Entry] {
     }
 
     fn verify_cpu(&self, start_hash: &Hash) -> EntryVerificationState {
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "aarch64_apple_darwin")))]
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         let (has_avx2, has_avx512) = (
             is_x86_feature_detected!("avx2"),
