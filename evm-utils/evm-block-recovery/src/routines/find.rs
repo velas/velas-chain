@@ -1,41 +1,35 @@
+use anyhow::*;
 use evm_state::BlockNum;
 use solana_storage_bigtable::LedgerStorage;
 
-use crate::data::{EvmBlockRange, EvmContent};
+#[derive(Debug, PartialEq, Eq)]
+pub struct EvmBlockRange {
+    pub first: BlockNum,
+    pub last: BlockNum,
+}
 
-pub async fn find(ledger: &LedgerStorage, start_block: BlockNum, limit: usize) {
+impl EvmBlockRange {
+    pub fn new(first: BlockNum, last: BlockNum) -> Self {
+        Self { first, last }
+    }
+}
+
+pub async fn find(ledger: &LedgerStorage, start_block: BlockNum, limit: usize) -> Result<()> {
     let blocks = ledger
         .get_evm_confirmed_blocks(start_block, limit)
         .await
-        .unwrap();
+        .context(format!(
+            "Unable to get EVM confirmed block's IDs starting with block {} limiteb by {}",
+            start_block, limit
+        ))?;
 
     let missing_blocks = find_evm_uncommitted_blocks(blocks);
 
     if missing_blocks.is_empty() {
-        log::info!("Nothing to recover...");
-        return;
+        log::info!("Missing blocks starting from block {start_block} with a limit of {limit} are not found");
     }
 
-    // let recovery_starting_slot = ledger
-    //     .get_evm_confirmed_full_block(missing_blocks[0].first - 1)
-    //     .await
-    //     .unwrap()
-    //     .header
-    //     .native_chain_slot;
-
-    // let mut recovered_blocks: Vec<u64> = Vec::new();
-
-    // let mut recovery_slot = recovery_starting_slot;
-
-    // while recovered_blocks.len() < missing_blocks.len() {
-    //     let native_block = ledger.get_confirmed_block(recovery_slot).await.unwrap();
-
-    //     let evm_txs = EvmContent::from_native_block(native_block);
-
-    //     recovery_slot += 1;
-    // }
-
-    // log::info!("Recovered blocks: {:?}", recovered_blocks);
+    Ok(())
 }
 
 fn find_evm_uncommitted_blocks(blocks: Vec<BlockNum>) -> Vec<EvmBlockRange> {

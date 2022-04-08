@@ -4,15 +4,85 @@ use solana_evm_loader_program::instructions::EvmInstruction;
 use solana_sdk::{evm_loader::ID as STATIC_PROGRAM_ID, instruction::CompiledInstruction};
 use solana_transaction_status::{ConfirmedBlock, TransactionWithStatusMeta};
 
-/// Converts transactions from the native block into RPC transactions
-/// Returns `None` if the native block contains instructions other than trivial EVM transactions
+#[derive(Debug)]
+pub struct ParsedInstructions {
+    pub instructions: Vec<EvmInstruction>,
+    pub only_trivial_instructions: bool,
+}
+
+impl ParsedInstructions {
+    pub fn from_native_block(native: ConfirmedBlock) -> Self {
+        let mut instructions = vec![];
+        let mut only_trivial_instructions = true;
+
+        for TransactionWithStatusMeta { transaction, .. } in native.transactions {
+            for CompiledInstruction {
+                data,
+                program_id_index,
+                ..
+            } in transaction.message.instructions
+            {
+                if transaction.message.account_keys[program_id_index as usize] == STATIC_PROGRAM_ID
+                {
+                    let instruction: EvmInstruction = bincode::deserialize(&data).unwrap();
+                    if !matches!(instruction, EvmInstruction::EvmTransaction { .. }) {
+                        only_trivial_instructions = false;
+                    }
+                    instructions.push(instruction);
+                }
+            }
+        }
+
+        Self {
+            instructions,
+            only_trivial_instructions,
+        }
+    }
+
+    pub fn instr_evm_transaction(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter(|i| matches!(i, EvmInstruction::EvmTransaction { .. }))
+            .count()
+    }
+
+    pub fn instr_evm_swap_to_native(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter(|i| matches!(i, EvmInstruction::SwapNativeToEther { .. }))
+            .count()
+    }
+
+    pub fn instr_evm_free_ownership(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter(|i| matches!(i, EvmInstruction::FreeOwnership {}))
+            .count()
+    }
+
+    pub fn instr_evm_big_transaction(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter(|i| matches!(i, EvmInstruction::EvmBigTransaction(_)))
+            .count()
+    }
+
+    pub fn instr_evm_authorized_transaction(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter(|i| matches!(i, EvmInstruction::EvmAuthorizedTransaction { .. }))
+            .count()
+    }
+}
+
 pub trait NativeBlockExt {
-    fn parse_trivial_transactions(&self) -> Option<Vec<(RPCTransaction, Vec<String>)>>;
+    fn parse_instructions(self) -> ParsedInstructions;
 }
 
 impl NativeBlockExt for ConfirmedBlock {
-    fn parse_trivial_transactions(&self) -> Option<Vec<(RPCTransaction, Vec<String>)>> {
-        let mut rpc_txs = vec![];
+    fn parse_instructions(self) -> ParsedInstructions {
+        let mut only_trivial_instructions = true;
+        let mut instructions = vec![];
 
         for TransactionWithStatusMeta { transaction, .. } in self.transactions {
             for CompiledInstruction {
@@ -23,19 +93,18 @@ impl NativeBlockExt for ConfirmedBlock {
             {
                 if transaction.message.account_keys[program_id_index as usize] == STATIC_PROGRAM_ID
                 {
-                    let evm_instr: EvmInstruction = bincode::deserialize(&data).unwrap();
-                    match evm_instr {
-                        EvmInstruction::EvmTransaction { evm_tx } => {
-                            let rpc_transaction = RPCTransaction::from_transaction(TransactionInReceipt::Signed(evm_tx)).unwrap();
-                            rpc_txs.push((rpc_transaction, vec![]));
-                        },
-                        _ => return None
+                    let instruction: EvmInstruction = bincode::deserialize(&data).unwrap();
+                    if !matches!(instruction, EvmInstruction::EvmTransaction { .. }) {
+                        only_trivial_instructions = false;
                     }
-                    
+                    instructions.push(instruction);
                 }
             }
         }
 
-        Some(rpc_txs)
+        ParsedInstructions {
+            instructions,
+            only_trivial_instructions,
+        }
     }
 }
