@@ -76,24 +76,24 @@ impl ParsedInstructions {
 }
 
 pub trait NativeBlockExt {
-    fn parse_instructions(self) -> ParsedInstructions;
+    fn parse_instructions(&self) -> ParsedInstructions;
 }
 
 impl NativeBlockExt for ConfirmedBlock {
-    fn parse_instructions(self) -> ParsedInstructions {
+    fn parse_instructions(&self) -> ParsedInstructions {
         let mut only_trivial_instructions = true;
         let mut instructions = vec![];
 
-        for TransactionWithStatusMeta { transaction, .. } in self.transactions {
+        for TransactionWithStatusMeta { transaction, .. } in &self.transactions {
             for CompiledInstruction {
                 data,
                 program_id_index,
                 ..
-            } in transaction.message.instructions
+            } in &transaction.message.instructions
             {
-                if transaction.message.account_keys[program_id_index as usize] == STATIC_PROGRAM_ID
+                if transaction.message.account_keys[*program_id_index as usize] == STATIC_PROGRAM_ID
                 {
-                    let instruction: EvmInstruction = bincode::deserialize(&data).unwrap();
+                    let instruction: EvmInstruction = bincode::deserialize(data).unwrap();
                     if !matches!(instruction, EvmInstruction::EvmTransaction { .. }) {
                         only_trivial_instructions = false;
                     }
