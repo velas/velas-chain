@@ -1,0 +1,25 @@
+[package]
+authors = ["Maksim Vykhota <m.vykhota@protonmail.com>", "Velas"]
+name = "evm-block-recovery"
+version = "0.1.0"
+edition = "2021"
+readme = "README.MD"
+
+[dependencies]
+anyhow = "1.0.56"
+bincode = "1.3.3"
+clap = { version = "3.1.6", features = ["derive"] }
+dotenv = "0.15.0"
+env_logger = "0.9.0"
+evm-rpc = { path = "../evm-rpc" }
+evm-state = { path = "../evm-state" }
+log = "0.4.16"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.79"
+solana-client = { path = "../../client" }
+solana-evm-loader-program = { path = "../programs/evm_loader" }
+solana-sdk = { path = "../../sdk", version = "=1.6.14" }
+solana-storage-bigtable = { path = "../../storage-bigtable", version = "=1.6.14" }
+solana-transaction-status = { path = "../../transaction-status", version = "=1.6.14" }
+tokio = { version = "1", features = ["full"] }
+# ureq = "2.4.0"
