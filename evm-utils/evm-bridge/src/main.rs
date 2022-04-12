@@ -714,7 +714,7 @@ impl BasicERPC for BasicErpcProxy {
         last_hashes: Vec<H256>,
         block_header: BlockHeader,
         state_root: H256,
-    ) -> EvmResult<BlockHeader> {
+    ) -> EvmResult<Block> {
         proxy_evm_rpc!(
             meta.rpc_client,
             DebugRecoverBlockHeader,

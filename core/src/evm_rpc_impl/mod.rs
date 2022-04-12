@@ -17,7 +17,7 @@ use evm_rpc::{
     RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{
-    AccountProvider, AccountState, Address, BlockHeader, ExecutionResult, Gas, LogFilter,
+    AccountProvider, AccountState, Address, Block, BlockHeader, Committed, ExecutionResult, Gas, LogFilter,
     Transaction, TransactionAction, TransactionInReceipt, TransactionReceipt, TransactionSignature,
     UnsignedTransactionWithCaller, H160, H256, U256,
 };
@@ -583,7 +583,7 @@ impl BasicERPC for BasicErpcImpl {
         last_hashes: Vec<H256>,
         block_header: BlockHeader,
         state_root: H256,
-    ) -> Result<BlockHeader, Error> {
+    ) -> Result<Block, Error> {
         let mut evm_state = meta
             .evm_state_archive()
             .ok_or(Error::ArchiveNotSupported)?
@@ -619,14 +619,16 @@ impl BasicERPC for BasicErpcImpl {
                 .map_err(|_| Error::InvalidParams {})?;
             simulate_transaction(&mut executor, tx.clone(), meta_keys)?;
         }
-        Ok(executor
+
+        let Committed { block: header, committed_transactions: transactions } = executor
             .evm_backend
             .commit_block(
                 block_header.native_chain_slot,
                 block_header.native_chain_hash,
             )
-            .state
-            .block)
+            .state;
+
+        Ok(Block { header, transactions })
     }
 
     fn estimate_gas(
