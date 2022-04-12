@@ -701,7 +701,7 @@ impl LedgerStorage {
         let mut bigtable = self.connection.client();
         let block_cell_data = bigtable
             .get_protobuf_or_bincode_cell::<evm_state::BlockHeader, generated_evm::EvmBlockHeader>(
-                "evm-block",
+                "evm-blocks",
                 slot_to_key(block_num),
             )
             .await

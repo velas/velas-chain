@@ -812,7 +812,7 @@ fn simulate_transaction(
     let tx_chain_id = executor.chain_id();
     let tx_hash = tx.hash.map(|a| a.0).unwrap_or_else(H256::random);
 
-    let evm_state_balance = u64::MAX;
+    let evm_state_balance = u64::MAX - 1;
 
     let (user_accounts, action) = if let Some(address) = tx.to {
         let address = address.0;
