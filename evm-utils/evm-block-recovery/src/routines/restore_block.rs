@@ -14,7 +14,7 @@ use solana_storage_bigtable::LedgerStorage;
 
 use crate::extensions::{NativeBlockExt, ParsedInstructions};
 
-pub async fn restore(
+pub async fn restore_block(
     ledger: &LedgerStorage,
     rpc_address: String,
     restoring_block: BlockNum,

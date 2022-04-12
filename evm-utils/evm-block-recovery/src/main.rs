@@ -4,7 +4,7 @@ pub mod extensions;
 pub mod routines;
 
 use clap::{Parser, Subcommand};
-use extensions::NativeBlockExt;
+use routines::find::BlockRange;
 use solana_storage_bigtable::LedgerStorage;
 
 #[derive(Parser)]
@@ -29,8 +29,8 @@ enum Commands {
         limit: usize,
     },
 
-    /// Restores metadata of specified EVM Block
-    Restore {
+    /// Restores EVM Block
+    RestoreBlock {
         /// RPC address of node used for requesting restored EVM header
         #[clap(long)]
         rpc_address: String,
@@ -44,12 +44,27 @@ enum Commands {
         dry_run: bool,
     },
 
+    /// Restores EVM subchain
+    RestoreChain {
+        /// First missing EVM Block
+        #[clap(short = 'f', long = "first-block")]
+        first: u64,
+
+        /// Last missing EVM Block
+        #[clap(short = 'l', long = "last-block")]
+        last: u64,
+    },
+
     /// Checks contents of Native Block
     CheckNative {
         /// Native Block number
         #[clap(short = 'b', long = "native-block")]
         block: u64,
     },
+    CheckEvm {
+        #[clap(short = 'b', long = "evm-block")]
+        block: u64,
+    }
 }
 
 #[tokio::main]
@@ -64,12 +79,18 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Find { start, limit } => routines::find(&ledger, start, limit).await?,
-        Commands::Restore {
+        Commands::RestoreBlock {
             block,
             rpc_address,
             dry_run,
-        } => routines::restore(&ledger, rpc_address, block, dry_run).await?,
+        } => routines::restore_block(&ledger, rpc_address, block, dry_run).await?,
+        Commands::RestoreChain { first, last } =>
+            routines::restore_chain(&ledger, BlockRange::new(first, last)).await?
+        ,
         Commands::CheckNative { block } => routines::check_native(&ledger, block).await?,
+        Commands::CheckEvm { block } => {
+            routines::check_evm(&ledger, block).await.unwrap()
+        }
     }
 
     Ok(())
