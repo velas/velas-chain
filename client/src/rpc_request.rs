@@ -105,6 +105,9 @@ pub enum RpcRequest {
     GetVelasAccountsByOperationalKey,
     GetVelasAccountsByOwnerKey,
     GetVelasRelyingPartiesByOwnerKey,
+
+    /// Debug
+    DebugRecoverBlockHeader,
 }
 
 #[allow(deprecated)]
@@ -193,6 +196,7 @@ impl fmt::Display for RpcRequest {
             RpcRequest::GetVelasAccountsByOperationalKey => "getVelasAccountsByOperationalKey",
             RpcRequest::GetVelasAccountsByOwnerKey => "getVelasAccountsByOwnerKey",
             RpcRequest::GetVelasRelyingPartiesByOwnerKey => "getVelasRelyingPartiesByOwnerKey",
+            RpcRequest::DebugRecoverBlockHeader => "debug_recoverBlockHeader",
         };
 
         write!(f, "{}", method)

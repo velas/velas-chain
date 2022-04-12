@@ -1,8 +1,10 @@
 use std::str::FromStr;
 
 use sha3::{Digest, Keccak256};
+use solana_sdk::account::AccountSharedData;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::keyed_account::KeyedAccount;
+use solana_sdk::pubkey::Pubkey;
 
 use crate::rpc::JsonRpcRequestProcessor;
 use evm_rpc::error::EvmStateError;
@@ -15,12 +17,15 @@ use evm_rpc::{
     RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{
-    AccountProvider, AccountState, Address, Gas, LogFilter, TransactionAction, H160, H256, U256,
+    AccountProvider, AccountState, Address, BlockHeader, ExecutionResult, Gas, LogFilter,
+    Transaction, TransactionAction, TransactionInReceipt, TransactionReceipt, TransactionSignature,
+    UnsignedTransactionWithCaller, H160, H256, U256,
 };
 use jsonrpc_core::BoxFuture;
 use snafu::ensure;
 use snafu::ResultExt;
 use solana_runtime::bank::Bank;
+use std::convert::TryInto;
 use std::{cell::RefCell, future::ready, sync::Arc};
 const GAS_PRICE: u64 = 3;
 
@@ -571,6 +576,59 @@ impl BasicERPC for BasicErpcImpl {
         })
     }
 
+    fn recover_block_header(
+        &self,
+        meta: JsonRpcRequestProcessor,
+        txs: Vec<(RPCTransaction, Vec<String>)>,
+        last_hashes: Vec<H256>,
+        block_header: BlockHeader,
+        state_root: H256,
+    ) -> Result<BlockHeader, Error> {
+        let mut evm_state = meta
+            .evm_state_archive()
+            .ok_or(Error::ArchiveNotSupported)?
+            .new_incomming_for_root(state_root)
+            .ok_or(Error::StateNotFoundForBlock {
+                block: BlockId::Num(Hex(block_header.block_number)),
+            })?;
+        evm_state.state.block_number = block_header.block_number;
+        evm_state.state.timestamp = block_header.timestamp;
+        evm_state.state.last_block_hash = block_header.parent_hash;
+
+        let evm_config = evm_state::EvmConfig {
+            chain_id: meta.bank(None).evm_chain_id,
+            estimate: false,
+            ..Default::default()
+        };
+
+        let last_hashes = last_hashes
+            .try_into()
+            .map_err(|_| Error::InvalidParams {})?;
+        let mut executor = evm_state::Executor::with_config(
+            evm_state,
+            evm_state::ChainContext::new(last_hashes),
+            evm_config,
+        );
+
+        debug!("running evm executor = {:?}", executor);
+        for (tx, meta_keys) in txs {
+            let meta_keys = meta_keys
+                .iter()
+                .map(|s| solana_sdk::pubkey::Pubkey::from_str(s))
+                .collect::<Result<Vec<Pubkey>, _>>()
+                .map_err(|_| Error::InvalidParams {})?;
+            simulate_transaction(&mut executor, tx.clone(), meta_keys)?;
+        }
+        Ok(executor
+            .evm_backend
+            .commit_block(
+                block_header.native_chain_slot,
+                block_header.native_chain_hash,
+            )
+            .state
+            .block)
+    }
+
     fn estimate_gas(
         &self,
         meta: Self::Metadata,
@@ -731,6 +789,159 @@ fn call_many(
             &*bank,
         )?)
     }
+    Ok(result)
+}
+
+fn simulate_transaction(
+    executor: &mut evm_state::Executor,
+    tx: RPCTransaction,
+    meta_keys: Vec<solana_sdk::pubkey::Pubkey>,
+) -> Result<ExecutionResult, Error> {
+    use solana_evm_loader_program::precompiles::*;
+    let caller = tx.from.map(|a| a.0).unwrap_or_default();
+
+    let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
+    let input = tx.input.map(|a| a.0).unwrap_or_else(Vec::new);
+    let gas_limit = tx.gas.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
+    let gas_price = tx.gas_price.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
+
+    let nonce = tx
+        .nonce
+        .map(|a| a.0)
+        .unwrap_or_else(|| executor.nonce(caller));
+    let tx_chain_id = executor.chain_id();
+    let tx_hash = tx.hash.map(|a| a.0).unwrap_or_else(H256::random);
+
+    let evm_state_balance = u64::MAX;
+
+    let (user_accounts, action) = if let Some(address) = tx.to {
+        let address = address.0;
+        debug!(
+            "Trying to execute tx = {:?}",
+            (caller, address, value, &input, gas_limit)
+        );
+
+        let mut meta_keys: Vec<_> = meta_keys
+            .into_iter()
+            .map(|pk| {
+                let user_account = RefCell::new(AccountSharedData::new(
+                    u64::MAX,
+                    0,
+                    &solana_sdk::system_program::id(),
+                ));
+                (user_account, pk)
+            })
+            .collect();
+
+        // Shortcut for swap tokens to native, will add solana account to transaction.
+        if address == *ETH_TO_VLX_ADDR {
+            debug!("Found transferToNative transaction");
+            match ETH_TO_VLX_CODE.parse_abi(&input) {
+                Ok(pk) => {
+                    info!("Adding account to meta = {}", pk);
+
+                    let user_account = RefCell::new(AccountSharedData::new(
+                        u64::MAX,
+                        0,
+                        &solana_sdk::system_program::id(),
+                    ));
+                    meta_keys.push((user_account, pk))
+                }
+                Err(e) => {
+                    error!("Error in parsing abi = {}", e);
+                }
+            }
+        }
+
+        (meta_keys, TransactionAction::Call(address))
+    } else {
+        (vec![], TransactionAction::Create)
+    };
+
+    // system transfers always set s = 0x1
+    let mut is_native_swap = false;
+    if Some(Hex(U256::from(0x1))) == tx.s {
+        // check if it native swap, then predeposit, amount, to pass transaction
+        if caller == *ETH_TO_VLX_ADDR {
+            is_native_swap = true;
+            let amount = value + gas_limit * gas_price;
+            executor.deposit(caller, amount)
+        }
+    }
+
+    let user_accounts: Vec<_> = user_accounts
+        .iter()
+        .map(|(user_account, pk)| KeyedAccount::new(pk, false, user_account))
+        .collect();
+
+    let mut result = executor
+        .transaction_execute_raw(
+            caller,
+            nonce,
+            gas_price,
+            gas_limit,
+            action,
+            input.clone(),
+            value,
+            Some(tx_chain_id),
+            tx_hash,
+            solana_evm_loader_program::precompiles::simulation_entrypoint(
+                executor.support_precompile(),
+                evm_state_balance,
+                &user_accounts,
+            ),
+        )
+        .with_context(|| EvmStateError)?;
+
+    let mut bytes: [u8; 32] = [0; 32];
+    tx.r.ok_or(Error::InvalidParams {})?
+        .0
+        .to_big_endian(&mut bytes);
+    let r = H256::from_slice(&bytes);
+    tx.s.ok_or(Error::InvalidParams {})?
+        .0
+        .to_big_endian(&mut bytes);
+    let s = H256::from_slice(&bytes);
+    let transaction = Transaction {
+        nonce,
+        gas_price,
+        gas_limit,
+        action,
+        value,
+        signature: TransactionSignature {
+            v: *tx.v.ok_or(Error::InvalidParams {})?,
+            r,
+            s,
+        },
+        input,
+    };
+
+    let tx_hashes = executor.evm_backend.get_executed_transactions();
+    assert!(!tx_hashes.contains(&tx_hash));
+
+    let transaction = if is_native_swap {
+        result.used_gas = 0;
+        TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller {
+            unsigned_tx: transaction.into(),
+            caller: *ETH_TO_VLX_ADDR,
+            chain_id: tx_chain_id,
+            signed_compatible: true,
+        })
+    } else {
+        TransactionInReceipt::Signed(transaction)
+    };
+    let receipt = TransactionReceipt::new(
+        transaction,
+        result.used_gas,
+        executor.evm_backend.block_number(),
+        tx_hashes.len() as u64 + 1,
+        result.tx_logs.clone(),
+        (result.exit_reason.clone(), result.exit_data.clone()),
+    );
+    executor
+        .evm_backend
+        .push_transaction_receipt(tx_hash, receipt);
+
     Ok(result)
 }
 
