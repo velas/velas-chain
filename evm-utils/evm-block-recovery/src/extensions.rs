@@ -1,5 +1,3 @@
-use evm_rpc::RPCTransaction;
-use evm_state::TransactionInReceipt;
 use solana_evm_loader_program::instructions::EvmInstruction;
 use solana_sdk::{evm_loader::ID as STATIC_PROGRAM_ID, instruction::CompiledInstruction};
 use solana_transaction_status::{ConfirmedBlock, TransactionWithStatusMeta};
