@@ -12,5 +12,5 @@ echo "RUST_LOG=\"info\"\n" > .env
 ### Example
 Restoring single block #1234
 ```
-cargo run restore-chain -f 1234 -l 1234 --rpc-address http://1.2.3.4:8899
+cargo run restore-chain -f 1234 -l 1234 --rpc-address http://1.2.3.4:8899 --output-dir /tmp
 ```

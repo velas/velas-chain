@@ -20,41 +20,45 @@ enum Commands {
     /// Finds missing ranges of EVM blocks
     Find {
         /// Starting EVM Block number
-        #[clap(long)]
+        #[clap(long, value_name = "NUMBER")]
         start: u64,
 
         /// Limit of blocks to search
-        #[clap(long)]
+        #[clap(long, value_name = "NUMBER")]
         limit: usize,
     },
 
     /// Restores EVM subchain
     RestoreChain {
         /// First missing EVM Block
-        #[clap(short = 'f', long = "first-block")]
+        #[clap(short = 'f', long = "first-block", value_name = "NUMBER")]
         first: u64,
 
         /// Last missing EVM Block
-        #[clap(short = 'l', long = "last-block")]
+        #[clap(short = 'l', long = "last-block", value_name = "NUMBER")]
         last: u64,
 
         /// RPC address of node used for requesting restored EVM header
-        #[clap(long)]
+        #[clap(long, value_name = "URL")]
         rpc_address: String,
 
         /// Write restored blocks to Ledger Storage
         #[clap(short, long)]
         modify_ledger: bool,
+
+        /// Writes restored Blocks to directory if set
+        #[clap(short, long, value_name = "DIR")]
+        output_dir: Option<String>,
     },
 
     /// Checks contents of Native Block
     CheckNative {
         /// Native Block number
-        #[clap(short = 'b', long = "native-block")]
+        #[clap(short = 'b', long = "native-block", value_name = "NUMBER")]
         block: u64,
     },
     CheckEvm {
-        #[clap(short = 'b', long = "evm-block")]
+        #[clap(short = 'b', long = "evm-block", value_name = "NUMBER")]
         block: u64,
     },
 }
@@ -76,12 +80,14 @@ async fn main() -> anyhow::Result<()> {
             last,
             rpc_address,
             modify_ledger,
+            output_dir,
         } => {
             routines::restore_chain(
                 &ledger,
                 BlockRange::new(first, last),
                 rpc_address,
                 modify_ledger,
+                output_dir,
             )
             .await?
         }

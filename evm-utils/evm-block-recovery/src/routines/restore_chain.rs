@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::SystemTime};
+use std::{path::PathBuf, str::FromStr, time::SystemTime};
 
 use anyhow::*;
 use evm_rpc::RPCTransaction;
@@ -18,6 +18,7 @@ pub async fn restore_chain(
     evm_missing: BlockRange,
     rpc_address: String,
     modify_ledger: bool,
+    output_dir: Option<String>,
 ) -> Result<()> {
     let rpc_client = RpcClient::new(rpc_address);
 
@@ -53,20 +54,17 @@ pub async fn restore_chain(
     for nb in native_blocks.into_iter() {
         let parsed_instructions = nb.parse_instructions();
         if !parsed_instructions.only_trivial_instructions {
-            // FIXME: get correct native block ID
             return Err(anyhow!(
                 "Native block {} contains non-trivial instructions",
                 nb.block_height.unwrap()
             ));
         }
-
         header_template.parent_hash = header_template.hash();
         header_template.native_chain_slot += 1;
         header_template.native_chain_hash =
             H256(Pubkey::from_str(&nb.blockhash).unwrap().to_bytes());
         header_template.block_number += 1;
-        // FIXME: 5hrs EST timezome correction
-        header_template.timestamp = *timestamps.get(&header_template.block_number).unwrap() - 18000;
+        header_template.timestamp = *timestamps.get(&header_template.block_number).unwrap();
 
         let txs: Vec<(RPCTransaction, Vec<String>)> = parsed_instructions
             .instructions
@@ -111,16 +109,23 @@ pub async fn restore_chain(
 
         restored_blocks.pop();
 
-        // FIXME: set all paths etc at CLI
-        let unixtime = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let path = format!(
-            "/home/maksimv/Desktop/restored-blocks-{}-{}-{}.json",
-            evm_missing.first, evm_missing.last, unixtime
-        );
-        std::fs::write(path, serde_json::to_string(&restored_blocks).unwrap()).unwrap();
+        if let Some(output_dir) = output_dir {
+            let unixtime = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            let blocks_path = PathBuf::new().join(&output_dir).join(format!(
+                "restored-blocks-{}-{}-{}.json",
+                evm_missing.first, evm_missing.last, unixtime
+            ));
+
+            std::fs::write(
+                blocks_path,
+                serde_json::to_string(&restored_blocks).unwrap(),
+            )
+            .unwrap();
+        }
 
         if modify_ledger {
             for block in restored_blocks {
@@ -152,7 +157,7 @@ async fn request_restored_block(
 
 async fn write_block(ledger: &LedgerStorage, full_block: Block) -> Result<()> {
     log::info!(
-        "Writing block {} with hash {} to t he Ledger...",
+        "Writing block {} with hash {} to the Ledger...",
         full_block.header.block_number,
         full_block.header.hash()
     );
