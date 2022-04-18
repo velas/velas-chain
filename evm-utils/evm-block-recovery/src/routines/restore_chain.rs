@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr, time::SystemTime};
 
 use anyhow::*;
-use evm_rpc::RPCTransaction;
+use evm_rpc::{RPCTransaction, Hex};
 use evm_state::{Block, BlockHeader, TransactionInReceipt, H256};
 use serde_json::json;
 use solana_client::{rpc_client::RpcClient, rpc_request::RpcRequest};
@@ -18,6 +18,7 @@ pub async fn restore_chain(
     evm_missing: BlockRange,
     rpc_address: String,
     modify_ledger: bool,
+    force_resume: bool,
     output_dir: Option<String>,
 ) -> Result<()> {
     let rpc_client = RpcClient::new(rpc_address);
@@ -81,16 +82,35 @@ pub async fn restore_chain(
 
         let last_hashes: Vec<H256> = vec![H256::zero(); 256];
         let state_root = header_template.state_root;
-        let restored_block =
+        let (restored_block, warns) =
             request_restored_block(&rpc_client, txs, last_hashes, header_template, state_root)
                 .await
                 .unwrap();
 
         header_template = restored_block.header.clone();
-        restored_blocks.push(restored_block);
+        
+        match (warns, force_resume) {
+            (warns, _) if warns.len() == 0 => {
+                log::info!("Block {} restored with no warnings", &restored_block.header.block_number);
+                restored_blocks.push(restored_block);
+            },
+            (warns, false) => {
+                log::error!("Unable to restore EVM block {}", &restored_block.header.block_number);
+                log::error!("Native block: {}", header_template.native_chain_slot);
+                log::error!("Failed transactions {:?}", &warns);
+                return Err(anyhow!("Block restore failed: try `--force_resume` mode"))
+            },
+            (warns, true) => {
+                log::warn!("EVM Block {} restored with warnings", &restored_block.header.block_number);
+                log::warn!("Native block: {}", header_template.native_chain_slot);
+                log::warn!("Failed transactions: {:?}", &warns);
+                restored_blocks.push(restored_block);
+            },
+        }
     }
 
     log::info!("{} blocks restored.", restored_blocks.len());
+    log::debug!("{:?}", &restored_blocks);
 
     if head.parent_hash == restored_blocks.iter().last().unwrap().header.hash() {
         log::info!("✅✅✅ Hashes match! ✅✅✅");
@@ -119,7 +139,7 @@ pub async fn restore_chain(
             }
         }
     } else {
-        log::warn!("❌❌❌ Hashes do not match! ❌❌❌")
+        log::error!("❌❌❌ Hashes do not match! ❌❌❌")
     }
 
     Ok(())
@@ -131,10 +151,10 @@ async fn request_restored_block(
     last_hashes: Vec<H256>,
     block_header: BlockHeader,
     state_root: H256,
-) -> Result<Block> {
+) -> Result<(Block, Vec<Hex<H256>>)> {
     let params = json!([txs, last_hashes, block_header, state_root]);
 
-    let result: Block = rpc_client
+    let result: (Block, Vec<Hex<H256>>) = rpc_client
         .send(RpcRequest::DebugRecoverBlockHeader, params)
         .unwrap();
 

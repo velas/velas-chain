@@ -583,7 +583,7 @@ impl BasicERPC for BasicErpcImpl {
         last_hashes: Vec<H256>,
         block_header: BlockHeader,
         state_root: H256,
-    ) -> Result<Block, Error> {
+    ) -> Result<(Block, Vec<Hex<H256>>, Error)> {
         let mut evm_state = meta
             .evm_state_archive()
             .ok_or(Error::ArchiveNotSupported)?
@@ -610,6 +610,7 @@ impl BasicERPC for BasicErpcImpl {
             evm_config,
         );
 
+        let mut warn = vec![];
         debug!("running evm executor = {:?}", executor);
         for (tx, meta_keys) in txs {
             let meta_keys = meta_keys
@@ -619,8 +620,10 @@ impl BasicERPC for BasicErpcImpl {
                 .map_err(|_| Error::InvalidParams {})?;
             match simulate_transaction(&mut executor, tx.clone(), meta_keys) {
                 Ok(_result) => (),
-                Err(_err) => {
-                    log::warn!("Tx {:?} simulation failed, ignoring", &tx.hash)
+                Err(err) => {
+                    log::warn!("Tx {:?} simulation failed: {:?}", &tx.hash, &tx);
+                    log::warn!("RPC Error: {:?}", &err);
+                    warn.push(tx.hash.unwrap_or_default());
                 },
             };
         }
@@ -633,7 +636,7 @@ impl BasicERPC for BasicErpcImpl {
             )
             .state;
 
-        Ok(Block { header, transactions })
+        Ok((Block { header, transactions }, warn))
     }
 
     fn estimate_gas(

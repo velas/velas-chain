@@ -46,7 +46,11 @@ enum Commands {
         #[clap(short, long)]
         modify_ledger: bool,
 
-        /// Writes restored Blocks to directory if set
+        /// Skip tx simulation failures
+        #[clap(short, long)]
+        force_resume: bool,
+        
+        /// Writes restored Blocks as JSON to directory if set
         #[clap(short, long, value_name = "DIR")]
         output_dir: Option<String>,
     },
@@ -80,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
             last,
             rpc_address,
             modify_ledger,
+            force_resume,
             output_dir,
         } => {
             routines::restore_chain(
@@ -87,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
                 BlockRange::new(first, last),
                 rpc_address,
                 modify_ledger,
+                force_resume,
                 output_dir,
             )
             .await?

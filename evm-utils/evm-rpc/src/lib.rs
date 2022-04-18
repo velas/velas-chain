@@ -725,7 +725,7 @@ pub mod basic {
             last_hashes: Vec<H256>,
             block_header: BlockHeader,
             state_root: H256,
-        ) -> Result<Block, Error>;
+        ) -> Result<(Block, Vec<Hex<H256>>), Error>;
 
         #[rpc(meta, name = "eth_estimateGas")]
         fn estimate_gas(
