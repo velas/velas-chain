@@ -40,7 +40,7 @@ pub async fn restore_chain(
 
     let mut native_blocks = vec![];
 
-    for slot in header_template.native_chain_slot + 1..=head.native_chain_slot {
+    for slot in header_template.native_chain_slot + 1..head.native_chain_slot {
         let native_block = ledger
             .get_confirmed_block(slot)
             .await
@@ -88,26 +88,12 @@ pub async fn restore_chain(
 
         header_template = restored_block.header.clone();
         restored_blocks.push(restored_block);
-
-        std::thread::sleep(std::time::Duration::from_secs(2));
     }
 
-    log::debug!("Amount of restored blocks: {}", restored_blocks.len());
-    log::debug!(
-        "Last Restored Block Header: {:#?}",
-        &restored_blocks.iter().last().unwrap().header
-    );
-    log::debug!(
-        "Last Restored Block Header Hash: {}",
-        &restored_blocks.iter().last().unwrap().header.hash()
-    );
-    log::debug!("EVM Head: {:#?}", &head);
-    log::debug!("EVM Head Hash: {}", head.hash());
+    log::info!("{} blocks restored.", restored_blocks.len());
 
-    if head.hash() == restored_blocks.iter().last().unwrap().header.hash() {
+    if head.parent_hash == restored_blocks.iter().last().unwrap().header.hash() {
         log::info!("✅✅✅ Hashes match! ✅✅✅");
-
-        restored_blocks.pop();
 
         if let Some(output_dir) = output_dir {
             let unixtime = SystemTime::now()

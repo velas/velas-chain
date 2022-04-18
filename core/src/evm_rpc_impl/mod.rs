@@ -617,7 +617,12 @@ impl BasicERPC for BasicErpcImpl {
                 .map(|s| solana_sdk::pubkey::Pubkey::from_str(s))
                 .collect::<Result<Vec<Pubkey>, _>>()
                 .map_err(|_| Error::InvalidParams {})?;
-            simulate_transaction(&mut executor, tx.clone(), meta_keys)?;
+            match simulate_transaction(&mut executor, tx.clone(), meta_keys) {
+                Ok(_result) => (),
+                Err(_err) => {
+                    log::warn!("Tx {:?} simulation failed, ignoring", &tx.hash)
+                },
+            };
         }
 
         let Committed { block: header, committed_transactions: transactions } = executor
