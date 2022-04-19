@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr, time::SystemTime};
 
 use anyhow::*;
-use evm_rpc::{RPCTransaction, Hex};
+use evm_rpc::{Hex, RPCTransaction};
 use evm_state::{Block, BlockHeader, TransactionInReceipt, H256};
 use serde_json::json;
 use solana_client::{rpc_client::RpcClient, rpc_request::RpcRequest};
@@ -88,58 +88,69 @@ pub async fn restore_chain(
                 .unwrap();
 
         header_template = restored_block.header.clone();
-        
+
         match (warns, force_resume) {
             (warns, _) if warns.len() == 0 => {
-                log::info!("Block {} restored with no warnings", &restored_block.header.block_number);
+                log::info!(
+                    "EVM Block {} (slot {}) restored with no warnings",
+                    &restored_block.header.block_number,
+                    header_template.native_chain_slot
+                );
                 restored_blocks.push(restored_block);
-            },
+            }
             (warns, false) => {
-                log::error!("Unable to restore EVM block {}", &restored_block.header.block_number);
-                log::error!("Native block: {}", header_template.native_chain_slot);
+                log::error!(
+                    "Unable to restore EVM block {} (slot {})",
+                    &restored_block.header.block_number,
+                    header_template.native_chain_slot
+                );
                 log::error!("Failed transactions {:?}", &warns);
-                return Err(anyhow!("Block restore failed: try `--force_resume` mode"))
-            },
+                return Err(anyhow!("Block restore failed: try `--force-resume` mode"));
+            }
             (warns, true) => {
-                log::warn!("EVM Block {} restored with warnings", &restored_block.header.block_number);
-                log::warn!("Native block: {}", header_template.native_chain_slot);
+                log::warn!(
+                    "EVM Block {} (slot {}) restored with warnings",
+                    &restored_block.header.block_number,
+                    header_template.native_chain_slot
+                );
                 log::warn!("Failed transactions: {:?}", &warns);
                 restored_blocks.push(restored_block);
-            },
+            }
         }
     }
 
     log::info!("{} blocks restored.", restored_blocks.len());
     log::debug!("{:?}", &restored_blocks);
 
-    if head.parent_hash == restored_blocks.iter().last().unwrap().header.hash() {
-        log::info!("✅✅✅ Hashes match! ✅✅✅");
+    if head.parent_hash != restored_blocks.iter().last().unwrap().header.hash() {
+        log::error!("❌❌❌ Hashes do not match! ❌❌❌");
+        return Ok(());
+    }
 
-        if let Some(output_dir) = output_dir {
-            let unixtime = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+    log::info!("✅✅✅ Hashes match! ✅✅✅");
 
-            let blocks_path = PathBuf::new().join(&output_dir).join(format!(
-                "restored-blocks-{}-{}-{}.json",
-                evm_missing.first, evm_missing.last, unixtime
-            ));
+    if let Some(output_dir) = output_dir {
+        let unixtime = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
-            std::fs::write(
-                blocks_path,
-                serde_json::to_string(&restored_blocks).unwrap(),
-            )
-            .unwrap();
+        let blocks_path = PathBuf::new().join(&output_dir).join(format!(
+            "restored-blocks-{}-{}-{}.json",
+            evm_missing.first, evm_missing.last, unixtime
+        ));
+
+        std::fs::write(
+            blocks_path,
+            serde_json::to_string(&restored_blocks).unwrap(),
+        )
+        .unwrap();
+    }
+
+    if modify_ledger {
+        for block in restored_blocks {
+            write_block(&ledger, block).await?;
         }
-
-        if modify_ledger {
-            for block in restored_blocks {
-                write_block(&ledger, block).await?;
-            }
-        }
-    } else {
-        log::error!("❌❌❌ Hashes do not match! ❌❌❌")
     }
 
     Ok(())

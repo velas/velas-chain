@@ -9,7 +9,7 @@ use solana_storage_bigtable::LedgerStorage;
 #[derive(Parser)]
 #[clap(author, version, long_about = None)]
 #[clap(name = "EVM Block Recovery")]
-#[clap(about = "Tool used for restoring EVM blocks metadata.")]
+#[clap(about = "Tool used for restoring EVM blocks.")]
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
@@ -20,25 +20,25 @@ enum Commands {
     /// Finds missing ranges of EVM blocks
     Find {
         /// Starting EVM Block number
-        #[clap(long, value_name = "NUMBER")]
+        #[clap(long, value_name = "NUM")]
         start: u64,
 
         /// Limit of blocks to search
-        #[clap(long, value_name = "NUMBER")]
+        #[clap(long, value_name = "NUM")]
         limit: usize,
     },
 
     /// Restores EVM subchain
     RestoreChain {
         /// First missing EVM Block
-        #[clap(short = 'f', long = "first-block", value_name = "NUMBER")]
+        #[clap(short = 'f', long = "first-block", value_name = "NUM")]
         first: u64,
 
         /// Last missing EVM Block
-        #[clap(short = 'l', long = "last-block", value_name = "NUMBER")]
+        #[clap(short = 'l', long = "last-block", value_name = "NUM")]
         last: u64,
 
-        /// RPC address of node used for requesting restored EVM header
+        /// RPC address of node used for requesting restored EVM Header
         #[clap(long, value_name = "URL")]
         rpc_address: String,
 
@@ -46,11 +46,11 @@ enum Commands {
         #[clap(short, long)]
         modify_ledger: bool,
 
-        /// Skip tx simulation failures
-        #[clap(short, long)]
+        /// Continue restoring after tx simulation failures
+        #[clap(short = 'r', long)]
         force_resume: bool,
-        
-        /// Writes restored Blocks as JSON to directory if set
+
+        /// Writes restored EVM Blocks as JSON to directory if set
         #[clap(short, long, value_name = "DIR")]
         output_dir: Option<String>,
     },
@@ -58,11 +58,11 @@ enum Commands {
     /// Checks contents of Native Block
     CheckNative {
         /// Native Block number
-        #[clap(short = 'b', long = "native-block", value_name = "NUMBER")]
+        #[clap(short = 'b', long = "native-block", value_name = "NUM")]
         block: u64,
     },
     CheckEvm {
-        #[clap(short = 'b', long = "evm-block", value_name = "NUMBER")]
+        #[clap(short = 'b', long = "evm-block", value_name = "NUM")]
         block: u64,
     },
 }
