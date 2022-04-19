@@ -583,7 +583,7 @@ impl BasicERPC for BasicErpcImpl {
         last_hashes: Vec<H256>,
         block_header: BlockHeader,
         state_root: H256,
-    ) -> Result<(Block, Vec<Hex<H256>>, Error)> {
+    ) -> Result<(Block, Vec<Hex<H256>>), Error> {
         let mut evm_state = meta
             .evm_state_archive()
             .ok_or(Error::ArchiveNotSupported)?
