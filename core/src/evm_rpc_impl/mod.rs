@@ -316,14 +316,15 @@ impl BasicERPC for BasicErpcImpl {
         &self,
         meta: Self::Metadata,
         address: Hex<Address>,
-        data: Hex<H256>,
+        data: Hex<U256>,
         block: Option<BlockId>,
     ) -> BoxFuture<Result<Hex<H256>, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
-    
+            let mut bytes = [0u8;32];
+            data.0.to_big_endian(&mut bytes);
             let storage = state
-                .get_storage_at(&meta, address.0, data.0)?
+                .get_storage_at(&meta, address.0, H256::from_slice(&bytes))?
                 .unwrap_or_default();
             Ok(Hex(storage))
         })

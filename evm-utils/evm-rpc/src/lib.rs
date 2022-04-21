@@ -618,7 +618,7 @@ pub mod basic {
             &self,
             meta: Self::Metadata,
             address: Hex<Address>,
-            data: Hex<H256>,
+            data: Hex<U256>,
             block: Option<BlockId>,
         ) -> BoxFuture<Result<Hex<H256>, Error>>;
 
