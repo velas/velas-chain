@@ -563,7 +563,7 @@ impl BasicERPC for BasicErpcProxy {
         &self,
         meta: Self::Metadata,
         address: Hex<Address>,
-        data: Hex<H256>,
+        data: Hex<U256>,
         block: Option<BlockId>,
     ) -> BoxFuture<EvmResult<Hex<H256>>> {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetStorageAt, address, data, block)))
