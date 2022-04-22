@@ -1630,7 +1630,7 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "0.23.0"
-source = "git+https://github.com/velas/evm?branch=add-traces#6c553073c2cb9433f290385a4bfa89c41bec5559"
+source = "git+https://github.com/velas/evm?branch=add-traces#dc957fd9f2b5054ae6fc55c40db95e55bbcbb2d1"
 dependencies = [
  "ethereum",
  "evm-core",
@@ -1687,7 +1687,7 @@ dependencies = [
 [[package]]
 name = "evm-core"
 version = "0.23.0"
-source = "git+https://github.com/velas/evm?branch=add-traces#6c553073c2cb9433f290385a4bfa89c41bec5559"
+source = "git+https://github.com/velas/evm?branch=add-traces#dc957fd9f2b5054ae6fc55c40db95e55bbcbb2d1"
 dependencies = [
  "parity-scale-codec",
  "primitive-types",
@@ -1697,7 +1697,7 @@ dependencies = [
 [[package]]
 name = "evm-gasometer"
 version = "0.23.0"
-source = "git+https://github.com/velas/evm?branch=add-traces#6c553073c2cb9433f290385a4bfa89c41bec5559"
+source = "git+https://github.com/velas/evm?branch=add-traces#dc957fd9f2b5054ae6fc55c40db95e55bbcbb2d1"
 dependencies = [
  "evm-core",
  "evm-runtime",
@@ -1732,7 +1732,7 @@ dependencies = [
 [[package]]
 name = "evm-runtime"
 version = "0.23.0"
-source = "git+https://github.com/velas/evm?branch=add-traces#6c553073c2cb9433f290385a4bfa89c41bec5559"
+source = "git+https://github.com/velas/evm?branch=add-traces#dc957fd9f2b5054ae6fc55c40db95e55bbcbb2d1"
 dependencies = [
  "evm-core",
  "primitive-types",
