@@ -530,8 +530,13 @@ pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b5060043
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::str::FromStr;
     use ethabi::Token;
     use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
+    use evm::backend::MemoryBackend;
+    use evm::executor::{MemoryStackState, StackSubstateMetadata};
+    use log::LevelFilter;
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
 
@@ -1310,5 +1315,154 @@ mod tests {
         );
 
         assert_eq!(&contract, &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap());
+    }
+
+    fn dummy_account() -> MemoryAccount {
+        MemoryAccount {
+            nonce: U256::one(),
+            balance: U256::from(10000000),
+            storage: BTreeMap::new(),
+            code: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_call_inner_with_estimate() {
+        let _logger_error = simple_logger::SimpleLogger::new().with_level(LevelFilter::Debug).init();
+        let config_estimate = Config { estimate: true, ..Config::istanbul() };
+        let config_no_estimate = Config::istanbul();
+
+        let vicinity = MemoryVicinity {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            block_hashes: Vec::new(),
+            block_number: Default::default(),
+            block_coinbase: Default::default(),
+            block_timestamp: Default::default(),
+            block_difficulty: Default::default(),
+            block_gas_limit: Default::default(),
+            chain_id: U256::one(),
+        };
+
+        let mut state = BTreeMap::new();
+        let caller_address = H160::from_str("0xf000000000000000000000000000000000000000").unwrap();
+        let contract_address = H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
+        state.insert(caller_address, dummy_account());
+        state.insert(
+            contract_address,
+            MemoryAccount {
+                nonce: U256::one(),
+                balance: U256::from(10000000),
+                storage: BTreeMap::new(),
+                // proxy contract code
+                code: hex::decode("608060405260043610610041576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff1680632da4e75c1461006a575b6000543660008037600080366000845af43d6000803e8060008114610065573d6000f35b600080fd5b34801561007657600080fd5b506100ab600480360381019080803573ffffffffffffffffffffffffffffffffffffffff1690602001909291905050506100ad565b005b600160009054906101000a900473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff163373ffffffffffffffffffffffffffffffffffffffff1614151561010957600080fd5b806000806101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff160217905550505600a165627a7a72305820f58232a59d38bc7ca7fcefa0993365e57f4cd4e8b3fa746e0d170c5b47a787920029").unwrap(),
+            }
+        );
+
+        let call_data = hex::decode("6057361d0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+        let transact_call = |config, gas_limit| {
+            let backend = MemoryBackend::new(&vicinity, state.clone());
+            let metadata = StackSubstateMetadata::new(gas_limit, config);
+            let state = MemoryStackState::new(metadata, &backend);
+            let mut executor = StackExecutor::new(state, config);
+
+            let _reason = executor.transact_call(
+                caller_address,
+                contract_address,
+                U256::zero(),
+                call_data.clone(),
+                gas_limit,
+            );
+            executor.used_gas()
+        };
+        {
+            let gas_limit = u64::MAX;
+            let gas_used_estimate = transact_call(&config_estimate, gas_limit);
+            let gas_used_no_estimate = transact_call(&config_no_estimate, gas_limit);
+            assert!(gas_used_estimate >= gas_used_no_estimate);
+            assert!(gas_used_estimate < gas_used_no_estimate + gas_used_no_estimate / 4,
+                    "gas_used with estimate=true is too high, gas_used_estimate={}, gas_used_no_estimate={}",
+                    gas_used_estimate, gas_used_no_estimate);
+        }
+
+        {
+            let gas_limit: u64 = 300_000_000;
+            let gas_used_estimate = transact_call(&config_estimate, gas_limit);
+            let gas_used_no_estimate = transact_call(&config_no_estimate, gas_limit);
+            assert!(gas_used_estimate >= gas_used_no_estimate);
+            assert!(gas_used_estimate < gas_used_no_estimate + gas_used_no_estimate / 4,
+                    "gas_used with estimate=true is too high, gas_used_estimate={}, gas_used_no_estimate={}",
+                    gas_used_estimate, gas_used_no_estimate);
+        }
+    }
+
+    #[test]
+    fn test_create_inner_with_estimate() {
+        let _logger_error = simple_logger::SimpleLogger::new().with_level(LevelFilter::Debug).init();
+        let config_estimate = Config { estimate: true, ..Config::istanbul() };
+        let config_no_estimate = Config::istanbul();
+
+        let vicinity = MemoryVicinity {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            block_hashes: Vec::new(),
+            block_number: Default::default(),
+            block_coinbase: Default::default(),
+            block_timestamp: Default::default(),
+            block_difficulty: Default::default(),
+            block_gas_limit: Default::default(),
+            chain_id: U256::one(),
+        };
+
+        let mut state = BTreeMap::new();
+        let caller_address = H160::from_str("0xf000000000000000000000000000000000000000").unwrap();
+        let contract_address = H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
+        state.insert(caller_address, dummy_account());
+        state.insert(
+            contract_address,
+            MemoryAccount {
+                nonce: U256::one(),
+                balance: U256::from(10000000),
+                storage: BTreeMap::new(),
+                // creator contract code
+                code: hex::decode("6080604052348015600f57600080fd5b506004361060285760003560e01c8063fb971d0114602d575b600080fd5b60336035565b005b60006040516041906062565b604051809103906000f080158015605c573d6000803e3d6000fd5b50905050565b610170806100708339019056fe608060405234801561001057600080fd5b50610150806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80632e64cec11461003b5780636057361d14610059575b600080fd5b610043610075565b60405161005091906100a1565b60405180910390f35b610073600480360381019061006e91906100ed565b61007e565b005b60008054905090565b8060008190555050565b6000819050919050565b61009b81610088565b82525050565b60006020820190506100b66000830184610092565b92915050565b600080fd5b6100ca81610088565b81146100d557600080fd5b50565b6000813590506100e7816100c1565b92915050565b600060208284031215610103576101026100bc565b5b6000610111848285016100d8565b9150509291505056fea264697066735822122044f0132d3ce474198482cc3f79c22d7ed4cece5e1dcbb2c7cb533a23068c5d6064736f6c634300080d0033a2646970667358221220a7ba80fb064accb768e9e7126cd0b69e3889378082d659ad1b17317e6d578b9a64736f6c634300080d0033").unwrap(),
+            }
+        );
+
+        let call_data = hex::decode("fb971d01").unwrap();
+        let transact_call = |config, gas_limit| {
+            let backend = MemoryBackend::new(&vicinity, state.clone());
+            let metadata = StackSubstateMetadata::new(gas_limit, config);
+            let state = MemoryStackState::new(metadata, &backend);
+            let mut executor = StackExecutor::new(state, config);
+
+            let _reason = executor.transact_call(
+                caller_address,
+                contract_address,
+                U256::zero(),
+                call_data.clone(),
+                gas_limit,
+            );
+            executor.used_gas()
+        };
+        {
+            let gas_limit = u64::MAX;
+            let gas_used_estimate = transact_call(&config_estimate, gas_limit);
+            let gas_used_no_estimate = transact_call(&config_no_estimate, gas_limit);
+            assert!(gas_used_estimate >= gas_used_no_estimate);
+            assert!(gas_used_estimate < gas_used_no_estimate + gas_used_no_estimate / 4,
+                    "gas_used with estimate=true is too high, gas_used_estimate={}, gas_used_no_estimate={}",
+                    gas_used_estimate, gas_used_no_estimate);
+        }
+
+        {
+            let gas_limit: u64 = 300_000_000;
+            let gas_used_estimate = transact_call(&config_estimate, gas_limit);
+            let gas_used_no_estimate = transact_call(&config_no_estimate, gas_limit);
+            assert!(gas_used_estimate >= gas_used_no_estimate);
+            assert!(gas_used_estimate < gas_used_no_estimate + gas_used_no_estimate / 4,
+                    "gas_used with estimate=true is too high, gas_used_estimate={}, gas_used_no_estimate={}",
+                    gas_used_estimate, gas_used_no_estimate);
+        }
     }
 }
