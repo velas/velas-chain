@@ -5,64 +5,65 @@
 //    copies from host memory to GPU memory unless the memory is page-pinned and
 //    cannot be paged to disk. The cuda driver provides these interfaces to pin and unpin memory.
 
-use crate::perf_libs;
-use crate::recycler::{RecyclerX, Reset};
-use rand::seq::SliceRandom;
-use rand::Rng;
-use rayon::prelude::*;
-use std::ops::{Index, IndexMut};
-use std::slice::SliceIndex;
-use std::sync::{Arc, Weak};
-
-use std::os::raw::c_int;
+use {
+    crate::{
+        perf_libs,
+        recycler::{RecyclerX, Reset},
+    },
+    rand::{seq::SliceRandom, Rng},
+    rayon::prelude::*,
+    std::{
+        ops::{Index, IndexMut},
+        os::raw::c_int,
+        slice::{Iter, IterMut, SliceIndex},
+        sync::Weak,
+    },
+};
 
 const CUDA_SUCCESS: c_int = 0;
 
-pub fn pin<T>(_mem: &mut Vec<T>) {
+fn pin<T>(_mem: &mut Vec<T>) {
     if let Some(api) = perf_libs::api() {
-        unsafe {
-            use core::ffi::c_void;
-            use std::mem::size_of;
+        use std::{ffi::c_void, mem::size_of};
 
-            let err = (api.cuda_host_register)(
-                _mem.as_mut_ptr() as *mut c_void,
-                _mem.capacity().saturating_mul(size_of::<T>()),
-                0,
-            );
-            if err != CUDA_SUCCESS {
-                panic!(
-                    "cudaHostRegister error: {} ptr: {:?} bytes: {}",
-                    err,
-                    _mem.as_ptr(),
-                    _mem.capacity().saturating_mul(size_of::<T>()),
-                );
-            }
-        }
+        let ptr = _mem.as_mut_ptr();
+        let size = _mem.capacity().saturating_mul(size_of::<T>());
+        let err = unsafe {
+            (api.cuda_host_register)(ptr as *mut c_void, size, /*flags=*/ 0)
+        };
+        assert!(
+            err == CUDA_SUCCESS,
+            "cudaHostRegister error: {} ptr: {:?} bytes: {}",
+            err,
+            ptr,
+            size
+        );
     }
 }
 
-pub fn unpin<T>(_mem: *mut T) {
+fn unpin<T>(_mem: *mut T) {
     if let Some(api) = perf_libs::api() {
-        unsafe {
-            use core::ffi::c_void;
+        use std::ffi::c_void;
 
-            let err = (api.cuda_host_unregister)(_mem as *mut c_void);
-            if err != CUDA_SUCCESS {
-                panic!("cudaHostUnregister returned: {} ptr: {:?}", err, _mem);
-            }
-        }
+        let err = unsafe { (api.cuda_host_unregister)(_mem as *mut c_void) };
+        assert!(
+            err == CUDA_SUCCESS,
+            "cudaHostUnregister returned: {} ptr: {:?}",
+            err,
+            _mem
+        );
     }
 }
 
 // A vector wrapper where the underlying memory can be
 // page-pinned. Controlled by flags in case user only wants
 // to pin in certain circumstances.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PinnedVec<T: Default + Clone + Sized> {
     x: Vec<T>,
     pinned: bool,
     pinnable: bool,
-    recycler: Option<Weak<RecyclerX<PinnedVec<T>>>>,
+    recycler: Weak<RecyclerX<PinnedVec<T>>>,
 }
 
 impl<T: Default + Clone + Sized> Reset for PinnedVec<T> {
@@ -74,79 +75,34 @@ impl<T: Default + Clone + Sized> Reset for PinnedVec<T> {
         self.resize(size_hint, T::default());
     }
     fn set_recycler(&mut self, recycler: Weak<RecyclerX<Self>>) {
-        self.recycler = Some(recycler);
-    }
-    fn unset_recycler(&mut self) {
-        self.recycler = None;
-    }
-}
-
-impl<T: Clone + Default + Sized> Default for PinnedVec<T> {
-    fn default() -> Self {
-        Self {
-            x: Vec::new(),
-            pinned: false,
-            pinnable: false,
-            recycler: None,
-        }
+        self.recycler = recycler;
     }
 }
 
 impl<T: Clone + Default + Sized> From<PinnedVec<T>> for Vec<T> {
     fn from(mut pinned_vec: PinnedVec<T>) -> Self {
         if pinned_vec.pinned {
+            // If the vector is pinned and has a recycler, just return a clone
+            // so that the next allocation of a PinnedVec will recycle an
+            // already pinned one.
+            if pinned_vec.recycler.strong_count() != 0 {
+                return pinned_vec.x.clone();
+            }
             unpin(pinned_vec.x.as_mut_ptr());
             pinned_vec.pinned = false;
         }
         pinned_vec.pinnable = false;
-        pinned_vec.recycler = None;
+        pinned_vec.recycler = Weak::default();
         std::mem::take(&mut pinned_vec.x)
-    }
-}
-pub struct PinnedIter<'a, T>(std::slice::Iter<'a, T>);
-
-pub struct PinnedIterMut<'a, T>(std::slice::IterMut<'a, T>);
-
-impl<'a, T: Clone + Default + Sized> Iterator for PinnedIter<'a, T> {
-    type Item = &'a T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
-    }
-}
-
-impl<'a, T: Clone + Default + Sized> Iterator for PinnedIterMut<'a, T> {
-    type Item = &'a mut T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
-    }
-}
-
-impl<T: Clone + Default + Sized> IntoIterator for PinnedVec<T> {
-    type Item = T;
-    type IntoIter = std::vec::IntoIter<T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        <Self as Into<Vec<T>>>::into(self).into_iter()
-    }
-}
-
-impl<'a, T: Clone + Default + Sized> IntoIterator for &'a mut PinnedVec<T> {
-    type Item = &'a T;
-    type IntoIter = PinnedIter<'a, T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        PinnedIter(self.x.iter())
     }
 }
 
 impl<'a, T: Clone + Default + Sized> IntoIterator for &'a PinnedVec<T> {
     type Item = &'a T;
-    type IntoIter = PinnedIter<'a, T>;
+    type IntoIter = Iter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        PinnedIter(self.x.iter())
+        self.x.iter()
     }
 }
 
@@ -167,12 +123,12 @@ impl<T: Clone + Default + Sized, I: SliceIndex<[T]>> IndexMut<I> for PinnedVec<T
 }
 
 impl<T: Clone + Default + Sized> PinnedVec<T> {
-    pub fn iter(&self) -> PinnedIter<T> {
-        PinnedIter(self.x.iter())
+    pub fn iter(&self) -> Iter<'_, T> {
+        self.x.iter()
     }
 
-    pub fn iter_mut(&mut self) -> PinnedIterMut<T> {
-        PinnedIterMut(self.x.iter_mut())
+    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
+        self.x.iter_mut()
     }
 
     pub fn capacity(&self) -> usize {
@@ -196,16 +152,11 @@ impl<'a, T: Clone + Send + Sync + Default + Sized> IntoParallelIterator for &'a 
     }
 }
 
-impl<T: Clone + Default + Send + Sized> IntoParallelIterator for PinnedVec<T> {
-    type Item = T;
-    type Iter = rayon::vec::IntoIter<T>;
-
-    fn into_par_iter(self) -> Self::Iter {
-        <Self as Into<Vec<T>>>::into(self).into_par_iter()
-    }
-}
-
 impl<T: Clone + Default + Sized> PinnedVec<T> {
+    pub fn reserve(&mut self, size: usize) {
+        self.x.reserve(size);
+    }
+
     pub fn reserve_and_pin(&mut self, size: usize) {
         if self.x.capacity() < size {
             if self.pinned {
@@ -237,18 +188,12 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
             x: source,
             pinned: false,
             pinnable: false,
-            recycler: None,
+            recycler: Weak::default(),
         }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
-        let x = Vec::with_capacity(capacity);
-        Self {
-            x,
-            pinned: false,
-            pinnable: false,
-            recycler: None,
-        }
+        Self::from_vec(Vec::with_capacity(capacity))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -308,6 +253,29 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
         self.check_ptr(old_ptr, old_capacity, "resize");
     }
 
+    /// Forces the length of the vector to `new_len`.
+    ///
+    /// This is a low-level operation that maintains none of the normal
+    /// invariants of the type. Normally changing the length of a vector
+    /// is done using one of the safe operations instead, such as
+    /// [`truncate`], [`resize`], [`extend`], or [`clear`].
+    ///
+    /// [`truncate`]: Vec::truncate
+    /// [`resize`]: Vec::resize
+    /// [`extend`]: Extend::extend
+    /// [`clear`]: Vec::clear
+    ///
+    /// # Safety
+    ///
+    /// - `new_len` must be less than or equal to [`capacity()`].
+    /// - The elements at `old_len..new_len` must be initialized.
+    ///
+    /// [`capacity()`]: Vec::capacity
+    ///
+    pub unsafe fn set_len(&mut self, size: usize) {
+        self.x.set_len(size);
+    }
+
     pub fn shuffle<R: Rng>(&mut self, rng: &mut R) {
         self.x.shuffle(rng)
     }
@@ -331,10 +299,6 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
             pin(&mut self.x);
             self.pinned = true;
         }
-    }
-    fn recycler_ref(&self) -> Option<Arc<RecyclerX<Self>>> {
-        let r = self.recycler.as_ref()?;
-        r.upgrade()
     }
 }
 
@@ -364,12 +328,9 @@ impl<T: Clone + Default + Sized> Clone for PinnedVec<T> {
 
 impl<T: Sized + Default + Clone> Drop for PinnedVec<T> {
     fn drop(&mut self) {
-        if let Some(strong) = self.recycler_ref() {
-            let mut vec = PinnedVec::default();
-            std::mem::swap(&mut vec, self);
-            strong.recycle(vec);
-        }
-        if self.pinned {
+        if let Some(recycler) = self.recycler.upgrade() {
+            recycler.recycle(std::mem::take(self));
+        } else if self.pinned {
             unpin(self.x.as_mut_ptr());
         }
     }
@@ -389,7 +350,7 @@ mod tests {
         assert_eq!(mem[0], 50);
         assert_eq!(mem[1], 10);
         assert_eq!(mem.len(), 2);
-        assert_eq!(mem.is_empty(), false);
+        assert!(!mem.is_empty());
         let mut iter = mem.iter();
         assert_eq!(*iter.next().unwrap(), 50);
         assert_eq!(*iter.next().unwrap(), 10);

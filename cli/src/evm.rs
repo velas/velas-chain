@@ -300,7 +300,7 @@ fn find_block_header(
         };
 
         let hash = solana_sdk::hash::Hash::from_str(&native_block.blockhash)?;
-        let hash = evm::H256::from_slice(&hash.0);
+        let hash = evm::H256::from_slice(&hash.to_bytes());
         block.native_chain_hash = hash;
         block.native_chain_slot = slot;
         debug!("Produced block = {:?}, hash = {:?}", block, block.hash());

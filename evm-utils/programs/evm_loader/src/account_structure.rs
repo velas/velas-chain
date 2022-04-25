@@ -1,4 +1,4 @@
-use solana_sdk::{account::AccountSharedData, keyed_account::KeyedAccount, pubkey::Pubkey};
+use solana_sdk::{account::{ AccountSharedData, WritableAccount, ReadableAccount}, keyed_account::KeyedAccount, pubkey::Pubkey};
 
 use crate::error::EvmError;
 use std::cell::RefMut;
@@ -38,19 +38,22 @@ impl<'a> AccountStructure<'a> {
             .try_account_ref_mut()
             .map_err(|_| EvmError::BorrowingFailed)?;
 
-        evm_acc.lamports = evm_acc
-            .lamports
+        let evm_acc_lamports = evm_acc
+            .lamports()
             .checked_sub(fee)
             .ok_or(EvmError::OverflowInRefund)?;
+        evm_acc.set_lamports(evm_acc_lamports);
 
         let mut user_acc = user
             .try_account_ref_mut()
             .map_err(|_| EvmError::BorrowingFailed)?;
 
-        user_acc.lamports = user_acc
-            .lamports
+        
+        let user_acc_lamports = user_acc
+            .lamports()
             .checked_add(fee)
             .ok_or(EvmError::OverflowInRefund)?;
+        user_acc.set_lamports(user_acc_lamports);
 
         Ok(())
     }
@@ -77,6 +80,7 @@ impl<'a> AccountStructure<'a> {
     where
         F: for<'r> Fn(AccountStructure<'r>) -> U,
     {
+        use solana_sdk::account::Account;
         use std::cell::RefCell;
 
         let evm_key = Pubkey::new_unique();
@@ -85,13 +89,13 @@ impl<'a> AccountStructure<'a> {
 
         let keys: Vec<_> = std::iter::repeat_with(|| {
             let user_key = Pubkey::new_unique();
-            let user_account = RefCell::new(AccountSharedData {
+            let user_account = RefCell::new(Account {
                 lamports: 1000,
                 data: vec![],
                 owner: crate::ID,
                 executable: false,
                 rent_epoch: 0,
-            });
+            }.into());
             (user_key, user_account)
         })
         .take(num_keys + 1)

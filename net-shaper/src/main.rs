@@ -1,13 +1,13 @@
 #![allow(clippy::integer_arithmetic)]
-use clap::{
-    crate_description, crate_name, crate_version, value_t, value_t_or_exit, App, Arg, ArgMatches,
-    SubCommand,
+use {
+    clap::{
+        crate_description, crate_name, crate_version, value_t, value_t_or_exit, App, Arg,
+        ArgMatches, SubCommand,
+    },
+    rand::{thread_rng, Rng},
+    serde::{Deserialize, Serialize},
+    std::{fs, io, path::PathBuf},
 };
-
-use rand::{thread_rng, Rng};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::{fs, io};
 
 #[derive(Deserialize, Serialize, Debug)]
 struct NetworkInterconnect {
@@ -389,9 +389,7 @@ fn shape_network_steps(
     my_index: u64,
 ) -> bool {
     // Integrity checks
-    if !topology.verify() {
-        panic!("Failed to verify the configuration file");
-    }
+    assert!(topology.verify(), "Failed to verify the configuration file");
     assert!(my_index < network_size);
 
     // Figure out partition we belong in
@@ -479,9 +477,7 @@ fn configure(matches: &ArgMatches) {
         NetworkTopology::new_random(max_partitions, max_drop, max_delay)
     };
 
-    if !config.verify() {
-        panic!("Failed to verify the configuration");
-    }
+    assert!(config.verify(), "Failed to verify the configuration");
 
     let topology = serde_json::to_string(&config).expect("Failed to write as JSON");
 

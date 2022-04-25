@@ -1,18 +1,21 @@
-use crate::args::{
-    Args, BalancesArgs, Command, DistributeTokensArgs, SplTokenArgs, StakeArgs, TransactionLogArgs,
+use {
+    crate::args::{
+        Args, BalancesArgs, Command, DistributeTokensArgs, SenderStakeArgs, SplTokenArgs,
+        StakeArgs, TransactionLogArgs,
+    },
+    clap::{
+        crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches, SubCommand,
+    },
+    solana_clap_utils::{
+        input_parsers::{pubkey_of_signer, value_of},
+        input_validators::{is_amount, is_valid_pubkey, is_valid_signer},
+        keypair::{pubkey_from_path, signer_from_path},
+    },
+    solana_cli_config::CONFIG_FILE,
+    solana_remote_wallet::remote_wallet::maybe_wallet_manager,
+    solana_sdk::native_token::sol_to_lamports,
+    std::{error::Error, ffi::OsString, process::exit},
 };
-use clap::{
-    crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches, SubCommand,
-};
-use solana_clap_utils::{
-    input_parsers::{pubkey_of_signer, value_of},
-    input_validators::{is_amount, is_valid_pubkey, is_valid_signer},
-    keypair::{pubkey_from_path, signer_from_path},
-};
-use solana_cli_config::CONFIG_FILE;
-use solana_remote_wallet::remote_wallet::maybe_wallet_manager;
-use solana_sdk::native_token::sol_to_lamports;
-use std::{error::Error, ffi::OsString, process::exit};
 
 fn get_matches<'a, I, T>(args: I) -> ArgMatches<'a>
 where
@@ -103,8 +106,79 @@ where
                 ),
         )
         .subcommand(
+            SubCommand::with_name("create-stake")
+                .about("Create stake accounts")
+                .arg(
+                    Arg::with_name("db_path")
+                        .long("db-path")
+                        .required(true)
+                        .takes_value(true)
+                        .value_name("FILE")
+                        .help(
+                            "Location for storing distribution database. \
+                            The database is used for tracking transactions as they are finalized \
+                            and preventing double spends.",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("input_csv")
+                        .long("input-csv")
+                        .required(true)
+                        .takes_value(true)
+                        .value_name("FILE")
+                        .help("Allocations CSV file"),
+                )
+                .arg(
+                    Arg::with_name("dry_run")
+                        .long("dry-run")
+                        .help("Do not execute any transfers"),
+                )
+                .arg(
+                    Arg::with_name("output_path")
+                        .long("output-path")
+                        .short("o")
+                        .value_name("FILE")
+                        .takes_value(true)
+                        .help("Write the transaction log to this file"),
+                )
+                .arg(
+                    Arg::with_name("sender_keypair")
+                        .long("from")
+                        .required(true)
+                        .takes_value(true)
+                        .value_name("SENDING_KEYPAIR")
+                        .validator(is_valid_signer)
+                        .help("Keypair to fund accounts"),
+                )
+                .arg(
+                    Arg::with_name("unlocked_sol")
+                        .default_value("1.0")
+                        .long("unlocked-sol")
+                        .takes_value(true)
+                        .value_name("SOL_AMOUNT")
+                        .help("Amount of SOL to put in system account to pay for fees"),
+                )
+                .arg(
+                    Arg::with_name("lockup_authority")
+                        .long("lockup-authority")
+                        .takes_value(true)
+                        .value_name("PUBKEY")
+                        .validator(is_valid_pubkey)
+                        .help("Lockup Authority Address"),
+                )
+                .arg(
+                    Arg::with_name("fee_payer")
+                        .long("fee-payer")
+                        .required(true)
+                        .takes_value(true)
+                        .value_name("KEYPAIR")
+                        .validator(is_valid_signer)
+                        .help("Fee payer"),
+                ),
+        )
+        .subcommand(
             SubCommand::with_name("distribute-stake")
-                .about("Distribute stake accounts")
+                .about("Split to stake accounts")
                 .arg(
                     Arg::with_name("db_path")
                         .long("db-path")
@@ -363,6 +437,58 @@ fn parse_distribute_tokens_args(
     })
 }
 
+fn parse_create_stake_args(
+    matches: &ArgMatches<'_>,
+) -> Result<DistributeTokensArgs, Box<dyn Error>> {
+    let mut wallet_manager = maybe_wallet_manager()?;
+    let signer_matches = ArgMatches::default(); // No default signer
+
+    let sender_keypair_str = value_t_or_exit!(matches, "sender_keypair", String);
+    let sender_keypair = signer_from_path(
+        &signer_matches,
+        &sender_keypair_str,
+        "sender",
+        &mut wallet_manager,
+    )?;
+
+    let fee_payer_str = value_t_or_exit!(matches, "fee_payer", String);
+    let fee_payer = signer_from_path(
+        &signer_matches,
+        &fee_payer_str,
+        "fee-payer",
+        &mut wallet_manager,
+    )?;
+
+    let lockup_authority_str = value_t!(matches, "lockup_authority", String).ok();
+    let lockup_authority = lockup_authority_str
+        .map(|path| {
+            pubkey_from_path(
+                &signer_matches,
+                &path,
+                "lockup authority",
+                &mut wallet_manager,
+            )
+        })
+        .transpose()?;
+
+    let stake_args = StakeArgs {
+        unlocked_sol: sol_to_lamports(value_t_or_exit!(matches, "unlocked_sol", f64)),
+        lockup_authority,
+        sender_stake_args: None,
+    };
+    Ok(DistributeTokensArgs {
+        input_csv: value_t_or_exit!(matches, "input_csv", String),
+        transaction_db: value_t_or_exit!(matches, "db_path", String),
+        output_path: matches.value_of("output_path").map(|path| path.to_string()),
+        dry_run: matches.is_present("dry_run"),
+        sender_keypair,
+        fee_payer,
+        stake_args: Some(stake_args),
+        spl_token_args: None,
+        transfer_amount: None,
+    })
+}
+
 fn parse_distribute_stake_args(
     matches: &ArgMatches<'_>,
 ) -> Result<DistributeTokensArgs, Box<dyn Error>> {
@@ -421,12 +547,17 @@ fn parse_distribute_stake_args(
         })
         .transpose()?;
 
-    let stake_args = StakeArgs {
+    let lockup_authority_address = lockup_authority.as_ref().map(|keypair| keypair.pubkey());
+    let sender_stake_args = SenderStakeArgs {
         stake_account_address,
-        unlocked_sol: sol_to_lamports(value_t_or_exit!(matches, "unlocked_sol", f64)),
         stake_authority,
         withdraw_authority,
         lockup_authority,
+    };
+    let stake_args = StakeArgs {
+        unlocked_sol: sol_to_lamports(value_t_or_exit!(matches, "unlocked_sol", f64)),
+        lockup_authority: lockup_authority_address,
+        sender_stake_args: Some(sender_stake_args),
     };
     Ok(DistributeTokensArgs {
         input_csv: value_t_or_exit!(matches, "input_csv", String),
@@ -519,6 +650,9 @@ where
     let command = match matches.subcommand() {
         ("distribute-tokens", Some(matches)) => {
             Command::DistributeTokens(parse_distribute_tokens_args(matches)?)
+        }
+        ("create-stake", Some(matches)) => {
+            Command::DistributeTokens(parse_create_stake_args(matches)?)
         }
         ("distribute-stake", Some(matches)) => {
             Command::DistributeTokens(parse_distribute_stake_args(matches)?)

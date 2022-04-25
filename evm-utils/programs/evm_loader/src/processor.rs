@@ -10,10 +10,10 @@ use evm_state::U256;
 use log::*;
 
 use evm::{gweis_to_lamports, Executor, ExitReason};
-use solana_sdk::account::AccountSharedData;
-use solana_sdk::ic_msg;
+use solana_sdk::account::{AccountSharedData, ReadableAccount, WritableAccount};
+use solana_program_runtime::ic_msg;
+use solana_program_runtime::invoke_context::InvokeContext;
 use solana_sdk::instruction::InstructionError;
-use solana_sdk::process_instruction::InvokeContext;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{keyed_account::KeyedAccount, program_utils::limited_deserialize};
 
@@ -35,27 +35,26 @@ pub struct EvmProcessor {}
 impl EvmProcessor {
     pub fn process_instruction(
         &self,
-        _program_id: &Pubkey,
-        keyed_accounts: &[KeyedAccount],
+        first_keyed_account: usize,
         data: &[u8],
-        invoke_context: &mut dyn InvokeContext,
-        cross_execution: bool,
+        invoke_context: &mut InvokeContext,
     ) -> Result<(), InstructionError> {
-        let (evm_state_account, keyed_accounts) = Self::check_evm_account(keyed_accounts)?;
+        let (evm_state_account, keyed_accounts) = Self::check_evm_account(first_keyed_account, &invoke_context)?;
 
         let cross_execution_enabled = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas::evm_cross_execution::id());
+            .feature_set.is_active(&solana_sdk::feature_set::velas::evm_cross_execution::id());
         let register_swap_tx_in_evm = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas::native_swap_in_evm_history::id());
+            .feature_set.is_active(&solana_sdk::feature_set::velas::native_swap_in_evm_history::id());
         let new_error_handling = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas::evm_new_error_handling::id());
+            .feature_set.is_active(&solana_sdk::feature_set::velas::evm_new_error_handling::id());
         let unsigned_tx_fix = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id());
+            .feature_set.is_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id());
         let ignore_reset_on_cleared = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas::ignore_reset_on_cleared::id());
-        let free_ownership_require_signer = invoke_context.is_feature_active(
+            .feature_set.is_active(&solana_sdk::feature_set::velas::ignore_reset_on_cleared::id());
+        let free_ownership_require_signer = invoke_context.feature_set.is_active(
             &solana_sdk::feature_set::velas::free_ownership_require_signer::id(),
         );
+        let cross_execution = invoke_context.get_stack_height() != 1;
 
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
@@ -167,7 +166,7 @@ impl EvmProcessor {
     fn process_raw_tx(
         &self,
         executor: &mut Executor,
-        invoke_context: &dyn InvokeContext,
+        invoke_context: &InvokeContext,
         accounts: AccountStructure,
         evm_tx: evm::Transaction,
     ) -> Result<(), EvmError> {
@@ -201,7 +200,7 @@ impl EvmProcessor {
     fn process_authorized_tx(
         &self,
         executor: &mut Executor,
-        invoke_context: &dyn InvokeContext,
+        invoke_context: &InvokeContext,
         accounts: AccountStructure,
         from: evm::Address,
         unsigned_tx: evm::UnsignedTransaction,
@@ -249,10 +248,10 @@ impl EvmProcessor {
                 .get_parent_caller()
                 .copied()
                 .unwrap_or_default();
-            let program_owner = program_account
+            let program_owner = *program_account
                 .try_account_ref()
                 .map_err(|_| EvmError::BorrowingFailed)?
-                .owner;
+                .owner();
             if program_owner != program_caller {
                 ic_msg!(
                     invoke_context,
@@ -285,7 +284,7 @@ impl EvmProcessor {
     fn process_free_ownership(
         &self,
         _executor: &mut Executor,
-        invoke_context: &dyn InvokeContext,
+        invoke_context: &InvokeContext,
         accounts: AccountStructure,
         free_ownership_require_signer: bool,
     ) -> Result<(), EvmError> {
@@ -306,21 +305,21 @@ impl EvmProcessor {
             .try_account_ref_mut()
             .map_err(|_| EvmError::BorrowingFailed)?;
 
-        if user.owner != crate::ID || *user_pk == solana::evm_state::ID {
+        if *user.owner() != crate::ID || *user_pk == solana::evm_state::ID {
             ic_msg!(
                 invoke_context,
                 "FreeOwnership: Incorrect account provided, maybe this account is not owned by evm."
             );
             return Err(EvmError::FreeNotEvmAccount);
         }
-        user.owner = solana_sdk::system_program::id();
+        user.set_owner(solana_sdk::system_program::id());
         Ok(())
     }
 
     fn process_swap_to_evm(
         &self,
         executor: &mut Executor,
-        invoke_context: &dyn InvokeContext,
+        invoke_context: &InvokeContext,
         accounts: AccountStructure,
         lamports: u64,
         evm_address: evm::Address,
@@ -355,22 +354,25 @@ impl EvmProcessor {
         let mut user_account = user
             .try_account_ref_mut()
             .map_err(|_| EvmError::BorrowingFailed)?;
-        if lamports > user_account.lamports {
+        if lamports > user_account.lamports() {
             ic_msg!(
                 invoke_context,
                 "SwapNativeToEther: insufficient lamports ({}, need {})",
-                user_account.lamports,
+                user_account.lamports(),
                 lamports
             );
             return Err(EvmError::SwapInsufficient);
         }
 
-        user_account.lamports -= lamports;
-        accounts
+        let user_account_lamports = user_account.lamports().saturating_sub( lamports);
+        user_account.set_lamports(user_account_lamports);
+        let mut evm_account = accounts
             .evm
             .try_account_ref_mut()
-            .map_err(|_| EvmError::BorrowingFailed)?
-            .lamports += lamports;
+            .map_err(|_| EvmError::BorrowingFailed)?;
+
+        let evm_account_lamports = evm_account.lamports().saturating_add(lamports);
+        evm_account.set_lamports(evm_account_lamports);
         executor.deposit(evm_address, gweis);
         if register_swap_tx_in_evm {
             executor.register_swap_tx_in_evm(
@@ -386,7 +388,7 @@ impl EvmProcessor {
     fn process_big_tx(
         &self,
         executor: &mut Executor,
-        invoke_context: &dyn InvokeContext,
+        invoke_context: &InvokeContext,
         accounts: AccountStructure,
         big_tx: EvmBigTransaction,
         unsigned_tx_fix: bool,
@@ -408,11 +410,11 @@ impl EvmProcessor {
             );
             return Err(EvmError::MissingRequiredSignature);
         }
-        let mut storage = storage_account
+        let storage = storage_account
             .try_account_ref_mut()
             .map_err(|_| EvmError::BorrowingFailed)?;
 
-        let mut tx_chunks = TxChunks::new(storage.data.as_mut_slice());
+        let mut tx_chunks = TxChunks::new(storage.data().to_vec());
 
         match big_tx {
             EvmBigTransaction::EvmTransactionAllocate { size } => {
@@ -554,10 +556,10 @@ impl EvmProcessor {
                 if unsigned_tx_fix {
                     let program_caller =
                         invoke_context.get_caller().map(|k| *k).unwrap_or_default();
-                    let program_owner = program_account
+                    let program_owner = *program_account
                         .try_account_ref()
                         .map_err(|_| EvmError::BorrowingFailed)?
-                        .owner;
+                        .owner();
                     if program_owner != program_caller {
                         return Err(EvmError::AuthorizedTransactionIncorrectOwner);
                     }
@@ -585,17 +587,18 @@ impl EvmProcessor {
 
     pub fn cleanup_storage<'a>(
         &self,
-        invoke_context: &dyn InvokeContext,
+        invoke_context: &InvokeContext,
         mut storage_ref: RefMut<AccountSharedData>,
         user: &'a KeyedAccount<'a>,
     ) -> Result<(), EvmError> {
-        let balance = storage_ref.lamports;
+        let balance = storage_ref.lamports();
 
-        storage_ref.lamports = 0;
+        storage_ref.set_lamports(0);
 
-        user.try_account_ref_mut()
-            .map_err(|_| EvmError::BorrowingFailed)?
-            .lamports += balance;
+        let mut user_acc = user.try_account_ref_mut()
+            .map_err(|_| EvmError::BorrowingFailed)?;
+        let user_acc_lamports = user_acc.lamports().saturating_add( balance);
+        user_acc.set_lamports(user_acc_lamports);
 
         ic_msg!(
             invoke_context,
@@ -611,7 +614,7 @@ impl EvmProcessor {
     pub fn handle_transaction_result(
         &self,
         executor: &mut Executor,
-        invoke_context: &dyn InvokeContext,
+        invoke_context: &InvokeContext,
         accounts: AccountStructure,
         sender: Option<&KeyedAccount>,
         tx_gas_price: evm_state::U256,
@@ -623,7 +626,7 @@ impl EvmProcessor {
         })?;
 
         write!(
-            crate::solana_extension::MultilineLogger::new(&*invoke_context.get_logger().borrow()),
+            crate::solana_extension::MultilineLogger::new(invoke_context.get_log_collector()),
             "{}",
             result
         )
@@ -681,11 +684,13 @@ impl EvmProcessor {
     }
 
     /// Ensure that first account is program itself, and it's locked for writes.
-    fn check_evm_account<'a, 'b>(
-        keyed_accounts: &'a [KeyedAccount<'b>],
-    ) -> Result<(&'a KeyedAccount<'b>, &'a [KeyedAccount<'b>]), InstructionError> {
+    fn check_evm_account<'a>(
+        first_keyed_account: usize,
+        invoke_context: &'a InvokeContext,
+    ) -> Result<(&'a KeyedAccount<'a>, &'a [KeyedAccount<'a>]), InstructionError> {
+        let keyed_accounts =  invoke_context.get_keyed_accounts()?;
         let first = keyed_accounts
-            .first()
+            .get(first_keyed_account)
             .ok_or(InstructionError::NotEnoughAccountKeys)?;
 
         trace!("first = {:?}", first);
@@ -695,7 +700,7 @@ impl EvmProcessor {
             return Err(InstructionError::MissingAccount);
         }
 
-        let keyed_accounts = &keyed_accounts[1..];
+        let keyed_accounts = &keyed_accounts[(first_keyed_account+1)..];
         Ok((first, keyed_accounts))
     }
 }
@@ -1194,7 +1199,7 @@ mod test {
         let executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
         assert_eq!(
-            keyed_accounts[1].try_account_ref_mut().unwrap().owner,
+            keyed_accounts[1].try_account_ref_mut().unwrap().owner(),
             solana_sdk::system_program::id()
         );
 

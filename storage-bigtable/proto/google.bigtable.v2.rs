@@ -244,6 +244,7 @@ pub struct RowFilter {
     pub filter: ::core::option::Option<row_filter::Filter>,
 }
 /// Nested message and enum types in `RowFilter`.
+#[allow(clippy::enum_variant_names)]
 pub mod row_filter {
     /// A RowFilter which sends rows through several RowFilters in sequence.
     #[derive(Clone, PartialEq, ::prost::Message)]
@@ -928,14 +929,14 @@ pub mod bigtable_client {
             interceptor: F,
         ) -> BigtableClient<InterceptedService<T, F>>
         where
-            F: tonic::service::Interceptor,
-            T: tonic::codegen::Service<
+            F: FnMut(tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status>,
+            T: Service<
                 http::Request<tonic::body::BoxBody>,
                 Response = http::Response<
                     <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<http::Request<tonic::body::BoxBody>>>::Error:
+            <T as Service<http::Request<tonic::body::BoxBody>>>::Error:
                 Into<StdError> + Send + Sync,
         {
             BigtableClient::new(InterceptedService::new(inner, interceptor))

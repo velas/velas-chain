@@ -1,4 +1,4 @@
-# Solana Coding Guidelines
+# Velas Coding Guidelines
 
 The goal of these guidelines is to improve developer productivity by allowing
 developers to jump into any file in the codebase and not need to adapt to
@@ -18,12 +18,14 @@ those dependencies, put the fix into a commit of its own, then checkout a new
 branch, and cherry-pick it.
 
 ```bash
-$ git commit -am "Fix foo, needed by bar"
+$ git commit -am "Fix: foo, needed by bar"
 $ git checkout master
 $ git checkout -b fix-foo
 $ git cherry-pick fix-bar
 $ git push --set-upstream origin fix-foo
 ```
+
+For commit we are using [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/)
 
 Open a PR to start the review process and then jump back to your original
 branch to keep making progress. Consider rebasing to make your fix the first
@@ -217,32 +219,3 @@ abbreviating words in function names.
 case where that code has not yet been updated to meet the conventions described
 here.
 
-
-## Terminology
-
-Inventing new terms is allowed, but should only be done when the term is widely
-used and understood. Avoid introducing new 3-letter terms, which can be
-confused with 3-letter acronyms.
-
-[Terms currently in use](docs/src/terminology.md)
-
-
-## Design Proposals
-
-Solana's architecture is described by docs generated from markdown files in
-the `docs/src/` directory, maintained by an *editor* (currently @garious). To
-add a design proposal, you'll need to include it in the
-[Accepted Design Proposals](https://docs.solana.com/proposals/accepted-design-proposals)
-section of the Solana docs.  Here's the full process:
-
-1. Propose a design by creating a PR that adds a markdown document to the
-   `docs/src/proposals` directory and references it from the [table of
-   contents](docs/src/SUMMARY.md). Add any relevant *maintainers* to the PR
-   review.
-2. The PR being merged indicates your proposed change was accepted and that the
-   maintainers support your plan of attack.
-3. Submit PRs that implement the proposal. When the implementation reveals the
-   need for tweaks to the proposal, be sure to update the proposal and have that
-   change reviewed by the same people as in step 1.
-4. Once the implementation is complete, submit a PR that moves the link from
-   the Accepted Proposals to the Implemented Proposals section.

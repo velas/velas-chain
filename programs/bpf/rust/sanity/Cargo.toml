@@ -1,19 +1,27 @@
 [package]
 name = "solana-bpf-rust-sanity"
-version = "1.6.14"
+version = "1.9.13"
 description = "Solana BPF test program written in Rust"
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
 repository = "https://github.com/solana-labs/solana"
 license = "Apache-2.0"
 homepage = "https://solana.com/"
 documentation = "https://docs.rs/solana-bpf-rust-sanity"
-edition = "2018"
+edition = "2021"
+
+[features]
+test-bpf = []
 
 [dependencies]
-solana-program = { path = "../../../../sdk/program", version = "=1.6.14" }
+solana-program = { path = "../../../../sdk/program", version = "=1.9.13" }
+
+[dev-dependencies]
+solana-program-runtime = { path = "../../../../program-runtime", version = "=1.9.13" }
+solana-program-test = { path = "../../../../program-test", version = "=1.9.13" }
+solana-sdk = { path = "../../../../sdk", version = "=1.9.13" }
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

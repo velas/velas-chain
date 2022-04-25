@@ -1,18 +1,30 @@
 #![allow(clippy::integer_arithmetic)]
-pub use solana_core::{cluster_info::MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, test_validator};
 use {
     console::style,
+    fd_lock::{RwLock, RwLockWriteGuard},
     indicatif::{ProgressDrawTarget, ProgressStyle},
-    log::*,
-    std::{env, process::exit, thread::JoinHandle},
+    std::{
+        borrow::Cow,
+        env,
+        fmt::Display,
+        fs::{File, OpenOptions},
+        path::Path,
+        process::exit,
+        thread::JoinHandle,
+    },
+};
+pub use {
+    solana_gossip::cluster_info::MINIMUM_VALIDATOR_PORT_RANGE_WIDTH,
+    solana_test_validator as test_validator,
 };
 
 pub mod admin_rpc_service;
+pub mod bootstrap;
 pub mod dashboard;
 
 #[cfg(unix)]
 fn redirect_stderr(filename: &str) {
-    use std::{fs::OpenOptions, os::unix::io::AsRawFd};
+    use std::os::unix::io::AsRawFd;
     match OpenOptions::new()
         .write(true)
         .create(true)
@@ -35,17 +47,24 @@ pub fn redirect_stderr_to_file(logfile: Option<String>) -> Option<JoinHandle<()>
         env::set_var("RUST_BACKTRACE", "1")
     }
 
-    let logger_thread = match logfile {
-        None => None,
+    let filter = "solana=info";
+    match logfile {
+        None => {
+            solana_logger::setup_with_default(filter);
+            None
+        }
         Some(logfile) => {
             #[cfg(unix)]
             {
-                let signals = signal_hook::iterator::Signals::new(&[signal_hook::SIGUSR1])
-                    .unwrap_or_else(|err| {
-                        eprintln!("Unable to register SIGUSR1 handler: {:?}", err);
-                        exit(1);
-                    });
+                use log::info;
+                let mut signals =
+                    signal_hook::iterator::Signals::new(&[signal_hook::consts::SIGUSR1])
+                        .unwrap_or_else(|err| {
+                            eprintln!("Unable to register SIGUSR1 handler: {:?}", err);
+                            exit(1);
+                        });
 
+                solana_logger::setup_with_default(filter);
                 redirect_stderr(&logfile);
                 Some(std::thread::spawn(move || {
                     for signal in signals.forever() {
@@ -59,14 +78,12 @@ pub fn redirect_stderr_to_file(logfile: Option<String>) -> Option<JoinHandle<()>
             }
             #[cfg(not(unix))]
             {
-                println!("logging to a file is not supported on this platform");
-                ()
+                println!("logrotate is not supported on this platform");
+                solana_logger::setup_file_with_default(&logfile, filter);
+                None
             }
         }
-    };
-
-    solana_logger::setup_with_default("info,solana_metrics=warn");
-    logger_thread
+    }
 }
 
 pub fn port_validator(port: String) -> Result<(), String> {
@@ -91,9 +108,12 @@ pub fn port_range_validator(port_range: String) -> Result<(), String> {
     }
 }
 
+pub fn format_name_value(name: &str, value: &str) -> String {
+    format!("{} {}", style(name).bold(), value)
+}
 /// Pretty print a "name value"
 pub fn println_name_value(name: &str, value: &str) {
-    println!("{} {}", style(name).bold(), value);
+    println!("{}", format_name_value(name, value));
 }
 
 /// Creates a new process bar for processing that will take an unknown amount of time
@@ -116,7 +136,7 @@ pub struct ProgressBar {
 }
 
 impl ProgressBar {
-    pub fn set_message(&self, msg: &str) {
+    pub fn set_message<T: Into<Cow<'static, str>> + Display>(&self, msg: T) {
         if self.is_term {
             self.progress_bar.set_message(msg);
         } else {
@@ -124,11 +144,39 @@ impl ProgressBar {
         }
     }
 
-    pub fn abandon_with_message(&self, msg: &str) {
+    pub fn println<I: AsRef<str>>(&self, msg: I) {
+        self.progress_bar.println(msg);
+    }
+
+    pub fn abandon_with_message<T: Into<Cow<'static, str>> + Display>(&self, msg: T) {
         if self.is_term {
             self.progress_bar.abandon_with_message(msg);
         } else {
             println!("{}", msg);
         }
     }
+}
+
+pub fn ledger_lockfile(ledger_path: &Path) -> RwLock<File> {
+    let lockfile = ledger_path.join("ledger.lock");
+    fd_lock::RwLock::new(
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&lockfile)
+            .unwrap(),
+    )
+}
+
+pub fn lock_ledger<'path, 'lock>(
+    ledger_path: &'path Path,
+    ledger_lockfile: &'lock mut RwLock<File>,
+) -> RwLockWriteGuard<'lock, File> {
+    ledger_lockfile.try_write().unwrap_or_else(|_| {
+        println!(
+            "Error: Unable to lock {} directory. Check if another validator is running",
+            ledger_path.display()
+        );
+        exit(1);
+    })
 }

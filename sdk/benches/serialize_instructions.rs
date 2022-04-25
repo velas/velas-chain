@@ -1,12 +1,17 @@
 #![feature(test)]
 
 extern crate test;
-use bincode::{deserialize, serialize};
-use solana_sdk::instruction::{AccountMeta, Instruction};
-use solana_sdk::message::Message;
-use solana_sdk::pubkey;
-use solana_sdk::sysvar::instructions;
-use test::Bencher;
+use {
+    bincode::{deserialize, serialize},
+    solana_sdk::{
+        instruction::{AccountMeta, Instruction},
+        message::{Message, SanitizedMessage},
+        pubkey::{self, Pubkey},
+        sysvar::instructions::{self, construct_instructions_data},
+    },
+    std::convert::TryFrom,
+    test::Bencher,
+};
 
 fn make_instructions() -> Vec<Instruction> {
     let meta = AccountMeta::new(pubkey::new_rand(), false);
@@ -23,13 +28,14 @@ fn bench_bincode_instruction_serialize(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_manual_instruction_serialize(b: &mut Bencher) {
+fn bench_construct_instructions_data(b: &mut Bencher) {
     let instructions = make_instructions();
-    let message = Message::new(&instructions, None);
+    let message =
+        SanitizedMessage::try_from(Message::new(&instructions, Some(&Pubkey::new_unique())))
+            .unwrap();
     b.iter(|| {
-        test::black_box(message.serialize_instructions(
-            true, // demote_sysvar_write_locks
-        ));
+        let instructions = message.decompile_instructions();
+        test::black_box(construct_instructions_data(&instructions));
     });
 }
 
@@ -45,12 +51,13 @@ fn bench_bincode_instruction_deserialize(b: &mut Bencher) {
 #[bench]
 fn bench_manual_instruction_deserialize(b: &mut Bencher) {
     let instructions = make_instructions();
-    let message = Message::new(&instructions, None);
-    let serialized = message.serialize_instructions(
-        true, // demote_sysvar_write_locks
-    );
+    let message =
+        SanitizedMessage::try_from(Message::new(&instructions, Some(&Pubkey::new_unique())))
+            .unwrap();
+    let serialized = construct_instructions_data(&message.decompile_instructions());
     b.iter(|| {
         for i in 0..instructions.len() {
+            #[allow(deprecated)]
             test::black_box(instructions::load_instruction_at(i, &serialized).unwrap());
         }
     });
@@ -59,11 +66,12 @@ fn bench_manual_instruction_deserialize(b: &mut Bencher) {
 #[bench]
 fn bench_manual_instruction_deserialize_single(b: &mut Bencher) {
     let instructions = make_instructions();
-    let message = Message::new(&instructions, None);
-    let serialized = message.serialize_instructions(
-        true, // demote_sysvar_write_locks
-    );
+    let message =
+        SanitizedMessage::try_from(Message::new(&instructions, Some(&Pubkey::new_unique())))
+            .unwrap();
+    let serialized = construct_instructions_data(&message.decompile_instructions());
     b.iter(|| {
+        #[allow(deprecated)]
         test::black_box(instructions::load_instruction_at(3, &serialized).unwrap());
     });
 }

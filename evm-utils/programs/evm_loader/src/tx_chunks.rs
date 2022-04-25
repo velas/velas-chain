@@ -5,6 +5,7 @@ use snafu::{ensure, Snafu};
 pub struct TxChunks<T>(T);
 
 #[derive(Debug, Snafu)]
+#[snafu(context(suffix(false)))]
 pub enum Error {
     #[snafu(display("Expected storage size {}, but available {}", expected, actual))]
     MismatchedSizes { actual: usize, expected: usize },

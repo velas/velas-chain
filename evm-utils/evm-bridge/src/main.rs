@@ -1,5 +1,5 @@
 mod pool;
-mod sol_proxy;
+// mod sol_proxy;
 
 use log::*;
 use solana_sdk::commitment_config::CommitmentConfig;
@@ -363,12 +363,12 @@ impl BridgeERPC for BridgeErpcImpl {
                     .gas_price
                     .map(|a| a.0)
                     .unwrap_or_else(|| meta.min_gas_price),
-                gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 30000000.into()),
+                gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 30000000i32.into()),
                 action: tx
                     .to
                     .map(|a| evm::TransactionAction::Call(a.0))
                     .unwrap_or(evm::TransactionAction::Create),
-                value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
+                value: tx.value.map(|a| a.0).unwrap_or_else(|| 0i32.into()),
                 input: tx.input.map(|a| a.0).unwrap_or_default(),
             };
 
@@ -396,7 +396,7 @@ impl BridgeERPC for BridgeErpcImpl {
                 .map_err(|e| into_native_error(e, meta.verbose_errors))?;
 
             let tx: compatibility::Transaction =
-                rlp::decode(&bytes.0).with_context(|| RlpError {
+                rlp::decode(&bytes.0).with_context(|_| RlpError {
                     struct_name: "RawTransaction".to_string(),
                     input_data: hex::encode(&bytes.0),
                 })?;
@@ -912,16 +912,16 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
 
     let mut io = MetaIoHandler::default();
 
-    {
-        use solana_core::rpc::rpc_minimal::Minimal;
-        let minimal_rpc = sol_proxy::MinimalRpcSolProxy;
-        io.extend_with(minimal_rpc.to_delegate());
-    }
-    {
-        use solana_core::rpc::rpc_full::Full;
-        let full_rpc = sol_proxy::FullRpcSolProxy;
-        io.extend_with(full_rpc.to_delegate());
-    }
+    // {
+    //     use solana_rpc::rpc::rpc_minimal::Minimal;
+    //     let minimal_rpc = sol_proxy::MinimalRpcSolProxy;
+    //     io.extend_with(minimal_rpc.to_delegate());
+    // }
+    // {
+    //     use solana_rpc::rpc::rpc_minimal::Full;
+    //     let full_rpc = sol_proxy::FullRpcSolProxy;
+    //     io.extend_with(full_rpc.to_delegate());
+    // }
 
     let ether_bridge = BridgeErpcImpl;
     io.extend_with(ether_bridge.to_delegate());

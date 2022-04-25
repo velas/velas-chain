@@ -1,8 +1,10 @@
-use super::*;
-use solana_ledger::shred::Shredder;
-use solana_sdk::hash::Hash;
-use solana_sdk::signature::Keypair;
-use std::{thread::sleep, time::Duration};
+use {
+    super::*,
+    crate::cluster_nodes::ClusterNodesCache,
+    solana_ledger::shred::Shredder,
+    solana_sdk::{hash::Hash, signature::Keypair},
+    std::{thread::sleep, time::Duration},
+};
 
 pub const NUM_BAD_SLOTS: u64 = 10;
 pub const SLOT_TO_RESOLVE: u64 = 32;
@@ -10,20 +12,26 @@ pub const SLOT_TO_RESOLVE: u64 = 32;
 #[derive(Clone)]
 pub(super) struct FailEntryVerificationBroadcastRun {
     shred_version: u16,
-    keypair: Arc<Keypair>,
     good_shreds: Vec<Shred>,
     current_slot: Slot,
     next_shred_index: u32,
+    next_code_index: u32,
+    cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
 }
 
 impl FailEntryVerificationBroadcastRun {
-    pub(super) fn new(keypair: Arc<Keypair>, shred_version: u16) -> Self {
+    pub(super) fn new(shred_version: u16) -> Self {
+        let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
+            CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
+            CLUSTER_NODES_CACHE_TTL,
+        ));
         Self {
             shred_version,
-            keypair,
             good_shreds: vec![],
             current_slot: 0,
             next_shred_index: 0,
+            next_code_index: 0,
+            cluster_nodes_cache,
         }
     }
 }
@@ -31,9 +39,10 @@ impl FailEntryVerificationBroadcastRun {
 impl BroadcastRun for FailEntryVerificationBroadcastRun {
     fn run(
         &mut self,
+        keypair: &Keypair,
         blockstore: &Arc<Blockstore>,
         receiver: &Receiver<WorkingBankEntry>,
-        socket_sender: &Sender<(TransmitShreds, Option<BroadcastShredBatchInfo>)>,
+        socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         // 1) Pull entries from banking stage
@@ -43,6 +52,7 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
 
         if bank.slot() != self.current_slot {
             self.next_shred_index = 0;
+            self.next_code_index = 0;
             self.current_slot = bank.slot();
         }
 
@@ -71,27 +81,31 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         let shredder = Shredder::new(
             bank.slot(),
             bank.parent().unwrap().slot(),
-            self.keypair.clone(),
             (bank.tick_height() % bank.ticks_per_slot()) as u8,
             self.shred_version,
         )
         .expect("Expected to create a new shredder");
 
-        let (data_shreds, _, _) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+            keypair,
             &receive_results.entries,
             last_tick_height == bank.max_tick_height() && last_entries.is_none(),
             self.next_shred_index,
+            self.next_code_index,
         );
 
         self.next_shred_index += data_shreds.len() as u32;
+        if let Some(index) = coding_shreds.iter().map(Shred::index).max() {
+            self.next_code_index = index + 1;
+        }
         let last_shreds = last_entries.map(|(good_last_entry, bad_last_entry)| {
-            let (good_last_data_shred, _, _) =
-                shredder.entries_to_shreds(&[good_last_entry], true, self.next_shred_index);
+            let (good_last_data_shred, _) =
+                shredder.entries_to_shreds(keypair, &[good_last_entry], true, self.next_shred_index, self.next_code_index);
 
-            let (bad_last_data_shred, _, _) =
+            let (bad_last_data_shred, _) =
                 // Don't mark the last shred as last so that validators won't know that
                 // they've gotten all the shreds, and will continue trying to repair
-                shredder.entries_to_shreds(&[bad_last_entry], false, self.next_shred_index);
+                shredder.entries_to_shreds(keypair, &[bad_last_entry], false, self.next_shred_index, self.next_code_index);
 
             self.next_shred_index += 1;
             (good_last_data_shred, bad_last_data_shred)
@@ -100,10 +114,7 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         let data_shreds = Arc::new(data_shreds);
         blockstore_sender.send((data_shreds.clone(), None))?;
         // 4) Start broadcast step
-        let bank_epoch = bank.get_leader_schedule_epoch(bank.slot());
-        let stakes = bank.epoch_staked_nodes(bank_epoch);
-        let stakes = stakes.map(Arc::new);
-        socket_sender.send(((stakes.clone(), data_shreds), None))?;
+        socket_sender.send((data_shreds, None))?;
         if let Some((good_last_data_shred, bad_last_data_shred)) = last_shreds {
             // Stash away the good shred so we can rewrite them later
             self.good_shreds.extend(good_last_data_shred.clone());
@@ -122,7 +133,7 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
             // Store the bad shred so we serve bad repairs to validators catching up
             blockstore_sender.send((bad_last_data_shred.clone(), None))?;
             // Send bad shreds to rest of network
-            socket_sender.send(((stakes, bad_last_data_shred), None))?;
+            socket_sender.send((bad_last_data_shred, None))?;
         }
         Ok(())
     }
@@ -131,21 +142,19 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         receiver: &Arc<Mutex<TransmitReceiver>>,
         cluster_info: &ClusterInfo,
         sock: &UdpSocket,
+        bank_forks: &Arc<RwLock<BankForks>>,
     ) -> Result<()> {
-        let ((stakes, shreds), _) = receiver.lock().unwrap().recv()?;
-        // Broadcast data
-        let (peers, peers_and_stakes) = get_broadcast_peers(cluster_info, stakes.as_deref());
-
+        let (shreds, _) = receiver.lock().unwrap().recv()?;
         broadcast_shreds(
             sock,
             &shreds,
-            &peers_and_stakes,
-            &peers,
-            &Arc::new(AtomicU64::new(0)),
+            &self.cluster_nodes_cache,
+            &Arc::new(AtomicInterval::default()),
             &mut TransmitShredsStats::default(),
-        )?;
-
-        Ok(())
+            cluster_info,
+            bank_forks,
+            cluster_info.socket_addr_space(),
+        )
     }
     fn record(
         &mut self,

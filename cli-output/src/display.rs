@@ -5,11 +5,10 @@ use {
     indicatif::{ProgressBar, ProgressStyle},
     solana_sdk::{
         clock::UnixTimestamp, hash::Hash, message::Message, native_token::lamports_to_sol,
-        program_utils::limited_deserialize, pubkey::Pubkey, transaction::Transaction,
+        program_utils::limited_deserialize, pubkey::Pubkey, stake, transaction::Transaction,
     },
     solana_transaction_status::UiTransactionStatusMeta,
-    spl_memo::id as spl_memo_id,
-    spl_memo::v1::id as spl_memo_v1_id,
+    spl_memo::{id as spl_memo_id, v1::id as spl_memo_v1_id},
     std::{collections::HashMap, fmt, io},
 };
 
@@ -140,7 +139,7 @@ fn format_account_mode(message: &Message, index: usize) -> String {
         } else {
             "-"
         },
-        if message.is_writable(index, /*demote_sysvar_write_locks=*/ true) {
+        if message.is_writable(index) {
             "w" // comment for consistent rust fmt (no joking; lol)
         } else {
             "-"
@@ -201,7 +200,7 @@ pub fn write_transaction<W: io::Write>(
     }
     let mut fee_payer_index = None;
     for (account_index, account) in message.account_keys.iter().enumerate() {
-        if fee_payer_index.is_none() && message.is_non_loader_key(account, account_index) {
+        if fee_payer_index.is_none() && message.is_non_loader_key(account_index) {
             fee_payer_index = Some(account_index)
         }
         writeln!(
@@ -244,10 +243,9 @@ pub fn write_transaction<W: io::Write>(
                 writeln!(w, "{}  {:?}", prefix, vote_instruction)?;
                 raw = false;
             }
-        } else if program_pubkey == solana_stake_program::id() {
-            if let Ok(stake_instruction) = limited_deserialize::<
-                solana_stake_program::stake_instruction::StakeInstruction,
-            >(&instruction.data)
+        } else if program_pubkey == stake::program::id() {
+            if let Ok(stake_instruction) =
+                limited_deserialize::<stake::instruction::StakeInstruction>(&instruction.data)
             {
                 writeln!(w, "{}  {:?}", prefix, stake_instruction)?;
                 raw = false;
@@ -339,7 +337,7 @@ pub fn write_transaction<W: io::Write>(
                     let sign = if reward.lamports < 0 { "-" } else { "" };
                     writeln!(
                         w,
-                        "{}  {:<44}  {:^15}  {:<15}  {}",
+                        "{}  {:<44}  {:^15}  {}◎{:<14.9}  ◎{:<18.9}",
                         prefix,
                         reward.pubkey,
                         if let Some(reward_type) = reward.reward_type {
@@ -347,12 +345,9 @@ pub fn write_transaction<W: io::Write>(
                         } else {
                             "-".to_string()
                         },
-                        format!(
-                            "{}◎{:<14.9}",
-                            sign,
-                            lamports_to_sol(reward.lamports.abs() as u64)
-                        ),
-                        format!("◎{:<18.9}", lamports_to_sol(reward.post_balance),)
+                        sign,
+                        lamports_to_sol(reward.lamports.abs() as u64),
+                        lamports_to_sol(reward.post_balance)
                     )?;
                 }
             }
@@ -432,8 +427,7 @@ pub fn unix_timestamp_to_string(unix_timestamp: UnixTimestamp) -> String {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use solana_sdk::pubkey::Pubkey;
+    use {super::*, solana_sdk::pubkey::Pubkey};
 
     #[test]
     fn test_format_labeled_address() {

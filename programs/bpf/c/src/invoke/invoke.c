@@ -2,7 +2,13 @@
  * @brief Example C-based BPF program that tests cross-program invocations
  */
 #include "../invoked/instruction.h"
-#include <solana_sdk.h>
+#include <sol/entrypoint.h>
+#include <sol/cpi.h>
+#include <sol/pubkey.h>
+#include <sol/log.h>
+#include <sol/assert.h>
+#include <sol/deserialize.h>
+#include <sol/return_data.h>
 
 static const uint8_t TEST_SUCCESS = 1;
 static const uint8_t TEST_PRIVILEGE_ESCALATION_SIGNER = 2;
@@ -19,6 +25,12 @@ static const uint8_t TEST_PRIVILEGE_DEESCALATION_ESCALATION_SIGNER = 12;
 static const uint8_t TEST_PRIVILEGE_DEESCALATION_ESCALATION_WRITABLE = 13;
 static const uint8_t TEST_WRITABLE_DEESCALATION_WRITABLE = 14;
 static const uint8_t TEST_NESTED_INVOKE_TOO_DEEP = 15;
+static const uint8_t TEST_EXECUTABLE_LAMPORTS = 16;
+static const uint8_t TEST_CALL_PRECOMPILE = 17;
+static const uint8_t ADD_LAMPORTS = 18;
+static const uint8_t TEST_RETURN_DATA_TOO_LARGE = 19;
+static const uint8_t TEST_DUPLICATE_PRIVILEGE_ESCALATION_SIGNER = 20;
+static const uint8_t TEST_DUPLICATE_PRIVILEGE_ESCALATION_WRITABLE = 21;
 
 static const int MINT_INDEX = 0;
 static const int ARGUMENT_INDEX = 1;
@@ -31,6 +43,8 @@ static const int DERIVED_KEY2_INDEX = 7;
 static const int DERIVED_KEY3_INDEX = 8;
 static const int SYSTEM_PROGRAM_INDEX = 9;
 static const int FROM_INDEX = 10;
+static const int ED25519_PROGRAM_INDEX = 11;
+static const int INVOKE_PROGRAM_INDEX = 12;
 
 uint64_t do_nested_invokes(uint64_t num_nested_invokes,
                            SolAccountInfo *accounts, uint64_t num_accounts) {
@@ -64,7 +78,7 @@ uint64_t do_nested_invokes(uint64_t num_nested_invokes,
 extern uint64_t entrypoint(const uint8_t *input) {
   sol_log("Invoke C program");
 
-  SolAccountInfo accounts[11];
+  SolAccountInfo accounts[13];
   SolParameters params = (SolParameters){.ka = accounts};
 
   if (!sol_deserialize(input, &params, SOL_ARRAY_SIZE(accounts))) {
@@ -165,6 +179,32 @@ extern uint64_t entrypoint(const uint8_t *input) {
 
       sol_assert(SUCCESS ==
                  sol_invoke(&instruction, accounts, SOL_ARRAY_SIZE(accounts)));
+    }
+
+    sol_log("Test return data");
+    {
+      SolAccountMeta arguments[] = {{accounts[ARGUMENT_INDEX].key, true, true}};
+      uint8_t data[] = { SET_RETURN_DATA };
+      uint8_t buf[100];
+
+      const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
+                                          arguments, SOL_ARRAY_SIZE(arguments),
+                                          data, SOL_ARRAY_SIZE(data)};
+
+      // set some return data, so that the callee can check it is cleared
+      sol_set_return_data((uint8_t[]){1, 2, 3, 4}, 4);
+
+      sol_assert(SUCCESS ==
+                 sol_invoke(&instruction, accounts, SOL_ARRAY_SIZE(accounts)));
+
+      SolPubkey setter;
+
+      uint64_t ret = sol_get_return_data(data, sizeof(data), &setter);
+
+      sol_assert(ret == sizeof(RETURN_DATA_VAL));
+
+      sol_assert(sol_memcmp(data, RETURN_DATA_VAL, sizeof(RETURN_DATA_VAL)));
+      sol_assert(SolPubkey_same(&setter, accounts[INVOKED_PROGRAM_INDEX].key));
     }
 
     sol_log("Test create_program_address");
@@ -512,26 +552,101 @@ extern uint64_t entrypoint(const uint8_t *input) {
     break;
   }
   case TEST_WRITABLE_DEESCALATION_WRITABLE: {
-  sol_log("Test writable deescalation");
-      uint8_t buffer[10];
-      for (int i = 0; i < 10; i++) {
-        buffer[i] = accounts[INVOKED_ARGUMENT_INDEX].data[i];
-      }
-      SolAccountMeta arguments[] = {
-          {accounts[INVOKED_ARGUMENT_INDEX].key, false, false}};
-      uint8_t data[] = {WRITE_ACCOUNT, 10};
-      const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
-                                          arguments, SOL_ARRAY_SIZE(arguments),
-                                          data, SOL_ARRAY_SIZE(data)};
-      sol_invoke(&instruction, accounts, SOL_ARRAY_SIZE(accounts));
-
-      for (int i = 0; i < 10; i++) {
-        sol_assert(buffer[i] == accounts[INVOKED_ARGUMENT_INDEX].data[i]);
-      }
-      break;
+    sol_log("Test writable deescalation");
+    uint8_t buffer[10];
+    for (int i = 0; i < 10; i++) {
+      buffer[i] = accounts[INVOKED_ARGUMENT_INDEX].data[i];
     }
+    SolAccountMeta arguments[] = {
+        {accounts[INVOKED_ARGUMENT_INDEX].key, false, false}};
+    uint8_t data[] = {WRITE_ACCOUNT, 10};
+    const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
+                                        arguments, SOL_ARRAY_SIZE(arguments),
+                                        data, SOL_ARRAY_SIZE(data)};
+    sol_invoke(&instruction, accounts, SOL_ARRAY_SIZE(accounts));
+
+    for (int i = 0; i < 10; i++) {
+      sol_assert(buffer[i] == accounts[INVOKED_ARGUMENT_INDEX].data[i]);
+    }
+    break;
+  }
   case TEST_NESTED_INVOKE_TOO_DEEP: {
     do_nested_invokes(5, accounts, params.ka_num);
+    break;
+  }
+  case TEST_EXECUTABLE_LAMPORTS: {
+    sol_log("Test executable lamports");
+    accounts[ARGUMENT_INDEX].executable = true;
+    *accounts[ARGUMENT_INDEX].lamports -= 1;
+    *accounts[DERIVED_KEY1_INDEX].lamports +=1;
+    SolAccountMeta arguments[] = {
+      {accounts[ARGUMENT_INDEX].key, true, false},
+      {accounts[DERIVED_KEY1_INDEX].key, true, false},
+    };
+    uint8_t data[] = {ADD_LAMPORTS, 0, 0, 0};
+    SolPubkey program_id;
+    sol_memcpy(&program_id, params.program_id, sizeof(SolPubkey));
+    const SolInstruction instruction = {&program_id,
+					arguments, SOL_ARRAY_SIZE(arguments),
+					data, SOL_ARRAY_SIZE(data)};
+    sol_invoke(&instruction, accounts, SOL_ARRAY_SIZE(accounts));
+    *accounts[ARGUMENT_INDEX].lamports += 1;
+    break;
+  }
+  case TEST_CALL_PRECOMPILE: {
+    sol_log("Test calling precompile from cpi");
+    SolAccountMeta arguments[] = {};
+    uint8_t data[] = {};
+    const SolInstruction instruction = {accounts[ED25519_PROGRAM_INDEX].key,
+					arguments, SOL_ARRAY_SIZE(arguments),
+					data, SOL_ARRAY_SIZE(data)};
+    sol_invoke(&instruction, accounts, SOL_ARRAY_SIZE(accounts));
+    break;
+  }
+  case ADD_LAMPORTS: {
+    *accounts[0].lamports += 1;
+     break;
+  }
+  case TEST_RETURN_DATA_TOO_LARGE: {
+    sol_log("Test setting return data too long");
+    // The actual buffer doesn't matter, just pass null
+    sol_set_return_data(NULL, 1027);
+    break;
+  }
+  case TEST_DUPLICATE_PRIVILEGE_ESCALATION_SIGNER: {
+    sol_log("Test duplicate privilege escalation signer");
+    SolAccountMeta arguments[] = {
+        {accounts[DERIVED_KEY3_INDEX].key, false, false},
+        {accounts[DERIVED_KEY3_INDEX].key, false, false},
+        {accounts[DERIVED_KEY3_INDEX].key, false, false}};
+    uint8_t data[] = {VERIFY_PRIVILEGE_ESCALATION};
+    const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
+                                        arguments, SOL_ARRAY_SIZE(arguments),
+                                        data, SOL_ARRAY_SIZE(data)};
+    sol_assert(SUCCESS ==
+               sol_invoke(&instruction, accounts, SOL_ARRAY_SIZE(accounts)));
+
+    // Signer privilege escalation will always fail the whole transaction
+    instruction.accounts[1].is_signer = true;
+    sol_invoke(&instruction, accounts, SOL_ARRAY_SIZE(accounts));
+    break;
+  }
+  case TEST_DUPLICATE_PRIVILEGE_ESCALATION_WRITABLE: {
+    sol_log("Test duplicate privilege escalation writable");
+    SolAccountMeta arguments[] = {
+        {accounts[DERIVED_KEY3_INDEX].key, false, false},
+        {accounts[DERIVED_KEY3_INDEX].key, false, false},
+        {accounts[DERIVED_KEY3_INDEX].key, false, false}};
+    uint8_t data[] = {VERIFY_PRIVILEGE_ESCALATION};
+    const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
+                                        arguments, SOL_ARRAY_SIZE(arguments),
+                                        data, SOL_ARRAY_SIZE(data)};
+    sol_assert(SUCCESS ==
+               sol_invoke(&instruction, accounts, SOL_ARRAY_SIZE(accounts)));
+
+    // Writable privilege escalation will always fail the whole transaction
+    instruction.accounts[1].is_writable = true;
+    sol_invoke(&instruction, accounts, SOL_ARRAY_SIZE(accounts));
     break;
   }
 

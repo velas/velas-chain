@@ -1,12 +1,24 @@
-use crate::{
+use {
+    crate::{
+        client_error::ClientError,
     pubsub_client::{PubsubClient, PubsubClientError, PubsubClientSubscription},
     rpc_client::RpcClient,
-    rpc_response::SlotUpdate,
-};
-use bincode::serialize;
-use log::*;
-use solana_sdk::{clock::Slot, pubkey::Pubkey, transaction::Transaction};
-use std::{
+        rpc_request::MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
+        rpc_response::SlotUpdate,
+        spinner,
+    },
+    bincode::serialize,
+    log::*,
+    solana_sdk::{
+        clock::Slot,
+        commitment_config::CommitmentConfig,
+        message::Message,
+        pubkey::Pubkey,
+        signature::SignerError,
+        signers::Signers,
+        transaction::{Transaction, TransactionError},
+    },
+    std::{
     collections::{HashMap, HashSet, VecDeque},
     net::{SocketAddr, UdpSocket},
     str::FromStr,
@@ -14,19 +26,24 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, RwLock,
     },
-    thread::JoinHandle,
-    time::{Duration, Instant},
+        thread::{sleep, JoinHandle},
+        time::{Duration, Instant},
+    },
+    thiserror::Error,
 };
-use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum TpuSenderError {
     #[error("Pubsub error: {0:?}")]
     PubsubError(#[from] PubsubClientError),
     #[error("RPC error: {0:?}")]
-    RpcError(#[from] crate::client_error::ClientError),
+    RpcError(#[from] ClientError),
     #[error("IO error: {0:?}")]
     IoError(#[from] std::io::Error),
+    #[error("Signer error: {0:?}")]
+    SignerError(#[from] SignerError),
+    #[error("Custom error: {0}")]
+    Custom(String),
 }
 
 type Result<T> = std::result::Result<T, TpuSenderError>;
@@ -41,7 +58,7 @@ pub const MAX_FANOUT_SLOTS: u64 = 100;
 #[derive(Clone, Debug)]
 pub struct TpuClientConfig {
     /// The range of upcoming slots to include when determining which
-    /// leaders to send transactions to (min: 1, max: 100)
+    /// leaders to send transactions to (min: 1, max: `MAX_FANOUT_SLOTS`)
     pub fanout_slots: u64,
 }
 
@@ -60,16 +77,18 @@ pub struct TpuClient {
     fanout_slots: u64,
     leader_tpu_service: LeaderTpuService,
     exit: Arc<AtomicBool>,
+    rpc_client: Arc<RpcClient>,
 }
 
 impl TpuClient {
-    /// Serializes and sends a transaction to the current leader's TPU port
+    /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
+    /// size
     pub fn send_transaction(&self, transaction: &Transaction) -> bool {
         let wire_transaction = serialize(transaction).expect("serialization should succeed");
         self.send_wire_transaction(&wire_transaction)
     }
 
-    /// Sends a transaction to the current leader's TPU port
+    /// Send a wire transaction to the current and upcoming leader TPUs according to fanout size
     pub fn send_wire_transaction(&self, wire_transaction: &[u8]) -> bool {
         let mut sent = false;
         for tpu_address in self
@@ -94,14 +113,158 @@ impl TpuClient {
         config: TpuClientConfig,
     ) -> Result<Self> {
         let exit = Arc::new(AtomicBool::new(false));
-        let leader_tpu_service = LeaderTpuService::new(rpc_client, websocket_url, exit.clone())?;
+        let leader_tpu_service =
+            LeaderTpuService::new(rpc_client.clone(), websocket_url, exit.clone())?;
 
         Ok(Self {
             send_socket: UdpSocket::bind("0.0.0.0:0").unwrap(),
             fanout_slots: config.fanout_slots.min(MAX_FANOUT_SLOTS).max(1),
             leader_tpu_service,
             exit,
+            rpc_client,
         })
+    }
+
+    pub fn send_and_confirm_messages_with_spinner<T: Signers>(
+        &self,
+        messages: &[Message],
+        signers: &T,
+    ) -> Result<Vec<Option<TransactionError>>> {
+        let mut expired_blockhash_retries = 5;
+        /* Send at ~100 TPS */
+        const SEND_TRANSACTION_INTERVAL: Duration = Duration::from_millis(10);
+        /* Retry batch send after 4 seconds */
+        const TRANSACTION_RESEND_INTERVAL: Duration = Duration::from_secs(4);
+
+        let progress_bar = spinner::new_progress_bar();
+        progress_bar.set_message("Setting up...");
+
+        let mut transactions = messages
+            .iter()
+            .enumerate()
+            .map(|(i, message)| (i, Transaction::new_unsigned(message.clone())))
+            .collect::<Vec<_>>();
+        let num_transactions = transactions.len() as f64;
+        let mut transaction_errors = vec![None; transactions.len()];
+        let set_message = |confirmed_transactions,
+                           block_height: Option<u64>,
+                           last_valid_block_height: u64,
+                           status: &str| {
+            progress_bar.set_message(format!(
+                "{:>5.1}% | {:<40}{}",
+                confirmed_transactions as f64 * 100. / num_transactions,
+                status,
+                match block_height {
+                    Some(block_height) => format!(
+                        " [block height {}; re-sign in {} blocks]",
+                        block_height,
+                        last_valid_block_height.saturating_sub(block_height),
+                    ),
+                    None => String::new(),
+                },
+            ));
+        };
+
+        let mut confirmed_transactions = 0;
+        let mut block_height = self.rpc_client.get_block_height()?;
+        while expired_blockhash_retries > 0 {
+            let (blockhash, last_valid_block_height) = self
+                .rpc_client
+                .get_latest_blockhash_with_commitment(self.rpc_client.commitment())?;
+
+            let mut pending_transactions = HashMap::new();
+            for (i, mut transaction) in transactions {
+                transaction.try_sign(signers, blockhash)?;
+                pending_transactions.insert(transaction.signatures[0], (i, transaction));
+            }
+
+            let mut last_resend = Instant::now() - TRANSACTION_RESEND_INTERVAL;
+            while block_height <= last_valid_block_height {
+                let num_transactions = pending_transactions.len();
+
+                // Periodically re-send all pending transactions
+                if Instant::now().duration_since(last_resend) > TRANSACTION_RESEND_INTERVAL {
+                    for (index, (_i, transaction)) in pending_transactions.values().enumerate() {
+                        if !self.send_transaction(transaction) {
+                            let _result = self.rpc_client.send_transaction(transaction).ok();
+                        }
+                        set_message(
+                            confirmed_transactions,
+                            None, //block_height,
+                            last_valid_block_height,
+                            &format!("Sending {}/{} transactions", index + 1, num_transactions,),
+                        );
+                        sleep(SEND_TRANSACTION_INTERVAL);
+                    }
+                    last_resend = Instant::now();
+                }
+
+                // Wait for the next block before checking for transaction statuses
+                let mut block_height_refreshes = 10;
+                set_message(
+                    confirmed_transactions,
+                    Some(block_height),
+                    last_valid_block_height,
+                    &format!("Waiting for next block, {} pending...", num_transactions),
+                );
+                let mut new_block_height = block_height;
+                while block_height == new_block_height && block_height_refreshes > 0 {
+                    sleep(Duration::from_millis(500));
+                    new_block_height = self.rpc_client.get_block_height()?;
+                    block_height_refreshes -= 1;
+                }
+                block_height = new_block_height;
+
+                // Collect statuses for the transactions, drop those that are confirmed
+                let pending_signatures = pending_transactions.keys().cloned().collect::<Vec<_>>();
+                for pending_signatures_chunk in
+                    pending_signatures.chunks(MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS)
+                {
+                    if let Ok(result) = self
+                        .rpc_client
+                        .get_signature_statuses(pending_signatures_chunk)
+                    {
+                        let statuses = result.value;
+                        for (signature, status) in
+                            pending_signatures_chunk.iter().zip(statuses.into_iter())
+                        {
+                            if let Some(status) = status {
+                                if status.satisfies_commitment(self.rpc_client.commitment()) {
+                                    if let Some((i, _)) = pending_transactions.remove(signature) {
+                                        confirmed_transactions += 1;
+                                        if status.err.is_some() {
+                                            progress_bar.println(format!(
+                                                "Failed transaction: {:?}",
+                                                status
+                                            ));
+                                        }
+                                        transaction_errors[i] = status.err;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    set_message(
+                        confirmed_transactions,
+                        Some(block_height),
+                        last_valid_block_height,
+                        "Checking transaction status...",
+                    );
+                }
+
+                if pending_transactions.is_empty() {
+                    return Ok(transaction_errors);
+                }
+            }
+
+            transactions = pending_transactions.into_iter().map(|(_k, v)| v).collect();
+            progress_bar.println(format!(
+                "Blockhash expired. {} retries remaining",
+                expired_blockhash_retries
+            ));
+            expired_blockhash_retries -= 1;
+        }
+        Err(TpuSenderError::Custom("Max retries exceeded".into()))
     }
 }
 
@@ -116,17 +279,22 @@ struct LeaderTpuCache {
     first_slot: Slot,
     leaders: Vec<Pubkey>,
     leader_tpu_map: HashMap<Pubkey, SocketAddr>,
+    slots_in_epoch: Slot,
+    last_epoch_info_slot: Slot,
 }
 
 impl LeaderTpuCache {
-    fn new(rpc_client: &RpcClient, first_slot: Slot) -> Self {
-        let leaders = Self::fetch_slot_leaders(rpc_client, first_slot).unwrap_or_default();
-        let leader_tpu_map = Self::fetch_cluster_tpu_sockets(rpc_client).unwrap_or_default();
-        Self {
+    fn new(rpc_client: &RpcClient, first_slot: Slot) -> Result<Self> {
+        let slots_in_epoch = rpc_client.get_epoch_info()?.slots_in_epoch;
+        let leaders = Self::fetch_slot_leaders(rpc_client, first_slot, slots_in_epoch)?;
+        let leader_tpu_map = Self::fetch_cluster_tpu_sockets(rpc_client)?;
+        Ok(Self {
             first_slot,
             leaders,
             leader_tpu_map,
-        }
+            slots_in_epoch,
+            last_epoch_info_slot: first_slot,
+        })
     }
 
     // Last slot that has a cached leader pubkey
@@ -144,7 +312,18 @@ impl LeaderTpuCache {
                     if leader_set.insert(*leader) {
                         leader_sockets.push(*tpu_socket);
                     }
+                } else {
+                    // The leader is probably delinquent
+                    trace!("TPU not available for leader {}", leader);
                 }
+            } else {
+                // Overran the local leader schedule cache
+                warn!(
+                    "Leader not known for slot {}; cache holds slots [{},{}]",
+                    leader_slot,
+                    self.first_slot,
+                    self.last_slot()
+                );
             }
         }
         leader_sockets
@@ -172,8 +351,13 @@ impl LeaderTpuCache {
             .collect())
     }
 
-    fn fetch_slot_leaders(rpc_client: &RpcClient, start_slot: Slot) -> Result<Vec<Pubkey>> {
-        Ok(rpc_client.get_slot_leaders(start_slot, 2 * MAX_FANOUT_SLOTS)?)
+    fn fetch_slot_leaders(
+        rpc_client: &RpcClient,
+        start_slot: Slot,
+        slots_in_epoch: Slot,
+    ) -> Result<Vec<Pubkey>> {
+        let fanout = (2 * MAX_FANOUT_SLOTS).min(slots_in_epoch);
+        Ok(rpc_client.get_slot_leaders(start_slot, fanout)?)
     }
 }
 
@@ -242,10 +426,10 @@ struct LeaderTpuService {
 
 impl LeaderTpuService {
     fn new(rpc_client: Arc<RpcClient>, websocket_url: &str, exit: Arc<AtomicBool>) -> Result<Self> {
-        let start_slot = rpc_client.get_max_shred_insert_slot()?;
+        let start_slot = rpc_client.get_slot_with_commitment(CommitmentConfig::processed())?;
 
         let recent_slots = RecentLeaderSlots::new(start_slot);
-        let leader_tpu_cache = Arc::new(RwLock::new(LeaderTpuCache::new(&rpc_client, start_slot)));
+        let leader_tpu_cache = Arc::new(RwLock::new(LeaderTpuCache::new(&rpc_client, start_slot)?));
 
         let subscription = if !websocket_url.is_empty() {
             let recent_slots = recent_slots.clone();
@@ -317,42 +501,62 @@ impl LeaderTpuService {
                 break;
             }
 
+            // Sleep a few slots before checking if leader cache needs to be refreshed again
+            std::thread::sleep(Duration::from_millis(sleep_ms));
+            sleep_ms = 1000;
+
             // Refresh cluster TPU ports every 5min in case validators restart with new port configuration
             // or new validators come online
             if last_cluster_refresh.elapsed() > Duration::from_secs(5 * 60) {
-                if let Ok(leader_tpu_map) = LeaderTpuCache::fetch_cluster_tpu_sockets(&rpc_client) {
-                    leader_tpu_cache.write().unwrap().leader_tpu_map = leader_tpu_map;
-                    last_cluster_refresh = Instant::now();
-                } else {
-                    sleep_ms = 100;
-                    continue;
+                match LeaderTpuCache::fetch_cluster_tpu_sockets(&rpc_client) {
+                    Ok(leader_tpu_map) => {
+                        leader_tpu_cache.write().unwrap().leader_tpu_map = leader_tpu_map;
+                        last_cluster_refresh = Instant::now();
+                    }
+                    Err(err) => {
+                        warn!("Failed to fetch cluster tpu sockets: {}", err);
+                        sleep_ms = 100;
+                    }
                 }
             }
 
-            // Sleep a few slots before checking if leader cache needs to be refreshed again
-            std::thread::sleep(Duration::from_millis(sleep_ms));
-
-            let current_slot = recent_slots.estimated_current_slot();
-            if current_slot
-                >= leader_tpu_cache
-                    .read()
-                    .unwrap()
-                    .last_slot()
-                    .saturating_sub(MAX_FANOUT_SLOTS)
-            {
-                if let Ok(slot_leaders) =
-                    LeaderTpuCache::fetch_slot_leaders(&rpc_client, current_slot)
-                {
+            let estimated_current_slot = recent_slots.estimated_current_slot();
+            let (last_slot, last_epoch_info_slot, mut slots_in_epoch) = {
+                let leader_tpu_cache = leader_tpu_cache.read().unwrap();
+                (
+                    leader_tpu_cache.last_slot(),
+                    leader_tpu_cache.last_epoch_info_slot,
+                    leader_tpu_cache.slots_in_epoch,
+                )
+            };
+            if estimated_current_slot >= last_epoch_info_slot.saturating_sub(slots_in_epoch) {
+                if let Ok(epoch_info) = rpc_client.get_epoch_info() {
+                    slots_in_epoch = epoch_info.slots_in_epoch;
                     let mut leader_tpu_cache = leader_tpu_cache.write().unwrap();
-                    leader_tpu_cache.first_slot = current_slot;
-                    leader_tpu_cache.leaders = slot_leaders;
-                } else {
-                    sleep_ms = 100;
-                    continue;
+                    leader_tpu_cache.slots_in_epoch = slots_in_epoch;
+                    leader_tpu_cache.last_epoch_info_slot = estimated_current_slot;
                 }
             }
-
-            sleep_ms = 1000;
+            if estimated_current_slot >= last_slot.saturating_sub(MAX_FANOUT_SLOTS) {
+                match LeaderTpuCache::fetch_slot_leaders(
+                    &rpc_client,
+                    estimated_current_slot,
+                    slots_in_epoch,
+                ) {
+                    Ok(slot_leaders) => {
+                        let mut leader_tpu_cache = leader_tpu_cache.write().unwrap();
+                        leader_tpu_cache.first_slot = estimated_current_slot;
+                        leader_tpu_cache.leaders = slot_leaders;
+                    }
+                    Err(err) => {
+                        warn!(
+                            "Failed to fetch slot leaders (current estimated slot: {}): {}",
+                            estimated_current_slot, err
+                        );
+                        sleep_ms = 100;
+                    }
+                }
+            }
         }
     }
 }

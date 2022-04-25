@@ -1,8 +1,10 @@
-use crate::cluster_info_vote_listener::VoteTracker;
-use solana_ledger::blockstore::Blockstore;
-use solana_runtime::bank::Bank;
-use solana_sdk::{clock::Slot, hash::Hash};
-use std::{collections::BTreeSet, time::Instant};
+use {
+    crate::cluster_info_vote_listener::VoteTracker,
+    solana_ledger::blockstore::Blockstore,
+    solana_runtime::bank::Bank,
+    solana_sdk::{clock::Slot, hash::Hash},
+    std::{collections::BTreeSet, time::Instant},
+};
 
 pub struct OptimisticConfirmationVerifier {
     snapshot_start_slot: Slot,
@@ -139,13 +141,11 @@ impl OptimisticConfirmationVerifier {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::consensus::test::VoteSimulator;
-    use solana_ledger::get_tmp_ledger_path;
-    use solana_runtime::bank::Bank;
-    use solana_sdk::pubkey::Pubkey;
-    use std::collections::HashMap;
-    use trees::tr;
+    use {
+        super::*, crate::vote_simulator::VoteSimulator, solana_ledger::get_tmp_ledger_path,
+        solana_runtime::bank::Bank, solana_sdk::pubkey::Pubkey, std::collections::HashMap,
+        trees::tr,
+    };
 
     #[test]
     fn test_add_new_optimistic_confirmed_slots() {
@@ -316,7 +316,7 @@ mod test {
             assert!(optimistic_confirmation_verifier.unchecked_slots.is_empty());
 
             // If we know set the root in blockstore, should return nothing
-            blockstore.set_roots(&[1, 3]).unwrap();
+            blockstore.set_roots(vec![1, 3].iter()).unwrap();
             optimistic_confirmation_verifier.add_new_optimistic_confirmed_slots(optimistic_slots);
             assert!(optimistic_confirmation_verifier
                 .verify_for_unrooted_optimistic_slots(&bank7, &blockstore)
@@ -343,7 +343,7 @@ mod test {
         let forks = tr(0) / (tr(1) / (tr(2) / (tr(4))) / (tr(3) / (tr(5) / (tr(6)))));
 
         let mut vote_simulator = VoteSimulator::new(1);
-        vote_simulator.fill_bank_forks(forks, &HashMap::new());
+        vote_simulator.fill_bank_forks(forks, &HashMap::new(), true);
         vote_simulator
     }
 }

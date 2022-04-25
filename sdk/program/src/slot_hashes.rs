@@ -2,8 +2,10 @@
 //!
 //! this account carries the Bank's most recent bank hashes for some N parents
 //!
-use crate::hash::Hash;
-use std::{iter::FromIterator, ops::Deref};
+use {
+    crate::hash::Hash,
+    std::{iter::FromIterator, ops::Deref},
+};
 
 pub const MAX_ENTRIES: usize = 512; // about 2.5 minutes to get your vote in
 
@@ -23,6 +25,9 @@ impl SlotHashes {
         }
         (self.0).truncate(MAX_ENTRIES);
     }
+    pub fn position(&self, slot: &Slot) -> Option<usize> {
+        self.binary_search_by(|(probe, _)| slot.cmp(probe)).ok()
+    }
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn get(&self, slot: &Slot) -> Option<&Hash> {
         self.binary_search_by(|(probe, _)| slot.cmp(probe))
@@ -33,6 +38,9 @@ impl SlotHashes {
         let mut slot_hashes = slot_hashes.to_vec();
         slot_hashes.sort_by(|(a, _), (b, _)| b.cmp(a));
         Self(slot_hashes)
+    }
+    pub fn slot_hashes(&self) -> &[SlotHash] {
+        &self.0
     }
 }
 
@@ -51,8 +59,7 @@ impl Deref for SlotHashes {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::hash::hash;
+    use {super::*, crate::hash::hash};
 
     #[test]
     fn test() {

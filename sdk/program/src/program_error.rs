@@ -1,8 +1,11 @@
-use crate::{decode_error::DecodeError, instruction::InstructionError, msg, pubkey::PubkeyError};
-use borsh::maybestd::io::Error as BorshIoError;
-use num_traits::{FromPrimitive, ToPrimitive};
-use std::convert::TryFrom;
-use thiserror::Error;
+#![allow(clippy::integer_arithmetic)]
+use {
+    crate::{decode_error::DecodeError, instruction::InstructionError, msg, pubkey::PubkeyError},
+    borsh::maybestd::io::Error as BorshIoError,
+    num_traits::{FromPrimitive, ToPrimitive},
+    std::convert::TryFrom,
+    thiserror::Error,
+};
 
 /// Reasons the program may fail
 #[derive(Clone, Debug, Deserialize, Eq, Error, PartialEq, Serialize)]
@@ -46,6 +49,10 @@ pub enum ProgramError {
     UnsupportedSysvar,
     #[error("Provided owner is not allowed")]
     IllegalOwner,
+    #[error("Account data allocation exceeded the maximum accounts data size limit")]
+    MaxAccountsDataSizeExceeded,
+    #[error("Cannot close vote account unless it stopped voting at least one full epoch ago")]
+    ActiveVoteAccountClose,
 }
 
 pub trait PrintProgramError {
@@ -84,6 +91,8 @@ impl PrintProgramError for ProgramError {
             Self::AccountNotRentExempt => msg!("Error: AccountNotRentExempt"),
             Self::UnsupportedSysvar => msg!("Error: UnsupportedSysvar"),
             Self::IllegalOwner => msg!("Error: IllegalOwner"),
+            Self::MaxAccountsDataSizeExceeded => msg!("Error: MaxAccountsDataSizeExceeded"),
+            Self::ActiveVoteAccountClose => msg!("Error: ActiveVoteAccountClose"),
         }
     }
 }
@@ -114,6 +123,13 @@ pub const BORSH_IO_ERROR: u64 = to_builtin!(15);
 pub const ACCOUNT_NOT_RENT_EXEMPT: u64 = to_builtin!(16);
 pub const UNSUPPORTED_SYSVAR: u64 = to_builtin!(17);
 pub const ILLEGAL_OWNER: u64 = to_builtin!(18);
+pub const MAX_ACCOUNTS_DATA_SIZE_EXCEEDED: u64 = to_builtin!(19);
+pub const ACTIVE_VOTE_ACCOUNT_CLOSE: u64 = to_builtin!(20);
+// Warning: Any new program errors added here must also be:
+// - Added to the below conversions
+// - Added as an equivilent to InstructionError
+// - Be featureized in the BPF loader to return `InstructionError::InvalidError`
+//   until the feature is activated
 
 impl From<ProgramError> for u64 {
     fn from(error: ProgramError) -> Self {
@@ -135,7 +151,8 @@ impl From<ProgramError> for u64 {
             ProgramError::AccountNotRentExempt => ACCOUNT_NOT_RENT_EXEMPT,
             ProgramError::UnsupportedSysvar => UNSUPPORTED_SYSVAR,
             ProgramError::IllegalOwner => ILLEGAL_OWNER,
-
+            ProgramError::MaxAccountsDataSizeExceeded => MAX_ACCOUNTS_DATA_SIZE_EXCEEDED,
+            ProgramError::ActiveVoteAccountClose => ACTIVE_VOTE_ACCOUNT_CLOSE,
             ProgramError::Custom(error) => {
                 if error == 0 {
                     CUSTOM_ZERO
@@ -150,23 +167,27 @@ impl From<ProgramError> for u64 {
 impl From<u64> for ProgramError {
     fn from(error: u64) -> Self {
         match error {
-            INVALID_ARGUMENT => ProgramError::InvalidArgument,
-            INVALID_INSTRUCTION_DATA => ProgramError::InvalidInstructionData,
-            INVALID_ACCOUNT_DATA => ProgramError::InvalidAccountData,
-            ACCOUNT_DATA_TOO_SMALL => ProgramError::AccountDataTooSmall,
-            INSUFFICIENT_FUNDS => ProgramError::InsufficientFunds,
-            INCORRECT_PROGRAM_ID => ProgramError::IncorrectProgramId,
-            MISSING_REQUIRED_SIGNATURES => ProgramError::MissingRequiredSignature,
-            ACCOUNT_ALREADY_INITIALIZED => ProgramError::AccountAlreadyInitialized,
-            UNINITIALIZED_ACCOUNT => ProgramError::UninitializedAccount,
-            NOT_ENOUGH_ACCOUNT_KEYS => ProgramError::NotEnoughAccountKeys,
-            ACCOUNT_BORROW_FAILED => ProgramError::AccountBorrowFailed,
-            MAX_SEED_LENGTH_EXCEEDED => ProgramError::MaxSeedLengthExceeded,
-            INVALID_SEEDS => ProgramError::InvalidSeeds,
-            UNSUPPORTED_SYSVAR => ProgramError::UnsupportedSysvar,
-            CUSTOM_ZERO => ProgramError::Custom(0),
-            ILLEGAL_OWNER => ProgramError::IllegalOwner,
-            _ => ProgramError::Custom(error as u32),
+            CUSTOM_ZERO => Self::Custom(0),
+            INVALID_ARGUMENT => Self::InvalidArgument,
+            INVALID_INSTRUCTION_DATA => Self::InvalidInstructionData,
+            INVALID_ACCOUNT_DATA => Self::InvalidAccountData,
+            ACCOUNT_DATA_TOO_SMALL => Self::AccountDataTooSmall,
+            INSUFFICIENT_FUNDS => Self::InsufficientFunds,
+            INCORRECT_PROGRAM_ID => Self::IncorrectProgramId,
+            MISSING_REQUIRED_SIGNATURES => Self::MissingRequiredSignature,
+            ACCOUNT_ALREADY_INITIALIZED => Self::AccountAlreadyInitialized,
+            UNINITIALIZED_ACCOUNT => Self::UninitializedAccount,
+            NOT_ENOUGH_ACCOUNT_KEYS => Self::NotEnoughAccountKeys,
+            ACCOUNT_BORROW_FAILED => Self::AccountBorrowFailed,
+            MAX_SEED_LENGTH_EXCEEDED => Self::MaxSeedLengthExceeded,
+            INVALID_SEEDS => Self::InvalidSeeds,
+            BORSH_IO_ERROR => Self::BorshIoError("Unknown".to_string()),
+            ACCOUNT_NOT_RENT_EXEMPT => Self::AccountNotRentExempt,
+            UNSUPPORTED_SYSVAR => Self::UnsupportedSysvar,
+            ILLEGAL_OWNER => Self::IllegalOwner,
+            MAX_ACCOUNTS_DATA_SIZE_EXCEEDED => Self::MaxAccountsDataSizeExceeded,
+            ACTIVE_VOTE_ACCOUNT_CLOSE => Self::ActiveVoteAccountClose,
+            _ => Self::Custom(error as u32),
         }
     }
 }
@@ -189,10 +210,13 @@ impl TryFrom<InstructionError> for ProgramError {
             Self::Error::NotEnoughAccountKeys => Ok(Self::NotEnoughAccountKeys),
             Self::Error::AccountBorrowFailed => Ok(Self::AccountBorrowFailed),
             Self::Error::MaxSeedLengthExceeded => Ok(Self::MaxSeedLengthExceeded),
+            Self::Error::InvalidSeeds => Ok(Self::InvalidSeeds),
             Self::Error::BorshIoError(err) => Ok(Self::BorshIoError(err)),
             Self::Error::AccountNotRentExempt => Ok(Self::AccountNotRentExempt),
             Self::Error::UnsupportedSysvar => Ok(Self::UnsupportedSysvar),
             Self::Error::IllegalOwner => Ok(Self::IllegalOwner),
+            Self::Error::MaxAccountsDataSizeExceeded => Ok(Self::MaxAccountsDataSizeExceeded),
+            Self::Error::ActiveVoteAccountClose => Ok(Self::ActiveVoteAccountClose),
             _ => Err(error),
         }
     }
@@ -205,26 +229,30 @@ where
     fn from(error: T) -> Self {
         let error = error.to_u64().unwrap_or(0xbad_c0de);
         match error {
-            CUSTOM_ZERO => InstructionError::Custom(0),
-            INVALID_ARGUMENT => InstructionError::InvalidArgument,
-            INVALID_INSTRUCTION_DATA => InstructionError::InvalidInstructionData,
-            INVALID_ACCOUNT_DATA => InstructionError::InvalidAccountData,
-            ACCOUNT_DATA_TOO_SMALL => InstructionError::AccountDataTooSmall,
-            INSUFFICIENT_FUNDS => InstructionError::InsufficientFunds,
-            INCORRECT_PROGRAM_ID => InstructionError::IncorrectProgramId,
-            MISSING_REQUIRED_SIGNATURES => InstructionError::MissingRequiredSignature,
-            ACCOUNT_ALREADY_INITIALIZED => InstructionError::AccountAlreadyInitialized,
-            UNINITIALIZED_ACCOUNT => InstructionError::UninitializedAccount,
-            NOT_ENOUGH_ACCOUNT_KEYS => InstructionError::NotEnoughAccountKeys,
-            ACCOUNT_BORROW_FAILED => InstructionError::AccountBorrowFailed,
-            MAX_SEED_LENGTH_EXCEEDED => InstructionError::MaxSeedLengthExceeded,
-            INVALID_SEEDS => InstructionError::InvalidSeeds,
-            UNSUPPORTED_SYSVAR => InstructionError::UnsupportedSysvar,
-            ILLEGAL_OWNER => InstructionError::IllegalOwner,
+            CUSTOM_ZERO => Self::Custom(0),
+            INVALID_ARGUMENT => Self::InvalidArgument,
+            INVALID_INSTRUCTION_DATA => Self::InvalidInstructionData,
+            INVALID_ACCOUNT_DATA => Self::InvalidAccountData,
+            ACCOUNT_DATA_TOO_SMALL => Self::AccountDataTooSmall,
+            INSUFFICIENT_FUNDS => Self::InsufficientFunds,
+            INCORRECT_PROGRAM_ID => Self::IncorrectProgramId,
+            MISSING_REQUIRED_SIGNATURES => Self::MissingRequiredSignature,
+            ACCOUNT_ALREADY_INITIALIZED => Self::AccountAlreadyInitialized,
+            UNINITIALIZED_ACCOUNT => Self::UninitializedAccount,
+            NOT_ENOUGH_ACCOUNT_KEYS => Self::NotEnoughAccountKeys,
+            ACCOUNT_BORROW_FAILED => Self::AccountBorrowFailed,
+            MAX_SEED_LENGTH_EXCEEDED => Self::MaxSeedLengthExceeded,
+            INVALID_SEEDS => Self::InvalidSeeds,
+            BORSH_IO_ERROR => Self::BorshIoError("Unknown".to_string()),
+            ACCOUNT_NOT_RENT_EXEMPT => Self::AccountNotRentExempt,
+            UNSUPPORTED_SYSVAR => Self::UnsupportedSysvar,
+            ILLEGAL_OWNER => Self::IllegalOwner,
+            MAX_ACCOUNTS_DATA_SIZE_EXCEEDED => Self::MaxAccountsDataSizeExceeded,
+            ACTIVE_VOTE_ACCOUNT_CLOSE => Self::ActiveVoteAccountClose,
             _ => {
                 // A valid custom error has no bits set in the upper 32
                 if error >> BUILTIN_BIT_SHIFT == 0 {
-                    InstructionError::Custom(error as u32)
+                    Self::Custom(error as u32)
                 } else {
                     Self::InvalidError
                 }
@@ -236,15 +264,15 @@ where
 impl From<PubkeyError> for ProgramError {
     fn from(error: PubkeyError) -> Self {
         match error {
-            PubkeyError::MaxSeedLengthExceeded => ProgramError::MaxSeedLengthExceeded,
-            PubkeyError::InvalidSeeds => ProgramError::InvalidSeeds,
-            PubkeyError::IllegalOwner => ProgramError::IllegalOwner,
+            PubkeyError::MaxSeedLengthExceeded => Self::MaxSeedLengthExceeded,
+            PubkeyError::InvalidSeeds => Self::InvalidSeeds,
+            PubkeyError::IllegalOwner => Self::IllegalOwner,
         }
     }
 }
 
 impl From<BorshIoError> for ProgramError {
     fn from(error: BorshIoError) -> Self {
-        ProgramError::BorshIoError(format!("{}", error))
+        Self::BorshIoError(format!("{}", error))
     }
 }

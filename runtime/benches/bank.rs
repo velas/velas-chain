@@ -3,23 +3,27 @@
 
 extern crate test;
 
-use log::*;
-use solana_runtime::{bank::*, bank_client::BankClient, loader_utils::create_invoke_instruction};
-use solana_sdk::{
-    client::AsyncClient,
-    client::SyncClient,
-    clock::MAX_RECENT_BLOCKHASHES,
-    genesis_config::create_genesis_config,
-    instruction::InstructionError,
-    keyed_account::KeyedAccount,
-    message::Message,
-    process_instruction::InvokeContext,
-    pubkey::Pubkey,
-    signature::{Keypair, Signer},
-    transaction::Transaction,
+use {
+    log::*,
+    solana_program_runtime::invoke_context::InvokeContext,
+    solana_runtime::{bank::*, bank_client::BankClient, loader_utils::create_invoke_instruction},
+    solana_sdk::{
+        client::{AsyncClient, SyncClient},
+        clock::MAX_RECENT_BLOCKHASHES,
+        genesis_config::create_genesis_config,
+        instruction::InstructionError,
+        message::Message,
+        pubkey::Pubkey,
+        signature::{Keypair, Signer},
+        transaction::Transaction,
+    },
+    solana_vote_program::{
+        vote_instruction,
+        vote_state::{Vote, VoteInit},
+    },
+    std::{sync::Arc, thread::sleep, time::Duration},
+    test::Bencher,
 };
-use std::{sync::Arc, thread::sleep, time::Duration};
-use test::Bencher;
 
 const BUILTIN_PROGRAM_ID: [u8; 32] = [
     98, 117, 105, 108, 116, 105, 110, 95, 112, 114, 111, 103, 114, 97, 109, 95, 105, 100, 0, 0, 0,
@@ -33,10 +37,9 @@ const NOOP_PROGRAM_ID: [u8; 32] = [
 
 #[allow(clippy::unnecessary_wraps)]
 fn process_instruction(
-    _program_id: &Pubkey,
-    _keyed_accounts: &[KeyedAccount],
+    _first_instruction_account: usize,
     _data: &[u8],
-    _invoke_context: &mut dyn InvokeContext,
+    _invoke_context: &mut InvokeContext,
 ) -> Result<(), InstructionError> {
     Ok(())
 }
@@ -56,9 +59,55 @@ pub fn create_builtin_transactions(
                 .unwrap_or_else(|_| panic!("{}:{}", line!(), file!()));
 
             let instruction = create_invoke_instruction(rando0.pubkey(), program_id, &1u8);
-            let (blockhash, _fee_calculator) = bank_client.get_recent_blockhash().unwrap();
+            let blockhash = bank_client.get_latest_blockhash().unwrap();
             let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
             Transaction::new(&[&rando0], message, blockhash)
+        })
+        .collect()
+}
+
+pub fn create_vote_transactions(
+    bank_client: &BankClient,
+    mint_keypair: &Keypair,
+) -> Vec<Transaction> {
+    let blockhash = bank_client.get_latest_blockhash().unwrap();
+    (0..4096)
+        .map(|_| {
+            // Seed the signer account
+            let payer_keypair = Keypair::new();
+            bank_client
+                .transfer_and_confirm(27_000_000, mint_keypair, &payer_keypair.pubkey())
+                .unwrap_or_else(|_| panic!("{}:{}", line!(), file!()));
+
+            // Setup vote
+            let vote_keypair = Keypair::new();
+            let instructions = vote_instruction::create_account(
+                &payer_keypair.pubkey(),
+                &vote_keypair.pubkey(),
+                &VoteInit {
+                    node_pubkey: payer_keypair.pubkey(),
+                    authorized_voter: payer_keypair.pubkey(),
+                    authorized_withdrawer: payer_keypair.pubkey(),
+                    commission: 100u8,
+                },
+                26_858_640,
+            );
+            let message = Message::new(&instructions, Some(&payer_keypair.pubkey()));
+            bank_client
+                .send_and_confirm_message(&[&payer_keypair, &vote_keypair], message)
+                .unwrap();
+
+            let vote_ix = vote_instruction::vote(
+                &vote_keypair.pubkey(),
+                &payer_keypair.pubkey(),
+                Vote {
+                    slots: vec![0],
+                    hash: blockhash,
+                    timestamp: None,
+                },
+            );
+            let message = Message::new(&[vote_ix], Some(&payer_keypair.pubkey()));
+            Transaction::new(&[&payer_keypair], message, blockhash)
         })
         .collect()
 }
@@ -78,7 +127,7 @@ pub fn create_native_loader_transactions(
                 .unwrap_or_else(|_| panic!("{}:{}", line!(), file!()));
 
             let instruction = create_invoke_instruction(rando0.pubkey(), program_id, &1u8);
-            let (blockhash, _fee_calculator) = bank_client.get_recent_blockhash().unwrap();
+            let blockhash = bank_client.get_latest_blockhash().unwrap();
             let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
             Transaction::new(&[&rando0], message, blockhash)
         })
@@ -86,7 +135,7 @@ pub fn create_native_loader_transactions(
 }
 
 fn sync_bencher(bank: &Arc<Bank>, _bank_client: &BankClient, transactions: &[Transaction]) {
-    let results = bank.process_transactions(transactions);
+    let results = bank.process_transactions(transactions.iter());
     assert!(results.iter().all(Result::is_ok));
 }
 
@@ -124,21 +173,26 @@ fn do_bench_transactions(
 ) {
     solana_logger::setup();
     let ns_per_s = 1_000_000_000;
-    let (mut genesis_config, mint_keypair) = create_genesis_config(100_000_000);
+    let (mut genesis_config, mint_keypair) = create_genesis_config(100_000_000_000_000);
     genesis_config.ticks_per_slot = 100;
-    let mut bank = Bank::new(&genesis_config);
+
+    let bank = Bank::new_for_benches(&genesis_config);
+    // freeze bank so that slot hashes is populated
+    bank.freeze();
+
+    let mut bank = Bank::new_from_parent(&Arc::new(bank), &Pubkey::default(), 1);
     bank.add_builtin(
         "builtin_program",
-        Pubkey::new(&BUILTIN_PROGRAM_ID),
+        &Pubkey::new(&BUILTIN_PROGRAM_ID),
         process_instruction,
     );
-    bank.add_native_program("solana_noop_program", &Pubkey::new(&NOOP_PROGRAM_ID), false);
+    bank.add_builtin_account("solana_noop_program", &Pubkey::new(&NOOP_PROGRAM_ID), false);
     let bank = Arc::new(bank);
     let bank_client = BankClient::new_shared(&bank);
     let transactions = create_transactions(&bank_client, &mint_keypair);
 
     // Do once to fund accounts, load modules, etc...
-    let results = bank.process_transactions(&transactions);
+    let results = bank.process_transactions(transactions.iter());
     assert!(results.iter().all(Result::is_ok));
 
     bencher.iter(|| {
@@ -169,6 +223,12 @@ fn bench_bank_sync_process_native_loader_transactions(bencher: &mut Bencher) {
 
 #[bench]
 #[ignore]
+fn bench_bank_sync_process_vote_transactions(bencher: &mut Bencher) {
+    do_bench_transactions(bencher, &sync_bencher, &create_vote_transactions);
+}
+
+#[bench]
+#[ignore]
 fn bench_bank_async_process_builtin_transactions(bencher: &mut Bencher) {
     do_bench_transactions(bencher, &async_bencher, &create_builtin_transactions);
 }
@@ -183,7 +243,7 @@ fn bench_bank_async_process_native_loader_transactions(bencher: &mut Bencher) {
 #[ignore]
 fn bench_bank_update_recent_blockhashes(bencher: &mut Bencher) {
     let (genesis_config, _mint_keypair) = create_genesis_config(100);
-    let mut bank = Arc::new(Bank::new(&genesis_config));
+    let mut bank = Arc::new(Bank::new_for_benches(&genesis_config));
     goto_end_of_slot(Arc::get_mut(&mut bank).unwrap());
     let genesis_hash = bank.last_blockhash();
     // Prime blockhash_queue

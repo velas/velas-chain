@@ -1,0 +1,4 @@
+velas-changes-remote-*-*.txt
+velas-changes-*-*.txt
+# Just velas-changes with prefix :^ - mean that this pathspec should be ignored
+pathspec-*-*.txt

@@ -1,11 +1,13 @@
-use solana_sdk::process_instruction::Logger;
+use solana_program_runtime::{ic_logger_msg, log_collector::{LogCollector}};
 use std::fmt::Write;
-pub struct MultilineLogger<'a> {
-    logger: &'a dyn Logger,
+use std::rc::Rc;
+use std::cell::RefCell;
+pub struct MultilineLogger {
+    logger: Option<Rc<RefCell<LogCollector>>>,
     line: String,
 }
-impl<'a> MultilineLogger<'a> {
-    pub fn new(logger: &'a dyn Logger) -> Self {
+impl MultilineLogger {
+    pub fn new(logger: Option<Rc<RefCell<LogCollector>>>) -> Self {
         Self {
             logger,
             line: String::new(),
@@ -13,11 +15,11 @@ impl<'a> MultilineLogger<'a> {
     }
 }
 
-impl<'a> Write for MultilineLogger<'a> {
+impl Write for MultilineLogger {
     fn write_str(&mut self, message: &str) -> std::fmt::Result {
         for c in message.chars() {
             if c == '\n' {
-                self.logger.log(&*self.line);
+                ic_logger_msg!(self.logger, &self.line);
                 self.line.clear();
             }
             self.line.push(c);
@@ -26,8 +28,8 @@ impl<'a> Write for MultilineLogger<'a> {
     }
 }
 
-impl<'a> Drop for MultilineLogger<'a> {
+impl Drop for MultilineLogger {
     fn drop(&mut self) {
-        self.logger.log(&*self.line);
+        ic_logger_msg!(self.logger, &self.line);
     }
 }

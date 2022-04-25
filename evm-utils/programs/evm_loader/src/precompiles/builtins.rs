@@ -11,6 +11,7 @@ use super::errors::*;
 use super::{PrecompileContext, PrecompileOk, Result};
 use crate::scope::evm::gweis_to_lamports;
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::account::{ReadableAccount, WritableAccount};
 
 pub trait NativeFunction<Inputs> {
     fn call(&self, inputs: Inputs, cx: PrecompileContext<'_>) -> Result<PrecompileOk>;
@@ -78,7 +79,7 @@ where
 
         self.abi
             .decode_input(input)
-            .with_context(|| FailedToParse {
+            .with_context(|_| FailedToParse {
                 name: self.abi.name.clone(),
             })
             .and_then(|tokens| self.check_args(&tokens).map(|_| tokens))
@@ -138,18 +139,19 @@ pub static ETH_TO_VLX_CODE: Lazy<NativeContract<EthToVlxImp, Pubkey>> = Lazy::ne
             .accounts
             .evm
             .try_account_ref_mut()
-            .with_context(|| NativeChainInstructionError {})?;
+            .with_context(|_| NativeChainInstructionError {})?;
 
         let mut user_account = user
             .try_account_ref_mut()
-            .with_context(|| NativeChainInstructionError {})?;
+            .with_context(|_| NativeChainInstructionError {})?;
 
-        if lamports > evm_account.lamports {
+        if lamports > evm_account.lamports() {
             return InsufficientFunds { lamports }.fail();
         }
-
-        evm_account.lamports -= lamports;
-        user_account.lamports += lamports;
+        let evm_account_lamports = evm_account.lamports().saturating_sub(lamports);
+        let user_account_lamports = user_account.lamports().saturating_add(lamports);
+        evm_account.set_lamports(evm_account_lamports);
+        user_account.set_lamports(user_account_lamports);
         Ok(PrecompileOk::new(ExitSucceed::Returned, vec![], 0))
     }
 

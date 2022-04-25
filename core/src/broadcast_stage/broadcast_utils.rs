@@ -1,12 +1,14 @@
-use crate::poh_recorder::WorkingBankEntry;
-use crate::result::Result;
-use solana_ledger::{entry::Entry, shred::Shred};
-use solana_runtime::bank::Bank;
-use solana_sdk::clock::Slot;
-use std::{
-    sync::mpsc::Receiver,
-    sync::Arc,
-    time::{Duration, Instant},
+use {
+    crate::result::Result,
+    solana_entry::entry::Entry,
+    solana_ledger::shred::Shred,
+    solana_poh::poh_recorder::WorkingBankEntry,
+    solana_runtime::bank::Bank,
+    solana_sdk::clock::Slot,
+    std::{
+        sync::{mpsc::Receiver, Arc},
+        time::{Duration, Instant},
+    },
 };
 
 pub(super) struct ReceiveResults {
@@ -19,6 +21,7 @@ pub(super) struct ReceiveResults {
 #[derive(Clone)]
 pub struct UnfinishedSlotInfo {
     pub next_shred_index: u32,
+    pub(crate) next_code_index: u32,
     pub slot: Slot,
     pub parent: Slot,
     // Data shreds buffered to make a batch of size
@@ -79,13 +82,15 @@ pub(super) fn recv_slot_entries(receiver: &Receiver<WorkingBankEntry>) -> Result
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo};
-    use solana_sdk::genesis_config::GenesisConfig;
-    use solana_sdk::pubkey::Pubkey;
-    use solana_sdk::system_transaction;
-    use solana_sdk::transaction::Transaction;
-    use std::sync::mpsc::channel;
+    use {
+        super::*,
+        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_sdk::{
+            genesis_config::GenesisConfig, pubkey::Pubkey, system_transaction,
+            transaction::Transaction,
+        },
+        std::sync::mpsc::channel,
+    };
 
     fn setup_test() -> (GenesisConfig, Arc<Bank>, Transaction) {
         let GenesisConfigInfo {
@@ -93,7 +98,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(2);
-        let bank0 = Arc::new(Bank::new(&genesis_config));
+        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         let tx = system_transaction::transfer(
             &mint_keypair,
             &solana_sdk::pubkey::new_rand(),

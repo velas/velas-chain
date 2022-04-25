@@ -5,7 +5,8 @@ use solana_sdk::instruction::InstructionError;
 
 use snafu::Snafu;
 #[derive(Debug, Snafu)]
-#[snafu(visibility = "pub(crate)")]
+#[snafu(visibility(pub(crate)))]
+#[snafu(context(suffix(false)))]
 pub enum PrecompileErrors {
     #[snafu(display("Cannot parse function {} abi = {}", name, source))]
     FailedToParse { name: String, source: ethabi::Error },
@@ -49,6 +50,7 @@ pub enum PrecompileErrors {
     InsufficientFunds { lamports: u64 },
 
     #[snafu(display("Native chain Instruction error source = {}", source))]
+    #[snafu(context(suffix(Error)))]
     NativeChainInstructionError { source: InstructionError },
 }
 

@@ -1,15 +1,19 @@
 #![allow(clippy::integer_arithmetic)]
 #[macro_use]
 extern crate log;
-use clap::{crate_description, crate_name, value_t, App, Arg};
-use rayon::prelude::*;
-use solana_measure::measure::Measure;
-use solana_runtime::{
-    accounts::{create_test_accounts, update_accounts_bench, Accounts},
-    accounts_index::{AccountSecondaryIndexes, Ancestors},
+use {
+    clap::{crate_description, crate_name, value_t, App, Arg},
+    rayon::prelude::*,
+    solana_measure::measure::Measure,
+    solana_runtime::{
+        accounts::{create_test_accounts, update_accounts_bench, Accounts},
+        accounts_db::AccountShrinkThreshold,
+        accounts_index::AccountSecondaryIndexes,
+        ancestors::Ancestors,
+    },
+    solana_sdk::{genesis_config::ClusterType, pubkey::Pubkey},
+    std::{env, fs, path::PathBuf},
 };
-use solana_sdk::{genesis_config::ClusterType, pubkey::Pubkey};
-use std::{env, fs, path::PathBuf};
 
 fn main() {
     solana_logger::setup();
@@ -58,11 +62,12 @@ fn main() {
     if fs::remove_dir_all(path.clone()).is_err() {
         println!("Warning: Couldn't remove {:?}", path);
     }
-    let accounts = Accounts::new_with_config(
+    let accounts = Accounts::new_with_config_for_benches(
         vec![path],
         &ClusterType::Testnet,
         AccountSecondaryIndexes::default(),
         false,
+        AccountShrinkThreshold::default(),
     );
     println!("Creating {} accounts", num_accounts);
     let mut create_time = Measure::start("create accounts");
@@ -87,17 +92,19 @@ fn main() {
         num_slots,
         create_time
     );
-    let mut ancestors: Ancestors = vec![(0, 0)].into_iter().collect();
+    let mut ancestors = Vec::with_capacity(num_slots);
+    ancestors.push(0);
     for i in 1..num_slots {
-        ancestors.insert(i as u64, i - 1);
+        ancestors.push(i as u64);
         accounts.add_root(i as u64);
     }
+    let ancestors = Ancestors::from(ancestors);
     let mut elapsed = vec![0; iterations];
     let mut elapsed_store = vec![0; iterations];
     for x in 0..iterations {
         if clean {
             let mut time = Measure::start("clean");
-            accounts.accounts_db.clean_accounts(None);
+            accounts.accounts_db.clean_accounts(None, false, None);
             time.stop();
             println!("{}", time);
             for slot in 0..num_slots {
@@ -116,6 +123,9 @@ fn main() {
                 solana_sdk::clock::Slot::default(),
                 &ancestors,
                 None,
+                false,
+                None,
+                false,
             );
             time_store.stop();
             if results != results_store {

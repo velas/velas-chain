@@ -1,4 +1,4 @@
-//! @brief Solana builtin helper macros
+//! Solana builtin helper macros
 
 #[rustversion::since(1.46.0)]
 #[macro_export]
@@ -79,7 +79,7 @@ macro_rules! declare_builtin_name {
 /// use solana_sdk::declare_builtin;
 ///
 /// fn my_process_instruction(
-///     program_id: &Pubkey,
+///     first_instruction_account: usize,
 ///     keyed_accounts: &[KeyedAccount],
 ///     instruction_data: &[u8],
 /// ) -> Result<(), InstructionError> {
@@ -110,7 +110,7 @@ macro_rules! declare_builtin_name {
 /// use solana_sdk::declare_builtin;
 ///
 /// fn my_process_instruction(
-///     program_id: &Pubkey,
+///     first_instruction_account: usize,
 ///     keyed_accounts: &[KeyedAccount],
 ///     instruction_data: &[u8],
 /// ) -> Result<(), InstructionError> {

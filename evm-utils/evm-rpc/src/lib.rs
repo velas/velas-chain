@@ -960,7 +960,7 @@ impl RPCTransaction {
         {
             TransactionInReceipt::Signed(tx) => {
                 let hash = tx.tx_id_hash();
-                let from = tx.caller().with_context(|| EvmStateError)?;
+                let from = tx.caller().with_context(|_| EvmStateError)?;
                 let gas_limit = tx.gas_limit;
                 let gas_price = tx.gas_price;
                 let input = tx.input;
@@ -1059,7 +1059,7 @@ impl RPCReceipt {
     ) -> Result<Self, crate::Error> {
         let (from, to, contract_address) = match receipt.transaction {
             TransactionInReceipt::Signed(tx) => {
-                let from = tx.caller().with_context(|| EvmStateError)?;
+                let from = tx.caller().with_context(|_| EvmStateError)?;
                 let nonce = tx.nonce;
                 let (to, creates) = match tx.action {
                     evm_state::transactions::TransactionAction::Call(address) => {

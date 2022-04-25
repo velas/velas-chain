@@ -1,23 +1,31 @@
-//! Persistent storage for accounts. For more information, see:
-//! https://docs.solana.com/implemented-proposals/persistent-account-storage
+//! Persistent storage for accounts.
+//!
+//! For more information, see:
+//!
+//! <https://docs.solana.com/implemented-proposals/persistent-account-storage>
 
-use log::*;
-use memmap2::MmapMut;
-use serde::{Deserialize, Serialize};
-use solana_sdk::{
-    account::{Account, AccountSharedData, ReadableAccount},
-    clock::{Epoch, Slot},
-    hash::Hash,
-    pubkey::Pubkey,
-};
-use std::{
-    fs::{remove_file, OpenOptions},
-    io,
-    io::{Seek, SeekFrom, Write},
-    mem,
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
-    sync::Mutex,
+use {
+    log::*,
+    memmap2::MmapMut,
+    serde::{Deserialize, Serialize},
+    solana_sdk::{
+        account::{Account, AccountSharedData, ReadableAccount},
+        clock::{Epoch, Slot},
+        hash::Hash,
+        pubkey::Pubkey,
+    },
+    std::{
+        borrow::Borrow,
+        convert::TryFrom,
+        fs::{remove_file, OpenOptions},
+        io::{self, Seek, SeekFrom, Write},
+        mem,
+        path::{Path, PathBuf},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Mutex,
+        },
+    },
 };
 
 // Data placement should be aligned at the next boundary. Without alignment accessing the memory may
@@ -29,7 +37,9 @@ macro_rules! u64_align {
     };
 }
 
-const MAXIMUM_APPEND_VEC_FILE_SIZE: usize = 16 * 1024 * 1024 * 1024; // 16 GiB
+const MAXIMUM_APPEND_VEC_FILE_SIZE: u64 = 16 * 1024 * 1024 * 1024; // 16 GiB
+
+pub type StoredMetaWriteVersion = u64;
 
 /// Meta contains enough context to recover the index from storage itself
 /// This struct will be backed by mmaped and snapshotted data files.
@@ -37,7 +47,7 @@ const MAXIMUM_APPEND_VEC_FILE_SIZE: usize = 16 * 1024 * 1024 * 1024; // 16 GiB
 #[derive(Clone, PartialEq, Debug)]
 pub struct StoredMeta {
     /// global write version
-    pub write_version: u64,
+    pub write_version: StoredMetaWriteVersion,
     /// key for the account
     pub pubkey: Pubkey,
     pub data_len: u64,
@@ -57,13 +67,22 @@ pub struct AccountMeta {
     pub rent_epoch: Epoch,
 }
 
-impl<'a> From<&'a AccountSharedData> for AccountMeta {
-    fn from(account: &'a AccountSharedData) -> Self {
+impl<'a, T: ReadableAccount> From<&'a T> for AccountMeta {
+    fn from(account: &'a T) -> Self {
         Self {
-            lamports: account.lamports,
-            owner: account.owner,
-            executable: account.executable,
-            rent_epoch: account.rent_epoch,
+            lamports: account.lamports(),
+            owner: *account.owner(),
+            executable: account.executable(),
+            rent_epoch: account.rent_epoch(),
+        }
+    }
+}
+
+impl<'a, T: ReadableAccount> From<Option<&'a T>> for AccountMeta {
+    fn from(account: Option<&'a T>) -> Self {
+        match account {
+            Some(account) => AccountMeta::from(account),
+            None => AccountMeta::default(),
         }
     }
 }
@@ -241,7 +260,10 @@ impl AppendVec {
                 std::io::ErrorKind::Other,
                 format!("too small file size {} for AppendVec", file_size),
             ))
-        } else if file_size > MAXIMUM_APPEND_VEC_FILE_SIZE {
+        } else if usize::try_from(MAXIMUM_APPEND_VEC_FILE_SIZE)
+            .map(|max| file_size > max)
+            .unwrap_or(true)
+        {
             Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!("too large file size {} for AppendVec", file_size),
@@ -293,7 +315,14 @@ impl AppendVec {
         let file_size = std::fs::metadata(&path)?.len();
         AppendVec::sanitize_len_and_size(current_len, file_size as usize)?;
 
-        let map = unsafe { MmapMut::map_mut(&data)? };
+        let map = unsafe {
+            let result = MmapMut::map_mut(&data);
+            if result.is_err() {
+                // for vm.max_map_count, error is: {code: 12, kind: Other, message: "Cannot allocate memory"}
+                info!("memory map error: {:?}. This may be because vm.max_map_count is not set correctly.", result);
+            }
+            result?
+        };
 
         let new = AppendVec {
             path: path.as_ref().to_path_buf(),
@@ -452,8 +481,8 @@ impl AppendVec {
     /// and will be available to other threads.
     pub fn append_accounts(
         &self,
-        accounts: &[(StoredMeta, &AccountSharedData)],
-        hashes: &[Hash],
+        accounts: &[(StoredMeta, Option<&impl ReadableAccount>)],
+        hashes: &[impl Borrow<Hash>],
     ) -> Vec<usize> {
         let _lock = self.append_lock.lock().unwrap();
         let mut offset = self.len();
@@ -463,8 +492,11 @@ impl AppendVec {
             let account_meta = AccountMeta::from(*account);
             let account_meta_ptr = &account_meta as *const AccountMeta;
             let data_len = stored_meta.data_len as usize;
-            let data_ptr = account.data().as_ptr();
-            let hash_ptr = hash.as_ref().as_ptr();
+            let data_ptr = account
+                .map(|account| account.data())
+                .unwrap_or_default()
+                .as_ptr();
+            let hash_ptr = hash.borrow().as_ref().as_ptr();
             let ptrs = [
                 (meta_ptr as *const u8, mem::size_of::<StoredMeta>()),
                 (account_meta_ptr as *const u8, mem::size_of::<AccountMeta>()),
@@ -494,7 +526,7 @@ impl AppendVec {
         account: &AccountSharedData,
         hash: Hash,
     ) -> Option<usize> {
-        let res = self.append_accounts(&[(storage_meta, account)], &[hash]);
+        let res = self.append_accounts(&[(storage_meta, Some(account))], &[&hash]);
         if res.len() == 1 {
             None
         } else {
@@ -504,13 +536,12 @@ impl AppendVec {
 }
 
 pub mod test_utils {
-    use super::StoredMeta;
-    use rand::distributions::Alphanumeric;
-    use rand::{thread_rng, Rng};
-    use solana_sdk::account::AccountSharedData;
-    use solana_sdk::pubkey::Pubkey;
-    use std::fs::create_dir_all;
-    use std::path::PathBuf;
+    use {
+        super::StoredMeta,
+        rand::{distributions::Alphanumeric, thread_rng, Rng},
+        solana_sdk::{account::AccountSharedData, pubkey::Pubkey},
+        std::{fs::create_dir_all, path::PathBuf},
+    };
 
     pub struct TempFile {
         pub path: PathBuf,
@@ -553,12 +584,13 @@ pub mod test_utils {
 
 #[cfg(test)]
 pub mod tests {
-    use super::test_utils::*;
-    use super::*;
-    use assert_matches::assert_matches;
-    use rand::{thread_rng, Rng};
-    use solana_sdk::timing::duration_as_ms;
-    use std::time::Instant;
+    use {
+        super::{test_utils::*, *},
+        assert_matches::assert_matches,
+        rand::{thread_rng, Rng},
+        solana_sdk::{account::WritableAccount, timing::duration_as_ms},
+        std::time::Instant,
+    };
 
     impl AppendVec {
         fn append_account_test(&self, data: &(StoredMeta, AccountSharedData)) -> Option<usize> {
@@ -589,6 +621,43 @@ pub mod tests {
                 *(&self.account_meta.executable as *const bool as *mut u8) = new_executable_byte;
             }
         }
+    }
+
+    #[test]
+    fn test_account_meta_default() {
+        let def1 = AccountMeta::default();
+        let def2 = AccountMeta::from(&Account::default());
+        assert_eq!(&def1, &def2);
+        let def2 = AccountMeta::from(&AccountSharedData::default());
+        assert_eq!(&def1, &def2);
+        let def2 = AccountMeta::from(Some(&AccountSharedData::default()));
+        assert_eq!(&def1, &def2);
+        let none: Option<&AccountSharedData> = None;
+        let def2 = AccountMeta::from(none);
+        assert_eq!(&def1, &def2);
+    }
+
+    #[test]
+    fn test_account_meta_non_default() {
+        let def1 = AccountMeta {
+            lamports: 1,
+            owner: Pubkey::new_unique(),
+            executable: true,
+            rent_epoch: 3,
+        };
+        let def2_account = Account {
+            lamports: def1.lamports,
+            owner: def1.owner,
+            executable: def1.executable,
+            rent_epoch: def1.rent_epoch,
+            data: Vec::new(),
+        };
+        let def2 = AccountMeta::from(&def2_account);
+        assert_eq!(&def1, &def2);
+        let def2 = AccountMeta::from(&AccountSharedData::from(def2_account.clone()));
+        assert_eq!(&def1, &def2);
+        let def2 = AccountMeta::from(Some(&AccountSharedData::from(def2_account)));
+        assert_eq!(&def1, &def2);
     }
 
     #[test]
@@ -726,7 +795,7 @@ pub mod tests {
         let owner = Pubkey::default();
         let data_len = 3_u64;
         let mut account = AccountSharedData::new(0, data_len as usize, &owner);
-        account.data = b"abc".to_vec();
+        account.set_data(b"abc".to_vec());
         let stored_meta = StoredMeta {
             write_version: 0,
             pubkey,
@@ -807,7 +876,7 @@ pub mod tests {
         av.append_account_test(&create_test_account(10)).unwrap();
         {
             let mut executable_account = create_test_account(10);
-            executable_account.1.executable = true;
+            executable_account.1.set_executable(true);
             av.append_account_test(&executable_account).unwrap();
         }
 
@@ -832,7 +901,7 @@ pub mod tests {
             let executable_bool: &bool = &account.account_meta.executable;
             // Depending on use, *executable_bool can be truthy or falsy due to direct memory manipulation
             // assert_eq! thinks *executable_bool is equal to false but the if condition thinks it's not, contradictorily.
-            assert_eq!(*executable_bool, false);
+            assert!(!*executable_bool);
             const FALSE: bool = false; // keep clippy happy
             if *executable_bool == FALSE {
                 panic!("This didn't occur if this test passed.");
@@ -843,7 +912,7 @@ pub mod tests {
         // we can NOT observe crafted value by value
         {
             let executable_bool: bool = account.account_meta.executable;
-            assert_eq!(executable_bool, false);
+            assert!(!executable_bool);
             assert_eq!(account.get_executable_byte(), 0); // Wow, not crafted_executable!
         }
 

@@ -1,12 +1,16 @@
-use crate::abi_example::{normalize_type_name, AbiEnumVisitor};
-use crate::hash::{Hash, Hasher};
-use log::*;
-use serde::ser::Error as SerdeError;
-use serde::ser::*;
-use serde::{Serialize, Serializer};
-use std::any::type_name;
-use std::io::Write;
-use thiserror::Error;
+use {
+    crate::{
+        abi_example::{normalize_type_name, AbiEnumVisitor},
+        hash::{Hash, Hasher},
+    },
+    log::*,
+    serde::{
+        ser::{Error as SerdeError, *},
+        Serialize, Serializer,
+    },
+    std::{any::type_name, io::Write},
+    thiserror::Error,
+};
 
 #[derive(Debug)]
 pub struct AbiDigester {
@@ -48,6 +52,17 @@ impl DigestError {
 }
 
 const INDENT_WIDTH: usize = 4;
+
+pub(crate) fn shorten_serialize_with(type_name: &str) -> &str {
+    // Fully qualified type names for the generated `__SerializeWith` types are very
+    // long and do not add extra value to the digest. They also cause the digest
+    // to change when a struct is moved to an inner module.
+    if type_name.ends_with("__SerializeWith") {
+        "__SerializeWith"
+    } else {
+        type_name
+    }
+}
 
 impl AbiDigester {
     pub fn create() -> Self {
@@ -164,7 +179,8 @@ impl AbiDigester {
         key: Sstr,
         v: &T,
     ) -> Result<(), DigestError> {
-        self.update_with_string(format!("field {}: {}", key, type_name::<T>()));
+        let field_type_name = shorten_serialize_with(type_name::<T>());
+        self.update_with_string(format!("field {}: {}", key, field_type_name));
         self.create_child()?
             .digest_data(v)
             .map(|_| ())
@@ -182,9 +198,7 @@ impl AbiDigester {
         label: &'static str,
         variant: &'static str,
     ) -> Result<(), DigestError> {
-        if !self.for_enum {
-            panic!("derive AbiEnumVisitor or implement it for the enum, which contains a variant ({}) named {}", label, variant);
-        }
+        assert!(self.for_enum, "derive AbiEnumVisitor or implement it for the enum, which contains a variant ({}) named {}", label, variant);
         Ok(())
     }
 
@@ -528,8 +542,7 @@ impl SerializeStructVariant for AbiDigester {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::sync::atomic::AtomicIsize;
+    use std::{collections::HashMap, sync::atomic::AtomicIsize};
 
     #[frozen_abi(digest = "CQiGCzsGquChkwffHjZKFqa3tCYtS3GWYRRYX7iDR38Q")]
     type TestTypeAlias = i32;

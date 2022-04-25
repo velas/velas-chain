@@ -18,8 +18,7 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use super::*;
-    use bincode::deserialize;
+    use {super::*, bincode::deserialize};
     use serde::Serialize;
 
     #[test]

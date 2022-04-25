@@ -1,25 +1,25 @@
 [package]
 name = "solana-keygen"
-version = "1.6.14"
+version = "1.9.13"
 description = "Solana key generation utility"
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
 repository = "https://github.com/solana-labs/solana"
 license = "Apache-2.0"
 homepage = "https://solana.com/"
 documentation = "https://docs.rs/solana-keygen"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-bs58 = "0.3.1"
+bs58 = "0.4.0"
 clap = "2.33"
 dirs-next = "2.0.0"
-num_cpus = "1.13.0"
-solana-clap-utils = { path = "../clap-utils", version = "=1.6.14" }
-solana-cli-config = { path = "../cli-config", version = "=1.6.14" }
-solana-remote-wallet = { path = "../remote-wallet", version = "=1.6.14" }
-solana-sdk = { path = "../sdk", version = "=1.6.14" }
-solana-version = { path = "../version", version = "=0.5.1" }
-tiny-bip39 = "0.7.0"
+num_cpus = "1.13.1"
+solana-clap-utils = { path = "../clap-utils", version = "=1.9.13" }
+solana-cli-config = { path = "../cli-config", version = "=1.9.13" }
+solana-remote-wallet = { path = "../remote-wallet", version = "=1.9.13" }
+solana-sdk = { path = "../sdk", version = "=1.9.13" }
+solana-version = { path = "../version", version = "=0.6.0" }
+tiny-bip39 = "0.8.2"
 
 [[bin]]
 name = "velas-keygen"

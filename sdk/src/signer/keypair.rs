@@ -17,9 +17,11 @@ use {
         io::{Read, Write},
         path::Path,
     },
+    wasm_bindgen::prelude::*,
 };
 
 /// A vanilla Ed25519 key pair
+#[wasm_bindgen]
 #[derive(Debug)]
 pub struct Keypair(ed25519_dalek::Keypair);
 
@@ -79,6 +81,10 @@ impl Signer for Keypair {
 
     fn try_sign_message(&self, message: &[u8]) -> Result<Signature, SignerError> {
         Ok(self.sign_message(message))
+    }
+
+    fn is_interactive(&self) -> bool {
+        false
     }
 }
 

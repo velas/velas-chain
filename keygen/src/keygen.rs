@@ -1,36 +1,39 @@
 #![allow(clippy::integer_arithmetic)]
-use bip39::{Language, Mnemonic, MnemonicType, Seed};
-use clap::{
-    crate_description, crate_name, value_t, value_t_or_exit, values_t_or_exit, App, AppSettings,
-    Arg, ArgMatches, SubCommand,
-};
-use solana_clap_utils::{
-    input_validators::{is_parsable, is_prompt_signer_source},
-    keypair::{
-        keypair_from_path, keypair_from_seed_phrase, prompt_passphrase, signer_from_path,
-        SKIP_SEED_PHRASE_VALIDATION_ARG,
+use {
+    bip39::{Language, Mnemonic, MnemonicType, Seed},
+    clap::{
+        crate_description, crate_name, value_t, value_t_or_exit, values_t_or_exit, App,
+        AppSettings, Arg, ArgMatches, SubCommand,
     },
-    ArgConstant, DisplayError,
-};
-use solana_cli_config::{Config, CONFIG_FILE};
-use solana_remote_wallet::remote_wallet::RemoteWalletManager;
-use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
-    message::Message,
-    pubkey::{write_pubkey_file, Pubkey},
-    signature::{keypair_from_seed, write_keypair, write_keypair_file, Keypair, Signer},
-};
-use std::{
-    collections::HashSet,
-    error,
-    path::Path,
-    process::exit,
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
+    solana_clap_utils::{
+        input_parsers::STDOUT_OUTFILE_TOKEN,
+        input_validators::{is_parsable, is_prompt_signer_source},
+        keypair::{
+            keypair_from_path, keypair_from_seed_phrase, prompt_passphrase, signer_from_path,
+            SKIP_SEED_PHRASE_VALIDATION_ARG,
+        },
+        ArgConstant, DisplayError,
     },
-    thread,
-    time::Instant,
+    solana_cli_config::{Config, CONFIG_FILE},
+    solana_remote_wallet::remote_wallet::RemoteWalletManager,
+    solana_sdk::{
+        instruction::{AccountMeta, Instruction},
+        message::Message,
+        pubkey::{write_pubkey_file, Pubkey},
+        signature::{keypair_from_seed, write_keypair, write_keypair_file, Keypair, Signer},
+    },
+    std::{
+        collections::HashSet,
+        error,
+        path::Path,
+        process::exit,
+        sync::{
+            atomic::{AtomicBool, AtomicU64, Ordering},
+            Arc,
+        },
+        thread,
+        time::Instant,
+    },
 };
 
 const NO_PASSPHRASE: &str = "";
@@ -50,7 +53,7 @@ const WORD_COUNT_ARG: ArgConstant<'static> = ArgConstant {
 const LANGUAGE_ARG: ArgConstant<'static> = ArgConstant {
     long: "language",
     name: "language",
-    help: "Specify the mnemonic lanaguage that will be present in the generated seed phrase",
+    help: "Specify the mnemonic language that will be present in the generated seed phrase",
 };
 
 const NO_PASSPHRASE_ARG: ArgConstant<'static> = ArgConstant {
@@ -117,7 +120,6 @@ impl KeyGenerationCommonArgs for App<'_, '_> {
         self.arg(word_count_arg())
             .arg(language_arg())
             .arg(no_passphrase_arg())
-            .arg(no_outfile_arg())
     }
 }
 
@@ -151,7 +153,7 @@ fn output_keypair(
     outfile: &str,
     source: &str,
 ) -> Result<(), Box<dyn error::Error>> {
-    if outfile == "-" {
+    if outfile == STDOUT_OUTFILE_TOKEN {
         let mut stdout = std::io::stdout();
         write_keypair(keypair, &mut stdout)?;
     } else {
@@ -391,6 +393,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                         .help("Do not display seed phrase. Useful when piping output to other programs that prompt for user input, like gpg"),
                 )
                 .key_generation_common_args()
+                .arg(no_outfile_arg())
         )
         .subcommand(
             SubCommand::with_name("grind")
@@ -446,6 +449,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                         .help("Generate using a mnemonic key phrase.  Expect a significant slowdown in this mode"),
                 )
                 .key_generation_common_args()
+                .arg(
+                    no_outfile_arg()
+                    // Require a seed phrase to avoid generating a keypair
+                    // but having no way to get the private key
+                    .requires("use_mnemonic")
+                )
         )
         .subcommand(
             SubCommand::with_name("pubkey")
@@ -550,7 +559,7 @@ fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
             };
 
             match outfile {
-                Some("-") => (),
+                Some(STDOUT_OUTFILE_TOKEN) => (),
                 Some(outfile) => check_for_overwrite(outfile, matches),
                 None => (),
             }
@@ -592,7 +601,7 @@ fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
                 path.to_str().unwrap()
             };
 
-            if outfile != "-" {
+            if outfile != STDOUT_OUTFILE_TOKEN {
                 check_for_overwrite(outfile, matches);
             }
 

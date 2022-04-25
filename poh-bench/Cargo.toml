@@ -1,25 +1,25 @@
 [package]
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
-edition = "2018"
+edition = "2021"
 name = "solana-poh-bench"
-version = "1.6.14"
+version = "1.9.13"
 repository = "https://github.com/solana-labs/solana"
 license = "Apache-2.0"
 homepage = "https://solana.com/"
 documentation = "https://docs.rs/solana-poh-bench"
+publish = false
 
 [dependencies]
 clap = "2.33.1"
-log = "0.4.11"
+log = "0.4.14"
 rand = "0.7.0"
-rayon = "1.5.0"
-solana-logger = { path = "../logger", version = "=1.6.14" }
-solana-ledger = { path = "../ledger", version = "=1.6.14" }
-solana-sdk = { path = "../sdk", version = "=1.6.14" }
-solana-clap-utils = { path = "../clap-utils", version = "=1.6.14" }
-solana-measure = { path = "../measure", version = "=1.6.14" }
-solana-version = { path = "../version", version = "=0.5.1" }
-solana-perf = { path = "../perf", version = "=1.6.14" }
+rayon = "1.5.1"
+solana-logger = { path = "../logger", version = "=1.9.13" }
+solana-entry = { path = "../entry", version = "=1.9.13" }
+solana-sdk = { path = "../sdk", version = "=1.9.13" }
+solana-measure = { path = "../measure", version = "=1.9.13" }
+solana-version = { path = "../version", version = "=0.6.0" }
+solana-perf = { path = "../perf", version = "=1.9.13" }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

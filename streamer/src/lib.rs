@@ -1,7 +1,9 @@
 #![allow(clippy::integer_arithmetic)]
 pub mod packet;
+pub mod quic;
 pub mod recvmmsg;
 pub mod sendmmsg;
+pub mod socket;
 pub mod streamer;
 
 #[macro_use]

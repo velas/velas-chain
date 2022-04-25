@@ -1,15 +1,17 @@
-use crate::blockstore::Blockstore;
-use log::*;
-use solana_measure::measure::Measure;
-use solana_sdk::clock::Slot;
-use std::{
-    collections::HashSet,
-    result::Result,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
+use {
+    crate::blockstore::Blockstore,
+    log::*,
+    solana_measure::measure::Measure,
+    solana_sdk::clock::Slot,
+    std::{
+        collections::HashSet,
+        result::Result,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        time::Duration,
     },
-    time::Duration,
 };
 use tokio::time::sleep;
 
@@ -24,7 +26,6 @@ pub async fn upload_confirmed_blocks(
     bigtable: solana_storage_bigtable::LedgerStorage,
     starting_slot: Slot,
     ending_slot: Option<Slot>,
-    allow_missing_metadata: bool,
     force_reupload: bool,
     exit: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -185,20 +186,7 @@ pub async fn upload_confirmed_blocks(
                 num_blocks -= 1;
                 None
             }
-            Some(confirmed_block) => {
-                if confirmed_block
-                    .transactions
-                    .iter()
-                    .any(|transaction| transaction.meta.is_none())
-                {
-                    if allow_missing_metadata {
-                        info!("Transaction metadata missing from slot {}", slot);
-                    } else {
-                        panic!("Transaction metadata missing from slot {}", slot);
-                    }
-                }
-                Some(bigtable.upload_confirmed_block(slot, confirmed_block))
-            }
+            Some(confirmed_block) => Some(bigtable.upload_confirmed_block(slot, confirmed_block)),
         });
 
         for result in futures::future::join_all(uploads).await {

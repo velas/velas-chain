@@ -1,42 +1,41 @@
 [package]
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
-edition = "2018"
+edition = "2021"
 name = "solana-ledger-tool"
 description = "Blockchain, Rebuilt for Scale"
-version = "1.6.14"
+version = "1.9.13"
 repository = "https://github.com/solana-labs/solana"
 license = "Apache-2.0"
 homepage = "https://solana.com/"
 documentation = "https://docs.rs/solana-ledger-tool"
 
 [dependencies]
-bs58 = "0.3.1"
-bytecount = "0.6.0"
+bs58 = "0.4.0"
+bytecount = "0.6.2"
 clap = "2.33.1"
-csv = "1.1.3"
-futures = "0.3.8"
-futures-util = "0.3.5"
-histogram = "*"
-itertools = "0.9.0"
-log = { version = "0.4.11" }
+csv = "1.1.6"
+dashmap = "4.0.2"
+histogram = "0.6.9"
+itertools = "0.10.1"
+log = { version = "0.4.14" }
 regex = "1"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.56"
-serde_yaml = "0.8.13"
-solana-clap-utils = { path = "../clap-utils", version = "=1.6.14" }
-solana-cli-output = { path = "../cli-output", version = "=1.6.14" }
-solana-ledger = { path = "../ledger", version = "=1.6.14" }
-solana-logger = { path = "../logger", version = "=1.6.14" }
-solana-measure = { path = "../measure", version = "=1.6.14" }
-solana-runtime = { path = "../runtime", version = "=1.6.14" }
-solana-sdk = { path = "../sdk", version = "=1.6.14" }
-solana-stake-program = { path = "../programs/stake", version = "=1.6.14" }
-solana-storage-bigtable = { path = "../storage-bigtable", version = "=1.6.14" }
-solana-transaction-status = { path = "../transaction-status", version = "=1.6.14" }
-solana-version = { path = "../version", version = "=0.5.1" }
-solana-vote-program = { path = "../programs/vote", version = "=1.6.14" }
-
-tempfile = "3.1.0"
+serde_json = "1.0.72"
+serde_yaml = "0.8.21"
+solana-clap-utils = { path = "../clap-utils", version = "=1.9.13" }
+solana-cli-output = { path = "../cli-output", version = "=1.9.13" }
+solana-core = { path = "../core", version = "=1.9.13" }
+solana-entry = { path = "../entry", version = "=1.9.13" }
+solana-ledger = { path = "../ledger", version = "=1.9.13" }
+solana-logger = { path = "../logger", version = "=1.9.13" }
+solana-measure = { path = "../measure", version = "=1.9.13" }
+solana-runtime = { path = "../runtime", version = "=1.9.13" }
+solana-sdk = { path = "../sdk", version = "=1.9.13" }
+solana-stake-program = { path = "../programs/stake", version = "=1.9.13" }
+solana-storage-bigtable = { path = "../storage-bigtable", version = "=1.9.13" }
+solana-transaction-status = { path = "../transaction-status", version = "=1.9.13" }
+solana-version = { path = "../version", version = "=0.6.0" }
+solana-vote-program = { path = "../programs/vote", version = "=1.9.13" }
 tokio = { version = "1", features = ["full"] }
 
 evm-state = { path = "../evm-utils/evm-state" }
@@ -45,14 +44,16 @@ triedb = { git = "https://github.com/velas/triedb", branch = "feat/gc-simple", f
 rlp = "0.5.0"
 anyhow = "1.0.43"
 rayon = "1.5.0"
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+jemallocator = {package = "tikv-jemallocator", version = "0.4.1", features = ["unprefixed_malloc_on_supported_platforms"]}
 
 [dev-dependencies]
-assert_cmd = "1.0"
+assert_cmd = "2.0"
 quickcheck = "1.0.3"
 quickcheck_macros = "1.0.0"
 
 [target."cfg(unix)".dependencies]
-signal-hook = "0.1.15"
+signal-hook = "0.3.10"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

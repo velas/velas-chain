@@ -5,7 +5,10 @@ use log::*;
 use serde_json::json;
 
 use solana_client::{rpc_client::RpcClient, rpc_config::*, rpc_request::*, rpc_response::*};
-use solana_core::rpc::{self, OptionalContext};
+use solana_rpc::{self, OptionalContext};
+use solana_client::rpc_deprecated_config::RpcConfirmedBlockConfig;
+use solana_client::rpc_deprecated_config::RpcConfirmedTransactionConfig;
+use solana_client::rpc_deprecated_config::RpcGetConfirmedSignaturesForAddress2Config;
 use solana_runtime::commitment::BlockCommitmentArray;
 use solana_sdk::{
     clock::{Slot, UnixTimestamp},

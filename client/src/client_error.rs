@@ -1,14 +1,15 @@
 use {
-    crate::rpc_request,
+    crate::{rpc_request, rpc_response},
     solana_faucet::faucet::FaucetError,
     solana_sdk::{
         signature::SignerError, transaction::TransactionError, transport::TransportError,
     },
     std::io,
     thiserror::Error,
-};
-
-pub use reqwest; // export `reqwest` for clients
+    
+}; 
+// export `reqwest` for clients
+pub use reqwest;
 
 #[derive(Error, Debug)]
 pub enum ClientErrorKind {
@@ -28,6 +29,24 @@ pub enum ClientErrorKind {
     FaucetError(#[from] FaucetError),
     #[error("Custom: {0}")]
     Custom(String),
+}
+
+impl ClientErrorKind {
+    pub fn get_transaction_error(&self) -> Option<TransactionError> {
+        match self {
+            Self::RpcError(rpc_request::RpcError::RpcResponseError {
+                data:
+                    rpc_request::RpcResponseErrorData::SendTransactionPreflightFailure(
+                        rpc_response::RpcSimulateTransactionResult {
+                            err: Some(tx_err), ..
+                        },
+                    ),
+                ..
+            }) => Some(tx_err.clone()),
+            Self::TransactionError(tx_err) => Some(tx_err.clone()),
+            _ => None,
+        }
+    }
 }
 
 impl From<TransportError> for ClientErrorKind {
@@ -87,6 +106,9 @@ impl ClientError {
         &self.kind
     }
 
+    pub fn get_transaction_error(&self) -> Option<TransactionError> {
+        self.kind.get_transaction_error()
+    }
     pub fn already_exist_error(&self) -> bool {
         use crate::rpc_response::RpcSimulateTransactionResult;
         use rpc_request::{RpcError, RpcResponseErrorData};

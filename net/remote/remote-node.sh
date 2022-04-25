@@ -20,15 +20,14 @@ internalNodesLamports="${11}"
 nodeIndex="${12}"
 numBenchTpsClients="${13}"
 benchTpsExtraArgs="${14}"
-numBenchExchangeClients="${15}"
-benchExchangeExtraArgs="${16}"
-genesisOptions="${17}"
-extraNodeArgs="${18}"
-gpuMode="${19:-auto}"
-maybeWarpSlot="${20}"
-waitForNodeInit="${21}"
-extraPrimordialStakes="${22:=0}"
-tmpfsAccounts="${23:false}"
+genesisOptions="${15}"
+extraNodeArgs="${16}"
+gpuMode="${17:-auto}"
+maybeWarpSlot="${18}"
+maybeFullRpc="${19}"
+waitForNodeInit="${20}"
+extraPrimordialStakes="${21:=0}"
+tmpfsAccounts="${22:false}"
 set +x
 
 missing() {
@@ -122,7 +121,7 @@ cat >> ~/solana/on-reboot <<EOF
   echo \$! > system-stats.pid
 
   if ${GPU_CUDA_OK} && [[ -e /dev/nvidia0 ]]; then
-    echo Selecting solana-validator-cuda
+    echo Selecting velas-validator-cuda
     export SOLANA_CUDA=1
   elif ${GPU_FAIL_IF_NONE} ; then
     echo "Expected GPU, found none!"
@@ -194,13 +193,6 @@ EOF
         tail -n +2 -q config/bench-tps"$i".yml >> config/client-accounts.yml
         echo "" >> config/client-accounts.yml
       done
-      for i in $(seq 0 $((numBenchExchangeClients-1))); do
-        # shellcheck disable=SC2086 # Do not want to quote $benchExchangeExtraArgs
-        solana-bench-exchange --batch-size 1000 --fund-amount 20000 \
-          --write-client-keys config/bench-exchange"$i".yml $benchExchangeExtraArgs
-        tail -n +2 -q config/bench-exchange"$i".yml >> config/client-accounts.yml
-        echo "" >> config/client-accounts.yml
-      done
       if [[ -f $externalPrimordialAccountsFile ]]; then
         cat "$externalPrimordialAccountsFile" >> config/validator-balances.yml
       fi
@@ -225,6 +217,12 @@ EOF
       fi
       if [[ -f net/keypairs/bootstrap-validator-identity.json ]]; then
         export BOOTSTRAP_VALIDATOR_IDENTITY_KEYPAIR=net/keypairs/bootstrap-validator-identity.json
+      fi
+      if [[ -f net/keypairs/bootstrap-validator-stake.json ]]; then
+        export BOOTSTRAP_VALIDATOR_STAKE_KEYPAIR=net/keypairs/bootstrap-validator-stake.json
+      fi
+      if [[ -f net/keypairs/bootstrap-validator-vote.json ]]; then
+        export BOOTSTRAP_VALIDATOR_VOTE_KEYPAIR=net/keypairs/bootstrap-validator-vote.json
       fi
       echo "remote-node.sh: Primordial stakes: $extraPrimordialStakes"
       if [[ "$extraPrimordialStakes" -gt 0 ]]; then
@@ -278,6 +276,11 @@ EOF
 
     if [[ "$tmpfsAccounts" = "true" ]]; then
       args+=(--accounts /mnt/solana-accounts)
+    fi
+
+    if $maybeFullRpc; then
+      args+=(--enable-rpc-transaction-history)
+      args+=(--enable-cpi-and-log-storage)
     fi
 
     if [[ $airdropsEnabled = true ]]; then
@@ -401,6 +404,11 @@ EOF
 
     if [[ "$tmpfsAccounts" = "true" ]]; then
       args+=(--accounts /mnt/solana-accounts)
+    fi
+
+    if $maybeFullRpc; then
+      args+=(--enable-rpc-transaction-history)
+      args+=(--enable-cpi-and-log-storage)
     fi
 
 cat >> ~/solana/on-reboot <<EOF

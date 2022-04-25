@@ -1,9 +1,11 @@
-use crate::heaviest_subtree_fork_choice::SlotHashKey;
-use solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey};
-use std::collections::{hash_map::Entry, HashMap};
+use {
+    crate::heaviest_subtree_fork_choice::SlotHashKey,
+    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
+    std::collections::{hash_map::Entry, HashMap},
+};
 
 #[derive(Default)]
-pub(crate) struct LatestValidatorVotesForFrozenBanks {
+pub struct LatestValidatorVotesForFrozenBanks {
     // TODO: Clean outdated/unstaked pubkeys from this list.
     max_gossip_frozen_votes: HashMap<Pubkey, (Slot, Vec<Hash>)>,
     max_replay_frozen_votes: HashMap<Pubkey, (Slot, Vec<Hash>)>,
@@ -15,7 +17,7 @@ pub(crate) struct LatestValidatorVotesForFrozenBanks {
 impl LatestValidatorVotesForFrozenBanks {
     // `frozen_hash.is_some()` if the bank with slot == `vote_slot` is frozen
     // Returns whether the vote was actually added, and the latest voted frozen slot
-    pub(crate) fn check_add_vote(
+    pub fn check_add_vote(
         &mut self,
         vote_pubkey: Pubkey,
         vote_slot: Slot,
@@ -86,7 +88,7 @@ impl LatestValidatorVotesForFrozenBanks {
         )
     }
 
-    pub(crate) fn take_votes_dirty_set(&mut self, root: Slot) -> Vec<(Pubkey, SlotHashKey)> {
+    pub fn take_votes_dirty_set(&mut self, root: Slot) -> Vec<(Pubkey, SlotHashKey)> {
         let new_votes = std::mem::take(&mut self.fork_choice_dirty_set);
         new_votes
             .into_iter()
@@ -98,6 +100,10 @@ impl LatestValidatorVotesForFrozenBanks {
                     .collect::<Vec<(Pubkey, SlotHashKey)>>()
             })
             .collect()
+    }
+
+    pub fn max_gossip_frozen_votes(&self) -> &HashMap<Pubkey, (Slot, Vec<Hash>)> {
+        &self.max_gossip_frozen_votes
     }
 
     #[cfg(test)]

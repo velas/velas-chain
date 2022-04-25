@@ -1,20 +1,24 @@
 #![allow(clippy::integer_arithmetic)]
-use serial_test::serial;
-use solana_bench_tps::{
-    bench::{do_bench_tps, generate_and_fund_keypairs},
-    cli::Config,
-};
-use solana_client::thin_client::create_client;
-use solana_core::{cluster_info::VALIDATOR_PORT_RANGE, validator::ValidatorConfig};
-use solana_faucet::faucet::run_local_faucet_with_port;
-use solana_local_cluster::{
-    local_cluster::{ClusterConfig, LocalCluster},
-    validator_configs::make_identical_validator_configs,
-};
-use solana_sdk::signature::{Keypair, Signer};
-use std::{
-    sync::{mpsc::channel, Arc},
-    time::Duration,
+use {
+    serial_test::serial,
+    solana_bench_tps::{
+        bench::{do_bench_tps, generate_and_fund_keypairs},
+        cli::Config,
+    },
+    solana_client::thin_client::create_client,
+    solana_core::validator::ValidatorConfig,
+    solana_faucet::faucet::run_local_faucet_with_port,
+    solana_gossip::cluster_info::VALIDATOR_PORT_RANGE,
+    solana_local_cluster::{
+        local_cluster::{ClusterConfig, LocalCluster},
+        validator_configs::make_identical_validator_configs,
+    },
+    solana_sdk::signature::{Keypair, Signer},
+    solana_streamer::socket::SocketAddrSpace,
+    std::{
+        sync::{mpsc::channel, Arc},
+        time::Duration,
+    },
 };
 
 fn test_bench_tps_local_cluster(config: Config) {
@@ -22,13 +26,19 @@ fn test_bench_tps_local_cluster(config: Config) {
 
     solana_logger::setup();
     const NUM_NODES: usize = 1;
-    let cluster = LocalCluster::new(&mut ClusterConfig {
-        node_stakes: vec![999_990; NUM_NODES],
-        cluster_lamports: 200_000_000,
-        validator_configs: make_identical_validator_configs(&ValidatorConfig::default(), NUM_NODES),
-        native_instruction_processors,
-        ..ClusterConfig::default()
-    });
+    let cluster = LocalCluster::new(
+        &mut ClusterConfig {
+            node_stakes: vec![999_990; NUM_NODES],
+            cluster_lamports: 200_000_000,
+            validator_configs: make_identical_validator_configs(
+                &ValidatorConfig::default_for_test(),
+                NUM_NODES,
+            ),
+            native_instruction_processors,
+            ..ClusterConfig::default()
+        },
+        SocketAddrSpace::Unspecified,
+    );
 
     let faucet_keypair = Keypair::new();
     cluster.transfer(

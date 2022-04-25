@@ -1,9 +1,9 @@
+#![allow(clippy::integer_arithmetic)]
 //!
 //! slot history
 //!
 pub use crate::clock::Slot;
-use bv::BitVec;
-use bv::BitsMut;
+use bv::{BitVec, BitsMut};
 
 #[repr(C)]
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -85,8 +85,7 @@ impl SlotHistory {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use log::*;
+    use {super::*, log::*};
 
     #[test]
     fn slot_history_test1() {

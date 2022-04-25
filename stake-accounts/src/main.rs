@@ -3,27 +3,27 @@ mod arg_parser;
 mod args;
 mod stake_accounts;
 
-use crate::arg_parser::parse_args;
-use crate::args::{
-    resolve_command, AuthorizeArgs, Command, MoveArgs, NewArgs, RebaseArgs, SetLockupArgs,
+use {
+    crate::{
+        arg_parser::parse_args,
+        args::{
+            resolve_command, AuthorizeArgs, Command, MoveArgs, NewArgs, RebaseArgs, SetLockupArgs,
+        },
+    },
+    solana_cli_config::Config,
+    solana_client::{client_error::ClientError, rpc_client::RpcClient},
+    solana_sdk::{
+        message::Message,
+        native_token::lamports_to_sol,
+        pubkey::Pubkey,
+        signature::{unique_signers, Signature, Signer},
+        signers::Signers,
+        stake::{instruction::LockupArgs, state::Lockup},
+        transaction::Transaction,
+    },
+    solana_stake_program::stake_state,
+    std::{env, error::Error},
 };
-use solana_cli_config::Config;
-use solana_client::client_error::ClientError;
-use solana_client::rpc_client::RpcClient;
-use solana_sdk::{
-    message::Message,
-    native_token::lamports_to_sol,
-    pubkey::Pubkey,
-    signature::{unique_signers, Signature, Signer},
-    signers::Signers,
-    transaction::Transaction,
-};
-use solana_stake_program::{
-    stake_instruction::LockupArgs,
-    stake_state::{Lockup, StakeState},
-};
-use std::env;
-use std::error::Error;
 
 fn get_balance_at(client: &RpcClient, pubkey: &Pubkey, i: usize) -> Result<u64, ClientError> {
     let address = stake_accounts::derive_stake_account_address(pubkey, i);
@@ -52,7 +52,7 @@ fn get_balances(
 fn get_lockup(client: &RpcClient, address: &Pubkey) -> Result<Lockup, ClientError> {
     client
         .get_account(address)
-        .map(|account| StakeState::lockup_from(&account).unwrap())
+        .map(|account| stake_state::lockup_from(&account).unwrap())
 }
 
 fn get_lockups(
@@ -207,8 +207,7 @@ fn send_and_confirm_message<S: Signers>(
 ) -> Result<Signature, ClientError> {
     let mut transaction = Transaction::new_unsigned(message);
 
-    let (blockhash, _fee_calculator) =
-        client.get_new_blockhash(&transaction.message().recent_blockhash)?;
+    let blockhash = client.get_new_latest_blockhash(&transaction.message().recent_blockhash)?;
     transaction.try_sign(signers, blockhash)?;
 
     if no_wait {

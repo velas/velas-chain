@@ -1,29 +1,32 @@
-use crate::bank::Bank;
-use evm_state::AccountProvider;
-use solana_sdk::{
-    account::Account,
-    client::{AsyncClient, Client, SyncClient},
-    commitment_config::CommitmentConfig,
-    epoch_info::EpochInfo,
-    fee_calculator::{FeeCalculator, FeeRateGovernor},
-    hash::Hash,
-    instruction::Instruction,
-    message::Message,
-    pubkey::Pubkey,
-    signature::{Keypair, Signature, Signer},
-    signers::Signers,
-    system_instruction,
-    transaction::{self, Transaction},
-    transport::{Result, TransportError},
-};
-use std::{
-    io,
-    sync::{
-        mpsc::{channel, Receiver, Sender},
-        Arc, Mutex,
+use {
+    crate::bank::Bank,
+    evm_state::AccountProvider,
+    solana_sdk::{
+        account::Account,
+        client::{AsyncClient, Client, SyncClient},
+        commitment_config::CommitmentConfig,
+        epoch_info::EpochInfo,
+        fee_calculator::{FeeCalculator, FeeRateGovernor},
+        hash::Hash,
+        instruction::Instruction,
+        message::{Message, SanitizedMessage},
+        pubkey::Pubkey,
+        signature::{Keypair, Signature, Signer},
+        signers::Signers,
+        system_instruction,
+        transaction::{self, Transaction},
+        transport::{Result, TransportError},
     },
-    thread::{sleep, Builder},
-    time::{Duration, Instant},
+    std::{
+        convert::TryFrom,
+        io,
+        sync::{
+            mpsc::{channel, Receiver, Sender},
+            Arc, Mutex,
+        },
+        thread::{sleep, Builder},
+        time::{Duration, Instant},
+    },
 };
 
 pub struct BankClient {
@@ -123,7 +126,10 @@ impl SyncClient for BankClient {
     }
 
     fn get_account_data(&self, pubkey: &Pubkey) -> Result<Option<Vec<u8>>> {
-        Ok(self.bank.get_account(pubkey).map(|account| account.data))
+        Ok(self
+            .bank
+            .get_account(pubkey)
+            .map(|account| Account::from(account).data))
     }
 
     fn get_account(&self, pubkey: &Pubkey) -> Result<Option<Account>> {
@@ -155,26 +161,38 @@ impl SyncClient for BankClient {
     }
 
     fn get_recent_blockhash(&self) -> Result<(Hash, FeeCalculator)> {
-        Ok(self.bank.last_blockhash_with_fee_calculator())
+        Ok((
+            self.bank.last_blockhash(),
+            FeeCalculator::new(self.bank.get_lamports_per_signature()),
+        ))
     }
 
     fn get_recent_blockhash_with_commitment(
         &self,
         _commitment_config: CommitmentConfig,
     ) -> Result<(Hash, FeeCalculator, u64)> {
-        let (blockhash, fee_calculator) = self.bank.last_blockhash_with_fee_calculator();
+        let blockhash = self.bank.last_blockhash();
+        #[allow(deprecated)]
         let last_valid_slot = self
             .bank
             .get_blockhash_last_valid_slot(&blockhash)
             .expect("bank blockhash queue should contain blockhash");
-        Ok((blockhash, fee_calculator, last_valid_slot))
+        Ok((
+            blockhash,
+            FeeCalculator::new(self.bank.get_lamports_per_signature()),
+            last_valid_slot,
+        ))
     }
 
     fn get_fee_calculator_for_blockhash(&self, blockhash: &Hash) -> Result<Option<FeeCalculator>> {
-        Ok(self.bank.get_fee_calculator(blockhash))
+        Ok(self
+            .bank
+            .get_lamports_per_signature_for_blockhash(blockhash)
+            .map(FeeCalculator::new))
     }
 
     fn get_fee_rate_governor(&self) -> Result<FeeRateGovernor> {
+        #[allow(deprecated)]
         Ok(self.bank.get_fee_rate_governor().clone())
     }
 
@@ -264,9 +282,12 @@ impl SyncClient for BankClient {
     }
 
     fn get_new_blockhash(&self, blockhash: &Hash) -> Result<(Hash, FeeCalculator)> {
-        let (last_blockhash, fee_calculator) = self.get_recent_blockhash()?;
-        if last_blockhash != *blockhash {
-            Ok((last_blockhash, fee_calculator))
+        let recent_blockhash = self.get_latest_blockhash()?;
+        if recent_blockhash != *blockhash {
+            Ok((
+                recent_blockhash,
+                FeeCalculator::new(self.bank.get_lamports_per_signature()),
+            ))
         } else {
             Err(TransportError::IoError(io::Error::new(
                 io::ErrorKind::Other,
@@ -279,6 +300,42 @@ impl SyncClient for BankClient {
         Ok(self.bank.get_epoch_info())
     }
 
+    fn get_latest_blockhash(&self) -> Result<Hash> {
+        Ok(self.bank.last_blockhash())
+    }
+
+    fn get_latest_blockhash_with_commitment(
+        &self,
+        _commitment_config: CommitmentConfig,
+    ) -> Result<(Hash, u64)> {
+        let blockhash = self.bank.last_blockhash();
+        let last_valid_block_height = self
+            .bank
+            .get_blockhash_last_valid_block_height(&blockhash)
+            .expect("bank blockhash queue should contain blockhash");
+        Ok((blockhash, last_valid_block_height))
+    }
+
+    fn is_blockhash_valid(
+        &self,
+        blockhash: &Hash,
+        _commitment_config: CommitmentConfig,
+    ) -> Result<bool> {
+        Ok(self.bank.is_blockhash_valid(blockhash))
+    }
+
+    fn get_fee_for_message(&self, message: &Message) -> Result<u64> {
+        SanitizedMessage::try_from(message.clone())
+            .ok()
+            .map(|sanitized_message| self.bank.get_fee_for_message(&sanitized_message))
+            .flatten()
+            .ok_or_else(|| {
+                TransportError::IoError(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Unable calculate fee",
+                ))
+            })
+    }
     // Evm scope
 
     /// Get account balance or 0 if not found.
@@ -302,7 +359,7 @@ impl BankClient {
             while let Ok(tx) = transaction_receiver.try_recv() {
                 transactions.push(tx);
             }
-            let _ = bank.process_transactions(&transactions);
+            let _ = bank.try_process_transactions(transactions.iter());
         }
     }
 
@@ -331,8 +388,10 @@ impl BankClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use solana_sdk::{genesis_config::create_genesis_config, instruction::AccountMeta};
+    use {
+        super::*,
+        solana_sdk::{genesis_config::create_genesis_config, instruction::AccountMeta},
+    };
 
     #[test]
     fn test_bank_client_new_with_keypairs() {
@@ -341,7 +400,7 @@ mod tests {
         let jane_doe_keypair = Keypair::new();
         let jane_pubkey = jane_doe_keypair.pubkey();
         let doe_keypairs = vec![&john_doe_keypair, &jane_doe_keypair];
-        let bank = Bank::new(&genesis_config);
+        let bank = Bank::new_for_tests(&genesis_config);
         let bank_client = BankClient::new(bank);
 
         // Create 2-2 Multisig Transfer instruction.

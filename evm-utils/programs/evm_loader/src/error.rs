@@ -5,6 +5,7 @@ use snafu::Snafu;
 
 /// Reasons the evm execution can fail.
 #[derive(Debug, Clone, PartialEq, FromPrimitive, ToPrimitive, Snafu)]
+#[snafu(context(suffix(false)))]
 pub enum EvmError {
     #[snafu(display("Cross-Program EVM execution disabled."))]
     CrossExecutionNotEnabled,
