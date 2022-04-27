@@ -50,6 +50,7 @@ where
         self.traverse_inner(Default::default(), hash)
     }
     pub fn traverse_inner(&self, nibble: NibbleVec, hash: H256) -> Result<()> {
+        dbg!(hash);
         debug!("traversing {:?} ...", hash);
         if hash != triedb::empty_trie_hash() {
             let db = self.db.borrow();

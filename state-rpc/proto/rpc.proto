@@ -1,0 +1,30 @@
+syntax = "proto3";
+package rpcserver;
+
+import "google/protobuf/empty.proto";
+
+service Backend {
+  rpc ping (google.protobuf.Empty) returns (PingReply);
+  rpc getBlock (Hash) returns (BlockData);
+  rpc getBlockMulti (MultiHash) returns (MultiBlockData);
+}
+
+message PingReply {
+  string message = 1;
+}
+
+message Hash {
+  string hash = 1;
+}
+
+message BlockData {
+  bytes data = 1;
+}
+
+message MultiHash {
+  repeated string hash = 1;
+}
+
+message MultiBlockData {
+  repeated bytes data = 1;
+}

@@ -53,7 +53,7 @@ pub struct Incomming {
     pub block_number: BlockNum,
     pub timestamp: u64,
     pub used_gas: u64,
-    pub(crate) state_root: H256,
+    pub state_root: H256,
     pub last_block_hash: H256,
     /// Maybe::Nothing indicates removed account
     pub(crate) state_updates: ChangedState,

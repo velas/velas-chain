@@ -72,6 +72,7 @@ members = [
     "sdk/cargo-test-bpf",
     "send-transaction-service",
     "stake-accounts",
+    "state-rpc",
     "sys-tuner",
     "tokens",
     "transaction-dos",

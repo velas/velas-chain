@@ -141,6 +141,7 @@ impl Storage {
                 // Make sure to reflect new columns in `merge_from_db`
             ]
             .iter()
+            .map(|column| dbg!(column))
             .map(|column| ColumnFamilyDescriptor::new(*column, db_opts.clone()))
             .collect()
         };
@@ -223,6 +224,17 @@ impl Storage {
         }
     }
 
+    // RPC:
+    // get(by_HASH<H256>) -> GRPC <- TrieDBNode
+    // get_multi(by_Vec<HASH<H256>>) -> GRPC <- Vec<TrieDBNode>
+    // get_account_multi(root_hash, by_account_key<H160>) -> GRPC <- Vec<TrieDBNode>
+    // в последнем можно исользовать Walker
+    //
+    // DIFF:
+    // Walker для обхода дерева
+    //
+
+    // Создает дерево меркла из стораджа
     pub fn typed_for<K: AsRef<[u8]>, V: Encodable + Decodable>(
         &self,
         root: H256,
@@ -285,6 +297,7 @@ impl Storage {
                     account.code_hash = code_hash;
                 }
 
+                // Создаем меркл дерево, для корня берем ключ аккаунта
                 let mut storage = FixedSecureTrieMut::<_, H256, U256>::new(
                     db_trie.trie_for(account.storage_root),
                 );
@@ -309,6 +322,10 @@ impl Storage {
             }
         }
 
+        // State
+        // Patch
+
+        // diff(state1(state_root), state2) -> Patch
         let mut accounts_patch = accounts.to_trie().into_patch();
         accounts_patch.change.merge_child(&storage_patches);
         db_trie
