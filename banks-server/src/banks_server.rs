@@ -35,6 +35,7 @@ use tarpc::{
     server::{self, Channel, Handler},
     transport,
 };
+use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio_serde::formats::Bincode;
 
@@ -81,7 +82,7 @@ impl BanksServer {
     fn new_loopback(
         bank_forks: Arc<RwLock<BankForks>>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-    ) -> Self {
+    ) -> (Self, JoinHandle<()>) {
         let (transaction_sender, transaction_receiver) = channel();
         let bank = bank_forks.read().unwrap().working_bank();
         let slot = bank.slot();
@@ -91,11 +92,10 @@ impl BanksServer {
             w_block_commitment_cache.set_all_slots(slot, slot);
         }
         let server_bank_forks = bank_forks.clone();
-        Builder::new()
-            .name("solana-bank-forks-client".to_string())
-            .spawn(move || Self::run(server_bank_forks, transaction_receiver))
-            .unwrap();
-        Self::new(bank_forks, block_commitment_cache, transaction_sender)
+        let t_worker = tokio::spawn(async move {
+            Self::run(server_bank_forks, transaction_receiver)
+        });
+        (Self::new(bank_forks, block_commitment_cache, transaction_sender), t_worker)
     }
 
     fn slot(&self, commitment: CommitmentLevel) -> Slot {
@@ -249,14 +249,13 @@ impl Banks for BanksServer {
 pub async fn start_local_server(
     bank_forks: Arc<RwLock<BankForks>>,
     block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-) -> UnboundedChannel<Response<BanksResponse>, ClientMessage<BanksRequest>> {
-    let banks_server = BanksServer::new_loopback(bank_forks, block_commitment_cache);
+) -> (UnboundedChannel<Response<BanksResponse>, ClientMessage<BanksRequest>>, Vec<JoinHandle<()>>) {
+    let (banks_server, t_worker) = BanksServer::new_loopback(bank_forks, block_commitment_cache);
     let (client_transport, server_transport) = transport::channel::unbounded();
     let server = server::new(server::Config::default())
         .incoming(stream::once(future::ready(server_transport)))
         .respond_with(banks_server.serve());
-    tokio::spawn(server);
-    client_transport
+    (client_transport, vec![tokio::spawn(server), t_worker])
 }
 
 pub async fn start_tcp_server(
