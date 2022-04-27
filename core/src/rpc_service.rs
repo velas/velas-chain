@@ -519,7 +519,7 @@ mod tests {
             None,
         );
         let thread = rpc_service.thread_hdl.thread();
-        assert_eq!(thread.name().unwrap(), "solana-jsonrpc");
+        assert_eq!(thread.name().unwrap(), "velas-jsonrpc");
 
         assert_eq!(
             10_000,
