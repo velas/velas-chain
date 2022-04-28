@@ -521,6 +521,8 @@ mod tests {
         sender.send(n).unwrap();
         let mut last_purge_slot = 0;
         let highest_compact_slot = Arc::new(AtomicU64::new(0));
+        let first_purged_evm_block = Arc::new(AtomicU64::new(0));
+        let last_purged_evm_block = Arc::new(AtomicU64::new(0));
         LedgerCleanupService::cleanup_ledger(
             &receiver,
             &blockstore,
@@ -528,6 +530,8 @@ mod tests {
             &mut last_purge_slot,
             10,
             &highest_compact_slot,
+            &first_purged_evm_block,
+            &last_purged_evm_block,
         )
         .unwrap();
 
@@ -540,6 +544,8 @@ mod tests {
             &highest_compact_slot,
             &mut compaction_jitter,
             None,
+            &first_purged_evm_block,
+            &last_purged_evm_block,
         );
 
         thread::sleep(Duration::from_secs(2));
