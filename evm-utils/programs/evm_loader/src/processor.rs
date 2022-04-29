@@ -4,7 +4,8 @@ use std::ops::DerefMut;
 
 use super::account_structure::AccountStructure;
 use super::instructions::{
-    EvmBigTransaction, EvmInstruction, FeePayerType, EVM_INSTRUCTION_BORSH_PREFIX,
+    EvmBigTransaction, EvmInstruction, FeePayerType, TransactionAuthType,
+    EVM_INSTRUCTION_BORSH_PREFIX,
 };
 use super::precompiles;
 use super::scope::*;
@@ -14,6 +15,7 @@ use log::*;
 use borsh::BorshDeserialize;
 use evm::{gweis_to_lamports, Executor, ExitReason};
 use evm_state::{ExecutionResult, Gas};
+use serde::Deserialize;
 use solana_sdk::account::AccountSharedData;
 use solana_sdk::ic_msg;
 use solana_sdk::instruction::InstructionError;
@@ -105,30 +107,56 @@ impl EvmProcessor {
         };
         trace!("Run evm exec with ix = {:?}.", ix);
         let result = match ix {
-            EvmInstruction::EvmTransaction { evm_tx, fee_type } => {
-                self.process_raw_tx(executor, invoke_context, accounts, evm_tx, fee_type)
-            }
+            EvmInstruction::EvmTransaction { evm_tx, fee_type } => self.process_execute_tx(
+                executor,
+                invoke_context,
+                accounts,
+                TransactionAuthType::Signed { tx: Some(evm_tx) },
+                fee_type,
+                unsigned_tx_fix,
+                borsh_serialization_used,
+            ),
             EvmInstruction::EvmAuthorizedTransaction {
                 from,
                 unsigned_tx,
                 fee_type,
-            } => self.process_authorized_tx(
+            } => self.process_execute_tx(
                 executor,
                 invoke_context,
                 accounts,
-                from,
-                unsigned_tx,
-                unsigned_tx_fix,
+                TransactionAuthType::ProgramAuthorized {
+                    tx: Some(unsigned_tx),
+                    from,
+                },
                 fee_type,
-            ),
-            EvmInstruction::EvmBigTransaction(big_tx) => self.process_big_tx(
-                executor,
-                invoke_context,
-                accounts,
-                big_tx,
                 unsigned_tx_fix,
                 borsh_serialization_used,
             ),
+            EvmInstruction::EvmBigTransaction(EvmBigTransaction::EvmTransactionExecute {
+                fee_type,
+            }) => self.process_execute_tx(
+                executor,
+                invoke_context,
+                accounts,
+                TransactionAuthType::Signed { tx: None },
+                fee_type,
+                unsigned_tx_fix,
+                borsh_serialization_used,
+            ),
+            EvmInstruction::EvmBigTransaction(
+                EvmBigTransaction::EvmTransactionExecuteUnsigned { from, fee_type },
+            ) => self.process_execute_tx(
+                executor,
+                invoke_context,
+                accounts,
+                TransactionAuthType::ProgramAuthorized { tx: None, from },
+                fee_type,
+                unsigned_tx_fix,
+                borsh_serialization_used,
+            ),
+            EvmInstruction::EvmBigTransaction(big_tx) => {
+                self.process_big_tx(invoke_context, accounts, big_tx)
+            }
             EvmInstruction::FreeOwnership {} => self.process_free_ownership(
                 executor,
                 invoke_context,
@@ -146,6 +174,15 @@ impl EvmProcessor {
                 evm_address,
                 register_swap_tx_in_evm,
                 unsigned_tx_fix,
+            ),
+            EvmInstruction::ExecuteTransaction { tx, fee_type } => self.process_execute_tx(
+                executor,
+                invoke_context,
+                accounts,
+                tx,
+                fee_type,
+                unsigned_tx_fix,
+                borsh_serialization_used,
             ),
         };
 
@@ -186,6 +223,51 @@ impl EvmProcessor {
 
             Err(err)
         })
+    }
+
+    fn process_execute_tx(
+        &self,
+        executor: &mut Executor,
+        invoke_context: &dyn InvokeContext,
+        accounts: AccountStructure,
+        tx: TransactionAuthType,
+        fee_type: FeePayerType,
+        unsigned_tx_fix: bool,
+        borsh_serialization_used: bool,
+    ) -> Result<(), EvmError> {
+        match tx {
+            TransactionAuthType::Signed { tx: Some(tx) } => {
+                self.process_raw_tx(executor, invoke_context, accounts, tx, fee_type)
+            }
+            TransactionAuthType::Signed { tx: None } => self.process_execute_big_tx(
+                executor,
+                invoke_context,
+                accounts,
+                fee_type,
+                unsigned_tx_fix,
+                borsh_serialization_used,
+            ),
+            TransactionAuthType::ProgramAuthorized { tx: Some(tx), from } => self
+                .process_authorized_tx(
+                    executor,
+                    invoke_context,
+                    accounts,
+                    from,
+                    tx,
+                    unsigned_tx_fix,
+                    fee_type,
+                ),
+            TransactionAuthType::ProgramAuthorized { tx: None, from } => self
+                .process_execute_big_authorized_tx(
+                    executor,
+                    invoke_context,
+                    accounts,
+                    from,
+                    fee_type,
+                    unsigned_tx_fix,
+                    borsh_serialization_used,
+                ),
+        }
     }
 
     fn process_raw_tx(
@@ -247,24 +329,7 @@ impl EvmProcessor {
             );
             EvmError::MissingAccount
         })?;
-        let key = if let Some(key) = program_account.signer_key() {
-            key
-        } else {
-            ic_msg!(
-                invoke_context,
-                "EvmAuthorizedTransaction: Second account is not a signer, cannot execute transaction."
-            );
-            return Err(EvmError::MissingRequiredSignature);
-        };
-        let from_expected = crate::evm_address_for_program(*key);
-
-        if from_expected != from {
-            ic_msg!(
-                invoke_context,
-                "EvmAuthorizedTransaction: From is not calculated with evm_address_for_program."
-            );
-            return Err(EvmError::AuthorizedTransactionIncorrectAddress);
-        }
+        Self::check_program_account(invoke_context, program_account, from, unsigned_tx_fix)?;
 
         ic_msg!(
             invoke_context,
@@ -274,25 +339,6 @@ impl EvmProcessor {
             unsigned_tx.value,
             unsigned_tx.action
         );
-
-        if unsigned_tx_fix {
-            let program_caller = invoke_context
-                .get_parent_caller()
-                .copied()
-                .unwrap_or_default();
-            let program_owner = program_account
-                .try_account_ref()
-                .map_err(|_| EvmError::BorrowingFailed)?
-                .owner;
-            if program_owner != program_caller {
-                ic_msg!(
-                    invoke_context,
-                    "EvmAuthorizedTransaction: Incorrect caller program_caller:{}, program_owner:{}",
-                    program_caller, program_owner,
-                );
-                return Err(EvmError::AuthorizedTransactionIncorrectOwner);
-            }
-        }
 
         let sender = accounts.first();
         let withdraw_fee_from_evm = fee_type.is_evm() || sender.is_none();
@@ -421,34 +467,13 @@ impl EvmProcessor {
 
     fn process_big_tx(
         &self,
-        executor: &mut Executor,
         invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         big_tx: EvmBigTransaction,
-        unsigned_tx_fix: bool,
-        deserialize_chunks_with_borsh: bool,
     ) -> Result<(), EvmError> {
         debug!("executing big_tx = {:?}", big_tx);
 
-        let storage_account = accounts.first().ok_or_else(|| {
-            ic_msg!(
-                invoke_context,
-                "EvmBigTransaction: No storage account found."
-            );
-            EvmError::MissingAccount
-        })?;
-
-        if storage_account.signer_key().is_none() {
-            ic_msg!(
-                invoke_context,
-                "EvmBigTransaction: Storage should sign instruction."
-            );
-            return Err(EvmError::MissingRequiredSignature);
-        }
-        let mut storage = storage_account
-            .try_account_ref_mut()
-            .map_err(|_| EvmError::BorrowingFailed)?;
-
+        let mut storage = Self::get_big_transaction_storage(invoke_context, &accounts)?;
         let mut tx_chunks = TxChunks::new(storage.data.as_mut_slice());
 
         match big_tx {
@@ -484,171 +509,131 @@ impl EvmProcessor {
                 Ok(())
             }
 
-            EvmBigTransaction::EvmTransactionExecute { fee_type } => {
-                debug!("Tx chunks crc = {:#x}", tx_chunks.crc());
-
-                let bytes = tx_chunks.take();
-
-                debug!("Trying to deserialize tx chunks byte = {:?}", bytes);
-                let tx: evm::Transaction = if deserialize_chunks_with_borsh {
-                    BorshDeserialize::deserialize(&mut bytes.as_slice()).map_err(|e| {
-                        ic_msg!(
-                            invoke_context,
-                            "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
-                            e
-                        );
-                        EvmError::DeserializationError
-                    })?
-                } else {
-                    bincode::deserialize(&bytes).map_err(|e| {
-                        ic_msg!(
-                            invoke_context,
-                            "BigTransaction::EvmTransactionExecute: Tx chunks deserialize error: {:?}",
-                            e
-                        );
-                        EvmError::DeserializationError
-                    })?
-                };
-
-                debug!("Executing EVM tx = {:?}", tx);
-                ic_msg!(
-                    invoke_context,
-                    "BigTransaction::EvmTransactionExecute: Executing transaction: gas_limit:{}, gas_price:{}, value:{}, action:{:?},",
-                    tx.gas_limit,
-                    tx.gas_price,
-                    tx.value,
-                    tx.action
-                );
-                let sender = accounts.users.get(1);
-                let withdraw_fee_from_evm = fee_type.is_evm() || sender.is_none();
-                let tx_gas_price = tx.gas_price;
-                let result = executor.transaction_execute(
-                    tx,
-                    withdraw_fee_from_evm,
-                    precompiles::entrypoint(accounts, executor.support_precompile()),
-                );
-                if let (false, Ok(result)) = (withdraw_fee_from_evm, &result) {
-                    Self::charge_native_account(result, tx_gas_price, sender.unwrap())?;
-                }
-
-                if unsigned_tx_fix {
-                    self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
-                }
-
-                self.handle_transaction_result(
-                    executor,
-                    invoke_context,
-                    accounts,
-                    sender,
-                    tx_gas_price,
-                    result,
-                )
-            }
-            EvmBigTransaction::EvmTransactionExecuteUnsigned { from, fee_type } => {
-                if !unsigned_tx_fix {
-                    ic_msg!(
-                        invoke_context,
-                        "BigTransaction::EvmTransactionExecuteUnsigned: Unsigned tx fix is not activated, this instruction is not supported."
-                    );
-                    return Err(EvmError::InstructionNotSupportedYet);
-                }
-                debug!("Tx chunks crc = {:#x}", tx_chunks.crc());
-
-                let bytes = tx_chunks.take();
-
-                debug!("Trying to deserialize tx chunks byte = {:?}", bytes);
-                let unsigned_tx: evm::UnsignedTransaction = if deserialize_chunks_with_borsh {
-                    BorshDeserialize::deserialize(&mut bytes.as_slice()).map_err(|e| {
-                        ic_msg!(
-                            invoke_context,
-                            "BigTransaction::EvmTransactionExecuteUnsigned: Tx chunks deserialize error: {:?}",
-                            e
-                        );
-                        EvmError::DeserializationError
-                    })?
-                } else {
-                    bincode::deserialize(&bytes).map_err(|e| {
-                        ic_msg!(
-                            invoke_context,
-                            "BigTransaction::EvmTransactionExecuteUnsigned: Tx chunks deserialize error: {:?}",
-                            e
-                        );
-                        EvmError::DeserializationError
-                    })?
-                };
-
-                debug!("Executing EVM tx = {:?}", unsigned_tx);
-                // TODO: Gas limit?
-                let program_account = accounts.users.get(1).ok_or_else(|| {
-                    ic_msg!(
-                        invoke_context,
-                        "BigTransaction::EvmTransactionExecuteUnsigned: Not enough accounts, expected signer address as second account."
-                    );
-                    EvmError::MissingAccount
-                })?;
-                let key = if let Some(key) = program_account.signer_key() {
-                    key
-                } else {
-                    ic_msg!(
-                        invoke_context,
-                        "BigTransaction::EvmTransactionExecuteUnsigned: Second account is not a signer, cannot execute transaction."
-                    );
-                    return Err(EvmError::MissingRequiredSignature);
-                };
-                let from_expected = crate::evm_address_for_program(*key);
-
-                if from_expected != from {
-                    ic_msg!(
-                        invoke_context,
-                        "BigTransaction::EvmTransactionExecuteUnsigned: From is not calculated with evm_address_for_program."
-                    );
-                    return Err(EvmError::AuthorizedTransactionIncorrectAddress);
-                }
-
-                ic_msg!(
-                    invoke_context,
-                    "BigTransaction::EvmTransactionExecuteUnsigned: Executing authorized transaction: gas_limit:{}, gas_price:{}, value:{}, action:{:?},",
-                    unsigned_tx.gas_limit,
-                    unsigned_tx.gas_price,
-                    unsigned_tx.value,
-                    unsigned_tx.action
-                );
-
-                if unsigned_tx_fix {
-                    let program_caller =
-                        invoke_context.get_caller().map(|k| *k).unwrap_or_default();
-                    let program_owner = program_account
-                        .try_account_ref()
-                        .map_err(|_| EvmError::BorrowingFailed)?
-                        .owner;
-                    if program_owner != program_caller {
-                        return Err(EvmError::AuthorizedTransactionIncorrectOwner);
-                    }
-                }
-                let withdraw_fee_from_evm = fee_type.is_evm();
-                let tx_gas_price = unsigned_tx.gas_price;
-                let result = executor.transaction_execute_unsinged(
-                    from,
-                    unsigned_tx,
-                    unsigned_tx_fix,
-                    withdraw_fee_from_evm,
-                    precompiles::entrypoint(accounts, executor.support_precompile()),
-                );
-                if let (false, Ok(result)) = (withdraw_fee_from_evm, &result) {
-                    Self::charge_native_account(result, tx_gas_price, program_account)?;
-                }
-
-                self.cleanup_storage(invoke_context, storage, program_account)?;
-                self.handle_transaction_result(
-                    executor,
-                    invoke_context,
-                    accounts,
-                    Some(program_account),
-                    tx_gas_price,
-                    result,
-                )
-            }
+            EvmBigTransaction::EvmTransactionExecute { .. } => unreachable!(),
+            EvmBigTransaction::EvmTransactionExecuteUnsigned { .. } => unreachable!(),
         }
+    }
+
+    fn process_execute_big_tx(
+        &self,
+        executor: &mut Executor,
+        invoke_context: &dyn InvokeContext,
+        accounts: AccountStructure,
+        fee_type: FeePayerType,
+        unsigned_tx_fix: bool,
+        deserialize_chunks_with_borsh: bool,
+    ) -> Result<(), EvmError> {
+        debug!("executing big transaction");
+        let mut storage = Self::get_big_transaction_storage(invoke_context, &accounts)?;
+        let tx_chunks = TxChunks::new(storage.data.as_mut_slice());
+        debug!("Tx chunks crc = {:#x}", tx_chunks.crc());
+
+        let bytes = tx_chunks.take();
+        let tx: evm::Transaction =
+            Self::deserialize_bytes(invoke_context, &bytes, deserialize_chunks_with_borsh)?;
+        debug!("Executing EVM tx = {:?}", tx);
+        ic_msg!(
+            invoke_context,
+            "process_execute_big_tx: Executing transaction: gas_limit:{}, gas_price:{}, value:{}, action:{:?},",
+            tx.gas_limit,
+            tx.gas_price,
+            tx.value,
+            tx.action
+        );
+        let sender = accounts.users.get(1);
+        let withdraw_fee_from_evm = fee_type.is_evm() || sender.is_none();
+        let tx_gas_price = tx.gas_price;
+        let result = executor.transaction_execute(
+            tx,
+            withdraw_fee_from_evm,
+            precompiles::entrypoint(accounts, executor.support_precompile()),
+        );
+        if let (false, Ok(result)) = (withdraw_fee_from_evm, &result) {
+            Self::charge_native_account(result, tx_gas_price, sender.unwrap())?;
+        }
+
+        if unsigned_tx_fix {
+            self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
+        }
+
+        self.handle_transaction_result(
+            executor,
+            invoke_context,
+            accounts,
+            sender,
+            tx_gas_price,
+            result,
+        )
+    }
+
+    fn process_execute_big_authorized_tx(
+        &self,
+        executor: &mut Executor,
+        invoke_context: &dyn InvokeContext,
+        accounts: AccountStructure,
+        from: evm::Address,
+        fee_type: FeePayerType,
+        unsigned_tx_fix: bool,
+        deserialize_chunks_with_borsh: bool,
+    ) -> Result<(), EvmError> {
+        debug!("executing big authorized transaction");
+
+        let mut storage = Self::get_big_transaction_storage(invoke_context, &accounts)?;
+        let tx_chunks = TxChunks::new(storage.data.as_mut_slice());
+        if !unsigned_tx_fix {
+            ic_msg!(
+                invoke_context,
+                "process_execute_big_authorized_tx: Unsigned tx fix is not activated, this instruction is not supported."
+            );
+            return Err(EvmError::InstructionNotSupportedYet);
+        }
+        debug!("Tx chunks crc = {:#x}", tx_chunks.crc());
+
+        let bytes = tx_chunks.take();
+        let unsigned_tx: evm::UnsignedTransaction =
+            Self::deserialize_bytes(invoke_context, &bytes, deserialize_chunks_with_borsh)?;
+        debug!("Executing EVM tx = {:?}", unsigned_tx);
+        // TODO: Gas limit?
+        let program_account = accounts.users.get(1).ok_or_else(|| {
+            ic_msg!(
+                invoke_context,
+                "process_execute_big_authorized_tx: Not enough accounts, expected signer address as second account."
+            );
+            EvmError::MissingAccount
+        })?;
+        Self::check_program_account(invoke_context, program_account, from, unsigned_tx_fix)?;
+
+        ic_msg!(
+            invoke_context,
+            "process_execute_big_authorized_tx: Executing authorized transaction: gas_limit:{}, gas_price:{}, value:{}, action:{:?},",
+            unsigned_tx.gas_limit,
+            unsigned_tx.gas_price,
+            unsigned_tx.value,
+            unsigned_tx.action
+        );
+
+        let withdraw_fee_from_evm = fee_type.is_evm();
+        let tx_gas_price = unsigned_tx.gas_price;
+        let result = executor.transaction_execute_unsinged(
+            from,
+            unsigned_tx,
+            unsigned_tx_fix,
+            withdraw_fee_from_evm,
+            precompiles::entrypoint(accounts, executor.support_precompile()),
+        );
+        if let (false, Ok(result)) = (withdraw_fee_from_evm, &result) {
+            Self::charge_native_account(result, tx_gas_price, program_account)?;
+        }
+
+        self.cleanup_storage(invoke_context, storage, program_account)?;
+        self.handle_transaction_result(
+            executor,
+            invoke_context,
+            accounts,
+            Some(program_account),
+            tx_gas_price,
+            result,
+        )
     }
 
     pub fn cleanup_storage<'a>(
@@ -672,6 +657,96 @@ impl EvmProcessor {
             user.unsigned_key()
         );
         Ok(())
+    }
+
+    fn check_program_account(
+        invoke_context: &dyn InvokeContext,
+        program_account: &KeyedAccount,
+        from: evm::Address,
+        unsigned_tx_fix: bool,
+    ) -> Result<(), EvmError> {
+        let key = program_account.signer_key().ok_or_else(|| {
+            ic_msg!(
+                invoke_context,
+                "Second account is not a signer, cannot execute transaction."
+            );
+            EvmError::MissingRequiredSignature
+        })?;
+        let from_expected = crate::evm_address_for_program(*key);
+        if from_expected != from {
+            ic_msg!(
+                invoke_context,
+                "From is not calculated with evm_address_for_program."
+            );
+            return Err(EvmError::AuthorizedTransactionIncorrectAddress);
+        }
+
+        if unsigned_tx_fix {
+            let program_caller = invoke_context
+                .get_parent_caller()
+                .copied()
+                .unwrap_or_default();
+            let program_owner = program_account
+                .try_account_ref()
+                .map_err(|_| EvmError::BorrowingFailed)?
+                .owner;
+            if program_owner != program_caller {
+                ic_msg!(
+                    invoke_context,
+                    "Incorrect caller program_caller:{}, program_owner:{}",
+                    program_caller,
+                    program_owner,
+                );
+                return Err(EvmError::AuthorizedTransactionIncorrectOwner);
+            }
+        }
+        Ok(())
+    }
+
+    fn deserialize_bytes<'a, T>(
+        invoke_context: &dyn InvokeContext,
+        bytes: &'a Vec<u8>,
+        deserialize_chunks_with_borsh: bool,
+    ) -> Result<T, EvmError>
+    where
+        T: BorshDeserialize + Deserialize<'a>,
+    {
+        debug!("Trying to deserialize tx chunks byte = {:?}", bytes);
+        if deserialize_chunks_with_borsh {
+            BorshDeserialize::deserialize(&mut bytes.as_slice()).map_err(|e| {
+                ic_msg!(invoke_context, "Tx chunks deserialize error: {:?}", e);
+                EvmError::DeserializationError
+            })
+        } else {
+            bincode::deserialize(&bytes).map_err(|e| {
+                ic_msg!(invoke_context, "Tx chunks deserialize error: {:?}", e);
+                EvmError::DeserializationError
+            })
+        }
+    }
+
+    fn get_big_transaction_storage<'a>(
+        invoke_context: &dyn InvokeContext,
+        accounts: &'a AccountStructure,
+    ) -> Result<RefMut<'a, AccountSharedData>, EvmError> {
+        let storage_account = accounts.first().ok_or_else(|| {
+            ic_msg!(
+                invoke_context,
+                "EvmBigTransaction: No storage account found."
+            );
+            EvmError::MissingAccount
+        })?;
+
+        if storage_account.signer_key().is_none() {
+            ic_msg!(
+                invoke_context,
+                "EvmBigTransaction: Storage should sign instruction."
+            );
+            return Err(EvmError::MissingRequiredSignature);
+        }
+        storage_account
+            .try_account_ref_mut()
+            .map_err(|_| EvmError::BorrowingFailed)
     }
 
     /// Calculate fee based on transaction result and charge native account
@@ -853,12 +928,55 @@ mod test {
     #[test]
     fn serialize_deserialize_eth_ix() {
         let tx = dummy_eth_tx();
-        let sol_ix = EvmInstruction::EvmTransaction {
-            evm_tx: tx,
-            fee_type: FeePayerType::Evm,
-        };
-        let ser = bincode::serialize(&sol_ix).unwrap();
-        assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
+        {
+            let sol_ix = EvmInstruction::EvmTransaction {
+                evm_tx: tx.clone(),
+                fee_type: FeePayerType::Evm,
+            };
+            let ser = bincode::serialize(&sol_ix).unwrap();
+            assert_ne!(sol_ix, limited_deserialize(&ser).unwrap());
+            assert_eq!(
+                EvmInstruction::ExecuteTransaction {
+                    tx: TransactionAuthType::Signed {
+                        tx: Some(tx.clone())
+                    },
+                    fee_type: FeePayerType::Evm,
+                },
+                limited_deserialize(&ser).unwrap(),
+            );
+        }
+        {
+            let sol_ix = EvmInstruction::EvmAuthorizedTransaction {
+                unsigned_tx: tx.clone().into(),
+                from: H160::zero(),
+                fee_type: FeePayerType::Evm,
+            };
+            let ser = bincode::serialize(&sol_ix).unwrap();
+            assert_ne!(sol_ix, limited_deserialize(&ser).unwrap());
+            assert_eq!(
+                EvmInstruction::ExecuteTransaction {
+                    tx: TransactionAuthType::ProgramAuthorized {
+                        tx: Some(tx.clone().into()),
+                        from: H160::zero(),
+                    },
+                    fee_type: FeePayerType::Evm,
+                },
+                limited_deserialize(&ser).unwrap(),
+            );
+        }
+        {
+            let sol_ix = EvmInstruction::SwapNativeToEther {
+                lamports: 0,
+                evm_address: H160::zero(),
+            };
+            let ser = bincode::serialize(&sol_ix).unwrap();
+            assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
+        }
+        {
+            let sol_ix = EvmInstruction::FreeOwnership {};
+            let ser = bincode::serialize(&sol_ix).unwrap();
+            assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
+        }
     }
 
     #[test]

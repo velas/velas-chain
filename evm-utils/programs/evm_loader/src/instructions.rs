@@ -119,6 +119,29 @@ impl Into<OldEvmBigTransaction> for EvmBigTransaction {
     Serialize,
     Deserialize,
 )]
+pub enum TransactionAuthType {
+    Signed {
+        tx: Option<evm::Transaction>,
+    },
+    ProgramAuthorized {
+        tx: Option<evm::UnsignedTransaction>,
+        from: evm::Address,
+    },
+}
+
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    BorshSchema,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+)]
 #[serde(from = "OldEvmInstruction")]
 #[serde(into = "OldEvmInstruction")]
 pub enum EvmInstruction {
@@ -178,13 +201,32 @@ pub enum EvmInstruction {
         unsigned_tx: evm::UnsignedTransaction,
         fee_type: FeePayerType,
     },
+
+    /// Execute native EVM transaction
+    ///
+    /// Outer args:
+    /// account_key[0] - `[writable]`. EVM state account, used for lock.
+    /// account_key[1] - `[readable]`. Optional argument, used in case tokens swaps from EVM back to native.
+    ///
+    /// Outer args (Big tx case):
+    /// account_key[0] - `[writable]`. EVM state account. used for lock.
+    /// account_key[1] - `[writable]`. Big Transaction data storage.
+    ///
+    /// Inner args:
+    /// tx - information about transaction execution:
+    ///   who authorized and whether or not should we get transaction from account data storage
+    /// fee_type - which side will be used for charging fee: Native or Evm
+    ExecuteTransaction {
+        tx: TransactionAuthType,
+        fee_type: FeePayerType,
+    },
 }
 
 impl From<OldEvmInstruction> for EvmInstruction {
     fn from(other: OldEvmInstruction) -> Self {
         match other {
-            OldEvmInstruction::EvmTransaction { evm_tx } => Self::EvmTransaction {
-                evm_tx,
+            OldEvmInstruction::EvmTransaction { evm_tx } => Self::ExecuteTransaction {
+                tx: TransactionAuthType::Signed { tx: Some(evm_tx) },
                 fee_type: FeePayerType::Evm,
             },
             OldEvmInstruction::SwapNativeToEther {
@@ -195,13 +237,27 @@ impl From<OldEvmInstruction> for EvmInstruction {
                 evm_address,
             },
             OldEvmInstruction::FreeOwnership {} => Self::FreeOwnership {},
+            OldEvmInstruction::EvmBigTransaction(
+                OldEvmBigTransaction::EvmTransactionExecute {},
+            ) => Self::ExecuteTransaction {
+                tx: TransactionAuthType::Signed { tx: None },
+                fee_type: FeePayerType::Evm,
+            },
+            OldEvmInstruction::EvmBigTransaction(
+                OldEvmBigTransaction::EvmTransactionExecuteUnsigned { from },
+            ) => Self::ExecuteTransaction {
+                tx: TransactionAuthType::ProgramAuthorized { tx: None, from },
+                fee_type: FeePayerType::Evm,
+            },
             OldEvmInstruction::EvmBigTransaction(big_tx) => {
                 Self::EvmBigTransaction(EvmBigTransaction::from(big_tx))
             }
             OldEvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => {
-                Self::EvmAuthorizedTransaction {
-                    from,
-                    unsigned_tx,
+                Self::ExecuteTransaction {
+                    tx: TransactionAuthType::ProgramAuthorized {
+                        tx: Some(unsigned_tx),
+                        from,
+                    },
                     fee_type: FeePayerType::Evm,
                 }
             }
@@ -225,6 +281,25 @@ impl Into<OldEvmInstruction> for EvmInstruction {
             Self::EvmAuthorizedTransaction {
                 from, unsigned_tx, ..
             } => OldEvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx },
+            Self::ExecuteTransaction { tx, .. } => match tx {
+                TransactionAuthType::Signed { tx: None } => OldEvmInstruction::EvmBigTransaction(
+                    OldEvmBigTransaction::EvmTransactionExecute {},
+                ),
+                TransactionAuthType::Signed { tx: Some(tx) } => {
+                    OldEvmInstruction::EvmTransaction { evm_tx: tx }
+                }
+                TransactionAuthType::ProgramAuthorized { tx: None, from } => {
+                    OldEvmInstruction::EvmBigTransaction(
+                        OldEvmBigTransaction::EvmTransactionExecuteUnsigned { from },
+                    )
+                }
+                TransactionAuthType::ProgramAuthorized { tx: Some(tx), from } => {
+                    OldEvmInstruction::EvmAuthorizedTransaction {
+                        unsigned_tx: tx,
+                        from,
+                    }
+                }
+            },
         }
     }
 }
