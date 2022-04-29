@@ -183,7 +183,7 @@ pub mod velas {
     }
 
     pub mod evm_instruction_borsh_serialization {
-        solana_sdk::declare_id!("11111111111111111111111111111111");
+        solana_sdk::declare_id!("9NUVkN3PYJXz6z8cUgtGHYWd1CmcYF7ci3a552rASPQw");
     }
 }
 lazy_static! {
