@@ -6,7 +6,6 @@ on:
       - develop
       - devnet
       - 'build/**'
-      - 'feature/**'
 
 jobs:
   docker-build-push:
