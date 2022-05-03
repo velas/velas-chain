@@ -4,7 +4,7 @@ use std::ops::DerefMut;
 
 use super::account_structure::AccountStructure;
 use super::instructions::{
-    EvmBigTransaction, EvmInstruction, FeePayerType, TransactionAuthType,
+    EvmBigTransaction, EvmInstruction, FeePayerType, ExecuteTransaction,
     EVM_INSTRUCTION_BORSH_PREFIX,
 };
 use super::precompiles;
@@ -107,53 +107,6 @@ impl EvmProcessor {
         };
         trace!("Run evm exec with ix = {:?}.", ix);
         let result = match ix {
-            EvmInstruction::EvmTransaction { evm_tx, fee_type } => self.process_execute_tx(
-                executor,
-                invoke_context,
-                accounts,
-                TransactionAuthType::Signed { tx: Some(evm_tx) },
-                fee_type,
-                unsigned_tx_fix,
-                borsh_serialization_used,
-            ),
-            EvmInstruction::EvmAuthorizedTransaction {
-                from,
-                unsigned_tx,
-                fee_type,
-            } => self.process_execute_tx(
-                executor,
-                invoke_context,
-                accounts,
-                TransactionAuthType::ProgramAuthorized {
-                    tx: Some(unsigned_tx),
-                    from,
-                },
-                fee_type,
-                unsigned_tx_fix,
-                borsh_serialization_used,
-            ),
-            EvmInstruction::EvmBigTransaction(EvmBigTransaction::EvmTransactionExecute {
-                fee_type,
-            }) => self.process_execute_tx(
-                executor,
-                invoke_context,
-                accounts,
-                TransactionAuthType::Signed { tx: None },
-                fee_type,
-                unsigned_tx_fix,
-                borsh_serialization_used,
-            ),
-            EvmInstruction::EvmBigTransaction(
-                EvmBigTransaction::EvmTransactionExecuteUnsigned { from, fee_type },
-            ) => self.process_execute_tx(
-                executor,
-                invoke_context,
-                accounts,
-                TransactionAuthType::ProgramAuthorized { tx: None, from },
-                fee_type,
-                unsigned_tx_fix,
-                borsh_serialization_used,
-            ),
             EvmInstruction::EvmBigTransaction(big_tx) => {
                 self.process_big_tx(invoke_context, accounts, big_tx)
             }
@@ -230,16 +183,16 @@ impl EvmProcessor {
         executor: &mut Executor,
         invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
-        tx: TransactionAuthType,
+        tx: ExecuteTransaction,
         fee_type: FeePayerType,
         unsigned_tx_fix: bool,
         borsh_serialization_used: bool,
     ) -> Result<(), EvmError> {
         match tx {
-            TransactionAuthType::Signed { tx: Some(tx) } => {
+            ExecuteTransaction::Signed { tx: Some(tx) } => {
                 self.process_raw_tx(executor, invoke_context, accounts, tx, fee_type)
             }
-            TransactionAuthType::Signed { tx: None } => self.process_execute_big_tx(
+            ExecuteTransaction::Signed { tx: None } => self.process_execute_big_tx(
                 executor,
                 invoke_context,
                 accounts,
@@ -247,7 +200,7 @@ impl EvmProcessor {
                 unsigned_tx_fix,
                 borsh_serialization_used,
             ),
-            TransactionAuthType::ProgramAuthorized { tx: Some(tx), from } => self
+            ExecuteTransaction::ProgramAuthorized { tx: Some(tx), from } => self
                 .process_authorized_tx(
                     executor,
                     invoke_context,
@@ -257,7 +210,7 @@ impl EvmProcessor {
                     unsigned_tx_fix,
                     fee_type,
                 ),
-            TransactionAuthType::ProgramAuthorized { tx: None, from } => self
+            ExecuteTransaction::ProgramAuthorized { tx: None, from } => self
                 .process_execute_big_authorized_tx(
                     executor,
                     invoke_context,
@@ -508,9 +461,6 @@ impl EvmProcessor {
 
                 Ok(())
             }
-
-            EvmBigTransaction::EvmTransactionExecute { .. } => unreachable!(),
-            EvmBigTransaction::EvmTransactionExecuteUnsigned { .. } => unreachable!(),
         }
     }
 
@@ -909,13 +859,13 @@ mod test {
     use solana_sdk::sysvar::rent::Rent;
 
     use super::TEST_CHAIN_ID as CHAIN_ID;
-    use crate::instructions::TransactionAuthType::ProgramAuthorized;
+    use crate::instructions::ExecuteTransaction::ProgramAuthorized;
     use borsh::BorshSerialize;
-    use std::{cell::RefCell, collections::BTreeMap};
-    use std::rc::Rc;
-    use std::sync::Arc;
     use solana_sdk::instruction::{CompiledInstruction, Instruction};
     use solana_sdk::message::Message;
+    use std::rc::Rc;
+    use std::sync::Arc;
+    use std::{cell::RefCell, collections::BTreeMap};
 
     pub struct MockInvokeContextWithParentCaller {
         pub key: Pubkey,
@@ -1001,8 +951,16 @@ mod test {
         fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>> {
             Rc::new(RefCell::new(self.compute_meter.clone()))
         }
-        fn add_executor(&self, _pubkey: &Pubkey, _executor: Arc<dyn solana_sdk::process_instruction::Executor>) {}
-        fn get_executor(&self, _pubkey: &Pubkey) -> Option<Arc<dyn solana_sdk::process_instruction::Executor>> {
+        fn add_executor(
+            &self,
+            _pubkey: &Pubkey,
+            _executor: Arc<dyn solana_sdk::process_instruction::Executor>,
+        ) {
+        }
+        fn get_executor(
+            &self,
+            _pubkey: &Pubkey,
+        ) -> Option<Arc<dyn solana_sdk::process_instruction::Executor>> {
             None
         }
         fn record_instruction(&self, _instruction: &Instruction) {}
@@ -1050,40 +1008,18 @@ mod test {
     fn serialize_deserialize_eth_ix() {
         let tx = dummy_eth_tx();
         {
-            let sol_ix = EvmInstruction::EvmTransaction {
-                evm_tx: tx.clone(),
-                fee_type: FeePayerType::Evm,
-            };
+            let sol_ix = EvmInstruction::new_execute_tx(tx.clone(), FeePayerType::Evm);
             let ser = bincode::serialize(&sol_ix).unwrap();
-            assert_ne!(sol_ix, limited_deserialize(&ser).unwrap());
-            assert_eq!(
-                EvmInstruction::ExecuteTransaction {
-                    tx: TransactionAuthType::Signed {
-                        tx: Some(tx.clone())
-                    },
-                    fee_type: FeePayerType::Evm,
-                },
-                limited_deserialize(&ser).unwrap(),
-            );
+            assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
         }
         {
-            let sol_ix = EvmInstruction::EvmAuthorizedTransaction {
-                unsigned_tx: tx.clone().into(),
-                from: H160::zero(),
-                fee_type: FeePayerType::Evm,
-            };
-            let ser = bincode::serialize(&sol_ix).unwrap();
-            assert_ne!(sol_ix, limited_deserialize(&ser).unwrap());
-            assert_eq!(
-                EvmInstruction::ExecuteTransaction {
-                    tx: TransactionAuthType::ProgramAuthorized {
-                        tx: Some(tx.clone().into()),
-                        from: H160::zero(),
-                    },
-                    fee_type: FeePayerType::Evm,
-                },
-                limited_deserialize(&ser).unwrap(),
+            let sol_ix = EvmInstruction::new_execute_authorized_tx(
+                tx.clone().into(),
+                H160::zero(),
+                FeePayerType::Evm,
             );
+            let ser = bincode::serialize(&sol_ix).unwrap();
+            assert_eq!(sol_ix, limited_deserialize(&ser).unwrap());
         }
         {
             let sol_ix = EvmInstruction::SwapNativeToEther {
@@ -1127,10 +1063,10 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_create.clone(),
-                    fee_type: FeePayerType::Evm,
-                })
+                &bincode::serialize(&EvmInstruction::new_execute_tx(
+                    tx_create.clone(),
+                    FeePayerType::Evm
+                ))
                 .unwrap(),
                 &mut invoke_context,
                 false,
@@ -1156,11 +1092,8 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_call,
-                    fee_type: FeePayerType::Evm
-                })
-                .unwrap(),
+                &bincode::serialize(&EvmInstruction::new_execute_tx(tx_call, FeePayerType::Evm))
+                    .unwrap(),
                 &mut invoke_context,
                 false,
             )
@@ -1214,13 +1147,7 @@ mod test {
         let mut buf = vec![EVM_INSTRUCTION_BORSH_PREFIX];
         BorshSerialize::serialize(&EvmInstruction::EvmBigTransaction(big_tx_alloc), &mut buf);
         processor
-            .process_instruction(
-                &crate::ID,
-                &keyed_accounts,
-                &buf,
-                &mut invoke_context,
-                true,
-            )
+            .process_instruction(&crate::ID, &keyed_accounts, &buf, &mut invoke_context, true)
             .unwrap();
 
         buf = vec![EVM_INSTRUCTION_BORSH_PREFIX];
@@ -1230,22 +1157,13 @@ mod test {
         };
         BorshSerialize::serialize(&EvmInstruction::EvmBigTransaction(big_tx_write), &mut buf);
         processor
-            .process_instruction(
-                &crate::ID,
-                &keyed_accounts,
-                &buf,
-                &mut invoke_context,
-                true,
-            )
+            .process_instruction(&crate::ID, &keyed_accounts, &buf, &mut invoke_context, true)
             .unwrap();
 
         buf = vec![EVM_INSTRUCTION_BORSH_PREFIX];
         BorshSerialize::serialize(
             &EvmInstruction::ExecuteTransaction {
-                tx: ProgramAuthorized {
-                    tx: None,
-                    from,
-                },
+                tx: ProgramAuthorized { tx: None, from },
                 fee_type: FeePayerType::Native,
             },
             &mut buf,
@@ -1303,10 +1221,10 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_create,
-                    fee_type: FeePayerType::Evm
-                })
+                &bincode::serialize(&EvmInstruction::new_execute_tx(
+                    tx_create,
+                    FeePayerType::Evm
+                ))
                 .unwrap(),
                 &mut mock,
                 false,
@@ -1360,10 +1278,10 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_1_sign.clone(),
-                    fee_type: FeePayerType::Evm,
-                })
+                &bincode::serialize(&EvmInstruction::new_execute_tx(
+                    tx_1_sign.clone(),
+                    FeePayerType::Evm
+                ))
                 .unwrap(),
                 &mut invoke_context,
                 false,
@@ -1377,10 +1295,10 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_0_sign,
-                    fee_type: FeePayerType::Evm
-                })
+                &bincode::serialize(&EvmInstruction::new_execute_tx(
+                    tx_0_sign,
+                    FeePayerType::Evm
+                ))
                 .unwrap(),
                 &mut invoke_context,
                 false,
@@ -1394,10 +1312,10 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_0_shadow_sign,
-                    fee_type: FeePayerType::Evm,
-                })
+                &bincode::serialize(&EvmInstruction::new_execute_tx(
+                    tx_0_shadow_sign,
+                    FeePayerType::Evm
+                ))
                 .unwrap(),
                 &mut invoke_context,
                 false,
@@ -1411,10 +1329,10 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_1_sign,
-                    fee_type: FeePayerType::Evm
-                })
+                &bincode::serialize(&EvmInstruction::new_execute_tx(
+                    tx_1_sign,
+                    FeePayerType::Evm
+                ))
                 .unwrap(),
                 &mut invoke_context,
                 false,
@@ -1452,10 +1370,10 @@ mod test {
             .process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_0_sign,
-                    fee_type: FeePayerType::Evm
-                })
+                &bincode::serialize(&EvmInstruction::new_execute_tx(
+                    tx_0_sign,
+                    FeePayerType::Evm
+                ))
                 .unwrap(),
                 &mut invoke_context,
                 false,
@@ -1512,10 +1430,10 @@ mod test {
                 .process_instruction(
                     &crate::ID,
                     &keyed_accounts,
-                    &bincode::serialize(&EvmInstruction::EvmTransaction {
-                        evm_tx: tx_create,
-                        fee_type: FeePayerType::Evm
-                    })
+                    &bincode::serialize(&EvmInstruction::new_execute_tx(
+                        tx_create,
+                        FeePayerType::Evm
+                    ))
                     .unwrap(),
                     &mut invoke_context,
                     false,
@@ -1563,10 +1481,10 @@ mod test {
                 .process_instruction(
                     &crate::ID,
                     &keyed_accounts,
-                    &bincode::serialize(&EvmInstruction::EvmTransaction {
-                        evm_tx: tx_call,
-                        fee_type: FeePayerType::Evm
-                    })
+                    &bincode::serialize(&EvmInstruction::new_execute_tx(
+                        tx_call,
+                        FeePayerType::Evm
+                    ))
                     .unwrap(),
                     &mut invoke_context,
                     false,
@@ -1759,10 +1677,10 @@ mod test {
                 .process_instruction(
                     &crate::ID,
                     &keyed_accounts,
-                    &bincode::serialize(&EvmInstruction::EvmTransaction {
-                        evm_tx: tx_call,
-                        fee_type: FeePayerType::Evm
-                    })
+                    &bincode::serialize(&EvmInstruction::new_execute_tx(
+                        tx_call,
+                        FeePayerType::Evm
+                    ))
                     .unwrap(),
                     &mut invoke_context,
                     false,
@@ -1899,11 +1817,8 @@ mod test {
             let result = processor.process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_call,
-                    fee_type: FeePayerType::Evm,
-                })
-                .unwrap(),
+                &bincode::serialize(&EvmInstruction::new_execute_tx(tx_call, FeePayerType::Evm))
+                    .unwrap(),
                 &mut invoke_context,
                 false,
             );
@@ -2044,11 +1959,8 @@ mod test {
             let result = processor.process_instruction(
                 &crate::ID,
                 &keyed_accounts,
-                &bincode::serialize(&EvmInstruction::EvmTransaction {
-                    evm_tx: tx_call,
-                    fee_type: FeePayerType::Evm,
-                })
-                .unwrap(),
+                &bincode::serialize(&EvmInstruction::new_execute_tx(tx_call, FeePayerType::Evm))
+                    .unwrap(),
                 &mut invoke_context,
                 false,
             );
@@ -2244,10 +2156,10 @@ mod test {
                     .process_instruction(
                         &crate::ID,
                         &keyed_accounts,
-                        &bincode::serialize(&EvmInstruction::EvmTransaction {
-                            evm_tx: tx_create,
-                            fee_type: FeePayerType::Evm
-                        })
+                        &bincode::serialize(&EvmInstruction::new_execute_tx(
+                            tx_create,
+                            FeePayerType::Evm
+                        ))
                         .unwrap(),
                         &mut invoke_context,
                         false,
@@ -2285,10 +2197,10 @@ mod test {
                 let result = processor.process_instruction(
                     &crate::ID,
                     &keyed_accounts,
-                    &bincode::serialize(&EvmInstruction::EvmTransaction {
-                        evm_tx: tx_call,
-                        fee_type: FeePayerType::Evm,
-                    })
+                    &bincode::serialize(&EvmInstruction::new_execute_tx(
+                        tx_call,
+                        FeePayerType::Evm,
+                    ))
                     .unwrap(),
                     &mut invoke_context,
                     false,
@@ -2642,10 +2554,7 @@ mod test {
         //let ix = crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Native);
         let mut buf = vec![EVM_INSTRUCTION_BORSH_PREFIX];
         BorshSerialize::serialize(
-            &EvmInstruction::EvmTransaction {
-                evm_tx: tx_create,
-                fee_type: FeePayerType::Native,
-            },
+            &EvmInstruction::new_execute_tx(tx_create, FeePayerType::Native),
             &mut buf,
         )
         .unwrap();

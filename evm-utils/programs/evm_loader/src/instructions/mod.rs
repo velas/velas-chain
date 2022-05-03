@@ -1,7 +1,9 @@
-use super::old_instructions::{OldEvmBigTransaction, OldEvmInstruction};
 use super::scope::*;
 use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
+use evm_state::{Address, Transaction, UnsignedTransaction};
 use serde::{Deserialize, Serialize};
+
+mod v0;
 
 pub const EVM_INSTRUCTION_BORSH_PREFIX: u8 = 255u8;
 
@@ -48,59 +50,22 @@ impl FeePayerType {
     Serialize,
     Deserialize,
 )]
-#[serde(from = "OldEvmBigTransaction")]
-#[serde(into = "OldEvmBigTransaction")]
 pub enum EvmBigTransaction {
     /// Allocate data in storage, pay fee should be taken from EVM.
     EvmTransactionAllocate { size: u64 },
 
     /// Store part of EVM transaction into temporary storage, in order to execute it later.
     EvmTransactionWrite { offset: u64, data: Vec<u8> },
-
-    /// Execute merged transaction, in order to do this, user should make sure that transaction is successfully writed.
-    EvmTransactionExecute { fee_type: FeePayerType },
-
-    /// Execute merged unsigned transaction, in order to do this, user should make sure that transaction is successfully writed.
-    EvmTransactionExecuteUnsigned {
-        from: evm::Address,
-        fee_type: FeePayerType,
-    },
 }
 
-impl From<OldEvmBigTransaction> for EvmBigTransaction {
-    fn from(other: OldEvmBigTransaction) -> Self {
-        match other {
-            OldEvmBigTransaction::EvmTransactionAllocate { size } => {
-                Self::EvmTransactionAllocate { size }
-            }
-            OldEvmBigTransaction::EvmTransactionWrite { offset, data } => {
-                Self::EvmTransactionWrite { offset, data }
-            }
-            OldEvmBigTransaction::EvmTransactionExecute {} => Self::EvmTransactionExecute {
-                fee_type: FeePayerType::Evm,
-            },
-            OldEvmBigTransaction::EvmTransactionExecuteUnsigned { from } => {
-                Self::EvmTransactionExecuteUnsigned {
-                    from,
-                    fee_type: FeePayerType::Evm,
-                }
-            }
-        }
-    }
-}
-
-impl Into<OldEvmBigTransaction> for EvmBigTransaction {
-    fn into(self) -> OldEvmBigTransaction {
+impl Into<v0::EvmBigTransaction> for EvmBigTransaction {
+    fn into(self) -> v0::EvmBigTransaction {
         match self {
             Self::EvmTransactionAllocate { size } => {
-                OldEvmBigTransaction::EvmTransactionAllocate { size }
+                v0::EvmBigTransaction::EvmTransactionAllocate { size }
             }
             Self::EvmTransactionWrite { offset, data } => {
-                OldEvmBigTransaction::EvmTransactionWrite { offset, data }
-            }
-            Self::EvmTransactionExecute { .. } => OldEvmBigTransaction::EvmTransactionExecute {},
-            Self::EvmTransactionExecuteUnsigned { from, .. } => {
-                OldEvmBigTransaction::EvmTransactionExecuteUnsigned { from }
+                v0::EvmBigTransaction::EvmTransactionWrite { offset, data }
             }
         }
     }
@@ -119,12 +84,12 @@ impl Into<OldEvmBigTransaction> for EvmBigTransaction {
     Serialize,
     Deserialize,
 )]
-pub enum TransactionAuthType {
+pub enum ExecuteTransaction {
     Signed {
-        tx: Option<evm::Transaction>,
+        tx: Option<Transaction>,
     },
     ProgramAuthorized {
-        tx: Option<evm::UnsignedTransaction>,
+        tx: Option<UnsignedTransaction>,
         from: evm::Address,
     },
 }
@@ -142,20 +107,9 @@ pub enum TransactionAuthType {
     Serialize,
     Deserialize,
 )]
-#[serde(from = "OldEvmInstruction")]
-#[serde(into = "OldEvmInstruction")]
+#[serde(from = "v0::EvmInstruction")]
+#[serde(into = "v0::EvmInstruction")]
 pub enum EvmInstruction {
-    /// Execute native EVM transaction.
-    ///
-    /// Outer args:
-    /// account_key[0] - `[writable]`. EVM state account, used for lock.
-    /// account_key[1] - `[readable]`. Optional argument, used in case tokens swaps from EVM back to native.
-    ///
-    EvmTransaction {
-        evm_tx: evm::Transaction,
-        fee_type: FeePayerType,
-    },
-
     /// Transfer native lamports to ethereum.
     ///
     /// Outer args:
@@ -186,22 +140,6 @@ pub enum EvmInstruction {
     /// account_key[1] - `[writable]`. Big Transaction data storage.
     EvmBigTransaction(EvmBigTransaction),
 
-    /// Execute native EVM transaction.
-    ///
-    /// Outer args:
-    /// account_key[0] - `[writable]`. EVM state account, used for lock.
-    /// account_key[1] - `[writable, signer]`. Co.
-    ///
-    /// Inner args:
-    /// from - is an address calculated using `program_evm_address`.
-    /// unsigned_tx - is an evm transaction, that should be called, without EVM signature verification,
-    ///   instead solana signature verification should be called.
-    EvmAuthorizedTransaction {
-        from: evm::Address,
-        unsigned_tx: evm::UnsignedTransaction,
-        fee_type: FeePayerType,
-    },
-
     /// Execute native EVM transaction
     ///
     /// Outer args:
@@ -217,84 +155,105 @@ pub enum EvmInstruction {
     ///   who authorized and whether or not should we get transaction from account data storage
     /// fee_type - which side will be used for charging fee: Native or Evm
     ExecuteTransaction {
-        tx: TransactionAuthType,
+        tx: ExecuteTransaction,
         fee_type: FeePayerType,
     },
 }
 
-impl From<OldEvmInstruction> for EvmInstruction {
-    fn from(other: OldEvmInstruction) -> Self {
+impl EvmInstruction {
+    pub fn new_execute_tx(tx: Transaction, fee_type: FeePayerType) -> Self {
+        Self::ExecuteTransaction {
+            tx: ExecuteTransaction::Signed { tx: Some(tx) },
+            fee_type,
+        }
+    }
+
+    pub fn new_execute_authorized_tx(
+        tx: UnsignedTransaction,
+        from: Address,
+        fee_type: FeePayerType,
+    ) -> Self {
+        Self::ExecuteTransaction {
+            tx: ExecuteTransaction::ProgramAuthorized { tx: Some(tx), from },
+            fee_type,
+        }
+    }
+
+    pub fn new_execute_big_tx(fee_type: FeePayerType) -> Self {
+        Self::ExecuteTransaction {
+            tx: ExecuteTransaction::Signed { tx: None },
+            fee_type,
+        }
+    }
+
+    pub fn new_execute_big_authorized_tx(from: Address, fee_type: FeePayerType) -> Self {
+        Self::ExecuteTransaction {
+            tx: ExecuteTransaction::ProgramAuthorized { tx: None, from },
+            fee_type,
+        }
+    }
+}
+
+impl From<v0::EvmInstruction> for EvmInstruction {
+    fn from(other: v0::EvmInstruction) -> Self {
         match other {
-            OldEvmInstruction::EvmTransaction { evm_tx } => Self::ExecuteTransaction {
-                tx: TransactionAuthType::Signed { tx: Some(evm_tx) },
-                fee_type: FeePayerType::Evm,
-            },
-            OldEvmInstruction::SwapNativeToEther {
+            v0::EvmInstruction::EvmTransaction { evm_tx } => {
+                Self::new_execute_tx(evm_tx, FeePayerType::Evm)
+            }
+            v0::EvmInstruction::SwapNativeToEther {
                 lamports,
                 evm_address,
             } => Self::SwapNativeToEther {
                 lamports,
                 evm_address,
             },
-            OldEvmInstruction::FreeOwnership {} => Self::FreeOwnership {},
-            OldEvmInstruction::EvmBigTransaction(
-                OldEvmBigTransaction::EvmTransactionExecute {},
-            ) => Self::ExecuteTransaction {
-                tx: TransactionAuthType::Signed { tx: None },
-                fee_type: FeePayerType::Evm,
-            },
-            OldEvmInstruction::EvmBigTransaction(
-                OldEvmBigTransaction::EvmTransactionExecuteUnsigned { from },
-            ) => Self::ExecuteTransaction {
-                tx: TransactionAuthType::ProgramAuthorized { tx: None, from },
-                fee_type: FeePayerType::Evm,
-            },
-            OldEvmInstruction::EvmBigTransaction(big_tx) => {
-                Self::EvmBigTransaction(EvmBigTransaction::from(big_tx))
-            }
-            OldEvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => {
-                Self::ExecuteTransaction {
-                    tx: TransactionAuthType::ProgramAuthorized {
-                        tx: Some(unsigned_tx),
-                        from,
-                    },
-                    fee_type: FeePayerType::Evm,
-                }
+            v0::EvmInstruction::FreeOwnership {} => Self::FreeOwnership {},
+            v0::EvmInstruction::EvmBigTransaction(
+                v0::EvmBigTransaction::EvmTransactionAllocate { size },
+            ) => Self::EvmBigTransaction(EvmBigTransaction::EvmTransactionAllocate { size }),
+            v0::EvmInstruction::EvmBigTransaction(v0::EvmBigTransaction::EvmTransactionWrite {
+                offset,
+                data,
+            }) => Self::EvmBigTransaction(EvmBigTransaction::EvmTransactionWrite { offset, data }),
+            v0::EvmInstruction::EvmBigTransaction(
+                v0::EvmBigTransaction::EvmTransactionExecute {},
+            ) => Self::new_execute_big_tx(FeePayerType::Evm),
+            v0::EvmInstruction::EvmBigTransaction(
+                v0::EvmBigTransaction::EvmTransactionExecuteUnsigned { from },
+            ) => Self::new_execute_big_authorized_tx(from, FeePayerType::Evm),
+            v0::EvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx } => {
+                Self::new_execute_authorized_tx(unsigned_tx, from, FeePayerType::Evm)
             }
         }
     }
 }
 
-impl Into<OldEvmInstruction> for EvmInstruction {
-    fn into(self) -> OldEvmInstruction {
+impl Into<v0::EvmInstruction> for EvmInstruction {
+    fn into(self) -> v0::EvmInstruction {
         match self {
-            Self::EvmTransaction { evm_tx, .. } => OldEvmInstruction::EvmTransaction { evm_tx },
             Self::SwapNativeToEther {
                 lamports,
                 evm_address,
-            } => OldEvmInstruction::SwapNativeToEther {
+            } => v0::EvmInstruction::SwapNativeToEther {
                 lamports,
                 evm_address,
             },
-            Self::FreeOwnership {} => OldEvmInstruction::FreeOwnership {},
-            Self::EvmBigTransaction(big_tx) => OldEvmInstruction::EvmBigTransaction(big_tx.into()),
-            Self::EvmAuthorizedTransaction {
-                from, unsigned_tx, ..
-            } => OldEvmInstruction::EvmAuthorizedTransaction { from, unsigned_tx },
+            Self::FreeOwnership {} => v0::EvmInstruction::FreeOwnership {},
+            Self::EvmBigTransaction(big_tx) => v0::EvmInstruction::EvmBigTransaction(big_tx.into()),
             Self::ExecuteTransaction { tx, .. } => match tx {
-                TransactionAuthType::Signed { tx: None } => OldEvmInstruction::EvmBigTransaction(
-                    OldEvmBigTransaction::EvmTransactionExecute {},
+                ExecuteTransaction::Signed { tx: None } => v0::EvmInstruction::EvmBigTransaction(
+                    v0::EvmBigTransaction::EvmTransactionExecute {},
                 ),
-                TransactionAuthType::Signed { tx: Some(tx) } => {
-                    OldEvmInstruction::EvmTransaction { evm_tx: tx }
+                ExecuteTransaction::Signed { tx: Some(tx) } => {
+                    v0::EvmInstruction::EvmTransaction { evm_tx: tx }
                 }
-                TransactionAuthType::ProgramAuthorized { tx: None, from } => {
-                    OldEvmInstruction::EvmBigTransaction(
-                        OldEvmBigTransaction::EvmTransactionExecuteUnsigned { from },
+                ExecuteTransaction::ProgramAuthorized { tx: None, from } => {
+                    v0::EvmInstruction::EvmBigTransaction(
+                        v0::EvmBigTransaction::EvmTransactionExecuteUnsigned { from },
                     )
                 }
-                TransactionAuthType::ProgramAuthorized { tx: Some(tx), from } => {
-                    OldEvmInstruction::EvmAuthorizedTransaction {
+                ExecuteTransaction::ProgramAuthorized { tx: Some(tx), from } => {
+                    v0::EvmInstruction::EvmAuthorizedTransaction {
                         unsigned_tx: tx,
                         from,
                     }
@@ -432,11 +391,8 @@ mod test {
         addr: Generator<evm::Address>,
         tx: Generator<evm::UnsignedTransaction>,
     ) {
-        let data = EvmInstruction::EvmAuthorizedTransaction {
-            from: addr.0,
-            unsigned_tx: tx.0.clone(),
-            fee_type: FeePayerType::Evm,
-        };
+        let data =
+            EvmInstruction::new_execute_authorized_tx(tx.0.clone(), addr.0, FeePayerType::Evm);
 
         fn custom_serialize(
             from: evm::Address,
@@ -500,51 +456,44 @@ mod test {
 
     #[test]
     fn test_from_js_unsigned_tx() {
-        let data = EvmInstruction::EvmAuthorizedTransaction {
-            from: evm_state::H160::zero(),
-            unsigned_tx: evm_state::UnsignedTransaction {
+        let data = EvmInstruction::new_execute_authorized_tx(
+            UnsignedTransaction {
                 nonce: 1.into(),
                 gas_price: 1.into(),
                 gas_limit: 3000000.into(),
-
-                action: evm_state::TransactionAction::Call(evm_state::H160::zero()),
+                action: evm_state::TransactionAction::Call(H160::zero()),
                 value: 100.into(),
                 input: vec![],
             },
-            fee_type: FeePayerType::Evm,
-        };
+            H160::zero(),
+            FeePayerType::Evm,
+        );
         let result = hex::decode("040000002a0000000000000030783030303030303030303030303030303030\
         303030303030303030303030303030303030303030303003000000000000003078310300000000000000\
         30783108000000000000003078326463366330000000002a000000000000003078303030303030303030\
         303030303030303030303030303030303030303030303030303030303030300400000000000000307836340000000000000000").unwrap();
         assert_eq!(bincode::serialize(&data).unwrap(), result);
 
-        let data = EvmInstruction::EvmAuthorizedTransaction {
-            from: evm_state::H160::repeat_byte(0x11),
-            unsigned_tx: evm_state::UnsignedTransaction {
+        let data = EvmInstruction::new_execute_authorized_tx(
+            UnsignedTransaction {
                 nonce: 777.into(),
                 gas_price: 33.into(),
                 gas_limit: 3000000.into(),
-                action: evm_state::TransactionAction::Call(evm_state::H160::repeat_byte(0xff)),
+                action: evm_state::TransactionAction::Call(H160::repeat_byte(0xff)),
                 value: 555.into(),
                 input: b"test".to_vec(),
             },
-            fee_type: FeePayerType::Evm,
-        };
+            H160::repeat_byte(0x11),
+            FeePayerType::Evm,
+        );
         let result = hex::decode("040000002a00000000000000307831313131313131313131313131313131313131\
         3131313131313131313131313131313131313131310500000000000000307833303904000000000000003078\
         323108000000000000003078326463366330000000002a000000000000003078666666666666666666666666\
         6666666666666666666666666666666666666666666666666666666605000000000000003078323262040000000000000074657374").unwrap();
         assert_eq!(bincode::serialize(&data).unwrap(), result);
 
-        let data = EvmInstruction::EvmAuthorizedTransaction {
-            from: crate::evm_address_for_program(
-                solana_sdk::pubkey::Pubkey::from_str(
-                    "BTpMi82Q9SNKUJPmZjRg2TpAoGH26nLYPn6X1YhWRi1p",
-                )
-                .unwrap(),
-            ),
-            unsigned_tx: evm_state::UnsignedTransaction {
+        let data = EvmInstruction::new_execute_authorized_tx(
+            UnsignedTransaction {
                 nonce: 777.into(),
                 gas_price: 33.into(),
                 gas_limit: 3000000.into(),
@@ -552,8 +501,14 @@ mod test {
                 value: 555.into(),
                 input: b"test".to_vec(),
             },
-            fee_type: FeePayerType::Evm,
-        };
+            crate::evm_address_for_program(
+                solana_sdk::pubkey::Pubkey::from_str(
+                    "BTpMi82Q9SNKUJPmZjRg2TpAoGH26nLYPn6X1YhWRi1p",
+                )
+                .unwrap(),
+            ),
+            FeePayerType::Evm,
+        );
         let result = hex::decode("040000002a00000000000000307861636330366230313831626365363436653938353\
         4336562313534623165343063663538323762620500000000000000307833303904000000000000003078323108\
         000000000000003078326463366330000000002a000000000000003078666666666666666666666666666666666\
@@ -607,11 +562,7 @@ mod test {
     #[test]
     fn test_serialize_big_execute_unsigned() {
         let from = H160::repeat_byte(0x1);
-        let ix =
-            EvmInstruction::EvmBigTransaction(EvmBigTransaction::EvmTransactionExecuteUnsigned {
-                from,
-                fee_type: FeePayerType::Evm,
-            });
+        let ix = EvmInstruction::new_execute_big_authorized_tx(from, FeePayerType::Evm);
 
         let data = bincode::serialize(&ix).unwrap();
         let big_tx_tag = [3, 0, 0, 0];
@@ -634,10 +585,7 @@ mod test {
     #[quickcheck]
     #[ignore]
     fn test_serialize_transaction(tx: Generator<evm::Transaction>) {
-        let data = EvmInstruction::EvmTransaction {
-            evm_tx: tx.0,
-            fee_type: FeePayerType::Evm,
-        };
+        let data = EvmInstruction::new_execute_tx(tx.0, FeePayerType::Evm);
         let data = bincode::serialize(&data).unwrap();
         assert_eq!(&*data, &[0, 1, 2, 3])
     }
@@ -683,13 +631,11 @@ mod test {
 
     #[test]
     fn test_serialize_big_transaction_execute_with_borsh() {
-        let big_tx = EvmBigTransaction::EvmTransactionExecute {
-            fee_type: FeePayerType::Native,
-        };
+        let big_tx = EvmInstruction::new_execute_big_tx(FeePayerType::Native);
         let mut buf: Vec<u8> = vec![];
         BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
 
-        let tag = [2u8];
+        let tag = [3u8, 0u8, 0u8]; // Execute, Signed, Big Tx
         let fee_type = [1];
         let result_data = [&tag[..], &fee_type[..]].concat();
         assert_eq!(buf, result_data);
@@ -698,14 +644,11 @@ mod test {
     #[test]
     fn test_serialize_big_transaction_execute_unsigned_with_borsh() {
         let from = H160::repeat_byte(0x1);
-        let big_tx = EvmBigTransaction::EvmTransactionExecuteUnsigned {
-            from,
-            fee_type: FeePayerType::Evm,
-        };
+        let big_tx = EvmInstruction::new_execute_big_authorized_tx(from, FeePayerType::Evm);
         let mut buf: Vec<u8> = vec![];
         BorshSerialize::serialize(&big_tx, &mut buf).unwrap();
 
-        let tag = [3u8];
+        let tag = [3u8, 1u8, 0u8]; // Execute, Authorized, Big Tx
         let from_in_bytes = from.as_bytes();
         let fee_type = [0];
 
@@ -729,23 +672,6 @@ mod test {
             EvmBigTransaction::EvmTransactionWrite {
                 offset: 57005,
                 data: vec![66, 64, 56, 3, 6, 56]
-            }
-        );
-
-        let big_tx = hex::decode("0200").unwrap();
-        assert_eq!(
-            <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &big_tx[..]).unwrap(),
-            EvmBigTransaction::EvmTransactionExecute {
-                fee_type: FeePayerType::Evm
-            }
-        );
-
-        let big_tx = hex::decode("03050505050505050505050505050505050505050500").unwrap();
-        assert_eq!(
-            <EvmBigTransaction as BorshDeserialize>::deserialize(&mut &big_tx[..]).unwrap(),
-            EvmBigTransaction::EvmTransactionExecuteUnsigned {
-                from: H160::repeat_byte(5),
-                fee_type: FeePayerType::Evm
             }
         );
     }
@@ -782,7 +708,7 @@ mod test {
 
     #[test]
     fn test_serialize_evm_instruction_transaction_with_borsh() {
-        let evm_tx = evm::Transaction {
+        let evm_tx = Transaction {
             nonce: evm::U256::from(1),
             gas_price: evm::U256::from(10),
             gas_limit: evm::U256::from(100),
@@ -795,11 +721,8 @@ mod test {
             },
             input: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         };
-        let data = EvmInstruction::EvmTransaction {
-            evm_tx,
-            fee_type: FeePayerType::Evm,
-        };
-        let result = hex::decode("00\
+        let data = EvmInstruction::new_execute_tx(evm_tx, FeePayerType::Evm);
+        let result = hex::decode("030001\
         0100000000000000000000000000000000000000000000000000000000000000\
         0a00000000000000000000000000000000000000000000000000000000000000\
         6400000000000000000000000000000000000000000000000000000000000000\
@@ -820,7 +743,7 @@ mod test {
             evm_address: H160::repeat_byte(0x1),
         };
         let result = hex::decode(
-            "01\
+            "00\
         e803000000000000\
         0101010101010101010101010101010101010101",
         )
@@ -833,7 +756,7 @@ mod test {
     #[test]
     fn test_serialize_evm_instruction_free_ownership_with_borsh() {
         let data = EvmInstruction::FreeOwnership {};
-        let result = hex::decode("02").unwrap();
+        let result = hex::decode("01").unwrap();
         let mut buf = vec![];
         BorshSerialize::serialize(&data, &mut buf).unwrap();
         assert_eq!(buf, result);
@@ -845,7 +768,7 @@ mod test {
             offset: 16,
             data: vec![1, 2, 3, 4],
         });
-        let result = hex::decode("030110000000000000000400000001020304").unwrap();
+        let result = hex::decode("020110000000000000000400000001020304").unwrap();
         let mut buf = vec![];
         BorshSerialize::serialize(&data, &mut buf).unwrap();
         assert_eq!(buf, result);
@@ -853,9 +776,8 @@ mod test {
 
     #[test]
     fn test_serialize_evm_instruction_evm_authorized_transaction_with_borsh() {
-        let data = EvmInstruction::EvmAuthorizedTransaction {
-            from: H160::repeat_byte(0x1),
-            unsigned_tx: evm::UnsignedTransaction {
+        let data = EvmInstruction::new_execute_authorized_tx(
+            UnsignedTransaction {
                 nonce: evm::U256::from(10),
                 gas_price: evm::U256::from(20),
                 gas_limit: evm::U256::from(30),
@@ -863,17 +785,18 @@ mod test {
                 value: evm::U256::from(40),
                 input: vec![10, 20, 30, 40],
             },
-            fee_type: FeePayerType::Evm,
-        };
+            H160::repeat_byte(0x1),
+            FeePayerType::Evm,
+        );
         let result = hex::decode(
-            "04\
-        0101010101010101010101010101010101010101\
+            "030101\
         0a00000000000000000000000000000000000000000000000000000000000000\
         1400000000000000000000000000000000000000000000000000000000000000\
         1e00000000000000000000000000000000000000000000000000000000000000\
         01\
         2800000000000000000000000000000000000000000000000000000000000000\
         040000000a141e28\
+        0101010101010101010101010101010101010101\
         00",
         )
         .unwrap();
@@ -883,8 +806,8 @@ mod test {
     }
 
     #[test]
-    fn test_deserialize_evm_instrtion_with_borsh() {
-        let instruction = hex::decode("00\
+    fn test_deserialize_evm_instruction_with_borsh() {
+        let instruction = hex::decode("030001\
         0100000000000000000000000000000000000000000000000000000000000000\
         0a00000000000000000000000000000000000000000000000000000000000000\
         6400000000000000000000000000000000000000000000000000000000000000\
@@ -895,8 +818,8 @@ mod test {
         00").unwrap();
         assert_eq!(
             <EvmInstruction as BorshDeserialize>::deserialize(&mut &instruction[..]).unwrap(),
-            EvmInstruction::EvmTransaction {
-                evm_tx: evm::Transaction {
+            EvmInstruction::new_execute_tx(
+                Transaction {
                     nonce: evm::U256::from(1),
                     gas_price: evm::U256::from(10),
                     gas_limit: evm::U256::from(100),
@@ -909,12 +832,12 @@ mod test {
                     },
                     input: vec![83, 73, 81, 57, 74, 14, 37, 12, 23, 34],
                 },
-                fee_type: FeePayerType::Evm,
-            }
+                FeePayerType::Evm,
+            )
         );
 
         let instruction =
-            hex::decode("01e803000000000000ffffffffffffffffffffffffffffffffffffffff").unwrap();
+            hex::decode("00e803000000000000ffffffffffffffffffffffffffffffffffffffff").unwrap();
         assert_eq!(
             <EvmInstruction as BorshDeserialize>::deserialize(&mut &instruction[..]).unwrap(),
             EvmInstruction::SwapNativeToEther {
@@ -923,29 +846,28 @@ mod test {
             }
         );
 
-        let instruction = hex::decode("02").unwrap();
+        let instruction = hex::decode("01").unwrap();
         assert_eq!(
             <EvmInstruction as BorshDeserialize>::deserialize(&mut &instruction[..]).unwrap(),
             EvmInstruction::FreeOwnership {}
         );
 
         let instruction = hex::decode(
-            "04\
-        0101010101010101010101010101010101010101\
+            "030101\
         0001000000000000000000000000000000000000000000000000000000000000\
         0001000000000000000000000000000000000000000000000000000000000000\
         0001000000000000000000000000000000000000000000000000000000000000\
         01\
         0001000000000000000000000000000000000000000000000000000000000000\
         040000000a141e28\
+        0101010101010101010101010101010101010101\
         00",
         )
         .unwrap();
         assert_eq!(
             <EvmInstruction as BorshDeserialize>::deserialize(&mut &instruction[..]).unwrap(),
-            EvmInstruction::EvmAuthorizedTransaction {
-                from: H160::repeat_byte(0x1),
-                unsigned_tx: evm::UnsignedTransaction {
+            EvmInstruction::new_execute_authorized_tx(
+                UnsignedTransaction {
                     nonce: evm::U256::from(256),
                     gas_price: evm::U256::from(256),
                     gas_limit: evm::U256::from(256),
@@ -953,8 +875,9 @@ mod test {
                     value: evm::U256::from(256),
                     input: vec![10, 20, 30, 40],
                 },
-                fee_type: FeePayerType::Evm,
-            }
+                H160::repeat_byte(0x1),
+                FeePayerType::Evm,
+            )
         );
     }
 
@@ -971,7 +894,7 @@ mod test {
 
         // data size is too small
         let invalid_instruction =
-            hex::decode("01e803000000000000ffffffffffffffffffffffffffffffffffffff").unwrap();
+            hex::decode("00e803000000000000ffffffffffffffffffffffffffffffffffffff").unwrap();
         assert_eq!(
             <EvmInstruction as BorshDeserialize>::deserialize(&mut &invalid_instruction[..])
                 .err()

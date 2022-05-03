@@ -5,7 +5,6 @@ pub mod tx_chunks;
 
 pub mod error;
 pub mod instructions;
-pub mod old_instructions;
 pub mod precompiles;
 pub mod processor;
 pub mod solana_extension;
@@ -43,7 +42,7 @@ pub mod scope {
     }
 }
 use instructions::{
-    EvmBigTransaction, EvmInstruction, FeePayerType, TransactionAuthType,
+    EvmBigTransaction, EvmInstruction, FeePayerType, ExecuteTransaction,
     EVM_INSTRUCTION_BORSH_PREFIX,
 };
 use scope::*;
@@ -78,7 +77,7 @@ pub fn send_raw_tx(
     create_evm_instruction_with_borsh(
         crate::ID,
         &EvmInstruction::ExecuteTransaction {
-            tx: TransactionAuthType::Signed { tx: Some(evm_tx) },
+            tx: ExecuteTransaction::Signed { tx: Some(evm_tx) },
             fee_type,
         },
         account_metas,
@@ -99,7 +98,7 @@ pub fn authorized_tx(
     create_evm_instruction_with_borsh(
         crate::ID,
         &EvmInstruction::ExecuteTransaction {
-            tx: TransactionAuthType::ProgramAuthorized { tx: Some(unsigned_tx), from },
+            tx: ExecuteTransaction::ProgramAuthorized { tx: Some(unsigned_tx), from },
             fee_type,
         },
         account_metas,
@@ -185,7 +184,7 @@ pub fn big_tx_execute(
     create_evm_instruction_with_borsh(
         crate::ID,
         &EvmInstruction::ExecuteTransaction {
-            tx: TransactionAuthType::Signed { tx: None },
+            tx: ExecuteTransaction::Signed { tx: None },
             fee_type,
         },
         account_metas,

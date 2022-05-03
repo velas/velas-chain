@@ -1,8 +1,8 @@
-use super::scope::*;
+use super::super::scope::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize)]
-pub enum OldEvmBigTransaction {
+pub enum EvmBigTransaction {
     /// Allocate data in storage, pay fee should be taken from EVM.
     EvmTransactionAllocate { size: u64 },
 
@@ -17,7 +17,7 @@ pub enum OldEvmBigTransaction {
 }
 
 #[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize)]
-pub enum OldEvmInstruction {
+pub enum EvmInstruction {
     /// Execute native EVM transaction.
     ///
     /// Outer args:
@@ -54,7 +54,7 @@ pub enum OldEvmInstruction {
     /// Outer args:
     /// account_key[0] - `[writable]`. EVM state account. used for lock.
     /// account_key[1] - `[writable]`. Big Transaction data storage.
-    EvmBigTransaction(OldEvmBigTransaction),
+    EvmBigTransaction(EvmBigTransaction),
 
     /// Execute native EVM transaction.
     ///
