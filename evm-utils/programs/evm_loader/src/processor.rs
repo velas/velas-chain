@@ -901,13 +901,134 @@ mod test {
     use primitive_types::{H160, H256, U256};
     use solana_sdk::keyed_account::KeyedAccount;
     use solana_sdk::native_loader;
-    use solana_sdk::process_instruction::MockInvokeContext;
+    use solana_sdk::process_instruction::{
+        BpfComputeBudget, ComputeMeter, Logger, MockComputeMeter, MockInvokeContext, MockLogger,
+        ProcessInstructionWithContext,
+    };
     use solana_sdk::program_utils::limited_deserialize;
     use solana_sdk::sysvar::rent::Rent;
 
     use super::TEST_CHAIN_ID as CHAIN_ID;
+    use crate::instructions::TransactionAuthType::ProgramAuthorized;
     use borsh::BorshSerialize;
     use std::{cell::RefCell, collections::BTreeMap};
+    use std::rc::Rc;
+    use std::sync::Arc;
+    use solana_sdk::instruction::{CompiledInstruction, Instruction};
+    use solana_sdk::message::Message;
+
+    pub struct MockInvokeContextWithParentCaller {
+        pub key: Pubkey,
+        pub parent_caller: Pubkey,
+        pub logger: MockLogger,
+        pub bpf_compute_budget: BpfComputeBudget,
+        pub compute_meter: MockComputeMeter,
+        pub programs: Vec<(Pubkey, ProcessInstructionWithContext)>,
+        pub accounts: Vec<(Pubkey, Rc<RefCell<AccountSharedData>>)>,
+        pub invoke_depth: usize,
+        pub evm_executor: Option<Rc<RefCell<evm_state::Executor>>>,
+    }
+
+    impl MockInvokeContextWithParentCaller {
+        pub fn with_evm(evm_executor: evm_state::Executor) -> Self {
+            Self {
+                evm_executor: Some(Rc::new(RefCell::new(evm_executor))),
+                ..Default::default()
+            }
+        }
+        pub fn deconstruct(self) -> Option<evm_state::Executor> {
+            self.evm_executor
+                .and_then(|e| Some(Rc::try_unwrap(e).ok()?.into_inner()))
+        }
+    }
+
+    impl Default for MockInvokeContextWithParentCaller {
+        fn default() -> Self {
+            MockInvokeContextWithParentCaller {
+                key: Pubkey::default(),
+                parent_caller: Pubkey::default(),
+                logger: MockLogger::default(),
+                bpf_compute_budget: BpfComputeBudget::default(),
+                compute_meter: MockComputeMeter {
+                    remaining: std::i64::MAX as u64,
+                },
+                programs: vec![],
+                accounts: vec![],
+                invoke_depth: 0,
+                evm_executor: None,
+            }
+        }
+    }
+
+    impl InvokeContext for MockInvokeContextWithParentCaller {
+        fn push(&mut self, _key: &Pubkey) -> Result<(), InstructionError> {
+            self.invoke_depth = self.invoke_depth.saturating_add(1);
+            Ok(())
+        }
+        fn pop(&mut self) {
+            self.invoke_depth = self.invoke_depth.saturating_sub(1);
+        }
+        fn invoke_depth(&self) -> usize {
+            self.invoke_depth
+        }
+        fn verify_and_update(
+            &mut self,
+            _message: &Message,
+            _instruction: &CompiledInstruction,
+            _accounts: &[Rc<RefCell<AccountSharedData>>],
+            _caller_pivileges: Option<&[bool]>,
+        ) -> Result<(), InstructionError> {
+            Ok(())
+        }
+        fn get_evm_executor(&self) -> Option<Rc<RefCell<evm_state::Executor>>> {
+            self.evm_executor.clone()
+        }
+        fn get_parent_caller(&self) -> Option<&Pubkey> {
+            Some(&self.parent_caller)
+        }
+        fn get_caller(&self) -> Result<&Pubkey, InstructionError> {
+            Ok(&self.key)
+        }
+        fn get_programs(&self) -> &[(Pubkey, ProcessInstructionWithContext)] {
+            &self.programs
+        }
+        fn get_logger(&self) -> Rc<RefCell<dyn Logger>> {
+            Rc::new(RefCell::new(self.logger.clone()))
+        }
+        fn get_bpf_compute_budget(&self) -> &BpfComputeBudget {
+            &self.bpf_compute_budget
+        }
+        fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>> {
+            Rc::new(RefCell::new(self.compute_meter.clone()))
+        }
+        fn add_executor(&self, _pubkey: &Pubkey, _executor: Arc<dyn solana_sdk::process_instruction::Executor>) {}
+        fn get_executor(&self, _pubkey: &Pubkey) -> Option<Arc<dyn solana_sdk::process_instruction::Executor>> {
+            None
+        }
+        fn record_instruction(&self, _instruction: &Instruction) {}
+        fn is_feature_active(&self, feature_id: &Pubkey) -> bool {
+            true
+        }
+        fn get_account(&self, pubkey: &Pubkey) -> Option<Rc<RefCell<AccountSharedData>>> {
+            for (key, account) in self.accounts.iter() {
+                if key == pubkey {
+                    return Some(account.clone());
+                }
+            }
+            None
+        }
+        fn update_timing(
+            &mut self,
+            _serialize_us: u64,
+            _create_vm_us: u64,
+            _execute_us: u64,
+            _deserialize_us: u64,
+        ) {
+        }
+        fn get_sysvar_data(&self, id: &Pubkey) -> Option<Rc<Vec<u8>>> {
+            None
+        }
+    }
 
     fn dummy_eth_tx() -> evm_state::transactions::Transaction {
         evm_state::transactions::Transaction {
@@ -1048,6 +1169,98 @@ mod test {
         let mut executor = invoke_context.deconstruct().unwrap();
         println!("cx = {:?}", executor);
         assert!(executor.get_tx_receipt_by_hash(tx_hash).is_some())
+    }
+
+    #[test]
+    fn test_cross_execution() {
+        let _logger = simple_logger::SimpleLogger::new().init();
+        let mut executor = evm_state::Executor::testing();
+        let processor = EvmProcessor::default();
+        let evm_account = RefCell::new(crate::create_state_account(0));
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+
+        let user_id = Pubkey::new_unique();
+        let program_id = Pubkey::new_unique();
+        let from = crate::evm_address_for_program(program_id);
+        executor.deposit(from, U256::from(2) * 300000);
+        let tx_create = evm::UnsignedTransaction {
+            nonce: 0.into(),
+            gas_price: 1.into(),
+            gas_limit: 300000.into(),
+            action: TransactionAction::Create,
+            value: 0.into(),
+            input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec(),
+        };
+        let mut tx_bytes = vec![];
+        BorshSerialize::serialize(&tx_create, &mut tx_bytes).unwrap();
+        let user_account = RefCell::new(solana_sdk::account::AccountSharedData {
+            lamports: 1000,
+            data: vec![0; tx_bytes.len()],
+            owner: crate::ID,
+            executable: false,
+            rent_epoch: 0,
+        });
+        let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
+        let program_account = RefCell::new(crate::create_state_account(0));
+        let program_keyed_account = KeyedAccount::new(&program_id, true, &program_account);
+        let keyed_accounts = [evm_keyed_account, user_keyed_account, program_keyed_account];
+
+        let mut invoke_context = MockInvokeContextWithParentCaller::with_evm(executor);
+        invoke_context.parent_caller = crate::ID;
+
+        let big_tx_alloc = EvmBigTransaction::EvmTransactionAllocate {
+            size: tx_bytes.len() as u64,
+        };
+        let mut buf = vec![EVM_INSTRUCTION_BORSH_PREFIX];
+        BorshSerialize::serialize(&EvmInstruction::EvmBigTransaction(big_tx_alloc), &mut buf);
+        processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &buf,
+                &mut invoke_context,
+                true,
+            )
+            .unwrap();
+
+        buf = vec![EVM_INSTRUCTION_BORSH_PREFIX];
+        let big_tx_write = EvmBigTransaction::EvmTransactionWrite {
+            offset: 0,
+            data: tx_bytes,
+        };
+        BorshSerialize::serialize(&EvmInstruction::EvmBigTransaction(big_tx_write), &mut buf);
+        processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &buf,
+                &mut invoke_context,
+                true,
+            )
+            .unwrap();
+
+        buf = vec![EVM_INSTRUCTION_BORSH_PREFIX];
+        BorshSerialize::serialize(
+            &EvmInstruction::ExecuteTransaction {
+                tx: ProgramAuthorized {
+                    tx: None,
+                    from,
+                },
+                fee_type: FeePayerType::Native,
+            },
+            &mut buf,
+        )
+        .unwrap();
+        assert!(processor
+            .process_instruction(
+                &crate::ID,
+                &keyed_accounts,
+                &buf,
+                &mut invoke_context,
+                false,
+            )
+            .is_ok());
+        let executor = invoke_context.deconstruct().unwrap();
     }
 
     #[test]
@@ -2506,7 +2719,7 @@ mod test {
     }
 
     #[test]
-    fn evm_transaction_with_unsufficient_native_funds() {
+    fn evm_transaction_with_insufficient_native_funds() {
         let _logger = simple_logger::SimpleLogger::new().init();
         let executor = evm_state::Executor::testing();
         let processor = EvmProcessor::default();
