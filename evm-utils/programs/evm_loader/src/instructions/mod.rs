@@ -94,6 +94,16 @@ pub enum ExecuteTransaction {
     },
 }
 
+impl ExecuteTransaction {
+    pub fn is_big(&self) -> bool {
+        match self {
+            ExecuteTransaction::Signed { tx: None } => true,
+            ExecuteTransaction::ProgramAuthorized { tx: None, .. } => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(
     BorshSerialize,
     BorshDeserialize,
