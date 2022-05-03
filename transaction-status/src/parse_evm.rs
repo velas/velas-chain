@@ -4,7 +4,7 @@ use crate::parse_instruction::{
 use bincode::deserialize;
 use evm_rpc::RPCTransaction;
 use serde_json::json;
-use solana_evm_loader_program::instructions::{EvmBigTransaction, EvmInstruction};
+use solana_evm_loader_program::instructions::{EvmBigTransaction, EvmInstruction, TransactionAuthType};
 use solana_sdk::{instruction::CompiledInstruction, pubkey::Pubkey};
 
 pub fn parse_evm(
@@ -158,6 +158,92 @@ pub fn parse_evm(
                 })
             }
         },
+        EvmInstruction::ExecuteTransaction { tx: TransactionAuthType::Signed { tx: Some(evm_tx) }, fee_type } => {
+            let info = if instruction.accounts.len() >= 2 {
+                json!({
+                    "bridgeAccount":  account_keys[instruction.accounts[1] as usize].to_string(),
+                    "transaction": RPCTransaction::from_transaction(evm_tx.into()).map_err(|_|ParseInstructionError::InstructionKeyMismatch(
+                        ParsableProgram::Evm,
+                    ))?,
+                    "feeType": fee_type,
+                })
+            } else {
+                json!({
+                    "transaction": RPCTransaction::from_transaction(evm_tx.into()).map_err(|_|ParseInstructionError::InstructionKeyMismatch(
+                        ParsableProgram::Evm,
+                    ))?,
+                    "feeType": fee_type,
+                })
+            };
+
+            Ok(ParsedInstructionEnum {
+                instruction_type: "evmTransaction".to_string(),
+                info,
+            })
+        }
+        EvmInstruction::ExecuteTransaction { tx: TransactionAuthType::ProgramAuthorized { tx: Some(unsigned_tx), from }, fee_type } => {
+            check_num_stake_accounts(&instruction.accounts, 2)?;
+            let tx = evm_state::UnsignedTransactionWithCaller {
+                caller: from,
+                unsigned_tx,
+                signed_compatible: true,
+                chain_id: 0,
+            };
+            let info = json!({
+                "programAccount":  account_keys[instruction.accounts[1] as usize].to_string(),
+                "transaction": RPCTransaction::from_transaction(tx.into()).map_err(|_|ParseInstructionError::InstructionKeyMismatch(
+                    ParsableProgram::Evm,
+                ))?,
+                "feeType": fee_type,
+            });
+
+            Ok(ParsedInstructionEnum {
+                instruction_type: "evmAuthorizedTransaction".to_string(),
+                info,
+            })
+        }
+        EvmInstruction::ExecuteTransaction { tx: TransactionAuthType::Signed { tx: None }, fee_type } => {
+            check_num_stake_accounts(&instruction.accounts, 2)?;
+            let info = if instruction.accounts.len() >= 3 {
+                json!({
+                        "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
+                        "bridgeAccount":  account_keys[instruction.accounts[2] as usize].to_string(),
+                        "feeType": fee_type,
+                    })
+            } else {
+                json!({
+                        "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
+                        "feeType": fee_type,
+                    })
+            };
+
+            Ok(ParsedInstructionEnum {
+                instruction_type: "evmBigTransactionExecute".to_string(),
+                info,
+            })
+        }
+        EvmInstruction::ExecuteTransaction { tx: TransactionAuthType::ProgramAuthorized { tx: None, from }, fee_type } => {
+            check_num_stake_accounts(&instruction.accounts, 2)?;
+            let info = if instruction.accounts.len() >= 3 {
+                json!({
+                        "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
+                        "bridgeAccount":  account_keys[instruction.accounts[2] as usize].to_string(),
+                        "from": from.to_string(),
+                        "feeType": fee_type,
+                    })
+            } else {
+                json!({
+                        "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
+                        "from": from.to_string(),
+                        "feeType": fee_type,
+                    })
+            };
+
+            Ok(ParsedInstructionEnum {
+                instruction_type: "evmBigTransactionExecute".to_string(),
+                info,
+            })
+        }
     }
 }
 

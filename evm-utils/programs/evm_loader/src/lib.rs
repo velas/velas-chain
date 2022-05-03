@@ -42,7 +42,10 @@ pub mod scope {
         };
     }
 }
-use instructions::{FeePayerType, EvmBigTransaction, EvmInstruction, EVM_INSTRUCTION_BORSH_PREFIX};
+use instructions::{
+    EvmBigTransaction, EvmInstruction, FeePayerType, TransactionAuthType,
+    EVM_INSTRUCTION_BORSH_PREFIX,
+};
 use scope::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 
@@ -74,7 +77,10 @@ pub fn send_raw_tx(
 
     create_evm_instruction_with_borsh(
         crate::ID,
-        &EvmInstruction::EvmTransaction { evm_tx, fee_type },
+        &EvmInstruction::ExecuteTransaction {
+            tx: TransactionAuthType::Signed { tx: Some(evm_tx) },
+            fee_type,
+        },
         account_metas,
     )
 }
@@ -92,9 +98,8 @@ pub fn authorized_tx(
     let from = evm_address_for_program(sender);
     create_evm_instruction_with_borsh(
         crate::ID,
-        &EvmInstruction::EvmAuthorizedTransaction {
-            from,
-            unsigned_tx,
+        &EvmInstruction::ExecuteTransaction {
+            tx: TransactionAuthType::ProgramAuthorized { tx: Some(unsigned_tx), from },
             fee_type,
         },
         account_metas,
@@ -177,11 +182,12 @@ pub fn big_tx_execute(
         account_metas.push(AccountMeta::new(*gas_collector, false))
     }
 
-    let big_tx = EvmBigTransaction::EvmTransactionExecute { fee_type };
-
     create_evm_instruction_with_borsh(
         crate::ID,
-        &EvmInstruction::EvmBigTransaction(big_tx),
+        &EvmInstruction::ExecuteTransaction {
+            tx: TransactionAuthType::Signed { tx: None },
+            fee_type,
+        },
         account_metas,
     )
 }
