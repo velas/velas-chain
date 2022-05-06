@@ -11,7 +11,7 @@ jobs:
     name: check
     container:
       image: ubuntu:20.04
-    runs-on: build
+    runs-on: build-dedicated
     steps:
       - uses: actions/checkout@v2
       - name: install dependencies
@@ -31,7 +31,7 @@ jobs:
           args: -- -Dwarnings
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: build-dedicated
     steps:
       - uses: actions/checkout@v2
       - name: install dependencies
@@ -51,4 +51,5 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
+          args: -j 16
 
