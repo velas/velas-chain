@@ -6,7 +6,6 @@ use evm_state::*;
 use evm_state::rand::Rng;
 use evm_rpc::FormatHex;
 
-mod utils;
 mod finder;
 
 use tonic::{transport::Server, Request, Response, Status};
@@ -42,7 +41,6 @@ impl Backend for Rpc {
 
         let data = request.into_inner().hash;
 
-
         let dir = Path::new("db/");
         let state_root = H256::from_hex("0xfb6e8eeafc655f1bb97212e7476837449b71a41df8c9d604f3cc7e12cebf0fe7").expect("get hash from &str");
 
@@ -57,6 +55,17 @@ impl Backend for Rpc {
             data: bytes.unwrap().unwrap()
         };
 
+        Ok(Response::new(reply))
+    }
+
+    async fn get_block_multi(
+        &self,
+        request: Request<app_grpc::MultiHash>,
+    ) -> Result<Response<app_grpc::MultiBlockData>, Status> {
+
+        let reply = app_grpc::MultiBlockData {
+            data: vec![]
+        };
         Ok(Response::new(reply))
     }
 }
