@@ -811,6 +811,18 @@ fn call_inner(
         .map(|(user_account, pk)| KeyedAccount::new(pk, false, user_account))
         .collect();
 
+    // Simulation does not have access to real account structure, so only process immutable entrypoints
+    let evm_account = RefCell::new(solana_evm_loader_program::create_state_account(
+        evm_state_balance,
+    ));
+    let evm_keyed_account = KeyedAccount::new(
+        &solana_sdk::evm_state::ID,
+        false,
+        &evm_account,
+    );
+    let accounts =
+        solana_evm_loader_program::AccountStructure::new(&evm_keyed_account, &user_accounts);
+
     let evm_state::executor::ExecutionResult {
         exit_reason,
         exit_data,
@@ -828,10 +840,9 @@ fn call_inner(
             value,
             Some(tx_chain_id),
             tx_hash,
-            solana_evm_loader_program::precompiles::simulation_entrypoint(
+            solana_evm_loader_program::precompiles::entrypoint(
+                accounts,
                 executor.support_precompile(),
-                evm_state_balance,
-                &user_accounts,
             ),
         )
         .with_context(|| EvmStateError)?;

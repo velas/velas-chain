@@ -86,7 +86,7 @@ solana-rayon-threadlimit = { path = "../rayon-threadlimit", version = "=1.6.14" 
 hex = "0.4.2"
 rlp = "0.5"
 sha3 = "0.9.1"
-primitive-types = "0.8.0"
+primitive-types = "0.11.0"
 secp256k1 = { version = "0.19.0", features = ["recovery", "global-context"] }
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }

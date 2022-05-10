@@ -1,8 +1,9 @@
-use evm::executor::{MemoryStackState, StackState, StackSubstateMetadata};
+use std::collections::BTreeMap;
+use evm::executor::stack::{MemoryStackState, StackState, StackSubstateMetadata};
 pub use evm::{
     backend::{Apply, ApplyBackend, Backend, Log, MemoryAccount, MemoryVicinity},
     executor::traces::*,
-    executor::StackExecutor,
+    executor::stack::StackExecutor,
     Config, Context, Handler, Transfer,
     {ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed},
 };
@@ -23,7 +24,7 @@ use crate::{
     },
 };
 use crate::{error::*, BlockVersion};
-
+pub use evm::executor::stack::{Precompile, PrecompileFailure, PrecompileOutput, PrecompileResult};
 pub use triedb::empty_trie_hash;
 
 pub const MAX_TX_LEN: u64 = 3 * 1024 * 1024; // Limit size to 3 MB
@@ -34,6 +35,11 @@ pub const TEST_CHAIN_ID: u64 = 0xDEAD;
 
 /// Exit result, if succeed, returns `ExitSucceed` - info about execution, Vec<u8> - output data, u64 - gas cost
 pub type PrecompileCallResult = Result<(ExitSucceed, Vec<u8>, u64), ExitError>;
+
+pub type OwnedPrecompile<'precompile> = BTreeMap<
+    H160,
+    Box<dyn Fn(&[u8], Option<u64>, &Context, bool) -> PrecompileResult + 'precompile>,
+>;
 
 #[derive(Clone, Debug)]
 pub struct ExecutionResult {
@@ -116,7 +122,7 @@ impl Executor {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn transaction_execute_raw<F>(
+    pub fn transaction_execute_raw(
         &mut self,
         caller: H160,
         nonce: U256,
@@ -127,11 +133,8 @@ impl Executor {
         value: U256,
         tx_chain_id: Option<u64>,
         tx_hash: H256,
-        mut precompiles: F,
-    ) -> Result<ExecutionResult, Error>
-    where
-        F: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
-    {
+        precompiles: OwnedPrecompile,
+    ) -> Result<ExecutionResult, Error> {
         let state_account = self
             .evm_backend
             .get_account_state(caller)
@@ -193,6 +196,7 @@ impl Executor {
             }
         );
 
+        let precompiles: Precompile = precompiles.iter().map(|(k, v)| (*k, &**v)).collect();
         let config = self.config.to_evm_params();
         let transaction_context = TransactionContext::new(gas_price.as_u64(), caller);
         let execution_context = ExecutorContext::new(
@@ -205,14 +209,14 @@ impl Executor {
         let block_gas_limit_left = execution_context.gas_left();
         let metadata = StackSubstateMetadata::new(block_gas_limit_left, &config);
         let state = MemoryStackState::new(metadata, &execution_context);
-        let mut executor = StackExecutor::new_with_precompile(state, &config, &mut precompiles);
+        let mut executor = StackExecutor::new_with_precompiles(state, &config, &precompiles);
         let (exit_reason, exit_data) = match action {
             TransactionAction::Call(addr) => {
                 debug!(
                     "TransactionAction::Call caller  = {}, to = {}.",
                     caller, addr
                 );
-                executor.transact_call(caller, addr, value, input, gas_limit.as_u64())
+                executor.transact_call(caller, addr, value, input, gas_limit.as_u64(), vec![])
             }
             TransactionAction::Create => {
                 let addr = TransactionAction::Create.address(caller, nonce);
@@ -220,10 +224,7 @@ impl Executor {
                     "TransactionAction::Create caller  = {}, to = {:?}.",
                     caller, addr
                 );
-                (
-                    executor.transact_create(caller, value, input, gas_limit.as_u64()),
-                    vec![],
-                )
+                executor.transact_create(caller, value, input, gas_limit.as_u64(), vec![])
             }
         };
         let traces = executor.take_traces();
@@ -267,16 +268,13 @@ impl Executor {
     }
 
     /// Perform transaction execution without verify signature.
-    pub fn transaction_execute_unsinged<F>(
+    pub fn transaction_execute_unsinged(
         &mut self,
         caller: H160,
         tx: UnsignedTransaction,
         calculate_tx_hash_with_caller: bool,
-        precompiles: F,
-    ) -> Result<ExecutionResult, Error>
-    where
-        F: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
-    {
+        precompiles: OwnedPrecompile,
+    ) -> Result<ExecutionResult, Error> {
         let chain_id = self.config.chain_id;
 
         let unsigned_tx = UnsignedTransactionWithCaller {
@@ -303,14 +301,11 @@ impl Executor {
         Ok(result)
     }
 
-    pub fn transaction_execute<F>(
+    pub fn transaction_execute(
         &mut self,
         evm_tx: Transaction,
-        precompiles: F,
-    ) -> Result<ExecutionResult, Error>
-    where
-        F: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
-    {
+        precompiles: OwnedPrecompile,
+    ) -> Result<ExecutionResult, Error> {
         let caller = evm_tx.caller()?; // This method verify signature.
 
         let nonce = evm_tx.nonce;
@@ -345,15 +340,14 @@ impl Executor {
     // 1. deposit
     // 2. withdrawal? - currently unused
     // 3. executing transaction without commit
-    pub fn with_executor<'a, F, U, P>(&'a mut self, mut precompiles: P, func: F) -> U
+    pub fn with_executor<'a, F, U>(&'a mut self, precompiles: OwnedPrecompile, func: F) -> U
     where
         F: for<'r> FnOnce(
-            &mut StackExecutor<'r, 'r, MemoryStackState<'r, 'r, ExecutorContext<'a, Incomming>>>,
+            &mut StackExecutor<'r, 'r, MemoryStackState<'r, 'r, ExecutorContext<'a, Incomming>>, Precompile>,
         ) -> U,
-
-        P: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
     {
         let transaction_context = TransactionContext::default();
+        let precompiles: Precompile = precompiles.iter().map(|(k, v)| (*k, &**v)).collect();
         let config = self.config.to_evm_params();
         let execution_context = ExecutorContext::new(
             &mut self.evm_backend,
@@ -365,7 +359,7 @@ impl Executor {
         let gas_limit = execution_context.gas_left();
         let metadata = StackSubstateMetadata::new(gas_limit, &config);
         let state = MemoryStackState::new(metadata, &execution_context);
-        let mut executor = StackExecutor::new_with_precompile(state, &config, &mut precompiles);
+        let mut executor = StackExecutor::new_with_precompiles(state, &config, &precompiles);
         let result = func(&mut executor);
         let used_gas = executor.used_gas();
         let (updates, _logs) = executor.into_state().deconstruct();
@@ -414,10 +408,9 @@ impl Executor {
     /// 5. value: amount (specified by method caller)
     ///
     pub fn deposit(&mut self, recipient: H160, amount: U256) {
-        self.with_executor(
-            |_, _, _, _| None,
-            |e| e.state_mut().deposit(recipient, amount),
-        );
+        self.with_executor(OwnedPrecompile::new(), |e| {
+            e.state_mut().deposit(recipient, amount)
+        });
     }
 
     pub fn register_swap_tx_in_evm(
@@ -427,14 +420,11 @@ impl Executor {
         amount: U256,
         signed_compatible: bool,
     ) {
-        let nonce = self.with_executor(
-            |_, _, _, _| None,
-            |e| {
-                let nonce = e.nonce(mint_address);
-                e.state_mut().inc_nonce(mint_address);
-                nonce
-            },
-        );
+        let nonce = self.with_executor(OwnedPrecompile::new(), |e| {
+            let nonce = e.nonce(mint_address);
+            e.state_mut().inc_nonce(mint_address);
+            nonce
+        });
         let tx = UnsignedTransaction {
             nonce,
             gas_limit: 0.into(),
@@ -462,14 +452,11 @@ impl Executor {
 
     /// After "swap from evm" transaction EVM_MINT_ADDRESS will cleanup. Using this method.
     pub fn reset_balance(&mut self, swap_addr: H160, ignore_reset_on_cleared: bool) {
-        self.with_executor(
-            |_, _, _, _| None,
-            |e| {
-                if !ignore_reset_on_cleared || e.state().basic(swap_addr).balance != U256::zero() {
-                    e.state_mut().reset_balance(swap_addr)
-                }
-            },
-        );
+        self.with_executor(OwnedPrecompile::new(), |e| {
+            if !ignore_reset_on_cleared || e.state().basic(swap_addr).balance != U256::zero() {
+                e.state_mut().reset_balance(swap_addr)
+            }
+        });
     }
 
     //  /// Burn some tokens on address:
@@ -535,7 +522,7 @@ mod tests {
     use ethabi::Token;
     use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use evm::backend::MemoryBackend;
-    use evm::executor::{MemoryStackState, StackSubstateMetadata};
+    use evm::executor::stack::{MemoryStackState, StackSubstateMetadata};
     use log::LevelFilter;
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
@@ -547,16 +534,7 @@ mod tests {
     use crate::context::EvmConfig;
     use crate::*;
     use error::*;
-
-    #[allow(clippy::type_complexity)]
-    fn noop_precompile(
-        _: H160,
-        _: &[u8],
-        _: Option<u64>,
-        _: &Context,
-    ) -> Option<Result<(ExitSucceed, Vec<u8>, u64), ExitError>> {
-        None
-    }
+    use crate::executor::OwnedPrecompile;
 
     fn name_to_key(name: &str) -> H160 {
         let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
@@ -613,7 +591,7 @@ mod tests {
     }
 
     mod metacoin {
-        use ethabi::{Function, Param, ParamType};
+        use ethabi::{Function, Param, ParamType, StateMutability};
         use once_cell::sync::Lazy;
 
         pub static GET_BALANCE: Lazy<Function> = Lazy::new(|| Function {
@@ -621,12 +599,15 @@ mod tests {
             inputs: vec![Param {
                 name: "addr".to_string(),
                 kind: ParamType::Address,
+                internal_type: None,
             }],
             outputs: vec![Param {
                 name: "".to_string(),
                 kind: ParamType::Uint(256),
+                internal_type: None,
             }],
-            constant: true,
+            constant: Some(true),
+            state_mutability: StateMutability::View,
         });
 
         pub static SEND_COIN: Lazy<Function> = Lazy::new(|| Function {
@@ -635,17 +616,21 @@ mod tests {
                 Param {
                     name: "receiver".to_string(),
                     kind: ParamType::Address,
+                    internal_type: None,
                 },
                 Param {
                     name: "amount".to_string(),
                     kind: ParamType::Uint(256),
+                    internal_type: None,
                 },
             ],
             outputs: vec![Param {
                 name: "sufficient".to_string(),
                 kind: ParamType::Bool,
+                internal_type: None,
             }],
-            constant: false,
+            constant: Some(false),
+            state_mutability: StateMutability::NonPayable,
         });
     }
 
@@ -669,7 +654,7 @@ mod tests {
         let create_tx = create_tx.sign(&alice.secret, Some(chain_id));
         assert!(matches!(
             executor
-                .transaction_execute(create_tx.clone(), noop_precompile)
+                .transaction_execute(create_tx.clone(), OwnedPrecompile::new())
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -678,7 +663,7 @@ mod tests {
         let hash = create_tx.tx_id_hash();
         assert!(matches!(
             executor
-                .transaction_execute(create_tx, noop_precompile)
+                .transaction_execute(create_tx, OwnedPrecompile::new())
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash } if tx_hash == hash
         ));
@@ -707,7 +692,7 @@ mod tests {
                     alice.address(),
                     create_tx.clone(),
                     false,
-                    noop_precompile
+                    OwnedPrecompile::new()
                 )
                 .unwrap()
                 .exit_reason,
@@ -717,7 +702,7 @@ mod tests {
         let hash = create_tx.signing_hash(Some(chain_id));
         assert!(matches!(
             executor
-            .transaction_execute_unsinged(alice.address(), create_tx, false, noop_precompile)
+            .transaction_execute_unsinged(alice.address(), create_tx, false, OwnedPrecompile::new())
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash } if tx_hash == hash
         ));
@@ -748,7 +733,7 @@ mod tests {
             let create_tx = alice.create(&code);
             assert!(matches!(
                 executor
-                    .transaction_execute(create_tx.clone(), noop_precompile)
+                    .transaction_execute(create_tx.clone(), OwnedPrecompile::new())
                     .unwrap()
                     .exit_reason,
                 ExitReason::Succeed(ExitSucceed::Returned)
@@ -781,7 +766,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, noop_precompile)
+                .transaction_execute(call_tx, OwnedPrecompile::new())
                 .unwrap();
 
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
@@ -835,7 +820,7 @@ mod tests {
         );
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx.clone(), true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx.clone(), true, OwnedPrecompile::new())
                 .unwrap_err(),
             Error::GasPriceOutOfBounds {
                 gas_price: 0.into()
@@ -846,7 +831,7 @@ mod tests {
 
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx, true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx, true, OwnedPrecompile::new())
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Stopped)
@@ -873,7 +858,7 @@ mod tests {
         let address = alice.address();
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx.clone(), true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx.clone(), true, OwnedPrecompile::new())
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -891,7 +876,7 @@ mod tests {
 
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx, true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx, true, OwnedPrecompile::new())
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash: hash }
         );
@@ -918,7 +903,7 @@ mod tests {
         let wrong_tx = create_tx.clone().sign(&alice.secret, None);
         assert!(matches!(
             dbg!(executor
-                .transaction_execute(wrong_tx, noop_precompile)
+                .transaction_execute(wrong_tx, OwnedPrecompile::new())
                 .unwrap_err()),
             Error::WrongChainId {
                 chain_id: err_chain_id,
@@ -931,7 +916,7 @@ mod tests {
             .sign(&alice.secret, Some(another_chain_id));
         assert!(matches!(
             executor
-                .transaction_execute(wrong_tx, noop_precompile)
+                .transaction_execute(wrong_tx, OwnedPrecompile::new())
                 .unwrap_err(),
             Error::WrongChainId {
                 chain_id: err_chain_id,
@@ -942,7 +927,7 @@ mod tests {
         let create_tx = create_tx.sign(&alice.secret, Some(chain_id));
         assert!(matches!(
             executor
-                .transaction_execute(create_tx, noop_precompile)
+                .transaction_execute(create_tx, OwnedPrecompile::new())
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -969,7 +954,7 @@ mod tests {
 
         assert!(matches!(
             executor
-                .transaction_execute(create_tx, noop_precompile)
+                .transaction_execute(create_tx, OwnedPrecompile::new())
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -989,7 +974,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(call_tx, noop_precompile)
+            .transaction_execute(call_tx, OwnedPrecompile::new())
             .unwrap();
 
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
@@ -1019,7 +1004,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(send_tx, noop_precompile)
+            .transaction_execute(send_tx, OwnedPrecompile::new())
             .unwrap();
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
         assert_eq!(
@@ -1043,7 +1028,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(call_tx, noop_precompile)
+            .transaction_execute(call_tx, OwnedPrecompile::new())
             .unwrap();
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
         assert_eq!(
@@ -1067,7 +1052,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(call_tx, noop_precompile)
+            .transaction_execute(call_tx, OwnedPrecompile::new())
             .unwrap();
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
         assert_eq!(
@@ -1103,7 +1088,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(send_tx, noop_precompile)
+                .transaction_execute(send_tx, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1127,7 +1112,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, noop_precompile)
+                .transaction_execute(call_tx, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1151,7 +1136,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, noop_precompile)
+                .transaction_execute(call_tx, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1181,7 +1166,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(send_tx, noop_precompile)
+                .transaction_execute(send_tx, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1205,7 +1190,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, noop_precompile)
+                .transaction_execute(call_tx, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1229,7 +1214,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, noop_precompile)
+                .transaction_execute(call_tx, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1252,7 +1237,7 @@ mod tests {
             Default::default(),
         );
 
-        let exit_reason = match executor.with_executor(noop_precompile, |e| {
+        let exit_reason = match executor.with_executor(OwnedPrecompile::new(), |e| {
             e.create(
                 name_to_key("caller"),
                 CreateScheme::Fixed(name_to_key("contract")),
@@ -1282,7 +1267,7 @@ mod tests {
                     input: data.to_vec(),
                 },
                 false, /* calculate_tx_hash_with_caller */
-                noop_precompile,
+                OwnedPrecompile::new(),
             )
             .unwrap();
 
@@ -1342,6 +1327,7 @@ mod tests {
             block_difficulty: Default::default(),
             block_gas_limit: Default::default(),
             chain_id: U256::one(),
+            block_base_fee_per_gas: Default::default()
         };
 
         let mut state = BTreeMap::new();
@@ -1364,7 +1350,8 @@ mod tests {
             let backend = MemoryBackend::new(&vicinity, state.clone());
             let metadata = StackSubstateMetadata::new(gas_limit, config);
             let state = MemoryStackState::new(metadata, &backend);
-            let mut executor = StackExecutor::new(state, config);
+            let precompiles = BTreeMap::new();
+            let mut executor = StackExecutor::new_with_precompiles(state, config, &precompiles);
 
             let _reason = executor.transact_call(
                 caller_address,
@@ -1372,6 +1359,7 @@ mod tests {
                 U256::zero(),
                 call_data.clone(),
                 gas_limit,
+                vec![],
             );
             executor.used_gas()
         };
@@ -1412,6 +1400,7 @@ mod tests {
             block_difficulty: Default::default(),
             block_gas_limit: Default::default(),
             chain_id: U256::one(),
+            block_base_fee_per_gas: Default::default()
         };
 
         let mut state = BTreeMap::new();
@@ -1434,7 +1423,8 @@ mod tests {
             let backend = MemoryBackend::new(&vicinity, state.clone());
             let metadata = StackSubstateMetadata::new(gas_limit, config);
             let state = MemoryStackState::new(metadata, &backend);
-            let mut executor = StackExecutor::new(state, config);
+            let precompiles = BTreeMap::new();
+            let mut executor = StackExecutor::new_with_precompiles(state, config, &precompiles);
 
             let _reason = executor.transact_call(
                 caller_address,
@@ -1442,6 +1432,7 @@ mod tests {
                 U256::zero(),
                 call_data.clone(),
                 gas_limit,
+                vec![],
             );
             executor.used_gas()
         };

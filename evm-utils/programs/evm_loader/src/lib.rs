@@ -9,6 +9,7 @@ pub mod solana_extension;
 
 pub static ID: solana_sdk::pubkey::Pubkey = solana_sdk::evm_loader::ID;
 
+pub use account_structure::AccountStructure;
 pub use processor::EvmProcessor;
 
 /// Public API for intermediate eth <-> solana transfers

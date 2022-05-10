@@ -1125,6 +1125,11 @@ impl From<evm_state::ExitReason> for generated_evm::ExitReason {
                     other: String::new(),
                     variant: ExitVariant::DesignatedInvalid.into(),
                 },
+                ExitError::InvalidCode => generated_evm::ExitReason {
+                    fatal: false,
+                    other: String::new(),
+                    variant: ExitVariant::InvalidCode.into(),
+                },
                 ExitError::InvalidJump => generated_evm::ExitReason {
                     fatal: false,
                     other: String::new(),
@@ -1244,6 +1249,7 @@ impl TryFrom<generated_evm::ExitReason> for evm_state::ExitReason {
             ExitVariant::CreateContractLimit => ExitError::CreateContractLimit,
             ExitVariant::CreateEmpty => ExitError::CreateEmpty,
             ExitVariant::DesignatedInvalid => ExitError::DesignatedInvalid,
+            ExitVariant::InvalidCode => ExitError::InvalidCode,
             ExitVariant::InvalidJump => ExitError::InvalidJump,
             ExitVariant::InvalidRange => ExitError::InvalidRange,
             ExitVariant::StackOverflow => ExitError::StackOverflow,

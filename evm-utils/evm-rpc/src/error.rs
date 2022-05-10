@@ -1,4 +1,5 @@
 use std::num::ParseIntError;
+use ethabi::StateMutability;
 
 use crate::BlockId;
 use evm_state::{ExitError, ExitFatal, ExitRevert, U256};
@@ -114,14 +115,17 @@ fn format_data_with_error<T: std::fmt::Debug>(data: &Bytes, error: &T) -> String
 }
 
 pub(crate) fn format_data(data: &Bytes) -> String {
+    #[allow(deprecated)]
     let func_decl = ethabi::Function {
         name: "Error".to_string(),
         inputs: vec![ethabi::Param {
             name: "string".to_string(),
             kind: ethabi::ParamType::String,
+            internal_type: None,
         }],
         outputs: vec![],
-        constant: false,
+        constant: Some(false),
+        state_mutability: StateMutability::Pure,
     };
     if data.0.len() > 4 {
         let hash = &data.0[0..4];
@@ -227,15 +231,16 @@ impl From<Error> for JRpcError {
                     ExitError::CreateContractLimit => 3,
                     ExitError::CreateEmpty => 4,
                     ExitError::DesignatedInvalid => 5,
-                    ExitError::InvalidJump => 6,
-                    ExitError::InvalidRange => 7,
-                    ExitError::OutOfFund => 8,
-                    ExitError::OutOfGas => 9,
-                    ExitError::OutOfOffset => 10,
-                    ExitError::PCUnderflow => 11,
-                    ExitError::StackOverflow => 12,
-                    ExitError::StackUnderflow => 13,
-                    ExitError::Other(_) => 14,
+                    ExitError::InvalidCode => 6,
+                    ExitError::InvalidJump => 7,
+                    ExitError::InvalidRange => 8,
+                    ExitError::OutOfFund => 9,
+                    ExitError::OutOfGas => 10,
+                    ExitError::OutOfOffset => 11,
+                    ExitError::PCUnderflow => 12,
+                    ExitError::StackOverflow => 13,
+                    ExitError::StackUnderflow => 14,
+                    ExitError::Other(_) => 15,
                 };
                 let error_code = ERROR_EVM_BASE_SUBCODE + error_code;
                 assert!(error_code < ERROR_EVM_BASE_SUBCODE + ERROR_EVM_BASE_SUBRANGE);

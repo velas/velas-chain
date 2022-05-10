@@ -1,5 +1,5 @@
-use super::{BuiltinEval, CallResult, PrecompileContext, PrecompileOk, Result};
-use evm_state::{TransactionSignature, H160, H256};
+use super::{BuiltinEval, CallResult, PrecompileContext, Result};
+use evm_state::{executor::PrecompileOutput, TransactionSignature, H160, H256};
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -179,11 +179,12 @@ pub fn extend_precompile_map(map: &mut HashMap<H160, BuiltinEval>) {
 fn execute_precompile<T: Precompile>(source: &[u8], cx: PrecompileContext) -> CallResult {
     let gas_used = T::pricer().calculate_price(source);
     let bytes = T::implementation(source, cx)?;
-    Ok(PrecompileOk::new(
-        evm_state::ExitSucceed::Returned,
-        bytes,
-        gas_used,
-    ))
+    Ok(PrecompileOutput {
+        exit_status: evm_state::ExitSucceed::Returned,
+        cost: gas_used,
+        output: bytes,
+        logs: vec![],
+    })
 }
 
 //TODO:

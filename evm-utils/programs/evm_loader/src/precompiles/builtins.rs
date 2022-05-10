@@ -1,26 +1,26 @@
 use snafu::{ensure, ResultExt};
 use std::{marker::PhantomData, str::FromStr};
 
-use ethabi::{Function, Param, ParamType, Token};
-use evm_state::ExitSucceed;
+use ethabi::{Function, Param, ParamType, StateMutability, Token};
+use evm_state::{ExitSucceed, executor::PrecompileOutput};
 use once_cell::sync::Lazy;
 use primitive_types::H160;
 
 use super::abi_parse::ParseTokens;
 use super::errors::*;
-use super::{PrecompileContext, PrecompileOk, Result};
+use super::{PrecompileContext, Result};
 use crate::scope::evm::gweis_to_lamports;
 use solana_sdk::pubkey::Pubkey;
 
 pub trait NativeFunction<Inputs> {
-    fn call(&self, inputs: Inputs, cx: PrecompileContext<'_>) -> Result<PrecompileOk>;
+    fn call(&self, inputs: Inputs, cx: PrecompileContext<'_, '_>) -> Result<PrecompileOutput>;
 }
 
 impl<F, Inputs> NativeFunction<Inputs> for F
 where
-    F: Fn(Inputs, PrecompileContext<'_>) -> Result<PrecompileOk>,
+    F: Fn(Inputs, PrecompileContext<'_, '_>) -> Result<PrecompileOutput>,
 {
-    fn call(&self, inputs: Inputs, cx: PrecompileContext<'_>) -> Result<PrecompileOk> {
+    fn call(&self, inputs: Inputs, cx: PrecompileContext<'_, '_>) -> Result<PrecompileOutput> {
         (*self)(inputs, cx)
     }
 }
@@ -85,7 +85,11 @@ where
             .and_then(I::parse)
     }
 
-    pub fn eval(&self, function_abi_input: &[u8], cx: PrecompileContext) -> Result<PrecompileOk> {
+    pub fn eval(
+        &self,
+        function_abi_input: &[u8],
+        cx: PrecompileContext,
+    ) -> Result<PrecompileOutput> {
         let params = self.parse_abi(function_abi_input)?;
 
         self.implementation.call(params, cx)
@@ -106,21 +110,24 @@ pub static ETH_TO_VLX_ADDR: Lazy<H160> = Lazy::new(|| {
     .expect("Serialization of static data should be determenistic and never fail.")
 });
 
-type EthToVlxImp = fn(Pubkey, PrecompileContext) -> Result<PrecompileOk>;
+type EthToVlxImp = fn(Pubkey, PrecompileContext) -> Result<PrecompileOutput>;
 
 pub static ETH_TO_VLX_CODE: Lazy<NativeContract<EthToVlxImp, Pubkey>> = Lazy::new(|| {
+    #[allow(deprecated)]
     let abi = Function {
         name: String::from("transferToNative"),
         inputs: vec![Param {
             name: String::from("native_recipient"),
             kind: ParamType::FixedBytes(32),
+            internal_type: Some(String::from("NativeAddress")),
         }],
         outputs: vec![],
-        constant: false,
+        constant: Some(false),
+        state_mutability: StateMutability::Payable,
     };
 
     // TOOD: Modify gas left.
-    fn implementation(pubkey: Pubkey, cx: PrecompileContext) -> Result<PrecompileOk> {
+    fn implementation(pubkey: Pubkey, cx: PrecompileContext) -> Result<PrecompileOutput> {
         // EVM should ensure that user has enough tokens, before calling this precompile.
 
         log::trace!("Precompile ETH_TO_VLX");
@@ -150,7 +157,12 @@ pub static ETH_TO_VLX_CODE: Lazy<NativeContract<EthToVlxImp, Pubkey>> = Lazy::ne
 
         evm_account.lamports -= lamports;
         user_account.lamports += lamports;
-        Ok(PrecompileOk::new(ExitSucceed::Returned, vec![], 0))
+        Ok(PrecompileOutput {
+            exit_status: ExitSucceed::Returned,
+            cost: 0,
+            output: vec![],
+            logs: vec![],
+        })
     }
 
     NativeContract::new([0xb1, 0xd6, 0x92, 0x7a], abi, implementation)
