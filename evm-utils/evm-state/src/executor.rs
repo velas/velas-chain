@@ -594,6 +594,7 @@ mod tests {
         use ethabi::{Function, Param, ParamType, StateMutability};
         use once_cell::sync::Lazy;
 
+        #[allow(deprecated)]
         pub static GET_BALANCE: Lazy<Function> = Lazy::new(|| Function {
             name: "getBalance".to_string(),
             inputs: vec![Param {
@@ -610,6 +611,7 @@ mod tests {
             state_mutability: StateMutability::View,
         });
 
+        #[allow(deprecated)]
         pub static SEND_COIN: Lazy<Function> = Lazy::new(|| Function {
             name: "sendCoin".to_string(),
             inputs: vec![
