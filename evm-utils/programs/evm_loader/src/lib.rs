@@ -109,10 +109,10 @@ pub fn free_ownership(owner: solana::Address) -> solana::Instruction {
     Instruction::new_with_bincode(crate::ID, &EvmInstruction::FreeOwnership {}, account_metas)
 }
 
-pub fn big_tx_allocate(storage: &solana::Address, size: usize) -> solana::Instruction {
+pub fn big_tx_allocate(storage: solana::Address, size: usize) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
-        AccountMeta::new(*storage, true),
+        AccountMeta::new(storage, true),
     ];
 
     let big_tx = EvmBigTransaction::EvmTransactionAllocate { size: size as u64 };
@@ -124,10 +124,10 @@ pub fn big_tx_allocate(storage: &solana::Address, size: usize) -> solana::Instru
     )
 }
 
-pub fn big_tx_write(storage: &solana::Address, offset: u64, chunk: Vec<u8>) -> solana::Instruction {
+pub fn big_tx_write(storage: solana::Address, offset: u64, chunk: Vec<u8>) -> solana::Instruction {
     let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
-        AccountMeta::new(*storage, true),
+        AccountMeta::new(storage, true),
     ];
 
     let big_tx = EvmBigTransaction::EvmTransactionWrite {
@@ -143,12 +143,12 @@ pub fn big_tx_write(storage: &solana::Address, offset: u64, chunk: Vec<u8>) -> s
 }
 
 pub fn big_tx_execute(
-    storage: &solana::Address,
+    storage: solana::Address,
     gas_collector: Option<&solana::Address>,
 ) -> solana::Instruction {
     let mut account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
-        AccountMeta::new(*storage, true),
+        AccountMeta::new(storage, true),
     ];
 
     if let Some(gas_collector) = gas_collector {

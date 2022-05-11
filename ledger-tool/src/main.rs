@@ -759,9 +759,11 @@ fn load_bank_forks(
         process_options,
         None,
         None,
+        None,
+	    verify_evm_state,
+        None,
         accounts_package_sender,
         None,
-	verify_evm_state,
     )
 }
 

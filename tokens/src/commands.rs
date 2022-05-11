@@ -38,8 +38,8 @@ use {
         transaction::Transaction,
     },
     solana_transaction_status::TransactionStatus,
-    spl_associated_token_account::get_associated_token_address,
-    spl_token::solana_program::program_error::ProgramError,
+    spl_associated_token_account_v1_0::get_associated_token_address,
+    spl_token_v2_0::solana_program::program_error::ProgramError,
     std::{
         cmp::{self},
         io,
@@ -631,7 +631,7 @@ fn finalize_transactions(
 
     while opt_confirmations.is_some() {
         if let Some(confirmations) = opt_confirmations {
-            progress_bar.set_message(format!(
+            progress_bar.set_message(&format!(
                 "[{}/{}] Finalizing transactions",
                 confirmations, 32,
             ));

@@ -37,7 +37,7 @@ mod evm {
         push_not_confirmed: bool,
         force_reupload: bool,
     ) -> Result<Slot, Box<dyn std::error::Error>> {
-        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
             .await
             .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
@@ -54,7 +54,7 @@ mod evm {
     }
 
     pub async fn first_available_block() -> Result<(), Box<dyn std::error::Error>> {
-        let bigtable = solana_storage_bigtable::LedgerStorage::new(true, None).await?;
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(true, None, None).await?;
         match bigtable.get_evm_first_available_block().await? {
             Some(block) => println!("{}", block),
             None => println!("No blocks available"),
@@ -64,7 +64,7 @@ mod evm {
     }
 
     pub async fn block(block_num: evm_state::BlockNum) -> Result<(), Box<dyn std::error::Error>> {
-        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
             .await
             .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
@@ -78,7 +78,7 @@ mod evm {
         starting_slot: Slot,
         limit: usize,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
             .await
             .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 

@@ -79,7 +79,7 @@ impl fmt::Display for ExecutionResult {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Executor {
     pub evm_backend: EvmBackend<Incomming>,
     chain_context: ChainContext,

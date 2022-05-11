@@ -10,8 +10,8 @@ use {
     solana_client::rpc_client::RpcClient,
     solana_sdk::{instruction::Instruction, message::Message, native_token::lamports_to_sol},
     solana_transaction_status::parse_token::spl_token_instruction,
-    spl_associated_token_account::{create_associated_token_account, get_associated_token_address},
-    spl_token::{
+    spl_associated_token_account_v1_0::{create_associated_token_account, get_associated_token_address},
+    spl_token_v2_0::{
         solana_program::program_pack::Pack,
         state::{Account as SplTokenAccount, Mint},
     },
@@ -66,8 +66,8 @@ pub fn build_spl_token_instructions(
             create_associated_token_account_instruction,
         ));
     }
-    let spl_instruction = spl_token::instruction::transfer_checked(
-        &spl_token::id(),
+    let spl_instruction = spl_token_v2_0::instruction::transfer_checked(
+        &spl_token_v2_0::id(),
         &spl_token_pubkey(&spl_token_args.token_account_address),
         &spl_token_pubkey(&spl_token_args.mint),
         &associated_token_address,

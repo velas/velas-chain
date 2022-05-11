@@ -230,6 +230,7 @@ impl LocalCluster {
             &leader_config,
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
+            None,
             socket_addr_space,
         );
 
@@ -425,6 +426,7 @@ impl LocalCluster {
             &config,
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
+            None,
             socket_addr_space,
         );
 
@@ -765,6 +767,7 @@ impl Cluster for LocalCluster {
             &safe_clone_config(&cluster_validator_info.config),
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
+            None,
             socket_addr_space,
         );
         cluster_validator_info.validator = Some(restarted_node);

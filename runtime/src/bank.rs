@@ -5798,7 +5798,6 @@ impl Bank {
             "evm_loader",
             &solana_sdk::evm_loader::id(),
             |acc, data, context| {
-                // TODO: avoid to_vec
                 solana_evm_loader_program::EvmProcessor{}.process_instruction(acc,
                     data,
                     context,

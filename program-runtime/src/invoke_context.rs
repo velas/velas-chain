@@ -252,6 +252,11 @@ impl<'a> InvokeContext<'a> {
         }
     }
 
+    /// Take evm executor from context, removing the context, panic if evm executor wasnt in context.
+    pub fn deconstruct_evm(self) -> Option<evm_state::Executor> {
+        self.evm_executor.and_then(|rc|Rc::try_unwrap(rc).ok().map(|i|i.into_inner()))
+    }
+
     pub fn new_mock(
         accounts: &'a [TransactionAccountRefCell],
         builtin_programs: &'a [BuiltinProgram],
@@ -269,6 +274,27 @@ impl<'a> InvokeContext<'a> {
             0,
             0,
             None,
+        )
+    }
+
+    pub fn new_mock_evm(
+        accounts: &'a [TransactionAccountRefCell],
+        evm_executor: evm_state::Executor,
+        builtin_programs: &'a [BuiltinProgram],
+    ) -> Self {
+        Self::new(
+            Rent::default(),
+            accounts,
+            builtin_programs,
+            Cow::Owned(SysvarCache::default()),
+            Some(LogCollector::new_ref()),
+            ComputeBudget::default(),
+            Rc::new(RefCell::new(Executors::default())),
+            Arc::new(FeatureSet::all_enabled()),
+            Hash::default(),
+            0,
+            0,
+            Some(Rc::new(RefCell::new(evm_executor))),
         )
     }
 

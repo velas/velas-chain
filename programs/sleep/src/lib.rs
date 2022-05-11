@@ -3,11 +3,12 @@ use std::{thread, time::Duration};
 use byteorder::{LittleEndian, ReadBytesExt};
 use log::*;
 use solana_sdk::{
-    instruction::InstructionError, keyed_account::KeyedAccount, process_instruction::InvokeContext,
+    instruction::InstructionError, keyed_account::KeyedAccount,
     pubkey::Pubkey,
 };
+use solana_program_runtime::invoke_context::InvokeContext;
 
-solana_sdk::declare_program!(
+solana_sdk::declare_builtin!(
     "S1eep11111111111111111111111111111111111111",
     solana_sleep_program,
     process_instruction
@@ -18,7 +19,7 @@ pub fn process_instruction(
     program_id: &Pubkey,
     keyed_accounts: &[KeyedAccount],
     data: &[u8],
-    _invoke_context: &mut dyn InvokeContext,
+    _invoke_context: &mut  InvokeContext,
 ) -> Result<(), InstructionError> {
     solana_logger::setup();
     trace!("sleep: program_id: {:?}", program_id);

@@ -10,8 +10,9 @@ edition = "2018"
 
 [dependencies]
 log = "0.4.11"
-solana-logger = { path = "../../logger", version = "1.5.14" }
-solana-sdk = { path = "../../sdk", version = "1.5.14" }
+solana-logger = { path = "../../logger", version = "1.9.13" }
+solana-sdk = { path = "../../sdk", version = "1.9.13" }
+solana-program-runtime = { path = "../../program-runtime", version = "1.9.13" }
 byteorder = "1.4.3"
 
 [lib]

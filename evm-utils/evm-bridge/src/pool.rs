@@ -681,7 +681,7 @@ fn deploy_big_tx(
     );
 
     let allocate_storage_ix =
-        solana_evm_loader_program::big_tx_allocate(&storage_pubkey, tx_bytes.len());
+        solana_evm_loader_program::big_tx_allocate(storage_pubkey, tx_bytes.len());
 
     let create_and_allocate_tx = solana::Transaction::new_signed_with_payer(
         &[create_storage_ix, allocate_storage_ix],
@@ -732,7 +732,7 @@ fn deploy_big_tx(
         .enumerate()
         .map(|(i, chunk)| {
             solana_evm_loader_program::big_tx_write(
-                &storage_pubkey,
+                storage_pubkey,
                 (i * evm_state::TX_MTU) as u64,
                 chunk.to_vec(),
             )
@@ -764,7 +764,7 @@ fn deploy_big_tx(
 
     let execute_tx = solana::Transaction::new_signed_with_payer(
         &[solana_evm_loader_program::big_tx_execute(
-            &storage_pubkey,
+            storage_pubkey,
             Some(&payer_pubkey),
         )],
         Some(&payer_pubkey),

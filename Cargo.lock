@@ -6995,6 +6995,7 @@ dependencies = [
  "byteorder",
  "log 0.4.14",
  "solana-logger 1.9.13",
+ "solana-program-runtime",
  "solana-sdk",
 ]
 

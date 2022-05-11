@@ -3,8 +3,8 @@
 
 use {
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
-    evm_state::U256;
-    log::{error, info};
+    evm_state::U256,
+    log::{error, info},
     solana_clap_utils::{
         input_parsers::{
             cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime,
@@ -14,7 +14,8 @@ use {
         },
     },
     solana_entry::poh::compute_hashes_per_tick,
-    solana_genesis::{genesis_accounts::add_genesis_accounts, Base64Account},
+    solana_stake_program::add_genesis_accounts,
+    solana_genesis::Base64Account,
     solana_ledger::{blockstore::create_new_ledger, blockstore_db::AccessType},
     solana_runtime::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_sdk::{
