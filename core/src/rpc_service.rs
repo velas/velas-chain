@@ -37,6 +37,12 @@ use std::{
 };
 use tokio_util::codec::{BytesCodec, FramedRead};
 
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{
+    filter::{LevelFilter, Targets},
+    layer::{Layer, SubscriberExt},
+};
+
 const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
 
 pub struct JsonRpcService {
@@ -275,6 +281,7 @@ impl JsonRpcService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         current_transaction_status_slot: Arc<AtomicU64>,
         evm_state_archive: Option<evm_state::Storage>,
+        jaeger_collector_url: Option<String>,
     ) -> Self {
         info!("rpc bound to {:?}", rpc_addr);
         info!("rpc configuration: {:?}", config);
@@ -376,6 +383,33 @@ impl JsonRpcService {
             send_transaction_retry_ms,
             send_transaction_leader_forward_count,
         ));
+        if let Some(collector) = jaeger_collector_url {
+            // init tracer
+            runtime.block_on(async {
+                let fmt_filter = std::env::var("RUST_LOG")
+                    .ok()
+                    .and_then(|rust_log| match rust_log.parse::<Targets>() {
+                        Ok(targets) => Some(targets),
+                        Err(e) => {
+                            eprintln!("failed to parse `RUST_LOG={:?}`: {}", rust_log, e);
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| Targets::default().with_default(LevelFilter::WARN));
+
+                let tracer = opentelemetry_jaeger::new_pipeline()
+                    .with_service_name("velas-jsonrpc-tracer")
+                    .with_collector_endpoint(collector)
+                    .install_batch(opentelemetry::runtime::Tokio)
+                    .unwrap();
+                let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+                let registry = tracing_subscriber::registry()
+                    .with(tracing_subscriber::fmt::layer().with_filter(fmt_filter))
+                    .with(opentelemetry);
+
+                registry.try_init().unwrap();
+            });
+        }
 
         #[cfg(test)]
         let test_request_processor = request_processor.clone();
@@ -516,6 +550,7 @@ mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
+            None,
             None,
         );
         let thread = rpc_service.thread_hdl.thread();

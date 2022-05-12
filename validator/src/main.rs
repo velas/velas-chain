@@ -1110,6 +1110,13 @@ pub fn main() {
                 .help("Use DIR as evm-state archive location"),
         )
         .arg(
+            Arg::with_name("jaeger_collector_url")
+                .long("jaeger-collector")
+                .value_name("URL")
+                .takes_value(true)
+                .help("Use URL as location to jaegere collector /api/traces endpoint."),
+        )
+        .arg(
             Arg::with_name("entrypoint")
                 .short("n")
                 .long("entrypoint")
@@ -2237,6 +2244,7 @@ pub fn main() {
         tpu_coalesce_ms,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
         verify_evm_state: matches.is_present("verify_evm_state"),
+        jaeger_collector_url: value_of(&matches, "jaeger_collector_url"),
 
         ..ValidatorConfig::default()
     };

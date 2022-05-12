@@ -24,6 +24,9 @@ use solana_runtime::bank::Bank;
 use std::{cell::RefCell, future::ready, sync::Arc};
 const GAS_PRICE: u64 = 3;
 
+use tracing_attributes::instrument;
+
+#[derive(Debug)]
 pub struct StateRootWithBank {
     pub state_root: Option<H256>,
     pub bank: Option<Arc<Bank>>,
@@ -87,6 +90,7 @@ impl StateRootWithBank {
     }
 }
 
+#[instrument(skip(meta))]
 async fn block_to_state_root(
     block: Option<BlockId>,
     meta: &JsonRpcRequestProcessor,
@@ -141,6 +145,7 @@ async fn block_to_state_root(
     }
 }
 
+#[instrument(skip(meta))]
 async fn block_parse_confirmed_num(
     block: Option<BlockId>,
     meta: &JsonRpcRequestProcessor,
@@ -150,7 +155,7 @@ async fn block_parse_confirmed_num(
         BlockId::BlockHash { .. } => None,
         BlockId::RelativeId(BlockRelId::Earliest) => {
             Some(meta.get_first_available_evm_block().await)
-        },
+        }
         BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
             Some(meta.get_last_confirmed_evm_block().unwrap_or_else(|| {
                 let bank = meta.bank(Some(CommitmentConfig::processed()));
@@ -285,10 +290,12 @@ impl ChainMockERPC for ChainMockErpcImpl {
     }
 }
 
+#[derive(Debug)]
 pub struct BasicErpcImpl;
 impl BasicERPC for BasicErpcImpl {
     type Metadata = JsonRpcRequestProcessor;
 
+    #[instrument(skip(self, meta))]
     fn block_number(&self, meta: Self::Metadata) -> BoxFuture<Result<Hex<usize>, Error>> {
         Box::pin(async move {
             let block = block_parse_confirmed_num(None, &meta).await.unwrap_or(0);
@@ -296,6 +303,7 @@ impl BasicERPC for BasicErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn balance(
         &self,
         meta: Self::Metadata,
@@ -304,7 +312,7 @@ impl BasicERPC for BasicErpcImpl {
     ) -> BoxFuture<Result<Hex<U256>, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
-    
+
             let account = state
                 .get_account_state_at(&meta, address.0)?
                 .unwrap_or_default();
@@ -312,6 +320,7 @@ impl BasicERPC for BasicErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn storage_at(
         &self,
         meta: Self::Metadata,
@@ -330,6 +339,7 @@ impl BasicERPC for BasicErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn transaction_count(
         &self,
         meta: Self::Metadata,
@@ -338,7 +348,7 @@ impl BasicERPC for BasicErpcImpl {
     ) -> BoxFuture<Result<Hex<U256>, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
-    
+
             let account = state
                 .get_account_state_at(&meta, address.0)?
                 .unwrap_or_default();
@@ -346,6 +356,7 @@ impl BasicERPC for BasicErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn code(
         &self,
         meta: Self::Metadata,
@@ -354,7 +365,7 @@ impl BasicERPC for BasicErpcImpl {
     ) -> BoxFuture<Result<Bytes, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
-    
+
             let account = state
                 .get_account_state_at(&meta, address.0)?
                 .unwrap_or_default();
@@ -362,6 +373,7 @@ impl BasicERPC for BasicErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn block_by_hash(
         &self,
         meta: Self::Metadata,
@@ -382,11 +394,12 @@ impl BasicERPC for BasicErpcImpl {
                 },
             };
             debug!("Found block = {:?}", block);
-    
+
             block_by_number(meta, block.into(), full).await
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn block_by_number(
         &self,
         meta: Self::Metadata,
@@ -396,6 +409,7 @@ impl BasicERPC for BasicErpcImpl {
         Box::pin(block_by_number(meta, block, full))
     }
 
+    #[instrument(skip(self, meta))]
     fn transaction_by_hash(
         &self,
         meta: Self::Metadata,
@@ -406,11 +420,14 @@ impl BasicERPC for BasicErpcImpl {
         Box::pin(async move {
             Ok(match meta.get_evm_receipt_by_hash(tx_hash.0).await {
                 Some(receipt) => {
-                    let (block, _) = meta.get_evm_block_by_id(receipt.block_number)
-                        .await
-                        .ok_or({
-                            Error::BlockNotFound { block: receipt.block_number.into() }
-                        })?;
+                    let (block, _) =
+                        meta.get_evm_block_by_id(receipt.block_number)
+                            .await
+                            .ok_or({
+                                Error::BlockNotFound {
+                                    block: receipt.block_number.into(),
+                                }
+                            })?;
                     let block_hash = block.header.hash();
                     Some(RPCTransaction::new_from_receipt(
                         receipt, tx_hash.0, block_hash, chain_id,
@@ -421,6 +438,7 @@ impl BasicERPC for BasicErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn transaction_receipt(
         &self,
         meta: Self::Metadata,
@@ -429,11 +447,14 @@ impl BasicERPC for BasicErpcImpl {
         Box::pin(async move {
             Ok(match meta.get_evm_receipt_by_hash(tx_hash.0).await {
                 Some(receipt) => {
-                    let (block, _) = meta.get_evm_block_by_id(receipt.block_number)
-                        .await
-                        .ok_or({
-                            Error::BlockNotFound { block: receipt.block_number.into() }
-                        })?;
+                    let (block, _) =
+                        meta.get_evm_block_by_id(receipt.block_number)
+                            .await
+                            .ok_or({
+                                Error::BlockNotFound {
+                                    block: receipt.block_number.into(),
+                                }
+                            })?;
                     let block_hash = block.header.hash();
                     Some(RPCReceipt::new_from_receipt(
                         receipt, tx_hash.0, block_hash, None,
@@ -444,6 +465,7 @@ impl BasicERPC for BasicErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn call(
         &self,
         meta: Self::Metadata,
@@ -456,7 +478,8 @@ impl BasicERPC for BasicErpcImpl {
             .flatten()
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| into_native_error(e, false)) {
+            .map_err(|e| into_native_error(e, false))
+        {
             Ok(keys) => keys,
             Err(err) => return Box::pin(ready(Err(err))),
         };
@@ -468,12 +491,14 @@ impl BasicERPC for BasicErpcImpl {
         })
     }
 
+    #[instrument(skip(self, _meta))]
     fn gas_price(&self, _meta: Self::Metadata) -> Result<Hex<Gas>, Error> {
         Ok(Hex(
             solana_evm_loader_program::scope::evm::lamports_to_gwei(GAS_PRICE),
         ))
     }
 
+    #[instrument(skip(self, meta))]
     fn trace_call(
         &self,
         meta: Self::Metadata,
@@ -491,6 +516,7 @@ impl BasicERPC for BasicErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn trace_call_many(
         &self,
         meta: Self::Metadata,
@@ -500,6 +526,7 @@ impl BasicERPC for BasicErpcImpl {
         Box::pin(trace_call_many(meta, tx_traces, block))
     }
 
+    #[instrument(skip(self, meta))]
     fn trace_replay_transaction(
         &self,
         meta: Self::Metadata,
@@ -521,18 +548,21 @@ impl BasicERPC for BasicErpcImpl {
                     meta_info.transaction_index = tx.transaction_index.map(|v| v.0);
                     meta_info.block_number = tx.block_number.map(|v| v.0);
                     meta_info.block_hash = tx.block_hash.map(|v| v.0);
-                    Ok(Some(trace_call_many(meta, vec![(tx, traces, Some(meta_info))], Some(block))
-                        .await?
-                        .into_iter()
-                        .next()
-                        .expect("One item should be returned")))
-                },
+                    Ok(Some(
+                        trace_call_many(meta, vec![(tx, traces, Some(meta_info))], Some(block))
+                            .await?
+                            .into_iter()
+                            .next()
+                            .expect("One item should be returned"),
+                    ))
+                }
                 Ok(None) => Ok(None),
                 Err(e) => Err(e),
             }
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn trace_replay_block(
         &self,
         meta: Self::Metadata,
@@ -567,10 +597,12 @@ impl BasicERPC for BasicErpcImpl {
                 meta,
                 transactions,
                 Some(block.number.as_u64().saturating_sub(1).into()),
-            ).await
+            )
+            .await
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn estimate_gas(
         &self,
         meta: Self::Metadata,
@@ -591,7 +623,12 @@ impl BasicERPC for BasicErpcImpl {
         })
     }
 
-    fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> BoxFuture<Result<Vec<RPCLog>, Error>> {
+    #[instrument(skip(self, meta))]
+    fn logs(
+        &self,
+        meta: Self::Metadata,
+        log_filter: RPCLogFilter,
+    ) -> BoxFuture<Result<Vec<RPCLog>, Error>> {
         Box::pin(async move {
             const MAX_NUM_BLOCKS: u64 = 2000;
             let block_num = meta
@@ -614,7 +651,7 @@ impl BasicERPC for BasicErpcImpl {
                     batch_size: Some(MAX_NUM_BLOCKS),
                 });
             }
-    
+
             let filter = LogFilter {
                 address: log_filter
                     .address
@@ -633,7 +670,7 @@ impl BasicERPC for BasicErpcImpl {
                 to_block: to,
             };
             debug!("filter = {:?}", filter);
-    
+
             let logs = meta.filter_logs(filter).await.map_err(|e| {
                 debug!("filter_logs error = {:?}", e);
                 into_native_error(e, false)
@@ -650,6 +687,7 @@ struct TxOutput {
     traces: Vec<evm_state::executor::Trace>,
 }
 
+#[instrument(skip(meta))]
 fn call(
     meta: JsonRpcRequestProcessor,
     tx: RPCTransaction,
@@ -678,6 +716,7 @@ fn call(
     })
 }
 
+#[instrument(skip(meta))]
 fn call_many(
     meta: JsonRpcRequestProcessor,
     txs: &[(RPCTransaction, Vec<solana_sdk::pubkey::Pubkey>)],
@@ -734,6 +773,7 @@ fn call_many(
     Ok(result)
 }
 
+#[instrument(skip(executor, bank))]
 fn call_inner(
     executor: &mut evm_state::Executor,
     tx: RPCTransaction,
@@ -844,6 +884,7 @@ fn call_inner(
     })
 }
 
+#[instrument(skip(meta))]
 async fn block_by_number(
     meta: JsonRpcRequestProcessor,
     block: BlockId,
@@ -892,13 +933,14 @@ async fn block_by_number(
     )))
 }
 
+#[instrument(skip(meta))]
 async fn trace_call_many(
     meta: JsonRpcRequestProcessor,
     tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
     block: Option<BlockId>,
 ) -> Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
     let saved_state = block_to_state_root(block, &meta).await;
-    
+
     let mut txs = Vec::new();
     let mut txs_meta = Vec::new();
 
