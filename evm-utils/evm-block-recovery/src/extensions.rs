@@ -9,34 +9,6 @@ pub struct ParsedInstructions {
 }
 
 impl ParsedInstructions {
-    pub fn from_native_block(native: ConfirmedBlock) -> Self {
-        let mut instructions = vec![];
-        let mut only_trivial_instructions = true;
-
-        for TransactionWithStatusMeta { transaction, .. } in native.transactions {
-            for CompiledInstruction {
-                data,
-                program_id_index,
-                ..
-            } in transaction.message.instructions
-            {
-                if transaction.message.account_keys[program_id_index as usize] == STATIC_PROGRAM_ID
-                {
-                    let instruction: EvmInstruction = bincode::deserialize(&data).unwrap();
-                    if !matches!(instruction, EvmInstruction::EvmTransaction { .. }) {
-                        only_trivial_instructions = false;
-                    }
-                    instructions.push(instruction);
-                }
-            }
-        }
-
-        Self {
-            instructions,
-            only_trivial_instructions,
-        }
-    }
-
     pub fn instr_evm_transaction(&self) -> usize {
         self.instructions
             .iter()
