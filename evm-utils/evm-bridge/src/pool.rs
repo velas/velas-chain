@@ -625,6 +625,11 @@ fn process_tx(
     send_raw_tx.sign(&[&bridge.key], blockhash);
     debug!("Sending tx = {:?}", send_raw_tx);
 
+    debug!(
+        "Sending tx raw = {:?}",
+        base64::encode(&send_raw_tx.message_data())
+    );
+
     let signature = bridge
         .rpc_client
         .send_transaction_with_config(
