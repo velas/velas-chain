@@ -26,6 +26,9 @@ use crate::rpc_health::RpcHealthStatus;
 
 const GAS_PRICE: u64 = 3;
 
+use tracing_attributes::instrument;
+
+#[derive(Debug)]
 pub struct StateRootWithBank {
     pub state_root: Option<H256>,
     pub bank: Option<Arc<Bank>>,
@@ -89,6 +92,7 @@ impl StateRootWithBank {
     }
 }
 
+#[instrument(skip(meta))]
 async fn block_to_state_root(
     block: Option<BlockId>,
     meta: &JsonRpcRequestProcessor,
@@ -143,6 +147,7 @@ async fn block_to_state_root(
     }
 }
 
+#[instrument(skip(meta))]
 async fn block_parse_confirmed_num(
     block: Option<BlockId>,
     meta: &JsonRpcRequestProcessor,
@@ -152,7 +157,7 @@ async fn block_parse_confirmed_num(
         BlockId::BlockHash { .. } => None,
         BlockId::RelativeId(BlockRelId::Earliest) => {
             Some(meta.get_first_available_evm_block().await)
-        },
+        }
         BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
             Some(meta.get_last_confirmed_evm_block().unwrap_or_else(|| {
                 let bank = meta.bank(Some(CommitmentConfig::processed()));
@@ -170,7 +175,7 @@ impl GeneralERPC for GeneralErpcImpl {
     type Metadata = JsonRpcRequestProcessor;
 
     fn client_version(&self, _meta: Self::Metadata) -> Result<String, Error> {
-        Ok(String::from("velas-chain/v0.3.0"))
+        Ok(String::from("velas-chain/v0.5.0"))
     }
 
     fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> Result<Hex<H256>, Error> {
@@ -232,6 +237,7 @@ pub struct ChainErpcImpl;
 impl ChainERPC for ChainErpcImpl {
     type Metadata = JsonRpcRequestProcessor;
 
+    #[instrument(skip(self, meta))]
     fn block_number(&self, meta: Self::Metadata) -> BoxFuture<Result<Hex<usize>, Error>> {
         Box::pin(async move {
             let block = block_parse_confirmed_num(None, &meta).await.unwrap_or(0);
@@ -239,6 +245,7 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn balance(
         &self,
         meta: Self::Metadata,
@@ -255,6 +262,7 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn storage_at(
         &self,
         meta: Self::Metadata,
@@ -273,6 +281,7 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn transaction_count(
         &self,
         meta: Self::Metadata,
@@ -289,6 +298,7 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn block_transaction_count_by_number(
         &self,
         meta: Self::Metadata,
@@ -304,6 +314,7 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn block_transaction_count_by_hash(
         &self,
         meta: Self::Metadata,
@@ -319,6 +330,7 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn code(
         &self,
         meta: Self::Metadata,
@@ -335,6 +347,7 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn block_by_hash(
         &self,
         meta: Self::Metadata,
@@ -360,6 +373,7 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn block_by_number(
         &self,
         meta: Self::Metadata,
@@ -369,6 +383,7 @@ impl ChainERPC for ChainErpcImpl {
         Box::pin(block_by_number(meta, block, full))
     }
 
+    #[instrument(skip(self, meta))]
     fn transaction_by_hash(
         &self,
         meta: Self::Metadata,
@@ -377,6 +392,7 @@ impl ChainERPC for ChainErpcImpl {
         Box::pin(transaction_by_hash(meta, tx_hash))
     }
 
+    #[instrument(skip(self, meta))]
     fn transaction_by_block_hash_and_index(
         &self,
         meta: Self::Metadata,
@@ -403,6 +419,7 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn transaction_by_block_number_and_index(
         &self,
         meta: Self::Metadata,
@@ -429,6 +446,7 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn transaction_receipt(
         &self,
         meta: Self::Metadata,
@@ -437,11 +455,14 @@ impl ChainERPC for ChainErpcImpl {
         Box::pin(async move {
             Ok(match meta.get_evm_receipt_by_hash(tx_hash.0).await {
                 Some(receipt) => {
-                    let (block, _) = meta.get_evm_block_by_id(receipt.block_number)
-                        .await
-                        .ok_or({
-                            Error::BlockNotFound { block: receipt.block_number.into() }
-                        })?;
+                    let (block, _) =
+                        meta.get_evm_block_by_id(receipt.block_number)
+                            .await
+                            .ok_or({
+                                Error::BlockNotFound {
+                                    block: receipt.block_number.into(),
+                                }
+                            })?;
                     let block_hash = block.header.hash();
                     Some(RPCReceipt::new_from_receipt(
                         receipt, tx_hash.0, block_hash, None,
@@ -452,6 +473,7 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn call(
         &self,
         meta: Self::Metadata,
@@ -464,7 +486,8 @@ impl ChainERPC for ChainErpcImpl {
             .flatten()
             .map(|s| solana_sdk::pubkey::Pubkey::from_str(&s))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| into_native_error(e, false)) {
+            .map_err(|e| into_native_error(e, false))
+        {
             Ok(keys) => keys,
             Err(err) => return Box::pin(ready(Err(err))),
         };
@@ -476,6 +499,8 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
+
+    #[instrument(skip(self, meta))]
     fn estimate_gas(
         &self,
         meta: Self::Metadata,
@@ -496,7 +521,12 @@ impl ChainERPC for ChainErpcImpl {
         })
     }
 
-    fn logs(&self, meta: Self::Metadata, log_filter: RPCLogFilter) -> BoxFuture<Result<Vec<RPCLog>, Error>> {
+    #[instrument(skip(self, meta))]
+    fn logs(
+        &self,
+        meta: Self::Metadata,
+        log_filter: RPCLogFilter,
+    ) -> BoxFuture<Result<Vec<RPCLog>, Error>> {
         Box::pin(async move {
             const MAX_NUM_BLOCKS: u64 = 2000;
             let block_num = meta
@@ -586,6 +616,7 @@ pub struct TraceErpcImpl;
 impl TraceERPC for TraceErpcImpl {
     type Metadata = JsonRpcRequestProcessor;
 
+    #[instrument(skip(self, meta))]
     fn trace_call(
         &self,
         meta: Self::Metadata,
@@ -603,6 +634,7 @@ impl TraceERPC for TraceErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn trace_call_many(
         &self,
         meta: Self::Metadata,
@@ -612,6 +644,7 @@ impl TraceERPC for TraceErpcImpl {
         Box::pin(trace_call_many(meta, tx_traces, block))
     }
 
+    #[instrument(skip(self, meta))]
     fn trace_replay_transaction(
         &self,
         meta: Self::Metadata,
@@ -662,6 +695,7 @@ impl TraceERPC for TraceErpcImpl {
         })
     }
 
+    #[instrument(skip(self, meta))]
     fn trace_replay_block(
         &self,
         meta: Self::Metadata,
@@ -708,6 +742,7 @@ struct TxOutput {
     traces: Vec<evm_state::executor::Trace>,
 }
 
+#[instrument(skip(meta))]
 fn call(
     meta: JsonRpcRequestProcessor,
     tx: RPCTransaction,
@@ -736,6 +771,7 @@ fn call(
     })
 }
 
+#[instrument(skip(meta))]
 fn call_many(
     meta: JsonRpcRequestProcessor,
     txs: &[(RPCTransaction, Vec<solana_sdk::pubkey::Pubkey>)],
@@ -800,6 +836,7 @@ fn call_many(
     Ok(result)
 }
 
+#[instrument(skip(executor, bank))]
 fn call_inner(
     executor: &mut evm_state::Executor,
     tx: RPCTransaction,
@@ -910,6 +947,7 @@ fn call_inner(
     })
 }
 
+#[instrument(skip(meta))]
 async fn block_by_number(
     meta: JsonRpcRequestProcessor,
     block: BlockId,
@@ -958,6 +996,7 @@ async fn block_by_number(
     )))
 }
 
+#[instrument(skip(meta))]
 async fn transaction_by_hash(
     meta: JsonRpcRequestProcessor,
     tx_hash: Hex<H256>,
@@ -980,6 +1019,7 @@ async fn transaction_by_hash(
     })
 }
 
+#[instrument(skip(meta))]
 async fn trace_call_many(
     meta: JsonRpcRequestProcessor,
     tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,

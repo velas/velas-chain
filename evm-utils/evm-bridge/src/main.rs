@@ -593,7 +593,12 @@ impl ChainERPC for ChainErpcProxy {
         address: Hex<Address>,
         block: Option<BlockId>,
     ) -> BoxFuture<EvmResult<Hex<U256>>> {
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetBalance, address, block)))
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetBalance,
+            address,
+            block
+        )))
     }
 
     #[instrument]
@@ -604,7 +609,13 @@ impl ChainERPC for ChainErpcProxy {
         data: Hex<U256>,
         block: Option<BlockId>,
     ) -> BoxFuture<EvmResult<Hex<H256>>> {
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetStorageAt, address, data, block)))
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetStorageAt,
+            address,
+            data,
+            block
+        )))
     }
 
     #[instrument]
@@ -620,7 +631,12 @@ impl ChainERPC for ChainErpcProxy {
             }
         }
 
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetTransactionCount, address, block)))
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetTransactionCount,
+            address,
+            block
+        )))
     }
 
     #[instrument]
@@ -656,7 +672,12 @@ impl ChainERPC for ChainErpcProxy {
         address: Hex<Address>,
         block: Option<BlockId>,
     ) -> BoxFuture<EvmResult<Bytes>> {
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetCode, address, block)))
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetCode,
+            address,
+            block
+        )))
     }
 
     #[instrument]
@@ -669,8 +690,10 @@ impl ChainERPC for ChainErpcProxy {
         if block_hash == Hex(H256::zero()) {
             Box::pin(ready(Ok(Some(RPCBlock::default()))))
         } else {
-            Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
-                .map(|o: Option<_>| o.map(compatibility::patch_block))))
+            Box::pin(ready(
+                proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
+                    .map(|o: Option<_>| o.map(compatibility::patch_block)),
+            ))
         }
     }
 
@@ -684,8 +707,10 @@ impl ChainERPC for ChainErpcProxy {
         if block == BlockId::Num(0x0.into()) {
             Box::pin(ready(Ok(Some(RPCBlock::default()))))
         } else {
-            Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetBlockByNumber, block, full)
-                .map(|o: Option<_>| o.map(compatibility::patch_block))))
+            Box::pin(ready(
+                proxy_evm_rpc!(meta.rpc_client, EthGetBlockByNumber, block, full)
+                    .map(|o: Option<_>| o.map(compatibility::patch_block)),
+            ))
         }
     }
 
@@ -702,8 +727,10 @@ impl ChainERPC for ChainErpcProxy {
                 return Box::pin(ready(Ok(Some(tx))));
             }
         }
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetTransactionByHash, tx_hash)
-            .map(|o: Option<_>| o.map(compatibility::patch_tx))))
+        Box::pin(ready(
+            proxy_evm_rpc!(meta.rpc_client, EthGetTransactionByHash, tx_hash)
+                .map(|o: Option<_>| o.map(compatibility::patch_tx)),
+        ))
     }
 
     #[instrument]
@@ -742,7 +769,11 @@ impl ChainERPC for ChainErpcProxy {
         meta: Self::Metadata,
         tx_hash: Hex<H256>,
     ) -> BoxFuture<EvmResult<Option<RPCReceipt>>> {
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetTransactionReceipt, tx_hash)))
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetTransactionReceipt,
+            tx_hash
+        )))
     }
 
     #[instrument]
@@ -753,7 +784,13 @@ impl ChainERPC for ChainErpcProxy {
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<EvmResult<Bytes>> {
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthCall, tx, block, meta_keys)))
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthCall,
+            tx,
+            block,
+            meta_keys
+        )))
     }
 
     #[instrument]
@@ -764,11 +801,21 @@ impl ChainERPC for ChainErpcProxy {
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<EvmResult<Hex<Gas>>> {
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthEstimateGas, tx, block, meta_keys)))
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthEstimateGas,
+            tx,
+            block,
+            meta_keys
+        )))
     }
 
-    #[instrument]
-    fn logs(&self, meta: Self::Metadata, mut log_filter: RPCLogFilter) -> BoxFuture<EvmResult<Vec<RPCLog>>> {
+    #[instrument(skip(self, meta))]
+    fn logs(
+        &self,
+        meta: Self::Metadata,
+        mut log_filter: RPCLogFilter,
+    ) -> BoxFuture<EvmResult<Vec<RPCLog>>> {
         let starting_block = match meta.block_to_number(log_filter.from_block) {
             Ok(res) => res,
             Err(err) => return Box::pin(ready(Err(err))),
@@ -995,6 +1042,9 @@ struct Args {
     /// Maximum number of blocks to return in eth_getLogs rpc.
     #[structopt(long = "max-logs-block-count", default_value = "500")]
     max_logs_blocks: u64,
+
+    #[structopt(long = "jaeger-collector-url", short = "j")]
+    jaeger_collector_url: Option<String>,
 }
 
 impl Args {
@@ -1044,33 +1094,31 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     let server_path = args.rpc_address;
     let binding_address = args.binding_address;
 
-    let fmt_filter = std::env::var("RUST_LOG")
-        .ok()
-        .and_then(|rust_log| match rust_log.parse::<Targets>() {
-            Ok(targets) => Some(targets),
-            Err(e) => {
-                eprintln!("failed to parse `RUST_LOG={:?}`: {}", rust_log, e);
-                None
-            }
-        })
-        .unwrap_or_else(|| Targets::default().with_default(LevelFilter::ERROR));
+    if let Some(collector) = args.jaeger_collector_url {
+        // init tracer
+        let fmt_filter = std::env::var("RUST_LOG")
+            .ok()
+            .and_then(|rust_log| match rust_log.parse::<Targets>() {
+                Ok(targets) => Some(targets),
+                Err(e) => {
+                    eprintln!("failed to parse `RUST_LOG={:?}`: {}", rust_log, e);
+                    None
+                }
+            })
+            .unwrap_or_else(|| Targets::default().with_default(LevelFilter::WARN));
 
-    let tracer = opentelemetry_jaeger::new_pipeline()
-        .with_service_name("evm-bridge")
-        .install_simple()
-        .unwrap();
-    let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-    let registry = tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_filter(fmt_filter))
-        .with(opentelemetry);
+        let tracer = opentelemetry_jaeger::new_pipeline()
+            .with_service_name("evm-bridge-tracer")
+            .with_collector_endpoint(collector)
+            .install_batch(opentelemetry::runtime::Tokio)
+            .unwrap();
+        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        let registry = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_filter(fmt_filter))
+            .with(opentelemetry);
 
-    #[cfg(feature = "console")]
-    let registry = {
-        let console_layer = console_subscriber::spawn();
-        registry.with(console_layer)
-    };
-
-    registry.try_init().unwrap();
+        registry.try_init().unwrap();
+    }
 
     let meta = EvmBridge::new(
         args.evm_chain_id,
