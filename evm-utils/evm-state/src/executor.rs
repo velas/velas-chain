@@ -84,6 +84,8 @@ pub struct Executor {
     pub evm_backend: EvmBackend<Incomming>,
     chain_context: ChainContext,
     config: EvmConfig,
+
+    clear_logs_on_error: bool,
 }
 
 impl Executor {
@@ -104,7 +106,16 @@ impl Executor {
             evm_backend,
             chain_context,
             config,
+            clear_logs_on_error: false,
         }
+    }
+
+    pub fn set_clear_logs_on_error(&mut self, val: bool) {
+        self.clear_logs_on_error = val;
+    }
+
+    pub fn is_clear_logs_on_error_enabled(&self) -> bool {
+        self.clear_logs_on_error
     }
 
     pub fn support_precompile(&self) -> bool {
@@ -392,12 +403,16 @@ impl Executor {
 
         assert!(!tx_hashes.contains(&tx_hash));
 
+        let logs = match self.is_clear_logs_on_error_enabled() && !result.exit_reason.is_succeed() {
+            true => vec![],
+            false => result.tx_logs,
+        };
         let receipt = TransactionReceipt::new(
             tx,
             result.used_gas,
             self.evm_backend.block_number(),
             tx_hashes.len() as u64 + 1,
-            result.tx_logs,
+            logs,
             (result.exit_reason, result.exit_data),
         );
 
