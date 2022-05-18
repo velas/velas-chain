@@ -183,7 +183,7 @@ pub mod velas {
     }
 
     pub mod clear_logs_on_error {
-        solana_sdk::declare_id!("11111111111111111111111111111111");
+        solana_sdk::declare_id!("9rZZ68tcDSZYkDMuFn59iRzoUxki2r16RWUucZQywFzS");
     }
 }
 lazy_static! {
