@@ -512,20 +512,40 @@ impl BasicERPC for BasicErpcImpl {
         Box::pin(async move {
             match tx_future.await {
                 Ok(Some(tx)) => {
-                    let block = if let Some(block) = tx.block_number {
-                        block.0.as_u64().saturating_sub(1).into()
-                    } else {
-                        return Ok(None);
+                    let (tx_block, tx_index) = match (tx.block_number, tx.transaction_index) {
+                        (Some(block), Some(index)) => (block.0.as_u64(), index.0),
+                        _ => return Ok(None),
                     };
-                    meta_info.transaction_hash = tx.hash.map(|v| v.0);
-                    meta_info.transaction_index = tx.transaction_index.map(|v| v.0);
-                    meta_info.block_number = tx.block_number.map(|v| v.0);
-                    meta_info.block_hash = tx.block_hash.map(|v| v.0);
-                    Ok(Some(trace_call_many(meta, vec![(tx, traces, Some(meta_info))], Some(block))
-                        .await?
-                        .into_iter()
-                        .next()
-                        .expect("One item should be returned")))
+                    let base_block = tx_block.saturating_sub(1).into();
+                    let tx_traces = match meta.get_evm_block_by_id(tx_block).await {
+                        Some((block, _)) => {
+                            let block_hash = block.header.hash();
+                            let chain_id = meta.bank(None).evm_chain_id;
+                            block
+                                .transactions
+                                .into_iter()
+                                .filter_map(|(hash, receipt)| {
+                                    let tx = RPCTransaction::new_from_receipt(
+                                        receipt,
+                                        hash,
+                                        block_hash,
+                                        chain_id,
+                                    )
+                                        .ok()?;
+                                    let mut meta_info = meta_info.clone();
+                                    meta_info.transaction_hash = tx.hash.map(|v| v.0);
+                                    meta_info.transaction_index = tx.transaction_index.map(|v| v.0);
+                                    meta_info.block_number = tx.block_number.map(|v| v.0);
+                                    meta_info.block_hash = tx.block_hash.map(|v| v.0);
+                                    Some((tx, traces.clone(), Some(meta_info)))
+                                })
+                                .collect()
+                        },
+                        None => return Ok(None),
+                    };
+
+                    let traces = trace_call_many(meta, tx_traces, Some(base_block)).await?;
+                    Ok(traces.get(tx_index - 1).cloned())
                 },
                 Ok(None) => Ok(None),
                 Err(e) => Err(e),
