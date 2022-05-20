@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::collections::HashMap;
 
 use derive_more::Display;
 
@@ -39,20 +40,28 @@ impl Backend for Rpc {
     ) -> Result<Response<app_grpc::BlockData>, Status> {
         println!("Got a request: {:?}", request);
 
-        let data = request.into_inner().hash;
+        let stringified_key = request.into_inner().hash;
 
-        let dir = Path::new("db/");
-        let state_root = H256::from_hex("0xfb6e8eeafc655f1bb97212e7476837449b71a41df8c9d604f3cc7e12cebf0fe7").expect("get hash from &str");
+        let state_root_str = std::fs::read_to_string("./.tmp/state_root.txt").expect("get the state root");
+        let dir = Path::new("./.tmp/db/");
 
-        let new_db = Storage::open_persistent(dir, true).expect("could not open database");
+        let state_root = H256::from_hex(&state_root_str).expect("get hash from &str");
 
-        let h = H256::from_hex(&data).expect("get hash from &str");
+        let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
 
-        let finder = finder::Finder::new(new_db, h);
-        let bytes = finder.traverse(state_root);
+        let key = H256::from_hex(&stringified_key).expect("get hash from &str");
+
+        let finder = finder::Finder::new(db_handle, key);
+        let maybe_bytes = finder.find(key);
+
+        let response = if let Ok(Some(bytes)) = maybe_bytes {
+            HashMap::from([(stringified_key, bytes)])
+        } else {
+            HashMap::new()
+        };
 
         let reply = app_grpc::BlockData {
-            data: bytes.unwrap().unwrap()
+            data: response
         };
 
         Ok(Response::new(reply))
@@ -63,9 +72,32 @@ impl Backend for Rpc {
         request: Request<app_grpc::MultiHash>,
     ) -> Result<Response<app_grpc::MultiBlockData>, Status> {
 
+        let stringified_keys = request.into_inner().hashes;
+
+        let mut response = HashMap::new();
+
+        stringified_keys.into_iter().for_each(|stringified_key| {
+let state_root_str = std::fs::read_to_string("./.tmp/state_root.txt").expect("get the state root");
+        let dir = Path::new("./.tmp/db/");
+
+        let state_root = H256::from_hex(&state_root_str).expect("get hash from &str");
+
+        let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
+
+        let key = H256::from_hex(&stringified_key).expect("get hash from &str");
+
+        let finder = finder::Finder::new(db_handle, key);
+        let maybe_bytes = finder.find(key);
+
+            if let Ok(Some(bytes)) = maybe_bytes {
+                response.insert(stringified_key, bytes);
+            }
+        });
+
         let reply = app_grpc::MultiBlockData {
-            data: vec![]
+            data: response
         };
+
         Ok(Response::new(reply))
     }
 }

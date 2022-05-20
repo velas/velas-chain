@@ -26,7 +26,7 @@ fn main() {
     let state_root = generate_db(&dir);
 
     let mut file = File::create("./.tmp/state_root.txt").unwrap();
-    file.write_all(state_root.as_bytes()).unwrap();
+    file.write_all(format!("{:?}", state_root).as_bytes()).unwrap();
 
    // Example of state
 

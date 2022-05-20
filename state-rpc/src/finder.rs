@@ -22,6 +22,12 @@ impl<DB: Borrow<OptimisticTransactionDB> + Sync + Send> Finder<DB> {
         }
     }
 
+    pub fn find(&self, hash: H256) -> Result<Option<Vec<u8>>, String> {
+        let db = self.db.borrow();
+        let bytes = db.get(hash)?;
+        Ok(bytes)
+    }
+
     pub fn traverse(&self, hash: H256) -> Result<Option<Vec<u8>>, ()> {
         self.traverse_inner(Default::default(), hash);
         let reader = self.found.read().unwrap();
@@ -29,13 +35,14 @@ impl<DB: Borrow<OptimisticTransactionDB> + Sync + Send> Finder<DB> {
     }
 
     fn traverse_inner(&self, nibble: NibbleVec, hash: H256) -> Result<Option<Vec<u8>>, ()> {
-        println!("traversing {:?} ...", hash);
+        eprintln!("traversing {:?} ...", hash);
         if hash != triedb::empty_trie_hash() {
             let db = self.db.borrow();
             let bytes = db
-                .get(hash).map_err(|_| ())?
+                .get(hash)
+                .map_err(|_| ())?
                 .ok_or_else(|| panic!("panicing in byte parsing"))?;
-            println!("raw bytes: {:?}", bytes);
+            eprintln!("raw bytes: {:?}", bytes);
 
             let rlp = Rlp::new(bytes.as_slice());
             println!("rlp: {:?}", rlp);

@@ -2,6 +2,7 @@
 name = "state-rpc"
 version = "0.1.0"
 edition = "2021"
+default-run = "state-rpc"
 
 [[bin]] # Generate
 name = "generate-state"

@@ -18,13 +18,13 @@ message Hash {
 }
 
 message BlockData {
-  bytes data = 1;
+  map<string, bytes> data = 1;
 }
 
 message MultiHash {
-  repeated string hash = 1;
+  repeated string hashes = 1;
 }
 
 message MultiBlockData {
-  repeated bytes data = 1;
+  map<string, bytes> data = 1;
 }
