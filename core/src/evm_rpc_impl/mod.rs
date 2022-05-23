@@ -304,7 +304,7 @@ impl BasicERPC for BasicErpcImpl {
     ) -> BoxFuture<Result<Hex<U256>, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
-    
+
             let account = state
                 .get_account_state_at(&meta, address.0)?
                 .unwrap_or_default();
@@ -338,7 +338,7 @@ impl BasicERPC for BasicErpcImpl {
     ) -> BoxFuture<Result<Hex<U256>, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
-    
+
             let account = state
                 .get_account_state_at(&meta, address.0)?
                 .unwrap_or_default();
@@ -354,7 +354,7 @@ impl BasicERPC for BasicErpcImpl {
     ) -> BoxFuture<Result<Bytes, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
-    
+
             let account = state
                 .get_account_state_at(&meta, address.0)?
                 .unwrap_or_default();
@@ -382,7 +382,7 @@ impl BasicERPC for BasicErpcImpl {
                 },
             };
             debug!("Found block = {:?}", block);
-    
+
             block_by_number(meta, block.into(), full).await
         })
     }
@@ -507,7 +507,7 @@ impl BasicERPC for BasicErpcImpl {
         traces: Vec<String>,
         meta_info: Option<TraceMeta>,
     ) -> BoxFuture<Result<Option<evm_rpc::trace::TraceResultsWithTransactionHash>, Error>> {
-        let mut meta_info = meta_info.unwrap_or_default();
+        let meta_info = meta_info.unwrap_or_default();
         let tx_future = self.transaction_by_hash(meta.clone(), tx_hash);
         Box::pin(async move {
             match tx_future.await {
@@ -524,12 +524,10 @@ impl BasicERPC for BasicErpcImpl {
                             block
                                 .transactions
                                 .into_iter()
+                                .take(tx_index)
                                 .filter_map(|(hash, receipt)| {
                                     let tx = RPCTransaction::new_from_receipt(
-                                        receipt,
-                                        hash,
-                                        block_hash,
-                                        chain_id,
+                                        receipt, hash, block_hash, chain_id,
                                     )
                                         .ok()?;
                                     let mut meta_info = meta_info.clone();
@@ -634,7 +632,7 @@ impl BasicERPC for BasicErpcImpl {
                     batch_size: Some(MAX_NUM_BLOCKS),
                 });
             }
-    
+
             let filter = LogFilter {
                 address: log_filter
                     .address
@@ -653,7 +651,7 @@ impl BasicERPC for BasicErpcImpl {
                 to_block: to,
             };
             debug!("filter = {:?}", filter);
-    
+
             let logs = meta.filter_logs(filter).await.map_err(|e| {
                 debug!("filter_logs error = {:?}", e);
                 into_native_error(e, false)
@@ -918,7 +916,7 @@ async fn trace_call_many(
     block: Option<BlockId>,
 ) -> Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
     let saved_state = block_to_state_root(block, &meta).await;
-    
+
     let mut txs = Vec::new();
     let mut txs_meta = Vec::new();
 

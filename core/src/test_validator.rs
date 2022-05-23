@@ -35,6 +35,7 @@ use {
         time::Duration,
     },
 };
+use evm_state::Storage;
 
 #[derive(Clone)]
 pub struct ProgramInfo {
@@ -83,6 +84,7 @@ pub struct TestValidatorGenesis {
     pub start_progress: Arc<RwLock<ValidatorStartProgress>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub max_ledger_shreds: Option<u64>,
+    evm_state_archive_enabled: bool,
 }
 
 impl TestValidatorGenesis {
@@ -94,6 +96,11 @@ impl TestValidatorGenesis {
     /// Check if a given TestValidator ledger has already been initialized
     pub fn ledger_exists(ledger_path: &Path) -> bool {
         ledger_path.join("vote-account-keypair.json").exists()
+    }
+
+    pub fn enable_evm_state_archive(&mut self) -> &mut Self {
+        self.evm_state_archive_enabled = true;
+        self
     }
 
     pub fn fee_rate_governor(&mut self, fee_rate_governor: FeeRateGovernor) -> &mut Self {
@@ -514,7 +521,7 @@ impl TestValidator {
             &validator_config,
             true, // should_check_duplicate_instance
             config.start_progress.clone(),
-            None,
+            config.evm_state_archive_enabled.then(|| Storage::create_temporary().unwrap()),
         ));
 
         // Needed to avoid panics in `solana-responder-gossip` in tests that create a number of
