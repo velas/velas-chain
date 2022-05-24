@@ -777,6 +777,14 @@ fn call_many(
         evm_state,
         evm_state::ChainContext::new(last_hashes),
         estimate_config,
+        evm_state::executor::FeatureSet::new(
+            bank.feature_set.is_active(
+                &solana_sdk::feature_set::velas::unsigned_tx_fix::id(),
+            ),
+            bank.feature_set.is_active(
+                &solana_sdk::feature_set::velas::clear_logs_on_error::id(),
+            ),
+        ),
     );
 
     debug!("running evm executor = {:?}", executor);

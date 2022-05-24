@@ -79,43 +79,76 @@ impl fmt::Display for ExecutionResult {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct FeatureSet {
+    unsigned_tx_fix: bool,
+    clear_logs_on_error: bool,
+}
+
+impl FeatureSet {
+    pub fn new(unsigned_tx_fix: bool, clear_logs_on_error: bool) -> Self {
+        FeatureSet {
+            unsigned_tx_fix,
+            clear_logs_on_error,
+        }
+    }
+
+    pub fn new_with_all_enabled() -> Self {
+        FeatureSet {
+            unsigned_tx_fix: true,
+            clear_logs_on_error: true,
+        }
+    }
+
+    pub fn is_unsigned_tx_fix_enabled(&self) -> bool {
+        self.unsigned_tx_fix
+    }
+
+    pub fn is_clear_logs_on_error_enabled(&self) -> bool {
+        self.clear_logs_on_error
+    }
+}
+
 #[derive(Debug)]
 pub struct Executor {
     pub evm_backend: EvmBackend<Incomming>,
     chain_context: ChainContext,
     config: EvmConfig,
 
-    clear_logs_on_error: bool,
+    pub feature_set: FeatureSet,
 }
 
 impl Executor {
     // Return new default executor, with empty state stored in temporary dirrectory
     pub fn testing() -> Self {
-        Self::with_config(Default::default(), Default::default(), Default::default())
+        Self::with_config(
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
     }
     pub fn default_configs(state: EvmBackend<Incomming>) -> Self {
-        Self::with_config(state, Default::default(), Default::default())
+        Self::with_config(
+            state,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
     }
 
     pub fn with_config(
         evm_backend: EvmBackend<Incomming>,
         chain_context: ChainContext,
         config: EvmConfig,
+        feature_set: FeatureSet,
     ) -> Self {
         Executor {
             evm_backend,
             chain_context,
             config,
-            clear_logs_on_error: false,
+            feature_set,
         }
-    }
-
-    pub fn set_clear_logs_on_error(&mut self, val: bool) {
-        self.clear_logs_on_error = val;
-    }
-
-    pub fn is_clear_logs_on_error_enabled(&self) -> bool {
-        self.clear_logs_on_error
     }
 
     pub fn support_precompile(&self) -> bool {
@@ -204,6 +237,7 @@ impl Executor {
             }
         );
 
+        let clear_logs_on_error_enabled = self.feature_set.is_clear_logs_on_error_enabled();
         let config = self.config.to_evm_params();
         let transaction_context = TransactionContext::new(gas_price.as_u64(), caller);
         let execution_context = ExecutorContext::new(
@@ -264,7 +298,10 @@ impl Executor {
         );
         let (updates, logs) = executor_state.deconstruct();
 
-        let tx_logs: Vec<_> = logs.into_iter().collect();
+        let tx_logs = match clear_logs_on_error_enabled && !exit_reason.is_succeed() {
+            true => vec![],
+            false => logs.into_iter().collect(),
+        };
         execution_context.apply(updates, used_gas);
 
         Ok(ExecutionResult {
@@ -282,7 +319,6 @@ impl Executor {
         &mut self,
         caller: H160,
         tx: UnsignedTransaction,
-        calculate_tx_hash_with_caller: bool,
         precompiles: F,
     ) -> Result<ExecutionResult, Error>
     where
@@ -294,7 +330,7 @@ impl Executor {
             unsigned_tx: tx.clone(),
             caller,
             chain_id,
-            signed_compatible: calculate_tx_hash_with_caller,
+            signed_compatible: self.feature_set.is_unsigned_tx_fix_enabled(),
         };
         let tx_hash = unsigned_tx.tx_id_hash();
         let result = self.transaction_execute_raw(
@@ -403,16 +439,12 @@ impl Executor {
 
         assert!(!tx_hashes.contains(&tx_hash));
 
-        let logs = match self.is_clear_logs_on_error_enabled() && !result.exit_reason.is_succeed() {
-            true => vec![],
-            false => result.tx_logs,
-        };
         let receipt = TransactionReceipt::new(
             tx,
             result.used_gas,
             self.evm_backend.block_number(),
             tx_hashes.len() as u64 + 1,
-            logs,
+            result.tx_logs,
             (result.exit_reason, result.exit_data),
         );
 
@@ -440,7 +472,6 @@ impl Executor {
         mint_address: H160,
         recipient: H160,
         amount: U256,
-        signed_compatible: bool,
     ) {
         let nonce = self.with_executor(
             |_, _, _, _| None,
@@ -462,7 +493,7 @@ impl Executor {
             unsigned_tx: tx,
             caller: mint_address,
             chain_id: self.config.chain_id,
-            signed_compatible,
+            signed_compatible: self.feature_set.is_unsigned_tx_fix_enabled(),
         };
         let result = ExecutionResult {
             tx_logs: Vec::new(),
@@ -562,6 +593,7 @@ mod tests {
     use crate::context::EvmConfig;
     use crate::*;
     use error::*;
+    use crate::executor::FeatureSet;
 
     #[allow(clippy::type_complexity)]
     fn noop_precompile(
@@ -673,8 +705,12 @@ mod tests {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -708,8 +744,12 @@ mod tests {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new(false, true),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -721,7 +761,6 @@ mod tests {
                 .transaction_execute_unsinged(
                     alice.address(),
                     create_tx.clone(),
-                    false,
                     noop_precompile
                 )
                 .unwrap()
@@ -732,7 +771,7 @@ mod tests {
         let hash = create_tx.signing_hash(Some(chain_id));
         assert!(matches!(
             executor
-            .transaction_execute_unsinged(alice.address(), create_tx, false, noop_precompile)
+            .transaction_execute_unsinged(alice.address(), create_tx, noop_precompile)
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash } if tx_hash == hash
         ));
@@ -755,7 +794,12 @@ mod tests {
                 Storage::create_temporary()
             };
             let backend = EvmBackend::new(Incomming::default(), storage.unwrap());
-            let mut executor = Executor::with_config(backend, Default::default(), evm_config);
+            let mut executor = Executor::with_config(
+                backend,
+                Default::default(),
+                evm_config,
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -780,7 +824,12 @@ mod tests {
                 .register_slot(slot, first_root, false)
                 .unwrap();
 
-            let mut executor = Executor::with_config(backend, Default::default(), evm_config);
+            let mut executor = Executor::with_config(
+                backend,
+                Default::default(),
+                evm_config,
+                FeatureSet::new_with_all_enabled(),
+            );
             let contract_address = create_tx.address().unwrap();
 
             alice.nonce += 1;
@@ -835,8 +884,12 @@ mod tests {
             chain_id,
             ..EvmConfig::new(chain_id, true)
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let alice = Persona::new();
         let mut create_tx = alice.unsigned(TransactionAction::Call(H160::zero()), &[]);
@@ -850,7 +903,7 @@ mod tests {
         );
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx.clone(), true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx.clone(), noop_precompile)
                 .unwrap_err(),
             Error::GasPriceOutOfBounds {
                 gas_price: 0.into()
@@ -861,7 +914,7 @@ mod tests {
 
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx, true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx, noop_precompile)
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Stopped)
@@ -877,8 +930,12 @@ mod tests {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -888,7 +945,7 @@ mod tests {
         let address = alice.address();
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx.clone(), true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx.clone(), noop_precompile)
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -906,7 +963,7 @@ mod tests {
 
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx, true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx, noop_precompile)
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash: hash }
         );
@@ -922,8 +979,12 @@ mod tests {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -976,6 +1037,7 @@ mod tests {
             EvmBackend::default(),
             Default::default(),
             Default::default(),
+            FeatureSet::new_with_all_enabled(),
         );
 
         let mut alice = Persona::new();
@@ -1101,7 +1163,12 @@ mod tests {
             let mut bob = bob.clone();
 
             let state = committed.next_incomming(0);
-            let mut executor = Executor::with_config(state, Default::default(), Default::default());
+            let mut executor = Executor::with_config(
+                state,
+                Default::default(),
+                Default::default(),
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let send_tx = bob.call(
                 contract,
@@ -1179,7 +1246,12 @@ mod tests {
         {
             // NOTE: ensure blockss are different
             let state = committed.next_incomming(0);
-            let mut executor = Executor::with_config(state, Default::default(), Default::default());
+            let mut executor = Executor::with_config(
+                state,
+                Default::default(),
+                Default::default(),
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let send_tx = alice.call(
                 contract,
@@ -1265,6 +1337,7 @@ mod tests {
             EvmBackend::default(),
             Default::default(),
             Default::default(),
+            FeatureSet::new(false, true),
         );
 
         let exit_reason = match executor.with_executor(noop_precompile, |e| {
@@ -1296,7 +1369,6 @@ mod tests {
                     value: U256::zero(),
                     input: data.to_vec(),
                 },
-                false, /* calculate_tx_hash_with_caller */
                 noop_precompile,
             )
             .unwrap();

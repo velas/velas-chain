@@ -3242,12 +3242,20 @@ impl Bank {
                         evm_patch = evm_patch.take().or_else(|| evm_state_getter(self));
                         let last_hashes = self.evm_hashes();
                         if let Some(state) = &evm_patch {
-                            let evm_executor = evm_state::Executor::with_config(
+                            let mut evm_executor = evm_state::Executor::with_config(
                                 state.clone(),
                                 evm_state::ChainContext::new(last_hashes),
                                 evm_state::EvmConfig::new(
                                     self.evm_chain_id,
                                     self.evm_burn_fee_activated(),
+                                ),
+                                evm_state::executor::FeatureSet::new(
+                                    self.feature_set.is_active(
+                                        &solana_sdk::feature_set::velas::unsigned_tx_fix::id(),
+                                    ),
+                                    self.feature_set.is_active(
+                                        &solana_sdk::feature_set::velas::clear_logs_on_error::id(),
+                                    ),
                                 ),
                             );
                             Some(evm_executor)
