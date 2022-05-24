@@ -49,15 +49,11 @@ impl EvmProcessor {
             .is_feature_active(&solana_sdk::feature_set::velas::native_swap_in_evm_history::id());
         let new_error_handling = invoke_context
             .is_feature_active(&solana_sdk::feature_set::velas::evm_new_error_handling::id());
-        let unsigned_tx_fix = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id());
         let ignore_reset_on_cleared = invoke_context
             .is_feature_active(&solana_sdk::feature_set::velas::ignore_reset_on_cleared::id());
         let free_ownership_require_signer = invoke_context.is_feature_active(
             &solana_sdk::feature_set::velas::free_ownership_require_signer::id(),
         );
-        let clear_logs_on_error = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas::clear_logs_on_error::id());
 
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
@@ -86,7 +82,6 @@ impl EvmProcessor {
             );
             return Err(EvmError::RecursiveCrossExecution.into());
         };
-        executor.set_clear_logs_on_error(clear_logs_on_error);
 
         let accounts = AccountStructure::new(evm_state_account, keyed_accounts);
 
@@ -103,10 +98,9 @@ impl EvmProcessor {
                     accounts,
                     from,
                     unsigned_tx,
-                    unsigned_tx_fix,
                 ),
             EvmInstruction::EvmBigTransaction(big_tx) => {
-                self.process_big_tx(executor, invoke_context, accounts, big_tx, unsigned_tx_fix)
+                self.process_big_tx(executor, invoke_context, accounts, big_tx)
             }
             EvmInstruction::FreeOwnership {} => self.process_free_ownership(
                 executor,
@@ -124,7 +118,6 @@ impl EvmProcessor {
                 lamports,
                 evm_address,
                 register_swap_tx_in_evm,
-                unsigned_tx_fix,
             ),
         };
 
@@ -208,7 +201,6 @@ impl EvmProcessor {
         accounts: AccountStructure,
         from: evm::Address,
         unsigned_tx: evm::UnsignedTransaction,
-        unsigned_tx_fix: bool,
     ) -> Result<(), EvmError> {
         // TODO: Check that it is from program?
         // TODO: Gas limit?
@@ -247,7 +239,7 @@ impl EvmProcessor {
             unsigned_tx.action
         );
 
-        if unsigned_tx_fix {
+        if executor.feature_set.is_unsigned_tx_fix_enabled() {
             let program_caller = invoke_context
                 .get_parent_caller()
                 .copied()
@@ -270,7 +262,6 @@ impl EvmProcessor {
         let result = executor.transaction_execute_unsinged(
             from,
             unsigned_tx,
-            unsigned_tx_fix,
             precompiles::entrypoint(accounts, executor.support_precompile()),
         );
         let sender = accounts.first();
@@ -328,7 +319,6 @@ impl EvmProcessor {
         lamports: u64,
         evm_address: evm::Address,
         register_swap_tx_in_evm: bool,
-        unsigned_tx_fix: bool,
     ) -> Result<(), EvmError> {
         let gweis = evm::lamports_to_gwei(lamports);
         let user = accounts.first().ok_or_else(|| {
@@ -380,7 +370,6 @@ impl EvmProcessor {
                 *precompiles::ETH_TO_VLX_ADDR,
                 evm_address,
                 gweis,
-                unsigned_tx_fix,
             )
         }
         Ok(())
@@ -392,7 +381,6 @@ impl EvmProcessor {
         invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         big_tx: EvmBigTransaction,
-        unsigned_tx_fix: bool,
     ) -> Result<(), EvmError> {
         debug!("executing big_tx = {:?}", big_tx);
 
@@ -481,7 +469,7 @@ impl EvmProcessor {
                 );
 
                 let sender = accounts.users.get(1);
-                if unsigned_tx_fix {
+                if executor.feature_set.is_unsigned_tx_fix_enabled() {
                     self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
                 }
 
@@ -495,7 +483,7 @@ impl EvmProcessor {
                 )
             }
             EvmBigTransaction::EvmTransactionExecuteUnsigned { from } => {
-                if !unsigned_tx_fix {
+                if !executor.feature_set.is_unsigned_tx_fix_enabled() {
                     ic_msg!(
                         invoke_context,
                         "BigTransaction::EvmTransactionExecuteUnsigned: Unsigned tx fix is not activated, this instruction is not supported."
@@ -554,7 +542,7 @@ impl EvmProcessor {
                     unsigned_tx.action
                 );
 
-                if unsigned_tx_fix {
+                if executor.feature_set.is_unsigned_tx_fix_enabled() {
                     let program_caller =
                         invoke_context.get_caller().map(|k| *k).unwrap_or_default();
                     let program_owner = program_account
@@ -569,7 +557,6 @@ impl EvmProcessor {
                 let result = executor.transaction_execute_unsinged(
                     from,
                     unsigned_tx,
-                    unsigned_tx_fix,
                     precompiles::entrypoint(accounts, executor.support_precompile()),
                 );
 
@@ -736,7 +723,7 @@ mod test {
         transactions::{TransactionAction, TransactionSignature},
         FromKey,
     };
-    use evm_state::{AccountProvider, ExitReason, ExitSucceed};
+    use evm_state::{AccountProvider, ExitReason, ExitSucceed, executor::FeatureSet};
     use primitive_types::{H160, H256, U256};
     use solana_sdk::keyed_account::KeyedAccount;
     use solana_sdk::native_loader;
@@ -1942,7 +1929,12 @@ mod test {
 
             // Reverted tx with clear_logs_on_error enabled must clear logs
             {
-                let executor = evm_state::Executor::default_configs(state.clone());
+                let executor = evm_state::Executor::with_config(
+                    state.clone(),
+                    Default::default(),
+                    Default::default(),
+                    FeatureSet::new_with_all_enabled(),
+                );
                 let mut invoke_context = MockInvokeContext::with_evm(executor);
 
                 let _result = processor.process_instruction(
@@ -1961,7 +1953,12 @@ mod test {
 
             // Reverted tx with clear_logs_on_error disabled don't clear logs
             {
-                let executor = evm_state::Executor::default_configs(state.clone());
+                let executor = evm_state::Executor::with_config(
+                    state.clone(),
+                    Default::default(),
+                    Default::default(),
+                    FeatureSet::new(true, false),
+                );
                 let mut invoke_context = MockInvokeContext::with_evm(executor);
                 invoke_context
                     .disable_feature(&solana_sdk::feature_set::velas::clear_logs_on_error::id());
@@ -1997,7 +1994,12 @@ mod test {
                 bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap();
 
             {
-                let executor = evm_state::Executor::default_configs(state.clone());
+                let executor = evm_state::Executor::with_config(
+                    state.clone(),
+                    Default::default(),
+                    Default::default(),
+                    FeatureSet::new_with_all_enabled(),
+                );
                 let mut invoke_context = MockInvokeContext::with_evm(executor);
 
                 let _result = processor.process_instruction(
@@ -2015,7 +2017,12 @@ mod test {
             }
 
             {
-                let executor = evm_state::Executor::default_configs(state.clone());
+                let executor = evm_state::Executor::with_config(
+                    state.clone(),
+                    Default::default(),
+                    Default::default(),
+                    FeatureSet::new(true, false),
+                );
                 let mut invoke_context = MockInvokeContext::with_evm(executor);
                 invoke_context
                     .disable_feature(&solana_sdk::feature_set::velas::clear_logs_on_error::id());
