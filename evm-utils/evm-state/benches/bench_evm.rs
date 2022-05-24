@@ -125,7 +125,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             let mut executor = Executor::with_config(
-                Default::default(),
+                updated_state.clone(),
                 Default::default(),
                 Default::default(),
                 FeatureSet::new_with_all_enabled(),
