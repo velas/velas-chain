@@ -468,24 +468,32 @@ impl ChainMockERPC for ChainMockErpcProxy {
         Ok(false)
     }
 
-    fn hashrate(&self, _meta: Self::Metadata) -> EvmResult<String> {
-        Ok(String::from("0x00"))
+    fn hashrate(&self, _meta: Self::Metadata) -> EvmResult<Hex<U256>> {
+        Ok(Hex(U256::zero()))
     }
 
     fn block_transaction_count_by_number(
         &self,
-        _meta: Self::Metadata,
-        _block: String,
-    ) -> EvmResult<Option<Hex<usize>>> {
-        Ok(None)
+        meta: Self::Metadata,
+        block: BlockId,
+    ) -> BoxFuture<EvmResult<Hex<usize>>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetBlockTransactionCountByNumber,
+            block
+        )))
     }
 
     fn block_transaction_count_by_hash(
         &self,
-        _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-    ) -> EvmResult<Option<Hex<usize>>> {
-        Err(evm_rpc::Error::Unimplemented {})
+        meta: Self::Metadata,
+        block_hash: Hex<H256>,
+    ) -> BoxFuture<EvmResult<Hex<usize>>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetBlockTransactionCountByHash,
+            block_hash
+        )))
     }
 
     fn uncle_by_block_hash_and_index(

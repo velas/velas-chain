@@ -212,24 +212,38 @@ impl ChainMockERPC for ChainMockErpcImpl {
         Ok(false)
     }
 
-    fn hashrate(&self, _meta: Self::Metadata) -> Result<String, Error> {
-        Err(Error::Unimplemented {})
+    fn hashrate(&self, _meta: Self::Metadata) -> Result<Hex<U256>, Error> {
+        Ok(Hex(0.into()))
     }
 
     fn block_transaction_count_by_number(
         &self,
-        _meta: Self::Metadata,
-        _block: String,
-    ) -> Result<Option<Hex<usize>>, Error> {
-        Ok(None)
+        meta: Self::Metadata,
+        block: BlockId,
+    ) -> BoxFuture<Result<Hex<usize>, Error>> {
+        Box::pin(async move {
+            let (evm_block, _) = match block_parse_confirmed_num(Some(block), &meta).await {
+                Some(num) => meta.get_evm_block_by_id(num).await,
+                None => None,
+            }
+            .ok_or(Error::BlockNotFound { block })?;
+            Ok(Hex(evm_block.transactions.len()))
+        })
     }
 
     fn block_transaction_count_by_hash(
         &self,
-        _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-    ) -> Result<Option<Hex<usize>>, Error> {
-        Err(Error::Unimplemented {})
+        meta: Self::Metadata,
+        block_hash: Hex<H256>,
+    ) -> BoxFuture<Result<Hex<usize>, Error>> {
+        Box::pin(async move {
+            let (evm_block, _) = match meta.get_evm_block_id_by_hash(block_hash.0).await {
+                Some(num) => meta.get_evm_block_by_id(num).await,
+                None => None,
+            }
+            .ok_or(Error::BlockNotFound { block: BlockId::BlockHash { block_hash } })?;
+            Ok(Hex(evm_block.transactions.len()))
+        })
     }
 
     fn uncle_by_block_hash_and_index(

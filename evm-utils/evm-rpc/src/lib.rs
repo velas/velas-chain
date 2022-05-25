@@ -772,7 +772,7 @@ pub mod chain_mock {
         fn is_mining(&self, meta: Self::Metadata) -> Result<bool, Error>;
 
         #[rpc(meta, name = "eth_hashrate")]
-        fn hashrate(&self, meta: Self::Metadata) -> Result<String, Error>;
+        fn hashrate(&self, meta: Self::Metadata) -> Result<Hex<U256>, Error>;
 
         #[rpc(meta, name = "eth_getUncleByBlockHashAndIndex")]
         fn uncle_by_block_hash_and_index(
@@ -795,14 +795,14 @@ pub mod chain_mock {
             &self,
             meta: Self::Metadata,
             block_hash: Hex<H256>,
-        ) -> Result<Option<Hex<usize>>, Error>;
+        ) -> BoxFuture<Result<Hex<usize>, Error>>;
 
         #[rpc(meta, name = "eth_getBlockTransactionCountByNumber")]
         fn block_transaction_count_by_number(
             &self,
             meta: Self::Metadata,
-            block: String,
-        ) -> Result<Option<Hex<usize>>, Error>;
+            block: BlockId,
+        ) -> BoxFuture<Result<Hex<usize>, Error>>;
 
         #[rpc(meta, name = "eth_getUncleCountByBlockHash")]
         fn block_uncles_count_by_hash(
