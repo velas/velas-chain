@@ -809,30 +809,30 @@ pub mod chain_mock {
             &self,
             meta: Self::Metadata,
             block_hash: Hex<H256>,
-        ) -> Result<Option<Hex<usize>>, Error>;
+        ) -> Result<Hex<usize>, Error>;
 
         #[rpc(meta, name = "eth_getUncleCountByBlockNumber")]
         fn block_uncles_count_by_number(
             &self,
             meta: Self::Metadata,
             block: String,
-        ) -> Result<Option<Hex<usize>>, Error>;
+        ) -> Result<Hex<usize>, Error>;
 
         #[rpc(meta, name = "eth_getTransactionByBlockHashAndIndex")]
         fn transaction_by_block_hash_and_index(
             &self,
             meta: Self::Metadata,
             block_hash: Hex<H256>,
-            tx_id: Hex<U256>,
-        ) -> Result<Option<RPCTransaction>, Error>;
+            tx_id: Hex<usize>,
+        ) -> BoxFuture<Result<Option<RPCTransaction>, Error>>;
 
         #[rpc(meta, name = "eth_getTransactionByBlockNumberAndIndex")]
         fn transaction_by_block_number_and_index(
             &self,
             meta: Self::Metadata,
-            block: String,
-            tx_id: Hex<U256>,
-        ) -> Result<Option<RPCTransaction>, Error>;
+            block: BlockId,
+            tx_id: Hex<usize>,
+        ) -> BoxFuture<Result<Option<RPCTransaction>, Error>>;
     }
 }
 

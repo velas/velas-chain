@@ -85,6 +85,8 @@ pub enum RpcRequest {
     /// EVM scope
     EthGetBlockTransactionCountByHash,
     EthGetBlockTransactionCountByNumber,
+    EthGetTransactionByBlockHashAndIndex,
+    EthGetTransactionByBlockNumberAndIndex,
     EthGetTransactionCount,
     EthGetBalance,
 
@@ -190,6 +192,8 @@ impl fmt::Display for RpcRequest {
             RpcRequest::EthTraceCallMany => "trace_callMany",
             RpcRequest::EthGetBlockTransactionCountByHash => "eth_getBlockTransactionCountByHash",
             RpcRequest::EthGetBlockTransactionCountByNumber => "eth_getBlockTransactionCountByNumber",
+            RpcRequest::EthGetTransactionByBlockHashAndIndex => "eth_getTransactionByBlockHashAndIndex",
+            RpcRequest::EthGetTransactionByBlockNumberAndIndex => "eth_getTransactionByBlockNumberAndIndex",
             RpcRequest::EthTraceReplayTransaction => "trace_replayTransaction",
             RpcRequest::EthTraceReplayBlock => "trace_replayBlockTransactions",
             RpcRequest::EthEstimateGas => "eth_estimateGas",

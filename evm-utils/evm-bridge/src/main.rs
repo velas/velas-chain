@@ -502,7 +502,7 @@ impl ChainMockERPC for ChainMockErpcProxy {
         _block_hash: Hex<H256>,
         _uncle_id: Hex<U256>,
     ) -> EvmResult<Option<RPCBlock>> {
-        Err(evm_rpc::Error::Unimplemented {})
+        Ok(None)
     }
 
     fn uncle_by_block_number_and_index(
@@ -511,41 +511,51 @@ impl ChainMockERPC for ChainMockErpcProxy {
         _block: String,
         _uncle_id: Hex<U256>,
     ) -> EvmResult<Option<RPCBlock>> {
-        Err(evm_rpc::Error::Unimplemented {})
+        Ok(None)
     }
 
     fn block_uncles_count_by_hash(
         &self,
         _meta: Self::Metadata,
         _block_hash: Hex<H256>,
-    ) -> EvmResult<Option<Hex<usize>>> {
-        Err(evm_rpc::Error::Unimplemented {})
+    ) -> EvmResult<Hex<usize>> {
+        Ok(Hex(0))
     }
 
     fn block_uncles_count_by_number(
         &self,
         _meta: Self::Metadata,
         _block: String,
-    ) -> EvmResult<Option<Hex<usize>>> {
-        Err(evm_rpc::Error::Unimplemented {})
+    ) -> EvmResult<Hex<usize>> {
+        Ok(Hex(0))
     }
 
     fn transaction_by_block_hash_and_index(
         &self,
-        _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-        _tx_id: Hex<U256>,
-    ) -> EvmResult<Option<RPCTransaction>> {
-        Err(evm_rpc::Error::Unimplemented {})
+        meta: Self::Metadata,
+        block_hash: Hex<H256>,
+        tx_id: Hex<usize>,
+    ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetTransactionByBlockHashAndIndex,
+            block_hash,
+            tx_id
+        )))
     }
 
     fn transaction_by_block_number_and_index(
         &self,
-        _meta: Self::Metadata,
-        _block: String,
-        _tx_id: Hex<U256>,
-    ) -> EvmResult<Option<RPCTransaction>> {
-        Err(evm_rpc::Error::Unimplemented {})
+        meta: Self::Metadata,
+        block: BlockId,
+        tx_id: Hex<usize>,
+    ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetTransactionByBlockNumberAndIndex,
+            block,
+            tx_id
+        )))
     }
 }
 
