@@ -22,6 +22,7 @@ struct Params {
 }
 
 fn main() {
+     env_logger::init();
     let dir = Path::new("./.tmp/db/");
     let state_root = generate_db(&dir);
 

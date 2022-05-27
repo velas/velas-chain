@@ -7,9 +7,9 @@ use evm_rpc::FormatHex;
 use evm_state::rand::Rng;
 use evm_state::*;
 
-mod finder;
-
 use tonic::{transport::Server, Request, Response, Status};
+
+use state_rpc::finder;
 
 use app_grpc::backend_server::{Backend, BackendServer};
 use app_grpc::PingReply;

@@ -2,11 +2,19 @@
 name = "state-rpc"
 version = "0.1.0"
 edition = "2021"
-default-run = "state-rpc"
+default-run = "server"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
 
 [[bin]] # Generate
 name = "generate-state"
 path = "src/bin/generate_state.rs"
+
+[[bin]]
+name = "find-diff"
+path = "src/bin/find_diff.rs"
 
 [dependencies]
 evm-state = { path = "../evm-utils/evm-state" }
@@ -26,6 +34,8 @@ tonic = "0.5"
 prost = "0.8"
 
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+
+env_logger = "0.9.0"
 
 
 [build-dependencies]
