@@ -23,6 +23,14 @@ pub async fn restore_chain(
 ) -> Result<()> {
     let rpc_client = RpcClient::new(rpc_address);
 
+    let tail = ledger
+        .get_evm_confirmed_block_header(evm_missing.last + 1)
+        .await
+        .context(format!(
+            "Unable to get EVM block header {}",
+            evm_missing.last + 1
+        ))?;
+
     let mut header_template = ledger
         .get_evm_confirmed_block_header(evm_missing.first - 1)
         .await
@@ -31,17 +39,9 @@ pub async fn restore_chain(
             evm_missing.first - 1
         ))?;
 
-    let head = ledger
-        .get_evm_confirmed_block_header(evm_missing.last + 1)
-        .await
-        .context(format!(
-            "Unable to get EVM block header {}",
-            evm_missing.last + 1
-        ))?;
-
     let mut native_blocks = vec![];
 
-    for slot in header_template.native_chain_slot + 1..head.native_chain_slot {
+    for slot in header_template.native_chain_slot + 1..tail.native_chain_slot {
         let native_block = ledger
             .get_confirmed_block(slot)
             .await
@@ -122,7 +122,7 @@ pub async fn restore_chain(
     log::info!("{} blocks restored.", restored_blocks.len());
     log::debug!("{:?}", &restored_blocks);
 
-    if head.parent_hash != restored_blocks.iter().last().unwrap().header.hash() {
+    if tail.parent_hash != restored_blocks.iter().last().unwrap().header.hash() {
         log::error!("❌❌❌ Hashes do not match! ❌❌❌");
         return Ok(());
     }
