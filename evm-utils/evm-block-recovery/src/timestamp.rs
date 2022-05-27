@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 struct BlockDto {
     number: u64,
-    timestamp: DateTime<Utc>,
+    timestamp: Option<DateTime<Utc>>,
+    unixtime: Option<u64>
 }
 
 /// FIXME: Source timestamp file exported with Time Zone error
@@ -20,6 +21,12 @@ pub fn load_timestamps() -> Result<HashMap<BlockNum, u64>> {
     Ok(serde_json::from_str::<Vec<BlockDto>>(&timestamps)
         .unwrap()
         .into_iter()
-        .map(|block| (block.number, block.timestamp.timestamp() as u64 - FIVE_HRS))
+        .map(|block| {
+            let block_number = block.number;
+
+            let unixtime = block.unixtime.or(block.timestamp.map(|t| t.timestamp() as u64 - FIVE_HRS)).unwrap();
+            
+            (block_number, unixtime)
+        })
         .collect())
 }

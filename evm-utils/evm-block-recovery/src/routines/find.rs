@@ -23,7 +23,7 @@ impl BlockRange {
 
 pub async fn find(ledger: &LedgerStorage, start_block: BlockNum, limit: usize) -> Result<()> {
     let blocks = ledger
-        .get_evm_confirmed_blocks(start_block, limit)
+        .get_evm_confirmed_full_blocks_nums(start_block, limit)
         .await
         .context(format!(
             "Unable to get EVM confirmed block's IDs starting with block {} limiteb by {}",
