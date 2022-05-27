@@ -660,11 +660,7 @@ impl LedgerStorage {
         Ok(key_to_slot(&blocks[0]))
     }
 
-    /// Fetch the next slots after the provided slot that contains a block
-    ///
-    /// start_slot: slot to start the search from (inclusive)
-    /// limit: stop after this many slots have been found; if limit==0, all records in the table
-    /// after start_slot will be read
+    
     pub async fn get_evm_confirmed_blocks(
         &self,
         start_block: evm_state::BlockNum,
@@ -674,6 +670,24 @@ impl LedgerStorage {
         let blocks = bigtable
             .get_row_keys(
                 "evm-blocks",
+                Some(slot_to_key(start_block)),
+                None,
+                limit as i64,
+            )
+            .await?;
+        Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
+    }
+
+    
+    pub async fn get_evm_confirmed_full_blocks_nums(
+        &self,
+        start_block: evm_state::BlockNum,
+        limit: usize,
+    ) -> Result<Vec<evm_state::BlockNum>> {
+        let mut bigtable = self.connection.client();
+        let blocks = bigtable
+            .get_row_keys(
+                "evm-full-blocks",
                 Some(slot_to_key(start_block)),
                 None,
                 limit as i64,
