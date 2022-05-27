@@ -140,6 +140,8 @@ pub async fn restore_chain(
             evm_missing.first, evm_missing.last, unixtime
         ));
 
+        let _ = std::fs::create_dir_all(&output_dir);
+
         std::fs::write(
             blocks_path,
             serde_json::to_string(&restored_blocks).unwrap(),
@@ -172,19 +174,3 @@ async fn request_restored_block(
     Ok(result)
 }
 
-async fn write_block(ledger: &LedgerStorage, full_block: Block) -> Result<()> {
-    log::info!(
-        "Writing block {} with hash {} to the Ledger...",
-        full_block.header.block_number,
-        full_block.header.hash()
-    );
-
-    let block_num = full_block.header.block_number;
-
-    ledger
-        .upload_evm_block(block_num, full_block)
-        .await
-        .context(format!("Unable to write block {block_num} to bigtable"))?;
-
-    Ok(())
-}

@@ -50,7 +50,7 @@ enum Commands {
         #[clap(short = 'r', long)]
         force_resume: bool,
 
-        /// Writes restored EVM Blocks as JSON to directory if set
+        /// Writes restored EVM Blocks as JSON file to directory if set
         #[clap(short, long, value_name = "DIR")]
         output_dir: Option<String>,
     },
@@ -65,6 +65,12 @@ enum Commands {
         #[clap(short = 'b', long = "evm-block", value_name = "NUM")]
         block: u64,
     },
+    /// Uploads blocks to bigtable from .json file
+    Upload {
+        /// Path to file with JSON collection of EVM blocks
+        #[clap(short, long, value_name = ".json")]
+        collection_path: String
+    }
 }
 
 #[tokio::main]
@@ -99,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::CheckNative { block } => routines::check_native(&ledger, block).await?,
         Commands::CheckEvm { block } => routines::check_evm(&ledger, block).await.unwrap(),
+        Commands::Upload { collection_path } => routines::upload(&ledger, collection_path).await.unwrap()
     }
 
     Ok(())
