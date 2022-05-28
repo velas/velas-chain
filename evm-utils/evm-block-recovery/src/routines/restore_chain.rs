@@ -12,7 +12,7 @@ use solana_storage_bigtable::LedgerStorage;
 use crate::extensions::NativeBlockExt;
 
 use super::find::BlockRange;
-use super::write_block;
+use super::write_blocks_collection;
 
 pub async fn restore_chain(
     ledger: &LedgerStorage,
@@ -151,9 +151,7 @@ pub async fn restore_chain(
     }
 
     if modify_ledger {
-        for block in restored_blocks {
-            write_block(&ledger, block).await?;
-        }
+        write_blocks_collection(&ledger, restored_blocks).await?;
     }
 
     Ok(())
@@ -174,4 +172,3 @@ async fn request_restored_block(
 
     Ok(result)
 }
-

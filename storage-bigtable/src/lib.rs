@@ -660,7 +660,6 @@ impl LedgerStorage {
         Ok(key_to_slot(&blocks[0]))
     }
 
-    
     pub async fn get_evm_confirmed_blocks(
         &self,
         start_block: evm_state::BlockNum,
@@ -678,7 +677,6 @@ impl LedgerStorage {
         Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
     }
 
-    
     pub async fn get_evm_confirmed_full_blocks_nums(
         &self,
         start_block: evm_state::BlockNum,

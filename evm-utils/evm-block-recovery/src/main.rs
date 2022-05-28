@@ -3,7 +3,6 @@ pub mod routines;
 pub mod timestamp;
 
 use clap::{Parser, Subcommand};
-use routines::find::BlockRange;
 use solana_storage_bigtable::LedgerStorage;
 
 #[derive(Parser)]
@@ -69,8 +68,8 @@ enum Commands {
     Upload {
         /// Path to file with JSON collection of EVM blocks
         #[clap(short, long, value_name = ".json")]
-        collection_path: String
-    }
+        collection: String,
+    },
 }
 
 #[tokio::main]
@@ -95,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
         } => {
             routines::restore_chain(
                 &ledger,
-                BlockRange::new(first, last),
+                routines::find::BlockRange::new(first, last),
                 rpc_address,
                 modify_ledger,
                 force_resume,
@@ -105,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::CheckNative { block } => routines::check_native(&ledger, block).await?,
         Commands::CheckEvm { block } => routines::check_evm(&ledger, block).await.unwrap(),
-        Commands::Upload { collection_path } => routines::upload(&ledger, collection_path).await.unwrap()
+        Commands::Upload { collection } => routines::upload(&ledger, collection).await.unwrap(),
     }
 
     Ok(())

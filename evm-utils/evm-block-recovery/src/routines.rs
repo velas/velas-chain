@@ -12,19 +12,25 @@ pub use upload::upload;
 
 use anyhow::*;
 
-async fn write_block(ledger: &solana_storage_bigtable::LedgerStorage, full_block: evm_state::Block) -> Result<()> {
-    log::info!(
-        "Writing block {} with hash {} to the Ledger...",
-        full_block.header.block_number,
-        full_block.header.hash()
-    );
+async fn write_blocks_collection(
+    ledger: &solana_storage_bigtable::LedgerStorage,
+    blocks: Vec<evm_state::Block>,
+) -> Result<()> {
+    for block in blocks {
+        log::info!(
+            "Writing block {} with hash {} to the Ledger...",
+            block.header.block_number,
+            block.header.hash()
+        );
 
-    let block_num = full_block.header.block_number;
+        let block_num = block.header.block_number;
 
-    ledger
-        .upload_evm_block(block_num, full_block)
-        .await
-        .context(format!("Unable to write block {block_num} to bigtable"))?;
+        // TODO: informative message if early-return
+        ledger
+            .upload_evm_block(block_num, block)
+            .await
+            .context(format!("Unable to write block {block_num} to bigtable"))?;
+    }
 
     Ok(())
 }
