@@ -2,7 +2,7 @@ use anyhow::*;
 use evm_state::Block;
 use solana_storage_bigtable::LedgerStorage;
 
-use crate::routines::write_block;
+use super::write_block;
 
 pub async fn upload(ledger: &LedgerStorage, collection_path: String) -> Result<()> {
     log::info!("Reading file: '{}'...", &collection_path);
