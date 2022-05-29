@@ -1,4 +1,5 @@
 use bincode::serialize;
+use evm_rpc::Hex;
 use jsonrpc_core::futures::StreamExt;
 use jsonrpc_core_client::transports::ws;
 use log::*;
@@ -11,11 +12,17 @@ use solana_client::{
     rpc_response::{Response, RpcSignatureResult, SlotUpdate},
     tpu_client::{TpuClient, TpuClientConfig},
 };
-use solana_core::{rpc_pubsub::gen_client::Client as PubsubClient, test_validator::TestValidator};
+use solana_core::{
+    rpc::JsonRpcConfig,
+    rpc_pubsub::gen_client::Client as PubsubClient,
+    test_validator::{TestValidator, TestValidatorGenesis}
+};
 use solana_sdk::{
-    commitment_config::CommitmentConfig,
+    commitment_config::{CommitmentConfig, CommitmentLevel},
+    fee_calculator::FeeRateGovernor,
     hash::Hash,
     pubkey::Pubkey,
+    rent::Rent,
     signature::{Keypair, Signer},
     system_transaction,
     transaction::Transaction,
@@ -49,6 +56,40 @@ fn post_rpc(request: Value, rpc_url: &str) -> Value {
         .send()
         .unwrap();
     serde_json::from_str(&response.text().unwrap()).unwrap()
+}
+
+fn get_blockhash(rpc_url: &str) -> Hash {
+    let req = json_req!(
+        "getRecentBlockhash",
+        json!([json!(CommitmentConfig {
+            commitment: CommitmentLevel::Finalized
+        })])
+    );
+    let json = post_rpc(req, &rpc_url);
+    json["result"]["value"]["blockhash"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+fn wait_confirmation(rpc_url: &str, signatures: &[&Value]) -> bool {
+    let request = json_req!("getSignatureStatuses", [signatures]);
+
+    for _ in 0..solana_sdk::clock::DEFAULT_TICKS_PER_SLOT {
+        let json = dbg!(post_rpc(request.clone(), &rpc_url));
+        let values = json["result"]["value"].as_array().unwrap();
+        if values.iter().all(|v| !v.is_null()) {
+            for val in values {
+                assert_eq!(val["err"], Value::Null);
+            }
+            info!("All signatures confirmed: {:?}", values);
+            return true;
+        }
+
+        sleep(Duration::from_secs(1));
+    }
+    false
 }
 
 #[test]
@@ -115,6 +156,89 @@ fn test_rpc_send_tx() {
     );
     let json: Value = post_rpc(req, &rpc_url);
     info!("{:?}", json["result"]["value"]);
+}
+
+#[test]
+fn test_rpc_replay_transaction() {
+    use solana_evm_loader_program::{send_raw_tx, transfer_native_to_evm_ixs};
+    // let filter = "warn,solana_runtime::message_processor=debug,evm=debug";
+    solana_logger::setup_with_default("warn");
+
+    let evm_secret_key = evm_state::SecretKey::from_slice(&[1; 32]).unwrap();
+    let evm_address = evm_state::addr_from_public_key(&evm_state::PublicKey::from_secret_key(
+        evm_state::SECP256K1,
+        &evm_secret_key,
+    ));
+
+    let alice = Keypair::new();
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .enable_evm_state_archive()
+        .rpc_config(JsonRpcConfig {
+            enable_rpc_transaction_history: true,
+            ..Default::default()
+        })
+        .start_with_mint_address(alice.pubkey())
+        .expect("validator start failed");
+    let rpc_url = test_validator.rpc_url();
+
+    let req = json_req!("eth_chainId", json!([]));
+    let json = post_rpc(req, &rpc_url);
+    let chain_id = Hex::from_hex(json["result"].as_str().unwrap()).unwrap().0;
+
+    let blockhash = dbg!(get_blockhash(&rpc_url));
+    let ixs = transfer_native_to_evm_ixs(alice.pubkey(), 1000000, evm_address);
+    let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
+    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+
+    let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
+    let json: Value = post_rpc(req, &rpc_url);
+    wait_confirmation(&rpc_url, &[&json["result"]]);
+
+    let evm_txs: Vec<_> = (0u64..3)
+        .map(|nonce| {
+            evm_state::UnsignedTransaction {
+                nonce: nonce.into(),
+                gas_price: 2000000000.into(),
+                gas_limit: 300000.into(),
+                action: evm_state::TransactionAction::Call(evm_address),
+                value: 0.into(),
+                input: vec![],
+            }
+            .sign(&evm_secret_key, Some(chain_id))
+        })
+        .collect();
+    let tx_hashes: Vec<_> = evm_txs.iter().map(|tx| tx.tx_id_hash()).collect();
+
+    while get_blockhash(&rpc_url) == blockhash {
+        sleep(Duration::from_secs(1));
+    }
+    let blockhash = get_blockhash(&rpc_url);
+    while get_blockhash(&rpc_url) == blockhash {
+        sleep(Duration::from_secs(1));
+    }
+    let blockhash = get_blockhash(&rpc_url);
+    let ixs: Vec<_> = evm_txs
+        .into_iter()
+        .map(|evm_tx| send_raw_tx(alice.pubkey(), evm_tx, None))
+        .collect();
+    let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
+    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+    let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
+    let json = dbg!(post_rpc(req, &rpc_url));
+    wait_confirmation(&rpc_url, &[&json["result"]]);
+
+    for tx_hash in tx_hashes {
+        let request = json_req!("trace_replayTransaction", json!([tx_hash, ["trace"]]));
+        let json = post_rpc(request.clone(), &rpc_url);
+        warn!("trace_replayTransaction: {}", dbg!(json.clone()));
+        assert!(!json["result"].is_null());
+    }
 }
 
 #[test]
