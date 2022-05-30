@@ -393,8 +393,9 @@ impl JsonRpcService {
                     io.extend_with(rpc_full::FullImpl.to_delegate());
                 }
 
-                io.extend_with(super::evm_rpc_impl::BasicErpcImpl.to_delegate());
-                io.extend_with(super::evm_rpc_impl::ChainMockErpcImpl.to_delegate());
+                io.extend_with(super::evm_rpc_impl::ChainErpcImpl.to_delegate());
+                io.extend_with(super::evm_rpc_impl::GeneralErpcImpl.to_delegate());
+                io.extend_with(super::evm_rpc_impl::TraceErpcImpl.to_delegate());
 
                 let request_middleware = RpcRequestMiddleware::new(
                     ledger_path,

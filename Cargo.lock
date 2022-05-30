@@ -1679,6 +1679,7 @@ dependencies = [
  "solana-runtime",
  "solana-sdk",
  "solana-transaction-status",
+ "solana-version",
  "structopt",
  "tokio 1.9.0",
  "txpool",

@@ -13,9 +13,10 @@ use std::{
     net::SocketAddr,
 };
 
-use evm_rpc::basic::BasicERPC;
 use evm_rpc::bridge::BridgeERPC;
-use evm_rpc::chain_mock::ChainMockERPC;
+use evm_rpc::chain::ChainERPC;
+use evm_rpc::general::GeneralERPC;
+use evm_rpc::trace::TraceERPC;
 use evm_rpc::error::{Error, *};
 use evm_rpc::trace::TraceMeta;
 use evm_rpc::*;
@@ -475,17 +476,23 @@ impl BridgeERPC for BridgeErpcImpl {
     }
 }
 
-pub struct ChainMockErpcProxy;
-impl ChainMockERPC for ChainMockErpcProxy {
+pub struct GeneralErpcProxy;
+impl GeneralERPC for GeneralErpcProxy {
     type Metadata = Arc<EvmBridge>;
+
+    fn client_version(&self, _meta: Self::Metadata) -> EvmResult<String> {
+        Ok(String::from("SolanaEvm/v0.1.0"))
+    }
+
+    fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> EvmResult<Hex<H256>> {
+        Ok(Hex(H256::from_slice(
+            Keccak256::digest(bytes.0.as_slice()).as_slice(),
+        )))
+    }
 
     fn network_id(&self, meta: Self::Metadata) -> EvmResult<String> {
         // NOTE: also we can get chain id from meta, but expects the same value
         Ok(format!("{}", meta.evm_chain_id))
-    }
-
-    fn chain_id(&self, meta: Self::Metadata) -> EvmResult<Hex<u64>> {
-        Ok(Hex(meta.evm_chain_id))
     }
 
     // TODO: Add network info
@@ -497,18 +504,12 @@ impl ChainMockERPC for ChainMockErpcProxy {
         Ok(Hex(0))
     }
 
-    fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> EvmResult<Hex<H256>> {
-        Ok(Hex(H256::from_slice(
-            Keccak256::digest(bytes.0.as_slice()).as_slice(),
-        )))
-    }
-
-    fn client_version(&self, _meta: Self::Metadata) -> EvmResult<String> {
-        Ok(String::from("SolanaEvm/v0.1.0"))
+    fn chain_id(&self, meta: Self::Metadata) -> EvmResult<Hex<u64>> {
+        Ok(Hex(meta.evm_chain_id))
     }
 
     fn protocol_version(&self, _meta: Self::Metadata) -> EvmResult<String> {
-        Ok(String::from("0"))
+        Ok(solana_version::semver!().into())
     }
 
     fn is_syncing(&self, meta: Self::Metadata) -> EvmResult<bool> {
@@ -527,95 +528,13 @@ impl ChainMockERPC for ChainMockErpcProxy {
         Ok(Hex(U256::zero()))
     }
 
-    fn block_transaction_count_by_number(
-        &self,
-        meta: Self::Metadata,
-        block: BlockId,
-    ) -> BoxFuture<EvmResult<Hex<usize>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetBlockTransactionCountByNumber,
-            block
-        )))
-    }
-
-    fn block_transaction_count_by_hash(
-        &self,
-        meta: Self::Metadata,
-        block_hash: Hex<H256>,
-    ) -> BoxFuture<EvmResult<Hex<usize>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetBlockTransactionCountByHash,
-            block_hash
-        )))
-    }
-
-    fn uncle_by_block_hash_and_index(
-        &self,
-        _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-        _uncle_id: Hex<U256>,
-    ) -> EvmResult<Option<RPCBlock>> {
-        Ok(None)
-    }
-
-    fn uncle_by_block_number_and_index(
-        &self,
-        _meta: Self::Metadata,
-        _block: String,
-        _uncle_id: Hex<U256>,
-    ) -> EvmResult<Option<RPCBlock>> {
-        Ok(None)
-    }
-
-    fn block_uncles_count_by_hash(
-        &self,
-        _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-    ) -> EvmResult<Hex<usize>> {
-        Ok(Hex(0))
-    }
-
-    fn block_uncles_count_by_number(
-        &self,
-        _meta: Self::Metadata,
-        _block: String,
-    ) -> EvmResult<Hex<usize>> {
-        Ok(Hex(0))
-    }
-
-    fn transaction_by_block_hash_and_index(
-        &self,
-        meta: Self::Metadata,
-        block_hash: Hex<H256>,
-        tx_id: Hex<usize>,
-    ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetTransactionByBlockHashAndIndex,
-            block_hash,
-            tx_id
-        )))
-    }
-
-    fn transaction_by_block_number_and_index(
-        &self,
-        meta: Self::Metadata,
-        block: BlockId,
-        tx_id: Hex<usize>,
-    ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetTransactionByBlockNumberAndIndex,
-            block,
-            tx_id
-        )))
+    fn gas_price(&self, meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
+        Ok(Hex(meta.min_gas_price))
     }
 }
 
-pub struct BasicErpcProxy;
-impl BasicERPC for BasicErpcProxy {
+pub struct ChainErpcProxy;
+impl ChainERPC for ChainErpcProxy {
     type Metadata = Arc<EvmBridge>;
 
     // The same as get_slot
@@ -655,6 +574,30 @@ impl BasicERPC for BasicErpcProxy {
         }
 
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthGetTransactionCount, address, block)))
+    }
+
+    fn block_transaction_count_by_number(
+        &self,
+        meta: Self::Metadata,
+        block: BlockId,
+    ) -> BoxFuture<EvmResult<Hex<usize>>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetBlockTransactionCountByNumber,
+            block
+        )))
+    }
+
+    fn block_transaction_count_by_hash(
+        &self,
+        meta: Self::Metadata,
+        block_hash: Hex<H256>,
+    ) -> BoxFuture<EvmResult<Hex<usize>>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetBlockTransactionCountByHash,
+            block_hash
+        )))
     }
 
     fn code(
@@ -710,6 +653,34 @@ impl BasicERPC for BasicErpcProxy {
             .map(|o: Option<_>| o.map(compatibility::patch_tx))))
     }
 
+    fn transaction_by_block_hash_and_index(
+        &self,
+        meta: Self::Metadata,
+        block_hash: Hex<H256>,
+        tx_id: Hex<usize>,
+    ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetTransactionByBlockHashAndIndex,
+            block_hash,
+            tx_id
+        )))
+    }
+
+    fn transaction_by_block_number_and_index(
+        &self,
+        meta: Self::Metadata,
+        block: BlockId,
+        tx_id: Hex<usize>,
+    ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthGetTransactionByBlockNumberAndIndex,
+            block,
+            tx_id
+        )))
+    }
+
     fn transaction_receipt(
         &self,
         meta: Self::Metadata,
@@ -726,58 +697,6 @@ impl BasicERPC for BasicErpcProxy {
         meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<EvmResult<Bytes>> {
         Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthCall, tx, block, meta_keys)))
-    }
-
-    fn trace_call(
-        &self,
-        meta: Self::Metadata,
-        tx: RPCTransaction,
-        traces: Vec<String>,
-        block: Option<BlockId>,
-        meta_info: Option<TraceMeta>,
-    ) -> BoxFuture<EvmResult<evm_rpc::trace::TraceResultsWithTransactionHash>> {
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthTraceCall, tx, traces, block, meta_info)))
-    }
-
-    fn trace_call_many(
-        &self,
-        meta: Self::Metadata,
-        tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
-        block: Option<BlockId>,
-    ) -> BoxFuture<EvmResult<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>>> {
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthTraceCallMany, tx_traces, block)))
-    }
-
-    fn trace_replay_transaction(
-        &self,
-        meta: Self::Metadata,
-        tx_hash: Hex<H256>,
-        traces: Vec<String>,
-        meta_info: Option<TraceMeta>,
-    ) -> BoxFuture<EvmResult<Option<trace::TraceResultsWithTransactionHash>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthTraceReplayTransaction,
-            tx_hash,
-            traces,
-            meta_info
-        )))
-    }
-
-    fn trace_replay_block(
-        &self,
-        meta: Self::Metadata,
-        block: BlockId,
-        traces: Vec<String>,
-        meta_info: Option<TraceMeta>,
-    ) -> BoxFuture<EvmResult<Vec<trace::TraceResultsWithTransactionHash>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthTraceReplayBlock,
-            block,
-            traces,
-            meta_info
-        )))
     }
 
     fn estimate_gas(
@@ -852,8 +771,95 @@ impl BasicERPC for BasicErpcProxy {
         })
     }
 
-    fn gas_price(&self, meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
-        Ok(Hex(meta.min_gas_price))
+    fn uncle_by_block_hash_and_index(
+        &self,
+        _meta: Self::Metadata,
+        _block_hash: Hex<H256>,
+        _uncle_id: Hex<U256>,
+    ) -> EvmResult<Option<RPCBlock>> {
+        Ok(None)
+    }
+
+    fn uncle_by_block_number_and_index(
+        &self,
+        _meta: Self::Metadata,
+        _block: String,
+        _uncle_id: Hex<U256>,
+    ) -> EvmResult<Option<RPCBlock>> {
+        Ok(None)
+    }
+
+    fn block_uncles_count_by_hash(
+        &self,
+        _meta: Self::Metadata,
+        _block_hash: Hex<H256>,
+    ) -> EvmResult<Hex<usize>> {
+        Ok(Hex(0))
+    }
+
+    fn block_uncles_count_by_number(
+        &self,
+        _meta: Self::Metadata,
+        _block: String,
+    ) -> EvmResult<Hex<usize>> {
+        Ok(Hex(0))
+    }
+}
+
+pub struct TraceErpcProxy;
+impl TraceERPC for TraceErpcProxy {
+    type Metadata = Arc<EvmBridge>;
+
+    fn trace_call(
+        &self,
+        meta: Self::Metadata,
+        tx: RPCTransaction,
+        traces: Vec<String>,
+        block: Option<BlockId>,
+        meta_info: Option<TraceMeta>,
+    ) -> BoxFuture<EvmResult<evm_rpc::trace::TraceResultsWithTransactionHash>> {
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthTraceCall, tx, traces, block, meta_info)))
+    }
+
+    fn trace_call_many(
+        &self,
+        meta: Self::Metadata,
+        tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
+        block: Option<BlockId>,
+    ) -> BoxFuture<EvmResult<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>>> {
+        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthTraceCallMany, tx_traces, block)))
+    }
+
+    fn trace_replay_transaction(
+        &self,
+        meta: Self::Metadata,
+        tx_hash: Hex<H256>,
+        traces: Vec<String>,
+        meta_info: Option<TraceMeta>,
+    ) -> BoxFuture<EvmResult<Option<trace::TraceResultsWithTransactionHash>>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthTraceReplayTransaction,
+            tx_hash,
+            traces,
+            meta_info
+        )))
+    }
+
+    fn trace_replay_block(
+        &self,
+        meta: Self::Metadata,
+        block: BlockId,
+        traces: Vec<String>,
+        meta_info: Option<TraceMeta>,
+    ) -> BoxFuture<EvmResult<Vec<trace::TraceResultsWithTransactionHash>>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            EthTraceReplayBlock,
+            block,
+            traces,
+            meta_info
+        )))
     }
 }
 
@@ -998,10 +1004,12 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
 
     let ether_bridge = BridgeErpcImpl;
     io.extend_with(ether_bridge.to_delegate());
-    let ether_basic = BasicErpcProxy;
-    io.extend_with(ether_basic.to_delegate());
-    let ether_mock = ChainMockErpcProxy;
-    io.extend_with(ether_mock.to_delegate());
+    let ether_chain = ChainErpcProxy;
+    io.extend_with(ether_chain.to_delegate());
+    let ether_general = GeneralErpcProxy;
+    io.extend_with(ether_general.to_delegate());
+    let ether_trace = TraceErpcProxy;
+    io.extend_with(ether_trace.to_delegate());
 
     let mempool_worker = worker_deploy(meta.clone());
 
