@@ -22,6 +22,8 @@ use snafu::ensure;
 use snafu::ResultExt;
 use solana_runtime::bank::Bank;
 use std::{cell::RefCell, future::ready, sync::Arc};
+use crate::rpc_health::RpcHealthStatus;
+
 const GAS_PRICE: u64 = 3;
 
 pub struct StateRootWithBank {
@@ -200,8 +202,11 @@ impl ChainMockERPC for ChainMockErpcImpl {
         Ok(String::from("0"))
     }
 
-    fn is_syncing(&self, _meta: Self::Metadata) -> Result<bool, Error> {
-        Err(Error::Unimplemented {})
+    fn is_syncing(&self, meta: Self::Metadata) -> Result<bool, Error> {
+        Ok(match meta.get_health() {
+            RpcHealthStatus::Ok => false,
+            _ => true,
+        })
     }
 
     fn coinbase(&self, _meta: Self::Metadata) -> Result<Hex<Address>, Error> {

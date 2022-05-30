@@ -52,6 +52,8 @@ use pool::{
     SystemClock,
 };
 
+use rlp::Encodable;
+use secp256k1::Message;
 use std::result::Result as StdResult;
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
 
@@ -318,13 +320,66 @@ impl BridgeERPC for BridgeErpcImpl {
         Ok(meta.accounts.iter().map(|(k, _)| Hex(*k)).collect())
     }
 
-    fn sign(
+    fn sign(&self, meta: Self::Metadata, address: Hex<Address>, data: Bytes) -> EvmResult<Bytes> {
+        let secret_key = meta
+            .accounts
+            .get(&address.0)
+            .ok_or(Error::KeyNotFound { account: address.0 })?;
+        let mut message_data =
+            format!("\x19Ethereum Signed Message:\n{}", data.0.len()).into_bytes();
+        message_data.extend_from_slice(&data.0);
+        let hash_to_sign = solana_sdk::keccak::hash(&message_data);
+        let msg: Message = Message::from_slice(&hash_to_sign.to_bytes()).unwrap();
+        let sig = SECP256K1.sign_recoverable(&msg, &secret_key);
+        let (rid, sig) = { sig.serialize_compact() };
+
+        let mut sig_data_arr = [0; 65];
+        sig_data_arr[0..64].copy_from_slice(&sig[0..64]);
+        sig_data_arr[64] = rid.to_i32() as u8;
+        Ok(sig_data_arr.to_vec().into())
+    }
+
+    fn sign_transaction(
         &self,
-        _meta: Self::Metadata,
-        _address: Hex<Address>,
-        _data: Bytes,
-    ) -> EvmResult<Bytes> {
-        Err(evm_rpc::Error::Unimplemented {})
+        meta: Self::Metadata,
+        tx: RPCTransaction,
+    ) -> BoxFuture<EvmResult<Bytes>> {
+        let future = async move {
+            let address = tx.from.map(|a| a.0).unwrap_or_default();
+
+            debug!("sign_transaction from = {}", address);
+
+            let secret_key = meta
+                .accounts
+                .get(&address)
+                .ok_or(Error::KeyNotFound { account: address })?;
+
+            let nonce = tx
+                .nonce
+                .map(|a| a.0)
+                .or_else(|| meta.pool.transaction_count(&address))
+                .or_else(|| meta.rpc_client.get_evm_transaction_count(&address).ok())
+                .unwrap_or_default();
+
+            let tx = UnsignedTransaction {
+                nonce,
+                gas_price: tx
+                    .gas_price
+                    .map(|a| a.0)
+                    .unwrap_or_else(|| meta.min_gas_price),
+                gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 30000000.into()),
+                action: tx
+                    .to
+                    .map(|a| TransactionAction::Call(a.0))
+                    .unwrap_or(TransactionAction::Create),
+                value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
+                input: tx.input.map(|a| a.0).unwrap_or_default(),
+            };
+
+            let tx = tx.sign(secret_key, Some(meta.evm_chain_id));
+            Ok(tx.rlp_bytes().to_vec().into())
+        };
+        Box::pin(future)
     }
 
     fn send_transaction(
@@ -416,7 +471,7 @@ impl BridgeERPC for BridgeErpcImpl {
     }
 
     fn compilers(&self, _meta: Self::Metadata) -> EvmResult<Vec<String>> {
-        Err(evm_rpc::Error::Unimplemented {})
+        Ok(vec![])
     }
 }
 
@@ -456,8 +511,8 @@ impl ChainMockERPC for ChainMockErpcProxy {
         Ok(String::from("0"))
     }
 
-    fn is_syncing(&self, _meta: Self::Metadata) -> EvmResult<bool> {
-        Ok(false)
+    fn is_syncing(&self, meta: Self::Metadata) -> EvmResult<bool> {
+        proxy_evm_rpc!(meta.rpc_client, EthSyncing)
     }
 
     fn coinbase(&self, _meta: Self::Metadata) -> EvmResult<Hex<Address>> {
@@ -1067,4 +1122,42 @@ fn send_and_confirm_transactions<T: Signers>(
         }
     }
     Err(anyhow::Error::msg("Transactions failed"))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{BridgeErpcImpl, EthPool, EvmBridge, SystemClock};
+    use evm_rpc::{BridgeERPC, Hex};
+    use evm_state::Address;
+    use secp256k1::SecretKey;
+    use solana_client::rpc_client::RpcClient;
+    use solana_sdk::signature::Keypair;
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_eth_sign() {
+        let signing_key =
+            SecretKey::from_str("c21020a52198632ae7d5c1adaa3f83da2e0c98cf541c54686ddc8d202124c086")
+                .unwrap();
+        let public_key = evm_state::PublicKey::from_secret_key(evm_state::SECP256K1, &signing_key);
+        let public_key = evm_state::addr_from_public_key(&public_key);
+        let bridge = Arc::new(EvmBridge {
+            evm_chain_id: 111u64,
+            key: Keypair::new(),
+            accounts: vec![(public_key, signing_key)].into_iter().collect(),
+            rpc_client: RpcClient::new("".to_string()),
+            verbose_errors: true,
+            simulate: false,
+            max_logs_blocks: 0u64,
+            pool: EthPool::new(SystemClock),
+            min_gas_price: 0.into(),
+        });
+
+        let rpc = BridgeErpcImpl {};
+        let address = Address::from_str("0x141a4802f84bb64c0320917672ef7D92658e964e").unwrap();
+        let data = "qwe".as_bytes().to_vec();
+        let res = rpc.sign(bridge, Hex(address), data.into()).unwrap();
+        assert_eq!(res.to_string(), "0xb734e224f0f92d89825f3f69bf03924d7d2f609159d6ce856d37a58d7fcbc8eb6d224fd73f05217025ed015283133c92888211b238272d87ec48347f05ab42a000");
+    }
 }

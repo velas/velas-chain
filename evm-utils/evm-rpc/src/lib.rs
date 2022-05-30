@@ -854,6 +854,13 @@ pub mod bridge {
             data: Bytes,
         ) -> Result<Bytes, Error>;
 
+        #[rpc(meta, name = "eth_signTransaction")]
+        fn sign_transaction(
+            &self,
+            meta: Self::Metadata,
+            tx: RPCTransaction,
+        ) -> BoxFuture<Result<Bytes, Error>>;
+
         #[rpc(meta, name = "eth_sendTransaction")]
         fn send_transaction(
             &self,
