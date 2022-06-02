@@ -28,6 +28,7 @@ pub struct StateRootWithBank {
     pub state_root: Option<H256>,
     pub bank: Option<Arc<Bank>>,
     pub block: BlockId,
+    pub block_timestamp: Option<u64>,
 }
 
 impl StateRootWithBank {
@@ -48,7 +49,9 @@ impl StateRootWithBank {
             assert!(evm.last_root() == root, "we store bank with invalid root");
             return Ok(evm.get_account_state(address));
         }
-        let archive_evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
+        let archive_evm_state = meta
+            .evm_state_archive(self.block_timestamp)
+            .ok_or(Error::ArchiveNotSupported)?;
         ensure!(
             archive_evm_state.kvs().check_root_exist(root),
             StateNotFoundForBlock { block: self.block }
@@ -76,7 +79,9 @@ impl StateRootWithBank {
             assert!(evm.last_root() == root, "we store bank with invalid root");
             return Ok(evm.get_storage(address, idx));
         }
-        let archive_evm_state = meta.evm_state_archive().ok_or(Error::ArchiveNotSupported)?;
+        let archive_evm_state = meta
+            .evm_state_archive(self.block_timestamp)
+            .ok_or(Error::ArchiveNotSupported)?;
         ensure!(
             archive_evm_state.kvs().check_root_exist(root),
             StateNotFoundForBlock { block: self.block }
@@ -105,6 +110,7 @@ async fn block_to_state_root(
                 state_root: Some(last_root),
                 bank: Some(bank),
                 block: block_id,
+                block_timestamp: None,
             };
         }
         BlockId::RelativeId(BlockRelId::Earliest) | BlockId::Num(Hex(0)) => {
@@ -120,6 +126,7 @@ async fn block_to_state_root(
                     state_root: None,
                     bank: None,
                     block: block_id,
+                    block_timestamp: None,
                 };
             }
         }
@@ -138,6 +145,10 @@ async fn block_to_state_root(
 
         bank: None,
         block: block_id,
+        block_timestamp: meta
+            .get_evm_block_by_id(block_num)
+            .await
+            .map(|(block, _)| block.header.timestamp),
     }
 }
 
@@ -717,7 +728,7 @@ fn call_many(
         }
     } else {
         let root = saved_state.state_root.unwrap();
-        meta.evm_state_archive()
+        meta.evm_state_archive(saved_state.block_timestamp)
             .ok_or(Error::ArchiveNotSupported)?
             .new_incomming_for_root(root)
             .ok_or(Error::StateNotFoundForBlock {
