@@ -178,6 +178,67 @@ impl BigTableConnection {
         }
     }
 
+    pub async fn new_with_parameters(
+        token_path: String,
+        instance_name: &str,
+        read_only: bool,
+        timeout: Option<Duration>,
+    ) -> Result<Self> {
+        match std::env::var("BIGTABLE_EMULATOR_HOST") {
+            Ok(endpoint) => {
+                info!("Connecting to bigtable emulator at {}", endpoint);
+
+                Ok(Self {
+                    access_token: None,
+                    channel: tonic::transport::Channel::from_shared(format!("http://{}", endpoint))
+                        .map_err(|err| Error::InvalidUri(endpoint, err.to_string()))?
+                        .connect_lazy()?,
+                    table_prefix: format!("projects/emulator/instances/{}/tables/", instance_name),
+                    timeout,
+                })
+            }
+
+            Err(_) => {
+                let scope = if read_only { Scope::BigTableDataReadOnly } else { Scope::BigTableData };
+
+                let access_token = AccessToken::new_with_token_path(scope, token_path)
+                    .await
+                    .map_err(Error::AccessTokenError)?;
+
+                let table_prefix = format!(
+                    "projects/{}/instances/{}/tables/",
+                    access_token.project(),
+                    instance_name
+                );
+
+                let endpoint = {
+                    let endpoint =
+                        tonic::transport::Channel::from_static("https://bigtable.googleapis.com")
+                            .tls_config(
+                            ClientTlsConfig::new()
+                                .ca_certificate(
+                                    root_ca_certificate::load().map_err(Error::CertificateError)?,
+                                )
+                                .domain_name("bigtable.googleapis.com"),
+                        )?;
+
+                    if let Some(timeout) = timeout {
+                        endpoint.timeout(timeout)
+                    } else {
+                        endpoint
+                    }
+                };
+
+                Ok(Self {
+                    access_token: Some(access_token),
+                    channel: endpoint.connect_lazy()?,
+                    table_prefix,
+                    timeout,
+                })
+            }
+        }
+    }
+
     /// Create a new BigTable client.
     ///
     /// Clients require `&mut self`, due to `Tonic::transport::Channel` limitations, however

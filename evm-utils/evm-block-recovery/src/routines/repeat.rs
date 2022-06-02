@@ -1,12 +1,8 @@
 use anyhow::*;
+use solana_storage_bigtable::LedgerStorage;
 
-pub async fn repeat(
-    _block_number: u64,
-    _src_token: String,
-    _src_instance: Option<String>,
-    _dst_token: String,
-    _dst_instance: Option<String>,
-) -> Result<()> {
-    println!("this is repeat command");
+pub async fn repeat(block_number: u64, src: LedgerStorage, dst: LedgerStorage) -> Result<()> {
+    println!("Repeating block {}", block_number);
+
     Ok(())
 }

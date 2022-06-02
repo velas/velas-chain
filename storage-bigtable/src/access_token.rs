@@ -15,10 +15,15 @@ use std::{
 
 pub use goauth::scopes::Scope;
 
-fn load_credentials() -> Result<Credentials, String> {
+enum Method { EnvVar, FilePath(String) }
+
+fn load_credentials(method: Method) -> Result<Credentials, String> {
     // Use standard GOOGLE_APPLICATION_CREDENTIALS environment variable
-    let credentials_file = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
-        .map_err(|_| "GOOGLE_APPLICATION_CREDENTIALS environment variable not found".to_string())?;
+    let credentials_file = match method {
+        Method::EnvVar => std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
+            .map_err(|_| "GOOGLE_APPLICATION_CREDENTIALS environment variable not found".to_string())?,
+        Method::FilePath(file_path) => file_path,
+    };
 
     Credentials::from_file(&credentials_file).map_err(|err| {
         format!(
@@ -38,7 +43,23 @@ pub struct AccessToken {
 
 impl AccessToken {
     pub async fn new(scope: Scope) -> Result<Self, String> {
-        let credentials = load_credentials()?;
+        let credentials = load_credentials(Method::EnvVar)?;
+        if let Err(err) = credentials.rsa_key() {
+            Err(format!("Invalid rsa key: {}", err))
+        } else {
+            let token = Arc::new(RwLock::new(Self::get_token(&credentials, &scope).await?));
+            let access_token = Self {
+                credentials,
+                scope,
+                token,
+                refresh_active: Arc::new(AtomicBool::new(false)),
+            };
+            Ok(access_token)
+        }
+    }
+
+    pub async fn new_with_token_path(scope: Scope, token_path: String) -> Result<Self, String> {
+        let credentials = load_credentials(Method::FilePath(token_path))?;
         if let Err(err) = credentials.rsa_key() {
             Err(format!("Invalid rsa key: {}", err))
         } else {

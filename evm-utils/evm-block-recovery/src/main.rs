@@ -57,13 +57,13 @@ enum Commands {
     /// Checks content of Native Block
     CheckNative {
         /// Native Block number
-        #[clap(short = 'b', long, value_name = "DEC NUM")]
+        #[clap(short = 'b', long, value_name = "NUM")]
         block_number: u64,
     },
 
     /// Checks content of Evm Block
     CheckEvm {
-        #[clap(short = 'b', long, value_name = "DEC NUM")]
+        #[clap(short = 'b', long, value_name = "NUM")]
         block_number: u64,
     },
 
@@ -73,22 +73,23 @@ enum Commands {
         #[clap(short, long, value_name = ".json")]
         collection: String,
     },
+
     // TODO: comment args
     /// Copies block from BT source to BT destination
     Repeat {
-        #[clap(short, long)]
+        #[clap(short, long, value_name = "NUM")]
         block_number: u64,
 
-        #[clap(short, long)]
+        #[clap(long, value_name = "FILE_PATH")]
         src_token: String,
 
-        #[clap(short, long)]
+        #[clap(long)]
         src_instance: Option<String>,
 
-        #[clap(short, long)]
+        #[clap(long, value_name = "FILE_PATH")]
         dst_token: String,
 
-        #[clap(short, long)]
+        #[clap(long)]
         dst_instance: Option<String>,
     },
 }
@@ -101,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Find { start, limit } => {
-            routines::find(ledger::default().await, start, limit).await?
+            routines::find(ledger::default().await?, start, limit).await?
         }
         Commands::RestoreChain {
             first,
@@ -112,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
             output_dir,
         } => {
             routines::restore_chain(
-                ledger::default().await,
+                ledger::default().await?,
                 routines::find::BlockRange::new(first, last),
                 rpc_address,
                 modify_ledger,
@@ -122,13 +123,13 @@ async fn main() -> anyhow::Result<()> {
             .await?
         }
         Commands::CheckNative { block_number } => {
-            routines::check_native(ledger::default().await, block_number).await?
+            routines::check_native(ledger::default().await?, block_number).await?
         }
         Commands::CheckEvm { block_number } => {
-            routines::check_evm(ledger::default().await, block_number).await?
+            routines::check_evm(ledger::default().await?, block_number).await?
         }
         Commands::Upload { collection } => {
-            routines::upload(ledger::default().await, collection).await?
+            routines::upload(ledger::default().await?, collection).await?
         }
         Commands::Repeat {
             block_number,
@@ -139,10 +140,8 @@ async fn main() -> anyhow::Result<()> {
         } => {
             routines::repeat(
                 block_number,
-                src_token,
-                src_instance,
-                dst_token,
-                dst_instance,
+                ledger::with_params(src_token, src_instance).await?,
+                ledger::with_params(dst_token, dst_instance).await?,
             )
             .await?
         }

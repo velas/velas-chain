@@ -318,6 +318,18 @@ impl LedgerStorage {
         Ok(Self { connection })
     }
 
+    pub async fn new_with_instance(
+        read_only: bool,
+        timeout: Option<std::time::Duration>,
+        token_path: String,
+        instance: Option<String>
+    ) -> Result<Self> {
+        let instance = instance.as_deref().unwrap_or("solana-ledger");
+        let connection =
+            bigtable::BigTableConnection::new(instance, read_only, timeout).await?;
+        Ok(Self { connection })
+    }
+
     /// Return the available slot that contains a block
     pub async fn get_first_available_block(&self) -> Result<Option<Slot>> {
         let mut bigtable = self.connection.client();
