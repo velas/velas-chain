@@ -91,7 +91,7 @@ pub async fn restore_chain(
         header_template = restored_block.header.clone();
 
         match (warns, force_resume) {
-            (warns, _) if warns.len() == 0 => {
+            (warns, _) if warns.is_empty() => {
                 log::info!(
                     "EVM Block {} (slot {}) restored with no warnings",
                     &restored_block.header.block_number,

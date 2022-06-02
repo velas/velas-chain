@@ -27,7 +27,7 @@ pub fn load_timestamps() -> Result<HashMap<BlockNum, u64>> {
             // Extract time from "unixtime" prop., or try to parse ISO 8601 "timestamp" prop.
             let time = block
                 .unixtime
-                .or(block.timestamp.map(|t| t.timestamp() as u64 - FIVE_HRS))
+                .or_else(|| block.timestamp.map(|t| t.timestamp() as u64 - FIVE_HRS))
                 .unwrap();
 
             (block_number, time)
