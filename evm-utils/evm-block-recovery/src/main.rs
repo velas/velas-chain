@@ -54,21 +54,42 @@ enum Commands {
         output_dir: Option<String>,
     },
 
-    /// Checks contents of Native Block
+    /// Checks content of Native Block
     CheckNative {
         /// Native Block number
-        #[clap(short = 'b', long = "native-block", value_name = "NUM")]
-        block: u64,
+        #[clap(short = 'b', long, value_name = "DEC NUM")]
+        block_number: u64,
     },
+
+    /// Checks content of Evm Block
     CheckEvm {
-        #[clap(short = 'b', long = "evm-block", value_name = "NUM")]
-        block: u64,
+        #[clap(short = 'b', long, value_name = "DEC NUM")]
+        block_number: u64,
     },
-    /// Uploads blocks to bigtable from .json file
+
+    /// Uploads blocks to Bigtable from .json file
     Upload {
         /// Path to file with JSON collection of EVM blocks
         #[clap(short, long, value_name = ".json")]
         collection: String,
+    },
+    // TODO: comment args
+    /// Copies block from BT source to BT destination
+    Repeat {
+        #[clap(short, long)]
+        block_number: u64,
+
+        #[clap(short, long)]
+        src_token: String,
+
+        #[clap(short, long)]
+        src_instance: Option<String>,
+
+        #[clap(short, long)]
+        dst_token: String,
+
+        #[clap(short, long)]
+        dst_instance: Option<String>,
     },
 }
 
@@ -102,9 +123,27 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?
         }
-        Commands::CheckNative { block } => routines::check_native(&ledger, block).await?,
-        Commands::CheckEvm { block } => routines::check_evm(&ledger, block).await.unwrap(),
-        Commands::Upload { collection } => routines::upload(&ledger, collection).await.unwrap(),
+        Commands::CheckNative { block_number } => {
+            routines::check_native(&ledger, block_number).await?
+        }
+        Commands::CheckEvm { block_number } => routines::check_evm(&ledger, block_number).await?,
+        Commands::Upload { collection } => routines::upload(&ledger, collection).await?,
+        Commands::Repeat {
+            block_number,
+            src_token,
+            src_instance,
+            dst_token,
+            dst_instance,
+        } => {
+            routines::repeat(
+                block_number,
+                src_token,
+                src_instance,
+                dst_token,
+                dst_instance,
+            )
+            .await?
+        }
     }
 
     Ok(())
