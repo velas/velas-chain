@@ -70,25 +70,29 @@ enum Commands {
     /// Uploads blocks to Bigtable from .json file
     Upload {
         /// Path to file with JSON collection of EVM blocks
-        #[clap(short, long, value_name = ".json")]
+        #[clap(short, long, value_name = "FILE_PATH")]
         collection: String,
     },
 
     // TODO: comment args
-    /// Copies block from BT source to BT destination
+    /// Copies block from Source Ledger to Destination Ledger
     Repeat {
+        /// EVM block to copy from src to dst
         #[clap(short, long, value_name = "NUM")]
         block_number: u64,
 
+        /// Google credentials JSON filepath of the Source Ledger
         #[clap(long, value_name = "FILE_PATH")]
         src_token: String,
 
         #[clap(long)]
         src_instance: Option<String>,
 
+        /// Google credentials JSON filepath of the Destination Ledger
         #[clap(long, value_name = "FILE_PATH")]
         dst_token: String,
 
+        /// Destination Ledger Instance
         #[clap(long)]
         dst_instance: Option<String>,
     },
