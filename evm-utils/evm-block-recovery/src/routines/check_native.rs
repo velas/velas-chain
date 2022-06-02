@@ -4,7 +4,7 @@ use solana_storage_bigtable::LedgerStorage;
 
 use crate::extensions::NativeBlockExt;
 
-pub async fn check_native(ledger: &LedgerStorage, block: Slot) -> Result<()> {
+pub async fn check_native(ledger: LedgerStorage, block: Slot) -> Result<()> {
     let native_block = ledger
         .get_confirmed_block(block)
         .await

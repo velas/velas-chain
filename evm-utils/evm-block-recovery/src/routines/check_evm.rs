@@ -2,7 +2,7 @@ use anyhow::Result;
 use evm_state::BlockNum;
 use solana_storage_bigtable::LedgerStorage;
 
-pub async fn check_evm(ledger: &LedgerStorage, block: BlockNum) -> Result<()> {
+pub async fn check_evm(ledger: LedgerStorage, block: BlockNum) -> Result<()> {
     let evm_block = ledger.get_evm_confirmed_full_block(block).await;
 
     match evm_block {

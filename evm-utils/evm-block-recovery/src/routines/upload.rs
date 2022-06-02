@@ -6,7 +6,7 @@ use solana_storage_bigtable::LedgerStorage;
 
 use super::write_blocks_collection;
 
-pub async fn upload(ledger: &LedgerStorage, collection: impl AsRef<Path>) -> Result<()> {
+pub async fn upload(ledger: LedgerStorage, collection: impl AsRef<Path>) -> Result<()> {
     log::info!("Reading file: '{}'...", collection.as_ref().display());
     let content = std::fs::read_to_string(collection.as_ref()).context(format!(
         "unable to read file '{}'",
@@ -35,7 +35,7 @@ pub async fn upload(ledger: &LedgerStorage, collection: impl AsRef<Path>) -> Res
 
     // TODO: ask user confirmation before actually write blocks
 
-    write_blocks_collection(ledger, blocks).await?;
+    write_blocks_collection(&ledger, blocks).await?;
 
     Ok(())
 }

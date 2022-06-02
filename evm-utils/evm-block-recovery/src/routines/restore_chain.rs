@@ -15,7 +15,7 @@ use super::find::BlockRange;
 use super::write_blocks_collection;
 
 pub async fn restore_chain(
-    ledger: &LedgerStorage,
+    ledger: LedgerStorage,
     evm_missing: BlockRange,
     rpc_address: String,
     modify_ledger: bool,

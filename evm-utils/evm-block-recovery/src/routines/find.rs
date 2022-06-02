@@ -21,7 +21,7 @@ impl BlockRange {
     }
 }
 
-pub async fn find(ledger: &LedgerStorage, start_block: BlockNum, limit: usize) -> Result<()> {
+pub async fn find(ledger: LedgerStorage, start_block: BlockNum, limit: usize) -> Result<()> {
     let blocks = ledger
         .get_evm_confirmed_full_blocks_nums(start_block, limit)
         .await

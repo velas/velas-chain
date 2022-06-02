@@ -1,9 +1,9 @@
 pub mod extensions;
+pub mod ledger;
 pub mod routines;
 pub mod timestamp;
 
 use clap::{Parser, Subcommand};
-use solana_storage_bigtable::LedgerStorage;
 
 #[derive(Parser)]
 #[clap(author, version, long_about = None)]
@@ -98,13 +98,11 @@ async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().expect("`.env` file expected");
     env_logger::init();
 
-    let ledger = LedgerStorage::new(false, None)
-        .await
-        .expect("Failed to connect to storage");
-
     let cli = Cli::parse();
     match cli.command {
-        Commands::Find { start, limit } => routines::find(&ledger, start, limit).await?,
+        Commands::Find { start, limit } => {
+            routines::find(ledger::default().await, start, limit).await?
+        }
         Commands::RestoreChain {
             first,
             last,
@@ -114,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
             output_dir,
         } => {
             routines::restore_chain(
-                &ledger,
+                ledger::default().await,
                 routines::find::BlockRange::new(first, last),
                 rpc_address,
                 modify_ledger,
@@ -124,10 +122,14 @@ async fn main() -> anyhow::Result<()> {
             .await?
         }
         Commands::CheckNative { block_number } => {
-            routines::check_native(&ledger, block_number).await?
+            routines::check_native(ledger::default().await, block_number).await?
         }
-        Commands::CheckEvm { block_number } => routines::check_evm(&ledger, block_number).await?,
-        Commands::Upload { collection } => routines::upload(&ledger, collection).await?,
+        Commands::CheckEvm { block_number } => {
+            routines::check_evm(ledger::default().await, block_number).await?
+        }
+        Commands::Upload { collection } => {
+            routines::upload(ledger::default().await, collection).await?
+        }
         Commands::Repeat {
             block_number,
             src_token,
