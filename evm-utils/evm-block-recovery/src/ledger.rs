@@ -8,14 +8,14 @@ pub async fn default() -> Result<LedgerStorage> {
         .context("Failed to create LedgerStorage using default method")
 }
 
-pub async fn with_params(token: String, instance: Option<String>) -> Result<LedgerStorage> {
+pub async fn with_params(token: String, instance: String) -> Result<LedgerStorage> {
     log::info!(
-        "Creating custom LedgerStorage: token_path='{}', instance={:?}",
+        "Creating custom LedgerStorage: token_path='{}', instance={}",
         token,
         instance
     );
 
-    LedgerStorage::new_with_instance(false, None, token, instance)
+    LedgerStorage::new_with_parameters(false, None, token, instance)
         .await
         .context("Can't create custom LedgerStorage")
 }

@@ -74,27 +74,31 @@ enum Commands {
         collection: String,
     },
 
-    // TODO: comment args
-    /// Copies block from Source Ledger to Destination Ledger
-    Repeat {
-        /// EVM block to copy from src to dst
+    /// Copies sequence of blocks from Source Ledger to Destination Ledger
+    RepeatEvm {
+        /// First EVM block of the sequence to copy from src to dst
         #[clap(short, long, value_name = "NUM")]
         block_number: u64,
 
+        /// EVM block sequence length
+        #[clap(short, long, value_name = "NUM", default_value = "1")]
+        limit: u64,
+
         /// Google credentials JSON filepath of the Source Ledger
         #[clap(long, value_name = "FILE_PATH")]
-        src_token: String,
+        src_creds: String,
 
-        #[clap(long)]
-        src_instance: Option<String>,
+        /// Source Ledger Instance
+        #[clap(long, default_value = "solana-ledger")]
+        src_instance: String,
 
         /// Google credentials JSON filepath of the Destination Ledger
         #[clap(long, value_name = "FILE_PATH")]
-        dst_token: String,
+        dst_creds: String,
 
         /// Destination Ledger Instance
-        #[clap(long)]
-        dst_instance: Option<String>,
+        #[clap(long, default_value = "solana-ledger")]
+        dst_instance: String,
     },
 }
 
@@ -135,17 +139,19 @@ async fn main() -> anyhow::Result<()> {
         Commands::Upload { collection } => {
             routines::upload(ledger::default().await?, collection).await?
         }
-        Commands::Repeat {
+        Commands::RepeatEvm {
             block_number,
-            src_token,
+            limit,
+            src_creds,
             src_instance,
-            dst_token,
+            dst_creds,
             dst_instance,
         } => {
             routines::repeat(
                 block_number,
-                ledger::with_params(src_token, src_instance).await?,
-                ledger::with_params(dst_token, dst_instance).await?,
+                limit,
+                ledger::with_params(src_creds, src_instance).await?,
+                ledger::with_params(dst_creds, dst_instance).await?,
             )
             .await?
         }

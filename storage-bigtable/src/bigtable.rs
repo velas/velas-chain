@@ -179,7 +179,7 @@ impl BigTableConnection {
     }
 
     pub async fn new_with_parameters(
-        token_path: String,
+        creds_path: String,
         instance_name: &str,
         read_only: bool,
         timeout: Option<Duration>,
@@ -201,7 +201,7 @@ impl BigTableConnection {
             Err(_) => {
                 let scope = if read_only { Scope::BigTableDataReadOnly } else { Scope::BigTableData };
 
-                let access_token = AccessToken::new_with_token_path(scope, token_path)
+                let access_token = AccessToken::new_with_creds(scope, creds_path)
                     .await
                     .map_err(Error::AccessTokenError)?;
 

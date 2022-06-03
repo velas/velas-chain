@@ -58,8 +58,8 @@ impl AccessToken {
         }
     }
 
-    pub async fn new_with_token_path(scope: Scope, token_path: String) -> Result<Self, String> {
-        let credentials = load_credentials(Method::FilePath(token_path))?;
+    pub async fn new_with_creds(scope: Scope, creds_path: String) -> Result<Self, String> {
+        let credentials = load_credentials(Method::FilePath(creds_path))?;
         if let Err(err) = credentials.rsa_key() {
             Err(format!("Invalid rsa key: {}", err))
         } else {

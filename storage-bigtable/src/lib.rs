@@ -318,15 +318,14 @@ impl LedgerStorage {
         Ok(Self { connection })
     }
 
-    pub async fn new_with_instance(
+    pub async fn new_with_parameters(
         read_only: bool,
         timeout: Option<std::time::Duration>,
-        token_path: String,
-        instance: Option<String>
+        creds_path: String,
+        instance: String
     ) -> Result<Self> {
-        let instance = instance.as_deref().unwrap_or("solana-ledger");
         let connection =
-            bigtable::BigTableConnection::new(instance, read_only, timeout).await?;
+            bigtable::BigTableConnection::new_with_parameters(creds_path, &instance, read_only, timeout).await?;
         Ok(Self { connection })
     }
 
