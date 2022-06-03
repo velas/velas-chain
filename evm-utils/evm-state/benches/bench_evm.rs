@@ -6,6 +6,7 @@ use evm::{ExitReason, ExitSucceed};
 use evm_state::*;
 use primitive_types::{H160 as Address, H256, U256};
 use sha3::{Digest, Keccak256};
+use evm_state::executor::FeatureSet;
 
 fn name_to_key<S: AsRef<str>>(name: S) -> H160 {
     H256::from_slice(Keccak256::digest(name.as_ref().as_bytes()).as_slice()).into()
@@ -43,8 +44,12 @@ fn criterion_benchmark(c: &mut Criterion) {
             state.set_account_state(address, AccountState::default());
         }
 
-        let mut executor =
-            Executor::with_config(Default::default(), Default::default(), Default::default());
+        let mut executor = Executor::with_config(
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let exit_reason = executor.with_executor(
             |_, _, _, _| None,
@@ -93,8 +98,12 @@ fn criterion_benchmark(c: &mut Criterion) {
             state.set_account_state(address, AccountState::default());
         }
 
-        let mut executor =
-            Executor::with_config(Default::default(), Default::default(), Default::default());
+        let mut executor = Executor::with_config(
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let exit_reason = executor.with_executor(
             |_, _, _, _| None,
@@ -119,6 +128,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 updated_state.clone(),
                 Default::default(),
                 Default::default(),
+                FeatureSet::new_with_all_enabled(),
             );
 
             let exit_reason = black_box(executor.with_executor(
@@ -145,8 +155,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     group.bench_function("call_hello_with_executor_recreate_raw", |b| {
-        let mut executor =
-            Executor::with_config(Default::default(), Default::default(), Default::default());
+        let mut executor = Executor::with_config(
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let exit_reason = executor.with_executor(
             |_, _, _, _| None,
@@ -181,6 +195,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 updated_state.clone(),
                 Default::default(),
                 Default::default(),
+                FeatureSet::new_with_all_enabled(),
             );
 
             let ExecutionResult {
@@ -190,7 +205,6 @@ fn criterion_benchmark(c: &mut Criterion) {
             } = black_box(executor.transaction_execute_unsinged(
                 caller,
                 tx.clone(),
-                true,
                 |_, _, _, _| None,
             ))
             .unwrap();
@@ -204,8 +218,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     group.bench_function("call_hello_with_executor_recreate_and_commit", |b| {
-        let mut executor =
-            Executor::with_config(Default::default(), Default::default(), Default::default());
+        let mut executor = Executor::with_config(
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let exit_reason = executor.with_executor(
             |_, _, _, _| None,
@@ -233,6 +251,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 updated_state.clone(),
                 Default::default(),
                 Default::default(),
+                FeatureSet::new_with_all_enabled(),
             );
 
             let tx = UnsignedTransaction {
@@ -250,7 +269,6 @@ fn criterion_benchmark(c: &mut Criterion) {
             } = black_box(executor.transaction_execute_unsinged(
                 caller,
                 tx.clone(),
-                true,
                 |_, _, _, _| None,
             ))
             .unwrap();
@@ -275,8 +293,12 @@ fn criterion_benchmark(c: &mut Criterion) {
                 Incomming::default(),
                 Storage::create_temporary_gc().unwrap(),
             );
-            let mut executor =
-                Executor::with_config(backend, Default::default(), Default::default());
+            let mut executor = Executor::with_config(
+                backend,
+                Default::default(),
+                Default::default(),
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let exit_reason = executor.with_executor(
                 |_, _, _, _| None,
@@ -304,6 +326,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     updated_state.clone(),
                     Default::default(),
                     Default::default(),
+                    FeatureSet::new_with_all_enabled(),
                 );
 
                 let tx = UnsignedTransaction {
@@ -322,7 +345,6 @@ fn criterion_benchmark(c: &mut Criterion) {
                 } = black_box(executor.transaction_execute_unsinged(
                     caller,
                     tx.clone(),
-                    true,
                     |_, _, _, _| None,
                 ))
                 .unwrap();
@@ -366,8 +388,12 @@ fn criterion_benchmark(c: &mut Criterion) {
                 Incomming::default(),
                 Storage::create_temporary_gc().unwrap(),
             );
-            let mut executor =
-                Executor::with_config(backend, Default::default(), Default::default());
+            let mut executor = Executor::with_config(
+                backend,
+                Default::default(),
+                Default::default(),
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let exit_reason = executor.with_executor(
                 |_, _, _, _| None,
@@ -395,6 +421,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     updated_state.clone(),
                     Default::default(),
                     Default::default(),
+                    FeatureSet::new_with_all_enabled(),
                 );
 
                 let tx = UnsignedTransaction {
@@ -413,7 +440,6 @@ fn criterion_benchmark(c: &mut Criterion) {
                 } = black_box(executor.transaction_execute_unsinged(
                     caller,
                     tx.clone(),
-                    true,
                     |_, _, _, _| None,
                 ))
                 .unwrap();
@@ -439,8 +465,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
 
     group.bench_function("call_hello_with_signature_verify_single_key", |b| {
-        let mut executor =
-            Executor::with_config(Default::default(), Default::default(), Default::default());
+        let mut executor = Executor::with_config(
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let exit_reason = executor.with_executor(
             |_, _, _, _| None,
@@ -477,6 +507,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 updated_state.clone(),
                 Default::default(),
                 Default::default(),
+                FeatureSet::new_with_all_enabled(),
             );
 
             let ExecutionResult {
@@ -504,8 +535,12 @@ fn criterion_benchmark(c: &mut Criterion) {
                     state.set_account_state(address, AccountState::default());
                 }
 
-                let mut executor =
-                Executor::with_config(Default::default(), Default::default(), Default::default());
+                let mut executor = Executor::with_config(
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                    FeatureSet::new_with_all_enabled(),
+                );
                 let create_transaction_result = executor.with_executor(|_,_,_,_| None,|executor| {
                     executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
                 });
@@ -532,7 +567,10 @@ fn criterion_benchmark(c: &mut Criterion) {
 
                 b.iter_custom(move |iters| {
                     let mut executor = Executor::with_config(
-                        state.clone(), Default::default(), Default::default()
+                        state.clone(),
+                        Default::default(),
+                        Default::default(),
+                        FeatureSet::new_with_all_enabled(),
                     );
 
                     let start = Instant::now();
@@ -574,8 +612,12 @@ fn criterion_benchmark(c: &mut Criterion) {
         let committed = state.commit_block(0, Default::default());
 
         let  state = committed.next_incomming(0);
-        let mut executor =
-            Executor::with_config(state, Default::default(), Default::default());
+        let mut executor = Executor::with_config(
+            state,
+            Default::default(),
+            Default::default(),
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let exit_reason = executor.with_executor(|_,_,_,_| None,|executor| {
             executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
@@ -591,8 +633,12 @@ fn criterion_benchmark(c: &mut Criterion) {
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
         let mut idx = 0;
         b.iter(|| {
-            let mut executor =
-                Executor::with_config(state.clone(), Default::default(), Default::default());
+            let mut executor = Executor::with_config(
+                state.clone(),
+                Default::default(),
+                Default::default(),
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let exit_reason = executor.with_executor(|_,_,_,_| None,|executor| {
                 executor.transact_call(

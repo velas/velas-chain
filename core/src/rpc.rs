@@ -92,6 +92,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+use tracing_attributes::instrument;
 use velas_account_program::{VelasAccountType, ACCOUNT_LEN as VELAS_ACCOUNT_SIZE};
 use velas_relying_party_program::RelyingPartyData;
 
@@ -164,6 +166,7 @@ pub struct JsonRpcRequestProcessor {
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     evm_state_archive: Option<evm_state::Storage>,
 }
+
 impl Metadata for JsonRpcRequestProcessor {}
 
 impl JsonRpcRequestProcessor {
@@ -315,6 +318,10 @@ impl JsonRpcRequestProcessor {
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
             evm_state_archive: None,
         }
+    }
+
+    pub fn get_health(&self) -> RpcHealthStatus {
+        self.health.check()
     }
 
     pub fn evm_state_archive_storage(&self) -> &Option<evm_state::Storage> {
@@ -471,7 +478,8 @@ impl JsonRpcRequestProcessor {
                 first_confirmed_block_in_epoch,
                 Some(RpcConfirmedBlockConfig::rewards_with_commitment(config.commitment).into()),
             )
-            .await {
+            .await
+        {
             first_confirmed_block
         } else {
             return Err(RpcCustomError::BlockNotAvailable {
@@ -960,7 +968,8 @@ impl JsonRpcRequestProcessor {
                 let result = self.blockstore.get_rooted_block(slot, true);
                 if result.is_err() {
                     if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                        let bigtable_result = bigtable_ledger_storage.get_confirmed_block(slot).await;
+                        let bigtable_result =
+                            bigtable_ledger_storage.get_confirmed_block(slot).await;
                         self.check_bigtable_result(&bigtable_result)?;
                         return Ok(bigtable_result.ok().map(|confirmed_block| {
                             confirmed_block.configure(encoding, transaction_details, show_rewards)
@@ -1226,7 +1235,8 @@ impl JsonRpcRequestProcessor {
             let status = if let Some(status) = self.get_transaction_status(signature, &bank) {
                 Some(status)
             } else if self.config.enable_rpc_transaction_history && search_transaction_history {
-                let transaction_status = self.blockstore
+                let transaction_status = self
+                    .blockstore
                     .get_rooted_transaction_status(signature)
                     .map_err(|_| Error::internal_error())?
                     .filter(|(slot, _status_meta)| {
@@ -1250,7 +1260,8 @@ impl JsonRpcRequestProcessor {
                     transaction_status
                 } else {
                     if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                        bigtable_ledger_storage.get_signature_status(&signature)
+                        bigtable_ledger_storage
+                            .get_signature_status(&signature)
                             .await
                             .map(Some)
                             .unwrap_or(None)
@@ -1351,7 +1362,8 @@ impl JsonRpcRequestProcessor {
                 }
                 None => {
                     if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                        return Ok(bigtable_ledger_storage.get_confirmed_transaction(&signature)
+                        return Ok(bigtable_ledger_storage
+                            .get_confirmed_transaction(&signature)
                             .await
                             .unwrap_or(None)
                             .map(|confirmed| confirmed.encode(encoding)));
@@ -1424,12 +1436,14 @@ impl JsonRpcRequestProcessor {
                         before = results.last().map(|x| x.signature);
                     }
 
-                    let bigtable_results = bigtable_ledger_storage.get_confirmed_signatures_for_address(
-                        &address,
-                        before.as_ref(),
-                        until.as_ref(),
-                        limit,
-                    ).await;
+                    let bigtable_results = bigtable_ledger_storage
+                        .get_confirmed_signatures_for_address(
+                            &address,
+                            before.as_ref(),
+                            until.as_ref(),
+                            limit,
+                        )
+                        .await;
                     match bigtable_results {
                         Ok(bigtable_results) => {
                             results.extend(bigtable_results.into_iter().map(|x| x.0));
@@ -1471,7 +1485,8 @@ impl JsonRpcRequestProcessor {
             .unwrap_or_default();
 
         if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-            let bigtable_slot = bigtable_ledger_storage.get_first_available_block()
+            let bigtable_slot = bigtable_ledger_storage
+                .get_first_available_block()
                 .await
                 .unwrap_or(None)
                 .unwrap_or(slot);
@@ -1892,6 +1907,7 @@ impl JsonRpcRequestProcessor {
     // Evm scope
     //
 
+    #[instrument(skip(self))]
     pub async fn get_evm_blocks_from_bigtable(
         &self,
         starting_block: evm_state::BlockNum,
@@ -1915,6 +1931,8 @@ impl JsonRpcRequestProcessor {
     /// Request blocks from bigtable if no confirmed block found in local db.
     /// Returns error if any gaps found.
     ///
+
+    #[instrument(skip(self))]
     pub async fn get_evm_blocks_by_ids(
         &self,
         starting_block: evm_state::BlockNum,
@@ -1960,8 +1978,9 @@ impl JsonRpcRequestProcessor {
                 blockstore_request_time += blockstore_request.elapsed();
                 let bigtable_request = Instant::now();
                 trace!("requesting bigtable = {}..{}", missing_block, ending_block);
-                let blocks_bigtable =
-                    self.get_evm_blocks_from_bigtable(missing_block, ending_block).await?;
+                let blocks_bigtable = self
+                    .get_evm_blocks_from_bigtable(missing_block, ending_block)
+                    .await?;
                 trace!("bigtable_return = {:?}", blocks_bigtable);
                 blocks.extend(blocks_bigtable);
                 bigtable_request_time += bigtable_request.elapsed();
@@ -1982,7 +2001,9 @@ impl JsonRpcRequestProcessor {
                 missing_block,
                 ending_block
             );
-            let blocks_bigtable = self.get_evm_blocks_from_bigtable(missing_block, ending_block).await?;
+            let blocks_bigtable = self
+                .get_evm_blocks_from_bigtable(missing_block, ending_block)
+                .await?;
             trace!("bigtable_return = {:?}", blocks_bigtable);
             blocks.extend(blocks_bigtable);
             bigtable_request_time += bigtable_request.elapsed();
@@ -1995,6 +2016,7 @@ impl JsonRpcRequestProcessor {
         Ok(blocks)
     }
 
+    #[instrument(skip(self))]
     pub async fn filter_logs(
         &self,
         filter: evm_state::LogFilter,
@@ -2007,7 +2029,10 @@ impl JsonRpcRequestProcessor {
         filter_request_time += filter_request.elapsed();
 
         let mut logs = Vec::new();
-        for block in self.get_evm_blocks_by_ids(filter.from_block, filter.to_block).await? {
+        for block in self
+            .get_evm_blocks_by_ids(filter.from_block, filter.to_block)
+            .await?
+        {
             let filter_request = Instant::now();
             logs.extend(Blockstore::filter_block_logs(&block, &masks, &filter)?);
             filter_request_time += filter_request.elapsed();
@@ -2017,6 +2042,7 @@ impl JsonRpcRequestProcessor {
         Ok(logs)
     }
 
+    #[instrument(skip(self))]
     pub async fn get_first_available_evm_block(&self) -> u64 {
         let block = self
             .blockstore
@@ -2024,7 +2050,8 @@ impl JsonRpcRequestProcessor {
             .unwrap_or_default();
 
         if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-            let bigtable_block = bigtable_ledger_storage.get_evm_first_available_block()
+            let bigtable_block = bigtable_ledger_storage
+                .get_evm_first_available_block()
                 .await
                 .unwrap_or(None)
                 .unwrap_or(block);
@@ -2035,6 +2062,8 @@ impl JsonRpcRequestProcessor {
         }
         block
     }
+
+    #[instrument(skip(self))]
     pub fn get_last_available_evm_block(&self) -> Option<u64> {
         self.blockstore
             .get_last_available_evm_block()
@@ -2043,6 +2072,8 @@ impl JsonRpcRequestProcessor {
 
     ///
     /// Get last evm block which has respective native chain block rooted
+
+    #[instrument(skip(self))]
     pub fn get_last_confirmed_evm_block(&self) -> Option<u64> {
         self.blockstore
             .evm_blocks_reverse_iterator()
@@ -2051,6 +2082,7 @@ impl JsonRpcRequestProcessor {
             .map(|((block_num, _), _)| block_num)
     }
 
+    #[instrument(skip(self))]
     pub async fn get_evm_receipt_by_hash(
         &self,
         hash: evm_state::H256,
@@ -2076,7 +2108,12 @@ impl JsonRpcRequestProcessor {
         }
         receipt
     }
-    pub async fn get_evm_block_by_id(&self, id: evm_state::BlockNum) -> Option<(evm_state::Block, bool)> {
+
+    #[instrument(skip(self))]
+    pub async fn get_evm_block_by_id(
+        &self,
+        id: evm_state::BlockNum,
+    ) -> Option<(evm_state::Block, bool)> {
         let block = self.blockstore.get_evm_block(id).ok();
         if block.is_some() {
             return block;
@@ -2103,6 +2140,7 @@ impl JsonRpcRequestProcessor {
         None
     }
 
+    #[instrument(skip(self))]
     pub async fn get_evm_block_id_by_hash(&self, hash: evm_state::H256) -> Option<u64> {
         let block = self
             .blockstore
@@ -2757,7 +2795,7 @@ pub mod rpc_minimal {
 
 // Full RPC interface that an API node is expected to provide
 pub mod rpc_full {
-// (rpc_minimal should also be provided by an API node)
+    // (rpc_minimal should also be provided by an API node)
     use super::*;
     #[rpc]
     pub trait Full {
@@ -2952,8 +2990,11 @@ pub mod rpc_full {
         ) -> BoxFuture<Result<Option<UiConfirmedBlock>>>;
 
         #[rpc(meta, name = "getBlockTime")]
-        fn get_block_time(&self, meta: Self::Metadata, slot: Slot)
-            -> BoxFuture<Result<Option<UnixTimestamp>>>;
+        fn get_block_time(
+            &self,
+            meta: Self::Metadata,
+            slot: Slot,
+        ) -> BoxFuture<Result<Option<UnixTimestamp>>>;
 
         #[rpc(meta, name = "getConfirmedBlocks")]
         fn get_confirmed_blocks(
@@ -3344,7 +3385,8 @@ pub mod rpc_full {
             if signature_strs.len() > MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS {
                 return Box::pin(ready(Err(Error::invalid_params(format!(
                     "Too many inputs provided; max {}",
-                    MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS)))));
+                    MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS
+                )))));
             }
             let mut signatures: Vec<Signature> = vec![];
             for signature_str in signature_strs {
@@ -3352,7 +3394,6 @@ pub mod rpc_full {
                     Ok(sig) => signatures.push(sig),
                     Err(err) => return Box::pin(ready(Err(err))),
                 }
-                
             }
             Box::pin(async move { meta.get_signature_statuses(signatures, config).await })
         }
@@ -3660,7 +3701,8 @@ pub mod rpc_full {
                 start_slot, end_slot
             );
             Box::pin(async move {
-                meta.get_confirmed_blocks(start_slot, end_slot, commitment.or(maybe_commitment)).await
+                meta.get_confirmed_blocks(start_slot, end_slot, commitment.or(maybe_commitment))
+                    .await
             })
         }
 
@@ -3676,7 +3718,8 @@ pub mod rpc_full {
                 start_slot, limit,
             );
             Box::pin(async move {
-                meta.get_confirmed_blocks_with_limit(start_slot, limit, commitment).await
+                meta.get_confirmed_blocks_with_limit(start_slot, limit, commitment)
+                    .await
             })
         }
 
@@ -3701,7 +3744,7 @@ pub mod rpc_full {
             match verify_signature(&signature_str) {
                 Ok(sig) => {
                     Box::pin(async move { meta.get_confirmed_transaction(sig, config).await })
-                },
+                }
                 Err(err) => Box::pin(ready(Err(err))),
             }
         }
@@ -3753,7 +3796,8 @@ pub mod rpc_full {
                 .before
                 .as_ref()
                 .map(|ref before| verify_signature(before))
-                .transpose() {
+                .transpose()
+            {
                 Ok(before) => before,
                 Err(err) => return Box::pin(ready(Err(err))),
             };
@@ -3761,7 +3805,8 @@ pub mod rpc_full {
                 .until
                 .as_ref()
                 .map(|ref until| verify_signature(until))
-                .transpose() {
+                .transpose()
+            {
                 Ok(until) => until,
                 Err(err) => return Box::pin(ready(Err(err))),
             };
@@ -3783,7 +3828,8 @@ pub mod rpc_full {
                     until,
                     limit,
                     config.commitment,
-                ).await
+                )
+                .await
             })
         }
 

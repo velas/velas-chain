@@ -6,6 +6,8 @@ use txpool::Listener;
 
 use super::PooledTransaction;
 
+
+#[derive(Debug)]
 pub struct PoolListener;
 impl PoolListener {
     fn notify_tx_removed(&self, tx: &Arc<PooledTransaction>) {

@@ -49,8 +49,6 @@ impl EvmProcessor {
             .is_feature_active(&solana_sdk::feature_set::velas::native_swap_in_evm_history::id());
         let new_error_handling = invoke_context
             .is_feature_active(&solana_sdk::feature_set::velas::evm_new_error_handling::id());
-        let unsigned_tx_fix = invoke_context
-            .is_feature_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id());
         let ignore_reset_on_cleared = invoke_context
             .is_feature_active(&solana_sdk::feature_set::velas::ignore_reset_on_cleared::id());
         let free_ownership_require_signer = invoke_context.is_feature_active(
@@ -100,10 +98,9 @@ impl EvmProcessor {
                     accounts,
                     from,
                     unsigned_tx,
-                    unsigned_tx_fix,
                 ),
             EvmInstruction::EvmBigTransaction(big_tx) => {
-                self.process_big_tx(executor, invoke_context, accounts, big_tx, unsigned_tx_fix)
+                self.process_big_tx(executor, invoke_context, accounts, big_tx)
             }
             EvmInstruction::FreeOwnership {} => self.process_free_ownership(
                 executor,
@@ -121,7 +118,6 @@ impl EvmProcessor {
                 lamports,
                 evm_address,
                 register_swap_tx_in_evm,
-                unsigned_tx_fix,
             ),
         };
 
@@ -205,7 +201,6 @@ impl EvmProcessor {
         accounts: AccountStructure,
         from: evm::Address,
         unsigned_tx: evm::UnsignedTransaction,
-        unsigned_tx_fix: bool,
     ) -> Result<(), EvmError> {
         // TODO: Check that it is from program?
         // TODO: Gas limit?
@@ -244,7 +239,7 @@ impl EvmProcessor {
             unsigned_tx.action
         );
 
-        if unsigned_tx_fix {
+        if executor.feature_set.is_unsigned_tx_fix_enabled() {
             let program_caller = invoke_context
                 .get_parent_caller()
                 .copied()
@@ -267,7 +262,6 @@ impl EvmProcessor {
         let result = executor.transaction_execute_unsinged(
             from,
             unsigned_tx,
-            unsigned_tx_fix,
             precompiles::entrypoint(accounts, executor.support_precompile()),
         );
         let sender = accounts.first();
@@ -325,7 +319,6 @@ impl EvmProcessor {
         lamports: u64,
         evm_address: evm::Address,
         register_swap_tx_in_evm: bool,
-        unsigned_tx_fix: bool,
     ) -> Result<(), EvmError> {
         let gweis = evm::lamports_to_gwei(lamports);
         let user = accounts.first().ok_or_else(|| {
@@ -377,7 +370,6 @@ impl EvmProcessor {
                 *precompiles::ETH_TO_VLX_ADDR,
                 evm_address,
                 gweis,
-                unsigned_tx_fix,
             )
         }
         Ok(())
@@ -389,7 +381,6 @@ impl EvmProcessor {
         invoke_context: &dyn InvokeContext,
         accounts: AccountStructure,
         big_tx: EvmBigTransaction,
-        unsigned_tx_fix: bool,
     ) -> Result<(), EvmError> {
         debug!("executing big_tx = {:?}", big_tx);
 
@@ -478,7 +469,7 @@ impl EvmProcessor {
                 );
 
                 let sender = accounts.users.get(1);
-                if unsigned_tx_fix {
+                if executor.feature_set.is_unsigned_tx_fix_enabled() {
                     self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
                 }
 
@@ -492,7 +483,7 @@ impl EvmProcessor {
                 )
             }
             EvmBigTransaction::EvmTransactionExecuteUnsigned { from } => {
-                if !unsigned_tx_fix {
+                if !executor.feature_set.is_unsigned_tx_fix_enabled() {
                     ic_msg!(
                         invoke_context,
                         "BigTransaction::EvmTransactionExecuteUnsigned: Unsigned tx fix is not activated, this instruction is not supported."
@@ -551,7 +542,7 @@ impl EvmProcessor {
                     unsigned_tx.action
                 );
 
-                if unsigned_tx_fix {
+                if executor.feature_set.is_unsigned_tx_fix_enabled() {
                     let program_caller =
                         invoke_context.get_caller().map(|k| *k).unwrap_or_default();
                     let program_owner = program_account
@@ -566,7 +557,6 @@ impl EvmProcessor {
                 let result = executor.transaction_execute_unsinged(
                     from,
                     unsigned_tx,
-                    unsigned_tx_fix,
                     precompiles::entrypoint(accounts, executor.support_precompile()),
                 );
 
@@ -733,7 +723,7 @@ mod test {
         transactions::{TransactionAction, TransactionSignature},
         FromKey,
     };
-    use evm_state::{AccountProvider, ExitReason, ExitSucceed};
+    use evm_state::{AccountProvider, ExitReason, ExitSucceed, executor::FeatureSet};
     use primitive_types::{H160, H256, U256};
     use solana_sdk::keyed_account::KeyedAccount;
     use solana_sdk::native_loader;
@@ -1836,6 +1826,7 @@ mod test {
                     println!("status = {:?}", tx.status);
                     assert!(matches!(tx.status, ExitReason::Revert(_)));
                 }
+                assert!(tx.logs.is_empty());
 
                 let committed = executor.deconstruct().commit_block(0, Default::default());
                 state = committed.next_incomming(0);
@@ -1854,6 +1845,200 @@ mod test {
                     );
                     // assert_eq!(lamports, 0), solana runtime will revert this account
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn test_revert_clears_logs() {
+        use hex_literal::hex;
+        let _ = simple_logger::SimpleLogger::new().init();
+        let code_with_revert = hex!("608060405234801561001057600080fd5b506101de806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80636057361d1461003b578063cf280be114610057575b600080fd5b6100556004803603810190610050919061011d565b610073565b005b610071600480360381019061006c919061011d565b6100b8565b005b7f31431e8e0193815c649ffbfb9013954926640a5c67ada972108cdb5a47a0d728600054826040516100a6929190610159565b60405180910390a18060008190555050565b7f31431e8e0193815c649ffbfb9013954926640a5c67ada972108cdb5a47a0d728600054826040516100eb929190610159565b60405180910390a180600081905550600061010557600080fd5b50565b60008135905061011781610191565b92915050565b6000602082840312156101335761013261018c565b5b600061014184828501610108565b91505092915050565b61015381610182565b82525050565b600060408201905061016e600083018561014a565b61017b602083018461014a565b9392505050565b6000819050919050565b600080fd5b61019a81610182565b81146101a557600080fd5b5056fea2646970667358221220fc523ca900ab8140013266ce0ed772e285153c9d3292c12522c336791782a40b64736f6c63430008070033");
+        let calldata =
+            hex!("6057361d0000000000000000000000000000000000000000000000000000000000000001");
+        let calldata_with_revert =
+            hex!("cf280be10000000000000000000000000000000000000000000000000000000000000001");
+
+        let mut state = evm_state::EvmBackend::default();
+        let processor = EvmProcessor::default();
+        let evm_account = RefCell::new(crate::create_state_account(1_000_000_000));
+        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        let receiver = Pubkey::new(&hex!(
+            "9b73845fe592e092a13df83a8f8485296ba9c0a28c7c0824c33b1b3b352b4043"
+        ));
+        let user_account = RefCell::new(solana_sdk::account::AccountSharedData::new(
+            0,
+            0,
+            &solana_sdk::system_program::id(),
+        ));
+        let user_account = KeyedAccount::new(&receiver, false, &user_account);
+        let keyed_accounts = [evm_keyed_account, user_account];
+
+        let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
+
+        let tx_create = evm::UnsignedTransaction {
+            nonce: 0.into(),
+            gas_price: 1.into(),
+            gas_limit: 300000.into(),
+            action: TransactionAction::Create,
+            value: 0.into(),
+            input: code_with_revert.to_vec(),
+        };
+        let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
+        let tx_address = tx_create.address().unwrap();
+
+        {
+            let mut executor = evm_state::Executor::default_configs(state);
+            let address = secret_key.to_address();
+            executor.deposit(address, U256::from(2) * 300000);
+            executor.deposit(
+                tx_address,
+                U256::from(1_000_000_000) * U256::from(1_000_000_000),
+            ); // 1ETHER
+
+            let mut invoke_context = MockInvokeContext::with_evm(executor);
+            assert!(processor
+                .process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_create })
+                        .unwrap(),
+                    &mut invoke_context,
+                    false,
+                )
+                .is_ok());
+
+            let executor = invoke_context.deconstruct().unwrap();
+            let committed = executor.deconstruct().commit_block(0, Default::default());
+            state = committed.next_incomming(0);
+        }
+
+        {
+            let tx_call = evm::UnsignedTransaction {
+                nonce: 1.into(),
+                gas_price: 1.into(),
+                gas_limit: 300000.into(),
+                action: TransactionAction::Call(tx_address),
+                value: 0.into(),
+                input: calldata_with_revert.to_vec(),
+            };
+            let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
+            let tx_hash = tx_call.tx_id_hash();
+            let instruction_data =
+                bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap();
+
+            // Reverted tx with clear_logs_on_error enabled must clear logs
+            {
+                let executor = evm_state::Executor::with_config(
+                    state.clone(),
+                    Default::default(),
+                    Default::default(),
+                    FeatureSet::new_with_all_enabled(),
+                );
+                let mut invoke_context = MockInvokeContext::with_evm(executor);
+
+                let _result = processor.process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &instruction_data,
+                    &mut invoke_context,
+                    false,
+                );
+                let mut executor = invoke_context.deconstruct().unwrap();
+                let tx = executor.get_tx_receipt_by_hash(tx_hash).unwrap();
+                println!("status = {:?}", tx.status);
+                assert!(matches!(tx.status, ExitReason::Revert(_)));
+                assert!(tx.logs.is_empty());
+            }
+
+            // Reverted tx with clear_logs_on_error disabled don't clear logs
+            {
+                let executor = evm_state::Executor::with_config(
+                    state.clone(),
+                    Default::default(),
+                    Default::default(),
+                    FeatureSet::new(true, false),
+                );
+                let mut invoke_context = MockInvokeContext::with_evm(executor);
+                invoke_context
+                    .disable_feature(&solana_sdk::feature_set::velas::clear_logs_on_error::id());
+
+                let _result = processor.process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &instruction_data,
+                    &mut invoke_context,
+                    false,
+                );
+                let mut executor = invoke_context.deconstruct().unwrap();
+                let tx = executor.get_tx_receipt_by_hash(tx_hash).unwrap();
+                println!("status = {:?}", tx.status);
+                assert!(matches!(tx.status, ExitReason::Revert(_)));
+                assert!(!tx.logs.is_empty());
+            }
+        }
+
+        // Successful tx don't affected by clear_logs_on_error
+        {
+            let tx_call = evm::UnsignedTransaction {
+                nonce: 1.into(),
+                gas_price: 1.into(),
+                gas_limit: 300000.into(),
+                action: TransactionAction::Call(tx_address),
+                value: 0.into(),
+                input: calldata.to_vec(),
+            };
+            let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
+            let tx_hash = tx_call.tx_id_hash();
+            let instruction_data =
+                bincode::serialize(&EvmInstruction::EvmTransaction { evm_tx: tx_call }).unwrap();
+
+            {
+                let executor = evm_state::Executor::with_config(
+                    state.clone(),
+                    Default::default(),
+                    Default::default(),
+                    FeatureSet::new_with_all_enabled(),
+                );
+                let mut invoke_context = MockInvokeContext::with_evm(executor);
+
+                let _result = processor.process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &instruction_data,
+                    &mut invoke_context,
+                    false,
+                );
+                let mut executor = invoke_context.deconstruct().unwrap();
+                let tx = executor.get_tx_receipt_by_hash(tx_hash).unwrap();
+                println!("status = {:?}", tx.status);
+                assert!(matches!(tx.status, ExitReason::Succeed(_)));
+                assert!(!tx.logs.is_empty());
+            }
+
+            {
+                let executor = evm_state::Executor::with_config(
+                    state.clone(),
+                    Default::default(),
+                    Default::default(),
+                    FeatureSet::new(true, false),
+                );
+                let mut invoke_context = MockInvokeContext::with_evm(executor);
+                invoke_context
+                    .disable_feature(&solana_sdk::feature_set::velas::clear_logs_on_error::id());
+
+                let _result = processor.process_instruction(
+                    &crate::ID,
+                    &keyed_accounts,
+                    &instruction_data,
+                    &mut invoke_context,
+                    false,
+                );
+                let mut executor = invoke_context.deconstruct().unwrap();
+                let tx = executor.get_tx_receipt_by_hash(tx_hash).unwrap();
+                println!("status = {:?}", tx.status);
+                assert!(matches!(tx.status, ExitReason::Succeed(_)));
+                assert!(!tx.logs.is_empty());
             }
         }
     }
