@@ -495,21 +495,10 @@ impl BridgeERPC for BridgeErpcImpl {
     }
 }
 
+#[derive(Debug)]
 pub struct GeneralErpcProxy;
 impl GeneralERPC for GeneralErpcProxy {
     type Metadata = Arc<EvmBridge>;
-
-    #[instrument]
-    fn client_version(&self, _meta: Self::Metadata) -> EvmResult<String> {
-        Ok(String::from("SolanaEvm/v0.1.0"))
-    }
-
-    #[instrument]
-    fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> EvmResult<Hex<H256>> {
-        Ok(Hex(H256::from_slice(
-            Keccak256::digest(bytes.0.as_slice()).as_slice(),
-        )))
-    }
 
     #[instrument]
     fn network_id(&self, meta: Self::Metadata) -> EvmResult<String> {
@@ -576,6 +565,7 @@ impl GeneralERPC for GeneralErpcProxy {
     }
 }
 
+#[derive(Debug)]
 pub struct ChainErpcProxy;
 impl ChainERPC for ChainErpcProxy {
     type Metadata = Arc<EvmBridge>;
@@ -916,6 +906,7 @@ impl ChainERPC for ChainErpcProxy {
     }
 }
 
+#[derive(Debug)]
 pub struct TraceErpcProxy;
 impl TraceERPC for TraceErpcProxy {
     type Metadata = Arc<EvmBridge>;
