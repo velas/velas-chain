@@ -2846,6 +2846,10 @@ impl Bank {
     }
 
     pub fn check_tx_durable_nonce(&self, tx: &Transaction) -> Option<(Pubkey, AccountSharedData)> {
+        if self.feature_set.is_active(&feature_set::velas::disable_durable_nonce::id()) {
+            return None
+        }
+
         transaction::uses_durable_nonce(tx)
             .and_then(|nonce_ix| transaction::get_nonce_pubkey_from_instruction(nonce_ix, tx))
             .and_then(|nonce_pubkey| {

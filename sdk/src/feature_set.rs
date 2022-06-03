@@ -181,6 +181,10 @@ pub mod velas {
     pub mod burn_fee {
         solana_sdk::declare_id!("CjdrowBMM3drcSSciwPVpAWz4hBqWAKSLj9Ea9PD1vip");
     }
+
+    pub mod disable_durable_nonce {
+        solana_sdk::declare_id!("AKAGpT85PfoGDxCBPsxGHy8iZdaJoeAiVXq5oRxFS5TL");
+    }
 }
 lazy_static! {
     /// Map of feature identifiers to user-visible description
