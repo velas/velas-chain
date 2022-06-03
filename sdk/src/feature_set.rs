@@ -185,6 +185,10 @@ pub mod velas {
     pub mod clear_logs_on_error {
         solana_sdk::declare_id!("9rZZ68tcDSZYkDMuFn59iRzoUxki2r16RWUucZQywFzS");
     }
+    
+    pub mod disable_durable_nonce {
+        solana_sdk::declare_id!("AKAGpT85PfoGDxCBPsxGHy8iZdaJoeAiVXq5oRxFS5TL");
+    }
 }
 lazy_static! {
     /// Map of feature identifiers to user-visible description
