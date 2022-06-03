@@ -15,6 +15,7 @@ solana-transaction-status = { path = "../../transaction-status", version = "1.4.
 solana-account-decoder = { path = "../../account-decoder", version = "1.4.0" }
 solana-logger = { path = "../../logger", version = "1.4.0" }
 solana-evm-loader-program = { path = "../programs/evm_loader" }
+solana-version = { path = "../../version" }
 structopt = { version = "0.3", features = ["paw"] }
 serde_json = "1.0.60"
 env_logger = "0.8.2"

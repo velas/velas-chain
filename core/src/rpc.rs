@@ -317,6 +317,10 @@ impl JsonRpcRequestProcessor {
         }
     }
 
+    pub fn get_health(&self) -> RpcHealthStatus {
+        self.health.check()
+    }
+
     pub fn evm_state_archive_storage(&self) -> &Option<evm_state::Storage> {
         &self.evm_state_archive
     }
