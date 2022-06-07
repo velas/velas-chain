@@ -8,7 +8,7 @@ pub(crate) mod upload;
 pub use check_evm::check_evm;
 pub use check_native::check_native;
 pub use find::find;
-pub use repeat::repeat;
+pub use repeat::{repeat_evm, repeat_native};
 pub use restore_chain::restore_chain;
 pub use upload::upload;
 

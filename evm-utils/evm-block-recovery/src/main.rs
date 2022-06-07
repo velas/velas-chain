@@ -74,13 +74,13 @@ enum Commands {
         collection: String,
     },
 
-    /// Copies sequence of blocks from Source Ledger to Destination Ledger
+    /// Copies sequence of EVM Blocks from Source to Destination Ledger
     RepeatEvm {
-        /// First EVM block of the sequence to copy from src to dst
+        /// First EVM Block of the sequence to copy from Src to Dst
         #[clap(short, long, value_name = "NUM")]
         block_number: u64,
 
-        /// EVM block sequence length
+        /// EVM Block sequence length
         #[clap(short, long, value_name = "NUM", default_value = "1")]
         limit: u64,
 
@@ -89,7 +89,7 @@ enum Commands {
         src_creds: String,
 
         /// Source Ledger Instance
-        #[clap(long, default_value = "solana-ledger")]
+        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
         src_instance: String,
 
         /// Google credentials JSON filepath of the Destination Ledger
@@ -97,7 +97,34 @@ enum Commands {
         dst_creds: String,
 
         /// Destination Ledger Instance
-        #[clap(long, default_value = "solana-ledger")]
+        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+        dst_instance: String,
+    },
+
+    /// Copies sequence of Native Blocks from Source to Destination Ledger
+    RepeatNative {
+        /// First Native Block of the sequence to copy from Src to Dst
+        #[clap(short, long, value_name = "NUM")]
+        block_number: u64,
+
+        /// Native Block sequence length
+        #[clap(short, long, value_name = "NUM", default_value = "1")]
+        limit: u64,
+
+        /// Google credentials JSON filepath of the Source Ledger
+        #[clap(long, value_name = "FILE_PATH")]
+        src_creds: String,
+
+        /// Source Ledger Instance
+        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+        src_instance: String,
+
+        /// Google credentials JSON filepath of the Destination Ledger
+        #[clap(long, value_name = "FILE_PATH")]
+        dst_creds: String,
+
+        /// Destination Ledger Instance
+        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
         dst_instance: String,
     },
 }
@@ -110,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Find { start, limit } => {
-            routines::find(ledger::default().await?, start, limit).await?
+            routines::find(ledger::default().await?, start, limit).await
         }
         Commands::RestoreChain {
             first,
@@ -128,16 +155,16 @@ async fn main() -> anyhow::Result<()> {
                 force_resume,
                 output_dir,
             )
-            .await?
+            .await
         }
         Commands::CheckNative { block_number } => {
-            routines::check_native(ledger::default().await?, block_number).await?
+            routines::check_native(ledger::default().await?, block_number).await
         }
         Commands::CheckEvm { block_number } => {
-            routines::check_evm(ledger::default().await?, block_number).await?
+            routines::check_evm(ledger::default().await?, block_number).await
         }
         Commands::Upload { collection } => {
-            routines::upload(ledger::default().await?, collection).await?
+            routines::upload(ledger::default().await?, collection).await
         }
         Commands::RepeatEvm {
             block_number,
@@ -147,15 +174,29 @@ async fn main() -> anyhow::Result<()> {
             dst_creds,
             dst_instance,
         } => {
-            routines::repeat(
+            routines::repeat_evm(
                 block_number,
                 limit,
                 ledger::with_params(src_creds, src_instance).await?,
                 ledger::with_params(dst_creds, dst_instance).await?,
             )
-            .await?
+            .await
+        }
+        Commands::RepeatNative {
+            block_number,
+            limit,
+            src_creds,
+            src_instance,
+            dst_creds,
+            dst_instance,
+        } => {
+            routines::repeat_native(
+                block_number,
+                limit,
+                ledger::with_params(src_creds, src_instance).await?,
+                ledger::with_params(dst_creds, dst_instance).await?,
+            )
+            .await
         }
     }
-
-    Ok(())
 }

@@ -1,7 +1,7 @@
 use anyhow::*;
 use solana_storage_bigtable::LedgerStorage;
 
-pub async fn repeat(
+pub async fn repeat_evm(
     block_number: u64,
     limit: u64,
     src: LedgerStorage,
@@ -51,6 +51,17 @@ pub async fn repeat(
                 block_number
             ))?;
     }
+
+    Ok(())
+}
+
+pub async fn repeat_native(
+    _block_number: u64,
+    _limit: u64,
+    _src: LedgerStorage,
+    _dst: LedgerStorage,
+) -> Result<()> {
+    log::info!("TODO: `repeat-native` command");
 
     Ok(())
 }
