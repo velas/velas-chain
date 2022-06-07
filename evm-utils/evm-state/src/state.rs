@@ -581,11 +581,11 @@ impl EvmState {
 
     /// Ignores all unapplied updates.
     /// spv_compatibility - is oneway feature flag, if activated change current version from InitVersion to VersionConsistentHashes (dont change if version is feature).
-    pub fn new_from_parent(&self, block_start_time: i64, spv_compatibility: bool) -> Self {
+    pub fn new_from_parent(&self, block_start_time: u64, spv_compatibility: bool) -> Self {
         let mut b = match self {
-            EvmState::Committed(committed) => committed.next_incomming(block_start_time as u64),
+            EvmState::Committed(committed) => committed.next_incomming(block_start_time),
             EvmState::Incomming(incomming) => EvmBackend {
-                state: incomming.state.new_update_time(block_start_time as u64),
+                state: incomming.state.new_update_time(block_start_time),
                 kvs: incomming.kvs.clone(),
             },
         };

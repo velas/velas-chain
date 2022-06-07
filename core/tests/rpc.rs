@@ -335,6 +335,107 @@ fn test_rpc_block_transaction() {
 }
 
 #[test]
+fn test_rpc_replay_transaction_timestamp() {
+    use solana_evm_loader_program::{send_raw_tx, transfer_native_to_evm_ixs};
+    let filter = "warn,evm=debug,evm_state::context=info";
+    solana_logger::setup_with_default(filter);
+
+    let evm_secret_key = evm_state::SecretKey::from_slice(&[1; 32]).unwrap();
+    let evm_address = evm_state::addr_from_public_key(&evm_state::PublicKey::from_secret_key(
+        evm_state::SECP256K1,
+        &evm_secret_key,
+    ));
+
+    let alice = Keypair::new();
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .enable_evm_state_archive()
+        .rpc_config(JsonRpcConfig {
+            enable_rpc_transaction_history: true,
+            ..Default::default()
+        })
+        .start_with_mint_address(alice.pubkey())
+        .expect("validator start failed");
+    let rpc_url = test_validator.rpc_url();
+
+    let req = json_req!("eth_chainId", json!([]));
+    let json = post_rpc(req, &rpc_url);
+    let chain_id = Hex::from_hex(json["result"].as_str().unwrap()).unwrap().0;
+
+    let blockhash = dbg!(get_blockhash(&rpc_url));
+    let ixs = transfer_native_to_evm_ixs(alice.pubkey(), 1000000, evm_address);
+    let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
+    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+
+    let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
+    let json: Value = post_rpc(req, &rpc_url);
+    wait_confirmation(&rpc_url, &[&json["result"]]);
+
+    // Contract with empty method that will revert after 60 seconds since creation
+    const TEST_CONTRACT: &str = "608060405234801561001057600080fd5b50426000819055506101ce806100276000396000f3fe608060405234801561001057600080fd5b506004361061002b5760003560e01c8063e0c6190d14610030575b600080fd5b61003861003a565b005b603c60005461004991906100e0565b421061008a576040517f08c379a0000000000000000000000000000000000000000000000000000000008152600401610081906100af565b60405180910390fd5b565b60006100996007836100cf565b91506100a48261016f565b602082019050919050565b600060208201905081810360008301526100c88161008c565b9050919050565b600082825260208201905092915050565b60006100eb82610136565b91506100f683610136565b9250827fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0382111561012b5761012a610140565b5b828201905092915050565b6000819050919050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b7f455850495245440000000000000000000000000000000000000000000000000060008201525056fea2646970667358221220ab2757ebc2b2a29957de6784b28b802df45baf56c759e3bcfcd4b01365438e5864736f6c63430008070033";
+    let tx_create = evm_state::UnsignedTransaction {
+        nonce: 0.into(),
+        gas_price: 2000000000.into(),
+        gas_limit: 300000.into(),
+        action: evm_state::TransactionAction::Create,
+        value: 0.into(),
+        input: hex::decode(TEST_CONTRACT).unwrap(),
+    }
+        .sign(&evm_secret_key, Some(chain_id));
+    let contract_address = tx_create.address().unwrap();
+    let tx_call = evm_state::UnsignedTransaction {
+        nonce: 1.into(),
+        gas_price: 2000000000.into(),
+        gas_limit: 300000.into(),
+        action: evm_state::TransactionAction::Call(contract_address),
+        value: 0.into(),
+        input: hex::decode("e0c6190d").unwrap(),
+    }
+        .sign(&evm_secret_key, Some(chain_id));
+    let tx_call_hash = tx_call.tx_id_hash();
+
+    while get_blockhash(&rpc_url) == blockhash {
+        sleep(Duration::from_secs(1));
+    }
+    let blockhash = get_blockhash(&rpc_url);
+    while get_blockhash(&rpc_url) == blockhash {
+        sleep(Duration::from_secs(1));
+    }
+    let mut blockhash = dbg!(get_blockhash(&rpc_url));
+    let ixs = vec![send_raw_tx(alice.pubkey(), tx_create, None)];
+    let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
+    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+    let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
+    let json = dbg!(post_rpc(req, &rpc_url));
+    wait_confirmation(&rpc_url, &[&json["result"]]);
+
+    sleep(Duration::from_secs(30));
+    let recent_blockhash = get_blockhash(&rpc_url);
+
+    let ixs = vec![send_raw_tx(alice.pubkey(), tx_call, None)];
+    let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], recent_blockhash);
+    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+    let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
+    let json = dbg!(post_rpc(req, &rpc_url));
+    wait_confirmation(&rpc_url, &[&json["result"]]);
+
+    sleep(Duration::from_secs(35));
+
+    let request = json_req!("trace_replayTransaction", json!([tx_call_hash, ["trace"]]));
+    let json = post_rpc(request.clone(), &rpc_url);
+    warn!("trace_replayTransaction: {}", dbg!(json.clone()));
+    assert!(!json["result"].is_null());
+    assert!(json["result"]["trace"].as_array().unwrap().iter().all(|v| {
+        !v.as_object().unwrap().contains_key("error")
+    }));
+}
+
+#[test]
 fn test_rpc_invalid_requests() {
     solana_logger::setup();
 
