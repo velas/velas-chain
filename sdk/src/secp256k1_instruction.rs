@@ -2,9 +2,7 @@
 
 use {
     crate::{
-        feature_set::{
-        libsecp256k1_fail_on_bad_count, FeatureSet,
-        },
+        feature_set::{libsecp256k1_fail_on_bad_count, FeatureSet},
         instruction::Instruction,
         precompiles::PrecompileError,
     },
@@ -146,7 +144,7 @@ pub fn verify(
         let signature = libsecp256k1::Signature::parse_standard_slice(
             &signature_instruction[sig_start..sig_end],
         )
-            .map_err(|_| PrecompileError::InvalidSignature)?;
+        .map_err(|_| PrecompileError::InvalidSignature)?;
 
         let recovery_id = libsecp256k1::RecoveryId::parse(signature_instruction[sig_end])
             .map_err(|_| PrecompileError::InvalidRecoveryId)?;
@@ -211,7 +209,6 @@ pub mod test {
     use {
         super::*,
         crate::{
-            feature_set,
             hash::Hash,
             secp256k1_instruction::{
                 new_secp256k1_instruction, SecpSignatureOffsets, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
@@ -232,7 +229,11 @@ pub mod test {
         let writer = std::io::Cursor::new(&mut instruction_data[1..]);
         bincode::serialize_into(writer, &offsets).unwrap();
 
-        verify(&instruction_data, &[&[0u8; 100]], &Arc::new(feature_set))
+        verify(
+            &instruction_data,
+            &[&[0u8; 100]],
+            &Arc::new(FeatureSet::all_enabled()),
+        )
     }
 
     #[test]
@@ -247,7 +248,11 @@ pub mod test {
         instruction_data.truncate(instruction_data.len() - 1);
 
         assert_eq!(
-            verify(&instruction_data, &[&[0u8; 100]], &Arc::new(feature_set)),
+            verify(
+                &instruction_data,
+                &[&[0u8; 100]],
+                &Arc::new(FeatureSet::all_enabled())
+            ),
             Err(PrecompileError::InvalidInstructionDataSize)
         );
 
@@ -375,7 +380,11 @@ pub mod test {
         bincode::serialize_into(writer, &offsets).unwrap();
 
         assert_eq!(
-            verify(&instruction_data, &[&[0u8; 100]], &Arc::new(feature_set)),
+            verify(
+                &instruction_data,
+                &[&[0u8; 100]],
+                &Arc::new(FeatureSet::all_enabled())
+            ),
             Err(PrecompileError::InvalidInstructionDataSize)
         );
     }
@@ -393,7 +402,7 @@ pub mod test {
         let message_arr = b"hello";
         let mut secp_instruction = new_secp256k1_instruction(&secp_privkey, message_arr);
         let mint_keypair = Keypair::new();
-        let feature_set = Arc::new(feature_set);
+        let feature_set = Arc::new(FeatureSet::all_enabled());
 
         let tx = Transaction::new_signed_with_payer(
             &[secp_instruction.clone()],

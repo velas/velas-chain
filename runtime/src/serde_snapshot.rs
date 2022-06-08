@@ -236,7 +236,7 @@ where
                 incremental_snapshot_bank_fields.unwrap_or(full_snapshot_bank_fields),
                 snapshot_accounts_db_fields,
                 genesis_config,
-        	    evm_state_path,
+                evm_state_path,
                 account_paths,
                 unpacked_append_vec_map,
                 debug_keys,
@@ -248,17 +248,16 @@ where
                 verify_index,
                 accounts_db_config,
                 accounts_update_notifier,
-        	    evm_state_backup_path,
-	            skip_purge_verify,
-	            evm_state_version.support_gc(), // is remote snapshot supported gc?
-	            true, // enable gc mode in current evm state
-	            evm_archive,
+                evm_state_backup_path,
+                skip_purge_verify,
+                evm_state_version.support_gc(), // is remote snapshot supported gc?
+                true,                           // enable gc mode in current evm state
+                evm_archive,
             )?;
             Ok(bank)
         }};
     }
-    INTO!(newer)
-    .map_err(|err| {
+    INTO!(newer).map_err(|err| {
         warn!("bankrc_from_stream error: {:?}", err);
         err
     })
@@ -292,8 +291,7 @@ where
             )
         };
     }
-    INTO!(newer)
-    .map_err(|err| {
+    INTO!(newer).map_err(|err| {
         warn!("bankrc_to_stream error: {:?}", err);
         err
     })

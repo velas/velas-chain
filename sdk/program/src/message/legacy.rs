@@ -13,7 +13,7 @@
 
 use {
     crate::{
-    bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
         hash::Hash,
         instruction::{AccountMeta, CompiledInstruction, Instruction},
         message::MessageHeader,
@@ -598,10 +598,10 @@ impl Message {
 
     /// Return true if message borrow mutably evm_state account.
     pub fn is_modify_evm_state(&self) -> bool {
-        self.account_keys.iter().enumerate().any(|(num, key)| {
-            *key == crate::evm_state::id()
-                 && self.is_writable(num)
-        })
+        self.account_keys
+            .iter()
+            .enumerate()
+            .any(|(num, key)| *key == crate::evm_state::id() && self.is_writable(num))
     }
 
     pub fn is_key_passed_to_program(&self, key_index: usize) -> bool {
@@ -679,7 +679,7 @@ impl Message {
     ) -> Result<Instruction, SanitizeError> {
         #[allow(deprecated)]
         sysvar::instructions::load_instruction_at(index, data)
-        }
+    }
 
     pub fn signer_keys(&self) -> Vec<&Pubkey> {
         // Clamp in case we're working on un-`sanitize()`ed input
@@ -1111,9 +1111,7 @@ mod tests {
             Some(&id1),
         );
         assert_eq!(
-            message.get_account_keys_by_lock_type(
-                true, // demote_sysvar_write_locks
-            ),
+            message.get_account_keys_by_lock_type(),
             (vec![&id1, &id0], vec![&id3, &id2, &program_id])
         );
     }

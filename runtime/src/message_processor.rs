@@ -282,6 +282,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            None,
         );
         assert!(result.is_ok());
         assert_eq!(accounts[0].1.borrow().lamports(), 100);
@@ -312,6 +313,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            None,
         );
         assert_eq!(
             result,
@@ -346,6 +348,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            None,
         );
         assert_eq!(
             result,
@@ -492,6 +495,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            None,
         );
         assert_eq!(
             result,
@@ -526,6 +530,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            None,
         );
         assert!(result.is_ok());
 
@@ -557,6 +562,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            None,
         );
         assert!(result.is_ok());
         assert_eq!(accounts[0].1.borrow().lamports(), 80);
@@ -615,6 +621,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            None,
         );
         assert_eq!(
             result,

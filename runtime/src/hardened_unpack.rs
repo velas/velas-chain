@@ -467,6 +467,7 @@ fn is_valid_genesis_archive_entry(parts: &[&str], kind: tar::EntryType) -> bool 
         ([DEFAULT_GENESIS_FILE], GNUSparse) => true,
         ([DEFAULT_GENESIS_FILE], Regular) => true,
         (["rocksdb"], Directory) => true,
+        (["rocksdb"], _) => false,
         (["rocksdb", ..], GNUSparse) => true,
         (["rocksdb", ..], Regular) => true,
         (["evm-state-genesis"], Directory) => true,

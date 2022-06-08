@@ -377,7 +377,10 @@ pub fn archive_snapshot_package(
             for dir in [TAR_ACCOUNTS_DIR, TAR_SNAPSHOTS_DIR] {
                 archive.append_dir_all(dir, staging_dir.as_ref().join(dir))?;
             }
-            archive.append_path_with_name(staging_dir.as_ref().join(TAR_VERSION_FILE), TAR_VERSION_FILE)?;
+            archive.append_path_with_name(
+                staging_dir.as_ref().join(TAR_VERSION_FILE),
+                TAR_VERSION_FILE,
+            )?;
             archive.into_inner()?;
             Ok(())
         };
@@ -454,9 +457,7 @@ where
                 let snapshot_file_name = get_snapshot_file_name(slot);
                 // So nice I join-ed it twice!  The redundant `snapshot_file_name` is unintentional
                 // and should be simplified.  Kept for compatibility.
-                let snapshot_path = bank_snapshots_dir
-                    .as_ref()
-                    .join(&snapshot_file_name);
+                let snapshot_path = bank_snapshots_dir.as_ref().join(&snapshot_file_name);
                 BankSnapshotInfo {
                     slot,
                     evm_state_backup_path: snapshot_path.join(EVM_STATE_DIR),
@@ -1709,7 +1710,9 @@ pub fn snapshot_bank(
     )
     .expect("failed to hard link bank snapshot into a tmpdir");
 
-    accounts_package_sender.send(accounts_package).map_err(Box::new)?;
+    accounts_package_sender
+        .send(accounts_package)
+        .map_err(Box::new)?;
 
     Ok(())
 }
@@ -1859,7 +1862,7 @@ pub fn package_and_archive_full_snapshot(
         (evm_state.last_root(), evm_state.kvs().clone())
     };
     let deltas = bank.src.slot_deltas(&bank.src.roots());
-    
+
     let accounts_package = AccountsPackage::new(
         bank,
         bank_snapshot_info,
@@ -1901,13 +1904,11 @@ pub fn package_and_archive_incremental_snapshot(
     maximum_full_snapshot_archives_to_retain: usize,
     maximum_incremental_snapshot_archives_to_retain: usize,
 ) -> Result<IncrementalSnapshotArchiveInfo> {
-
     let (evm_root, evm_database) = {
         let evm_state = bank.evm_state.read().unwrap();
         (evm_state.last_root(), evm_state.kvs().clone())
     };
     let deltas = bank.src.slot_deltas(&bank.src.roots());
-
 
     let accounts_package = AccountsPackage::new(
         bank,
@@ -2745,12 +2746,14 @@ mod tests {
 
         let accounts_dir = tempfile::TempDir::new().unwrap();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let evm_state_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = ArchiveFormat::Tar;
 
+        let original_bank = Arc::new(original_bank);
         let snapshot_archive_info = bank_to_full_snapshot_archive(
             &bank_snapshots_dir,
-            &original_bank,
+            original_bank.clone(),
             None,
             snapshot_archives_dir.path(),
             snapshot_archive_format,
@@ -2760,6 +2763,9 @@ mod tests {
         .unwrap();
 
         let (roundtrip_bank, _) = bank_from_snapshot_archives(
+            evm_state_dir.path(),
+            None,
+            true,
             &[PathBuf::from(accounts_dir.path())],
             bank_snapshots_dir.path(),
             &snapshot_archive_info,
@@ -2779,7 +2785,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(original_bank, roundtrip_bank);
+        assert_eq!(&*original_bank, &roundtrip_bank);
     }
 
     /// Test roundtrip of bank to a full snapshot, then back again.  This test is more involved
@@ -2836,12 +2842,13 @@ mod tests {
 
         let accounts_dir = tempfile::TempDir::new().unwrap();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let evm_state_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = ArchiveFormat::TarGzip;
 
         let full_snapshot_archive_info = bank_to_full_snapshot_archive(
             bank_snapshots_dir.path(),
-            &bank4,
+            bank4.clone(),
             None,
             snapshot_archives_dir.path(),
             snapshot_archive_format,
@@ -2851,6 +2858,9 @@ mod tests {
         .unwrap();
 
         let (roundtrip_bank, _) = bank_from_snapshot_archives(
+            evm_state_dir.path(),
+            None,
+            true,
             &[PathBuf::from(accounts_dir.path())],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -2912,13 +2922,14 @@ mod tests {
 
         let accounts_dir = tempfile::TempDir::new().unwrap();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let evm_state_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = ArchiveFormat::TarZstd;
 
         let full_snapshot_slot = slot;
         let full_snapshot_archive_info = bank_to_full_snapshot_archive(
             bank_snapshots_dir.path(),
-            &bank1,
+            bank1.clone(),
             None,
             snapshot_archives_dir.path(),
             snapshot_archive_format,
@@ -2950,7 +2961,7 @@ mod tests {
 
         let incremental_snapshot_archive_info = bank_to_incremental_snapshot_archive(
             bank_snapshots_dir.path(),
-            &bank4,
+            bank4.clone(),
             full_snapshot_slot,
             None,
             snapshot_archives_dir.path(),
@@ -2961,6 +2972,9 @@ mod tests {
         .unwrap();
 
         let (roundtrip_bank, _) = bank_from_snapshot_archives(
+            evm_state_dir.path(),
+            None,
+            true,
             &[PathBuf::from(accounts_dir.path())],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -3012,13 +3026,14 @@ mod tests {
 
         let accounts_dir = tempfile::TempDir::new().unwrap();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let evm_state_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = ArchiveFormat::Tar;
 
         let full_snapshot_slot = slot;
         bank_to_full_snapshot_archive(
             &bank_snapshots_dir,
-            &bank1,
+            bank1.clone(),
             None,
             &snapshot_archives_dir,
             snapshot_archive_format,
@@ -3050,7 +3065,7 @@ mod tests {
 
         bank_to_incremental_snapshot_archive(
             &bank_snapshots_dir,
-            &bank4,
+            bank4.clone(),
             full_snapshot_slot,
             None,
             &snapshot_archives_dir,
@@ -3061,6 +3076,9 @@ mod tests {
         .unwrap();
 
         let (deserialized_bank, ..) = bank_from_latest_snapshot_archives(
+            evm_state_dir.path(),
+            None,
+            true,
             &bank_snapshots_dir,
             &snapshot_archives_dir,
             &[accounts_dir.as_ref().to_path_buf()],
@@ -3114,6 +3132,7 @@ mod tests {
 
         let accounts_dir = tempfile::TempDir::new().unwrap();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let evm_state_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = ArchiveFormat::Tar;
 
@@ -3149,7 +3168,7 @@ mod tests {
         let full_snapshot_slot = slot;
         let full_snapshot_archive_info = bank_to_full_snapshot_archive(
             bank_snapshots_dir.path(),
-            &bank1,
+            bank1.clone(),
             None,
             snapshot_archives_dir.path(),
             snapshot_archive_format,
@@ -3188,7 +3207,7 @@ mod tests {
         // deserializes correctly.
         let incremental_snapshot_archive_info = bank_to_incremental_snapshot_archive(
             bank_snapshots_dir.path(),
-            &bank2,
+            bank2.clone(),
             full_snapshot_slot,
             None,
             snapshot_archives_dir.path(),
@@ -3198,6 +3217,9 @@ mod tests {
         )
         .unwrap();
         let (deserialized_bank, _) = bank_from_snapshot_archives(
+            evm_state_dir.path(),
+            None,
+            true,
             &[accounts_dir.path().to_path_buf()],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -3249,7 +3271,7 @@ mod tests {
         // deserializes correctly
         let incremental_snapshot_archive_info = bank_to_incremental_snapshot_archive(
             bank_snapshots_dir.path(),
-            &bank4,
+            bank4.clone(),
             full_snapshot_slot,
             None,
             snapshot_archives_dir.path(),
@@ -3260,6 +3282,9 @@ mod tests {
         .unwrap();
 
         let (deserialized_bank, _) = bank_from_snapshot_archives(
+            evm_state_dir.path(),
+            None,
+            true,
             &[accounts_dir.path().to_path_buf()],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,

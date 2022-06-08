@@ -48,7 +48,7 @@ use {
         accounts_index::{AccountSecondaryIndexes, IndexKey, ScanConfig, ScanResult},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::{Ancestors, AncestorsForSerialization},
-        blockhash_queue::{BlockhashQueue, BlockHashEvm},
+        blockhash_queue::{BlockHashEvm, BlockhashQueue},
         builtins::{self, BuiltinAction, BuiltinFeatureTransition, Builtins},
         cost_tracker::CostTracker,
         epoch_stakes::{EpochStakes, NodeVoteAccounts},
@@ -68,6 +68,7 @@ use {
     },
     byteorder::{ByteOrder, LittleEndian},
     dashmap::DashMap,
+    evm_state::{AccountProvider, FromKey},
     itertools::Itertools,
     log::*,
     rand::Rng,
@@ -160,7 +161,6 @@ use {
         },
         time::{Duration, Instant},
     },
-    evm_state::{AccountProvider, FromKey}
 };
 
 mod builtin_programs;
@@ -1611,7 +1611,7 @@ impl Bank {
                 evm_state
                     .register_slot(slot)
                     .expect("failed to mark slot reference");
-                    evm_state
+                evm_state
             },
             (),
             "evm_state_register",
@@ -2927,7 +2927,6 @@ impl Bank {
         if !self.fix_recent_blockhashes_sysvar_evm() {
             self.update_recent_evm_blockhashes_locked(&evm_blockhashes);
         }
-            
     }
 
     fn get_timestamp_estimate(
@@ -3030,54 +3029,54 @@ impl Bank {
     }
 
     pub fn commit_evm(&self) {
-       let mut measure = Measure::start("commit-evm-block-ms");
+        let mut measure = Measure::start("commit-evm-block-ms");
 
-       let old_root = self.evm_state.read().unwrap().last_root();
-       let hash = self
-           .evm_state
-           .write()
-           .expect("evm state was poisoned")
-           .try_commit(self.slot(), self.last_blockhash().to_bytes())
-           .expect("failed to commit evm");
+        let old_root = self.evm_state.read().unwrap().last_root();
+        let hash = self
+            .evm_state
+            .write()
+            .expect("evm state was poisoned")
+            .try_commit(self.slot(), self.last_blockhash().to_bytes())
+            .expect("failed to commit evm");
 
-       measure.stop();
-       debug!("EVM state commit took {}", measure);
+        measure.stop();
+        debug!("EVM state commit took {}", measure);
 
-       inc_new_counter_info!("commit-evm-block-ms", measure.as_ms() as usize);
+        inc_new_counter_info!("commit-evm-block-ms", measure.as_ms() as usize);
 
-       debug!(
-           "Set evm state root to {:?} at block {}",
-           self.evm_state.read().unwrap().last_root(),
-           self.evm_state.read().unwrap().block_number()
-       );
+        debug!(
+            "Set evm state root to {:?} at block {}",
+            self.evm_state.read().unwrap().last_root(),
+            self.evm_state.read().unwrap().block_number()
+        );
 
-       let mut w_evm_blockhash_queue = self
-           .evm_blockhashes
-           .write()
-           .expect("evm blockchashes poisoned");
+        let mut w_evm_blockhash_queue = self
+            .evm_blockhashes
+            .write()
+            .expect("evm blockchashes poisoned");
 
-       if let Some((hash, changes)) = hash {
-           *self
-               .evm_changed_list
-               .write()
-               .expect("change list was poisoned") = Some((old_root, changes));
+        if let Some((hash, changes)) = hash {
+            *self
+                .evm_changed_list
+                .write()
+                .expect("change list was poisoned") = Some((old_root, changes));
 
-           self.evm_state
-               .write()
-               .expect("evm state was poisoned")
-               .reregister_slot(self.slot())
-               .expect("Failed to change slot");
-           w_evm_blockhash_queue.insert_hash(hash);
-           if self.fix_recent_blockhashes_sysvar_evm() {
-               self.update_recent_evm_blockhashes_locked(&w_evm_blockhash_queue);
-           }
-       }
-   }
+            self.evm_state
+                .write()
+                .expect("evm state was poisoned")
+                .reregister_slot(self.slot())
+                .expect("Failed to change slot");
+            w_evm_blockhash_queue.insert_hash(hash);
+            if self.fix_recent_blockhashes_sysvar_evm() {
+                self.update_recent_evm_blockhashes_locked(&w_evm_blockhash_queue);
+            }
+        }
+    }
 
     pub fn rehash(&self) {
         let mut hash = self.hash.write().unwrap();
         let new = self.hash_internal_state();
-        
+
         if new != *hash {
             warn!("Updating bank hash to {}", new);
             *hash = new;
@@ -3674,7 +3673,6 @@ impl Bank {
             },
         )
     }
-        
 
     /// Run transactions against a frozen bank without committing the results
     pub fn simulate_transaction(
@@ -4134,10 +4132,7 @@ impl Bank {
                 let evm_executor = evm_state::Executor::with_config(
                     state.clone(),
                     evm_state::ChainContext::new(last_hashes),
-                    evm_state::EvmConfig::new(
-                        self.evm_chain_id,
-                        self.evm_burn_fee_activated(),
-                    ),
+                    evm_state::EvmConfig::new(self.evm_chain_id, self.evm_burn_fee_activated()),
                 );
                 Some(evm_executor)
             } else {
@@ -4155,7 +4150,6 @@ impl Bank {
         // Without Rc/RefCell we need to somehow provide mutable evm executor from InvokeContext,
         // keeping InvokeContext free to sharable borrowing for logging purposes.
         let evm_executor = evm_executor.map(RefCell::new).map(Rc::new);
-
 
         let (blockhash, lamports_per_signature) = self.last_blockhash_and_lamports_per_signature();
 
@@ -4186,8 +4180,8 @@ impl Bank {
 
         //TODO(velas): Move evm_state apply to update executors
         let evm_new_error_handling = self
-                .feature_set
-                .is_active(&solana_sdk::feature_set::velas::evm_new_error_handling::id());
+            .feature_set
+            .is_active(&solana_sdk::feature_set::velas::evm_new_error_handling::id());
 
         if let Some(evm_executor) = evm_executor {
             let executor = Rc::try_unwrap(evm_executor)
@@ -4207,7 +4201,6 @@ impl Bank {
                 *evm_patch = Some(new_patch);
             }
         }
-
 
         let mut update_executors_time = Measure::start("update_executors_time");
         self.update_executors(process_result.is_ok(), executors);
@@ -4294,7 +4287,7 @@ impl Bank {
             .iter()
             .filter(|tx| tx.message().is_modify_evm_state())
             .count();
-        
+
         debug!("processing transactions: {}", sanitized_txs.len());
         inc_new_counter_info!("bank-process_transactions", sanitized_txs.len());
         inc_new_counter_info!("bank-evm-process_transactions", evm_txs_len);
@@ -4394,7 +4387,7 @@ impl Bank {
                         timings,
                         &mut error_counters,
                         &mut evm_patch,
-                        evm_state_getter.clone()
+                        evm_state_getter.clone(),
                     )
                 }
             })
@@ -5798,14 +5791,9 @@ impl Bank {
             "evm_loader",
             &solana_sdk::evm_loader::id(),
             |acc, data, context| {
-                solana_evm_loader_program::EvmProcessor{}.process_instruction(acc,
-                    data,
-                    context,
-                )
-            }
+                solana_evm_loader_program::EvmProcessor {}.process_instruction(acc, data, context)
+            },
         );
-
-        
 
         self.builtin_feature_transitions = Arc::new(builtins.feature_transitions);
 
@@ -6778,7 +6766,9 @@ impl Bank {
                 apply_transitions_for_new_features,
                 &new_feature_activations,
             );
-            self.reconfigure_token2_native_mint(new_feature_activations.contains(&feature_set::velas::hardfork_pack::id()));
+            self.reconfigure_token2_native_mint(
+                new_feature_activations.contains(&feature_set::velas::hardfork_pack::id()),
+            );
         }
         self.ensure_no_storage_rewards_pool();
     }
@@ -6938,7 +6928,8 @@ impl Bank {
         };
 
         // It's okay if we trigget two activations sequentionally.
-        let reconfigure_token2_native_mint = reconfigure_token2_native_mint_old || reconfigure_token2_native_mint_velas;
+        let reconfigure_token2_native_mint =
+            reconfigure_token2_native_mint_old || reconfigure_token2_native_mint_velas;
 
         if reconfigure_token2_native_mint {
             let mut native_mint_account = solana_sdk::account::AccountSharedData::from(Account {
@@ -7102,7 +7093,6 @@ impl Drop for Bank {
                 error!("Cannot purge evm_state slot: {}, error: {}", self.slot(), e)
                 //TODO: Save last hashes list, to perform cleanup if it was recoverable error.
             }
-
         }
     }
 }
@@ -7494,7 +7484,10 @@ pub(crate) mod tests {
         let sysvar_and_builtin_program_delta1 = 2;
         assert_eq!(
             bank1.capitalization(),
-            42 * 42 + sysvar_and_builtin_program_delta0 + sysvar_and_builtin_program_delta1 + evm_state_and_program_delta,
+            42 * 42
+                + sysvar_and_builtin_program_delta0
+                + sysvar_and_builtin_program_delta1
+                + evm_state_and_program_delta,
         );
     }
 
@@ -9240,7 +9233,7 @@ pub(crate) mod tests {
         // not being eagerly-collected for exact rewards calculation
         bank0.restore_old_behavior_for_fragile_tests();
 
-        let sysvar_and_builtin_program_delta0 = 10;
+        let sysvar_and_builtin_program_delta0 = 12;
         assert_eq!(
             bank0.capitalization(),
             42 * 1_000_000_000 + sysvar_and_builtin_program_delta0
@@ -10378,7 +10371,7 @@ pub(crate) mod tests {
         solana_logger::setup();
 
         let (genesis_config, mint_keypair) = create_genesis_config(20000 * 3);
-        let bank = Bank::new(&genesis_config);
+        let bank = Bank::new_for_tests(&genesis_config);
         let alice = Keypair::new();
         let bob = Keypair::new();
 
@@ -10414,7 +10407,7 @@ pub(crate) mod tests {
         let tx1 = create_tx(&alice, genesis_config.hash(), 0);
         let first_call = vec![tx1];
 
-        let lock_result = bank.prepare_batch(first_call.iter());
+        let lock_result = bank.prepare_batch_for_tests(first_call);
         let results_alice = bank
             .load_execute_and_commit_transactions(
                 &lock_result,
@@ -10497,10 +10490,34 @@ pub(crate) mod tests {
         }
         // returns evm hash before and after apply
         fn test_with_users(num_sleeps: u64) -> (evm_state::H256, evm_state::H256) {
+            fn process_sleep_instruction(
+                _first_instruction_account: usize,
+                data: &[u8],
+                _invoke_context: &mut InvokeContext,
+            ) -> std::result::Result<(), InstructionError> {
+                const MAX_SLEEP_MS: u32 = 1000;
+                if data.len() != 4 {
+                    error!("data len should be 4 bytes");
+                    return Err(InstructionError::InvalidInstructionData);
+                }
+                let mut data_arr = [0; 4];
+                data_arr.copy_from_slice(&data);
+                let ms = u32::from_be_bytes(data_arr);
+
+                let sleep_ms = ms % MAX_SLEEP_MS;
+                trace!("Sleep: sleeping ms {}", sleep_ms);
+                std::thread::sleep(Duration::from_millis(sleep_ms.into()));
+                Ok(())
+            }
+
             let (genesis_config, mint_keypair) = create_genesis_config(20000 * (num_sleeps + 3));
-            let bank = Bank::new(&genesis_config);
+            let mut bank = Bank::new_for_tests(&genesis_config);
             let sleep_program_id = solana_sdk::pubkey::new_rand();
-            bank.add_native_program("solana_sleep_program", &sleep_program_id, false);
+            bank.add_builtin(
+                "solana_sleep_program",
+                &sleep_program_id,
+                process_sleep_instruction,
+            );
 
             let recent_hash = genesis_config.hash();
 
@@ -10527,13 +10544,13 @@ pub(crate) mod tests {
             // execute two batches parallel, with replacement
             rayon::scope(|s| {
                 s.spawn(|_| {
-                    bank.process_transactions(&slow_batch)
+                    bank.process_transactions(slow_batch.iter())
                         .into_iter()
                         .map(|i| i.unwrap())
                         .collect()
                 });
                 s.spawn(|_| {
-                    bank.process_transactions(&fast_batch)
+                    bank.process_transactions(fast_batch.iter())
                         .into_iter()
                         .map(|i| i.unwrap())
                         .collect()
@@ -10584,7 +10601,7 @@ pub(crate) mod tests {
         let tx = solana_evm_loader_program::processor::dummy_call(0).0;
         let receiver = tx.caller().unwrap();
         let (genesis_config, mint_keypair) = create_genesis_config(40000);
-        let mut bank = Bank::new(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
 
         bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
         bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
@@ -10681,7 +10698,7 @@ pub(crate) mod tests {
         let tx = solana_evm_loader_program::processor::dummy_call(0).0;
         let receiver = tx.caller().unwrap();
         let (genesis_config, mint_keypair) = create_genesis_config(20000);
-        let mut bank = Bank::new(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
 
         bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
         bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
@@ -10701,7 +10718,7 @@ pub(crate) mod tests {
         // check that revert keep tx in history, but balances are set to zero
         assert_eq!(evm_state.processed_tx_len(), 1);
         let account = bank.get_account(&mint_keypair.pubkey()).unwrap();
-        assert_eq!(account.lamports, 20000);
+        assert_eq!(account.lamports(), 20000);
         let state = evm_state.get_account_state(receiver).unwrap_or_default();
         assert_eq!(state.balance, 0.into());
         let state_swapper = evm_state
@@ -10746,7 +10763,7 @@ pub(crate) mod tests {
         let tx = solana_evm_loader_program::processor::dummy_call(0).0;
         let receiver = tx.caller().unwrap();
         let (genesis_config, mint_keypair) = create_genesis_config(20000);
-        let mut bank = Bank::new(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
 
         bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
         bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
@@ -10766,7 +10783,7 @@ pub(crate) mod tests {
         // check that revert keep tx in history, but balances are set to zero
         assert_eq!(evm_state.processed_tx_len(), 2);
         let account = bank.get_account(&mint_keypair.pubkey()).unwrap();
-        assert_eq!(account.lamports, 20000);
+        assert_eq!(account.lamports(), 20000);
         let state = evm_state.get_account_state(receiver).unwrap_or_default();
         assert_eq!(state.balance, 0.into());
         assert_eq!(state.nonce, 1.into());
@@ -10801,7 +10818,7 @@ pub(crate) mod tests {
         let tx = solana_evm_loader_program::processor::dummy_call(0).0;
         let receiver = tx.caller().unwrap();
         let (genesis_config, mint_keypair) = create_genesis_config(20000);
-        let mut bank = Bank::new(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
 
         bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
         bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
@@ -10821,7 +10838,7 @@ pub(crate) mod tests {
         // check that revert keep tx in history, but balances are set to zero
         assert_eq!(evm_state.processed_tx_len(), 1);
         let account = bank.get_account(&mint_keypair.pubkey()).unwrap_or_default();
-        assert_eq!(account.lamports, 0);
+        assert_eq!(account.lamports(), 0);
         let state = evm_state.get_account_state(receiver).unwrap_or_default();
         assert_eq!(
             state.balance,
@@ -10839,7 +10856,7 @@ pub(crate) mod tests {
     fn test_bank_hash_internal_state_verify_transfer_evm() {
         solana_logger::setup();
         let (genesis_config, mint_keypair) = create_genesis_config(2_000);
-        let bank0 = Bank::new(&genesis_config);
+        let bank0 = Bank::new_for_tests(&genesis_config);
 
         let mut rng = evm_state::rand::thread_rng();
         let sender = evm_state::SecretKey::new(&mut rng);
@@ -10862,7 +10879,7 @@ pub(crate) mod tests {
             }
 
             evm_state
-                .try_commit(bank0.slot(), bank0.last_blockhash().0)
+                .try_commit(bank0.slot(), bank0.last_blockhash().to_bytes())
                 .unwrap();
         }
         let pubkey: evm_state::H160 = H256::random().into();
@@ -10926,7 +10943,7 @@ pub(crate) mod tests {
     fn test_bank_transfer_evm_release_lock_panic() {
         solana_logger::setup_with("trace");
         let (genesis_config, mint_keypair) = create_genesis_config(2_000);
-        let bank0 = Bank::new(&genesis_config);
+        let bank0 = Bank::new_for_tests(&genesis_config);
 
         let mut rng = evm_state::rand::thread_rng();
         let sender = evm_state::SecretKey::new(&mut rng);
@@ -10949,7 +10966,7 @@ pub(crate) mod tests {
             }
 
             evm_state
-                .try_commit(bank0.slot(), bank0.last_blockhash().0)
+                .try_commit(bank0.slot(), bank0.last_blockhash().to_bytes())
                 .unwrap();
         }
         let pubkey: evm_state::H160 = H256::random().into();
@@ -10988,7 +11005,7 @@ pub(crate) mod tests {
 
         std::panic::catch_unwind(|| evm_state.get_account_state(sender_addr)).unwrap_err();
     }
-    
+
     #[test]
     fn test_readonly_relaxed_locks() {
         let (genesis_config, _) = create_genesis_config(3);
@@ -14042,7 +14059,7 @@ pub(crate) mod tests {
             if bank.slot == 0 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "6oxxAqridoSSPQ1rnEh8qBhQpMmLUve3X4fsNNr2gExE"
+                    "J4YYeNiKWStTAoTaFpQBCYTSqhipcJLYNwo9GREoxo6S"
                 );
                 assert_eq!(
                     bank.evm_state.read().unwrap().last_root(),
@@ -14052,19 +14069,19 @@ pub(crate) mod tests {
             if bank.slot == 32 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "7AkMgAb2v4tuoiSf3NnVgaBxSvp7XidbrSwsPEn4ENTp"
+                    "Ets76onVkaRS6WBjYzY1FNKt3QSSBRyc2h33kfh8fAzm"
                 );
             }
             if bank.slot == 64 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "2JzWWRBtQgdXboaACBRXNNKsHeBtn57uYmqH1AgGUkdG"
+                    "5wBUCcyLpMkd1CQw9HFhGcAsQLmxKjF1Jg5TCS2DpMdh"
                 );
             }
             if bank.slot == 128 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "FQnVhDVjhCyfBxFb3bdm3CLiuCePvWuW5TGDsLBZnKAo"
+                    "2hjdjpSLLzs25Lt1Gu5bs68hi3ZQ3vaXZgdSiEvax2Cm"
                 );
                 break;
             }
@@ -14714,57 +14731,6 @@ pub(crate) mod tests {
         assert_eq!(native_mint_account.owner(), &inline_spl_token::id());
     }
 
-    #[test]
-    fn test_ensure_no_storage_rewards_pool() {
-        solana_logger::setup();
-
-        let mut genesis_config =
-            create_genesis_config_with_leader(5, &solana_sdk::pubkey::new_rand(), 0).genesis_config;
-
-        // Testnet - Storage rewards pool is purged at epoch 93
-        // Also this is with bad capitalization
-        genesis_config.cluster_type = ClusterType::Testnet;
-        genesis_config.inflation = Inflation::default();
-        let reward_pubkey = solana_sdk::pubkey::new_rand();
-        genesis_config.rewards_pools.insert(
-            reward_pubkey,
-            Account::new(u64::MAX, 0, &solana_sdk::pubkey::new_rand()),
-        );
-        let bank0 = Bank::new_for_tests(&genesis_config);
-        // because capitalization has been reset with bogus capitalization calculation allowing overflows,
-        // deliberately substract 1 lamport to simulate it
-        bank0.capitalization.fetch_sub(1, Relaxed);
-        let bank0 = Arc::new(bank0);
-        assert_eq!(bank0.get_balance(&reward_pubkey), u64::MAX,);
-
-        let bank1 = Bank::new_from_parent(
-            &bank0,
-            &Pubkey::default(),
-            genesis_config.epoch_schedule.get_first_slot_in_epoch(93),
-        );
-
-        // assert that everything gets in order....
-        assert!(bank1.get_account(&reward_pubkey).is_none());
-        let sysvar_and_builtin_program_delta = 1;
-        assert_eq!(
-            bank0.capitalization() + 1 + 1_000_000_000 + sysvar_and_builtin_program_delta,
-            bank1.capitalization()
-        );
-        assert_eq!(bank1.capitalization(), bank1.calculate_capitalization(true));
-
-        // Depending on RUSTFLAGS, this test exposes rust's checked math behavior or not...
-        // So do some convolted setup; anyway this test itself will just be temporary
-        let bank0 = std::panic::AssertUnwindSafe(bank0);
-        let overflowing_capitalization =
-            std::panic::catch_unwind(|| bank0.calculate_capitalization(true));
-        if let Ok(overflowing_capitalization) = overflowing_capitalization {
-            info!("asserting overflowing capitalization for bank0");
-            assert_eq!(overflowing_capitalization, bank0.capitalization());
-        } else {
-            info!("NOT-asserting overflowing capitalization for bank0");
-        }
-    }
-
     #[derive(Debug)]
     struct TestExecutor {}
     impl Executor for TestExecutor {
@@ -15261,7 +15227,7 @@ pub(crate) mod tests {
             let sysvars = bank1
                 .get_program_accounts(&sysvar::id(), &ScanConfig::default())
                 .unwrap();
-            assert_eq!(sysvars.len(), 8);
+            assert_eq!(sysvars.len(), 9);
             assert!(sysvars
                 .iter()
                 .map(|(_pubkey, account)| account.lamports())
@@ -15283,10 +15249,12 @@ pub(crate) mod tests {
                             sysvar::fees::id(),
                             #[allow(deprecated)]
                             sysvar::recent_blockhashes::id(),
+                            sysvar::recent_evm_blockhashes::id(),
                             sysvar::rent::id(),
                             sysvar::slot_hashes::id(),
                             sysvar::slot_history::id(),
                             sysvar::stake_history::id(),
+                            solana_sdk::evm_loader::id(),
                         ]
                     ),
                     new
@@ -15298,7 +15266,7 @@ pub(crate) mod tests {
             let sysvars = bank2
                 .get_program_accounts(&sysvar::id(), &ScanConfig::default())
                 .unwrap();
-            assert_eq!(sysvars.len(), 8);
+            assert_eq!(sysvars.len(), 9);
             assert!(sysvars
                 .iter()
                 .map(|(_pubkey, account)| account.lamports())
@@ -16270,8 +16238,8 @@ pub(crate) mod tests {
             .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
             .unwrap();
         for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
-            genesis_config.accounts.remove(&pair.vote_id).unwrap();
-            genesis_config.accounts.remove(&pair.enable_id).unwrap();
+            genesis_config.accounts.remove(&pair.vote_id);
+            genesis_config.accounts.remove(&pair.enable_id);
         }
 
         let bank = Bank::new_for_tests(&genesis_config);
@@ -16351,8 +16319,8 @@ pub(crate) mod tests {
             .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
             .unwrap();
         for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
-            genesis_config.accounts.remove(&pair.vote_id).unwrap();
-            genesis_config.accounts.remove(&pair.enable_id).unwrap();
+            genesis_config.accounts.remove(&pair.vote_id);
+            genesis_config.accounts.remove(&pair.enable_id);
         }
 
         let bank = Bank::new_for_tests(&genesis_config);
@@ -16383,16 +16351,7 @@ pub(crate) mod tests {
         // Request `full_inflation::mainnet::certusone` activation,
         // which takes priority over pico_inflation
         bank.store_account(
-            &feature_set::full_inflation::mainnet::certusone::vote::id(),
-            &feature::create_account(
-                &Feature {
-                    activated_at: Some(2),
-                },
-                42,
-            ),
-        );
-        bank.store_account(
-            &feature_set::full_inflation::mainnet::certusone::enable::id(),
+            &feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id(),
             &feature::create_account(
                 &Feature {
                     activated_at: Some(2),
@@ -16438,8 +16397,8 @@ pub(crate) mod tests {
             .remove(&feature_set::full_inflation::devnet_and_testnet_velas_mainnet::id())
             .unwrap();
         for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
-            genesis_config.accounts.remove(&pair.vote_id).unwrap();
-            genesis_config.accounts.remove(&pair.enable_id).unwrap();
+            genesis_config.accounts.remove(&pair.vote_id);
+            genesis_config.accounts.remove(&pair.enable_id);
         }
 
         let mut bank = Bank::new_for_tests(&genesis_config);
