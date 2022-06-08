@@ -205,6 +205,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             } = black_box(executor.transaction_execute_unsinged(
                 caller,
                 tx.clone(),
+                true,
                 |_, _, _, _| None,
             ))
             .unwrap();
@@ -269,6 +270,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             } = black_box(executor.transaction_execute_unsinged(
                 caller,
                 tx.clone(),
+                true,
                 |_, _, _, _| None,
             ))
             .unwrap();
@@ -345,6 +347,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 } = black_box(executor.transaction_execute_unsinged(
                     caller,
                     tx.clone(),
+                    true,
                     |_, _, _, _| None,
                 ))
                 .unwrap();
@@ -440,6 +443,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 } = black_box(executor.transaction_execute_unsinged(
                     caller,
                     tx.clone(),
+                    true,
                     |_, _, _, _| None,
                 ))
                 .unwrap();
@@ -514,7 +518,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 exit_reason,
                 exit_data,
                 ..
-            } = black_box(executor.transaction_execute(tx.clone(), |_, _, _, _| None)).unwrap();
+            } = black_box(executor.transaction_execute(tx.clone(), true, |_, _, _, _| None)).unwrap();
 
             assert!(matches!(
                 exit_reason,

@@ -36,6 +36,7 @@ use std::{
 };
 use primitive_types::H256;
 use tokio::runtime::Runtime;
+use solana_evm_loader_program::instructions::FeePayerType;
 
 macro_rules! json_req {
     ($method: expr, $params: expr) => {{
@@ -226,7 +227,7 @@ fn test_rpc_replay_transaction() {
     let blockhash = get_blockhash(&rpc_url);
     let ixs: Vec<_> = evm_txs
         .into_iter()
-        .map(|evm_tx| send_raw_tx(alice.pubkey(), evm_tx, None))
+        .map(|evm_tx| send_raw_tx(alice.pubkey(), evm_tx, None, FeePayerType::Evm))
         .collect();
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
@@ -302,7 +303,7 @@ fn test_rpc_block_transaction() {
     let blockhash = get_blockhash(&rpc_url);
     let ixs: Vec<_> = evm_txs
         .into_iter()
-        .map(|evm_tx| send_raw_tx(alice.pubkey(), evm_tx, None))
+        .map(|evm_tx| send_raw_tx(alice.pubkey(), evm_tx, None, FeePayerType::Evm))
         .collect();
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
@@ -407,7 +408,7 @@ fn test_rpc_replay_transaction_timestamp() {
         sleep(Duration::from_secs(1));
     }
     let mut blockhash = dbg!(get_blockhash(&rpc_url));
-    let ixs = vec![send_raw_tx(alice.pubkey(), tx_create, None)];
+    let ixs = vec![send_raw_tx(alice.pubkey(), tx_create, None, FeePayerType::Evm)];
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
@@ -417,7 +418,7 @@ fn test_rpc_replay_transaction_timestamp() {
     sleep(Duration::from_secs(30));
     let recent_blockhash = get_blockhash(&rpc_url);
 
-    let ixs = vec![send_raw_tx(alice.pubkey(), tx_call, None)];
+    let ixs = vec![send_raw_tx(alice.pubkey(), tx_call, None, FeePayerType::Evm)];
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], recent_blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));

@@ -8,6 +8,7 @@ use std::{
 };
 
 use ::tokio::sync::mpsc;
+use borsh::BorshSerialize;
 use evm_rpc::{error::into_native_error, Bytes, Hex, RPCTransaction};
 use evm_state::{Address, TransactionAction, H160, H256, U256};
 use listener::PoolListener;
@@ -16,6 +17,7 @@ use once_cell::sync::Lazy;
 use serde_json::json;
 use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
 use solana_evm_loader_program::{
+    instructions::FeePayerType,
     scope::{evm, solana},
     tx_chunks::TxChunks,
 };
@@ -545,7 +547,8 @@ fn process_tx(
     sender: H160,
     mut meta_keys: HashSet<Pubkey>,
 ) -> EvmResult<Hex<H256>> {
-    let bytes = bincode::serialize(&tx).unwrap();
+    let mut bytes = vec![];
+    BorshSerialize::serialize(&tx, &mut bytes).unwrap();
 
     let rpc_tx = RPCTransaction::from_transaction(tx.clone().into())?;
 
@@ -600,6 +603,7 @@ fn process_tx(
         bridge.key.pubkey(),
         tx.clone(),
         Some(bridge.key.pubkey()),
+        FeePayerType::Evm,
     );
 
     // Add meta accounts as additional arguments
@@ -664,8 +668,9 @@ fn deploy_big_tx(
 
     debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
-    let tx_bytes =
-        bincode::serialize(&tx).map_err(|e| into_native_error(e, bridge.verbose_errors))?;
+    let mut tx_bytes = vec![];
+    BorshSerialize::serialize(&tx, &mut tx_bytes)
+        .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     debug!(
         "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
@@ -779,6 +784,7 @@ fn deploy_big_tx(
         &[solana_evm_loader_program::big_tx_execute(
             &storage_pubkey,
             Some(&payer_pubkey),
+            FeePayerType::Evm,
         )],
         Some(&payer_pubkey),
         &signers,
