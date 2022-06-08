@@ -12,6 +12,14 @@ use clap::{Parser, Subcommand};
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
+
+    /// Overrides "GOOGLE_APPLICATION_CREDENTIALS" environment variable value with provided creds file
+    #[clap(long, value_name = "FILE_PATH")]
+    creds: Option<String>,
+
+    /// Bigtable Instance
+    #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+    instance: String,
 }
 
 #[derive(Subcommand)]
@@ -37,9 +45,9 @@ enum Commands {
         #[clap(short = 'l', long = "last-block", value_name = "NUM")]
         last: u64,
 
-        /// RPC address of node used for requesting restored EVM Header
+        /// RPC address of archive node used for restoring EVM Header
         #[clap(long, value_name = "URL")]
-        rpc_address: String,
+        archive_url: String,
 
         /// Write restored blocks to Ledger Storage
         #[clap(short, long)]
@@ -131,24 +139,35 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    dotenv::dotenv().expect("`.env` file expected");
+    let dotenv = dotenv::dotenv();
+
     env_logger::init();
+
+    match dotenv {
+        Ok(_) => {
+            log::info!(r#"".env" successfully loaded"#)
+        },
+        Err(_) => {
+            log::info!(r#"".env" file not found"#)
+        },
+    }
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Find { start, limit } => {
-            routines::find(ledger::default().await?, start, limit).await
-        }
+        Commands::Find {
+            start,
+            limit,
+        } => routines::find(ledger::with_params(cli.creds, cli.instance).await?, start, limit).await,
         Commands::RestoreChain {
             first,
             last,
-            rpc_address,
+            archive_url: rpc_address,
             modify_ledger,
             force_resume,
             output_dir,
         } => {
             routines::restore_chain(
-                ledger::default().await?,
+                ledger::with_params(cli.creds, cli.instance).await?,
                 routines::find::BlockRange::new(first, last),
                 rpc_address,
                 modify_ledger,
@@ -157,15 +176,17 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
         }
-        Commands::CheckNative { block_number } => {
-            routines::check_native(ledger::default().await?, block_number).await
+        Commands::CheckNative {
+            block_number,
+        } => {
+            routines::check_native(ledger::with_params(cli.creds, cli.instance).await?, block_number).await
         }
-        Commands::CheckEvm { block_number } => {
-            routines::check_evm(ledger::default().await?, block_number).await
-        }
-        Commands::Upload { collection } => {
-            routines::upload(ledger::default().await?, collection).await
-        }
+        Commands::CheckEvm {
+            block_number,
+        } => routines::check_evm(ledger::with_params(cli.creds, cli.instance).await?, block_number).await,
+        Commands::Upload {
+            collection,
+        } => routines::upload(ledger::with_params(cli.creds, cli.instance).await?, collection).await,
         Commands::RepeatEvm {
             block_number,
             limit,
@@ -177,8 +198,8 @@ async fn main() -> anyhow::Result<()> {
             routines::repeat_evm(
                 block_number,
                 limit,
-                ledger::with_params(src_creds, src_instance).await?,
-                ledger::with_params(dst_creds, dst_instance).await?,
+                ledger::with_params(Some(src_creds), src_instance).await?,
+                ledger::with_params(Some(dst_creds), dst_instance).await?,
             )
             .await
         }
@@ -193,8 +214,8 @@ async fn main() -> anyhow::Result<()> {
             routines::repeat_native(
                 block_number,
                 limit,
-                ledger::with_params(src_creds, src_instance).await?,
-                ledger::with_params(dst_creds, dst_instance).await?,
+                ledger::with_params(Some(src_creds), src_instance).await?,
+                ledger::with_params(Some(dst_creds), dst_instance).await?,
             )
             .await
         }
