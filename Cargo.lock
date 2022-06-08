@@ -1695,7 +1695,7 @@ name = "evm-bridge"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.9.3",
+ "base64 0.13.0",
  "bincode",
  "borsh 0.8.2",
  "derivative",
@@ -1711,7 +1711,7 @@ dependencies = [
  "jsonrpc-ws-server",
  "log 0.4.14",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.17.0",
  "opentelemetry-jaeger",
  "paw",
  "primitive-types",
@@ -3607,6 +3607,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6105e89802af13fdf48c49d7646d3b533a70e536d818aae7e78ba0433d01acb8"
+dependencies = [
+ "async-trait",
+ "crossbeam-channel 0.5.1",
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
+ "js-sys",
+ "lazy_static 1.4.0",
+ "percent-encoding 2.1.0",
+ "pin-project",
+ "rand 0.8.4",
+ "thiserror",
+]
+
+[[package]]
 name = "opentelemetry-http"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3616,7 +3635,7 @@ dependencies = [
  "bytes 1.0.1",
  "futures-util",
  "http",
- "opentelemetry",
+ "opentelemetry 0.16.0",
  "reqwest",
 ]
 
@@ -3630,7 +3649,7 @@ dependencies = [
  "headers",
  "http",
  "lazy_static 1.4.0",
- "opentelemetry",
+ "opentelemetry 0.16.0",
  "opentelemetry-http",
  "opentelemetry-semantic-conventions",
  "reqwest",
@@ -3645,7 +3664,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ffeac823339e8b0f27b961f4385057bf9f97f2863bc745bd015fd6091f2270e9"
 dependencies = [
- "opentelemetry",
+ "opentelemetry 0.16.0",
 ]
 
 [[package]]
@@ -5790,7 +5809,7 @@ dependencies = [
  "net2",
  "num-traits",
  "num_cpus",
- "opentelemetry",
+ "opentelemetry 0.17.0",
  "opentelemetry-jaeger",
  "primitive-types",
  "rand 0.7.3",
@@ -8021,7 +8040,7 @@ version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ffbf13a0f8b054a4e59df3a173b818e9c6177c02789871f2073977fd0062076"
 dependencies = [
- "opentelemetry",
+ "opentelemetry 0.16.0",
  "tracing",
  "tracing-core",
  "tracing-log",
