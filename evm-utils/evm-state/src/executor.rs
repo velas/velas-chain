@@ -79,31 +79,75 @@ impl fmt::Display for ExecutionResult {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct FeatureSet {
+    unsigned_tx_fix: bool,
+    clear_logs_on_error: bool,
+}
+
+impl FeatureSet {
+    pub fn new(unsigned_tx_fix: bool, clear_logs_on_error: bool) -> Self {
+        FeatureSet {
+            unsigned_tx_fix,
+            clear_logs_on_error,
+        }
+    }
+
+    pub fn new_with_all_enabled() -> Self {
+        FeatureSet {
+            unsigned_tx_fix: true,
+            clear_logs_on_error: true,
+        }
+    }
+
+    pub fn is_unsigned_tx_fix_enabled(&self) -> bool {
+        self.unsigned_tx_fix
+    }
+
+    pub fn is_clear_logs_on_error_enabled(&self) -> bool {
+        self.clear_logs_on_error
+    }
+}
+
 #[derive(Debug)]
 pub struct Executor {
     pub evm_backend: EvmBackend<Incomming>,
     chain_context: ChainContext,
     config: EvmConfig,
+
+    pub feature_set: FeatureSet,
 }
 
 impl Executor {
     // Return new default executor, with empty state stored in temporary dirrectory
     pub fn testing() -> Self {
-        Self::with_config(Default::default(), Default::default(), Default::default())
+        Self::with_config(
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
     }
     pub fn default_configs(state: EvmBackend<Incomming>) -> Self {
-        Self::with_config(state, Default::default(), Default::default())
+        Self::with_config(
+            state,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
     }
 
     pub fn with_config(
         evm_backend: EvmBackend<Incomming>,
         chain_context: ChainContext,
         config: EvmConfig,
+        feature_set: FeatureSet,
     ) -> Self {
         Executor {
             evm_backend,
             chain_context,
             config,
+            feature_set,
         }
     }
 
@@ -196,6 +240,7 @@ impl Executor {
             );
         }
 
+        let clear_logs_on_error_enabled = self.feature_set.is_clear_logs_on_error_enabled();
         let config = self.config.to_evm_params();
         let transaction_context = TransactionContext::new(gas_price.as_u64(), caller);
         let execution_context = ExecutorContext::new(
@@ -255,7 +300,10 @@ impl Executor {
         );
         let (updates, logs) = executor_state.deconstruct();
 
-        let tx_logs: Vec<_> = logs.into_iter().collect();
+        let tx_logs = match clear_logs_on_error_enabled && !exit_reason.is_succeed() {
+            true => vec![],
+            false => logs.into_iter().collect(),
+        };
         execution_context.apply(updates, used_gas);
 
         Ok(ExecutionResult {
@@ -273,7 +321,6 @@ impl Executor {
         &mut self,
         caller: H160,
         tx: UnsignedTransaction,
-        calculate_tx_hash_with_caller: bool,
         withdraw_fee: bool,
         precompiles: F,
     ) -> Result<ExecutionResult, Error>
@@ -286,7 +333,7 @@ impl Executor {
             unsigned_tx: tx.clone(),
             caller,
             chain_id,
-            signed_compatible: calculate_tx_hash_with_caller,
+            signed_compatible: self.feature_set.is_unsigned_tx_fix_enabled(),
         };
         let tx_hash = unsigned_tx.tx_id_hash();
         let result = self.transaction_execute_raw(
@@ -431,7 +478,6 @@ impl Executor {
         mint_address: H160,
         recipient: H160,
         amount: U256,
-        signed_compatible: bool,
     ) {
         let nonce = self.with_executor(
             |_, _, _, _| None,
@@ -453,7 +499,7 @@ impl Executor {
             unsigned_tx: tx,
             caller: mint_address,
             chain_id: self.config.chain_id,
-            signed_compatible,
+            signed_compatible: self.feature_set.is_unsigned_tx_fix_enabled(),
         };
         let result = ExecutionResult {
             tx_logs: Vec::new(),
@@ -544,8 +590,13 @@ pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b5060043
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::str::FromStr;
     use ethabi::Token;
     use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
+    use evm::backend::MemoryBackend;
+    use evm::executor::{MemoryStackState, StackSubstateMetadata};
+    use log::LevelFilter;
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
 
@@ -556,6 +607,7 @@ mod tests {
     use crate::context::EvmConfig;
     use crate::*;
     use error::*;
+    use crate::executor::FeatureSet;
 
     #[allow(clippy::type_complexity)]
     fn noop_precompile(
@@ -667,8 +719,12 @@ mod tests {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -702,8 +758,12 @@ mod tests {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new(false, true),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -715,7 +775,6 @@ mod tests {
                 .transaction_execute_unsinged(
                     alice.address(),
                     create_tx.clone(),
-                    false,
                     true,
                     noop_precompile
                 )
@@ -727,7 +786,7 @@ mod tests {
         let hash = create_tx.signing_hash(Some(chain_id));
         assert!(matches!(
             executor
-            .transaction_execute_unsinged(alice.address(), create_tx, false, true, noop_precompile)
+            .transaction_execute_unsinged(alice.address(), create_tx, true, noop_precompile)
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash } if tx_hash == hash
         ));
@@ -750,7 +809,12 @@ mod tests {
                 Storage::create_temporary()
             };
             let backend = EvmBackend::new(Incomming::default(), storage.unwrap());
-            let mut executor = Executor::with_config(backend, Default::default(), evm_config);
+            let mut executor = Executor::with_config(
+                backend,
+                Default::default(),
+                evm_config,
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -775,7 +839,12 @@ mod tests {
                 .register_slot(slot, first_root, false)
                 .unwrap();
 
-            let mut executor = Executor::with_config(backend, Default::default(), evm_config);
+            let mut executor = Executor::with_config(
+                backend,
+                Default::default(),
+                evm_config,
+                FeatureSet::new_with_all_enabled(),
+            );
             let contract_address = create_tx.address().unwrap();
 
             alice.nonce += 1;
@@ -830,8 +899,12 @@ mod tests {
             chain_id,
             ..EvmConfig::new(chain_id, true)
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let alice = Persona::new();
         let mut create_tx = alice.unsigned(TransactionAction::Call(H160::zero()), &[]);
@@ -845,7 +918,7 @@ mod tests {
         );
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx.clone(), true, true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx.clone(), true, noop_precompile)
                 .unwrap_err(),
             Error::GasPriceOutOfBounds {
                 gas_price: 0.into()
@@ -856,7 +929,7 @@ mod tests {
 
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx, true, true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx, true, noop_precompile)
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Stopped)
@@ -872,8 +945,12 @@ mod tests {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -886,7 +963,6 @@ mod tests {
                 .transaction_execute_unsinged(
                     address,
                     create_tx.clone(),
-                    true,
                     true,
                     noop_precompile
                 )
@@ -907,7 +983,7 @@ mod tests {
 
         assert_eq!(
             executor
-                .transaction_execute_unsinged(address, create_tx, true, true, noop_precompile)
+                .transaction_execute_unsinged(address, create_tx, true, noop_precompile)
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash: hash }
         );
@@ -923,8 +999,12 @@ mod tests {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -977,6 +1057,7 @@ mod tests {
             EvmBackend::default(),
             Default::default(),
             Default::default(),
+            FeatureSet::new_with_all_enabled(),
         );
 
         let mut alice = Persona::new();
@@ -1102,7 +1183,12 @@ mod tests {
             let mut bob = bob.clone();
 
             let state = committed.next_incomming(0);
-            let mut executor = Executor::with_config(state, Default::default(), Default::default());
+            let mut executor = Executor::with_config(
+                state,
+                Default::default(),
+                Default::default(),
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let send_tx = bob.call(
                 contract,
@@ -1180,7 +1266,12 @@ mod tests {
         {
             // NOTE: ensure blockss are different
             let state = committed.next_incomming(0);
-            let mut executor = Executor::with_config(state, Default::default(), Default::default());
+            let mut executor = Executor::with_config(
+                state,
+                Default::default(),
+                Default::default(),
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let send_tx = alice.call(
                 contract,
@@ -1266,6 +1357,7 @@ mod tests {
             EvmBackend::default(),
             Default::default(),
             Default::default(),
+            FeatureSet::new(false, true),
         );
 
         let exit_reason = match executor.with_executor(noop_precompile, |e| {
@@ -1297,7 +1389,6 @@ mod tests {
                     value: U256::zero(),
                     input: data.to_vec(),
                 },
-                false, /* calculate_tx_hash_with_caller */
                 true,
                 noop_precompile,
             )
@@ -1332,5 +1423,154 @@ mod tests {
         );
 
         assert_eq!(&contract, &hex::decode(HELLO_WORLD_CODE_SAVED).unwrap());
+    }
+
+    fn dummy_account() -> MemoryAccount {
+        MemoryAccount {
+            nonce: U256::one(),
+            balance: U256::from(10000000),
+            storage: BTreeMap::new(),
+            code: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_call_inner_with_estimate() {
+        let _logger_error = simple_logger::SimpleLogger::new().with_level(LevelFilter::Debug).init();
+        let config_estimate = Config { estimate: true, ..Config::istanbul() };
+        let config_no_estimate = Config::istanbul();
+
+        let vicinity = MemoryVicinity {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            block_hashes: Vec::new(),
+            block_number: Default::default(),
+            block_coinbase: Default::default(),
+            block_timestamp: Default::default(),
+            block_difficulty: Default::default(),
+            block_gas_limit: Default::default(),
+            chain_id: U256::one(),
+        };
+
+        let mut state = BTreeMap::new();
+        let caller_address = H160::from_str("0xf000000000000000000000000000000000000000").unwrap();
+        let contract_address = H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
+        state.insert(caller_address, dummy_account());
+        state.insert(
+            contract_address,
+            MemoryAccount {
+                nonce: U256::one(),
+                balance: U256::from(10000000),
+                storage: BTreeMap::new(),
+                // proxy contract code
+                code: hex::decode("608060405260043610610041576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff1680632da4e75c1461006a575b6000543660008037600080366000845af43d6000803e8060008114610065573d6000f35b600080fd5b34801561007657600080fd5b506100ab600480360381019080803573ffffffffffffffffffffffffffffffffffffffff1690602001909291905050506100ad565b005b600160009054906101000a900473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff163373ffffffffffffffffffffffffffffffffffffffff1614151561010957600080fd5b806000806101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff160217905550505600a165627a7a72305820f58232a59d38bc7ca7fcefa0993365e57f4cd4e8b3fa746e0d170c5b47a787920029").unwrap(),
+            }
+        );
+
+        let call_data = hex::decode("6057361d0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+        let transact_call = |config, gas_limit| {
+            let backend = MemoryBackend::new(&vicinity, state.clone());
+            let metadata = StackSubstateMetadata::new(gas_limit, config);
+            let state = MemoryStackState::new(metadata, &backend);
+            let mut executor = StackExecutor::new(state, config);
+
+            let _reason = executor.transact_call(
+                caller_address,
+                contract_address,
+                U256::zero(),
+                call_data.clone(),
+                gas_limit,
+            );
+            executor.used_gas()
+        };
+        {
+            let gas_limit = u64::MAX;
+            let gas_used_estimate = transact_call(&config_estimate, gas_limit);
+            let gas_used_no_estimate = transact_call(&config_no_estimate, gas_limit);
+            assert!(gas_used_estimate >= gas_used_no_estimate);
+            assert!(gas_used_estimate < gas_used_no_estimate + gas_used_no_estimate / 4,
+                    "gas_used with estimate=true is too high, gas_used_estimate={}, gas_used_no_estimate={}",
+                    gas_used_estimate, gas_used_no_estimate);
+        }
+
+        {
+            let gas_limit: u64 = 300_000_000;
+            let gas_used_estimate = transact_call(&config_estimate, gas_limit);
+            let gas_used_no_estimate = transact_call(&config_no_estimate, gas_limit);
+            assert!(gas_used_estimate >= gas_used_no_estimate);
+            assert!(gas_used_estimate < gas_used_no_estimate + gas_used_no_estimate / 4,
+                    "gas_used with estimate=true is too high, gas_used_estimate={}, gas_used_no_estimate={}",
+                    gas_used_estimate, gas_used_no_estimate);
+        }
+    }
+
+    #[test]
+    fn test_create_inner_with_estimate() {
+        let _logger_error = simple_logger::SimpleLogger::new().with_level(LevelFilter::Debug).init();
+        let config_estimate = Config { estimate: true, ..Config::istanbul() };
+        let config_no_estimate = Config::istanbul();
+
+        let vicinity = MemoryVicinity {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            block_hashes: Vec::new(),
+            block_number: Default::default(),
+            block_coinbase: Default::default(),
+            block_timestamp: Default::default(),
+            block_difficulty: Default::default(),
+            block_gas_limit: Default::default(),
+            chain_id: U256::one(),
+        };
+
+        let mut state = BTreeMap::new();
+        let caller_address = H160::from_str("0xf000000000000000000000000000000000000000").unwrap();
+        let contract_address = H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
+        state.insert(caller_address, dummy_account());
+        state.insert(
+            contract_address,
+            MemoryAccount {
+                nonce: U256::one(),
+                balance: U256::from(10000000),
+                storage: BTreeMap::new(),
+                // creator contract code
+                code: hex::decode("6080604052348015600f57600080fd5b506004361060285760003560e01c8063fb971d0114602d575b600080fd5b60336035565b005b60006040516041906062565b604051809103906000f080158015605c573d6000803e3d6000fd5b50905050565b610170806100708339019056fe608060405234801561001057600080fd5b50610150806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80632e64cec11461003b5780636057361d14610059575b600080fd5b610043610075565b60405161005091906100a1565b60405180910390f35b610073600480360381019061006e91906100ed565b61007e565b005b60008054905090565b8060008190555050565b6000819050919050565b61009b81610088565b82525050565b60006020820190506100b66000830184610092565b92915050565b600080fd5b6100ca81610088565b81146100d557600080fd5b50565b6000813590506100e7816100c1565b92915050565b600060208284031215610103576101026100bc565b5b6000610111848285016100d8565b9150509291505056fea264697066735822122044f0132d3ce474198482cc3f79c22d7ed4cece5e1dcbb2c7cb533a23068c5d6064736f6c634300080d0033a2646970667358221220a7ba80fb064accb768e9e7126cd0b69e3889378082d659ad1b17317e6d578b9a64736f6c634300080d0033").unwrap(),
+            }
+        );
+
+        let call_data = hex::decode("fb971d01").unwrap();
+        let transact_call = |config, gas_limit| {
+            let backend = MemoryBackend::new(&vicinity, state.clone());
+            let metadata = StackSubstateMetadata::new(gas_limit, config);
+            let state = MemoryStackState::new(metadata, &backend);
+            let mut executor = StackExecutor::new(state, config);
+
+            let _reason = executor.transact_call(
+                caller_address,
+                contract_address,
+                U256::zero(),
+                call_data.clone(),
+                gas_limit,
+            );
+            executor.used_gas()
+        };
+        {
+            let gas_limit = u64::MAX;
+            let gas_used_estimate = transact_call(&config_estimate, gas_limit);
+            let gas_used_no_estimate = transact_call(&config_no_estimate, gas_limit);
+            assert!(gas_used_estimate >= gas_used_no_estimate);
+            assert!(gas_used_estimate < gas_used_no_estimate + gas_used_no_estimate / 4,
+                    "gas_used with estimate=true is too high, gas_used_estimate={}, gas_used_no_estimate={}",
+                    gas_used_estimate, gas_used_no_estimate);
+        }
+
+        {
+            let gas_limit: u64 = 300_000_000;
+            let gas_used_estimate = transact_call(&config_estimate, gas_limit);
+            let gas_used_no_estimate = transact_call(&config_no_estimate, gas_limit);
+            assert!(gas_used_estimate >= gas_used_no_estimate);
+            assert!(gas_used_estimate < gas_used_no_estimate + gas_used_no_estimate / 4,
+                    "gas_used with estimate=true is too high, gas_used_estimate={}, gas_used_no_estimate={}",
+                    gas_used_estimate, gas_used_no_estimate);
+        }
     }
 }

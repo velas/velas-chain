@@ -137,6 +137,7 @@ pub struct ValidatorConfig {
     pub validator_exit: Arc<RwLock<ValidatorExit>>,
     pub no_wait_for_vote_to_start_leader: bool,
     pub verify_evm_state: bool,
+    pub jaeger_collector_url: Option<String>,
 }
 
 impl Default for ValidatorConfig {
@@ -194,6 +195,7 @@ impl Default for ValidatorConfig {
             validator_exit: Arc::new(RwLock::new(ValidatorExit::default())),
             no_wait_for_vote_to_start_leader: true,
             verify_evm_state: false,
+            jaeger_collector_url: None,
         }
     }
 }
@@ -573,6 +575,7 @@ impl Validator {
                     leader_schedule_cache.clone(),
                     max_complete_transaction_status_slot,
                     evm_state_archive,
+                    config.jaeger_collector_url.clone(),
                 )),
                 if config.rpc_config.minimal_api {
                     None

@@ -10,7 +10,7 @@ on:
 jobs:
   docker-build-push:
     name: Build and push
-    runs-on: build
+    runs-on: build-dedicated
     outputs:
       repository: ${{ steps.build.outputs.repository }}
       image_tag: ${{ steps.build.outputs.image_tag }}

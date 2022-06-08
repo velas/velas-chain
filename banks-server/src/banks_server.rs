@@ -91,10 +91,7 @@ impl BanksServer {
             w_block_commitment_cache.set_all_slots(slot, slot);
         }
         let server_bank_forks = bank_forks.clone();
-        Builder::new()
-            .name("solana-bank-forks-client".to_string())
-            .spawn(move || Self::run(server_bank_forks, transaction_receiver))
-            .unwrap();
+        tokio::spawn(async move { Self::run(server_bank_forks, transaction_receiver) });
         Self::new(bank_forks, block_commitment_cache, transaction_sender)
     }
 

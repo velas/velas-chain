@@ -35,6 +35,8 @@ use txpool::{
     scoring::Choice, Pool, Readiness, Ready, Scoring, ShouldReplace, VerifiedTransaction,
 };
 
+use tracing_attributes::instrument;
+
 use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult};
 
 type UnixTimeMs = u64;
@@ -54,6 +56,7 @@ const SENDER_PAUSE: Duration = Duration::from_secs(15);
 /// TODO: adjust value
 const TX_REIMPORT_THRESHOLD: Duration = Duration::from_secs(30);
 
+#[derive(Debug)]
 pub struct CachedTransaction {
     evm_tx: evm_state::Transaction,
     meta_keys: HashSet<Pubkey>,
@@ -67,6 +70,8 @@ pub trait Clock: Send + Sync {
 }
 
 /// Real clock used for production
+
+#[derive(Debug)]
 pub struct SystemClock;
 
 impl Clock for SystemClock {
@@ -87,6 +92,7 @@ impl<T> Ready<T> for AlwaysReady {
     }
 }
 
+#[derive(Debug)]
 pub struct EthPool<C: Clock> {
     /// A pool of transactions, waiting to be deployed
     pool: Mutex<Pool<PooledTransaction, MyScoring, PoolListener>>,
@@ -533,6 +539,7 @@ pub async fn worker_signature_checker(bridge: Arc<EvmBridge>) {
     }
 }
 
+#[instrument]
 fn process_tx(
     bridge: Arc<EvmBridge>,
     tx: evm_state::Transaction,
@@ -622,6 +629,11 @@ fn process_tx(
     send_raw_tx.sign(&[&bridge.key], blockhash);
     debug!("Sending tx = {:?}", send_raw_tx);
 
+    debug!(
+        "Sending tx raw = {:?}",
+        base64::encode(&send_raw_tx.message_data())
+    );
+
     let signature = bridge
         .rpc_client
         .send_transaction_with_config(
@@ -641,6 +653,7 @@ fn process_tx(
     Ok(Hex(hash))
 }
 
+#[instrument]
 fn deploy_big_tx(
     bridge: &EvmBridge,
     payer: &solana_sdk::signature::Keypair,
