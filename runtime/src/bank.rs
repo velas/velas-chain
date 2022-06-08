@@ -1094,7 +1094,7 @@ impl Bank {
             .evm_state
             .read()
             .expect("parent evm state was poisoned")
-            .new_from_parent(parent.clock().unix_timestamp, spv_compatibility);
+            .new_from_parent(parent.clock().unix_timestamp as u64, spv_compatibility);
 
         evm_state
             .register_slot(slot)
