@@ -71,6 +71,7 @@ enum Commands {
 
     /// Checks content of Evm Block
     CheckEvm {
+        /// EVM Block number
         #[clap(short = 'b', long, value_name = "NUM")]
         block_number: u64,
     },
@@ -144,20 +145,24 @@ async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     match dotenv {
-        Ok(_) => {
-            log::info!(r#"".env" successfully loaded"#)
-        },
-        Err(_) => {
-            log::info!(r#"".env" file not found"#)
-        },
+        Ok(path) => {
+            log::info!(r#""{}" successfully loaded"#, path.display())
+        }
+        Err(e) => {
+            log::info!(r#"".env" file not found: {e:?}""#)
+        }
     }
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Find {
-            start,
-            limit,
-        } => routines::find(ledger::with_params(cli.creds, cli.instance).await?, start, limit).await,
+        Commands::Find { start, limit } => {
+            routines::find(
+                ledger::with_params(cli.creds, cli.instance).await?,
+                start,
+                limit,
+            )
+            .await
+        }
         Commands::RestoreChain {
             first,
             last,
@@ -176,17 +181,27 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
         }
-        Commands::CheckNative {
-            block_number,
-        } => {
-            routines::check_native(ledger::with_params(cli.creds, cli.instance).await?, block_number).await
+        Commands::CheckNative { block_number } => {
+            routines::check_native(
+                ledger::with_params(cli.creds, cli.instance).await?,
+                block_number,
+            )
+            .await
         }
-        Commands::CheckEvm {
-            block_number,
-        } => routines::check_evm(ledger::with_params(cli.creds, cli.instance).await?, block_number).await,
-        Commands::Upload {
-            collection,
-        } => routines::upload(ledger::with_params(cli.creds, cli.instance).await?, collection).await,
+        Commands::CheckEvm { block_number } => {
+            routines::check_evm(
+                ledger::with_params(cli.creds, cli.instance).await?,
+                block_number,
+            )
+            .await
+        }
+        Commands::Upload { collection } => {
+            routines::upload(
+                ledger::with_params(cli.creds, cli.instance).await?,
+                collection,
+            )
+            .await
+        }
         Commands::RepeatEvm {
             block_number,
             limit,
