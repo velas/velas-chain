@@ -51,7 +51,7 @@ pub struct RpcClient {
     node_version: RwLock<Option<semver::Version>>,
 }
 
-fn serialize_encode_transaction(
+pub fn serialize_encode_transaction(
     transaction: &Transaction,
     encoding: UiTransactionEncoding,
 ) -> ClientResult<String> {
