@@ -237,10 +237,58 @@ impl AsyncRpcClient {
     pub async fn send_request(&self, request: RpcRequest, params: Value) -> ClientResult<Value> {
         let request_id = self.request_id.fetch_add(1, Ordering::Relaxed);
         let request_json = request.build_request_json(request_id, params).to_string();
-        self._send_request(request_json).await
+        match self._send_request(request_json).await {
+            Ok(response) => {
+                let json: Value = response.json().await?;
+                if json["error"].is_object() {
+                    match serde_json::from_value::<RpcErrorObject>(json["error"].clone())
+                    {
+                        Ok(rpc_error_object) => {
+                            let data = match rpc_error_object.code {
+                                rpc_custom_error::JSON_RPC_SERVER_ERROR_SEND_TRANSACTION_PREFLIGHT_FAILURE => {
+                                    match serde_json::from_value::<RpcSimulateTransactionResult>(json["error"]["data"].clone()) {
+                                        Ok(data) => RpcResponseErrorData::SendTransactionPreflightFailure(data),
+                                        Err(err) => {
+                                            debug!("Failed to deserialize RpcSimulateTransactionResult: {:?}", err);
+                                            RpcResponseErrorData::Empty
+                                        }
+                                    }
+                                },
+                                rpc_custom_error::JSON_RPC_SERVER_ERROR_NODE_UNHEALTHY => {
+                                    match serde_json::from_value::<rpc_custom_error::NodeUnhealthyErrorData>(json["error"]["data"].clone()) {
+                                        Ok(rpc_custom_error::NodeUnhealthyErrorData {num_slots_behind}) => RpcResponseErrorData::NodeUnhealthy {num_slots_behind},
+                                        Err(_err) => {
+                                            RpcResponseErrorData::Empty
+                                        }
+                                    }
+                                },
+                                _ => RpcResponseErrorData::Empty
+                            };
+
+                            Err(RpcError::RpcResponseError {
+                                code: rpc_error_object.code,
+                                message: rpc_error_object.message,
+                                data,
+                                original_err: json["error"]["data"].clone(),
+                            }
+                                .into())
+                        }
+                        Err(err) => Err(RpcError::RpcRequestError(format!(
+                            "Failed to deserialize RPC error response: {} [{}]",
+                            serde_json::to_string(&json["error"]).unwrap(),
+                            err
+                        ))
+                            .into()),
+                    }
+                } else {
+                    Ok(json["result"].clone())
+                }
+            }
+            Err(err) => Err(err.into())
+        }
     }
 
-    pub async fn _send_request(&self, request_json: String) -> ClientResult<Value> {
+    pub async fn _send_request(&self, request_json: String) -> reqwest::Result<reqwest::Response> {
         let mut too_many_requests_retries = 5;
         loop {
             let response = {
@@ -280,58 +328,11 @@ impl AsyncRpcClient {
                             sleep(duration).await;
                             continue;
                         }
-                        return Err(response.error_for_status().unwrap_err().into());
+                        return response.error_for_status();
                     }
-
-                    let response_text = response.text().await?;
-
-                    let json: serde_json::Value = serde_json::from_str(&response_text)?;
-                    if json["error"].is_object() {
-                        return match serde_json::from_value::<RpcErrorObject>(json["error"].clone())
-                        {
-                            Ok(rpc_error_object) => {
-                                let data = match rpc_error_object.code {
-                                    rpc_custom_error::JSON_RPC_SERVER_ERROR_SEND_TRANSACTION_PREFLIGHT_FAILURE => {
-                                        match serde_json::from_value::<RpcSimulateTransactionResult>(json["error"]["data"].clone()) {
-                                            Ok(data) => RpcResponseErrorData::SendTransactionPreflightFailure(data),
-                                            Err(err) => {
-                                                debug!("Failed to deserialize RpcSimulateTransactionResult: {:?}", err);
-                                                RpcResponseErrorData::Empty
-                                            }
-                                        }
-                                    },
-                                    rpc_custom_error::JSON_RPC_SERVER_ERROR_NODE_UNHEALTHY => {
-                                        match serde_json::from_value::<rpc_custom_error::NodeUnhealthyErrorData>(json["error"]["data"].clone()) {
-                                            Ok(rpc_custom_error::NodeUnhealthyErrorData {num_slots_behind}) => RpcResponseErrorData::NodeUnhealthy {num_slots_behind},
-                                            Err(_err) => {
-                                                RpcResponseErrorData::Empty
-                                            }
-                                        }
-                                    },
-                                    _ => RpcResponseErrorData::Empty
-                                };
-
-                                Err(RpcError::RpcResponseError {
-                                    code: rpc_error_object.code,
-                                    message: rpc_error_object.message,
-                                    data,
-                                    original_err: json["error"]["data"].clone(),
-                                }
-                                    .into())
-                            }
-                            Err(err) => Err(RpcError::RpcRequestError(format!(
-                                "Failed to deserialize RPC error response: {} [{}]",
-                                serde_json::to_string(&json["error"]).unwrap(),
-                                err
-                            ))
-                                .into()),
-                        };
-                    }
-                    return Ok(json["result"].clone());
+                    return Ok(response);
                 }
-                Err(err) => {
-                    return Err(err.into());
-                }
+                other => return other
             }
         }
     }

@@ -45,28 +45,52 @@ impl Middleware<Arc<EvmBridge>> for ProxyMiddleware {
                          jsonrpc_core::Failure { jsonrpc, error, id },
                      )) if error.code == jsonrpc_core::ErrorCode::MethodNotFound => {
                     println!("Proxy method called!");
-                    let output = match meta_cloned.rpc_client_async._send_request(call_json).await {
-                        Ok(result) => jsonrpc_core::Output::Success(jsonrpc_core::Success{
-                            jsonrpc,
-                            result,
-                            id,
-                        }),
-                        Err(ClientError { kind: ClientErrorKind::RpcError(RpcError::RpcResponseError { code, message, original_err, ..}), .. }) =>
-                            jsonrpc_core::Output::Failure(jsonrpc_core::Failure {
-                                jsonrpc,
-                                error: jsonrpc_core::Error { code: code.into(), message, data: Some(original_err) },
-                                id,
-                            }),
+                    let response = match meta_cloned.rpc_client_async._send_request(call_json).await {
+                        Ok(response) => response,
                         Err(err) => {
-                            let mut error = jsonrpc_core::Error::internal_error();
-                            error.message = format!("{}", err.kind);
-                            jsonrpc_core::Output::Failure(jsonrpc_core::Failure {
+                            let failure = jsonrpc_core::Failure {
                                 jsonrpc,
-                                error,
-                                id
-                            })
+                                error: jsonrpc_core::Error {
+                                    code: jsonrpc_core::ErrorCode::InternalError,
+                                    message: err.to_string(),
+                                    data: None,
+                                },
+                                id,
+                            };
+                            return Some(jsonrpc_core::Output::Failure(failure));
                         }
                     };
+                    let json: Value = match response.json().await {
+                        Ok(json) => json,
+                        Err(err) => {
+                            println!("Proxy error: {}", err.to_string());
+                            let failure = jsonrpc_core::Failure {
+                                jsonrpc,
+                                error: jsonrpc_core::Error {
+                                    code: jsonrpc_core::ErrorCode::InternalError,
+                                    message: err.to_string(),
+                                    data: None,
+                                },
+                                id,
+                            };
+                            return Some(jsonrpc_core::Output::Failure(failure));
+                        }
+                    };
+                    println!("Proxy response: {}", json);
+                    let output = if json["error"].is_null() {
+                        jsonrpc_core::Output::Success(jsonrpc_core::Success{
+                            jsonrpc,
+                            result: json["result"].clone(),
+                            id,
+                        })
+                    } else {
+                        jsonrpc_core::Output::Failure(jsonrpc_core::Failure {
+                            jsonrpc,
+                            error: serde_json::from_value(json["error"].clone()).ok()?,
+                            id,
+                        })
+                    };
+                    println!("Returning output: {:?}", output);
                     Some(output)
                 }
                 _ => res,
