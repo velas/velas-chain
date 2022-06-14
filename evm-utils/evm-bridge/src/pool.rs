@@ -551,7 +551,7 @@ async fn process_tx(
     if bridge.simulate {
         // Try simulate transaction execution
         bridge
-            .rpc_client_async
+            .rpc_client
             .send::<Bytes>(RpcRequest::EthCall, json!([rpc_tx, "latest"]))
             .await
             .map_err(from_client_error)?;
@@ -613,7 +613,7 @@ async fn process_tx(
 
     debug!("Getting block hash");
     let (blockhash, _fee_calculator, _) = bridge
-        .rpc_client_async
+        .rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
         .await
         .map(|response| response.value)
@@ -633,7 +633,7 @@ async fn process_tx(
     );
 
     let signature = bridge
-        .rpc_client_async
+        .rpc_client
         .send_transaction_with_config(
             &send_raw_tx,
             RpcSendTransactionConfig {
@@ -679,13 +679,13 @@ async fn deploy_big_tx(
     );
 
     let balance = bridge
-        .rpc_client_async
+        .rpc_client
         .get_minimum_balance_for_rent_exemption(tx_bytes.len())
         .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     let (blockhash, _, _) = bridge
-        .rpc_client_async
+        .rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::finalized())
         .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
@@ -720,7 +720,7 @@ async fn deploy_big_tx(
     };
 
     match bridge
-        .rpc_client_async
+        .rpc_client
         .send_and_confirm_transaction_with_config(&create_and_allocate_tx, rpc_send_cfg)
         .await
     {
@@ -742,7 +742,7 @@ async fn deploy_big_tx(
     }
 
     let (blockhash, _) = bridge
-        .rpc_client_async
+        .rpc_client
         .get_new_blockhash(&blockhash)
         .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
@@ -770,7 +770,7 @@ async fn deploy_big_tx(
 
     debug!("Write data txs: {:?}", write_data_txs);
 
-    send_and_confirm_transactions(&bridge.rpc_client_async, write_data_txs, &signers)
+    send_and_confirm_transactions(&bridge.rpc_client, write_data_txs, &signers)
         .await
         .map(|_| debug!("All write txs for storage {} was done", storage_pubkey))
         .map_err(|e| {
@@ -779,7 +779,7 @@ async fn deploy_big_tx(
         })?;
 
     let (blockhash, _, _) = bridge
-        .rpc_client_async
+        .rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
         .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
@@ -799,7 +799,7 @@ async fn deploy_big_tx(
     debug!("Execute EVM transaction at storage {} ...", storage_pubkey);
 
     match bridge
-        .rpc_client_async
+        .rpc_client
         .send_transaction_with_config(&execute_tx, rpc_send_cfg)
         .await
     {

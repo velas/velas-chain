@@ -5,10 +5,7 @@ use std::time::Instant;
 use jsonrpc_core::{
     Call, FutureOutput, futures_util::future::{Either, FutureExt}, Middleware, Version::V2
 };
-use reqwest::header::CONTENT_TYPE;
 use serde_json::Value;
-use solana_client::client_error::{ClientError, ClientErrorKind};
-use solana_client::rpc_request::RpcError;
 
 use crate::EvmBridge;
 
@@ -45,7 +42,7 @@ impl Middleware<Arc<EvmBridge>> for ProxyMiddleware {
                          jsonrpc_core::Failure { jsonrpc, error, id },
                      )) if error.code == jsonrpc_core::ErrorCode::MethodNotFound => {
                     println!("Proxy method called!");
-                    let response = match meta_cloned.rpc_client_async._send_request(call_json).await {
+                    let response = match meta_cloned.rpc_client._send_request(call_json).await {
                         Ok(response) => response,
                         Err(err) => {
                             let failure = jsonrpc_core::Failure {

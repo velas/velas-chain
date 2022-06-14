@@ -1,6 +1,5 @@
 mod middleware;
 mod pool;
-mod sol_proxy;
 
 use log::*;
 use std::future::ready;
@@ -15,9 +14,7 @@ use std::{
 use evm_rpc::bridge::BridgeERPC;
 use evm_rpc::chain::ChainERPC;
 use evm_rpc::general::GeneralERPC;
-use evm_rpc::trace::TraceERPC;
 use evm_rpc::error::{Error, *};
-use evm_rpc::trace::TraceMeta;
 use evm_rpc::*;
 use evm_state::*;
 use sha3::{Digest, Keccak256};
@@ -47,7 +44,7 @@ use solana_transaction_status::{TransactionStatus, UiTransactionEncoding};
 
 use solana_client::{
     client_error::{ClientError, ClientErrorKind, Result as ClientResult},
-    rpc_client::{RpcClient, serialize_encode_transaction},
+    rpc_client::serialize_encode_transaction,
     rpc_config::*,
     rpc_custom_error,
     rpc_request::{RpcError, RpcRequest, RpcResponseErrorData},
@@ -680,9 +677,7 @@ pub struct EvmBridge {
     accounts: HashMap<evm_state::Address, evm_state::SecretKey>,
 
     #[derivative(Debug = "ignore")]
-    rpc_client: RpcClient,
-    #[derivative(Debug = "ignore")]
-    rpc_client_async: AsyncRpcClient,
+    rpc_client: AsyncRpcClient,
     verbose_errors: bool,
     simulate: bool,
     max_logs_blocks: u64,
@@ -714,8 +709,7 @@ impl EvmBridge {
             .collect();
 
         info!("Trying to create rpc client with addr: {}", addr);
-        let rpc_client = RpcClient::new_with_commitment(addr.clone(), CommitmentConfig::processed());
-        let rpc_client_async = AsyncRpcClient::new(addr);
+        let rpc_client = AsyncRpcClient::new(addr);
 
         info!("Loading keypair from: {}", keypath);
         let key = solana_sdk::signature::read_keypair_file(&keypath).unwrap();
@@ -728,7 +722,6 @@ impl EvmBridge {
             key,
             accounts,
             rpc_client,
-            rpc_client_async,
             verbose_errors,
             simulate,
             max_logs_blocks,
@@ -777,7 +770,7 @@ impl EvmBridge {
         let block_num = match block {
             BlockId::Num(block) => block.0,
             BlockId::RelativeId(BlockRelId::Latest) => {
-                let num: Hex<u64> = proxy_evm_rpc!(self.rpc_client_async, EthBlockNumber)?;
+                let num: Hex<u64> = proxy_evm_rpc!(self.rpc_client, EthBlockNumber)?;
                 num.0
             }
             _ => return Err(Error::BlockNotFound { block }),
@@ -788,7 +781,7 @@ impl EvmBridge {
     pub async fn is_transaction_landed(&self, hash: &H256) -> Option<bool> {
         async fn is_receipt_exists(bridge: &EvmBridge, hash: &H256) -> Option<bool> {
             bridge
-                .rpc_client_async
+                .rpc_client
                 .get_evm_transaction_receipt(hash)
                 .await
                 .ok()
@@ -799,7 +792,7 @@ impl EvmBridge {
         async fn is_signature_exists(bridge: &EvmBridge, hash: &H256) -> Option<bool> {
             match bridge.pool.signature_of_cached_transaction(hash) {
                 Some(signature) => bridge
-                    .rpc_client_async
+                    .rpc_client
                     .get_signature_status(&signature)
                     .await
                     .ok()
@@ -871,7 +864,7 @@ impl BridgeERPC for BridgeErpcImpl {
                 .or_else(|| meta.pool.transaction_count(&address)) {
                 Some(n) => n,
                 None => meta
-                    .rpc_client_async
+                    .rpc_client
                     .get_evm_transaction_count(&address)
                     .await
                     .unwrap_or_default(),
@@ -928,7 +921,7 @@ impl BridgeERPC for BridgeErpcImpl {
                 .or_else(|| meta.pool.transaction_count(&address)) {
                 Some(n) => n,
                 None => meta
-                    .rpc_client_async
+                    .rpc_client
                     .get_evm_transaction_count(&address)
                     .await
                     .unwrap_or_default(),
@@ -1077,7 +1070,7 @@ impl ChainERPC for ChainErpcProxy {
     #[instrument(skip(self))]
     // The same as get_slot
     fn block_number(&self, meta: Self::Metadata) -> BoxFuture<EvmResult<Hex<usize>>> {
-        Box::pin(async move { proxy_evm_rpc!(meta.rpc_client_async, EthBlockNumber) })
+        Box::pin(async move { proxy_evm_rpc!(meta.rpc_client, EthBlockNumber) })
     }
 
     #[instrument(skip(self))]
@@ -1089,7 +1082,7 @@ impl ChainERPC for ChainErpcProxy {
     ) -> BoxFuture<EvmResult<Hex<U256>>> {
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthGetBalance,
                 address,
                 block
@@ -1107,7 +1100,7 @@ impl ChainERPC for ChainErpcProxy {
     ) -> BoxFuture<EvmResult<Hex<H256>>> {
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthGetStorageAt,
                 address,
                 data,
@@ -1131,7 +1124,7 @@ impl ChainERPC for ChainErpcProxy {
 
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthGetTransactionCount,
                 address,
                 block
@@ -1147,7 +1140,7 @@ impl ChainERPC for ChainErpcProxy {
     ) -> BoxFuture<EvmResult<Hex<usize>>> {
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthGetBlockTransactionCountByNumber,
                 block
             )
@@ -1162,7 +1155,7 @@ impl ChainERPC for ChainErpcProxy {
     ) -> BoxFuture<EvmResult<Hex<usize>>> {
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthGetBlockTransactionCountByHash,
                 block_hash
             )
@@ -1178,7 +1171,7 @@ impl ChainERPC for ChainErpcProxy {
     ) -> BoxFuture<EvmResult<Bytes>> {
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthGetCode,
                 address,
                 block
@@ -1198,7 +1191,7 @@ impl ChainERPC for ChainErpcProxy {
         } else {
             Box::pin(async move {
                 proxy_evm_rpc!(
-                    meta.rpc_client_async,
+                    meta.rpc_client,
                     EthGetBlockByHash,
                     block_hash,
                     full
@@ -1220,7 +1213,7 @@ impl ChainERPC for ChainErpcProxy {
         } else {
             Box::pin(async move {
                 proxy_evm_rpc!(
-                    meta.rpc_client_async,
+                    meta.rpc_client,
                     EthGetBlockByNumber,
                     block,
                     full
@@ -1245,7 +1238,7 @@ impl ChainERPC for ChainErpcProxy {
         }
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthGetTransactionByHash,
                 tx_hash
             )
@@ -1262,7 +1255,7 @@ impl ChainERPC for ChainErpcProxy {
     ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthGetTransactionByBlockHashAndIndex,
                 block_hash,
                 tx_id
@@ -1279,7 +1272,7 @@ impl ChainERPC for ChainErpcProxy {
     ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthGetTransactionByBlockNumberAndIndex,
                 block,
                 tx_id
@@ -1295,7 +1288,7 @@ impl ChainERPC for ChainErpcProxy {
     ) -> BoxFuture<EvmResult<Option<RPCReceipt>>> {
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthGetTransactionReceipt,
                 tx_hash
             )
@@ -1312,7 +1305,7 @@ impl ChainERPC for ChainErpcProxy {
     ) -> BoxFuture<EvmResult<Bytes>> {
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthCall,
                 tx,
                 block,
@@ -1331,7 +1324,7 @@ impl ChainERPC for ChainErpcProxy {
     ) -> BoxFuture<EvmResult<Hex<Gas>>> {
         Box::pin(async move {
             proxy_evm_rpc!(
-                meta.rpc_client_async,
+                meta.rpc_client,
                 EthEstimateGas,
                 tx,
                 block,
@@ -1380,7 +1373,7 @@ impl ChainERPC for ChainErpcProxy {
                 collector.push(tokio::task::spawn(async move {
                     info!("filter = {:?}", cloned_filter);
                     let result: EvmResult<Vec<RPCLog>> =
-                        proxy_evm_rpc!(@silent cloned_meta.rpc_client_async, EthGetLogs, cloned_filter);
+                        proxy_evm_rpc!(@silent cloned_meta.rpc_client, EthGetLogs, cloned_filter);
                     info!("logs = {:?}", result);
 
                     result
@@ -1435,88 +1428,6 @@ impl ChainERPC for ChainErpcProxy {
         _block: String,
     ) -> EvmResult<Hex<usize>> {
         Ok(Hex(0))
-    }
-}
-
-#[derive(Debug)]
-pub struct TraceErpcProxy;
-impl TraceERPC for TraceErpcProxy {
-    type Metadata = Arc<EvmBridge>;
-
-    #[instrument(skip(self))]
-    fn trace_call(
-        &self,
-        meta: Self::Metadata,
-        tx: RPCTransaction,
-        traces: Vec<String>,
-        block: Option<BlockId>,
-        meta_info: Option<TraceMeta>,
-    ) -> BoxFuture<EvmResult<evm_rpc::trace::TraceResultsWithTransactionHash>> {
-        Box::pin(async move {
-            proxy_evm_rpc!(
-                meta.rpc_client_async,
-                EthTraceCall,
-                tx,
-                traces,
-                block,
-                meta_info
-            )
-        })
-    }
-
-    #[instrument(skip(self))]
-    fn trace_call_many(
-        &self,
-        meta: Self::Metadata,
-        tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
-        block: Option<BlockId>,
-    ) -> BoxFuture<EvmResult<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>>> {
-        Box::pin(async move {
-            proxy_evm_rpc!(
-                meta.rpc_client_async,
-                EthTraceCallMany,
-                tx_traces,
-                block
-            )
-        })
-    }
-
-    #[instrument(skip(self))]
-    fn trace_replay_transaction(
-        &self,
-        meta: Self::Metadata,
-        tx_hash: Hex<H256>,
-        traces: Vec<String>,
-        meta_info: Option<TraceMeta>,
-    ) -> BoxFuture<EvmResult<Option<trace::TraceResultsWithTransactionHash>>> {
-        Box::pin(async move {
-            proxy_evm_rpc!(
-                meta.rpc_client_async,
-                EthTraceReplayTransaction,
-                tx_hash,
-                traces,
-                meta_info
-            )
-        })
-    }
-
-    #[instrument(skip(self))]
-    fn trace_replay_block(
-        &self,
-        meta: Self::Metadata,
-        block: BlockId,
-        traces: Vec<String>,
-        meta_info: Option<TraceMeta>,
-    ) -> BoxFuture<EvmResult<Vec<trace::TraceResultsWithTransactionHash>>> {
-        Box::pin(async move {
-            proxy_evm_rpc!(
-                meta.rpc_client_async,
-                EthTraceReplayBlock,
-                block,
-                traces,
-                meta_info
-            )
-        })
     }
 }
 
@@ -1677,25 +1588,12 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
 
     let mut io = MetaIoHandler::with_middleware(ProxyMiddleware {});
 
-    {
-        use solana_core::rpc::rpc_minimal::Minimal;
-        let minimal_rpc = sol_proxy::MinimalRpcSolProxy;
-        io.extend_with(minimal_rpc.to_delegate());
-    }
-    {
-        use solana_core::rpc::rpc_full::Full;
-        let full_rpc = sol_proxy::FullRpcSolProxy;
-        io.extend_with(full_rpc.to_delegate());
-    }
-
     let ether_bridge = BridgeErpcImpl;
     io.extend_with(ether_bridge.to_delegate());
     let ether_chain = ChainErpcProxy;
     io.extend_with(ether_chain.to_delegate());
     let ether_general = GeneralErpcProxy;
     io.extend_with(ether_general.to_delegate());
-    let ether_trace = TraceErpcProxy;
-    io.extend_with(ether_trace.to_delegate());
 
     let mempool_worker = worker_deploy(meta.clone());
 
@@ -1848,8 +1746,7 @@ mod tests {
             evm_chain_id: 111u64,
             key: Keypair::new(),
             accounts: vec![(public_key, signing_key)].into_iter().collect(),
-            rpc_client: RpcClient::new("".to_string()),
-            rpc_client_async: AsyncRpcClient::new("".to_string()),
+            rpc_client: AsyncRpcClient::new("".to_string()),
             verbose_errors: true,
             simulate: false,
             max_logs_blocks: 0u64,
