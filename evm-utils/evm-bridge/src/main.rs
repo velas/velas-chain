@@ -1,3 +1,4 @@
+mod middleware;
 mod pool;
 // mod sol_proxy;
 
@@ -5,7 +6,6 @@ use log::*;
 use std::future::ready;
 use std::str::FromStr;
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
-use std::thread::sleep;
 use std::time::{Duration, Instant};
 use std::{
     collections::{HashMap, HashSet},
@@ -55,7 +55,9 @@ use solana_client::{
 
 use ::tokio;
 use ::tokio::sync::mpsc;
+use ::tokio::time::sleep;
 
+use middleware::ProxyMiddleware;
 use pool::{
     worker_cleaner, worker_deploy, worker_signature_checker, EthPool, PooledTransaction,
     SystemClock,
@@ -221,10 +223,13 @@ impl AsyncRpcClient {
         }
     }
 
-    async fn send_request(&self, request: RpcRequest, params: Value) -> ClientResult<Value> {
+    pub async fn send_request(&self, request: RpcRequest, params: Value) -> ClientResult<Value> {
         let request_id = self.request_id.fetch_add(1, Ordering::Relaxed);
         let request_json = request.build_request_json(request_id, params).to_string();
+        self._send_request(request_json).await
+    }
 
+    pub async fn _send_request(&self, request_json: String) -> ClientResult<Value> {
         let mut too_many_requests_retries = 5;
         loop {
             let response = {
@@ -261,7 +266,7 @@ impl AsyncRpcClient {
                                 response, too_many_requests_retries, duration
                             );
 
-                            sleep(duration);
+                            sleep(duration).await;
                             continue;
                         }
                         return Err(response.error_for_status().unwrap_err().into());
@@ -427,7 +432,7 @@ impl AsyncRpcClient {
                             && status_retry < GET_STATUS_RETRIES
                         {
                             // Retry twice a second
-                            sleep(Duration::from_millis(500));
+                            sleep(Duration::from_millis(500)).await;
                             continue;
                         }
                     }
@@ -612,7 +617,7 @@ impl AsyncRpcClient {
             debug!("Got same blockhash ({:?}), will retry...", blockhash);
 
             // Retry ~twice during a slot
-            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2));
+            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2)).await;
             num_retries += 1;
         }
         Err(RpcError::ForUser(format!(
@@ -1489,7 +1494,7 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     );
     let meta = Arc::new(meta);
 
-    let mut io = MetaIoHandler::default();
+    let mut io = MetaIoHandler::with_middleware(ProxyMiddleware {});
 
     // {
     //     use solana_rpc::rpc::rpc_minimal::Minimal;
@@ -1574,7 +1579,7 @@ async fn send_and_confirm_transactions<T: Signers>(
                 // Delay ~1 tick between write transactions in an attempt to reduce AccountInUse errors
                 // when all the write transactions modify the same program account (eg, deploying a
                 // new program)
-                sleep(Duration::from_millis(MS_PER_TICK));
+                sleep(Duration::from_millis(MS_PER_TICK)).await;
             }
 
             debug!("Sending {:?}", transaction.signatures);
@@ -1599,7 +1604,7 @@ async fn send_and_confirm_transactions<T: Signers>(
 
             if cfg!(not(test)) {
                 // Retry twice a second
-                sleep(Duration::from_millis(500));
+                sleep(Duration::from_millis(500)).await;
             }
 
             let mut retained = vec![];
