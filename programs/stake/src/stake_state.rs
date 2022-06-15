@@ -283,7 +283,7 @@ fn calculate_stake_rewards(
     vote_state: &VoteState,
     stake_history: Option<&StakeHistory>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
-    _fix_activating_credits_observed: bool, // this unused flag will soon be justified by an upcoming feature pr
+    fix_activating_credits_observed: bool, // this unused flag will soon be justified by an upcoming feature pr
 ) -> Option<(u64, u64, u64)> {
     // ensure to run to trigger (optional) inflation_point_calc_tracer
     // this awkward flag variable will soon be justified by an upcoming feature pr
@@ -302,7 +302,7 @@ fn calculate_stake_rewards(
             inflation_point_calc_tracer(&SkippedReason::DisabledInflation.into());
         }
         forced_credits_update_with_skipped_reward = true;
-    } else if stake.delegation.activation_epoch == rewarded_epoch {
+    } else if fix_activating_credits_observed && stake.delegation.activation_epoch == rewarded_epoch {
         // not assert!()-ed; but points should be zero
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
             inflation_point_calc_tracer(&SkippedReason::JustActivated.into());
