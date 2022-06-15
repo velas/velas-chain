@@ -3,12 +3,14 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use jsonrpc_core::{
-    Call, FutureOutput, futures_util::future::{Either, FutureExt}, Middleware, Version::V2
+    futures_util::future::{Either, FutureExt},
+    Call, Error, ErrorCode, Failure, FutureOutput, Id, Middleware, Output, Success,
+    Version::V2,
 };
+use log::{debug, error};
 use serde_json::Value;
 
 use crate::EvmBridge;
-
 
 #[derive(Clone, Default)]
 pub struct ProxyMiddleware;
@@ -22,78 +24,66 @@ impl Middleware<Arc<EvmBridge>> for ProxyMiddleware {
         meta: Arc<EvmBridge>,
         next: F,
     ) -> Either<Self::CallFuture, X>
-        where
-            F: FnOnce(Call, Arc<EvmBridge>) -> X + Send,
-            X: std::future::Future<Output = Option<jsonrpc_core::Output>> + Send + 'static,
+    where
+        F: FnOnce(Call, Arc<EvmBridge>) -> X + Send,
+        X: std::future::Future<Output = Option<Output>> + Send + 'static,
     {
         let start = Instant::now();
         let meta_cloned = meta.clone();
         let call_json = match serde_json::to_string(&call) {
             Ok(str) => str,
             Err(_) => {
-                return Either::Left(Box::pin(ready(Some(
-                    jsonrpc_core::Output::invalid_request(jsonrpc_core::Id::Null, Some(V2))
-                ))));
+                return Either::Left(Box::pin(ready(Some(Output::invalid_request(
+                    Id::Null,
+                    Some(V2),
+                )))))
             }
         };
-        Either::Left(Box::pin(next(call.clone(), meta).then(move |res| async move {
-            let res = match res {
-                Some(jsonrpc_core::Output::Failure(
-                         jsonrpc_core::Failure { jsonrpc, error, id },
-                     )) if error.code == jsonrpc_core::ErrorCode::MethodNotFound => {
-                    println!("Proxy method called!");
-                    let response = match meta_cloned.rpc_client._send_request(call_json).await {
-                        Ok(response) => response,
-                        Err(err) => {
-                            let failure = jsonrpc_core::Failure {
+        Either::Left(Box::pin(next(call.clone(), meta).then(
+            move |res| async move {
+                let res = match res {
+                    Some(Output::Failure(Failure { jsonrpc, error, id }))
+                        if error.code == ErrorCode::MethodNotFound =>
+                    {
+                        debug!("Method not found! Redirecting to node...");
+                        let response = match meta_cloned.rpc_client._send_request(call_json).await {
+                            Ok(response) => response,
+                            Err(err) => {
+                                let mut error = Error::internal_error();
+                                error.message = err.to_string();
+                                return Some(Output::Failure(Failure { jsonrpc, error, id }));
+                            }
+                        };
+                        let json: Value = match response.json().await {
+                            Ok(json) => json,
+                            Err(err) => {
+                                error!("Node rpc call error: {}", err.to_string());
+                                let mut error = Error::internal_error();
+                                error.message = err.to_string();
+                                return Some(Output::Failure(Failure { jsonrpc, error, id }));
+                            }
+                        };
+                        debug!("Node response: {}", json);
+                        let output = if json["error"].is_null() {
+                            Output::Success(Success {
                                 jsonrpc,
-                                error: jsonrpc_core::Error {
-                                    code: jsonrpc_core::ErrorCode::InternalError,
-                                    message: err.to_string(),
-                                    data: None,
-                                },
+                                result: json["result"].clone(),
                                 id,
-                            };
-                            return Some(jsonrpc_core::Output::Failure(failure));
-                        }
-                    };
-                    let json: Value = match response.json().await {
-                        Ok(json) => json,
-                        Err(err) => {
-                            println!("Proxy error: {}", err.to_string());
-                            let failure = jsonrpc_core::Failure {
+                            })
+                        } else {
+                            Output::Failure(Failure {
                                 jsonrpc,
-                                error: jsonrpc_core::Error {
-                                    code: jsonrpc_core::ErrorCode::InternalError,
-                                    message: err.to_string(),
-                                    data: None,
-                                },
+                                error: serde_json::from_value(json["error"].clone()).ok()?,
                                 id,
-                            };
-                            return Some(jsonrpc_core::Output::Failure(failure));
-                        }
-                    };
-                    println!("Proxy response: {}", json);
-                    let output = if json["error"].is_null() {
-                        jsonrpc_core::Output::Success(jsonrpc_core::Success{
-                            jsonrpc,
-                            result: json["result"].clone(),
-                            id,
-                        })
-                    } else {
-                        jsonrpc_core::Output::Failure(jsonrpc_core::Failure {
-                            jsonrpc,
-                            error: serde_json::from_value(json["error"].clone()).ok()?,
-                            id,
-                        })
-                    };
-                    println!("Returning output: {:?}", output);
-                    Some(output)
-                }
-                _ => res,
-            };
-            println!("Processing took: {:?}", start.elapsed());
-            res
-        })))
+                            })
+                        };
+                        Some(output)
+                    }
+                    _ => res,
+                };
+                debug!("Processing took: {:?}", start.elapsed());
+                res
+            },
+        )))
     }
 }
