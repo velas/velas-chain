@@ -32,7 +32,7 @@ use solana_sdk::{
 };
 use solana_transaction_status::{TransactionStatus, UiTransactionEncoding};
 
-use evm_rpc::{Hex, RPCReceipt};
+use evm_rpc::{BlockId, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTransaction};
 use evm_state::{Address, H256, U256};
 use solana_evm_loader_program::scope::solana;
 
@@ -174,6 +174,42 @@ impl AsyncRpcClient {
                 other => return other,
             }
         }
+    }
+
+    pub async fn get_evm_block_by_hash(
+        &self,
+        block_hash: Hex<H256>,
+        full: bool,
+    ) -> ClientResult<Option<RPCBlock>> {
+        self.send(RpcRequest::EthGetBlockByHash, json!([block_hash, full]))
+            .await
+    }
+
+    pub async fn get_evm_block_by_number(
+        &self,
+        block: BlockId,
+        full: bool,
+    ) -> ClientResult<Option<RPCBlock>> {
+        self.send(RpcRequest::EthGetBlockByNumber, json!([block, full]))
+            .await
+    }
+
+    pub async fn get_evm_block_number(&self) -> ClientResult<u64> {
+        self.send::<Hex<_>>(RpcRequest::EthBlockNumber, json!([]))
+            .await
+            .map(|h| h.0)
+    }
+
+    pub async fn get_evm_logs(&self, filter: &RPCLogFilter) -> ClientResult<Vec<RPCLog>> {
+        self.send(RpcRequest::EthGetLogs, json!([filter])).await
+    }
+
+    pub async fn get_evm_transaction_by_hash(
+        &self,
+        tx_hash: Hex<H256>,
+    ) -> ClientResult<Option<RPCTransaction>> {
+        self.send(RpcRequest::EthGetTransactionByHash, json!([tx_hash]))
+            .await
     }
 
     pub async fn get_evm_transaction_count(&self, address: &Address) -> ClientResult<U256> {
