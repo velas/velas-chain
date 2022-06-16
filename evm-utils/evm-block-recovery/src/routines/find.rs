@@ -21,25 +21,7 @@ impl BlockRange {
     }
 }
 
-pub async fn find(ledger: LedgerStorage, start_block: BlockNum, limit: usize) -> Result<()> {
-    let blocks = ledger
-        .get_evm_confirmed_full_blocks_nums(start_block, limit)
-        .await
-        .context(format!(
-            "Unable to get EVM confirmed block's IDs starting with block {} limiteb by {}",
-            start_block, limit
-        ))?;
-
-    let missing_blocks = find_evm_uncommitted_blocks(blocks);
-
-    if missing_blocks.is_empty() {
-        log::info!("Missing blocks starting from block {start_block} with a limit of {limit} are not found");
-    }
-
-    Ok(())
-}
-
-fn find_evm_uncommitted_blocks(blocks: Vec<BlockNum>) -> Vec<BlockRange> {
+fn find_uncommitted_blocks(blocks: Vec<BlockNum>) -> Vec<BlockRange> {
     let mut result = Vec::new();
     for i in 0..blocks.len() - 1 {
         let previous = blocks[i];
@@ -61,6 +43,46 @@ fn find_evm_uncommitted_blocks(blocks: Vec<BlockNum>) -> Vec<BlockRange> {
     result
 }
 
+pub async fn find_evm(ledger: LedgerStorage, start_block: BlockNum, limit: usize) -> Result<()> {
+    log::info!("Looking for missing EVM Blocks");
+
+    let blocks = ledger
+        .get_evm_confirmed_full_blocks_nums(start_block, limit)
+        .await
+        .context(format!(
+            "Unable to get EVM Confirmed Block IDs starting with block {} limit by {}",
+            start_block, limit
+        ))?;
+
+    let missing_blocks = find_uncommitted_blocks(blocks);
+
+    if missing_blocks.is_empty() {
+        log::info!("Missing EVM Blocks starting from block {start_block} with a limit of {limit} are not found");
+    }
+
+    Ok(())
+}
+
+pub async fn find_native(ledger: LedgerStorage, start_block: BlockNum, limit: usize) -> Result<()> {
+    log::info!("Looking for missing Native Blocks");
+
+    let blocks = ledger
+        .get_confirmed_blocks(start_block, limit)
+        .await
+        .context(format!(
+            "Unable to get Native Confirmed Block IDs starting with block {} limit by {}",
+            start_block, limit
+        ))?;
+
+    let missing_blocks = find_uncommitted_blocks(blocks);
+
+    if missing_blocks.is_empty() {
+        log::info!("Missing Native Blocks starting from block {start_block} with a limit of {limit} are not found");
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,7 +91,7 @@ mod tests {
     fn test_find_missing_blocks() {
         let confirmed_blocks = vec![1, 2, 3, 8, 9, 10];
         assert_eq!(
-            find_evm_uncommitted_blocks(confirmed_blocks),
+            find_uncommitted_blocks(confirmed_blocks),
             vec![BlockRange { first: 4, last: 7 }]
         )
     }
@@ -78,7 +100,7 @@ mod tests {
     fn test_find_missing_blocks_multirange() {
         let confirmed_blocks = vec![1, 2, 5, 6, 10, 11, 13];
         assert_eq!(
-            find_evm_uncommitted_blocks(confirmed_blocks),
+            find_uncommitted_blocks(confirmed_blocks),
             vec![
                 BlockRange { first: 3, last: 4 },
                 BlockRange { first: 7, last: 9 },

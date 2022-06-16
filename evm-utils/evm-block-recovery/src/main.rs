@@ -24,13 +24,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Finds missing ranges of EVM blocks
-    Find {
+    /// Finds missing ranges of EVM Blocks
+    FindEvm {
         /// Starting EVM Block number
         #[clap(long, value_name = "NUM")]
         start: u64,
 
-        /// Limit of blocks to search
+        /// Limit of EVM Blocks to search
+        #[clap(long, value_name = "NUM")]
+        limit: usize,
+    },
+
+    /// Finds missing ranges of Native Blocks
+    FindNative {
+        /// Starting Native Block number
+        #[clap(long, value_name = "NUM")]
+        start: u64,
+
+        /// Limit of Native Blocks to search
         #[clap(long, value_name = "NUM")]
         limit: usize,
     },
@@ -142,21 +153,39 @@ enum Commands {
 async fn main() -> anyhow::Result<()> {
     let dotenv = dotenv::dotenv();
 
-    env_logger::init();
+    match std::env::var("RUST_LOG") {
+        Ok(value) => {
+            env_logger::init();
+            log::info!(r#"RUST_LOG is set to "{value}""#);
+        }
+        Err(_err) => {
+            std::env::set_var("RUST_LOG", "info");
+            env_logger::init();
+            log::warn!(r#"Environment variable "RUST_LOG" not found."#);
+        }
+    }
 
     match dotenv {
         Ok(path) => {
             log::info!(r#""{}" successfully loaded"#, path.display())
         }
         Err(e) => {
-            log::info!(r#"".env" file not found: {e:?}""#)
+            log::warn!(r#"".env" file not found: {e:?}""#)
         }
     }
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Find { start, limit } => {
-            routines::find(
+        Commands::FindEvm { start, limit } => {
+            routines::find_evm(
+                ledger::with_params(cli.creds, cli.instance).await?,
+                start,
+                limit,
+            )
+            .await
+        }
+        Commands::FindNative { start, limit } => {
+            routines::find_native(
                 ledger::with_params(cli.creds, cli.instance).await?,
                 start,
                 limit,
