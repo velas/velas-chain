@@ -237,6 +237,9 @@ fn test_replica_bootstrap() {
     let rpc_pubsub_addr = SocketAddr::new(ip_addr, port);
     let ledger_dir = tempfile::tempdir_in(farf_dir()).unwrap();
     let ledger_path = ledger_dir.path();
+
+    let evm_state_dir = tempfile::tempdir_in(farf_dir()).unwrap();
+    let evm_path = evm_state_dir.path();
     let snapshot_output_dir = tempfile::tempdir_in(farf_dir()).unwrap();
     let snapshot_archives_dir = snapshot_output_dir.path();
     let bank_snapshots_dir = snapshot_archives_dir.join("snapshot");
@@ -293,6 +296,7 @@ fn test_replica_bootstrap() {
         account_indexes: AccountSecondaryIndexes::default(),
         accounts_db_caching_enabled: false,
         replica_exit: Arc::new(RwLock::new(Exit::default())),
+        evm_state_path: evm_path.to_path_buf(),
     };
     let _replica_node = ReplicaNode::new(config);
 }

@@ -2,15 +2,14 @@
 pub use solana_sdk::packet::{Meta, Packet, PacketFlags, PACKET_DATA_SIZE};
 use {
     crate::{cuda_runtime::PinnedVec, recycler::Recycler},
-    bincode::config::Options,
     serde::Serialize,
     std::net::SocketAddr,
 };
 
 pub const NUM_PACKETS: usize = 1024 * 8;
 
-pub const PACKETS_PER_BATCH: usize = 128;
-pub const NUM_RCVMMSGS: usize = 128;
+pub const PACKETS_PER_BATCH: usize = 64;
+pub const NUM_RCVMMSGS: usize = 64;
 
 #[derive(Debug, Default, Clone)]
 pub struct PacketBatch {
@@ -82,16 +81,16 @@ impl PacketBatch {
 }
 
 pub fn to_packet_batches<T: Serialize>(xs: &[T], chunks: usize) -> Vec<PacketBatch> {
-    let mut out = vec![];
-    for x in xs.chunks(chunks) {
-        let mut batch = PacketBatch::with_capacity(x.len());
-        batch.packets.resize(x.len(), Packet::default());
-        for (i, packet) in x.iter().zip(batch.packets.iter_mut()) {
-            Packet::populate_packet(packet, None, i).expect("serialize request");
-        }
-        out.push(batch);
-    }
-    out
+    xs.chunks(chunks)
+        .map(|x| {
+            let mut batch = PacketBatch::with_capacity(x.len());
+            batch.packets.resize(x.len(), Packet::default());
+            for (i, packet) in x.iter().zip(batch.packets.iter_mut()) {
+                Packet::populate_packet(packet, None, i).expect("serialize request");
+            }
+            batch
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -122,17 +121,6 @@ pub fn to_packet_batch_with_destination<T: Serialize>(
         }
     }
     out
-}
-
-pub fn limited_deserialize<T>(data: &[u8]) -> bincode::Result<T>
-where
-    T: serde::de::DeserializeOwned,
-{
-    bincode::options()
-        .with_limit(PACKET_DATA_SIZE as u64)
-        .with_fixint_encoding()
-        .allow_trailing_bytes()
-        .deserialize_from(data)
 }
 
 #[cfg(test)]

@@ -51,6 +51,8 @@ use {
     tokio_util::codec::{BytesCodec, FramedRead},
 };
 
+const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
+const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
 const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
 
 pub struct JsonRpcService {
@@ -218,16 +220,37 @@ impl RequestMiddleware for RpcRequestMiddleware {
         trace!("request uri: {}", request.uri());
 
         if let Some(ref snapshot_config) = self.snapshot_config {
-            if request.uri().path() == "/snapshot.tar.bz2" {
+            if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH
+                || request.uri().path() == INCREMENTAL_SNAPSHOT_REQUEST_PATH
+            {
                 // Convenience redirect to the latest snapshot
-                return if let Some(full_snapshot_archive_info) =
+                let full_snapshot_archive_info =
                     snapshot_utils::get_highest_full_snapshot_archive_info(
                         &snapshot_config.snapshot_archives_dir,
-                    ) {
+                    );
+                let snapshot_archive_info =
+                    if let Some(full_snapshot_archive_info) = full_snapshot_archive_info {
+                        if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH {
+                            Some(full_snapshot_archive_info.snapshot_archive_info().clone())
+                        } else {
+                            snapshot_utils::get_highest_incremental_snapshot_archive_info(
+                                &snapshot_config.snapshot_archives_dir,
+                                full_snapshot_archive_info.slot(),
+                            )
+                            .map(|incremental_snapshot_archive_info| {
+                                incremental_snapshot_archive_info
+                                    .snapshot_archive_info()
+                                    .clone()
+                            })
+                        }
+                    } else {
+                        None
+                    };
+                return if let Some(snapshot_archive_info) = snapshot_archive_info {
                     RpcRequestMiddleware::redirect(&format!(
                         "/{}",
-                        full_snapshot_archive_info
-                            .path()
+                        snapshot_archive_info
+                            .path
                             .file_name()
                             .unwrap_or_else(|| std::ffi::OsStr::new(""))
                             .to_str()
@@ -263,8 +286,7 @@ impl RequestMiddleware for RpcRequestMiddleware {
 fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<String> {
     match path {
         "/v0/circulating-supply" => {
-            let r_bank_forks = bank_forks.read().unwrap();
-            let bank = r_bank_forks.root_bank();
+            let bank = bank_forks.read().unwrap().root_bank();
             let total_supply = bank.capitalization();
             let non_circulating_supply =
                 solana_runtime::non_circulating_supply::calculate_non_circulating_supply(&bank)
@@ -276,8 +298,7 @@ fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<Strin
             ))
         }
         "/v0/total-supply" => {
-            let r_bank_forks = bank_forks.read().unwrap();
-            let bank = r_bank_forks.root_bank();
+            let bank = bank_forks.read().unwrap().root_bank();
             let total_supply = bank.capitalization();
             Some(format!("{}", lamports_to_sol(total_supply)))
         }

@@ -21,20 +21,20 @@ use {
     solana_perf::{
         cuda_runtime::PinnedVec,
         data_budget::DataBudget,
-        packet::{limited_deserialize, Packet, PacketBatch, PACKETS_PER_BATCH},
+        packet::{Packet, PacketBatch, PACKETS_PER_BATCH},
         perf_libs,
     },
     solana_poh::poh_recorder::{BankStart, PohRecorder, PohRecorderError, TransactionRecorder},
     solana_program_runtime::timings::ExecuteTimings,
     solana_runtime::{
-        accounts_db::ErrorCounters,
         bank::{
-            Bank, LoadAndExecuteTransactionsOutput, TransactionBalancesSet, TransactionCheckResult,
-            TransactionExecutionResult,
+            Bank, CommitTransactionCounts, LoadAndExecuteTransactionsOutput,
+            TransactionBalancesSet, TransactionCheckResult, TransactionExecutionResult,
         },
         bank_utils,
         cost_model::{CostModel, TransactionCost},
         transaction_batch::TransactionBatch,
+        transaction_error_metrics::TransactionErrorMetrics,
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{
@@ -48,6 +48,7 @@ use {
             Message,
         },
         pubkey::Pubkey,
+        saturating_add_assign,
         short_vec::decode_shortu16_len,
         signature::Signature,
         timing::{duration_as_ms, timestamp, AtomicInterval},
@@ -83,14 +84,16 @@ pub const FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET: u64 = 2;
 pub const HOLD_TRANSACTIONS_SLOT_OFFSET: u64 = 20;
 
 // Fixed thread size seems to be fastest on GCP setup
-pub const NUM_THREADS: u32 = 4;
+pub const NUM_THREADS: u32 = 6;
 
-const TOTAL_BUFFERED_PACKETS: usize = 500_000;
+const TOTAL_BUFFERED_PACKETS: usize = 700_000;
 
-const MAX_NUM_TRANSACTIONS_PER_BATCH: usize = 128;
+const MAX_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
 const NUM_VOTE_PROCESSING_THREADS: u32 = 2;
 const MIN_THREADS_BANKING: u32 = 1;
+
+const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 
 pub struct ProcessTransactionBatchOutput {
     // The number of transactions filtered out by the cost model
@@ -109,6 +112,12 @@ struct RecordTransactionsSummary {
     retryable_indexes: Vec<usize>,
 }
 
+#[derive(Debug)]
+pub enum CommitTransactionDetails {
+    Committed { compute_units: u64 },
+    NotCommitted,
+}
+
 pub struct ExecuteAndCommitTransactionsOutput {
     // Total number of transactions that were passed as candidates for execution
     transactions_attempted_execution_count: usize,
@@ -122,10 +131,10 @@ pub struct ExecuteAndCommitTransactionsOutput {
     // to the block ending.
     retryable_transaction_indexes: Vec<usize>,
     // A result that indicates whether transactions were successfully
-    // committed into the Poh stream. If so, the result tells us
-    // how many such transactions were committed
-    commit_transactions_result: Result<(), PohRecorderError>,
+    // committed into the Poh stream.
+    commit_transactions_result: Result<Vec<CommitTransactionDetails>, PohRecorderError>,
     execute_and_commit_timings: LeaderExecuteAndCommitTimings,
+    error_counters: TransactionErrorMetrics,
 }
 
 #[derive(Debug, Default)]
@@ -327,7 +336,8 @@ pub struct BatchedTransactionCostDetails {
     pub batched_signature_cost: u64,
     pub batched_write_lock_cost: u64,
     pub batched_data_bytes_cost: u64,
-    pub batched_execute_cost: u64,
+    pub batched_builtins_execute_cost: u64,
+    pub batched_bpf_execute_cost: u64,
 }
 
 #[derive(Debug, Default)]
@@ -769,7 +779,7 @@ impl BankingStage {
         data_budget: &DataBudget,
         qos_service: &Arc<QosService>,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-    ) -> BufferedPacketsDecision {
+    ) {
         let (decision, make_decision_time) = Measure::this(
             |_| {
                 let bank_start;
@@ -869,8 +879,6 @@ impl BankingStage {
             }
             _ => (),
         }
-
-        decision
     }
 
     fn handle_forwarding(
@@ -950,11 +958,14 @@ impl BankingStage {
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
         let mut buffered_packet_batches = VecDeque::with_capacity(batch_limit);
         let mut banking_stage_stats = BankingStageStats::new(id);
+
         let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(id);
+        let mut last_metrics_update = Instant::now();
+
         loop {
             let my_pubkey = cluster_info.id();
-            while !buffered_packet_batches.is_empty() {
-                let (decision, process_buffered_packets_time) = Measure::this(
+            if !buffered_packet_batches.is_empty() {
+                let (_, process_buffered_packets_time) = Measure::this(
                     |_| {
                         Self::process_buffered_packets(
                             &my_pubkey,
@@ -977,36 +988,34 @@ impl BankingStage {
                 );
                 slot_metrics_tracker
                     .increment_process_buffered_packets_us(process_buffered_packets_time.as_us());
-
-                if matches!(decision, BufferedPacketsDecision::Hold)
-                    || matches!(decision, BufferedPacketsDecision::ForwardAndHold)
-                {
-                    // If we are waiting on a new bank,
-                    // check the receiver for more transactions/for exiting
-                    break;
-                }
             }
 
-            let (_, slot_metrics_checker_check_slot_boundary_time) = Measure::this(
-                |_| {
-                    let current_poh_bank = {
-                        let poh = poh_recorder.lock().unwrap();
-                        poh.bank_start()
-                    };
-                    slot_metrics_tracker.update_on_leader_slot_boundary(&current_poh_bank);
-                },
-                (),
-                "slot_metrics_checker_check_slot_boundary",
-            );
-            slot_metrics_tracker.increment_slot_metrics_check_slot_boundary_us(
-                slot_metrics_checker_check_slot_boundary_time.as_us(),
-            );
+            // avoid excessively locking poh_recorder
+            if last_metrics_update.elapsed() >= SLOT_BOUNDARY_CHECK_PERIOD {
+                let (_, slot_metrics_checker_check_slot_boundary_time) = Measure::this(
+                    |_| {
+                        let current_poh_bank = {
+                            let poh = poh_recorder.lock().unwrap();
+                            poh.bank_start()
+                        };
+                        slot_metrics_tracker.update_on_leader_slot_boundary(&current_poh_bank);
+                    },
+                    (),
+                    "slot_metrics_checker_check_slot_boundary",
+                );
+                slot_metrics_tracker.increment_slot_metrics_check_slot_boundary_us(
+                    slot_metrics_checker_check_slot_boundary_time.as_us(),
+                );
+
+                last_metrics_update = Instant::now();
+            }
 
             let recv_timeout = if !buffered_packet_batches.is_empty() {
-                // If packets are buffered, let's wait for less time on recv from the channel.
-                // This helps detect the next leader faster, and processing the buffered
-                // packets quickly
-                Duration::from_millis(10)
+                // If there are buffered packets, run the equivalent of try_recv to try reading more
+                // packets. This prevents starving BankingStage::consume_buffered_packets due to
+                // buffered_packet_batches containing transactions that exceed the cost model for
+                // the current bank.
+                Duration::from_millis(0)
             } else {
                 // Default wait time
                 Duration::from_millis(100)
@@ -1172,6 +1181,7 @@ impl BankingStage {
                     transaction_status_sender.is_some(),
                     transaction_status_sender.is_some(),
                     &mut execute_and_commit_timings.execute_timings,
+                    None, // account_overrides
                     Bank::take_evm_state_cloned,
                 )
             },
@@ -1187,10 +1197,27 @@ impl BankingStage {
             executed_transactions_count,
             executed_with_successful_result_count,
             signature_count,
-	        evm_patch,
+            error_counters,
+	    evm_patch,
             ..
         } = load_and_execute_transactions_output;
 
+        let mut transactions_execute_and_record_status: Vec<_> = execution_results
+            .iter()
+            .map(|execution_result| match execution_result {
+                TransactionExecutionResult::Executed { details, .. } => {
+                    CommitTransactionDetails::Committed {
+                        compute_units: details.executed_units,
+                    }
+                }
+                TransactionExecutionResult::NotExecuted { .. } => {
+                    CommitTransactionDetails::NotCommitted
+                }
+            })
+            .collect();
+
+        let (last_blockhash, lamports_per_signature) =
+            bank.last_blockhash_and_lamports_per_signature();
         let (freeze_lock, freeze_lock_time) =
             Measure::this(|_| bank.freeze_lock(), (), "freeze_lock");
         execute_and_commit_timings.freeze_lock_us = freeze_lock_time.as_us();
@@ -1216,6 +1243,11 @@ impl BankingStage {
         } = record_transactions_summary;
         execute_and_commit_timings.record_transactions_timings = record_transactions_timings;
 
+        // mark transactions that were executed but not recorded
+        retryable_record_transaction_indexes.iter().for_each(|i| {
+            transactions_execute_and_record_status[*i] = CommitTransactionDetails::NotCommitted;
+        });
+
         inc_new_counter_info!(
             "banking_stage-record_transactions_num_to_commit",
             *commit_transactions_result.as_ref().unwrap_or(&0)
@@ -1234,6 +1266,7 @@ impl BankingStage {
                 retryable_transaction_indexes,
                 commit_transactions_result: Err(e),
                 execute_and_commit_timings,
+                error_counters,
             };
         }
 
@@ -1249,13 +1282,17 @@ impl BankingStage {
                         sanitized_txs,
                         &mut loaded_transactions,
                         execution_results,
-                        executed_transactions_count as u64,
-                        executed_transactions_count
-                            .saturating_sub(executed_with_successful_result_count)
-                            as u64,
-                        signature_count,
+                        last_blockhash,
+                        lamports_per_signature,
+                        CommitTransactionCounts {
+                            committed_transactions_count: executed_transactions_count as u64,
+                            committed_with_failure_result_count: executed_transactions_count
+                                .saturating_sub(executed_with_successful_result_count)
+                                as u64,
+                            signature_count,
+                        },
                         &mut execute_and_commit_timings.execute_timings,
-	                    evm_patch,
+                        evm_patch,
                     )
                 },
                 (),
@@ -1319,8 +1356,9 @@ impl BankingStage {
             executed_transactions_count,
             executed_with_successful_result_count,
             retryable_transaction_indexes,
-            commit_transactions_result: Ok(()),
+            commit_transactions_result: Ok(transactions_execute_and_record_status),
             execute_and_commit_timings,
+            error_counters,
         }
     }
 
@@ -1333,38 +1371,28 @@ impl BankingStage {
         gossip_vote_sender: &ReplayVoteSender,
         qos_service: &Arc<QosService>,
     ) -> ProcessTransactionBatchOutput {
-        let ((transactions_qos_results, cost_model_throttled_transactions_count), cost_model_time) =
-            Measure::this(
-                |_| {
-                    let tx_costs = qos_service.compute_transaction_costs(txs.iter());
+        let mut cost_model_time = Measure::start("cost_model");
 
-                    let (transactions_qos_results, num_included) =
-                        qos_service.select_transactions_per_cost(txs.iter(), tx_costs.iter(), bank);
+        let transaction_costs = qos_service.compute_transaction_costs(txs.iter());
 
-                    let cost_model_throttled_transactions_count =
-                        txs.len().saturating_sub(num_included);
+        let (transactions_qos_results, num_included) =
+            qos_service.select_transactions_per_cost(txs.iter(), transaction_costs.iter(), bank);
 
-                    qos_service.accumulate_estimated_transaction_costs(
-                        &Self::accumulate_batched_transaction_costs(
-                            tx_costs.iter(),
-                            transactions_qos_results.iter(),
-                        ),
-                    );
-                    (
-                        transactions_qos_results,
-                        cost_model_throttled_transactions_count,
-                    )
-                },
-                (),
-                "cost_model",
-            );
+        let cost_model_throttled_transactions_count = txs.len().saturating_sub(num_included);
+
+        qos_service.accumulate_estimated_transaction_costs(
+            &Self::accumulate_batched_transaction_costs(
+                transaction_costs.iter(),
+                transactions_qos_results.iter(),
+            ),
+        );
+        cost_model_time.stop();
 
         // Only lock accounts for those transactions are selected for the block;
         // Once accounts are locked, other threads cannot encode transactions that will modify the
         // same account state
         let mut lock_time = Measure::start("lock_time");
-        let batch =
-            bank.prepare_sanitized_batch_with_results(txs, transactions_qos_results.into_iter());
+        let batch = bank.prepare_sanitized_batch_with_results(txs, transactions_qos_results.iter());
         lock_time.stop();
 
         // retryable_txs includes AccountInUse, WouldExceedMaxBlockCostLimit
@@ -1379,20 +1407,28 @@ impl BankingStage {
                 gossip_vote_sender,
             );
 
-        let ExecuteAndCommitTransactionsOutput {
-            ref mut retryable_transaction_indexes,
-            ref execute_and_commit_timings,
-            ..
-        } = execute_and_commit_transactions_output;
-
-        retryable_transaction_indexes
-            .iter_mut()
-            .for_each(|x| *x += chunk_offset);
-
         let mut unlock_time = Measure::start("unlock_time");
         // Once the accounts are new transactions can enter the pipeline to process them
         drop(batch);
         unlock_time.stop();
+
+        let ExecuteAndCommitTransactionsOutput {
+            ref mut retryable_transaction_indexes,
+            ref execute_and_commit_timings,
+            ref commit_transactions_result,
+            ..
+        } = execute_and_commit_transactions_output;
+
+        QosService::update_or_remove_transaction_costs(
+            transaction_costs.iter(),
+            transactions_qos_results.iter(),
+            commit_transactions_result.as_ref().ok(),
+            bank,
+        );
+
+        retryable_transaction_indexes
+            .iter_mut()
+            .for_each(|x| *x += chunk_offset);
 
         let (cu, us) =
             Self::accumulate_execute_units_and_time(&execute_and_commit_timings.execute_timings);
@@ -1425,18 +1461,26 @@ impl BankingStage {
             .zip(transaction_results)
             .for_each(|(cost, result)| {
                 if result.is_ok() {
-                    cost_details.batched_signature_cost = cost_details
-                        .batched_signature_cost
-                        .saturating_add(cost.signature_cost);
-                    cost_details.batched_write_lock_cost = cost_details
-                        .batched_write_lock_cost
-                        .saturating_add(cost.write_lock_cost);
-                    cost_details.batched_data_bytes_cost = cost_details
-                        .batched_data_bytes_cost
-                        .saturating_add(cost.data_bytes_cost);
-                    cost_details.batched_execute_cost = cost_details
-                        .batched_execute_cost
-                        .saturating_add(cost.execution_cost);
+                    saturating_add_assign!(
+                        cost_details.batched_signature_cost,
+                        cost.signature_cost
+                    );
+                    saturating_add_assign!(
+                        cost_details.batched_write_lock_cost,
+                        cost.write_lock_cost
+                    );
+                    saturating_add_assign!(
+                        cost_details.batched_data_bytes_cost,
+                        cost.data_bytes_cost
+                    );
+                    saturating_add_assign!(
+                        cost_details.batched_builtins_execute_cost,
+                        cost.builtins_execution_cost
+                    );
+                    saturating_add_assign!(
+                        cost_details.batched_bpf_execute_cost,
+                        cost.bpf_execution_cost
+                    );
                 }
             });
         cost_details
@@ -1485,6 +1529,7 @@ impl BankingStage {
         let mut total_cost_model_throttled_transactions_count: usize = 0;
         let mut total_cost_model_us: u64 = 0;
         let mut total_execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
+        let mut total_error_counters = TransactionErrorMetrics::default();
         let mut reached_max_poh_height = false;
         while chunk_start != transactions.len() {
             let chunk_end = std::cmp::min(
@@ -1518,10 +1563,12 @@ impl BankingStage {
                 retryable_transaction_indexes: new_retryable_transaction_indexes,
                 commit_transactions_result: new_commit_transactions_result,
                 execute_and_commit_timings: new_execute_and_commit_timings,
+                error_counters: new_error_counters,
                 ..
             } = execute_and_commit_transactions_output;
 
             total_execute_and_commit_timings.accumulate(&new_execute_and_commit_timings);
+            total_error_counters.accumulate(&new_error_counters);
             total_transactions_attempted_execution_count =
                 total_transactions_attempted_execution_count
                     .saturating_add(new_transactions_attempted_execution_count);
@@ -1584,6 +1631,7 @@ impl BankingStage {
             cost_model_throttled_transactions_count: total_cost_model_throttled_transactions_count,
             cost_model_us: total_cost_model_us,
             execute_and_commit_timings: total_execute_and_commit_timings,
+            error_counters: total_error_counters,
         }
     }
 
@@ -1641,7 +1689,7 @@ impl BankingStage {
                     return None;
                 }
 
-                let tx: VersionedTransaction = limited_deserialize(&p.data[0..p.meta.size]).ok()?;
+                let tx: VersionedTransaction = p.deserialize_slice(..).ok()?;
                 let message_bytes = Self::packet_message(p)?;
                 let message_hash = Message::hash_raw_message(message_bytes);
                 let tx = SanitizedTransaction::try_create(
@@ -1671,7 +1719,7 @@ impl BankingStage {
         let filter =
             Self::prepare_filter_for_pending_transactions(transactions.len(), pending_indexes);
 
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
         // The following code also checks if the blockhash for a transaction is too old
         // The check accounts for
         //  1. Transaction forwarding delay
@@ -1754,10 +1802,12 @@ impl BankingStage {
 
         let ProcessTransactionsSummary {
             ref retryable_transaction_indexes,
+            ref error_counters,
             ..
         } = process_transactions_summary;
 
         slot_metrics_tracker.accumulate_process_transactions_summary(&process_transactions_summary);
+        slot_metrics_tracker.accumulate_transaction_errors(error_counters);
 
         let retryable_tx_count = retryable_transaction_indexes.len();
         inc_new_counter_info!("banking_stage-unprocessed_transactions", retryable_tx_count);
@@ -2027,11 +2077,11 @@ fn next_leader_x<F>(
 where
     F: FnOnce(&ContactInfo) -> SocketAddr,
 {
-    if let Some(leader_pubkey) = poh_recorder
+    let leader_pubkey = poh_recorder
         .lock()
         .unwrap()
-        .leader_after_n_slots(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET)
-    {
+        .leader_after_n_slots(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET);
+    if let Some(leader_pubkey) = leader_pubkey {
         cluster_info.lookup_contact_info(&leader_pubkey, port_selector)
     } else {
         None
@@ -2057,7 +2107,7 @@ mod tests {
             poh_recorder::{create_test_recorder, Record, WorkingBankEntry},
             poh_service::PohService,
         },
-        solana_program_runtime::timings::ProgramTiming,
+        solana_program_runtime::{invoke_context::Executors, timings::ProgramTiming},
         solana_rpc::transaction_status_service::TransactionStatusService,
         solana_runtime::bank::TransactionExecutionDetails,
         solana_sdk::{
@@ -2073,8 +2123,10 @@ mod tests {
         solana_transaction_status::TransactionWithMetadata,
         solana_vote_program::vote_transaction,
         std::{
+            cell::RefCell,
             net::SocketAddr,
             path::Path,
+            rc::Rc,
             sync::{
                 atomic::{AtomicBool, Ordering},
                 mpsc::Receiver,
@@ -2092,12 +2144,16 @@ mod tests {
     }
 
     fn new_execution_result(status: Result<(), TransactionError>) -> TransactionExecutionResult {
-        TransactionExecutionResult::Executed(TransactionExecutionDetails {
-            status,
-            log_messages: None,
-            inner_instructions: None,
-            durable_nonce_fee: None,
-        })
+        TransactionExecutionResult::Executed {
+            details: TransactionExecutionDetails {
+                status,
+                log_messages: None,
+                inner_instructions: None,
+                durable_nonce_fee: None,
+                executed_units: 0u64,
+            },
+            executors: Rc::new(RefCell::new(Executors::default())),
+        }
     }
 
     #[test]
@@ -2824,6 +2880,132 @@ mod tests {
             let _ = poh_simulator.join();
 
             assert_eq!(bank.get_balance(&pubkey), 1);
+        }
+        Blockstore::destroy(ledger_path.path()).unwrap();
+    }
+
+    #[test]
+    fn test_bank_process_and_record_transactions_cost_tracker() {
+        solana_logger::setup();
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_slow_genesis_config(10_000);
+        let bank = Arc::new(Bank::new_no_wallclock_throttle_for_tests(&genesis_config));
+        let pubkey = solana_sdk::pubkey::new_rand();
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        {
+            let blockstore = Blockstore::open(ledger_path.path())
+                .expect("Expected to be able to open database ledger");
+            let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((4, 4)),
+                bank.ticks_per_slot(),
+                &pubkey,
+                &Arc::new(blockstore),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &Arc::new(PohConfig::default()),
+                Arc::new(AtomicBool::default()),
+            );
+            let recorder = poh_recorder.recorder();
+            let poh_recorder = Arc::new(Mutex::new(poh_recorder));
+
+            let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
+
+            poh_recorder.lock().unwrap().set_bank(&bank);
+            let (gossip_vote_sender, _gossip_vote_receiver) = unbounded();
+
+            let qos_service =
+                Arc::new(QosService::new(Arc::new(RwLock::new(CostModel::default()))));
+
+            let get_block_cost = || bank.read_cost_tracker().unwrap().block_cost();
+            let get_tx_count = || bank.read_cost_tracker().unwrap().transaction_count();
+            assert_eq!(get_block_cost(), 0);
+            assert_eq!(get_tx_count(), 0);
+
+            //
+            // TEST: cost tracker's block cost increases when successfully processing a tx
+            //
+
+            let transactions = sanitize_transactions(vec![system_transaction::transfer(
+                &mint_keypair,
+                &pubkey,
+                1,
+                genesis_config.hash(),
+            )]);
+
+            let process_transactions_batch_output = BankingStage::process_and_record_transactions(
+                &bank,
+                &transactions,
+                &recorder,
+                0,
+                None,
+                &gossip_vote_sender,
+                &qos_service,
+            );
+
+            let ExecuteAndCommitTransactionsOutput {
+                executed_with_successful_result_count,
+                commit_transactions_result,
+                ..
+            } = process_transactions_batch_output.execute_and_commit_transactions_output;
+            assert_eq!(executed_with_successful_result_count, 1);
+            assert!(commit_transactions_result.is_ok());
+
+            let single_transfer_cost = get_block_cost();
+            assert_ne!(single_transfer_cost, 0);
+            assert_eq!(get_tx_count(), 1);
+
+            //
+            // TEST: When a tx in a batch can't be executed (here because of account
+            // locks), then its cost does not affect the cost tracker.
+            //
+
+            let allocate_keypair = Keypair::new();
+            let transactions = sanitize_transactions(vec![
+                system_transaction::transfer(&mint_keypair, &pubkey, 2, genesis_config.hash()),
+                // intentionally use a tx that has a different cost
+                system_transaction::allocate(
+                    &mint_keypair,
+                    &allocate_keypair,
+                    genesis_config.hash(),
+                    1,
+                ),
+            ]);
+
+            let process_transactions_batch_output = BankingStage::process_and_record_transactions(
+                &bank,
+                &transactions,
+                &recorder,
+                0,
+                None,
+                &gossip_vote_sender,
+                &qos_service,
+            );
+
+            let ExecuteAndCommitTransactionsOutput {
+                executed_with_successful_result_count,
+                commit_transactions_result,
+                retryable_transaction_indexes,
+                ..
+            } = process_transactions_batch_output.execute_and_commit_transactions_output;
+            assert_eq!(executed_with_successful_result_count, 1);
+            assert!(commit_transactions_result.is_ok());
+            assert_eq!(retryable_transaction_indexes, vec![1]);
+
+            assert_eq!(get_block_cost(), 2 * single_transfer_cost);
+            assert_eq!(get_tx_count(), 2);
+
+            poh_recorder
+                .lock()
+                .unwrap()
+                .is_exited
+                .store(true, Ordering::Relaxed);
+            let _ = poh_simulator.join();
         }
         Blockstore::destroy(ledger_path.path()).unwrap();
     }
@@ -3961,45 +4143,60 @@ mod tests {
 
     #[test]
     fn test_accumulate_batched_transaction_costs() {
-        let tx_costs = vec![
-            TransactionCost {
-                signature_cost: 1,
-                write_lock_cost: 2,
-                data_bytes_cost: 3,
-                execution_cost: 10,
+        let signature_cost = 1;
+        let write_lock_cost = 2;
+        let data_bytes_cost = 3;
+        let builtins_execution_cost = 4;
+        let bpf_execution_cost = 10;
+        let num_txs = 4;
+
+        let tx_costs: Vec<_> = (0..num_txs)
+            .map(|_| TransactionCost {
+                signature_cost,
+                write_lock_cost,
+                data_bytes_cost,
+                builtins_execution_cost,
+                bpf_execution_cost,
                 ..TransactionCost::default()
-            },
-            TransactionCost {
-                signature_cost: 4,
-                write_lock_cost: 5,
-                data_bytes_cost: 6,
-                execution_cost: 20,
-                ..TransactionCost::default()
-            },
-            TransactionCost {
-                signature_cost: 7,
-                write_lock_cost: 8,
-                data_bytes_cost: 9,
-                execution_cost: 40,
-                ..TransactionCost::default()
-            },
-        ];
-        let tx_results = vec![
-            Ok(()),
-            Ok(()),
-            Err(TransactionError::WouldExceedMaxBlockCostLimit),
-        ];
-        // should only accumulate first two cost that are OK
-        let expected_signatures = 5;
-        let expected_write_locks = 7;
-        let expected_data_bytes = 9;
-        let expected_executions = 30;
-        let cost_details =
+            })
+            .collect();
+        let tx_results: Vec<_> = (0..num_txs)
+            .map(|n| {
+                if n % 2 == 0 {
+                    Ok(())
+                } else {
+                    Err(TransactionError::WouldExceedMaxBlockCostLimit)
+                }
+            })
+            .collect();
+        // should only accumulate half of the costs that are OK
+        let expected_signatures = signature_cost * (num_txs / 2);
+        let expected_write_locks = write_lock_cost * (num_txs / 2);
+        let expected_data_bytes = data_bytes_cost * (num_txs / 2);
+        let expected_builtins_execution_costs = builtins_execution_cost * (num_txs / 2);
+        let expected_bpf_execution_costs = bpf_execution_cost * (num_txs / 2);
+        let batched_transaction_details =
             BankingStage::accumulate_batched_transaction_costs(tx_costs.iter(), tx_results.iter());
-        assert_eq!(expected_signatures, cost_details.batched_signature_cost);
-        assert_eq!(expected_write_locks, cost_details.batched_write_lock_cost);
-        assert_eq!(expected_data_bytes, cost_details.batched_data_bytes_cost);
-        assert_eq!(expected_executions, cost_details.batched_execute_cost);
+        assert_eq!(
+            expected_signatures,
+            batched_transaction_details.batched_signature_cost
+        );
+        assert_eq!(
+            expected_write_locks,
+            batched_transaction_details.batched_write_lock_cost
+        );
+        assert_eq!(
+            expected_data_bytes,
+            batched_transaction_details.batched_data_bytes_cost
+        );
+        assert_eq!(
+            expected_builtins_execution_costs,
+            batched_transaction_details.batched_builtins_execute_cost
+        );
+        assert_eq!(
+            expected_bpf_execution_costs,
+            batched_transaction_details.batched_bpf_execute_cost
+        );
     }
 
     #[test]

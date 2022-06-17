@@ -13,7 +13,7 @@ use {
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
     },
-    crossbeam_channel::unbounded,
+    crossbeam_channel::{self, bounded, unbounded, RecvTimeoutError},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{blockstore::Blockstore, blockstore_processor::TransactionStatusSender},
     solana_poh::poh_recorder::{PohRecorder, WorkingBankEntry},
@@ -35,10 +35,14 @@ use {
             Arc, Mutex, RwLock,
         },
         thread,
+        time::Duration,
     },
 };
 
 pub const DEFAULT_TPU_COALESCE_MS: u64 = 5;
+
+/// Timeout interval when joining threads during TPU close
+const TPU_THREADS_JOIN_TIMEOUT_SECONDS: u64 = 10;
 
 pub struct Tpu {
     fetch_stage: FetchStage,
@@ -91,6 +95,7 @@ impl Tpu {
             &vote_packet_sender,
             poh_recorder,
             tpu_coalesce_ms,
+            Some(bank_forks.read().unwrap().get_vote_only_mode_signal()),
         );
         let (verified_sender, verified_receiver) = unbounded();
 
@@ -105,7 +110,7 @@ impl Tpu {
 
         let sigverify_stage = {
             let verifier = TransactionSigVerifier::default();
-            SigVerifyStage::new(packet_receiver, verified_sender, verifier)
+            SigVerifyStage::new(packet_receiver, verified_sender, verifier, "tpu-verifier")
         };
 
         let (verified_tpu_vote_packets_sender, verified_tpu_vote_packets_receiver) = unbounded();
@@ -116,6 +121,7 @@ impl Tpu {
                 vote_packet_receiver,
                 verified_tpu_vote_packets_sender,
                 verifier,
+                "tpu-vote-verifier",
             )
         };
 
@@ -171,6 +177,22 @@ impl Tpu {
     }
 
     pub fn join(self) -> thread::Result<()> {
+        // spawn a new thread to wait for tpu close
+        let (sender, receiver) = bounded(0);
+        let _ = thread::spawn(move || {
+            let _ = self.do_join();
+            sender.send(()).unwrap();
+        });
+
+        // exit can deadlock. put an upper-bound on how long we wait for it
+        let timeout = Duration::from_secs(TPU_THREADS_JOIN_TIMEOUT_SECONDS);
+        if let Err(RecvTimeoutError::Timeout) = receiver.recv_timeout(timeout) {
+            error!("timeout for closing tvu");
+        }
+        Ok(())
+    }
+
+    fn do_join(self) -> thread::Result<()> {
         let results = vec![
             self.fetch_stage.join(),
             self.sigverify_stage.join(),

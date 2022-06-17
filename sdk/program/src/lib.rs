@@ -19,7 +19,6 @@ pub mod ed25519_program;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
 pub mod epoch_schedule;
-pub mod example_mocks;
 pub mod evm_state;
 pub mod feature;
 pub mod fee_calculator;
@@ -226,6 +225,34 @@ macro_rules! unchecked_div_by_const {
         quotient
     }};
 }
+
+use std::{mem::MaybeUninit, ptr::write_bytes};
+
+#[macro_export]
+macro_rules! copy_field {
+    ($ptr:expr, $self:ident, $field:ident) => {
+        std::ptr::addr_of_mut!((*$ptr).$field).write($self.$field)
+    };
+}
+
+pub fn clone_zeroed<T, F>(clone: F) -> T
+where
+    F: Fn(&mut MaybeUninit<T>),
+{
+    let mut value = MaybeUninit::<T>::uninit();
+    unsafe { write_bytes(&mut value, 0, 1) }
+    clone(&mut value);
+    unsafe { value.assume_init() }
+}
+
+// This module is purposefully listed after all other exports: because of an
+// interaction within rustdoc between the reexports inside this module of
+// `solana_program`'s top-level modules, and `solana_sdk`'s glob re-export of
+// `solana_program`'s top-level modules, if this module is not lexically last
+// rustdoc fails to generate documentation for the re-exports within
+// `solana_sdk`.
+#[cfg(not(target_arch = "bpf"))]
+pub mod example_mocks;
 
 #[cfg(test)]
 mod tests {

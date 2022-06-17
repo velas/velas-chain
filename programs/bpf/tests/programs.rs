@@ -62,8 +62,7 @@ use solana_sdk::{
 };
 use solana_transaction_status::{
     token_balances::collect_token_balances, ConfirmedTransaction, InnerInstructions,
-    TransactionStatusMeta,
-    TransactionWithMetadata,
+    TransactionStatusMeta, TransactionWithMetadata,
 };
 use std::{collections::HashMap, env, fs::File, io::Read, path::PathBuf, str::FromStr, sync::Arc};
 
@@ -111,7 +110,7 @@ fn write_bpf_program(
     program_keypair: &Keypair,
     elf: &[u8],
 ) {
-    let chunk_size = 256; // Size of chunk just needs to fit into tx
+    let chunk_size = 512; // Size of chunk just needs to fit into tx
     let mut offset = 0;
     for chunk in elf.chunks(chunk_size) {
         let instruction =
@@ -373,12 +372,13 @@ fn execute_transactions(
             post_token_balances,
         )| {
             match execution_result {
-                TransactionExecutionResult::Executed(details) => {
+                TransactionExecutionResult::Executed { details, .. } => {
                     let TransactionExecutionDetails {
                         status,
                         log_messages,
                         inner_instructions,
                         durable_nonce_fee,
+                        ..
                     } = details;
 
                     let lamports_per_signature = match durable_nonce_fee {
@@ -1412,20 +1412,20 @@ fn assert_instruction_count() {
     {
         programs.extend_from_slice(&[
             ("solana_bpf_rust_128bit", 584),
-            ("solana_bpf_rust_alloc", 7388),
-            ("solana_bpf_rust_custom_heap", 536),
-            ("solana_bpf_rust_dep_crate", 47),
-            ("solana_bpf_rust_external_spend", 507),
-            ("solana_bpf_rust_iter", 824),
+            ("solana_bpf_rust_alloc", 4459),
+            ("solana_bpf_rust_custom_heap", 469),
+            ("solana_bpf_rust_dep_crate", 2),
+            ("solana_bpf_rust_external_spend", 338),
+            ("solana_bpf_rust_iter", 108),
             ("solana_bpf_rust_many_args", 1289),
-            ("solana_bpf_rust_mem", 5997),
-            ("solana_bpf_rust_membuiltins", 3976),
-            ("solana_bpf_rust_noop", 481),
+            ("solana_bpf_rust_mem", 2118),
+            ("solana_bpf_rust_membuiltins", 1539),
+            ("solana_bpf_rust_noop", 326),
             ("solana_bpf_rust_param_passing", 146),
-            ("solana_bpf_rust_rand", 488),
-            ("solana_bpf_rust_sanity", 9128),
-            ("solana_bpf_rust_secp256k1_recover", 25889),
-            ("solana_bpf_rust_sha", 30692),
+            ("solana_bpf_rust_rand", 429),
+            ("solana_bpf_rust_sanity", 52290),
+            ("solana_bpf_rust_secp256k1_recover", 25707),
+            ("solana_bpf_rust_sha", 26384),
         ]);
     }
 

@@ -10,7 +10,7 @@ use {
         },
         log_collector::LogCollector,
         sysvar_cache::SysvarCache,
-        timings::ExecuteTimings,
+        timings::{ExecuteDetailsTimings, ExecuteTimings},
     },
     solana_sdk::{
         account::WritableAccount,
@@ -71,6 +71,7 @@ impl MessageProcessor {
         blockhash: Hash,
         lamports_per_signature: u64,
         current_accounts_data_len: u64,
+        accumulated_consumed_units: &mut u64,
         evm_executor: Option<Rc<RefCell<evm_state::Executor>>>,
     ) -> Result<ProcessedMessageInfo, TransactionError> {
         let mut invoke_context = InvokeContext::new(
@@ -135,13 +136,18 @@ impl MessageProcessor {
                 timings,
             );
             time.stop();
+            *accumulated_consumed_units =
+                accumulated_consumed_units.saturating_add(compute_units_consumed);
             timings.details.accumulate_program(
                 program_id,
                 time.as_us(),
                 compute_units_consumed,
                 result.is_err(),
             );
-            timings.details.accumulate(&invoke_context.timings);
+            invoke_context.timings = {
+                timings.details.accumulate(&invoke_context.timings);
+                ExecuteDetailsTimings::default()
+            };
             saturating_add_assign!(
                 timings.execute_accessories.process_instructions.total_us,
                 time.as_us()
@@ -282,6 +288,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &mut 0,
             None,
         );
         assert!(result.is_ok());
@@ -313,6 +320,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &mut 0,
             None,
         );
         assert_eq!(
@@ -348,6 +356,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &mut 0,
             None,
         );
         assert_eq!(
@@ -495,6 +504,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &mut 0,
             None,
         );
         assert_eq!(
@@ -530,6 +540,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &mut 0,
             None,
         );
         assert!(result.is_ok());
@@ -562,6 +573,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &mut 0,
             None,
         );
         assert!(result.is_ok());
@@ -621,8 +633,10 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &mut 0,
             None,
         );
+
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(

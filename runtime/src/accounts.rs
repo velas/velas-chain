@@ -1,9 +1,10 @@
 use {
     crate::{
+        account_overrides::AccountOverrides,
         account_rent_state::{check_rent_state, RentState},
         accounts_db::{
             AccountShrinkThreshold, AccountsAddRootTiming, AccountsDb, AccountsDbConfig,
-            BankHashInfo, ErrorCounters, LoadHint, LoadedAccount, ScanStorageResult,
+            BankHashInfo, LoadHint, LoadedAccount, ScanStorageResult,
             ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
         },
         accounts_index::{AccountSecondaryIndexes, IndexKey, ScanConfig, ScanError, ScanResult},
@@ -16,6 +17,7 @@ use {
         blockhash_queue::BlockhashQueue,
         rent_collector::RentCollector,
         system_instruction_processor::{get_system_account_kind, SystemAccountKind},
+        transaction_error_metrics::TransactionErrorMetrics,
     },
     dashmap::{
         mapref::entry::Entry::{Occupied, Vacant},
@@ -38,7 +40,10 @@ use {
             SanitizedMessage,
         },
         native_loader,
-        nonce::{state::Versions as NonceVersions, State as NonceState},
+        nonce::{
+            state::{DurableNonce, Versions as NonceVersions},
+            State as NonceState,
+        },
         pubkey::Pubkey,
         system_program,
         sysvar::{self, instructions::construct_instructions_data, slot_hashes::SlotHashes},
@@ -271,9 +276,10 @@ impl Accounts {
         ancestors: &Ancestors,
         tx: &SanitizedTransaction,
         fee: u64,
-        error_counters: &mut ErrorCounters,
+        error_counters: &mut TransactionErrorMetrics,
         rent_collector: &RentCollector,
         feature_set: &FeatureSet,
+        account_overrides: Option<&AccountOverrides>,
     ) -> Result<LoadedTransaction> {
         // Copy all the accounts
         let message = tx.message();
@@ -305,25 +311,30 @@ impl Accounts {
                                 .is_active(&feature_set::instructions_sysvar_owned_by_sysvar::id()),
                         )
                     } else {
-                        let (account, rent) = self
-                            .accounts_db
-                            .load_with_fixed_root(ancestors, key)
-                            .map(|(mut account, _)| {
-                                if message.is_writable(i) {
-                                    let rent_due = rent_collector
-                                        .collect_from_existing_account(
-                                            key,
-                                            &mut account,
-                                            rent_for_sysvars,
-                                            self.accounts_db.filler_account_suffix.as_ref(),
-                                        )
-                                        .rent_amount;
-                                    (account, rent_due)
-                                } else {
-                                    (account, 0)
-                                }
-                            })
-                            .unwrap_or_default();
+                        let (account, rent) = if let Some(account_override) =
+                            account_overrides.and_then(|overrides| overrides.get(key))
+                        {
+                            (account_override.clone(), 0)
+                        } else {
+                            self.accounts_db
+                                .load_with_fixed_root(ancestors, key)
+                                .map(|(mut account, _)| {
+                                    if message.is_writable(i) {
+                                        let rent_due = rent_collector
+                                            .collect_from_existing_account(
+                                                key,
+                                                &mut account,
+                                                rent_for_sysvars,
+                                                self.accounts_db.filler_account_suffix.as_ref(),
+                                            )
+                                            .rent_amount;
+                                        (account, rent_due)
+                                    } else {
+                                        (account, 0)
+                                    }
+                                })
+                                .unwrap_or_default()
+                        };
 
                         if bpf_loader_upgradeable::check_id(account.owner()) {
                             if message.is_writable(i) && !message.is_upgradeable_loader_present() {
@@ -450,7 +461,7 @@ impl Accounts {
         ancestors: &Ancestors,
         accounts: &mut Vec<(Pubkey, AccountSharedData)>,
         mut program_account_index: usize,
-        error_counters: &mut ErrorCounters,
+        error_counters: &mut TransactionErrorMetrics,
     ) -> Result<Vec<usize>> {
         let mut account_indices = Vec::new();
         let mut program_id = accounts[program_account_index].0;
@@ -517,16 +528,18 @@ impl Accounts {
         Ok(account_indices)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn load_accounts(
         &self,
         ancestors: &Ancestors,
         txs: &[SanitizedTransaction],
         lock_results: Vec<TransactionCheckResult>,
         hash_queue: &BlockhashQueue,
-        error_counters: &mut ErrorCounters,
+        error_counters: &mut TransactionErrorMetrics,
         rent_collector: &RentCollector,
         feature_set: &FeatureSet,
         fee_structure: &FeeStructure,
+        account_overrides: Option<&AccountOverrides>,
     ) -> Vec<TransactionLoadResult> {
         txs.iter()
             .zip(lock_results)
@@ -556,6 +569,7 @@ impl Accounts {
                         error_counters,
                         rent_collector,
                         feature_set,
+                        account_overrides,
                     ) {
                         Ok(loaded_transaction) => loaded_transaction,
                         Err(e) => return (Err(e), None),
@@ -1033,14 +1047,14 @@ impl Accounts {
     pub fn lock_accounts_with_results<'a>(
         &self,
         txs: impl Iterator<Item = &'a SanitizedTransaction>,
-        results: impl Iterator<Item = Result<()>>,
+        results: impl Iterator<Item = &'a Result<()>>,
         feature_set: &FeatureSet,
     ) -> Vec<Result<()>> {
         let tx_account_locks_results: Vec<Result<_>> = txs
             .zip(results)
             .map(|(tx, result)| match result {
                 Ok(()) => tx.get_account_locks(feature_set),
-                Err(err) => Err(err),
+                Err(err) => Err(err.clone()),
             })
             .collect();
         self.lock_accounts_inner(tx_account_locks_results)
@@ -1103,7 +1117,7 @@ impl Accounts {
         res: &'a [TransactionExecutionResult],
         loaded: &'a mut [TransactionLoadResult],
         rent_collector: &RentCollector,
-        blockhash: &Hash,
+        durable_nonce: &(DurableNonce, /*separate_domains:*/ bool),
         lamports_per_signature: u64,
         rent_for_sysvars: bool,
         leave_nonce_on_success: bool,
@@ -1113,7 +1127,7 @@ impl Accounts {
             res,
             loaded,
             rent_collector,
-            blockhash,
+            durable_nonce,
             lamports_per_signature,
             rent_for_sysvars,
             leave_nonce_on_success,
@@ -1140,7 +1154,7 @@ impl Accounts {
         execution_results: &'a [TransactionExecutionResult],
         load_results: &'a mut [TransactionLoadResult],
         rent_collector: &RentCollector,
-        blockhash: &Hash,
+        durable_nonce: &(DurableNonce, /*separate_domains:*/ bool),
         lamports_per_signature: u64,
         rent_for_sysvars: bool,
         leave_nonce_on_success: bool,
@@ -1153,7 +1167,7 @@ impl Accounts {
             }
 
             let execution_status = match &execution_results[i] {
-                TransactionExecutionResult::Executed(details) => &details.status,
+                TransactionExecutionResult::Executed { details, .. } => &details.status,
                 // Don't store any accounts if tx wasn't executed
                 TransactionExecutionResult::NotExecuted(_) => continue,
             };
@@ -1195,7 +1209,7 @@ impl Accounts {
                         execution_status,
                         is_fee_payer,
                         maybe_nonce,
-                        blockhash,
+                        durable_nonce,
                         lamports_per_signature,
                     );
 
@@ -1222,13 +1236,13 @@ impl Accounts {
     }
 }
 
-pub fn prepare_if_nonce_account<'a>(
+fn prepare_if_nonce_account<'a>(
     address: &Pubkey,
     account: &mut AccountSharedData,
     execution_result: &Result<()>,
     is_fee_payer: bool,
     maybe_nonce: Option<(&'a NonceFull, bool)>,
-    blockhash: &Hash,
+    &(durable_nonce, separate_domains): &(DurableNonce, bool),
     lamports_per_signature: u64,
 ) -> bool {
     if let Some((nonce, rollback)) = maybe_nonce {
@@ -1247,17 +1261,15 @@ pub fn prepare_if_nonce_account<'a>(
             //
             // Since we know we are dealing with a valid nonce account,
             // unwrap is safe here
-            let state = StateMut::<NonceVersions>::state(nonce.account())
-                .unwrap()
-                .convert_to_current();
-            if let NonceState::Initialized(ref data) = state {
-                account
-                    .set_state(&NonceVersions::new_current(NonceState::new_initialized(
-                        &data.authority,
-                        blockhash,
-                        lamports_per_signature,
-                    )))
-                    .unwrap();
+            let nonce_versions = StateMut::<NonceVersions>::state(nonce.account()).unwrap();
+            if let NonceState::Initialized(ref data) = nonce_versions.state() {
+                let nonce_state = NonceState::new_initialized(
+                    &data.authority,
+                    durable_nonce,
+                    lamports_per_signature,
+                );
+                let nonce_versions = NonceVersions::new(nonce_state, separate_domains);
+                account.set_state(&nonce_versions).unwrap();
             }
             true
         } else {
@@ -1310,7 +1322,9 @@ mod tests {
             bank::{DurableNonceFee, TransactionExecutionDetails},
             rent_collector::RentCollector,
         },
+        assert_matches::assert_matches,
         solana_address_lookup_table_program::state::LookupTableMeta,
+        solana_program_runtime::invoke_context::Executors,
         solana_sdk::{
             account::{AccountSharedData, WritableAccount},
             epoch_schedule::EpochSchedule,
@@ -1326,7 +1340,9 @@ mod tests {
         },
         std::{
             borrow::Cow,
+            cell::RefCell,
             convert::TryFrom,
+            rc::Rc,
             sync::atomic::{AtomicBool, AtomicU64, Ordering},
             thread, time,
         },
@@ -1348,12 +1364,16 @@ mod tests {
         status: Result<()>,
         nonce: Option<&NonceFull>,
     ) -> TransactionExecutionResult {
-        TransactionExecutionResult::Executed(TransactionExecutionDetails {
-            status,
-            log_messages: None,
-            inner_instructions: None,
-            durable_nonce_fee: nonce.map(DurableNonceFee::from),
-        })
+        TransactionExecutionResult::Executed {
+            details: TransactionExecutionDetails {
+                status,
+                log_messages: None,
+                inner_instructions: None,
+                durable_nonce_fee: nonce.map(DurableNonceFee::from),
+                executed_units: 0u64,
+            },
+            executors: Rc::new(RefCell::new(Executors::default())),
+        }
     }
 
     fn load_accounts_with_fee_and_rent(
@@ -1361,7 +1381,7 @@ mod tests {
         ka: &[(Pubkey, AccountSharedData)],
         lamports_per_signature: u64,
         rent_collector: &RentCollector,
-        error_counters: &mut ErrorCounters,
+        error_counters: &mut TransactionErrorMetrics,
         feature_set: &FeatureSet,
         fee_structure: &FeeStructure,
     ) -> Vec<TransactionLoadResult> {
@@ -1389,6 +1409,7 @@ mod tests {
             rent_collector,
             feature_set,
             fee_structure,
+            None,
         )
     }
 
@@ -1396,7 +1417,7 @@ mod tests {
         tx: Transaction,
         ka: &[(Pubkey, AccountSharedData)],
         lamports_per_signature: u64,
-        error_counters: &mut ErrorCounters,
+        error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionLoadResult> {
         load_accounts_with_fee_and_rent(
             tx,
@@ -1412,7 +1433,7 @@ mod tests {
     fn load_accounts(
         tx: Transaction,
         ka: &[(Pubkey, AccountSharedData)],
-        error_counters: &mut ErrorCounters,
+        error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionLoadResult> {
         load_accounts_with_fee(tx, ka, 0, error_counters)
     }
@@ -1473,7 +1494,7 @@ mod tests {
     #[test]
     fn test_load_accounts_no_account_0_exists() {
         let accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
 
@@ -1499,7 +1520,7 @@ mod tests {
     #[test]
     fn test_load_accounts_unknown_program_id() {
         let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
         let key0 = keypair.pubkey();
@@ -1533,7 +1554,7 @@ mod tests {
     #[test]
     fn test_load_accounts_insufficient_funds() {
         let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
         let key0 = keypair.pubkey();
@@ -1571,7 +1592,7 @@ mod tests {
     #[test]
     fn test_load_accounts_invalid_account_for_fee() {
         let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
         let key0 = keypair.pubkey();
@@ -1600,7 +1621,7 @@ mod tests {
 
     #[test]
     fn test_load_accounts_fee_payer_is_nonce() {
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
         let mut feature_set = FeatureSet::all_enabled();
         feature_set.deactivate(&tx_wide_compute_cap::id());
         let rent_collector = RentCollector::new(
@@ -1618,7 +1639,10 @@ mod tests {
             nonce.pubkey(),
             AccountSharedData::new_data(
                 min_balance * 2,
-                &NonceVersions::new_current(NonceState::Initialized(nonce::state::Data::default())),
+                &NonceVersions::new(
+                    NonceState::Initialized(nonce::state::Data::default()),
+                    true, // separate_domains
+                ),
                 &system_program::id(),
             )
             .unwrap(),
@@ -1681,7 +1705,7 @@ mod tests {
     #[test]
     fn test_load_accounts_no_loaders() {
         let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
         let key0 = keypair.pubkey();
@@ -1722,7 +1746,7 @@ mod tests {
     #[test]
     fn test_load_accounts_max_call_depth() {
         let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
         let key0 = keypair.pubkey();
@@ -1788,7 +1812,7 @@ mod tests {
     #[test]
     fn test_load_accounts_bad_owner() {
         let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
         let key0 = keypair.pubkey();
@@ -1823,7 +1847,7 @@ mod tests {
     #[test]
     fn test_load_accounts_not_executable() {
         let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
         let key0 = keypair.pubkey();
@@ -1857,7 +1881,7 @@ mod tests {
     #[test]
     fn test_load_accounts_multiple_loaders() {
         let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
         let key0 = keypair.pubkey();
@@ -2096,7 +2120,7 @@ mod tests {
     #[test]
     fn test_load_accounts_executable_with_write_lock() {
         let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
         let key0 = keypair.pubkey();
@@ -2152,7 +2176,7 @@ mod tests {
     #[test]
     fn test_load_accounts_upgradeable_with_write_lock() {
         let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
         let key0 = keypair.pubkey();
@@ -2249,7 +2273,7 @@ mod tests {
     #[test]
     fn test_load_accounts_programdata_with_write_lock() {
         let mut accounts: Vec<(Pubkey, AccountSharedData)> = Vec::new();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
 
         let keypair = Keypair::new();
         let key0 = keypair.pubkey();
@@ -2338,7 +2362,7 @@ mod tests {
             false,
             AccountShrinkThreshold::default(),
         );
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
         let ancestors = vec![(0, 0)].into_iter().collect();
 
         let keypair = Keypair::new();
@@ -2797,7 +2821,7 @@ mod tests {
 
         let results = accounts.lock_accounts_with_results(
             txs.iter(),
-            qos_results.into_iter(),
+            qos_results.iter(),
             &FeatureSet::all_enabled(),
         );
 
@@ -2926,7 +2950,7 @@ mod tests {
             &execution_results,
             loaded.as_mut_slice(),
             &rent_collector,
-            &Hash::default(),
+            &(DurableNonce::default(), /*separate_domains:*/ true),
             0,
             true,
             true, // leave_nonce_on_success
@@ -2981,14 +3005,18 @@ mod tests {
         accounts.accounts_db.clean_accounts(None, false, None);
     }
 
-    fn load_accounts_no_store(accounts: &Accounts, tx: Transaction) -> Vec<TransactionLoadResult> {
+    fn load_accounts_no_store(
+        accounts: &Accounts,
+        tx: Transaction,
+        account_overrides: Option<&AccountOverrides>,
+    ) -> Vec<TransactionLoadResult> {
         let tx = SanitizedTransaction::from_transaction_for_tests(tx);
         let rent_collector = RentCollector::default();
         let mut hash_queue = BlockhashQueue::new(100);
         hash_queue.register_hash(tx.message().recent_blockhash(), 10);
 
         let ancestors = vec![(0, 0)].into_iter().collect();
-        let mut error_counters = ErrorCounters::default();
+        let mut error_counters = TransactionErrorMetrics::default();
         accounts.load_accounts(
             &ancestors,
             &[tx],
@@ -2998,6 +3026,7 @@ mod tests {
             &rent_collector,
             &FeatureSet::all_enabled(),
             &FeeStructure::default(),
+            account_overrides,
         )
     }
 
@@ -3023,29 +3052,69 @@ mod tests {
             instructions,
         );
 
-        let loaded_accounts = load_accounts_no_store(&accounts, tx);
+        let loaded_accounts = load_accounts_no_store(&accounts, tx, None);
         assert_eq!(loaded_accounts.len(), 1);
         assert!(loaded_accounts[0].0.is_err());
+    }
+
+    #[test]
+    fn test_overrides() {
+        solana_logger::setup();
+        let accounts = Accounts::new_with_config_for_tests(
+            Vec::new(),
+            &ClusterType::Development,
+            AccountSecondaryIndexes::default(),
+            false,
+            AccountShrinkThreshold::default(),
+        );
+        let mut account_overrides = AccountOverrides::default();
+        let slot_history_id = sysvar::slot_history::id();
+        let account = AccountSharedData::new(42, 0, &Pubkey::default());
+        account_overrides.set_slot_history(Some(account));
+
+        let keypair = Keypair::new();
+        let account = AccountSharedData::new(1_000_000, 0, &Pubkey::default());
+        accounts.store_slow_uncached(0, &keypair.pubkey(), &account);
+
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0])];
+        let tx = Transaction::new_with_compiled_instructions(
+            &[&keypair],
+            &[slot_history_id],
+            Hash::default(),
+            vec![native_loader::id()],
+            instructions,
+        );
+
+        let loaded_accounts = load_accounts_no_store(&accounts, tx, Some(&account_overrides));
+        assert_eq!(loaded_accounts.len(), 1);
+        let loaded_transaction = loaded_accounts[0].0.as_ref().unwrap();
+        assert_eq!(loaded_transaction.accounts[0].0, keypair.pubkey());
+        assert_eq!(loaded_transaction.accounts[1].0, slot_history_id);
+        assert_eq!(loaded_transaction.accounts[1].1.lamports(), 42);
     }
 
     fn create_accounts_prepare_if_nonce_account() -> (
         Pubkey,
         AccountSharedData,
         AccountSharedData,
-        Hash,
+        (DurableNonce, /*separate_domains:*/ bool),
         u64,
         Option<AccountSharedData>,
     ) {
-        let data =
-            NonceVersions::new_current(NonceState::Initialized(nonce::state::Data::default()));
+        let data = NonceVersions::new(
+            NonceState::Initialized(nonce::state::Data::default()),
+            true, // separate_domains
+        );
         let account = AccountSharedData::new_data(42, &data, &system_program::id()).unwrap();
         let mut pre_account = account.clone();
         pre_account.set_lamports(43);
+        let durable_nonce =
+            DurableNonce::from_blockhash(&Hash::new(&[1u8; 32]), /*separate_domains:*/ true);
         (
             Pubkey::default(),
             pre_account,
             account,
-            Hash::new(&[1u8; 32]),
+            (durable_nonce, /*separate_domains:*/ true),
             1234,
             None,
         )
@@ -3057,7 +3126,7 @@ mod tests {
         tx_result: &Result<()>,
         is_fee_payer: bool,
         maybe_nonce: Option<(&NonceFull, bool)>,
-        blockhash: &Hash,
+        durable_nonce: &(DurableNonce, /*separate_domains:*/ bool),
         lamports_per_signature: u64,
         expect_account: &AccountSharedData,
     ) -> bool {
@@ -3077,7 +3146,7 @@ mod tests {
             tx_result,
             is_fee_payer,
             maybe_nonce,
-            blockhash,
+            durable_nonce,
             lamports_per_signature,
         );
         assert_eq!(expect_account, account);
@@ -3103,9 +3172,14 @@ mod tests {
 
         let mut expect_account = pre_account;
         expect_account
-            .set_state(&NonceVersions::new_current(NonceState::Initialized(
-                nonce::state::Data::new(Pubkey::default(), blockhash, lamports_per_signature),
-            )))
+            .set_state(&NonceVersions::new(
+                NonceState::Initialized(nonce::state::Data::new(
+                    Pubkey::default(),
+                    blockhash.0,
+                    lamports_per_signature,
+                )),
+                true, // separate_domains
+            ))
             .unwrap();
 
         assert!(run_prepare_if_nonce_account_test(
@@ -3189,9 +3263,14 @@ mod tests {
         let nonce = NonceFull::new(pre_account_address, pre_account, maybe_fee_payer_account);
 
         expect_account
-            .set_state(&NonceVersions::new_current(NonceState::Initialized(
-                nonce::state::Data::new(Pubkey::default(), blockhash, lamports_per_signature),
-            )))
+            .set_state(&NonceVersions::new(
+                NonceState::Initialized(nonce::state::Data::new(
+                    Pubkey::default(),
+                    blockhash.0,
+                    lamports_per_signature,
+                )),
+                true, // separate_domains
+            ))
             .unwrap();
 
         assert!(run_prepare_if_nonce_account_test(
@@ -3231,7 +3310,7 @@ mod tests {
             )),
             false,
             Some((&nonce, true)),
-            &Hash::default(),
+            &(DurableNonce::default(), /*separate_domains:*/ true),
             1,
             &post_fee_payer_account.clone(),
         ));
@@ -3242,7 +3321,7 @@ mod tests {
             &Ok(()),
             true,
             Some((&nonce, true)),
-            &Hash::default(),
+            &(DurableNonce::default(), /*separate_domains:*/ true),
             1,
             &post_fee_payer_account.clone(),
         ));
@@ -3256,7 +3335,7 @@ mod tests {
             )),
             true,
             None,
-            &Hash::default(),
+            &(DurableNonce::default(), /*separate_domains:*/ true),
             1,
             &post_fee_payer_account.clone(),
         ));
@@ -3270,7 +3349,7 @@ mod tests {
             )),
             true,
             Some((&nonce, true)),
-            &Hash::default(),
+            &(DurableNonce::default(), /*separate_domains:*/ true),
             1,
             &pre_fee_payer_account,
         ));
@@ -3285,9 +3364,16 @@ mod tests {
         let from = keypair_from_seed(&[1; 32]).unwrap();
         let from_address = from.pubkey();
         let to_address = Pubkey::new_unique();
-        let nonce_state = NonceVersions::new_current(NonceState::Initialized(
-            nonce::state::Data::new(nonce_authority.pubkey(), Hash::new_unique(), 0),
-        ));
+        let durable_nonce =
+            DurableNonce::from_blockhash(&Hash::new_unique(), /*separate_domains:*/ true);
+        let nonce_state = NonceVersions::new(
+            NonceState::Initialized(nonce::state::Data::new(
+                nonce_authority.pubkey(),
+                durable_nonce,
+                0,
+            )),
+            true, // separate_domains
+        );
         let nonce_account_post =
             AccountSharedData::new_data(43, &nonce_state, &system_program::id()).unwrap();
         let from_account_post = AccountSharedData::new(4199, 0, &Pubkey::default());
@@ -3310,9 +3396,16 @@ mod tests {
         ];
         let tx = new_sanitized_tx(&[&nonce_authority, &from], message, blockhash);
 
-        let nonce_state = NonceVersions::new_current(NonceState::Initialized(
-            nonce::state::Data::new(nonce_authority.pubkey(), Hash::new_unique(), 0),
-        ));
+        let durable_nonce =
+            DurableNonce::from_blockhash(&Hash::new_unique(), /*separate_domains:*/ true);
+        let nonce_state = NonceVersions::new(
+            NonceState::Initialized(nonce::state::Data::new(
+                nonce_authority.pubkey(),
+                durable_nonce,
+                0,
+            )),
+            true, // separate_domains
+        );
         let nonce_account_pre =
             AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
         let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
@@ -3335,7 +3428,8 @@ mod tests {
 
         let mut loaded = vec![loaded];
 
-        let next_blockhash = Hash::new_unique();
+        let durable_nonce =
+            DurableNonce::from_blockhash(&Hash::new_unique(), /*separate_domains:*/ true);
         let accounts = Accounts::new_with_config_for_tests(
             Vec::new(),
             &ClusterType::Development,
@@ -3356,7 +3450,7 @@ mod tests {
             &execution_results,
             loaded.as_mut_slice(),
             &rent_collector,
-            &next_blockhash,
+            &(durable_nonce, /*separate_domains:*/ true),
             0,
             true,
             true, // leave_nonce_on_success
@@ -3381,10 +3475,14 @@ mod tests {
             collected_nonce_account.lamports(),
             nonce_account_pre.lamports(),
         );
-        assert!(nonce_account::verify_nonce_account(
-            &collected_nonce_account,
-            &next_blockhash
-        ));
+        assert_matches!(
+            nonce_account::verify_nonce_account(
+                &collected_nonce_account,
+                durable_nonce.as_hash(),
+                true, // separate_domins
+            ),
+            Some(_)
+        );
     }
 
     #[test]
@@ -3396,9 +3494,16 @@ mod tests {
         let from = keypair_from_seed(&[1; 32]).unwrap();
         let from_address = from.pubkey();
         let to_address = Pubkey::new_unique();
-        let nonce_state = NonceVersions::new_current(NonceState::Initialized(
-            nonce::state::Data::new(nonce_authority.pubkey(), Hash::new_unique(), 0),
-        ));
+        let durable_nonce =
+            DurableNonce::from_blockhash(&Hash::new_unique(), /*separate_domains:*/ true);
+        let nonce_state = NonceVersions::new(
+            NonceState::Initialized(nonce::state::Data::new(
+                nonce_authority.pubkey(),
+                durable_nonce,
+                0,
+            )),
+            true, // separate_domains
+        );
         let nonce_account_post =
             AccountSharedData::new_data(43, &nonce_state, &system_program::id()).unwrap();
         let from_account_post = AccountSharedData::new(4200, 0, &Pubkey::default());
@@ -3421,9 +3526,16 @@ mod tests {
         ];
         let tx = new_sanitized_tx(&[&nonce_authority, &from], message, blockhash);
 
-        let nonce_state = NonceVersions::new_current(NonceState::Initialized(
-            nonce::state::Data::new(nonce_authority.pubkey(), Hash::new_unique(), 0),
-        ));
+        let durable_nonce =
+            DurableNonce::from_blockhash(&Hash::new_unique(), /*separate_domains:*/ true);
+        let nonce_state = NonceVersions::new(
+            NonceState::Initialized(nonce::state::Data::new(
+                nonce_authority.pubkey(),
+                durable_nonce,
+                0,
+            )),
+            true, // separate_domains
+        );
         let nonce_account_pre =
             AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
 
@@ -3445,7 +3557,8 @@ mod tests {
 
         let mut loaded = vec![loaded];
 
-        let next_blockhash = Hash::new_unique();
+        let durable_nonce =
+            DurableNonce::from_blockhash(&Hash::new_unique(), /*separate_domains:*/ true);
         let accounts = Accounts::new_with_config_for_tests(
             Vec::new(),
             &ClusterType::Development,
@@ -3466,7 +3579,7 @@ mod tests {
             &execution_results,
             loaded.as_mut_slice(),
             &rent_collector,
-            &next_blockhash,
+            &(durable_nonce, /*separate_domains:*/ true),
             0,
             true,
             true, // leave_nonce_on_success
@@ -3482,10 +3595,14 @@ mod tests {
             collected_nonce_account.lamports(),
             nonce_account_pre.lamports()
         );
-        assert!(nonce_account::verify_nonce_account(
-            &collected_nonce_account,
-            &next_blockhash
-        ));
+        assert_matches!(
+            nonce_account::verify_nonce_account(
+                &collected_nonce_account,
+                durable_nonce.as_hash(),
+                true, // separate_domins
+            ),
+            Some(_)
+        );
     }
 
     #[test]

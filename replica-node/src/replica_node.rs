@@ -47,6 +47,7 @@ pub struct ReplicaNodeConfig {
     pub ledger_path: PathBuf,
     pub snapshot_archives_dir: PathBuf,
     pub bank_snapshots_dir: PathBuf,
+    pub evm_state_path: PathBuf,
     pub account_paths: Vec<PathBuf>,
     pub snapshot_info: (Slot, Hash),
     pub cluster_info: Arc<ClusterInfo>,
@@ -118,6 +119,9 @@ fn initialize_from_snapshot(
         &snapshot_config.bank_snapshots_dir
     );
     let (bank0, _) = snapshot_utils::bank_from_snapshot_archives(
+        &replica_config.evm_state_path,
+        None,
+        false, // verify evm state
         &replica_config.account_paths,
         &snapshot_config.bank_snapshots_dir,
         &archive_info,
@@ -247,6 +251,7 @@ fn start_client_rpc_services(
             max_slots,
             leader_schedule_cache.clone(),
             max_complete_transaction_status_slot,
+            None,
         )),
         Some(pubsub_service),
         Some(OptimisticallyConfirmedBankTracker::new(

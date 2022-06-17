@@ -887,10 +887,17 @@ pub fn main() {
                 .long("maximum-local-snapshot-age")
                 .value_name("NUMBER_OF_SLOTS")
                 .takes_value(true)
-                .default_value("500")
+                .default_value("2500")
                 .help("Reuse a local snapshot if it's less than this many \
                        slots behind the highest snapshot available for \
                        download from other validators"),
+        )
+        .arg(
+            // NOP arg for forward compatibility with ISS on-by-default in v1.10
+            Arg::with_name("no_incremental_snapshots")
+                .long("no-incremental-snapshots")
+                .hidden(true)
+                .conflicts_with("incremental_snapshots")
         )
         .arg(
             Arg::with_name("incremental_snapshots")
@@ -1127,6 +1134,7 @@ pub fn main() {
                 .alias("no-untrusted-rpc")
                 .long("only-known-rpc")
                 .takes_value(false)
+                .requires("known_validators")
                 .help("Use the RPC service of known validators only")
         )
         .arg(

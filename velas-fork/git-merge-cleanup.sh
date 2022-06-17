@@ -44,13 +44,14 @@ keep_ours_file="$current_folder/velas-rewrite"
 # Removes js related stuf
 git rm -rf explorer web3.js docs
 
-git checkout --ours --pathspec-from-file c
+# git checkout --ours --pathspec-from-file c
 
 # Now save all files that was modified in remote but wasnt in our local
 # Filter out changes from file that wasn't touched by velas changes
 
 for file in $(comm -23 $remote_changes $velas_changes)
 do
+echo "Adding file $file from remote"
 # its okay that this commands can not find some files, because its can be marked as already fixed
 git checkout --theirs -- $file
 git add $file
