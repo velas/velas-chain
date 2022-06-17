@@ -7,7 +7,7 @@ pub struct Cli {
     pub command: Commands,
 
     /// Overrides "GOOGLE_APPLICATION_CREDENTIALS" environment variable value with provided creds file
-    #[clap(long, value_name = "FILE_PATH")]
+    #[clap(long, value_name = "FILE_PATH", value_hint = clap::ValueHint::FilePath)]
     pub creds: Option<String>,
 
     /// Bigtable Instance
@@ -50,7 +50,7 @@ pub enum Commands {
         last: u64,
 
         /// RPC address of archive node used for restoring EVM Header
-        #[clap(long, value_name = "URL")]
+        #[clap(long, value_name = "URL", value_hint = clap::ValueHint::Url)]
         archive_url: String,
 
         /// Write restored blocks to Ledger Storage
@@ -62,7 +62,7 @@ pub enum Commands {
         force_resume: bool,
 
         /// Writes restored EVM Blocks as JSON file to directory if set
-        #[clap(short, long, value_name = "DIR")]
+        #[clap(short, long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
         output_dir: Option<String>,
     },
 
@@ -83,7 +83,7 @@ pub enum Commands {
     /// Uploads blocks to Bigtable from .json file
     Upload {
         /// Path to file with JSON collection of EVM blocks
-        #[clap(short, long, value_name = "FILE_PATH")]
+        #[clap(short, long, value_name = "FILE_PATH", value_hint = clap::ValueHint::FilePath)]
         collection: String,
     },
 
@@ -98,7 +98,7 @@ pub enum Commands {
         limit: u64,
 
         /// Google credentials JSON filepath of the Source Ledger
-        #[clap(long, value_name = "FILE_PATH")]
+        #[clap(long, value_name = "FILE_PATH", value_hint = clap::ValueHint::FilePath)]
         src_creds: String,
 
         /// Source Ledger Instance
@@ -106,7 +106,7 @@ pub enum Commands {
         src_instance: String,
 
         /// Google credentials JSON filepath of the Destination Ledger
-        #[clap(long, value_name = "FILE_PATH")]
+        #[clap(long, value_name = "FILE_PATH", value_hint = clap::ValueHint::FilePath)]
         dst_creds: String,
 
         /// Destination Ledger Instance
@@ -125,7 +125,7 @@ pub enum Commands {
         limit: u64,
 
         /// Google credentials JSON filepath of the Source Ledger
-        #[clap(long, value_name = "FILE_PATH")]
+        #[clap(long, value_name = "FILE_PATH", value_hint = clap::ValueHint::FilePath)]
         src_creds: String,
 
         /// Source Ledger Instance
@@ -133,7 +133,7 @@ pub enum Commands {
         src_instance: String,
 
         /// Google credentials JSON filepath of the Destination Ledger
-        #[clap(long, value_name = "FILE_PATH")]
+        #[clap(long, value_name = "FILE_PATH", value_hint = clap::ValueHint::FilePath)]
         dst_creds: String,
 
         /// Destination Ledger Instance

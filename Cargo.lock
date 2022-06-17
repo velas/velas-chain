@@ -771,6 +771,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap_complete"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f6ebaab5f25e4f0312dfa07cb30a755204b96e6531457c2cfdecfdf5f2adf40"
+dependencies = [
+ "clap 3.2.5",
+]
+
+[[package]]
 name = "clap_derive"
 version = "3.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1710,6 +1719,7 @@ dependencies = [
  "bincode",
  "chrono",
  "clap 3.2.5",
+ "clap_complete",
  "dotenv",
  "env_logger 0.9.0",
  "evm-rpc",
