@@ -12,10 +12,6 @@ path = "src/bin/server.rs"
 name = "generate-state"
 path = "src/bin/generate_state.rs"
 
-[[bin]]
-name = "find-diff"
-path = "src/bin/find_diff.rs"
-
 [dependencies]
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
