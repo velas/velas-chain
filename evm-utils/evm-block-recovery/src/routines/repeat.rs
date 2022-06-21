@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 struct BlockMessage<B> {
     idx: usize,
     block: B,
+    block_number: u64,
 }
 
 pub async fn repeat_evm(
@@ -35,7 +36,7 @@ pub async fn repeat_evm(
             log::info!(
                 "[{}] Uploading block {} to the Destination Ledger",
                 message.idx,
-                block_number
+                message.block_number
             );
 
             let uploaded = dst
@@ -43,7 +44,7 @@ pub async fn repeat_evm(
                 .await
                 .context(format!(
                     "Unable to upload block {} to the Destination Ledger",
-                    block_number
+                    message.block_number
                 ));
 
             match uploaded {
@@ -51,14 +52,14 @@ pub async fn repeat_evm(
                     log::info!(
                         "[{}] Block {} uploaded successfully",
                         message.idx,
-                        block_number
+                        message.block_number
                     )
                 }
                 Err(_) => {
                     log::error!(
                         "[{}] Failed to upload block {} to the Destination Ledger",
                         message.idx,
-                        block_number
+                        message.block_number
                     )
                 }
             }
@@ -83,7 +84,11 @@ pub async fn repeat_evm(
                 block_number
             ))?;
 
-        sender.send(BlockMessage { idx, block })?;
+        sender.send(BlockMessage {
+            idx: idx + 1,
+            block,
+            block_number,
+        })?;
     }
 
     drop(sender);
@@ -118,7 +123,7 @@ pub async fn repeat_native(
             log::info!(
                 "[{}] Uploading block {} to the Destination Ledger",
                 message.idx,
-                block_number
+                message.block_number
             );
 
             let uploaded = dst
@@ -126,7 +131,7 @@ pub async fn repeat_native(
                 .await
                 .context(format!(
                     "Unable to upload block {} to the Destination Ledger",
-                    block_number
+                    message.block_number
                 ));
 
             match uploaded {
@@ -134,14 +139,14 @@ pub async fn repeat_native(
                     log::info!(
                         "[{}] Block {} uploaded successfully",
                         message.idx,
-                        block_number
+                        message.block_number
                     )
                 }
                 Err(_) => {
                     log::error!(
                         "[{}] Failed to upload block {} to the Destination Ledger",
                         message.idx,
-                        block_number
+                        message.block_number
                     )
                 }
             }
@@ -166,7 +171,11 @@ pub async fn repeat_native(
                 block_number
             ))?;
 
-        sender.send(BlockMessage { idx, block })?;
+        sender.send(BlockMessage {
+            idx: idx + 1,
+            block,
+            block_number,
+        })?;
     }
 
     drop(sender);

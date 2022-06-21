@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
             log::info!(r#"RUST_LOG is set to "{value}""#);
         }
         Err(_err) => {
-            std::env::set_var("RUST_LOG", "info");
+            std::env::set_var("RUST_LOG", "evm_block_recovery");
             env_logger::init();
             log::warn!(r#"Environment variable "RUST_LOG" not found."#);
         }
