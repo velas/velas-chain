@@ -30,15 +30,9 @@ pub async fn repeat_evm(
 
     let (sender, mut receiver) = mpsc::unbounded_channel::<BlockMessage<Block>>();
     let writer = tokio::spawn(async move {
-        log::info!("Writer task started");
+        log::trace!("Writer task started");
 
         while let Some(message) = receiver.recv().await {
-            log::info!(
-                "[{}] Uploading block {} to the Destination Ledger",
-                message.idx,
-                message.block_number
-            );
-
             let uploaded = dst
                 .upload_evm_block(block_number, message.block)
                 .await
@@ -67,7 +61,7 @@ pub async fn repeat_evm(
             uploaded.unwrap(); // NOTICE: early return on error
         }
 
-        log::info!("Writer task ended");
+        log::trace!("Writer task ended");
     });
 
     for (idx, block_number) in (block_number..block_number + limit).enumerate() {
@@ -117,15 +111,9 @@ pub async fn repeat_native(
 
     let (sender, mut receiver) = mpsc::unbounded_channel::<BlockMessage<ConfirmedBlock>>();
     let writer = tokio::spawn(async move {
-        log::info!("Writer task started");
+        log::trace!("Writer task started");
 
         while let Some(message) = receiver.recv().await {
-            log::info!(
-                "[{}] Uploading block {} to the Destination Ledger",
-                message.idx,
-                message.block_number
-            );
-
             let uploaded = dst
                 .upload_confirmed_block(block_number, message.block)
                 .await
@@ -154,7 +142,7 @@ pub async fn repeat_native(
             uploaded.unwrap(); // NOTICE: early return on error
         }
 
-        log::info!("Writer task ended");
+        log::trace!("Writer task ended");
     });
 
     for (idx, block_number) in (block_number..block_number + limit).enumerate() {
