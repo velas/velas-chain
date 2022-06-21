@@ -18,9 +18,9 @@ evm-rpc = { path = "../evm-utils/evm-rpc" }
 tempfile = "3.1.0"
 rand = "0.8.3"
 derive_more = "0.99.11"
-triedb = { git = "https://github.com/velas/triedb", branch = "feat/gc-simple", features = ["rocksdb"] }
+triedb = { git = "https://github.com/raventid/triedb", branch = "state-diff", features = ["rocksdb"] }
 
-rlp = "0.5.0"
+# rlp = "0.5.0"
 primitive-types = "0.8.0"
 rayon="1.5"
 
@@ -32,6 +32,7 @@ prost = "0.8"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 
 env_logger = "0.9.0"
+log = "0.4.17"
 
 
 [build-dependencies]

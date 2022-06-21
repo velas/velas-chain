@@ -7,6 +7,7 @@ service Backend {
   rpc ping (google.protobuf.Empty) returns (PingReply);
   rpc getBlock (Hash) returns (BlockData);
   rpc getBlockMulti (MultiHash) returns (MultiBlockData);
+  rpc getStateDiff (StateDiffRequest) returns (Changeset);
 }
 
 message PingReply {
@@ -27,4 +28,30 @@ message MultiHash {
 
 message MultiBlockData {
   map<string, bytes> data = 1;
+}
+
+message StateDiffRequest {
+  string first_root = 1;
+  string second_root = 2;
+}
+
+message Insert {
+  string hash = 1;
+  bytes data = 2;
+}
+
+message Remove {
+  string hash = 1;
+  bytes data = 2;
+}
+
+message Change {
+  oneof change {
+    Insert insert = 3;
+    Remove remove = 4;
+  }
+}
+
+message Changeset {
+  repeated Change changes = 1;
 }

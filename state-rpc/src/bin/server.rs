@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use derive_more::Display;
+use log::{debug, error, log_enabled, info, Level};
 
 use evm_rpc::FormatHex;
 use evm_state::rand::Rng;
@@ -84,6 +85,29 @@ impl Backend for Rpc {
 
         Ok(Response::new(reply))
     }
+
+    async fn get_state_diff(
+        &self,
+        request: Request<app_grpc::StateDiffRequest>,
+    ) -> Result<Response<app_grpc::Changeset>, Status> {
+        let inner = request.into_inner();
+
+        let first_root = inner.first_root;
+        let second_root = inner.second_root;
+
+        let first_root = H256::from_hex(&first_root).expect("get hash from first_root");
+        let second_root = H256::from_hex(&second_root).expect("get hash from second_root");
+
+        let dir = Path::new("./.tmp/db/");
+        let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
+
+        let insert = app_grpc::Insert { hash: "a".to_string(), data: vec![1,2,3] };
+        let changei = app_grpc::change::Change::Insert(insert);
+        let change = app_grpc::Change { change: Some(changei) };
+        let reply = app_grpc::Changeset { changes: vec![change] };
+
+        Ok(Response::new(reply))
+    }
 }
 
 #[tokio::main]
@@ -91,6 +115,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // For the future state movement
     // let state_root_str = std::fs::read_to_string("./.tmp/state_root.txt").expect("get the state root");
     // let state_root = H256::from_hex(&state_root_str).expect("get hash from &str");
+    env_logger::init();
+
+    info!("Starting the State-RPC web server");
 
     let addr = "127.0.0.1:8000".parse()?;
     let backend = BackendServer::new(Rpc {});
