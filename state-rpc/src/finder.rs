@@ -1,9 +1,6 @@
 use primitive_types::H256;
-use rlp::Rlp;
 use std::borrow::Borrow;
 use std::sync::RwLock;
-use triedb::merkle::nibble::NibbleVec;
-use triedb::merkle::{MerkleNode, MerkleValue};
 
 use rocksdb::OptimisticTransactionDB;
 
