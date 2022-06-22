@@ -114,6 +114,8 @@ pub enum Error {
     GasPriceTooLow { need: U256 },
     #[snafu(display("Transaction was removed from mempool"))]
     TransactionRemoved {},
+    #[snafu(display("Invalid rpc params"))]
+    InvalidParams {},
     // InvalidParams {},
     // UnsupportedTrieQuery,
     // NotFound,
@@ -206,6 +208,8 @@ impl From<Error> for JRpcError {
             }
             Error::ProxyRpcError { source } => source.clone(),
             Error::WrongChainId { .. } => Self::invalid_params(err.to_string()),
+            // NOTE: add context information of the error
+            Error::InvalidParams {} => Self::invalid_params(err.to_string()),
             Error::EvmStateError { source } => {
                 internal_error_with_details(EVM_STATE_RPC_ERROR, &err, &source)
             }
