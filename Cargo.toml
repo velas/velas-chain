@@ -45,6 +45,7 @@ members = [
     "metrics",
     "net-shaper",
     "notifier",
+    "evm-utils/evm-block-recovery",
     "evm-utils/evm-bridge",
     "evm-utils/programs/evm_loader",
     "evm-utils/evm-state",

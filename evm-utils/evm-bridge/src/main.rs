@@ -782,6 +782,25 @@ impl ChainERPC for ChainErpcProxy {
     }
 
     #[instrument]
+    fn recover_block_header(
+        &self,
+        meta: Self::Metadata,
+        txs: Vec<(RPCTransaction, Vec<String>)>,
+        last_hashes: Vec<H256>,
+        block_header: BlockHeader,
+        state_root: H256,
+    ) -> BoxFuture<EvmResult<(Block, Vec<Hex<H256>>)>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            DebugRecoverBlockHeader,
+            txs,
+            last_hashes,
+            block_header,
+            state_root
+        )))
+    }
+
+    #[instrument]
     fn estimate_gas(
         &self,
         meta: Self::Metadata,
