@@ -69,6 +69,7 @@ pub async fn repeat_evm(
             idx,
             block_number
         );
+
         let block = src
             .get_evm_confirmed_full_block(block_number)
             .await
@@ -86,9 +87,7 @@ pub async fn repeat_evm(
 
     drop(sender);
 
-    let _result1 = writer.await;
-
-    Ok(())
+    writer.await.context("Writer job terminated with error")
 }
 
 pub async fn repeat_native(

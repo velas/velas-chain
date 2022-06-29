@@ -6,7 +6,7 @@ pub struct Cli {
     #[clap(subcommand)]
     pub command: Commands,
 
-    /// Overrides "GOOGLE_APPLICATION_CREDENTIALS" environment variable value with provided creds file
+    /// Optionally override "GOOGLE_APPLICATION_CREDENTIALS" environment variable value
     #[clap(long, value_name = "FILE_PATH", value_hint = clap::ValueHint::FilePath)]
     pub creds: Option<String>,
 
@@ -42,35 +42,35 @@ pub enum Commands {
     /// Restores EVM subchain
     RestoreChain {
         /// First missing EVM Block
-        #[clap(short = 'f', long = "first-block", value_name = "NUM")]
-        first: u64,
+        #[clap(long, value_name = "NUM")]
+        first_block: u64,
 
         /// Last missing EVM Block
-        #[clap(short = 'l', long = "last-block", value_name = "NUM")]
-        last: u64,
+        #[clap(long, value_name = "NUM")]
+        last_block: u64,
 
         /// RPC address of archive node used for restoring EVM Header
         #[clap(long, value_name = "URL", value_hint = clap::ValueHint::Url)]
         archive_url: String,
 
         /// Write restored blocks to Ledger Storage
-        #[clap(short, long)]
+        #[clap(long)]
         modify_ledger: bool,
 
         /// Continue restoring after tx simulation failures
-        #[clap(short = 'r', long)]
+        #[clap(long)]
         force_resume: bool,
 
         /// Writes restored EVM Blocks as JSON file to directory if set
-        #[clap(short, long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
+        #[clap(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
         output_dir: Option<String>,
     },
 
     /// Checks content of Native Block
     CheckNative {
         /// Native Block number
-        #[clap(short = 'b', long, value_name = "NUM")]
-        block_number: u64,
+        #[clap(short, long, value_name = "NUM")]
+        slot: u64,
     },
 
     /// Checks content of Evm Block

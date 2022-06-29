@@ -11,33 +11,30 @@ use solana_storage_bigtable::LedgerStorage;
 
 use crate::extensions::NativeBlockExt;
 
-use super::find::BlockRange;
 use super::write_blocks_collection;
 
 pub async fn restore_chain(
     ledger: LedgerStorage,
-    evm_missing: BlockRange,
-    rpc_address: String,
+    first_block: u64,
+    last_block: u64,
+    archive_url: String,
     modify_ledger: bool,
     force_resume: bool,
     output_dir: Option<String>,
 ) -> Result<()> {
-    let rpc_client = RpcClient::new(rpc_address);
+    let rpc_client = RpcClient::new(archive_url);
 
     let tail = ledger
-        .get_evm_confirmed_block_header(evm_missing.last + 1)
+        .get_evm_confirmed_block_header(last_block + 1)
         .await
-        .context(format!(
-            "Unable to get EVM block header {}",
-            evm_missing.last + 1
-        ))?;
+        .context(format!("Unable to get EVM block header {}", last_block + 1))?;
 
     let mut header_template = ledger
-        .get_evm_confirmed_block_header(evm_missing.first - 1)
+        .get_evm_confirmed_block_header(first_block - 1)
         .await
         .context(format!(
             "Unable to get EVM block header {}",
-            evm_missing.first - 1
+            first_block - 1
         ))?;
 
     let mut native_blocks = vec![];
@@ -138,7 +135,7 @@ pub async fn restore_chain(
 
         let blocks_path = PathBuf::new().join(&output_dir).join(format!(
             "restored-blocks-{}-{}-{}.json",
-            evm_missing.first, evm_missing.last, unixtime
+            first_block, last_block, unixtime
         ));
 
         let _ = std::fs::create_dir_all(&output_dir);

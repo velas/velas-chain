@@ -4,16 +4,15 @@ use solana_storage_bigtable::LedgerStorage;
 
 use crate::extensions::NativeBlockExt;
 
-pub async fn check_native(ledger: LedgerStorage, block: Slot) -> Result<()> {
-    let native_block = ledger
-        .get_confirmed_block(block)
-        .await
-        .context(format!("Unable to get Native block {block}"))?;
+pub async fn check_native(ledger: LedgerStorage, slot: Slot) -> Result<()> {
+    let native_block = ledger.get_confirmed_block(slot).await.context(format!(
+        r#"Unable to get Native block {slot} from table "blocks""#
+    ))?;
 
     let txs = native_block.parse_instructions();
 
     log::info!(
-        "Native block {block} timstamp {} contains instructions:",
+        "Native block {slot} timstamp {} contains instructions:",
         native_block.block_time.unwrap()
     );
     log::info!("EvmTransaction: {}", txs.instr_evm_transaction());

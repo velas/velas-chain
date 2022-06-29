@@ -51,29 +51,26 @@ async fn main() -> anyhow::Result<()> {
             .await
         }
         Commands::RestoreChain {
-            first,
-            last,
-            archive_url: rpc_address,
+            first_block,
+            last_block,
+            archive_url,
             modify_ledger,
             force_resume,
             output_dir,
         } => {
             routines::restore_chain(
                 ledger::with_params(cli.creds, cli.instance).await?,
-                routines::find::BlockRange::new(first, last),
-                rpc_address,
+                first_block,
+                last_block,
+                archive_url,
                 modify_ledger,
                 force_resume,
                 output_dir,
             )
             .await
         }
-        Commands::CheckNative { block_number } => {
-            routines::check_native(
-                ledger::with_params(cli.creds, cli.instance).await?,
-                block_number,
-            )
-            .await
+        Commands::CheckNative { slot } => {
+            routines::check_native(ledger::with_params(cli.creds, cli.instance).await?, slot).await
         }
         Commands::CheckEvm { block_number } => {
             routines::check_evm(
