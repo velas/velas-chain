@@ -3664,6 +3664,7 @@ mod tests {
                 &[&new_signer],
                 latest_refreshed_recent_blockhash,
             );
+            std::thread::sleep(std::time::Duration::from_millis(100));
             cluster_info.refresh_vote(latest_refresh_tx.clone(), refresh_slot);
         }
         // The diff since `max_ts` should only be the latest refreshed vote

@@ -60,6 +60,9 @@ pub enum EvmError {
 
     #[snafu(display("This instruction cause overflow in fee refund calculation."))]
     OverflowInRefund,
+
+    #[snafu(display("Native account has not enough tokens."))]
+    NativeAccountInsufficientFunds, // TODO: can we merge this with SwapInsufficient?
 }
 
 impl<E> DecodeError<E> for EvmError {

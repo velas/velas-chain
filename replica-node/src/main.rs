@@ -404,6 +404,7 @@ pub fn main() {
         accounts_db_caching_enabled: false,
         replica_exit: Arc::new(RwLock::new(Exit::default())),
         evm_state_path,
+        jaeger_collector_url: None,
     };
 
     let replica = ReplicaNode::new(config);

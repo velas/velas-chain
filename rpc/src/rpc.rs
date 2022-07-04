@@ -102,6 +102,8 @@ use {
     },
     evm_rpc::Hex,
 };
+use tracing_attributes::instrument;
+
 use solana_runtime::accounts_index::ScanResult;
 use velas_account_program::{VelasAccountType, ACCOUNT_LEN as VELAS_ACCOUNT_SIZE};
 use velas_relying_party_program::RelyingPartyData;
@@ -188,6 +190,7 @@ pub struct JsonRpcRequestProcessor {
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     evm_state_archive: Option<evm_state::Storage>,
 }
+
 impl Metadata for JsonRpcRequestProcessor {}
 
 impl JsonRpcRequestProcessor {
@@ -355,17 +358,24 @@ impl JsonRpcRequestProcessor {
         }
     }
 
+    pub fn get_health(&self) -> RpcHealthStatus {
+        self.health.check()
+    }
+
     pub fn evm_state_archive_storage(&self) -> &Option<evm_state::Storage> {
         &self.evm_state_archive
     }
 
-    pub fn evm_state_archive(&self) -> Option<evm_state::EvmBackend<evm_state::Incomming>> {
-        // TODO: timestamp
+    pub fn evm_state_archive(
+        &self,
+        timestamp: Option<u64>,
+    ) -> Option<evm_state::EvmBackend<evm_state::Incomming>> {
         // TODO: block_hashes history
         let arhive = self.evm_state_archive.clone()?;
         let bank = self.bank(Some(CommitmentConfig::processed()));
         let state_ref = bank.evm_state.read().expect("state was poisoned");
-        match state_ref.new_from_parent(bank.clock().unix_timestamp, true) {
+        let timestamp = timestamp.unwrap_or(bank.clock().unix_timestamp as u64);
+        match state_ref.new_from_parent(timestamp, true) {
             evm_state::EvmState::Incomming(mut i) => {
                 i.kvs = arhive;
                 Some(i)
@@ -2104,6 +2114,7 @@ impl JsonRpcRequestProcessor {
     // Evm scope
     //
 
+    #[instrument(skip(self))]
     pub async fn get_evm_blocks_from_bigtable(
         &self,
         starting_block: evm_state::BlockNum,
@@ -2127,6 +2138,8 @@ impl JsonRpcRequestProcessor {
     /// Request blocks from bigtable if no confirmed block found in local db.
     /// Returns error if any gaps found.
     ///
+
+    #[instrument(skip(self))]
     pub async fn get_evm_blocks_by_ids(
         &self,
         starting_block: evm_state::BlockNum,
@@ -2194,7 +2207,9 @@ impl JsonRpcRequestProcessor {
                 missing_block,
                 ending_block
             );
-            let blocks_bigtable = self.get_evm_blocks_from_bigtable(missing_block, ending_block).await?;
+            let blocks_bigtable = self
+                .get_evm_blocks_from_bigtable(missing_block, ending_block)
+                .await?;
             trace!("bigtable_return = {:?}", blocks_bigtable);
             blocks.extend(blocks_bigtable);
             bigtable_request_time += bigtable_request.elapsed();
@@ -2207,6 +2222,7 @@ impl JsonRpcRequestProcessor {
         Ok(blocks)
     }
 
+    #[instrument(skip(self))]
     pub async fn filter_logs(
         &self,
         filter: evm_state::LogFilter,
@@ -2219,7 +2235,10 @@ impl JsonRpcRequestProcessor {
         filter_request_time += filter_request.elapsed();
 
         let mut logs = Vec::new();
-        for block in self.get_evm_blocks_by_ids(filter.from_block, filter.to_block).await? {
+        for block in self
+            .get_evm_blocks_by_ids(filter.from_block, filter.to_block)
+            .await?
+        {
             let filter_request = Instant::now();
             logs.extend(Blockstore::filter_block_logs(&block, &masks, &filter)?);
             filter_request_time += filter_request.elapsed();
@@ -2229,6 +2248,7 @@ impl JsonRpcRequestProcessor {
         Ok(logs)
     }
 
+    #[instrument(skip(self))]
     pub async fn get_first_available_evm_block(&self) -> u64 {
         let block = self
             .blockstore
@@ -2236,7 +2256,8 @@ impl JsonRpcRequestProcessor {
             .unwrap_or_default();
 
         if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-            let bigtable_block = bigtable_ledger_storage.get_evm_first_available_block()
+            let bigtable_block = bigtable_ledger_storage
+                .get_evm_first_available_block()
                 .await
                 .unwrap_or(None)
                 .unwrap_or(block);
@@ -2247,6 +2268,8 @@ impl JsonRpcRequestProcessor {
         }
         block
     }
+
+    #[instrument(skip(self))]
     pub fn get_last_available_evm_block(&self) -> Option<u64> {
         self.blockstore
             .get_last_available_evm_block()
@@ -2255,6 +2278,8 @@ impl JsonRpcRequestProcessor {
 
     ///
     /// Get last evm block which has respective native chain block rooted
+
+    #[instrument(skip(self))]
     pub fn get_last_confirmed_evm_block(&self) -> Option<u64> {
         self.blockstore
             .evm_blocks_reverse_iterator()
@@ -2263,6 +2288,7 @@ impl JsonRpcRequestProcessor {
             .map(|((block_num, _), _)| block_num)
     }
 
+    #[instrument(skip(self))]
     pub async fn get_evm_receipt_by_hash(
         &self,
         hash: evm_state::H256,
@@ -2288,7 +2314,12 @@ impl JsonRpcRequestProcessor {
         }
         receipt
     }
-    pub async fn get_evm_block_by_id(&self, id: evm_state::BlockNum) -> Option<(evm_state::Block, bool)> {
+
+    #[instrument(skip(self))]
+    pub async fn get_evm_block_by_id(
+        &self,
+        id: evm_state::BlockNum,
+    ) -> Option<(evm_state::Block, bool)> {
         let block = self.blockstore.get_evm_block(id).ok();
         if block.is_some() {
             return block;
@@ -2315,6 +2346,7 @@ impl JsonRpcRequestProcessor {
         None
     }
 
+    #[instrument(skip(self))]
     pub async fn get_evm_block_id_by_hash(&self, hash: evm_state::H256) -> Option<u64> {
         let block = self
             .blockstore

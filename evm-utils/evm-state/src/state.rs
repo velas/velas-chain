@@ -581,11 +581,11 @@ impl EvmState {
 
     /// Ignores all unapplied updates.
     /// spv_compatibility - is oneway feature flag, if activated change current version from InitVersion to VersionConsistentHashes (dont change if version is feature).
-    pub fn new_from_parent(&self, block_start_time: i64, spv_compatibility: bool) -> Self {
+    pub fn new_from_parent(&self, block_start_time: u64, spv_compatibility: bool) -> Self {
         let mut b = match self {
-            EvmState::Committed(committed) => committed.next_incomming(block_start_time as u64),
+            EvmState::Committed(committed) => committed.next_incomming(block_start_time),
             EvmState::Incomming(incomming) => EvmBackend {
-                state: incomming.state.new_update_time(block_start_time as u64),
+                state: incomming.state.new_update_time(block_start_time),
                 kvs: incomming.kvs.clone(),
             },
         };
@@ -981,7 +981,7 @@ mod tests {
     #[test]
     fn reads_the_same_after_consequent_dumps() {
         use std::ops::Bound::Included;
-        let _ = simple_logger::SimpleLogger::new().env().init();
+        let _ = simple_logger::SimpleLogger::new().with_utc_timestamps().env().init();
 
         const N_VERSIONS: usize = 10;
         const ACCOUNTS_PER_VERSION: usize = 10;
@@ -1026,7 +1026,7 @@ mod tests {
 
     #[test]
     fn lookups_thru_forks() {
-        let _ = simple_logger::SimpleLogger::new().init();
+        let _ = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
 
         let mut state = EvmBackend::default();
 
@@ -1049,7 +1049,7 @@ mod tests {
 
     #[test]
     fn it_handles_accounts_state_get_set_expectations() {
-        let _ = simple_logger::SimpleLogger::new().init();
+        let _ = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
 
         let mut state = EvmBackend::default();
 

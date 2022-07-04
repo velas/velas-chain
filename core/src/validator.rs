@@ -167,8 +167,9 @@ pub struct ValidatorConfig {
     pub validator_exit: Arc<RwLock<Exit>>,
     pub no_wait_for_vote_to_start_leader: bool,
     pub accounts_shrink_ratio: AccountShrinkThreshold,
+    pub wait_to_vote_slot: Option<u64>,
     pub verify_evm_state: bool,
-    pub wait_to_vote_slot: Option<Slot>,
+    pub jaeger_collector_url: Option<String>,
 }
 
 impl Default for ValidatorConfig {
@@ -229,6 +230,7 @@ impl Default for ValidatorConfig {
             accounts_shrink_ratio: AccountShrinkThreshold::default(),
             accounts_db_config: None,
             verify_evm_state: false,
+            jaeger_collector_url: None,
             wait_to_vote_slot: None,
         }
     }
@@ -674,6 +676,7 @@ impl Validator {
                     leader_schedule_cache.clone(),
                     max_complete_transaction_status_slot,
                     evm_state_archive,
+                    config.jaeger_collector_url.clone(),
                 )),
                 if !config.rpc_config.full_api {
                     None
@@ -1537,11 +1540,25 @@ fn backup_and_clear_blockstore(ledger_path: &Path, start_slot: Slot, shred_versi
         }
 
         let end_slot = last_slot.unwrap();
+        let mut evm_block_compaction_range = None;
+        if let (Ok(mut iter_first), Ok(mut iter_last)) = (
+            blockstore.evm_block_by_slot_iterator(start_slot),
+            blockstore.evm_block_by_slot_reverse_iterator(end_slot),
+        ) {
+            if let (Some(item1), Some(item2)) = (iter_first.next(), iter_last.next()) {
+                if item1.0 <= end_slot && item2.0 >= start_slot { // ensure that evm blocks we found are in range
+                    // add 1 because range for compaction is exclusive
+                    let to = item2.1.checked_add(1).unwrap_or(evm_state::BlockNum::MAX);
+                    evm_block_compaction_range = Some((item1.1, to));
+                }
+            }
+        }
         info!("Purging slots {} to {}", start_slot, end_slot);
         blockstore.purge_from_next_slots(start_slot, end_slot);
         blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact);
         info!("Purging done, compacting db..");
-        if let Err(e) = blockstore.compact_storage(start_slot, end_slot) {
+        if let Err(e) = blockstore.compact_storage(start_slot, end_slot, evm_block_compaction_range)
+        {
             warn!(
                 "Error from compacting storage from {} to {}: {:?}",
                 start_slot, end_slot, e

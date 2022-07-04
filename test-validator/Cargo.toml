@@ -27,6 +27,7 @@ solana-rpc = { path = "../rpc", version = "=1.9.29" }
 solana-runtime = { path = "../runtime", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-streamer = { path = "../streamer", version = "=1.9.29" }
+evm-state = { path = "../evm-utils/evm-state" }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

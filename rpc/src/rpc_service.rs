@@ -53,6 +53,12 @@ use {
 
 const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
 const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{
+    filter::{LevelFilter, Targets},
+    layer::{Layer, SubscriberExt},
+};
+
 const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
 
 pub struct JsonRpcService {
@@ -328,6 +334,7 @@ impl JsonRpcService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         current_transaction_status_slot: Arc<AtomicU64>,
         evm_state_archive: Option<evm_state::Storage>,
+        jaeger_collector_url: Option<String>,
     ) -> Self {
         info!("rpc bound to {:?}", rpc_addr);
         info!("rpc configuration: {:?}", config);
@@ -433,6 +440,33 @@ impl JsonRpcService {
             receiver,
             send_transaction_service_config,
         ));
+        if let Some(collector) = jaeger_collector_url {
+            // init tracer
+            runtime.block_on(async {
+                let fmt_filter = std::env::var("RUST_LOG")
+                    .ok()
+                    .and_then(|rust_log| match rust_log.parse::<Targets>() {
+                        Ok(targets) => Some(targets),
+                        Err(e) => {
+                            eprintln!("failed to parse `RUST_LOG={:?}`: {}", rust_log, e);
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| Targets::default().with_default(LevelFilter::WARN));
+
+                let tracer = opentelemetry_jaeger::new_pipeline()
+                    .with_service_name("velas-jsonrpc-tracer")
+                    .with_collector_endpoint(collector)
+                    .install_batch(opentelemetry::runtime::Tokio)
+                    .unwrap();
+                let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+                let registry = tracing_subscriber::registry()
+                    .with(tracing_subscriber::fmt::layer().with_filter(fmt_filter))
+                    .with(opentelemetry);
+
+                registry.try_init().unwrap();
+            });
+        }
 
         #[cfg(test)]
         let test_request_processor = request_processor.clone();
@@ -459,8 +493,9 @@ impl JsonRpcService {
                     io.extend_with(rpc_obsolete_v1_7::ObsoleteV1_7Impl.to_delegate());
                 }
 
-                io.extend_with(super::evm_rpc_impl::BasicErpcImpl.to_delegate());
-                io.extend_with(super::evm_rpc_impl::ChainMockErpcImpl.to_delegate());
+                io.extend_with(super::evm_rpc_impl::ChainErpcImpl.to_delegate());
+                io.extend_with(super::evm_rpc_impl::GeneralErpcImpl.to_delegate());
+                io.extend_with(super::evm_rpc_impl::TraceErpcImpl.to_delegate());
 
                 let request_middleware = RpcRequestMiddleware::new(
                     ledger_path,
@@ -602,9 +637,10 @@ mod tests {
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
             None,
+            None,
         );
         let thread = rpc_service.thread_hdl.thread();
-        assert_eq!(thread.name().unwrap(), "solana-jsonrpc");
+        assert_eq!(thread.name().unwrap(), "velas-jsonrpc");
 
         assert_eq!(
             10_000,

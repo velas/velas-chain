@@ -411,6 +411,18 @@ pub mod velas {
     pub mod burn_fee {
         solana_sdk::declare_id!("CjdrowBMM3drcSSciwPVpAWz4hBqWAKSLj9Ea9PD1vip");
     }
+
+    pub mod clear_logs_on_error {
+        solana_sdk::declare_id!("9rZZ68tcDSZYkDMuFn59iRzoUxki2r16RWUucZQywFzS");
+    }
+
+    pub mod disable_durable_nonce {
+        solana_sdk::declare_id!("AKAGpT85PfoGDxCBPsxGHy8iZdaJoeAiVXq5oRxFS5TL");
+    }
+
+    pub mod evm_instruction_borsh_serialization {
+        solana_sdk::declare_id!("9NUVkN3PYJXz6z8cUgtGHYWd1CmcYF7ci3a552rASPQw");
+    }
 }
 lazy_static! {
     /// Map of feature identifiers to user-visible description
@@ -519,6 +531,9 @@ lazy_static! {
             (velas::ignore_reset_on_cleared::id(), "Don't reset evm_swap address balance, when it already swapped, to avoid empty blocks."),
             (velas::free_ownership_require_signer::id(), "Free ownership require signer."),
             (velas::burn_fee::id(), "Burn fee during transaction execution."),
+            (velas::clear_logs_on_error::id(), "Clear logs from receipt if transaction is failed or reverted."),
+            (velas::disable_durable_nonce::id(), "Disable durable nonce."),
+            (velas::evm_instruction_borsh_serialization::id(), "Support for Borsh serialization for EVM instructions."),
             /*************** ADD NEW FEATURES HERE ***************/
         ]
     ).collect();

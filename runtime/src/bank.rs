@@ -1635,7 +1635,7 @@ impl Bank {
                     .evm_state
                     .read()
                     .expect("parent evm state was poisoned")
-                    .new_from_parent(parent.clock().unix_timestamp, spv_compatibility);
+            .new_from_parent(parent.clock().unix_timestamp as u64, spv_compatibility);
 
                 evm_state
                     .register_slot(slot)
@@ -3968,6 +3968,8 @@ impl Bank {
             if !nonce_is_authorized {
                 return None;
             }
+        } else if self.feature_set.is_active(&feature_set::velas::disable_durable_nonce::id()) {
+            return None
         }
 
         Some((*nonce_address, nonce_account))
@@ -4177,10 +4179,21 @@ impl Bank {
             *evm_patch = evm_patch.take().or_else(|| evm_state_getter(self));
             let last_hashes = self.evm_hashes();
             if let Some(state) = &evm_patch {
-                let evm_executor = evm_state::Executor::with_config(
+                    let mut evm_executor = evm_state::Executor::with_config(
                     state.clone(),
                     evm_state::ChainContext::new(last_hashes),
-                    evm_state::EvmConfig::new(self.evm_chain_id, self.evm_burn_fee_activated()),
+                    evm_state::EvmConfig::new(
+                        self.evm_chain_id,
+                        self.evm_burn_fee_activated(),
+                    ),
+                    evm_state::executor::FeatureSet::new(
+                        self.feature_set.is_active(
+                            &solana_sdk::feature_set::velas::unsigned_tx_fix::id(),
+                       ),
+                        self.feature_set.is_active(
+                            &solana_sdk::feature_set::velas::clear_logs_on_error::id(),
+                        ),
+                    ),
                 );
                 Some(evm_executor)
             } else {
@@ -5689,7 +5702,12 @@ impl Bank {
             n.into(),
             Some(self.evm_chain_id),
         );
-        let ix = solana_evm_loader_program::send_raw_tx(fee_payer.pubkey(), evm_tx, None);
+        let ix = solana_evm_loader_program::send_raw_tx(
+            fee_payer.pubkey(),
+            evm_tx,
+            None,
+            solana_evm_loader_program::instructions::FeePayerType::Evm,
+        );
         let tx = Transaction::new_signed_with_payer(
             &[ix],
             Some(&fee_payer.pubkey()),
@@ -10485,10 +10503,11 @@ pub(crate) mod tests {
         solana_logger::setup();
 
         let (genesis_config, mint_keypair) = create_genesis_config(20000 * 3);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
         let alice = Keypair::new();
         let bob = Keypair::new();
 
+        bank.activate_feature(&feature_set::velas::evm_instruction_borsh_serialization::id());
         fn fund_evm(from_keypair: &Keypair, hash: Hash, lamports: u64) -> Transaction {
             let tx = solana_evm_loader_program::processor::dummy_call(0).0;
             let from_pubkey = from_keypair.pubkey();
@@ -10513,6 +10532,7 @@ pub(crate) mod tests {
                 from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(nonce).0,
                 None,
+                solana_evm_loader_program::instructions::FeePayerType::Evm,
             );
             let message = Message::new(&[instruction], Some(&from_pubkey));
             Transaction::new(&[from_keypair], message, hash)
@@ -10571,6 +10591,7 @@ pub(crate) mod tests {
                 from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(nonce).0,
                 None,
+                solana_evm_loader_program::instructions::FeePayerType::Evm,
             );
             let message = Message::new(&[instruction], Some(&from_pubkey));
             Transaction::new(&[from_keypair], message, hash)
@@ -10626,6 +10647,8 @@ pub(crate) mod tests {
 
             let (genesis_config, mint_keypair) = create_genesis_config(20000 * (num_sleeps + 3));
             let mut bank = Bank::new_for_tests(&genesis_config);
+
+            bank.activate_feature(&feature_set::velas::evm_instruction_borsh_serialization::id());
             let sleep_program_id = solana_sdk::pubkey::new_rand();
             bank.add_builtin(
                 "solana_sleep_program",
@@ -10707,6 +10730,7 @@ pub(crate) mod tests {
                 from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(nonce).0,
                 None,
+                solana_evm_loader_program::instructions::FeePayerType::Evm,
             );
 
             let message = Message::new(&[instruction], Some(&from_pubkey));
@@ -10719,6 +10743,7 @@ pub(crate) mod tests {
 
         bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
         bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
+        bank.activate_feature(&feature_set::velas::evm_instruction_borsh_serialization::id());
         let recent_hash = genesis_config.hash();
 
         let tx = fund_evm(&mint_keypair, recent_hash, 20000);
@@ -10816,6 +10841,7 @@ pub(crate) mod tests {
 
         bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
         bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
+        bank.activate_feature(&feature_set::velas::evm_instruction_borsh_serialization::id());
         let recent_hash = genesis_config.hash();
 
         let tx = fund_evm_with_revert(&mint_keypair, receiver, recent_hash, 20000);
@@ -10865,6 +10891,7 @@ pub(crate) mod tests {
                 from_pubkey,
                 solana_evm_loader_program::processor::dummy_call(nonce).0,
                 None,
+                solana_evm_loader_program::instructions::FeePayerType::Evm,
             );
             instructions.push(instruction);
             let s = Keypair::new();
@@ -10881,6 +10908,7 @@ pub(crate) mod tests {
 
         bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
         bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
+        bank.activate_feature(&feature_set::velas::evm_instruction_borsh_serialization::id());
         let recent_hash = genesis_config.hash();
 
         let tx = fund_evm_with_evm_call(&mint_keypair, receiver, recent_hash, 20000, 0);
@@ -10936,6 +10964,7 @@ pub(crate) mod tests {
 
         bank.activate_feature(&feature_set::velas::native_swap_in_evm_history::id());
         bank.activate_feature(&feature_set::velas::evm_new_error_handling::id());
+        bank.activate_feature(&feature_set::velas::evm_instruction_borsh_serialization::id());
         let recent_hash = genesis_config.hash();
 
         let tx = fund_evm(&mint_keypair, receiver, recent_hash, 20000);
@@ -10968,10 +10997,11 @@ pub(crate) mod tests {
     }
     #[test]
     fn test_bank_hash_internal_state_verify_transfer_evm() {
-        solana_logger::setup();
+        solana_logger::setup_with("trace");
         let (genesis_config, mint_keypair) = create_genesis_config(2_000);
-        let bank0 = Bank::new_for_tests(&genesis_config);
+        let mut bank0 = Bank::new_for_tests(&genesis_config);
 
+        bank0.activate_feature(&feature_set::velas::evm_instruction_borsh_serialization::id());
         let mut rng = evm_state::rand::thread_rng();
         let sender = evm_state::SecretKey::new(&mut rng);
         let sender_addr = sender.to_address();
@@ -11057,8 +11087,9 @@ pub(crate) mod tests {
     fn test_bank_transfer_evm_release_lock_panic() {
         solana_logger::setup_with("trace");
         let (genesis_config, mint_keypair) = create_genesis_config(2_000);
-        let bank0 = Bank::new_for_tests(&genesis_config);
+        let mut bank0 = Bank::new_for_tests(&genesis_config);
 
+        bank0.activate_feature(&feature_set::velas::evm_instruction_borsh_serialization::id());
         let mut rng = evm_state::rand::thread_rng();
         let sender = evm_state::SecretKey::new(&mut rng);
         let sender_addr = sender.to_address();
@@ -15562,7 +15593,7 @@ pub(crate) mod tests {
                             sysvar::slot_hashes::id(),
                             sysvar::slot_history::id(),
                             sysvar::stake_history::id(),
-                            solana_sdk::evm_loader::id(),
+                            // solana_sdk::evm_loader::id(),
                         ]
                     ),
                     new

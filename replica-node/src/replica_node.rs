@@ -58,6 +58,7 @@ pub struct ReplicaNodeConfig {
     pub accounts_db_caching_enabled: bool,
     pub replica_exit: Arc<RwLock<Exit>>,
     pub socket_addr_space: SocketAddrSpace,
+    pub jaeger_collector_url: Option<String>,
 }
 
 pub struct ReplicaNode {
@@ -252,6 +253,7 @@ fn start_client_rpc_services(
             leader_schedule_cache.clone(),
             max_complete_transaction_status_slot,
             None,
+            replica_config.jaeger_collector_url.clone(),
         )),
         Some(pubsub_service),
         Some(OptimisticallyConfirmedBankTracker::new(
