@@ -20,6 +20,7 @@ pub async fn restore_chain(
     archive_url: String,
     modify_ledger: bool,
     force_resume: bool,
+    timestamps: String,
     output_dir: Option<String>,
 ) -> Result<()> {
     let rpc_client = RpcClient::new(archive_url);
@@ -47,7 +48,7 @@ pub async fn restore_chain(
         native_blocks.push(native_block);
     }
 
-    let timestamps = crate::timestamp::load_timestamps().unwrap();
+    let timestamps = crate::timestamp::load_timestamps(timestamps).unwrap();
     let mut restored_blocks = vec![];
 
     for nb in native_blocks.into_iter() {

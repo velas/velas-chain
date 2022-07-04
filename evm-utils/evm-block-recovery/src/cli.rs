@@ -21,7 +21,7 @@ pub enum Commands {
     FindEvm {
         /// Starting EVM Block number
         #[clap(long, value_name = "NUM")]
-        start: u64,
+        start_block: u64,
 
         /// Limit of EVM Blocks to search
         #[clap(long, value_name = "NUM")]
@@ -32,7 +32,7 @@ pub enum Commands {
     FindNative {
         /// Starting Native Block number
         #[clap(long, value_name = "NUM")]
-        start: u64,
+        start_slot: u64,
 
         /// Limit of Native Blocks to search
         #[clap(long, value_name = "NUM")]
@@ -61,6 +61,10 @@ pub enum Commands {
         #[clap(long)]
         force_resume: bool,
 
+        /// TODO: explain JSON schema and reason why this param is required during blocks restore
+        #[clap(long, value_name = "FILE_PATH", default_value = "./timestamps/blocks.json", value_hint = clap::ValueHint::FilePath)]
+        timestamps: String,
+
         /// Writes restored EVM Blocks as JSON file to directory if set
         #[clap(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
         output_dir: Option<String>,
@@ -78,6 +82,33 @@ pub enum Commands {
         /// EVM Block number
         #[clap(short = 'b', long, value_name = "NUM")]
         block_number: u64,
+    },
+
+    /// Compares difference of Native Block sets
+    CompareNative {
+        /// First Native Slot
+        #[clap(long, value_name = "NUM")]
+        start_slot: u64,
+
+        /// Limit of Native Blocks to search
+        #[clap(long, value_name = "NUM")]
+        limit: usize,
+
+        /// Google credentials JSON filepath of the "Credible Ledger"
+        #[clap(long, value_name = "FILE_PATH", value_hint = clap::ValueHint::FilePath)]
+        credible_ledger_creds: String,
+
+        /// "Credible Ledger" Instance
+        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+        credible_ledger_instance: String,
+
+        /// Google credentials JSON filepath of the "Deceptive Ledger"
+        #[clap(long, value_name = "FILE_PATH", value_hint = clap::ValueHint::FilePath)]
+        dubious_ledger_creds: String,
+
+        /// "Deceptive Ledger" Instance
+        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+        dubious_ledger_instance: String,
     },
 
     /// Uploads blocks to Bigtable from .json file

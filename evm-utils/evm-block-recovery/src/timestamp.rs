@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 use anyhow::*;
 use chrono::{DateTime, Utc};
@@ -15,8 +15,8 @@ struct BlockDto {
 /// FIXME: Source timestamp file exported with Time Zone error
 const FIVE_HRS: u64 = 18000;
 
-pub fn load_timestamps() -> Result<HashMap<BlockNum, u64>> {
-    let timestamps = std::fs::read_to_string("./timestamps/blocks.json").unwrap();
+pub fn load_timestamps(path: impl AsRef<Path>) -> Result<HashMap<BlockNum, u64>> {
+    let timestamps = std::fs::read_to_string(path).unwrap();
 
     let result: HashMap<BlockNum, u64> = serde_json::from_str::<Vec<BlockDto>>(&timestamps)
         .unwrap()

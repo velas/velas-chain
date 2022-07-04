@@ -1,5 +1,6 @@
 pub(crate) mod check_evm;
 pub(crate) mod check_native;
+pub(crate) mod compare;
 pub(crate) mod find;
 pub(crate) mod repeat;
 pub(crate) mod restore_chain;
@@ -7,6 +8,7 @@ pub(crate) mod upload;
 
 pub use check_evm::check_evm;
 pub use check_native::check_native;
+pub use compare::compare_native;
 pub use find::{find_evm, find_native};
 pub use repeat::{repeat_evm, repeat_native};
 pub use restore_chain::restore_chain;

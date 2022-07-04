@@ -2,6 +2,8 @@ use anyhow::*;
 use evm_state::BlockNum;
 use solana_storage_bigtable::LedgerStorage;
 
+use crate::routines::BlockRange;
+
 use super::find_uncommitted_ranges;
 
 pub async fn find_evm(ledger: LedgerStorage, start_block: BlockNum, limit: usize) -> Result<()> {
@@ -48,11 +50,14 @@ pub async fn find_native(ledger: LedgerStorage, start_slot: u64, limit: usize) -
         slots.last().unwrap()
     );
 
+    if slots[0] > start_slot {
+        let missing_ahead = BlockRange::new(start_slot, slots[0] - 1);
+        log::warn!("Found possibly missing {missing_ahead}, manual check required");
+    }
+
     let missing_ranges = find_uncommitted_ranges(slots);
 
-    log::warn!("FIRST MR: {}", missing_ranges[0]);
-
-    log::info!("Got {} possibly missing ranges", missing_ranges.len());
+    log::info!("Found {} possibly missing ranges", missing_ranges.len());
 
     for range in missing_ranges.into_iter() {
         let slot_prev = range.first() - 1;

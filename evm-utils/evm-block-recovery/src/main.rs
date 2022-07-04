@@ -34,18 +34,18 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::FindEvm { start, limit } => {
+        Commands::FindEvm { start_block, limit } => {
             routines::find_evm(
                 ledger::with_params(cli.creds, cli.instance).await?,
-                start,
+                start_block,
                 limit,
             )
             .await
         }
-        Commands::FindNative { start, limit } => {
+        Commands::FindNative { start_slot, limit } => {
             routines::find_native(
                 ledger::with_params(cli.creds, cli.instance).await?,
-                start,
+                start_slot,
                 limit,
             )
             .await
@@ -56,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
             archive_url,
             modify_ledger,
             force_resume,
+            timestamps,
             output_dir,
         } => {
             routines::restore_chain(
@@ -65,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
                 archive_url,
                 modify_ledger,
                 force_resume,
+                timestamps,
                 output_dir,
             )
             .await
@@ -76,6 +78,22 @@ async fn main() -> anyhow::Result<()> {
             routines::check_evm(
                 ledger::with_params(cli.creds, cli.instance).await?,
                 block_number,
+            )
+            .await
+        }
+        Commands::CompareNative {
+            start_slot,
+            limit,
+            credible_ledger_creds,
+            credible_ledger_instance,
+            dubious_ledger_creds,
+            dubious_ledger_instance,
+        } => {
+            routines::compare_native(
+                start_slot,
+                limit,
+                ledger::with_params(Some(credible_ledger_creds), credible_ledger_instance).await?,
+                ledger::with_params(Some(dubious_ledger_creds), dubious_ledger_instance).await?,
             )
             .await
         }
