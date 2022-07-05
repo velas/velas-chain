@@ -7,7 +7,7 @@ use {
         blockstore_db::{
         columns as cf, AccessType, BlockstoreRecoveryMode, Column, Database,
         EvmTransactionReceiptsIndex, IteratorDirection, IteratorMode, LedgerColumn, Result,
-        WriteBatch, BlockstoreError,
+        WriteBatch,
         },
         blockstore_meta::*,
         leader_schedule_cache::LeaderScheduleCache,
@@ -69,6 +69,7 @@ use {
     thiserror::Error,
     trees::{Tree, TreeWalk},
 };
+pub use crate::blockstore_db::BlockstoreError;
 
 pub mod blockstore_purge;
 
@@ -7342,7 +7343,7 @@ pub mod tests {
             blockstore.set_max_expired_slot(lowest_cleanup_slot);
             // force compaction filters to run across whole key range.
             blockstore
-                .compact_storage(Slot::min_value(), Slot::max_value())
+                .compact_storage(Slot::min_value(), Slot::max_value(), None)
                 .unwrap();
         }
 
@@ -7360,152 +7361,6 @@ pub mod tests {
             assert_eq!(are_missing, (false, false, false));
         }
         assert_existing_always();
-    }
-
-    fn do_test_lowest_cleanup_slot_and_special_cfs(
-        simulate_compaction: bool,
-        simulate_ledger_cleanup_service: bool,
-    ) {
-        solana_logger::setup();
-
-        let blockstore_path = get_tmp_ledger_path!();
-        {
-            let blockstore = Blockstore::open(&blockstore_path).unwrap();
-            // TransactionStatus column opens initialized with one entry at index 2
-            let transaction_status_cf = blockstore.db.column::<cf::TransactionStatus>();
-
-            let pre_balances_vec = vec![1, 2, 3];
-            let post_balances_vec = vec![3, 2, 1];
-            let status = TransactionStatusMeta {
-                status: solana_sdk::transaction::Result::<()>::Ok(()),
-                fee: 42u64,
-                pre_balances: pre_balances_vec,
-                post_balances: post_balances_vec,
-                inner_instructions: Some(vec![]),
-                log_messages: Some(vec![]),
-                pre_token_balances: Some(vec![]),
-                post_token_balances: Some(vec![]),
-                rewards: Some(vec![]),
-            }
-            .into();
-
-            let signature1 = Signature::new(&[2u8; 64]);
-            let signature2 = Signature::new(&[3u8; 64]);
-
-            // Insert rooted slots 0..=3 with no fork
-            let meta0 = SlotMeta::new(0, 0);
-            blockstore.meta_cf.put(0, &meta0).unwrap();
-            let meta1 = SlotMeta::new(1, 0);
-            blockstore.meta_cf.put(1, &meta1).unwrap();
-            let meta2 = SlotMeta::new(2, 1);
-            blockstore.meta_cf.put(2, &meta2).unwrap();
-            let meta3 = SlotMeta::new(3, 2);
-            blockstore.meta_cf.put(3, &meta3).unwrap();
-
-            blockstore.set_roots(&[0, 1, 2, 3]).unwrap();
-
-            let lowest_cleanup_slot = 1;
-            let lowest_available_slot = lowest_cleanup_slot + 1;
-
-            transaction_status_cf
-                .put_protobuf((0, signature1, lowest_cleanup_slot), &status)
-                .unwrap();
-
-            transaction_status_cf
-                .put_protobuf((0, signature2, lowest_available_slot), &status)
-                .unwrap();
-
-            let address0 = solana_sdk::pubkey::new_rand();
-            let address1 = solana_sdk::pubkey::new_rand();
-            blockstore
-                .write_transaction_status(
-                    lowest_cleanup_slot,
-                    signature1,
-                    vec![&address0],
-                    vec![],
-                    TransactionStatusMeta::default(),
-                )
-                .unwrap();
-            blockstore
-                .write_transaction_status(
-                    lowest_available_slot,
-                    signature2,
-                    vec![&address1],
-                    vec![],
-                    TransactionStatusMeta::default(),
-                )
-                .unwrap();
-
-            let check_for_missing = || {
-                (
-                    blockstore
-                        .get_transaction_status_with_counter(signature1, &[])
-                        .unwrap()
-                        .0
-                        .is_none(),
-                    blockstore
-                        .find_address_signatures_for_slot(address0, lowest_cleanup_slot)
-                        .unwrap()
-                        .is_empty(),
-                    blockstore
-                        .find_address_signatures(address0, lowest_cleanup_slot, lowest_cleanup_slot)
-                        .unwrap()
-                        .is_empty(),
-                )
-            };
-
-            let assert_existing_always = || {
-                let are_existing_always = (
-                    blockstore
-                        .get_transaction_status_with_counter(signature2, &[])
-                        .unwrap()
-                        .0
-                        .is_some(),
-                    !blockstore
-                        .find_address_signatures_for_slot(address1, lowest_available_slot)
-                        .unwrap()
-                        .is_empty(),
-                    !blockstore
-                        .find_address_signatures(
-                            address1,
-                            lowest_available_slot,
-                            lowest_available_slot,
-                        )
-                        .unwrap()
-                        .is_empty(),
-                );
-                assert_eq!(are_existing_always, (true, true, true));
-            };
-
-            let are_missing = check_for_missing();
-            // should never be missing before the conditional compaction & simulation...
-            assert_eq!(are_missing, (false, false, false));
-            assert_existing_always();
-
-            if simulate_compaction {
-                blockstore.set_max_expired_slot(lowest_cleanup_slot);
-                // force compaction filters to run across whole key range.
-                blockstore
-                    .compact_storage(Slot::min_value(), Slot::max_value(), None)
-                    .unwrap();
-            }
-
-            if simulate_ledger_cleanup_service {
-                *blockstore.lowest_cleanup_slot.write().unwrap() = lowest_cleanup_slot;
-            }
-
-            let are_missing = check_for_missing();
-            if simulate_compaction || simulate_ledger_cleanup_service {
-                // ... when either simulation (or both) is effective, we should observe to be missing
-                // consistently
-                assert_eq!(are_missing, (true, true, true));
-            } else {
-                // ... otherwise, we should observe to be existing...
-                assert_eq!(are_missing, (false, false, false));
-            }
-            assert_existing_always();
-        }
-        Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
     }
 
     #[test]
@@ -9602,23 +9457,4 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_duplicate_last_index() {
-        let num_shreds = 2;
-        let num_entries = max_ticks_per_n_shreds(num_shreds, None);
-        let slot = 1;
-        let (mut shreds, _) = make_slot_entries(slot, 0, num_entries);
-
-        // Mark both as last shred
-        shreds[0].set_last_in_slot();
-        shreds[1].set_last_in_slot();
-        let blockstore_path = get_tmp_ledger_path!();
-        {
-            let blockstore = Blockstore::open(&blockstore_path).unwrap();
-            blockstore.insert_shreds(shreds, None, false).unwrap();
-
-            assert!(blockstore.get_duplicate_slot(slot).is_some());
-        }
-        Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
-    }
 }

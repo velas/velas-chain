@@ -609,7 +609,7 @@ mod tests {
         );
         assert_eq!(
             is_valid_genesis_archive_entry(path, &["rocksdb"], tar::EntryType::Regular),
-            UnpackPath::Invalid
+            UnpackPath::Ignore
         );
         assert_eq!(
             is_valid_genesis_archive_entry(path, &["aaaa"], tar::EntryType::Regular),
@@ -621,11 +621,11 @@ mod tests {
         );
         assert_eq!(
             is_valid_genesis_archive_entry(path, &["rocksdb"], tar::EntryType::GNUSparse,),
-            UnpackPath::Invalid
+            UnpackPath::Ignore
         );
         assert_eq!(
             is_valid_genesis_archive_entry(path, &["rocksdb", "foo"], tar::EntryType::Directory,),
-            UnpackPath::Invalid
+            UnpackPath::Ignore
         );
         assert_eq!(
             is_valid_genesis_archive_entry(

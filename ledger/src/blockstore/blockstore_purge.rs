@@ -1393,8 +1393,8 @@ pub mod tests {
 
     #[test]
     fn test_purge_evm_blocks_exact() {
-        let blockstore_path = get_tmp_ledger_path!();
-        let blockstore = Blockstore::open(&blockstore_path).unwrap();
+        let blockstore_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(&blockstore_path.path()).unwrap();
 
         let mut block_hashes = vec![];
         let mut tx_hashes = vec![];
@@ -1466,14 +1466,14 @@ pub mod tests {
             .is_some());
 
         drop(blockstore);
-        Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
+        Blockstore::destroy(&blockstore_path.path()).expect("Expected successful database destruction");
     }
 
     // Check that evm blocks are deleted when BlockHeader is stored with index (block_num, None)
     #[test]
     fn test_purge_evm_blocks_without_slot_in_index() {
-        let blockstore_path = get_tmp_ledger_path!();
-        let blockstore = Blockstore::open(&blockstore_path).unwrap();
+        let blockstore_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(&blockstore_path.path()).unwrap();
 
         for block_num in 0..5 {
             let evm_block = create_dummy_evm_block(block_num, block_num);
@@ -1503,13 +1503,13 @@ pub mod tests {
         test_all_empty_or_min(&blockstore, 2);
 
         drop(blockstore);
-        Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
+        Blockstore::destroy(&blockstore_path.path()).expect("Expected successful database destruction");
     }
 
     #[test]
     fn test_purge_special_evm_columns() {
-        let blockstore_path = get_tmp_ledger_path!();
-        let blockstore = Blockstore::open(&blockstore_path).unwrap();
+        let blockstore_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(&blockstore_path.path()).unwrap();
 
         for block_num in 0..2 {
             let transaction = create_dummy_evm_transaction();
@@ -1587,13 +1587,13 @@ pub mod tests {
             .is_none());
 
         drop(blockstore);
-        Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
+        Blockstore::destroy(&blockstore_path.path()).expect("Expected successful database destruction");
     }
 
     #[test]
     fn test_purge_not_existing_evm_blocks() {
-        let blockstore_path = get_tmp_ledger_path!();
-        let blockstore = Blockstore::open(&blockstore_path).unwrap();
+        let blockstore_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(&blockstore_path.path()).unwrap();
 
         blockstore
             .write_evm_block_header(&create_dummy_evm_block(1, 5))
@@ -1607,13 +1607,13 @@ pub mod tests {
         test_all_empty_or_min(&blockstore, 5);
 
         drop(blockstore);
-        Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
+        Blockstore::destroy(&blockstore_path.path()).expect("Expected successful database destruction");
     }
 
     #[test]
     fn test_purge_evm_blocks_with_shift_between_slot_and_blocknum() {
-        let blockstore_path = get_tmp_ledger_path!();
-        let blockstore = Blockstore::open(&blockstore_path).unwrap();
+        let blockstore_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(&blockstore_path.path()).unwrap();
 
         blockstore
             .write_evm_block_header(&create_dummy_evm_block(1, 1))
@@ -1637,13 +1637,13 @@ pub mod tests {
         }
 
         drop(blockstore);
-        Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
+        Blockstore::destroy(&blockstore_path.path()).expect("Expected successful database destruction");
     }
 
     #[test]
     fn test_evm_blocks_compaction() {
-        let blockstore_path = get_tmp_ledger_path!();
-        let blockstore = Blockstore::open(&blockstore_path).unwrap();
+        let blockstore_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(&blockstore_path.path()).unwrap();
 
         blockstore
             .write_evm_block_header(&create_dummy_evm_block(1, 1))
@@ -1672,6 +1672,6 @@ pub mod tests {
         }
 
         drop(blockstore);
-        Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
+        Blockstore::destroy(&blockstore_path.path()).expect("Expected successful database destruction");
     }
 }

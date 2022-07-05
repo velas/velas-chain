@@ -603,7 +603,7 @@ mod tests {
     #[ignore]
     fn test_bench_tps_bank_client() {
         let (genesis_config, id) = create_genesis_config(10_000);
-        let bank = Bank::new(&genesis_config);
+        let bank = Bank::new_for_tests(&genesis_config);
         let client = Arc::new(BankClient::new(bank));
 
         let config = Config {
@@ -633,7 +633,7 @@ mod tests {
         let (mut genesis_config, id) = create_genesis_config(10_000);
         let fee_rate_governor = FeeRateGovernor::new(11, 0);
         genesis_config.fee_rate_governor = fee_rate_governor;
-        let bank = Bank::new(&genesis_config);
+        let bank = Bank::new_for_tests(&genesis_config);
         let client = Arc::new(BankClient::new(bank));
         let keypair_count = 20;
         let lamports = 20;

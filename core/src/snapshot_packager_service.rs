@@ -230,6 +230,9 @@ mod tests {
         },
         tempfile::TempDir,
     };
+    use solana_ledger::genesis_utils::GenesisConfigInfo;
+    use solana_runtime::genesis_utils::create_genesis_config;
+    use solana_runtime::bank::Bank;
 
     // Create temporary placeholder directory for all test files
     fn make_tmp_dir_path() -> PathBuf {
@@ -301,7 +304,7 @@ mod tests {
             genesis_config, ..
         } = create_genesis_config(10_000);
         // Create bank
-        let bank = Arc::new(Bank::new(&genesis_config));
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
         // Create a packageable snapshot
         let slot = 42;

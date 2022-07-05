@@ -190,6 +190,30 @@ pub fn big_tx_execute(
         account_metas,
     )
 }
+pub fn big_tx_execute_authorized(
+    storage: solana::Address,
+    from: evm::Address,
+    gas_collector: solana::Address,
+    fee_type: FeePayerType,
+) -> solana::Instruction {
+    let mut account_metas = vec![
+        AccountMeta::new(solana::evm_state::ID, false),
+        AccountMeta::new(storage, true),
+    ];
+
+    if gas_collector != storage {
+        account_metas.push(AccountMeta::new_readonly(gas_collector, true))
+    }
+
+    create_evm_instruction_with_borsh(
+        crate::ID,
+        &EvmInstruction::ExecuteTransaction {
+            tx: ExecuteTransaction::ProgramAuthorized { tx: None, from},
+            fee_type,
+        },
+        account_metas,
+    )
+}
 
 pub fn transfer_native_to_evm_ixs(
     owner: solana::Address,

@@ -14,11 +14,6 @@ use {
         rpc_response::{Response as RpcResponse, RpcSignatureResult, SlotUpdate},
         tpu_client::{TpuClient, TpuClientConfig},
     },
-use solana_core::{
-    rpc::JsonRpcConfig,
-    rpc_pubsub::gen_client::Client as PubsubClient,
-use solana_core::{rpc_pubsub::gen_client::Client as PubsubClient, test_validator::TestValidator};
-};
     solana_sdk::{
     commitment_config::{CommitmentConfig, CommitmentLevel},
     fee_calculator::FeeRateGovernor,
@@ -41,6 +36,11 @@ use solana_core::{rpc_pubsub::gen_client::Client as PubsubClient, test_validator
     },
     tokio::runtime::Runtime,
 };
+use std::str::FromStr;
+use solana_test_validator::TestValidatorGenesis;
+use solana_rpc::rpc::JsonRpcConfig;
+use solana_client::pubsub_client::PubsubClient;
+
 use primitive_types::H256;
 
 use evm_rpc::Hex;
@@ -198,7 +198,7 @@ fn test_rpc_replay_transaction() {
             enable_rpc_transaction_history: true,
             ..Default::default()
         })
-        .start_with_mint_address(alice.pubkey())
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::new(/*allow_private_addr=*/ true))
         .expect("validator start failed");
     let rpc_url = test_validator.rpc_url();
 
@@ -274,7 +274,7 @@ fn test_rpc_block_transaction() {
             enable_rpc_transaction_history: true,
             ..Default::default()
         })
-        .start_with_mint_address(alice.pubkey())
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::new(/*allow_private_addr=*/ true))
         .expect("validator start failed");
     let rpc_url = test_validator.rpc_url();
 
@@ -373,7 +373,7 @@ fn test_rpc_replay_transaction_timestamp() {
             enable_rpc_transaction_history: true,
             ..Default::default()
         })
-        .start_with_mint_address(alice.pubkey())
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::new(/*allow_private_addr=*/ true))
         .expect("validator start failed");
     let rpc_url = test_validator.rpc_url();
 
@@ -492,19 +492,14 @@ fn test_rpc_slot_updates() {
     // Create the pub sub runtime
     let rt = Runtime::new().unwrap();
     let rpc_pubsub_url = test_validator.rpc_pubsub_url();
-    let (update_sender, update_receiver) = channel::<Arc<SlotUpdate>>();
+    let (update_sender, update_receiver) = channel::<SlotUpdate>();
 
     // Subscribe to slot updates
     rt.spawn(async move {
-        let connect = ws::try_connect::<PubsubClient>(&rpc_pubsub_url).unwrap();
-        let client = connect.await.unwrap();
 
         tokio::spawn(async move {
-            let mut update_sub = client.slots_updates_subscribe().unwrap();
-            loop {
-                let response = update_sub.next().await.unwrap();
-                update_sender.send(response.unwrap()).unwrap();
-            }
+            let mut update_sub = PubsubClient::slot_updates_subscribe(&rpc_pubsub_url, move |response| update_sender.send(response).unwrap()).unwrap();
+            loop{tokio::time::sleep(Duration::from_millis(1000)).await;} // wait subscription
         });
     });
 
@@ -530,7 +525,7 @@ fn test_rpc_slot_updates() {
             .recv_timeout(Duration::from_secs(2))
             .unwrap();
         if update.slot() == verify_slot {
-            let update_name = match *update {
+            let update_name = match update {
                 SlotUpdate::CreatedBank { .. } => "CreatedBank",
                 SlotUpdate::Completed { .. } => "Completed",
                 SlotUpdate::Frozen { .. } => "Frozen",
@@ -550,7 +545,7 @@ fn test_rpc_slot_updates() {
 #[test]
 fn test_rpc_subscriptions() {
     solana_logger::setup();
-
+    use solana_sdk::signature::Signature;
     let alice = Keypair::new();
     let test_validator =
         TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
@@ -593,15 +588,12 @@ fn test_rpc_subscriptions() {
     let rpc_pubsub_url = test_validator.rpc_pubsub_url();
     let signature_set_clone = signature_set.clone();
     rt.spawn(async move {
-        let connect = ws::try_connect::<PubsubClient>(&rpc_pubsub_url).unwrap();
-        let client = connect.await.unwrap();
-
         // Subscribe to signature notifications
         for sig in signature_set_clone {
             let status_sender = status_sender.clone();
-            let mut sig_sub = client
-                .signature_subscribe(
-                    sig.clone(),
+            let mut sig_sub = PubsubClient::signature_subscribe(
+                    &rpc_pubsub_url,
+                    &Signature::from_str(&sig).unwrap(),
                     Some(RpcSignatureSubscribeConfig {
                         commitment: Some(CommitmentConfig::confirmed()),
                         ..RpcSignatureSubscribeConfig::default()
@@ -610,9 +602,9 @@ fn test_rpc_subscriptions() {
                 .unwrap_or_else(|err| panic!("sig sub err: {:#?}", err));
 
             tokio::spawn(async move {
-                let response = sig_sub.next().await.unwrap();
+                let response = sig_sub.1.recv().unwrap();
                 status_sender
-                    .send((sig.clone(), response.unwrap()))
+                    .send((sig.clone(), response))
                     .unwrap();
             });
         }
@@ -620,9 +612,9 @@ fn test_rpc_subscriptions() {
         // Subscribe to account notifications
         for pubkey in account_set {
             let account_sender = account_sender.clone();
-            let mut client_sub = client
-                .account_subscribe(
-                    pubkey,
+            let mut client_sub = PubsubClient::account_subscribe(
+                    &rpc_pubsub_url,
+                    &Pubkey::from_str(&pubkey).unwrap(),
                     Some(RpcAccountInfoConfig {
                         commitment: Some(CommitmentConfig::confirmed()),
                         ..RpcAccountInfoConfig::default()
@@ -630,17 +622,16 @@ fn test_rpc_subscriptions() {
                 )
                 .unwrap_or_else(|err| panic!("acct sub err: {:#?}", err));
             tokio::spawn(async move {
-                let response = client_sub.next().await.unwrap();
-                account_sender.send(response.unwrap()).unwrap();
+                let response = client_sub.1.recv().unwrap();
+                account_sender.send(response).unwrap();
             });
         }
 
         // Signal ready after the next slot notification
-        let mut slot_sub = client
-            .slot_subscribe()
+        let mut slot_sub = PubsubClient::slot_subscribe(&rpc_pubsub_url,)
             .unwrap_or_else(|err| panic!("sig sub err: {:#?}", err));
         tokio::spawn(async move {
-            let _response = slot_sub.next().await.unwrap();
+            let _response = slot_sub.1.recv().unwrap();
             ready_sender.send(()).unwrap();
         });
     });

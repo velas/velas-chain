@@ -27,6 +27,11 @@ solana-streamer = { path = "../streamer", version = "=1.9.29" }
 solana-test-validator = { path = "../test-validator", version = "=1.9.29" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.9.29" }
 tokio = { version = "1.14.1", features = ["full"] }
+solana-evm-loader-program = { path = "../evm-utils/programs/evm_loader" }
+evm-rpc = { path = "../evm-utils/evm-rpc" }
+evm-state = { path = "../evm-utils/evm-state" }
+hex = "0.4"
+primitive-types = "0.8.0"
 
 [dev-dependencies]
 solana-logger = { path = "../logger", version = "=1.9.29" }

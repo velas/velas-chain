@@ -297,6 +297,7 @@ fn test_replica_bootstrap() {
         accounts_db_caching_enabled: false,
         replica_exit: Arc::new(RwLock::new(Exit::default())),
         evm_state_path: evm_path.to_path_buf(),
+        jaeger_collector_url: None,
     };
     let _replica_node = ReplicaNode::new(config);
 }

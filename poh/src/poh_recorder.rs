@@ -877,6 +877,7 @@ mod tests {
         solana_sdk::{clock::DEFAULT_TICKS_PER_SLOT, hash::hash},
         std::sync::mpsc::sync_channel,
     };
+    use solana_ledger::genesis_utils::GenesisConfigInfo;
 
     #[test]
     fn test_poh_recorder_no_zero_tick() {

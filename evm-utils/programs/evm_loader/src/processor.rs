@@ -183,12 +183,23 @@ impl EvmProcessor {
         borsh_used: bool,
     ) -> Result<(), EvmError> {
         let is_big = tx.is_big();
-        let sender = if is_big {
-            accounts.users.get(1)
+        // TODO: Add logic for fee collector
+        let (sender, _fee_collector) = if is_big {
+            (accounts.users.get(1), accounts.users.get(2))
         } else {
-            accounts.first()
+            (accounts.first(), accounts.users.get(1))
         };
-        let withdraw_fee_from_evm = fee_type.is_evm() || sender.is_none();
+
+        // FeePayerType::Native is possible only in new serialization format
+        if fee_type.is_native() && sender.is_none() {
+            ic_msg!(
+                invoke_context,
+                "Fee payer is native but no sender providen",
+            );
+            return Err(EvmError::MissingRequiredSignature)
+        }
+
+        let withdraw_fee_from_evm = fee_type.is_evm();
         let tx_gas_price;
         let result = match tx {
             ExecuteTransaction::Signed { tx } => {
@@ -247,9 +258,6 @@ impl EvmProcessor {
             }
         };
 
-        if let (false, Ok(result)) = (withdraw_fee_from_evm, &result) {
-            Self::charge_native_account(result, tx_gas_price, sender.unwrap())?;
-        }
         if executor.feature_set.is_unsigned_tx_fix_enabled() && is_big {
             let storage = Self::get_big_transaction_storage(invoke_context, &accounts)?;
             self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
@@ -261,6 +269,7 @@ impl EvmProcessor {
             sender,
             tx_gas_price,
             result,
+            withdraw_fee_from_evm,
         )
     }
 
@@ -534,13 +543,15 @@ impl EvmProcessor {
     /// Calculate fee based on transaction result and charge native account
     pub fn charge_native_account(
         tx_result: &ExecutionResult,
-        gas_price: Gas,
+        fee: U256,
         native_account: &KeyedAccount,
+        evm_account: &KeyedAccount
     ) -> Result<(), EvmError> {
         // Charge only when transaction succeeded
         if matches!(tx_result.exit_reason, ExitReason::Succeed(_)) {
-            let fee = gas_price * tx_result.used_gas;
             let (fee, _) = gweis_to_lamports(fee);
+
+            trace!("Charging account for fee {}", fee);
             let mut account_data = native_account
                 .try_account_ref_mut()
                 .map_err(|_| EvmError::BorrowingFailed)?;
@@ -549,6 +560,11 @@ impl EvmProcessor {
                 .checked_sub(fee)
                 .ok_or(EvmError::NativeAccountInsufficientFunds)?;
             account_data.set_lamports(new_lamports);
+
+            let mut evm_account = evm_account.try_account_ref_mut()
+                .map_err(|_| EvmError::BorrowingFailed)?;
+            let new_evm_lamports = evm_account.lamports().checked_add( fee).ok_or(EvmError::OverflowInRefund)?;
+            evm_account.set_lamports(new_evm_lamports);
         }
         Ok(())
     }
@@ -563,6 +579,7 @@ impl EvmProcessor {
         sender: Option<&KeyedAccount>,
         tx_gas_price: evm_state::U256,
         result: Result<evm_state::ExecutionResult, evm_state::error::Error>,
+        withdraw_fee_from_evm: bool,
     ) -> Result<(), EvmError> {
         let result = result.map_err(|e| {
             ic_msg!(invoke_context, "Transaction execution error: {}", e);
@@ -588,7 +605,7 @@ impl EvmProcessor {
 
         let full_fee = tx_gas_price * result.used_gas;
 
-        let burn_fee = executor.config().burn_gas_price * result.used_gas;
+        let burn_fee = dbg!(executor.config().burn_gas_price) * result.used_gas;
 
         if full_fee < burn_fee {
             ic_msg!(
@@ -601,22 +618,32 @@ impl EvmProcessor {
 
         // refund only remaining part
         let refund_fee = full_fee - burn_fee;
+        let (refund_native_fee, _) = gweis_to_lamports(refund_fee);
 
+        // 1. Fee can be charged from evm account or native. (evm part is done in Executor::transaction_execute* methods.)
+        if !withdraw_fee_from_evm {
+            let sender = sender.as_ref().ok_or(EvmError::MissingRequiredSignature)?;
+            Self::charge_native_account(&result, full_fee, *sender, &accounts.evm)?;
+        }
+
+        // 2. Then we should burn some part of it.
+        // This if only register burn to the deposit address, withdrawal is done in 1.
         if burn_fee > U256::zero() {
+            trace!("Burning fee {}", burn_fee);
             // we already withdraw gas_price during transaction_execute,
             // if burn_fixed_fee is activated, we should deposit to burn addr (0x00..00)
-            executor.deposit(BURN_ADDR, burn_fee)
+            executor.deposit(BURN_ADDR, burn_fee);
         };
 
+        // 3. And transfer back remaining fee to the bridge as refund of native fee that was used to wrap this transaction.
         if let Some(payer) = sender {
-            let (fee, _) = gweis_to_lamports(refund_fee);
             ic_msg!(
                 invoke_context,
                 "Refunding transaction fee to transaction sender fee:{:?}, sender:{}",
-                fee,
+                refund_native_fee,
                 payer.unsigned_key()
             );
-            accounts.refund_fee(payer, fee)?;
+            accounts.refund_fee(payer, refund_native_fee)?;
         } else {
             ic_msg!(
                 invoke_context,
@@ -687,10 +714,6 @@ mod test {
     use solana_sdk::{instruction::{AccountMeta, Instruction}, message::{SanitizedMessage, Message}};
     use solana_sdk::native_loader;
     use solana_program_runtime::{invoke_context::{InvokeContext, BuiltinProgram}, timings::ExecuteTimings};
-    use solana_sdk::process_instruction::{
-        BpfComputeBudget, ComputeMeter, Logger, MockComputeMeter, MockInvokeContext, MockLogger,
-        ProcessInstructionWithContext,
-    };
     use solana_sdk::program_utils::limited_deserialize;
     use solana_sdk::sysvar::rent::Rent;
 
@@ -706,11 +729,12 @@ mod test {
 
     // Testing object that emulate Bank work, and can execute transactions.
     // Emulate batch of native transactions.
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     struct EvmMockContext {
         evm_state: evm_state::EvmBackend<evm_state::Incomming>,
         evm_state_account: MutableAccount,
         rest_accounts: BTreeMap<Pubkey, MutableAccount>,
+        feature_set: solana_sdk::feature_set::FeatureSet,
     }
 
     impl EvmMockContext {
@@ -720,8 +744,13 @@ mod test {
             Self {
                 evm_state: evm_state::EvmBackend::default(),
                 evm_state_account: Rc::new(RefCell::new(crate::create_state_account(evm_balance))),
-                rest_accounts: Default::default()
+                rest_accounts: Default::default(),
+                feature_set: solana_sdk::feature_set::FeatureSet::all_enabled(),
             }
+        }
+
+        fn disable_feature(&mut self, pubkey: &Pubkey) {
+            self.feature_set.deactivate(pubkey);
         }
 
         fn native_account(&mut self, pubkey: Pubkey) -> MutableAccount {
@@ -749,7 +778,20 @@ mod test {
         // Emulate native transaction
         fn process_transaction(&mut self, ixs: Vec<Instruction> ) -> Result<(), InstructionError> {
             let evm_state_clone = self.evm_state.clone();
-            let evm_executor = evm_state::Executor::with_config(evm_state_clone, Default::default(), Default::default());
+            let evm_executor = evm_state::Executor::with_config(
+                evm_state_clone,
+                Default::default(),
+                evm::EvmConfig::new(evm::TEST_CHAIN_ID,self.feature_set.is_active(
+                &solana_sdk::feature_set::velas::burn_fee::id(),
+                ),
+            ),  evm_state::executor::FeatureSet::new(
+                self.feature_set.is_active(
+                    &solana_sdk::feature_set::velas::unsigned_tx_fix::id(),
+               ),
+                self.feature_set.is_active(
+                    &solana_sdk::feature_set::velas::clear_logs_on_error::id(),
+                ),
+            ),);
 
             let evm_program = BuiltinProgram {
                 program_id: solana_sdk::evm_loader::id(),
@@ -776,8 +818,8 @@ mod test {
             let keys: Vec<_> = message_keys.into_iter().map(|pubkey|(pubkey, self.native_account(pubkey))).collect();
 
             let mut invoke_context = InvokeContext::new_mock_evm(&keys, evm_executor, builtins);
+            invoke_context.feature_set = Arc::new(self.feature_set.clone());
             for instruction in message.instructions() {
-
                 if let Err(e) = invoke_context.process_instruction(&message, instruction, &[program_index], &[],
                     &[], &mut ExecuteTimings::default()).result {
                     let executor = invoke_context.deconstruct_evm().expect("Evm executor should exist");
@@ -785,6 +827,7 @@ mod test {
                     return Err(e)
                 }
             }
+            // invoke context will apply native accounts chages, but evm should be applied manually.
             let executor = invoke_context.deconstruct_evm().expect("Evm executor should exist");
             self.evm_state = executor.evm_backend;
             Ok(())
@@ -844,6 +887,7 @@ mod test {
     #[test]
     fn execute_tx() {
         let mut evm_context = EvmMockContext::new(0);
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
 
         let address = secret_key.to_address();
@@ -860,7 +904,7 @@ mod test {
 
         assert!(evm_context
             .process_instruction(
-                crate::send_raw_tx(Pubkey::new_unique(), tx_create.clone(), None)
+                crate::send_raw_tx(Pubkey::new_unique(), tx_create.clone(), None, FeePayerType::Evm)
             )
             .is_ok());
         let tx_address = tx_create.address().unwrap();
@@ -878,24 +922,22 @@ mod test {
 
         assert!(evm_context
             .process_instruction(
-                crate::send_raw_tx(Pubkey::new_unique(), tx_call, None)
+                crate::send_raw_tx(Pubkey::new_unique(), tx_call, None, FeePayerType::Evm)
             )
             .is_ok());
         assert!(evm_context.evm_state.find_transaction_receipt(tx_hash).is_some())
     }
 
     #[test]
-    fn test_cross_execution() {
-        let _logger = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
-        let mut executor = evm_state::Executor::testing();
-        let processor = EvmProcessor::default();
-        let evm_account = RefCell::new(crate::create_state_account(0));
-        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+    fn test_big_authorized_tx_execution() {
+        let _logger = simple_logger::SimpleLogger::new().env().with_utc_timestamps().init();
+        let mut evm_context = EvmMockContext::new(0);
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
 
         let user_id = Pubkey::new_unique();
         let program_id = Pubkey::new_unique();
         let from = crate::evm_address_for_program(program_id);
-        executor.deposit(from, U256::from(2) * 300000);
+        evm_context.deposit_evm(from, U256::from(2) * 300000);
         let tx_create = evm::UnsignedTransaction {
             nonce: 0.into(),
             gas_price: 1.into(),
@@ -906,58 +948,32 @@ mod test {
         };
         let mut tx_bytes = vec![];
         BorshSerialize::serialize(&tx_create, &mut tx_bytes).unwrap();
-        let user_account = RefCell::new(solana_sdk::account::AccountSharedData {
-            lamports: 1000,
-            data: vec![0; tx_bytes.len()],
-            owner: crate::ID,
-            executable: false,
-            rent_epoch: 0,
-        });
-        let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
-        let program_account = RefCell::new(crate::create_state_account(0));
-        let program_keyed_account = KeyedAccount::new(&program_id, true, &program_account);
-        let keyed_accounts = [evm_keyed_account, user_keyed_account, program_keyed_account];
 
-        let mut invoke_context = InvokeContext::new_mock_evm(executor);
-        invoke_context.parent_caller = crate::ID;
 
-        let big_tx_alloc = EvmBigTransaction::EvmTransactionAllocate {
-            size: tx_bytes.len() as u64,
-        };
-        let mut buf = vec![EVM_INSTRUCTION_BORSH_PREFIX];
-        BorshSerialize::serialize(&EvmInstruction::EvmBigTransaction(big_tx_alloc), &mut buf)
-            .unwrap();
-        processor
-            .process_instruction(&crate::ID, &keyed_accounts, &buf, &mut invoke_context, true)
+        let acc = evm_context.native_account(user_id);
+        acc.borrow_mut().set_lamports(0);
+        acc.borrow_mut().set_data(vec![0;tx_bytes.len()]);
+        acc.borrow_mut().set_owner(crate::ID);
+
+        let acc = evm_context.native_account(program_id);
+        acc.borrow_mut().set_lamports(1000);
+
+        let big_tx_alloc = crate::big_tx_allocate(user_id, tx_bytes.len());
+        evm_context
+            .process_instruction(big_tx_alloc)
             .unwrap();
 
-        buf = vec![EVM_INSTRUCTION_BORSH_PREFIX];
-        let big_tx_write = EvmBigTransaction::EvmTransactionWrite {
-            offset: 0,
-            data: tx_bytes,
-        };
-        BorshSerialize::serialize(&EvmInstruction::EvmBigTransaction(big_tx_write), &mut buf)
-            .unwrap();
-        processor
-            .process_instruction(&crate::ID, &keyed_accounts, &buf, &mut invoke_context, true)
+        let big_tx_write = crate::big_tx_write(user_id, 0, tx_bytes );
+        
+        evm_context
+            .process_instruction(big_tx_write)
             .unwrap();
 
-        buf = vec![EVM_INSTRUCTION_BORSH_PREFIX];
-        BorshSerialize::serialize(
-            &EvmInstruction::ExecuteTransaction {
-                tx: ProgramAuthorized { tx: None, from },
-                fee_type: FeePayerType::Native,
-            },
-            &mut buf,
-        )
-        .unwrap();
-        assert!(processor
+        let big_tx_execute = crate::big_tx_execute_authorized(user_id, from, program_id, FeePayerType::Native);
+        
+        assert!(evm_context
             .process_instruction(
-                &crate::ID,
-                &keyed_accounts,
-                &buf,
-                &mut invoke_context,
-                false,
+                big_tx_execute
             )
             .is_ok());
     }
@@ -966,6 +982,7 @@ mod test {
     fn deploy_tx_refund_fee() {
         let init_evm_balance = 1000000;
         let mut evm_context = EvmMockContext::new(init_evm_balance);
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
         let user_id = Pubkey::new_unique();
         evm_context.native_account(user_id).borrow_mut().set_owner(crate::ID);
 
@@ -987,7 +1004,7 @@ mod test {
         let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
         assert!(evm_context
             .process_instruction(
-                crate::send_raw_tx(user_id, tx_create , None)
+                crate::send_raw_tx(user_id, tx_create , None, FeePayerType::Evm)
             )
             .is_ok());
         let used_gas_for_hello_world_deploy = 114985;
@@ -1003,6 +1020,7 @@ mod test {
     #[test]
     fn tx_preserve_nonce() {
         let mut evm_context = EvmMockContext::new(0);
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let address = secret_key.to_address();
         evm_context.deposit_evm(address, U256::from(2u32) * 300000u32);
@@ -1028,7 +1046,7 @@ mod test {
         // Execute of second tx before first should fail.
         assert!(evm_context
             .process_instruction(
-                crate::send_raw_tx(Pubkey::new_unique(), tx_1_sign.clone(), None)
+                crate::send_raw_tx(Pubkey::new_unique(), tx_1_sign.clone(), None, FeePayerType::Evm)
             )
             .is_err());
 
@@ -1036,14 +1054,14 @@ mod test {
 
         assert!(evm_context
             .process_instruction(
-                crate::send_raw_tx(Pubkey::new_unique(), tx_0_sign.clone(), None)
+                crate::send_raw_tx(Pubkey::new_unique(), tx_0_sign.clone(), None, FeePayerType::Evm)
             )
             .is_ok());
 
         // Executing copy of first tx with different signature, should not pass too.
         assert!(evm_context
             .process_instruction(
-                crate::send_raw_tx(Pubkey::new_unique(), tx_0_shadow_sign.clone(), None)
+                crate::send_raw_tx(Pubkey::new_unique(), tx_0_shadow_sign.clone(), None, FeePayerType::Evm)
             )
             .is_err());
 
@@ -1051,7 +1069,7 @@ mod test {
         // But executing of second tx now should succeed.
         assert!(evm_context
             .process_instruction(
-                crate::send_raw_tx(Pubkey::new_unique(), tx_1_sign.clone(), None)
+                crate::send_raw_tx(Pubkey::new_unique(), tx_1_sign.clone(), None, FeePayerType::Evm)
             )
             .is_ok());
 
@@ -1077,7 +1095,7 @@ mod test {
         // Transaction should fail because can't pay the bill.
         assert!(evm_context
             .process_instruction(
-                crate::send_raw_tx(Pubkey::new_unique(), tx_0_sign, None)
+                crate::send_raw_tx(Pubkey::new_unique(), tx_0_sign, None, FeePayerType::Evm)
             )
             .is_err());
 
@@ -1086,6 +1104,7 @@ mod test {
     #[test]
     fn execute_tx_with_state_apply() {
         let mut evm_context = EvmMockContext::new(0);
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
 
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
 
@@ -1121,7 +1140,7 @@ mod test {
 
             assert!(evm_context
                 .process_instruction(
-                    crate::send_raw_tx(Pubkey::new_unique(), tx_create, None)
+                    crate::send_raw_tx(Pubkey::new_unique(), tx_create, None, FeePayerType::Evm)
                 )
                 .is_ok());
         }
@@ -1156,7 +1175,7 @@ mod test {
 
             assert!(evm_context
                 .process_instruction(
-                    crate::send_raw_tx(Pubkey::new_unique(), tx_call, None)
+                    crate::send_raw_tx(Pubkey::new_unique(), tx_call, None, FeePayerType::Evm)
                 )
                 .is_ok());
             
@@ -1290,7 +1309,7 @@ mod test {
 
         let tx_call = tx_call.sign(&ether_sc, Some(CHAIN_ID));
         {
-            let ix = crate::send_raw_tx(Pubkey::new_unique(), tx_call, None);
+            let ix = crate::send_raw_tx(Pubkey::new_unique(), tx_call, None, FeePayerType::Evm);
             // if we don't add second account to account list, insctruction should fail
             let result = evm_context.process_instruction(
                 ix
@@ -1335,6 +1354,7 @@ mod test {
     #[test]
     fn execute_transfer_roundtrip() {
         let mut evm_context = EvmMockContext::new(0);
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
 
         let user_id = Pubkey::new_unique();
         let acc = evm_context.native_account(user_id);
@@ -1403,7 +1423,7 @@ mod test {
 
         let tx_call = tx_call.sign(&ether_sc, Some(CHAIN_ID));
         {
-            let mut ix = crate::send_raw_tx(Pubkey::new_unique(), tx_call, None);
+            let mut ix = crate::send_raw_tx(Pubkey::new_unique(), tx_call, None, FeePayerType::Evm);
             // add second account to account list, because we need account to be able to credit
             ix.accounts.push(AccountMeta::new(second_user_id,false));
             let result = evm_context.process_instruction(
@@ -1523,7 +1543,7 @@ mod test {
 
         let tx_call = tx_call.sign(&ether_sc, Some(CHAIN_ID));
         {
-            let mut ix = crate::send_raw_tx(Pubkey::new_unique(), tx_call, None);
+            let mut ix = crate::send_raw_tx(Pubkey::new_unique(), tx_call, None, FeePayerType::Evm);
             // add second account to account list, because we need account to be able to credit
             ix.accounts.push(AccountMeta::new(second_user_id,false));
             let result = evm_context.process_instruction(
@@ -1606,6 +1626,7 @@ mod test {
             // Create clear executor for each run, to avoid state conflicts in instructions (signed and unsigned tx with same nonce).
             let mut evm_context = EvmMockContext::new(0);
 
+            evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
             let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
             evm_context.deposit_evm(secret_key.to_address(), U256::from(2u32) * 300000u32); // deposit some small amount for gas payments
                                                                                // insert new accounts, if some missing
@@ -1669,6 +1690,7 @@ mod test {
                 continue;
             }
             let mut evm_context = EvmMockContext::new(1_000_000_000);
+            evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
             let receiver = Pubkey::new(&hex!(
                 "9b73845fe592e092a13df83a8f8485296ba9c0a28c7c0824c33b1b3b352b4043"
             ));
@@ -1693,7 +1715,7 @@ mod test {
                 evm_context.deposit_evm(address, U256::from(2u32) * 300000u32);
 
                 evm_context
-                    .process_instruction(crate::send_raw_tx(Pubkey::new_unique(), tx_create, None)  ) .unwrap();
+                    .process_instruction(crate::send_raw_tx(Pubkey::new_unique(), tx_create, None, FeePayerType::Evm)  ) .unwrap();
                 evm_context.evm_state = evm_context.evm_state.commit_block(0, Default::default()).next_incomming(0);
             }
 
@@ -1715,7 +1737,7 @@ mod test {
 
                 let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
                 let tx_hash = tx_call.tx_id_hash();
-                let mut ix = crate::send_raw_tx(Pubkey::new_unique(), tx_call, None);
+                let mut ix = crate::send_raw_tx(Pubkey::new_unique(), tx_call, None, FeePayerType::Evm);
                 ix.accounts.push(AccountMeta::new(receiver, false));
                 let result = evm_context.process_instruction(
                     ix
@@ -1763,64 +1785,39 @@ mod test {
         let calldata_with_revert =
             hex!("cf280be10000000000000000000000000000000000000000000000000000000000000001");
 
-        let mut state = evm_state::EvmBackend::default();
-        let processor = EvmProcessor::default();
-        let evm_account = RefCell::new(crate::create_state_account(1_000_000_000));
-        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        let mut evm_context = EvmMockContext::new(1_000_000_000);
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
         let receiver = Pubkey::new(&hex!(
             "9b73845fe592e092a13df83a8f8485296ba9c0a28c7c0824c33b1b3b352b4043"
         ));
-        let user_account = RefCell::new(solana_sdk::account::AccountSharedData::new(
-            0,
-            0,
-            &solana_sdk::system_program::id(),
-        ));
-        let user_account = KeyedAccount::new(&receiver, false, &user_account);
-        let keyed_accounts = [evm_keyed_account, user_account];
-
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
 
         let tx_create = evm::UnsignedTransaction {
-            nonce: 0.into(),
-            gas_price: 1.into(),
-            gas_limit: 300000.into(),
+            nonce: 0u32.into(),
+            gas_price: 1u32.into(),
+            gas_limit: 300000u32.into(),
             action: TransactionAction::Create,
-            value: 0.into(),
+            value: 0u32.into(),
             input: code_with_revert.to_vec(),
         };
         let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
+
+        let _caller_address = tx_create.caller().unwrap();
+
         let tx_address = tx_create.address().unwrap();
 
         {
-            let mut executor = evm_state::Executor::default_configs(state);
             let address = secret_key.to_address();
-            executor.deposit(address, U256::from(2) * 300000);
-            executor.deposit(
-                tx_address,
-                U256::from(1_000_000_000) * U256::from(1_000_000_000),
-            ); // 1ETHER
+            evm_context.deposit_evm(address, U256::from(2u32) * 300000u32);
 
-            let mut invoke_context = MockInvokeContext::with_evm(executor);
-            assert!(processor
-                .process_instruction(
-                    &crate::ID,
-                    &keyed_accounts,
-                    &bincode::serialize(&EvmInstruction::ExecuteTransaction {
-                        tx: ExecuteTransaction::Signed { tx: Some(tx_create) },
-                        fee_type: FeePayerType::Evm,
-                    })
-                        .unwrap(),
-                    &mut invoke_context,
-                    false,
-                )
-                .is_ok());
-
-            let executor = invoke_context.deconstruct().unwrap();
-            let committed = executor.deconstruct().commit_block(0, Default::default());
-            state = committed.next_incomming(0);
+            evm_context
+                .process_instruction(crate::send_raw_tx(Pubkey::new_unique(), tx_create, None, FeePayerType::Evm)  ) .unwrap();
+            evm_context.evm_state = evm_context.evm_state.commit_block(0, Default::default()).next_incomming(0);
         }
 
+
         {
+            let evm_context = evm_context.clone(); // make copy for test
             let tx_call = evm::UnsignedTransaction {
                 nonce: 1.into(),
                 gas_price: 1.into(),
@@ -1831,32 +1828,17 @@ mod test {
             };
             let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
             let tx_hash = tx_call.tx_id_hash();
-            let instruction_data =
-                bincode::serialize(&EvmInstruction::ExecuteTransaction {
-                    tx: ExecuteTransaction::Signed { tx: Some(tx_call) },
-                    fee_type: FeePayerType::Evm,
-                })
-                    .unwrap();
+            let instruction = crate::send_raw_tx(Pubkey::new_unique(), tx_call, None, FeePayerType::Evm);
 
             // Reverted tx with clear_logs_on_error enabled must clear logs
             {
-                let executor = evm_state::Executor::with_config(
-                    state.clone(),
-                    Default::default(),
-                    Default::default(),
-                    FeatureSet::new_with_all_enabled(),
+                let mut evm_context = evm_context.clone(); // make copy for test
+                
+                let _result = evm_context
+                    .process_instruction(instruction.clone()
                 );
-                let mut invoke_context = MockInvokeContext::with_evm(executor);
-
-                let _result = processor.process_instruction(
-                    &crate::ID,
-                    &keyed_accounts,
-                    &instruction_data,
-                    &mut invoke_context,
-                    false,
-                );
-                let mut executor = invoke_context.deconstruct().unwrap();
-                let tx = executor.get_tx_receipt_by_hash(tx_hash).unwrap();
+                let executor = evm_context.evm_state;
+                let tx = executor.find_transaction_receipt(tx_hash).unwrap();
                 println!("status = {:?}", tx.status);
                 assert!(matches!(tx.status, ExitReason::Revert(_)));
                 assert!(tx.logs.is_empty());
@@ -1864,25 +1846,14 @@ mod test {
 
             // Reverted tx with clear_logs_on_error disabled don't clear logs
             {
-                let executor = evm_state::Executor::with_config(
-                    state.clone(),
-                    Default::default(),
-                    Default::default(),
-                    FeatureSet::new(true, false),
-                );
-                let mut invoke_context = MockInvokeContext::with_evm(executor);
-                invoke_context
+                let mut evm_context = evm_context.clone(); // make copy for test
+                evm_context
                     .disable_feature(&solana_sdk::feature_set::velas::clear_logs_on_error::id());
-
-                let _result = processor.process_instruction(
-                    &crate::ID,
-                    &keyed_accounts,
-                    &instruction_data,
-                    &mut invoke_context,
-                    false,
+                let _result = evm_context
+                    .process_instruction(instruction
                 );
-                let mut executor = invoke_context.deconstruct().unwrap();
-                let tx = executor.get_tx_receipt_by_hash(tx_hash).unwrap();
+                let executor = evm_context.evm_state;
+                let tx = executor.find_transaction_receipt(tx_hash).unwrap();
                 println!("status = {:?}", tx.status);
                 assert!(matches!(tx.status, ExitReason::Revert(_)));
                 assert!(!tx.logs.is_empty());
@@ -1901,56 +1872,33 @@ mod test {
             };
             let tx_call = tx_call.sign(&secret_key, Some(CHAIN_ID));
             let tx_hash = tx_call.tx_id_hash();
-            let instruction_data =
-                bincode::serialize(&EvmInstruction::ExecuteTransaction {
-                    tx: ExecuteTransaction::Signed { tx: Some(tx_call) },
-                    fee_type: FeePayerType::Evm
-                })
-                    .unwrap();
+            let instruction = crate::send_raw_tx(Pubkey::new_unique(), tx_call, None, FeePayerType::Evm);
+
 
             {
-                let executor = evm_state::Executor::with_config(
-                    state.clone(),
-                    Default::default(),
-                    Default::default(),
-                    FeatureSet::new_with_all_enabled(),
+                let mut evm_context = evm_context.clone(); // make copy for test
+                
+                let _result = evm_context
+                    .process_instruction(instruction.clone()
                 );
-                let mut invoke_context = MockInvokeContext::with_evm(executor);
-
-                let _result = processor.process_instruction(
-                    &crate::ID,
-                    &keyed_accounts,
-                    &instruction_data,
-                    &mut invoke_context,
-                    false,
-                );
-                let mut executor = invoke_context.deconstruct().unwrap();
-                let tx = executor.get_tx_receipt_by_hash(tx_hash).unwrap();
+                let executor = evm_context.evm_state;
+                let tx = executor.find_transaction_receipt(tx_hash).unwrap();
+               
                 println!("status = {:?}", tx.status);
                 assert!(matches!(tx.status, ExitReason::Succeed(_)));
                 assert!(!tx.logs.is_empty());
             }
 
-            {
-                let executor = evm_state::Executor::with_config(
-                    state.clone(),
-                    Default::default(),
-                    Default::default(),
-                    FeatureSet::new(true, false),
+            {let mut evm_context = evm_context.clone(); // make copy for test
+                
+                let _result = evm_context
+                    .process_instruction(instruction
                 );
-                let mut invoke_context = MockInvokeContext::with_evm(executor);
-                invoke_context
+                evm_context
                     .disable_feature(&solana_sdk::feature_set::velas::clear_logs_on_error::id());
-
-                let _result = processor.process_instruction(
-                    &crate::ID,
-                    &keyed_accounts,
-                    &instruction_data,
-                    &mut invoke_context,
-                    false,
-                );
-                let mut executor = invoke_context.deconstruct().unwrap();
-                let tx = executor.get_tx_receipt_by_hash(tx_hash).unwrap();
+               
+                let executor = evm_context.evm_state;
+                let tx = executor.find_transaction_receipt(tx_hash).unwrap();
                 println!("status = {:?}", tx.status);
                 assert!(matches!(tx.status, ExitReason::Succeed(_)));
                 assert!(!tx.logs.is_empty());
@@ -1961,7 +1909,7 @@ mod test {
     #[test]
     fn authorized_tx_only_from_signer() {
         let mut evm_context = EvmMockContext::new(0);
-
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
 
         let address = secret_key.to_address();
@@ -1984,7 +1932,7 @@ mod test {
 
         evm_context
             .process_instruction(
-                crate::send_raw_tx(user_id, tx_create, None)
+                crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Evm)
             )
             .unwrap();
 
@@ -2029,257 +1977,213 @@ mod test {
     #[test]
     fn authorized_tx_with_evm_fee_type() {
         let _ = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
-        let mut executor = evm_state::Executor::testing();
-        let processor = EvmProcessor::default();
-
+        let mut evm_context = EvmMockContext::new(gweis_to_lamports(U256::from(300000u64 * evm_state::BURN_GAS_PRICE * 2)).0);
+        
         let mut rand = evm_state::rand::thread_rng();
         let dummy_key = evm::SecretKey::new(&mut rand);
         let dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
         let user_evm_address = crate::evm_address_for_program(user_id);
-        executor.deposit(user_evm_address, U256::from(30000000000u64));
-        let evm_account = RefCell::new(crate::create_state_account(10));
+        evm_context.deposit_evm(user_evm_address, U256::from(300000u64 * evm_state::BURN_GAS_PRICE * 2));
 
         let unsigned_tx = evm::UnsignedTransaction {
             nonce: 0.into(),
-            gas_price: 100000.into(),
+            gas_price: U256::from(evm_state::BURN_GAS_PRICE)* 2,
             gas_limit: 300000.into(),
             action: TransactionAction::Call(dummy_address),
             value: 0.into(),
-            input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
+            input: vec![],
         };
+        let from = crate::evm_address_for_program(user_id);
+        let tx_hash = evm::UnsignedTransactionWithCaller {
+            unsigned_tx: unsigned_tx.clone(),
+            chain_id: evm::TEST_CHAIN_ID,
+            caller: from,
+            signed_compatible: true,
+        }.tx_id_hash();
 
         let ix = crate::authorized_tx(user_id, unsigned_tx, FeePayerType::Evm);
 
-        let user_account = RefCell::new(solana_sdk::account::AccountSharedData {
-            lamports: 0,
-            data: vec![],
-            owner: solana_sdk::system_program::id(),
-            executable: false,
-            rent_epoch: 0,
-        });
-        let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
-        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
-        let keyed_accounts = [evm_keyed_account, user_keyed_account];
-        println!("Keyed accounts = {:?}", &keyed_accounts);
+        let evm_balance_before = evm_context.evm_state.get_account_state(user_evm_address).unwrap().balance;
+        let user_balance_before = evm_context.native_account(user_id).try_borrow().unwrap().lamports();
 
-        let evm_balance_before = executor.balance(user_evm_address);
-        let user_balance_before = user_account.try_borrow().unwrap().lamports;
-
-        let mut invoke_context = MockInvokeContext::with_evm(executor);
-        processor
+        evm_context
             .process_instruction(
-                &crate::ID,
-                &keyed_accounts,
-                &ix.data,
-                &mut invoke_context,
-                false,
+                ix
             )
             .unwrap();
 
-        let executor = invoke_context.deconstruct().unwrap();
+        let executor = &evm_context.evm_state;
+        let tx = executor.find_transaction_receipt(tx_hash).unwrap();
+        let burn_fee = U256::from(tx.used_gas) * U256::from(evm_state::BURN_GAS_PRICE);
         // EVM balance has decreased
-        assert!(evm_balance_before > executor.balance(user_evm_address));
+        assert!(evm_balance_before > executor.get_account_state(user_evm_address).unwrap().balance);
         // Native balance has increased because of refund
-        let evm_balance_difference = evm_balance_before - executor.balance(user_evm_address);
+        let evm_balance_difference = evm_balance_before - executor.get_account_state(user_evm_address).unwrap().balance;
         assert_eq!(
-            user_account.try_borrow().unwrap().lamports,
-            user_balance_before + gweis_to_lamports(evm_balance_difference).0
+            burn_fee * 2,
+            evm_balance_difference
+        );
+        assert_eq!(
+            evm_context.native_account(user_id).try_borrow().unwrap().lamports(),
+            user_balance_before + gweis_to_lamports(evm_balance_difference).0 / 2
         );
     }
 
     #[test]
     fn authorized_tx_with_native_fee_type() {
-        let _ = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
-        let mut executor = evm_state::Executor::testing();
-        let processor = EvmProcessor::default();
-
+        let _ = simple_logger::SimpleLogger::new().env().with_utc_timestamps().init();
+        let mut evm_context = EvmMockContext::new(1000);
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
+        
         let mut rand = evm_state::rand::thread_rng();
         let dummy_key = evm::SecretKey::new(&mut rand);
         let dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
         let user_evm_address = crate::evm_address_for_program(user_id);
-        executor.deposit(user_evm_address, U256::from(2) * 300000);
-        let evm_account = RefCell::new(crate::create_state_account(10));
-
+        evm_context.deposit_evm(user_evm_address, U256::from(30000000000u64));
+        evm_context.native_account(user_id).borrow_mut().set_lamports(30000000000u64);
         let unsigned_tx = evm::UnsignedTransaction {
             nonce: 0.into(),
             gas_price: 100000.into(),
             gas_limit: 300000.into(),
             action: TransactionAction::Call(dummy_address),
             value: 0.into(),
-            input: hex::decode(evm_state::HELLO_WORLD_ABI).unwrap().to_vec(),
+            input: vec![],
         };
 
         let ix = crate::authorized_tx(user_id, unsigned_tx, FeePayerType::Native);
 
-        let user_account = RefCell::new(solana_sdk::account::AccountSharedData {
-            lamports: 1000,
-            data: vec![],
-            owner: solana_sdk::system_program::id(),
-            executable: false,
-            rent_epoch: 0,
-        });
-        let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
-        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
-        let keyed_accounts = [evm_keyed_account, user_keyed_account];
-        println!("Keyed accounts = {:?}", &keyed_accounts);
+        let evm_balance_before = evm_context.evm_state.get_account_state(user_evm_address).unwrap().balance;
+        let user_balance_before = evm_context.native_account(user_id).try_borrow().unwrap().lamports();
 
-        let evm_balance_before = executor.balance(user_evm_address);
-        let user_balance_before = user_account.try_borrow().unwrap().lamports;
-
-        let mut invoke_context = MockInvokeContext::with_evm(executor);
-        processor
+        evm_context
             .process_instruction(
-                &crate::ID,
-                &keyed_accounts,
-                &ix.data,
-                &mut invoke_context,
-                false,
+                ix
             )
             .unwrap();
 
-        let executor = invoke_context.deconstruct().unwrap();
+        let executor = &evm_context.evm_state;
         // EVM balance hasn't decreased
-        assert_eq!(evm_balance_before, executor.balance(user_evm_address));
+        assert_eq!(evm_balance_before, executor.get_account_state(user_evm_address).unwrap().balance);
         // Native balance refunded
         assert_eq!(
             user_balance_before,
-            user_account.try_borrow().unwrap().lamports
+            evm_context.native_account(user_id).try_borrow().unwrap().lamports()
         );
     }
 
     // Transaction with fee type Native should be executed correctly if signer has no balance on evm account
     #[test]
-    fn evm_transaction_with_native_fee_type_and_zero_evm_balance() {
-        let _logger = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
-        let executor = evm_state::Executor::testing();
-        let processor = EvmProcessor::default();
-
-        let evm_account = RefCell::new(crate::create_state_account(100));
-        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+    fn evm_transaction_with_native_fee_type_and_zero_evm_balance_check_burn() {
+        let _ = simple_logger::SimpleLogger::new().env().with_utc_timestamps().init();
+        let mut evm_context = EvmMockContext::new(1000);
+        
+        let mut rand = evm_state::rand::thread_rng();
+        let dummy_key = evm::SecretKey::new(&mut rand);
+        let dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
+        let gas_price :U256 =  evm::BURN_GAS_PRICE.into();
         let user_evm_address = crate::evm_address_for_program(user_id);
-        let user_account = RefCell::new(solana_sdk::account::AccountSharedData {
-            lamports: 1000,
-            data: vec![],
-            owner: solana_sdk::system_program::id(),
-            executable: false,
-            rent_epoch: 0,
-        });
-        let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
-
-        let keyed_accounts = [evm_keyed_account, user_keyed_account];
-        let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
-        let tx_create = evm::UnsignedTransaction {
+        evm_context.native_account(user_id).borrow_mut().set_lamports(30000000000u64);
+        evm_context.native_account(user_id).borrow_mut().set_owner(crate::ID); // only owner can withdraw tokens.
+        let unsigned_tx = evm::UnsignedTransaction {
             nonce: 0.into(),
-            gas_price: 100000.into(),
+            gas_price: gas_price,
             gas_limit: 300000.into(),
-            action: TransactionAction::Create,
+            action: TransactionAction::Call(dummy_address),
             value: 0.into(),
-            input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec(),
+            input: vec![],
         };
-        // Signer has zero balance but fee will be taken from native account
-        assert_eq!(executor.balance(user_evm_address), U256::from(0));
-        let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
+
+        let tx_create = unsigned_tx.sign(&dummy_key, Some(CHAIN_ID));
+        let tx_hash = tx_create.tx_id_hash();
         let ix = crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Native);
 
-        let user_balance_before = user_account.try_borrow().unwrap().lamports;
+        let executor = &evm_context.evm_state;
+        // Signer has zero balance but fee will be taken from native account
+        assert_eq!(U256::from(0), executor.get_account_state(user_evm_address).unwrap_or_default().balance);
 
-        let mut invoke_context = MockInvokeContext::with_evm(executor);
-        assert!(processor
-            .process_instruction(
-                &crate::ID,
-                &keyed_accounts,
-                &ix.data,
-                &mut invoke_context,
-                false,
-            )
-            .is_ok());
+        let user_balance_before =  evm_context.native_account(user_id).try_borrow().unwrap().lamports();
 
-        let executor = invoke_context.deconstruct().unwrap();
+        evm_context
+        .process_instruction(
+            ix
+        )
+        .unwrap();
+
+        let executor = &evm_context.evm_state;
+        let tx = executor.find_transaction_receipt(tx_hash).unwrap();
+        let burn_fee = gweis_to_lamports(U256::from(tx.used_gas) * U256::from(evm_state::BURN_GAS_PRICE));
+         
+        // EVM balance hasn't decreased
+        assert_eq!(U256::from(0), executor.get_account_state(user_evm_address).unwrap_or_default().balance);
         // Native balance refunded
         assert_eq!(
-            user_balance_before,
-            user_account.try_borrow().unwrap().lamports
+            user_balance_before  - burn_fee.0,
+            evm_context.native_account(user_id).try_borrow().unwrap().lamports()
         );
-        assert_eq!(executor.balance(user_evm_address), U256::from(0));
+
     }
 
     // In case when fee type Native chosen but no native account provided fee will be taken from signer (EVM)
     #[test]
     fn evm_transaction_with_native_fee_type_and_and_no_native_account_provided() {
-        let _logger = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
-        let mut executor = evm_state::Executor::testing();
-        let processor = EvmProcessor::default();
+        let _ = simple_logger::SimpleLogger::new().env().with_utc_timestamps().init();
+        let mut evm_context = EvmMockContext::new(1000);
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
+        
+        let mut rand = evm_state::rand::thread_rng();
+        let dummy_key = evm::SecretKey::new(&mut rand);
+        let dummy_address = dummy_key.to_address();
 
-        let evm_account = RefCell::new(crate::create_state_account(0));
-        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
-
-        let keyed_accounts = [evm_keyed_account];
-        let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
-        let signer_evm_address = secret_key.to_address();
-        executor.deposit(signer_evm_address, U256::from(30000000000u64));
-        let tx_create = evm::UnsignedTransaction {
+        let user_id = Pubkey::new_unique();
+        let user_evm_address = crate::evm_address_for_program(user_id);
+        evm_context.native_account(user_id).borrow_mut().set_lamports(30000000000u64);
+        let unsigned_tx = evm::UnsignedTransaction {
             nonce: 0.into(),
             gas_price: 100000.into(),
             gas_limit: 300000.into(),
-            action: TransactionAction::Create,
+            action: TransactionAction::Call(dummy_address),
             value: 0.into(),
-            input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec(),
+            input: vec![],
         };
-        // Signer has zero balance
-        let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
-        //let ix = crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Native);
-        let mut buf = vec![EVM_INSTRUCTION_BORSH_PREFIX];
-        BorshSerialize::serialize(
-            &EvmInstruction::new_execute_tx(tx_create, FeePayerType::Native),
-            &mut buf,
+
+        let tx_create = unsigned_tx.sign(&dummy_key, Some(CHAIN_ID));
+        let mut ix = crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Native);
+
+        let executor = &evm_context.evm_state;
+        // Signer has zero balance but fee will be taken from native account
+        assert_eq!(U256::from(0), executor.get_account_state(user_evm_address).unwrap_or_default().balance);
+
+        ix.accounts.pop();
+        // Ix should fail because no sender found
+        evm_context
+        .process_instruction(
+            ix
         )
-        .unwrap();
+        .unwrap_err();
 
-        let evm_balance_before = executor.balance(signer_evm_address);
-
-        let mut invoke_context = MockInvokeContext::with_evm(executor);
-        assert!(processor
-            .process_instruction(
-                &crate::ID,
-                &keyed_accounts,
-                &buf,
-                &mut invoke_context,
-                false,
-            )
-            .is_ok());
-
-        let executor = invoke_context.deconstruct().unwrap();
-        assert!(evm_balance_before > executor.balance(signer_evm_address));
     }
 
     #[test]
     fn evm_transaction_native_fee_handled_correctly_with_exit_reason_not_succeed() {
-        let _logger = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
-        let executor = evm_state::Executor::testing();
-        let processor = EvmProcessor::default();
-
-        let evm_account = RefCell::new(crate::create_state_account(100));
-        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        
+        let _ = simple_logger::SimpleLogger::new().env().with_utc_timestamps().init();
+        let mut evm_context = EvmMockContext::new(1000);
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
+        
+        let mut rand = evm_state::rand::thread_rng();
+        let dummy_key = evm::SecretKey::new(&mut rand);
+        let dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
-        let user_account = RefCell::new(solana_sdk::account::AccountSharedData {
-            lamports: 1000,
-            data: vec![],
-            owner: solana_sdk::system_program::id(),
-            executable: false,
-            rent_epoch: 0,
-        });
-        let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
-
-        let keyed_accounts = [evm_keyed_account, user_keyed_account];
-        let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
-        let tx_create = evm::UnsignedTransaction {
+        let user_evm_address = crate::evm_address_for_program(user_id);
+        evm_context.native_account(user_id).borrow_mut().set_lamports(30000000000u64);
+        let unsigned_tx = evm::UnsignedTransaction {
             nonce: 0.into(),
             gas_price: 100000.into(),
             gas_limit: 3000.into(),
@@ -2287,84 +2191,74 @@ mod test {
             value: 0.into(),
             input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec(),
         };
-        let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
+
+        let tx_create = unsigned_tx.sign(&dummy_key, Some(CHAIN_ID));
         let ix = crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Native);
 
-        let user_balance_before = user_account.try_borrow().unwrap().lamports;
+        let executor = &evm_context.evm_state;
+        // Signer has zero balance but fee will be taken from native account
+        assert_eq!(U256::from(0), executor.get_account_state(user_evm_address).unwrap_or_default().balance);
 
-        let mut invoke_context = MockInvokeContext::with_evm(executor);
-        assert!(processor
-            .process_instruction(
-                &crate::ID,
-                &keyed_accounts,
-                &ix.data,
-                &mut invoke_context,
-                false,
-            )
-            .is_err());
+        let user_balance_before =  evm_context.native_account(user_id).try_borrow().unwrap().lamports();
 
+        evm_context
+        .process_instruction(
+            ix
+        )
+        .unwrap_err();
+
+        // Native balance refunded
         assert_eq!(
             user_balance_before,
-            user_account.try_borrow().unwrap().lamports
+            evm_context.native_account(user_id).try_borrow().unwrap().lamports()
         );
     }
 
     #[test]
     fn evm_transaction_with_insufficient_native_funds() {
-        let _logger = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
-        let executor = evm_state::Executor::testing();
-        let processor = EvmProcessor::default();
-
-        let evm_account = RefCell::new(crate::create_state_account(100));
-        let evm_keyed_account = KeyedAccount::new(&solana::evm_state::ID, false, &evm_account);
+        let _ = simple_logger::SimpleLogger::new().env().with_utc_timestamps().init();
+        let mut evm_context = EvmMockContext::new(1000);
+        evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
+        
+        let mut rand = evm_state::rand::thread_rng();
+        let dummy_key = evm::SecretKey::new(&mut rand);
+        let dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
         let user_evm_address = crate::evm_address_for_program(user_id);
-        let user_account = RefCell::new(solana_sdk::account::AccountSharedData {
-            lamports: 1,
-            data: vec![],
-            owner: solana_sdk::system_program::id(),
-            executable: false,
-            rent_epoch: 0,
-        });
-        let user_keyed_account = KeyedAccount::new(&user_id, true, &user_account);
-
-        let keyed_accounts = [evm_keyed_account, user_keyed_account];
-        let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
-        let tx_create = evm::UnsignedTransaction {
+        // evm_context.native_account(user_id).borrow_mut().set_lamports(30000000000u64);
+        let unsigned_tx = evm::UnsignedTransaction {
             nonce: 0.into(),
             gas_price: 100000.into(),
             gas_limit: 300000.into(),
-            action: TransactionAction::Create,
+            action: TransactionAction::Call(dummy_address),
             value: 0.into(),
-            input: hex::decode(evm_state::HELLO_WORLD_CODE).unwrap().to_vec(),
+            input: vec![],
         };
+
+        let tx_create = unsigned_tx.sign(&dummy_key, Some(CHAIN_ID));
+        let mut ix = crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Native);
+
+        let executor = &evm_context.evm_state;
         // Signer has zero balance but fee will be taken from native account
-        assert_eq!(executor.balance(user_evm_address), U256::from(0));
-        let tx_create = tx_create.sign(&secret_key, Some(CHAIN_ID));
-        let ix = crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Native);
+        assert_eq!(U256::from(0), executor.get_account_state(user_evm_address).unwrap_or_default().balance);
 
-        let user_balance_before = user_account.try_borrow().unwrap().lamports;
-        let user_evm_balance_before = executor.balance(user_evm_address);
+        let user_balance_before =  evm_context.native_account(user_id).try_borrow().unwrap().lamports();
+        // Ix should fail because no sender found
+        evm_context
+        .process_instruction(
+            ix
+        )
+        .unwrap_err();
 
-        let mut invoke_context = MockInvokeContext::with_evm(executor);
-        assert!(processor
-            .process_instruction(
-                &crate::ID,
-                &keyed_accounts,
-                &ix.data,
-                &mut invoke_context,
-                false,
-            )
-            .is_err());
 
-        let executor = invoke_context.deconstruct().unwrap();
+        let executor = &evm_context.evm_state;
         // All balances remain the same
+        assert_eq!(U256::from(0), executor.get_account_state(user_evm_address).unwrap_or_default().balance);
         assert_eq!(
             user_balance_before,
-            user_account.try_borrow().unwrap().lamports
+            evm_context.native_account(user_id).try_borrow().unwrap().lamports()
         );
-        assert_eq!(user_evm_balance_before, executor.balance(user_evm_address));
     }
 
     #[test]

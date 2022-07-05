@@ -17,7 +17,7 @@ triedb = { git = "https://github.com/velas/triedb", branch = "feat/gc-simple", f
 primitive-types = "0.8.0"
 keccak-hash = "0.6"
 log = "0.4.11"
-simple_logger = "1.11"
+simple_logger = "2.2"
 hex = "0.4.2"
 serde = "1.0"
 sha3 = "0.9.1"

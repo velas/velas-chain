@@ -1428,7 +1428,7 @@ impl Bank {
     ) -> Self {
         Self::new_with_paths(
             genesis_config,
-            None,
+            None, // Skip EVM genesis
             paths,
             debug_keys,
             additional_builtins,
@@ -1635,7 +1635,7 @@ impl Bank {
                     .evm_state
                     .read()
                     .expect("parent evm state was poisoned")
-            .new_from_parent(parent.clock().unix_timestamp as u64, spv_compatibility);
+                    .new_from_parent(parent.clock().unix_timestamp as u64, spv_compatibility);
 
                 evm_state
                     .register_slot(slot)
@@ -3968,8 +3968,11 @@ impl Bank {
             if !nonce_is_authorized {
                 return None;
             }
-        } else if self.feature_set.is_active(&feature_set::velas::disable_durable_nonce::id()) {
-            return None
+        } else if self
+            .feature_set
+            .is_active(&feature_set::velas::disable_durable_nonce::id())
+        {
+            return None;
         }
 
         Some((*nonce_address, nonce_account))
@@ -4179,20 +4182,15 @@ impl Bank {
             *evm_patch = evm_patch.take().or_else(|| evm_state_getter(self));
             let last_hashes = self.evm_hashes();
             if let Some(state) = &evm_patch {
-                    let mut evm_executor = evm_state::Executor::with_config(
+                let mut evm_executor = evm_state::Executor::with_config(
                     state.clone(),
                     evm_state::ChainContext::new(last_hashes),
-                    evm_state::EvmConfig::new(
-                        self.evm_chain_id,
-                        self.evm_burn_fee_activated(),
-                    ),
+                    evm_state::EvmConfig::new(self.evm_chain_id, self.evm_burn_fee_activated()),
                     evm_state::executor::FeatureSet::new(
-                        self.feature_set.is_active(
-                            &solana_sdk::feature_set::velas::unsigned_tx_fix::id(),
-                       ),
-                        self.feature_set.is_active(
-                            &solana_sdk::feature_set::velas::clear_logs_on_error::id(),
-                        ),
+                        self.feature_set
+                            .is_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id()),
+                        self.feature_set
+                            .is_active(&solana_sdk::feature_set::velas::clear_logs_on_error::id()),
                     ),
                 );
                 Some(evm_executor)
@@ -6904,6 +6902,7 @@ impl Bank {
             #[allow(deprecated)]
             sysvar::fees::id(),
             #[allow(deprecated)]
+            sysvar::recent_evm_blockhashes::id(),
             sysvar::recent_blockhashes::id(),
             sysvar::rent::id(),
             sysvar::rewards::id(),
@@ -7199,9 +7198,13 @@ impl Drop for Bank {
             // 1. Tests
             // 2. At startup when replaying blockstore and there's no
             // AccountsBackgroundService to perform cleanups yet.
-            self.rc
-                .accounts
-                .purge_slot(self.slot(), self.bank_id(), false);
+            self.rc.accounts.purge_slot(
+                self.slot(),
+                self.bank_id(),
+                true, // TODO: is_from_abs flag should be set to false, but currently we have a bug with snapshot packager,
+                      // if it was initialized before drop_callback some Arc<Bank> can be left without drop_callback,
+                      // and use Bank::drop -> purge_slot dirrectly, this produce a panic if is_from_abs is set to false.
+            );
 
             let evm_state = self.evm_state.read().unwrap();
             let storage = evm_state.kvs();
@@ -15579,23 +15582,24 @@ pub(crate) mod tests {
             || Bank::new_from_parent(&bank1, &Pubkey::default(), bank1.first_slot_in_next_epoch()),
             |old, new| {
                 assert_eq!(
-                    old + expected_cap_delta_after_sysvar_reset(
-                        &bank1,
-                        &[
-                            sysvar::clock::id(),
-                            sysvar::epoch_schedule::id(),
-                            #[allow(deprecated)]
-                            sysvar::fees::id(),
-                            #[allow(deprecated)]
-                            sysvar::recent_blockhashes::id(),
-                            sysvar::recent_evm_blockhashes::id(),
-                            sysvar::rent::id(),
-                            sysvar::slot_hashes::id(),
-                            sysvar::slot_history::id(),
-                            sysvar::stake_history::id(),
-                            // solana_sdk::evm_loader::id(),
-                        ]
-                    ),
+                    dbg!(old)
+                        + dbg!(expected_cap_delta_after_sysvar_reset(
+                            &bank1,
+                            &[
+                                sysvar::clock::id(),
+                                sysvar::epoch_schedule::id(),
+                                #[allow(deprecated)]
+                                sysvar::fees::id(),
+                                #[allow(deprecated)]
+                                sysvar::recent_blockhashes::id(),
+                                sysvar::recent_evm_blockhashes::id(),
+                                sysvar::rent::id(),
+                                sysvar::slot_hashes::id(),
+                                sysvar::slot_history::id(),
+                                sysvar::stake_history::id(),
+                                // solana_sdk::evm_loader::id(),
+                            ]
+                        )),
                     new
                 )
             },
@@ -15608,7 +15612,7 @@ pub(crate) mod tests {
             assert_eq!(sysvars.len(), 9);
             assert!(sysvars
                 .iter()
-                .map(|(_pubkey, account)| account.lamports())
+                .map(|(_pubkey, account)| dbg!(account.lamports()))
                 .all(|lamports| lamports > 1));
         }
     }

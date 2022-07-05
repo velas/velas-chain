@@ -176,20 +176,20 @@ mod tests {
         for _ in 0..30 {
             stakes.insert(Pubkey::new_unique(), 1);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), 30);
 
         for _ in 0..30 {
             stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY - 1);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), 60);
 
         // Test case for majoirty < NUM_MAJOR_STAKERS_FOR_FILTERING
         for _ in 0..(NUM_MAJOR_STAKERS_FOR_FILTERING - 1) {
             stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(
             num_stakers.len(),
             60 + (NUM_MAJOR_STAKERS_FOR_FILTERING - 1)
@@ -199,14 +199,14 @@ mod tests {
         // Should remove all nodes without majoirty stake.
 
         stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY);
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), NUM_MAJOR_STAKERS_FOR_FILTERING);
 
         // Test case where more than NUM_MAJOR_STAKERS_FOR_FILTERING, should keep all majority in stakers.
         for n in 0..30 {
             stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY + n * 100);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), NUM_MAJOR_STAKERS_FOR_FILTERING + 30);
         assert_eq!(stakes.len(), NUM_MAJOR_STAKERS_FOR_FILTERING + 30 + 60)
     }

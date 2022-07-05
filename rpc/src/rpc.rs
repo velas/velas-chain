@@ -7087,6 +7087,7 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
+            None,
         );
         SendTransactionService::new::<NullTpuInfo>(
             tpu_address,
@@ -7462,83 +7463,6 @@ pub mod tests {
         assert!(confirmed_block.transactions.is_none());
         assert!(confirmed_block.signatures.is_none());
         assert_eq!(confirmed_block.rewards.unwrap(), vec![]);
-    }
-
-    #[test]
-    fn test_get_block_production() {
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
-        let roots = vec![0, 1, 3, 4, 8];
-        let RpcHandler {
-            io,
-            meta,
-            block_commitment_cache,
-            leader_pubkey,
-            ..
-        } = start_rpc_handler_with_tx_and_blockstore(&bob_pubkey, roots);
-        block_commitment_cache
-            .write()
-            .unwrap()
-            .set_highest_confirmed_root(8);
-
-        let req = r#"{"jsonrpc":"2.0","id":1,"method":"getBlockProduction","params":[]}"#;
-        let res = io.handle_request_sync(req, meta.clone());
-        let result: Value = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-        let block_production: RpcBlockProduction =
-            serde_json::from_value(result["result"]["value"].clone()).unwrap();
-        assert_eq!(
-            block_production.by_identity.get(&leader_pubkey.to_string()),
-            Some(&(9, 5))
-        );
-        assert_eq!(
-            block_production.range,
-            RpcBlockProductionRange {
-                first_slot: 0,
-                last_slot: 8
-            }
-        );
-
-        let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getBlockProduction","params":[{{"identity": "{}"}}]}}"#,
-            leader_pubkey
-        );
-        let res = io.handle_request_sync(&req, meta.clone());
-        let result: Value = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-        let block_production: RpcBlockProduction =
-            serde_json::from_value(result["result"]["value"].clone()).unwrap();
-        assert_eq!(
-            block_production.by_identity.get(&leader_pubkey.to_string()),
-            Some(&(9, 5))
-        );
-        assert_eq!(
-            block_production.range,
-            RpcBlockProductionRange {
-                first_slot: 0,
-                last_slot: 8
-            }
-        );
-
-        let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getBlockProduction","params":[{{"range": {{"firstSlot": 0, "lastSlot": 4}}, "identity": "{}"}}]}}"#,
-            bob_pubkey
-        );
-        let res = io.handle_request_sync(&req, meta);
-        let result: Value = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-        let block_production: RpcBlockProduction =
-            serde_json::from_value(result["result"]["value"].clone()).unwrap();
-        assert_eq!(
-            block_production.by_identity.get(&leader_pubkey.to_string()),
-            None
-        );
-        assert_eq!(
-            block_production.range,
-            RpcBlockProductionRange {
-                first_slot: 0,
-                last_slot: 4
-            }
-        );
     }
 
     #[test]
