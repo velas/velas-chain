@@ -75,7 +75,7 @@ pub async fn find_native(ledger: LedgerStorage, start_slot: u64, limit: usize) -
 
         if block_prev.blockhash == block_curr.previous_blockhash {
             let checked_range = BlockRange::new(slot_prev, slot_curr);
-            log::info!("{checked_range} passed hash check");
+            log::trace!("{checked_range} passed hash check");
         } else {
             log::warn!("Found missing {}", range);
         }

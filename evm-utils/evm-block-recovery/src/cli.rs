@@ -1,3 +1,5 @@
+const DEFAULT_INSTANCE: &str = "solana-ledger";
+
 #[derive(clap::Parser)]
 #[clap(author, version, long_about = None)]
 #[clap(name = "EVM Block Recovery")]
@@ -11,7 +13,7 @@ pub struct Cli {
     pub creds: Option<String>,
 
     /// Bigtable Instance
-    #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
     pub instance: String,
 }
 
@@ -99,7 +101,7 @@ pub enum Commands {
         credible_ledger_creds: String,
 
         /// "Credible Ledger" Instance
-        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+        #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
         credible_ledger_instance: String,
 
         /// Google credentials JSON filepath of the "Deceptive Ledger"
@@ -107,7 +109,7 @@ pub enum Commands {
         dubious_ledger_creds: String,
 
         /// "Deceptive Ledger" Instance
-        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+        #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
         dubious_ledger_instance: String,
     },
 
@@ -133,7 +135,7 @@ pub enum Commands {
         src_creds: String,
 
         /// Source Ledger Instance
-        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+        #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
         src_instance: String,
 
         /// Google credentials JSON filepath of the Destination Ledger
@@ -141,7 +143,7 @@ pub enum Commands {
         dst_creds: String,
 
         /// Destination Ledger Instance
-        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+        #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
         dst_instance: String,
     },
 
@@ -149,18 +151,18 @@ pub enum Commands {
     RepeatNative {
         /// First Native Block of the sequence to copy from Src to Dst
         #[clap(short, long, value_name = "NUM")]
-        block_number: u64,
+        start_slot: u64,
 
         /// Native Block sequence length
-        #[clap(short, long, value_name = "NUM", default_value = "1")]
-        limit: u64,
+        #[clap(short, long, value_name = "NUM")]
+        end_slot: u64,
 
         /// Google credentials JSON filepath of the Source Ledger
         #[clap(long, value_name = "FILE_PATH", value_hint = clap::ValueHint::FilePath)]
         src_creds: String,
 
         /// Source Ledger Instance
-        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+        #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
         src_instance: String,
 
         /// Google credentials JSON filepath of the Destination Ledger
@@ -168,7 +170,7 @@ pub enum Commands {
         dst_creds: String,
 
         /// Destination Ledger Instance
-        #[clap(long, value_name = "STRING", default_value = "solana-ledger")]
+        #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
         dst_instance: String,
     },
 }

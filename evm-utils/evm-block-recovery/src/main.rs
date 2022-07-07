@@ -121,16 +121,16 @@ async fn main() -> anyhow::Result<()> {
             .await
         }
         Commands::RepeatNative {
-            block_number,
-            limit,
+            start_slot,
+            end_slot,
             src_creds,
             src_instance,
             dst_creds,
             dst_instance,
         } => {
             routines::repeat_native(
-                block_number,
-                limit,
+                start_slot,
+                end_slot,
                 ledger::with_params(Some(src_creds), src_instance).await?,
                 ledger::with_params(Some(dst_creds), dst_instance).await?,
             )

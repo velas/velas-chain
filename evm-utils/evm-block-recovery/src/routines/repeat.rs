@@ -91,8 +91,8 @@ pub async fn repeat_evm(
 }
 
 pub async fn repeat_native(
-    _block_number: u64,
-    _limit: u64,
+    start_slot: u64,
+    end_slot: u64,
     _src: LedgerStorage,
     _dst: LedgerStorage,
 ) -> Result<()> {
