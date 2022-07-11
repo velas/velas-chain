@@ -34,8 +34,8 @@ impl Backend for Rpc {
 
     async fn get_block(
         &self,
-        request: Request<app_grpc::Hash>,
-    ) -> Result<Response<app_grpc::BlockData>, Status> {
+        request: Request<app_grpc::GetBlockRequest>,
+    ) -> Result<Response<app_grpc::GetBlockReply>, Status> {
         info!("Got a request: {:?}", request);
 
         let stringified_key = request.into_inner().hash;
@@ -55,15 +55,15 @@ impl Backend for Rpc {
             HashMap::new()
         };
 
-        let reply = app_grpc::BlockData { data: response };
+        let reply = app_grpc::GetBlockReply { blocks_data: response };
 
         Ok(Response::new(reply))
     }
 
     async fn get_block_multi(
         &self,
-        request: Request<app_grpc::MultiHash>,
-    ) -> Result<Response<app_grpc::MultiBlockData>, Status> {
+        request: Request<app_grpc::GetBlockMultiRequest>,
+    ) -> Result<Response<app_grpc::GetBlockMultiReply>, Status> {
         info!("Got a request: {:?}", request);
 
         let stringified_keys = request.into_inner().hashes;
@@ -83,15 +83,15 @@ impl Backend for Rpc {
             }
         });
 
-        let reply = app_grpc::MultiBlockData { data: response };
+        let reply = app_grpc::GetBlockMultiReply { blocks_data: response };
 
         Ok(Response::new(reply))
     }
 
     async fn get_state_diff(
         &self,
-        request: Request<app_grpc::StateDiffRequest>,
-    ) -> Result<Response<app_grpc::Changeset>, Status> {
+        request: Request<app_grpc::GetStateDiffRequest>,
+    ) -> Result<Response<app_grpc::GetStateDiffReply>, Status> {
         info!("Got a request: {:?}", request);
 
         let inner = request.into_inner();
@@ -110,27 +110,27 @@ impl Backend for Rpc {
         // let changeset = diff_finder.get_changeset(start_state_root, end_state_root);
 
         // TODO: After changing type above remove this `changeset`
-        let changeset = vec![triedb::state_diff::Change::Insert(start_state_root, vec![1,2,3,4,5])];
-        let mut diff = vec![];
+        let triedb_changeset = vec![triedb::state_diff::Change::Insert(start_state_root, vec![1,2,3,4,5])];
+        let mut changeset = vec![];
 
-        for change in changeset {
+        for change in triedb_changeset {
             match change {
                 triedb::state_diff::Change::Insert(hash, data) => {
                     let raw_insert = app_grpc::Insert { hash: hash.to_string(), data: data };
                     let insert = app_grpc::change::Change::Insert(raw_insert);
                     let change = app_grpc::Change { change: Some(insert) };
-                    diff.push(change);
+                    changeset.push(change);
                 },
                 triedb::state_diff::Change::Removal(hash, data) => {
                     let removal = app_grpc::Removal { hash: hash.to_string(), data: data };
                     let removal = app_grpc::change::Change::Removal(removal);
                     let change = app_grpc::Change { change: Some(removal) };
-                    diff.push(change);
+                    changeset.push(change);
                 },
             }
         }
 
-        let reply = app_grpc::Changeset { changes: diff };
+        let reply = app_grpc::GetStateDiffReply { changeset };
 
         Ok(Response::new(reply))
     }

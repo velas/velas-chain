@@ -5,32 +5,32 @@ import "google/protobuf/empty.proto";
 
 service Backend {
   rpc ping (google.protobuf.Empty) returns (PingReply);
-  rpc getBlock (Hash) returns (BlockData);
-  rpc getBlockMulti (MultiHash) returns (MultiBlockData);
-  rpc getStateDiff (StateDiffRequest) returns (Changeset);
+  rpc getBlock (GetBlockRequest) returns (GetBlockReply);
+  rpc getBlockMulti (GetBlockMultiRequest) returns (GetBlockMultiReply);
+  rpc getStateDiff (GetStateDiffRequest) returns (GetStateDiffReply);
 }
 
 message PingReply {
   string message = 1;
 }
 
-message Hash {
+message GetBlockRequest {
   string hash = 1;
 }
 
-message BlockData {
-  map<string, bytes> data = 1;
+message GetBlockReply {
+  map<string, bytes> blocks_data = 1;
 }
 
-message MultiHash {
+message GetBlockMultiRequest {
   repeated string hashes = 1;
 }
 
-message MultiBlockData {
-  map<string, bytes> data = 1;
+message GetBlockMultiReply {
+  map<string, bytes> blocks_data = 1;
 }
 
-message StateDiffRequest {
+message GetStateDiffRequest {
   string first_root = 1;
   string second_root = 2;
 }
@@ -52,6 +52,6 @@ message Change {
   }
 }
 
-message Changeset {
-  repeated Change changes = 1;
+message GetStateDiffReply {
+  repeated Change changeset = 1;
 }

@@ -8,6 +8,10 @@ default-run = "server"
 name = "server"
 path = "src/bin/server.rs"
 
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
+
 [[bin]] # Generate
 name = "generate-state"
 path = "src/bin/generate_state.rs"
