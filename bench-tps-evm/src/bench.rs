@@ -46,11 +46,11 @@ pub type Result<T> = std::result::Result<T, BenchTpsError>;
 
 pub type SharedTransactions = Arc<RwLock<VecDeque<Vec<(Transaction, u64)>>>>;
 
-pub fn get_recent_blockhash<T: Client>(client: &T) -> (Hash, FeeCalculator) {
+pub fn get_recent_blockhash<T: Client>(client: &T) -> Hash {
     loop {
-        match client.get_recent_blockhash_with_commitment(CommitmentConfig::processed()) {
-            Ok((blockhash, fee_calculator, _last_valid_slot)) => {
-                return (blockhash, fee_calculator)
+        match client.get_latest_blockhash_with_commitment(CommitmentConfig::processed()) {
+            Ok((blockhash, _last_valid_slot)) => {
+                return blockhash
             }
             Err(err) => {
                 info!("Couldn't get recent blockhash: {:?}", err);
@@ -204,7 +204,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, Transaction)> {
                 self.len(),
             );
 
-            let (blockhash, _fee_calculator) = get_recent_blockhash(client.as_ref());
+            let blockhash = get_recent_blockhash(client.as_ref());
 
             // re-sign retained to_fund_txes with updated blockhash
             self.sign(blockhash);
@@ -396,7 +396,7 @@ pub fn airdrop_lamports<T: Client>(
             id.pubkey(),
         );
 
-        let (blockhash, _fee_calculator) = get_recent_blockhash(client);
+        let blockhash = get_recent_blockhash(client);
         match request_airdrop_transaction(faucet_addr, &id.pubkey(), airdrop_amount, blockhash) {
             Ok(transaction) => {
                 let mut tries = 0;

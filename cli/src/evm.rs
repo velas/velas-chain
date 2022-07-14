@@ -262,9 +262,8 @@ fn transfer(
     let message = Message::new(&ixs, Some(&from.pubkey()));
     let mut create_account_tx = Transaction::new_unsigned(message);
 
-    let (blockhash, ..) = rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::default())?
-        .value;
+    let (blockhash, _last_height) = rpc_client
+        .get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
 
     create_account_tx.sign(&config.signers, blockhash);
 
@@ -291,7 +290,7 @@ fn find_block_header(
 
     let native_slot = block.native_chain_slot;
     for slot in native_slot - range..native_slot + range {
-        let native_block = match rpc_client.get_confirmed_block(slot) {
+        let native_block = match rpc_client.get_block(slot) {
             Ok(native_block) => native_block,
             Err(_) => {
                 debug!("Skiped slot = {:?}, Cannot request blockhash", slot);
@@ -333,9 +332,8 @@ fn send_raw_tx<P: AsRef<Path>>(
     let msg = Message::new(&[ix], Some(&signer.pubkey()));
     let mut tx = Transaction::new_unsigned(msg);
 
-    let (blockhash, ..) = rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::default())?
-        .value;
+    let (blockhash, _last_height) = rpc_client
+        .get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
     tx.sign(&config.signers, blockhash);
 
     debug!("sending tx: {:?}", tx);

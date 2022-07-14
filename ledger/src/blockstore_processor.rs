@@ -567,6 +567,7 @@ pub struct ProcessOptions {
     pub shrink_ratio: AccountShrinkThreshold,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn process_blockstore(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,

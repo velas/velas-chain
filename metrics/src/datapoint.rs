@@ -18,7 +18,7 @@ impl DataPoint {
 
     pub fn add_field_str(&mut self, name: &'static str, value: &str) -> &mut Self {
         self.fields
-            .push((name, format!("\"{}\"", value.replace("\"", "\\\""))));
+            .push((name, format!("\"{}\"", value.replace('"', "\\\""))));
         self
     }
 

@@ -1,5 +1,5 @@
 use super::scope::*;
-use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
+use borsh::{BorshDeserialize, BorshSerialize};
 use evm_state::{Address, Transaction, UnsignedTransaction};
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +10,7 @@ pub const EVM_INSTRUCTION_BORSH_PREFIX: u8 = 255u8;
 #[derive(
     BorshSerialize,
     BorshDeserialize,
-    BorshSchema,
+    // BorshSchema,
     Clone,
     Debug,
     PartialEq,
@@ -40,7 +40,7 @@ impl FeePayerType {
 #[derive(
     BorshSerialize,
     BorshDeserialize,
-    BorshSchema,
+    // BorshSchema,
     Clone,
     Debug,
     PartialEq,
@@ -50,6 +50,8 @@ impl FeePayerType {
     Serialize,
     Deserialize,
 )]
+
+// #[allow(clippy::dead_code)]
 pub enum EvmBigTransaction {
     /// Allocate data in storage, pay fee should be taken from EVM.
     EvmTransactionAllocate { size: u64 },
@@ -58,23 +60,10 @@ pub enum EvmBigTransaction {
     EvmTransactionWrite { offset: u64, data: Vec<u8> },
 }
 
-impl Into<v0::EvmBigTransaction> for EvmBigTransaction {
-    fn into(self) -> v0::EvmBigTransaction {
-        match self {
-            Self::EvmTransactionAllocate { size } => {
-                v0::EvmBigTransaction::EvmTransactionAllocate { size }
-            }
-            Self::EvmTransactionWrite { offset, data } => {
-                v0::EvmBigTransaction::EvmTransactionWrite { offset, data }
-            }
-        }
-    }
-}
-
 #[derive(
     BorshSerialize,
     BorshDeserialize,
-    BorshSchema,
+    // BorshSchema,
     Clone,
     Debug,
     PartialEq,
@@ -96,18 +85,15 @@ pub enum ExecuteTransaction {
 
 impl ExecuteTransaction {
     pub fn is_big(&self) -> bool {
-        match self {
-            ExecuteTransaction::Signed { tx: None } => true,
-            ExecuteTransaction::ProgramAuthorized { tx: None, .. } => true,
-            _ => false,
-        }
+        matches!(self, ExecuteTransaction::Signed { tx: None } | ExecuteTransaction::ProgramAuthorized { tx: None, .. })
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(
     BorshSerialize,
     BorshDeserialize,
-    BorshSchema,
+    // BorshSchema,
     Clone,
     Debug,
     PartialEq,
@@ -204,6 +190,15 @@ impl EvmInstruction {
     }
 }
 
+impl From<EvmBigTransaction> for v0::EvmBigTransaction {
+    fn from(tx: EvmBigTransaction) -> Self {
+        match tx {
+            EvmBigTransaction::EvmTransactionAllocate { size } => v0::EvmBigTransaction::EvmTransactionAllocate { size },
+            EvmBigTransaction::EvmTransactionWrite { offset, data } => v0::EvmBigTransaction::EvmTransactionWrite { offset, data },
+        }
+    }
+}
+
 impl From<v0::EvmInstruction> for EvmInstruction {
     fn from(other: v0::EvmInstruction) -> Self {
         match other {
@@ -238,19 +233,19 @@ impl From<v0::EvmInstruction> for EvmInstruction {
     }
 }
 
-impl Into<v0::EvmInstruction> for EvmInstruction {
-    fn into(self) -> v0::EvmInstruction {
-        match self {
-            Self::SwapNativeToEther {
+impl From<EvmInstruction> for v0::EvmInstruction {
+    fn from(i: EvmInstruction) -> Self {
+        match i {
+            EvmInstruction::SwapNativeToEther {
                 lamports,
                 evm_address,
             } => v0::EvmInstruction::SwapNativeToEther {
                 lamports,
                 evm_address,
             },
-            Self::FreeOwnership {} => v0::EvmInstruction::FreeOwnership {},
-            Self::EvmBigTransaction(big_tx) => v0::EvmInstruction::EvmBigTransaction(big_tx.into()),
-            Self::ExecuteTransaction { tx, .. } => match tx {
+            EvmInstruction::FreeOwnership {} => v0::EvmInstruction::FreeOwnership {},
+            EvmInstruction::EvmBigTransaction(big_tx) => v0::EvmInstruction::EvmBigTransaction(big_tx.into()),
+            EvmInstruction::ExecuteTransaction { tx, .. } => match tx {
                 ExecuteTransaction::Signed { tx: None } => v0::EvmInstruction::EvmBigTransaction(
                     v0::EvmBigTransaction::EvmTransactionExecute {},
                 ),

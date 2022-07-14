@@ -90,7 +90,6 @@ use {
         cmp::{max, min},
         collections::{HashMap, HashSet},
         convert::TryFrom,
-        future::ready,
         net::SocketAddr,
         str::FromStr,
         sync::{
@@ -100,7 +99,6 @@ use {
         },
         time::{Duration, Instant},
     },
-    evm_rpc::Hex,
 };
 use tracing_attributes::instrument;
 

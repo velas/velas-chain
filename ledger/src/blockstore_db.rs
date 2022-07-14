@@ -1,5 +1,5 @@
-use columns::{EvmBlockHeader, EvmHeaderIndexByHash, EvmHeaderIndexBySlot, EvmTransactionReceipts};
 use evm_state::{BlockNum, H256};
+
 pub use rocksdb::Direction as IteratorDirection;
 use {
     crate::blockstore_meta,

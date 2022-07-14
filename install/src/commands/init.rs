@@ -28,7 +28,7 @@ pub enum Mode {
 pub struct ReleaseVersion {
     pub target: String,
     pub commit: String,
-    channel: String,
+    _channel: String,
 }
 
 // TODO: simplify this

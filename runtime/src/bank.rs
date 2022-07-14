@@ -4141,6 +4141,7 @@ impl Bank {
 
     /// Execute a transaction using the provided loaded accounts and update
     /// the executors cache if the transaction was successful.
+    #[allow(clippy::too_many_arguments)]
     fn execute_loaded_transaction(
         &self,
         tx: &SanitizedTransaction,
@@ -4182,7 +4183,7 @@ impl Bank {
             *evm_patch = evm_patch.take().or_else(|| evm_state_getter(self));
             let last_hashes = self.evm_hashes();
             if let Some(state) = &evm_patch {
-                let mut evm_executor = evm_state::Executor::with_config(
+                let evm_executor = evm_state::Executor::with_config(
                     state.clone(),
                     evm_state::ChainContext::new(last_hashes),
                     evm_state::EvmConfig::new(self.evm_chain_id, self.evm_burn_fee_activated()),
@@ -6903,6 +6904,7 @@ impl Bank {
             sysvar::fees::id(),
             #[allow(deprecated)]
             sysvar::recent_evm_blockhashes::id(),
+            #[allow(deprecated)]
             sysvar::recent_blockhashes::id(),
             sysvar::rent::id(),
             sysvar::rewards::id(),

@@ -90,12 +90,14 @@ impl From<NotificationEntry> for TimestampedNotificationEntry {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EthPubSubResult {
     Header(evm_rpc::RPCBlock),
     Log(evm_rpc::RPCLog),
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum NotificationEntry {
     Slot(SlotInfo),
     SlotUpdate(SlotUpdate),
@@ -1180,7 +1182,7 @@ impl RpcSubscriptions {
             inc_new_counter_info!("rpc-subscription-notify-bank-or-gossip", total_notified);
             datapoint_info!(
                 "rpc_subscriptions",
-                ("source", source.to_string(), String),
+                ("source", source, String),
                 (
                     "num_account_subscriptions",
                     num_accounts_found.load(Ordering::Relaxed),

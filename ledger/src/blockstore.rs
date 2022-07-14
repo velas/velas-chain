@@ -1837,7 +1837,7 @@ impl Blockstore {
     pub fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
         datapoint_info!(
             "blockstore-rpc-api",
-            ("method", "get_block_time".to_string(), String)
+            ("method", "get_block_time", String)
         );
         let _lock = self.check_lowest_cleanup_slot(slot)?;
         self.blocktime_cf.get(slot)
@@ -1850,7 +1850,7 @@ impl Blockstore {
     pub fn get_block_height(&self, slot: Slot) -> Result<Option<u64>> {
         datapoint_info!(
             "blockstore-rpc-api",
-            ("method", "get_block_height".to_string(), String)
+            ("method", "get_block_height", String)
         );
         let _lock = self.check_lowest_cleanup_slot(slot)?;
         self.block_height_cf.get(slot)
@@ -1941,8 +1941,6 @@ impl Blockstore {
                         .unwrap_or_else(|e| {
                             panic!("Could not deserialize block_num for slot {}: {:?}", slot, e)
                         })
-                        .try_into()
-                        .expect("Convertation should always pass"),
                 )
             }))
     }
@@ -1962,8 +1960,6 @@ impl Blockstore {
                         .unwrap_or_else(|e| {
                             panic!("Could not deserialize block_num for slot {}: {:?}", slot, e)
                         })
-                        .try_into()
-                        .expect("Convertation should always pass"),
                 )
             }))
     }
@@ -1992,7 +1988,7 @@ impl Blockstore {
     ) -> Result<ConfirmedBlock> {
         datapoint_info!(
             "blockstore-rpc-api",
-            ("method", "get_rooted_block".to_string(), String)
+            ("method", "get_rooted_block", String)
         );
         let _lock = self.check_lowest_cleanup_slot(slot)?;
 
@@ -2087,7 +2083,7 @@ impl Blockstore {
     pub fn get_evm_block(&self, block_number: evm::BlockNum) -> Result<(evm::Block, bool)> {
         datapoint_info!(
             "blockstore-rpc-api",
-            ("method", "get_evm_block".to_string(), String)
+            ("method", "get_evm_block", String)
         );
         // TODO: Integrate with cleanup service
         // let lowest_cleanup_slot = self.lowest_cleanup_slot.read().unwrap();
@@ -2387,7 +2383,7 @@ impl Blockstore {
             "blockstore-rpc-api",
             (
                 "method",
-                "get_rooted_transaction_status".to_string(),
+                "get_rooted_transaction_status",
                 String
             )
         );
@@ -2402,7 +2398,7 @@ impl Blockstore {
     ) -> Result<Option<(Slot, TransactionStatusMeta)>> {
         datapoint_info!(
             "blockstore-rpc-api",
-            ("method", "get_transaction_status".to_string(), String)
+            ("method", "get_transaction_status", String)
         );
         self.get_transaction_status_with_counter(signature, confirmed_unrooted_slots)
             .map(|(status, _)| status)
@@ -2415,7 +2411,7 @@ impl Blockstore {
     ) -> Result<Option<ConfirmedTransaction>> {
         datapoint_info!(
             "blockstore-rpc-api",
-            ("method", "get_rooted_transaction".to_string(), String)
+            ("method", "get_rooted_transaction", String)
         );
         self.get_transaction_with_status(signature, &[])
     }
@@ -2428,7 +2424,7 @@ impl Blockstore {
     ) -> Result<Option<ConfirmedTransaction>> {
         datapoint_info!(
             "blockstore-rpc-api",
-            ("method", "get_complete_transaction".to_string(), String)
+            ("method", "get_complete_transaction", String)
         );
         let last_root = self.last_root();
         let confirmed_unrooted_slots: Vec<_> =
@@ -2574,7 +2570,7 @@ impl Blockstore {
             "blockstore-rpc-api",
             (
                 "method",
-                "get_confirmed_signatures_for_address".to_string(),
+                "get_confirmed_signatures_for_address",
                 String
             )
         );
@@ -2623,7 +2619,7 @@ impl Blockstore {
             "blockstore-rpc-api",
             (
                 "method",
-                "get_confirmed_signatures_for_address2".to_string(),
+                "get_confirmed_signatures_for_address2",
                 String
             )
         );
@@ -3785,7 +3781,7 @@ fn send_signals(
                     "blockstore_error",
                     (
                         "error",
-                        "Unable to send newly completed slot because channel is full".to_string(),
+                        "Unable to send newly completed slot because channel is full",
                         String
                     ),
                 );

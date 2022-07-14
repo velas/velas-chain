@@ -513,12 +513,14 @@ impl EvmBackend<Committed> {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum EvmState {
     Committed(EvmBackend<Committed>),
     Incomming(EvmBackend<Incomming>),
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvmPersistState {
     Committed(Committed),

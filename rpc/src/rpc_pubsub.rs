@@ -32,6 +32,7 @@ use {
     std::{str::FromStr, sync::Arc},
 };
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Serialize, Deserialize)]
 pub enum EthPubSubResult {
     Header(evm_rpc::RPCBlock),
@@ -675,11 +676,11 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
                     "eth_subscribe: Trying to subscribe to unsupported topic: {}",
                     topic
                 );
-                return Err(Error {
+                Err(Error {
                     code: ErrorCode::InvalidParams,
                     message: "Invalid Request: Not known subscription".into(),
                     data: None,
-                });
+                })
             }
         }
     }

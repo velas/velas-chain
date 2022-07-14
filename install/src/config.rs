@@ -50,7 +50,7 @@ impl Config {
     }
 
     fn _load(config_path: &str) -> Result<Self, io::Error> {
-        let file = File::open(config_path.to_string())?;
+        let file = File::open(config_path)?;
         let config = serde_yaml::from_reader(file)
             .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{:?}", err)))?;
         Ok(config)

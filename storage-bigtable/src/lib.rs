@@ -1051,7 +1051,7 @@ impl LedgerStorage {
             bigtable::CellData::Protobuf(tx) => tx.try_into().map_err(|_err| {
                 bigtable::Error::ObjectCorrupt(format!(
                     "evm-tx/{}",
-                    evm_rpc::Hex(*hash).to_string()
+                    evm_rpc::Hex(*hash)
                 ))
             })?,
         }))

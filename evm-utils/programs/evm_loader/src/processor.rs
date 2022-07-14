@@ -14,13 +14,12 @@ use log::*;
 
 use borsh::BorshDeserialize;
 use evm::{gweis_to_lamports, Executor, ExitReason};
-use evm_state::{ExecutionResult, Gas};
+use evm_state::ExecutionResult;
 use serde::de::DeserializeOwned;
 use solana_sdk::account::{AccountSharedData, ReadableAccount, WritableAccount};
 use solana_program_runtime::ic_msg;
 use solana_program_runtime::invoke_context::InvokeContext;
 use solana_sdk::instruction::InstructionError;
-use solana_sdk::pubkey::Pubkey;
 use solana_sdk::{keyed_account::KeyedAccount, program_utils::limited_deserialize};
 
 use super::error::EvmError;
@@ -45,7 +44,7 @@ impl EvmProcessor {
         data: &[u8],
         invoke_context: &mut InvokeContext,
     ) -> Result<(), InstructionError> {
-        let (evm_state_account, keyed_accounts) = Self::check_evm_account(first_keyed_account, &invoke_context)?;
+        let (evm_state_account, keyed_accounts) = Self::check_evm_account(first_keyed_account, invoke_context)?;
 
         let cross_execution_enabled = invoke_context
             .feature_set.is_active(&solana_sdk::feature_set::velas::evm_cross_execution::id());
@@ -97,7 +96,7 @@ impl EvmProcessor {
         let ix = match (borsh_serialization_enabled, data.split_first()) {
             (true, Some((&prefix, borsh_data))) if prefix == EVM_INSTRUCTION_BORSH_PREFIX => {
                 borsh_serialization_used = true;
-                BorshDeserialize::deserialize(&mut &borsh_data[..])
+                BorshDeserialize::deserialize(&mut &*borsh_data)
                     .map_err(|_| InstructionError::InvalidInstructionData)?
             }
             _ => limited_deserialize(data)?,
@@ -623,7 +622,7 @@ impl EvmProcessor {
         // 1. Fee can be charged from evm account or native. (evm part is done in Executor::transaction_execute* methods.)
         if !withdraw_fee_from_evm {
             let sender = sender.as_ref().ok_or(EvmError::MissingRequiredSignature)?;
-            Self::charge_native_account(&result, full_fee, *sender, &accounts.evm)?;
+            Self::charge_native_account(&result, full_fee, *sender, accounts.evm)?;
         }
 
         // 2. Then we should burn some part of it.

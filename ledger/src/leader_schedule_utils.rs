@@ -28,7 +28,7 @@ pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
 }
 
 fn retain_sort_stakers(stakes: &HashMap<Pubkey, u64>) -> Vec<(Pubkey, u64)> {
-    let mut stakes: Vec<_> = stakes.into_iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut stakes: Vec<_> = stakes.iter().map(|(k, v)| (*k, *v)).collect();
     sort_stakes(&mut stakes);
     if num_major_stakers(&stakes) >= NUM_MAJOR_STAKERS_FOR_FILTERING {
         retain_major_stakers(&mut stakes)
