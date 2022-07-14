@@ -49,7 +49,7 @@ pub type SharedTransactions = Arc<RwLock<VecDeque<Vec<(Transaction, u64)>>>>;
 pub fn get_recent_blockhash<T: Client>(client: &T) -> Hash {
     loop {
         match client.get_latest_blockhash_with_commitment(CommitmentConfig::processed()) {
-            Ok((blockhash, _last_valid_slot)) => {
+            Ok((blockhash, _last_valid_height)) => {
                 return blockhash
             }
             Err(err) => {

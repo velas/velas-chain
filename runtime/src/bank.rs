@@ -931,7 +931,7 @@ pub(crate) struct BankFieldsToDeserialize {
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) evm_chain_id: u64,
-    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
+    pub(crate) evm_persist_fields: evm_state::EvmPersistState,
     pub(crate) evm_blockhashes: BlockHashEvm,
     pub(crate) accounts_data_len: u64,
 }
@@ -973,7 +973,7 @@ pub(crate) struct BankFieldsToSerialize<'a> {
     pub(crate) epoch_stakes: &'a HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) evm_chain_id: u64,
-    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
+    pub(crate) evm_persist_fields: evm_state::EvmPersistState,
     pub(crate) evm_blockhashes: &'a RwLock<BlockHashEvm>,
     pub(crate) accounts_data_len: u64,
 }
@@ -2132,7 +2132,7 @@ impl Bank {
             blockhash_queue: &self.blockhash_queue,
             evm_blockhashes: &self.evm_blockhashes,
             evm_chain_id: self.evm_chain_id,
-            evm_persist_feilds: self.evm_state.read().unwrap().clone().save_state(),
+            evm_persist_fields: self.evm_state.read().unwrap().clone().save_state(),
             ancestors,
             hash: *self.hash.read().unwrap(),
             parent_hash: self.parent_hash,

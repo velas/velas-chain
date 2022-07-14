@@ -609,14 +609,14 @@ impl EvmState {
 
     pub fn load_from<P: AsRef<Path>>(
         path: P,
-        evm_persist_feilds: impl Into<EvmPersistState>,
+        evm_persist_fields: impl Into<EvmPersistState>,
         gc_enabled: bool,
     ) -> Result<Self, anyhow::Error> {
         info!("Open EVM storage {}", path.as_ref().display());
 
         let kvs = KVS::open_persistent(path, gc_enabled)?;
 
-        Ok(match evm_persist_feilds.into() {
+        Ok(match evm_persist_fields.into() {
             EvmPersistState::Incomming(i) => EvmBackend::new(i, kvs).into(),
             EvmPersistState::Committed(c) => EvmBackend::new(c, kvs).into(),
         })

@@ -397,7 +397,7 @@ where
     info!(
         "Restoring evm-state snapshot from = {:?}, for root = {}, skip_purge_verify = {}, snapshot_gc = {}, our_state_gc = {}.",
         evm_state_backup_path,
-        bank_fields.evm_persist_feilds.last_root(),
+        bank_fields.evm_persist_fields.last_root(),
         skip_purge_verify,
         load_full_backup,
         enable_gc
@@ -438,7 +438,7 @@ where
         evm_state::storage::copy_and_purge(
             src,
             destination,
-            bank_fields.evm_persist_feilds.last_root(),
+            bank_fields.evm_persist_fields.last_root(),
         )
         .map_err(|e| Error::custom(format!("Unable to copy_and_purge storage {}", e)))?;
         measure.stop();
@@ -458,7 +458,7 @@ where
             evm_state::storage::copy_and_purge(
                 src,
                 &[evm_archive],
-                bank_fields.evm_persist_feilds.last_root(),
+                bank_fields.evm_persist_fields.last_root(),
             )
             .map_err(|e| Error::custom(format!("Unable to copy_and_purge storage {}", e)))?;
         };
@@ -466,14 +466,14 @@ where
 
     let evm_state = evm_state::EvmState::load_from(
         evm_state_path,
-        bank_fields.evm_persist_feilds.clone(),
+        bank_fields.evm_persist_fields.clone(),
         enable_gc,
     )
     .map_err(|e| Error::custom(format!("Unable to open EVM state storage {}", e)))?;
 
     evm_state
         .kvs()
-        .cleanup_slots(bank_fields.slot, bank_fields.evm_persist_feilds.last_root())
+        .cleanup_slots(bank_fields.slot, bank_fields.evm_persist_fields.last_root())
         .map_err(|e| Error::custom(format!("Unable to register slot for evm root {}", e)))?;
 
     // if limit_load_slot_count_from_snapshot is set, then we need to side-step some correctness checks beneath this call
