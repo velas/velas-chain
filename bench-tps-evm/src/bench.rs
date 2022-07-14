@@ -21,7 +21,6 @@ use solana_sdk::{
     client::Client,
     clock::{DEFAULT_TICKS_PER_SECOND, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
     commitment_config::CommitmentConfig,
-    fee_calculator::FeeCalculator,
     hash::Hash,
     message::Message,
     pubkey::Pubkey,
