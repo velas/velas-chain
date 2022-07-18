@@ -126,6 +126,7 @@ pub fn poll_blockhash<T: Client>(
     loop {
         let blockhash_updated = {
             let old_blockhash = *blockhash.read().unwrap();
+            // TODO: get_new_blockhash is deprecated
             if let Ok((new_blockhash, _fee)) = client.get_new_blockhash(&old_blockhash) {
                 *blockhash.write().unwrap() = new_blockhash;
                 blockhash_last_updated = Instant::now();
@@ -553,6 +554,7 @@ pub fn generate_and_fund_keypairs<T: 'static + Client + Send + Sync>(
     //   pay for the transaction fees in a new run.
     let enough_lamports = 8 * lamports_per_account / 10;
     if first_keypair_balance < enough_lamports || last_keypair_balance < enough_lamports {
+        // TODO: get_fee_rate_governor is deprecated
         let fee_rate_governor = client.get_fee_rate_governor().unwrap();
         let max_fee = fee_rate_governor.max_lamports_per_signature;
         let extra_fees = extra * max_fee;
