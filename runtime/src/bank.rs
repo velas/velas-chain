@@ -6902,7 +6902,6 @@ impl Bank {
             sysvar::epoch_schedule::id(),
             #[allow(deprecated)]
             sysvar::fees::id(),
-            #[allow(deprecated)]
             sysvar::recent_evm_blockhashes::id(),
             #[allow(deprecated)]
             sysvar::recent_blockhashes::id(),
