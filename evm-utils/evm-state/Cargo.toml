@@ -15,7 +15,7 @@ triedb = { git = "https://github.com/velas/triedb", branch = "feat/gc-simple", f
 # triedb = { path = "../../../triedb",  features = ["rocksdb"] }
 
 primitive-types = "0.8.0"
-keccak-hash = "0.6"
+keccak-hash = "0.9"
 log = "0.4.11"
 simple_logger = "1.11"
 hex = "0.4.2"
