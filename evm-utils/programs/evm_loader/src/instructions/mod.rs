@@ -10,6 +10,7 @@ pub const EVM_INSTRUCTION_BORSH_PREFIX: u8 = 255u8;
 #[derive(
     BorshSerialize,
     BorshDeserialize,
+    // TODO: add schema generation custom command
     // BorshSchema,
     Clone,
     Debug,
@@ -40,6 +41,7 @@ impl FeePayerType {
 #[derive(
     BorshSerialize,
     BorshDeserialize,
+    // TODO: add schema generation custom command
     // BorshSchema,
     Clone,
     Debug,
@@ -63,6 +65,7 @@ pub enum EvmBigTransaction {
 #[derive(
     BorshSerialize,
     BorshDeserialize,
+    // TODO: add schema generation custom command
     // BorshSchema,
     Clone,
     Debug,
@@ -93,6 +96,7 @@ impl ExecuteTransaction {
 #[derive(
     BorshSerialize,
     BorshDeserialize,
+    // TODO: add schema generation custom command
     // BorshSchema,
     Clone,
     Debug,
