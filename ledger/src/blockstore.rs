@@ -7490,7 +7490,7 @@ pub mod tests {
     #[test]
     fn test_get_complete_transaction() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let _blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let slot = 2;
         let entries = make_slot_entries_with_transactions(5);

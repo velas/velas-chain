@@ -708,20 +708,19 @@ mod test {
         transactions::{TransactionAction, TransactionSignature},
         FromKey,
     };
-    use evm_state::{AccountProvider, ExitReason, ExitSucceed, executor::FeatureSet};
+    use evm_state::{AccountProvider, ExitReason, ExitSucceed};
     use primitive_types::{H160, H256, U256};
     use solana_sdk::{instruction::{AccountMeta, Instruction}, message::{SanitizedMessage, Message}};
     use solana_sdk::native_loader;
     use solana_program_runtime::{invoke_context::{InvokeContext, BuiltinProgram}, timings::ExecuteTimings};
     use solana_sdk::program_utils::limited_deserialize;
     use solana_sdk::sysvar::rent::Rent;
+    use solana_sdk::pubkey::Pubkey;
 
     type MutableAccount = Rc<RefCell<AccountSharedData>>;
 
     use super::TEST_CHAIN_ID as CHAIN_ID;
-    use crate::instructions::ExecuteTransaction::ProgramAuthorized;
     use borsh::BorshSerialize;
-    use solana_sdk::instruction::{CompiledInstruction};
     use std::rc::Rc;
     use std::sync::Arc;
     use std::{cell::RefCell, collections::{BTreeMap, BTreeSet}};
@@ -1786,7 +1785,7 @@ mod test {
 
         let mut evm_context = EvmMockContext::new(1_000_000_000);
         evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
-        let receiver = Pubkey::new(&hex!(
+        let _receiver = Pubkey::new(&hex!(
             "9b73845fe592e092a13df83a8f8485296ba9c0a28c7c0824c33b1b3b352b4043"
         ));
         let secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
@@ -2177,7 +2176,7 @@ mod test {
         
         let mut rand = evm_state::rand::thread_rng();
         let dummy_key = evm::SecretKey::new(&mut rand);
-        let dummy_address = dummy_key.to_address();
+        let _dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
         let user_evm_address = crate::evm_address_for_program(user_id);
@@ -2236,7 +2235,7 @@ mod test {
         };
 
         let tx_create = unsigned_tx.sign(&dummy_key, Some(CHAIN_ID));
-        let mut ix = crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Native);
+        let ix = crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Native);
 
         let executor = &evm_context.evm_state;
         // Signer has zero balance but fee will be taken from native account
