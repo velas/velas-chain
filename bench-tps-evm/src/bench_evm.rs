@@ -132,7 +132,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Trans
                 self.len(),
             );
 
-            let (blockhash, _fee_calculator) = crate::bench::get_recent_blockhash(client.as_ref());
+            let blockhash = crate::bench::get_recent_blockhash(client.as_ref());
 
             // re-sign retained to_fund_txes with updated blockhash
             self.sign(blockhash);
@@ -430,7 +430,7 @@ where
     let shared_txs: SharedTransactions = Arc::new(RwLock::new(VecDeque::new()));
 
     let recent_blockhash = Arc::new(RwLock::new(
-        crate::bench::get_recent_blockhash(client.as_ref()).0,
+        crate::bench::get_recent_blockhash(client.as_ref()),
     ));
     let shared_tx_active_thread_count = Arc::new(AtomicIsize::new(0));
     let total_tx_sent_count = Arc::new(AtomicUsize::new(0));

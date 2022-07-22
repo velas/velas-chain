@@ -59,7 +59,7 @@ struct DeserializableVersionedBank {
 
     pub(crate) evm_chain_id: u64,
     pub(crate) evm_blockhashes: BlockHashEvm,
-    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
+    pub(crate) evm_persist_fields: evm_state::EvmPersistState,
 }
 
 impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
@@ -98,7 +98,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             epoch_stakes: dvb.epoch_stakes,
             is_delta: dvb.is_delta,
             evm_chain_id: dvb.evm_chain_id,
-            evm_persist_feilds: dvb.evm_persist_feilds,
+            evm_persist_fields: dvb.evm_persist_fields,
         }
     }
 }
@@ -141,7 +141,7 @@ struct SerializableVersionedBank<'a> {
     is_delta: bool,
     pub(crate) evm_chain_id: u64,
     pub(crate) evm_blockhashes: &'a RwLock<BlockHashEvm>,
-    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
+    pub(crate) evm_persist_fields: evm_state::EvmPersistState,
 }
 
 impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedBank<'a> {
@@ -181,7 +181,7 @@ impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedB
             epoch_stakes: rhs.epoch_stakes,
             is_delta: rhs.is_delta,
             evm_chain_id: rhs.evm_chain_id,
-            evm_persist_feilds: rhs.evm_persist_feilds,
+            evm_persist_fields: rhs.evm_persist_fields,
         }
     }
 }

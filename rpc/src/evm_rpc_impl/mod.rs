@@ -220,10 +220,7 @@ impl GeneralERPC for GeneralErpcImpl {
     }
 
     fn is_syncing(&self, meta: Self::Metadata) -> Result<bool, Error> {
-        Ok(match meta.get_health() {
-            RpcHealthStatus::Ok => false,
-            _ => true,
-        })
+        Ok(!matches!(meta.get_health(), RpcHealthStatus::Ok))
     }
 
     fn coinbase(&self, _meta: Self::Metadata) -> Result<Hex<Address>, Error> {

@@ -1,6 +1,7 @@
 use super::super::scope::*;
 use serde::{Deserialize, Serialize};
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum EvmBigTransaction {
     /// Allocate data in storage, pay fee should be taken from EVM.

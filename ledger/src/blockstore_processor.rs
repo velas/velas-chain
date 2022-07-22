@@ -567,6 +567,7 @@ pub struct ProcessOptions {
     pub shrink_ratio: AccountShrinkThreshold,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn process_blockstore(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
@@ -3038,7 +3039,7 @@ pub mod tests {
         let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
-        let mut entries: Vec<_> = (0..NUM_TRANSFERS)
+        let entries: Vec<_> = (0..NUM_TRANSFERS)
             .step_by(NUM_TRANSFERS_PER_ENTRY)
             .map(|i| {
                 let mut transactions = (0..NUM_TRANSFERS_PER_ENTRY)
@@ -3568,7 +3569,7 @@ pub mod tests {
         let mut hash = bank.last_blockhash();
         let mut root: Option<Arc<Bank>> = None;
         loop {
-            let mut entries: Vec<_> = (0..NUM_TRANSFERS)
+            let entries: Vec<_> = (0..NUM_TRANSFERS)
                 .step_by(NUM_TRANSFERS_PER_ENTRY)
                 .map(|i| {
                     next_entry_mut(&mut hash, 0, {

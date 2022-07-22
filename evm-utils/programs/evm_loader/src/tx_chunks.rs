@@ -66,8 +66,7 @@ impl<T: BorrowMut<[u8]>> TxChunks<T> {
     }
 
     pub fn take(self) -> Vec<u8> {
-        // self.0.borrow_mut().iter_mut().map(std::mem::take).collect()
-        self.0.borrow().iter().copied().collect()
+        self.0.borrow().to_vec()
     }
 }
 

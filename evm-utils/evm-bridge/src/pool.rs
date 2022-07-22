@@ -148,7 +148,7 @@ impl<C: Clock> EthPool<C> {
                 .map(|tx| tx.hash)
         };
 
-        hash.map(|hash| self.remove(&hash)).flatten()
+        hash.and_then(|hash| self.remove(&hash))
     }
 
     /// Gets reference to the next transaction in queue ready to be deployed
@@ -615,10 +615,9 @@ fn process_tx(
     let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
 
     debug!("Getting block hash");
-    let (blockhash, _fee_calculator, _) = bridge
+    let (blockhash, _height) = bridge
         .rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
-        .map(|response| response.value)
+        .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
         // NOTE: into_native_error?
         .map_err(|e| evm_rpc::Error::NativeRpcError {
             details: String::from("Failed to get recent blockhash"),
@@ -684,11 +683,10 @@ fn deploy_big_tx(
         .get_minimum_balance_for_rent_exemption(tx_bytes.len())
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
-    let (blockhash, _, _) = bridge
+    let (blockhash, _height) = bridge
         .rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::finalized())
-        .map_err(|e| into_native_error(e, bridge.verbose_errors))?
-        .value;
+        .get_latest_blockhash_with_commitment(CommitmentConfig::finalized())
+        .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     let create_storage_ix = system_instruction::create_account(
         &payer_pubkey,
@@ -739,9 +737,9 @@ fn deploy_big_tx(
         }
     }
 
-    let (blockhash, _) = bridge
+    let blockhash = bridge
         .rpc_client
-        .get_new_blockhash(&blockhash)
+        .get_new_latest_blockhash(&blockhash)
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     let write_data_txs: Vec<solana::Transaction> = tx_bytes
@@ -774,11 +772,10 @@ fn deploy_big_tx(
             into_native_error(e, bridge.verbose_errors)
         })?;
 
-    let (blockhash, _, _) = bridge
+    let (blockhash, _height) = bridge
         .rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
-        .map_err(|e| into_native_error(e, bridge.verbose_errors))?
-        .value;
+        .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+        .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     let execute_tx = solana::Transaction::new_signed_with_payer(
         &[solana_evm_loader_program::big_tx_execute(

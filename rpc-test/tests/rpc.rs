@@ -1,7 +1,5 @@
 use {
     bincode::serialize,
-    jsonrpc_core::futures::StreamExt,
-    jsonrpc_core_client::transports::ws,
     log::*,
     reqwest::{self, header::CONTENT_TYPE},
     serde_json::{json, Value},
@@ -304,7 +302,7 @@ fn test_rpc_block_transaction() {
                 .sign(&evm_secret_key, Some(chain_id))
         })
         .collect();
-    let tx_hashes: Vec<_> = evm_txs.iter().map(|tx| tx.tx_id_hash()).collect();
+    let _tx_hashes: Vec<_> = evm_txs.iter().map(|tx| tx.tx_id_hash()).collect();
 
     while get_blockhash(&rpc_url) == blockhash {
         sleep(Duration::from_secs(1));
@@ -420,7 +418,7 @@ fn test_rpc_replay_transaction_timestamp() {
     while get_blockhash(&rpc_url) == blockhash {
         sleep(Duration::from_secs(1));
     }
-    let mut blockhash = dbg!(get_blockhash(&rpc_url));
+    let blockhash = dbg!(get_blockhash(&rpc_url));
     let ixs = vec![send_raw_tx(alice.pubkey(), tx_create, None, FeePayerType::Evm)];
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
@@ -498,7 +496,7 @@ fn test_rpc_slot_updates() {
     rt.spawn(async move {
 
         tokio::spawn(async move {
-            let mut update_sub = PubsubClient::slot_updates_subscribe(&rpc_pubsub_url, move |response| update_sender.send(response).unwrap()).unwrap();
+            let _update_sub = PubsubClient::slot_updates_subscribe(&rpc_pubsub_url, move |response| update_sender.send(response).unwrap()).unwrap();
             loop{tokio::time::sleep(Duration::from_millis(1000)).await;} // wait subscription
         });
     });
@@ -591,7 +589,7 @@ fn test_rpc_subscriptions() {
         // Subscribe to signature notifications
         for sig in signature_set_clone {
             let status_sender = status_sender.clone();
-            let mut sig_sub = PubsubClient::signature_subscribe(
+            let sig_sub = PubsubClient::signature_subscribe(
                     &rpc_pubsub_url,
                     &Signature::from_str(&sig).unwrap(),
                     Some(RpcSignatureSubscribeConfig {
@@ -612,7 +610,7 @@ fn test_rpc_subscriptions() {
         // Subscribe to account notifications
         for pubkey in account_set {
             let account_sender = account_sender.clone();
-            let mut client_sub = PubsubClient::account_subscribe(
+            let client_sub = PubsubClient::account_subscribe(
                     &rpc_pubsub_url,
                     &Pubkey::from_str(&pubkey).unwrap(),
                     Some(RpcAccountInfoConfig {
@@ -628,7 +626,7 @@ fn test_rpc_subscriptions() {
         }
 
         // Signal ready after the next slot notification
-        let mut slot_sub = PubsubClient::slot_subscribe(&rpc_pubsub_url,)
+        let slot_sub = PubsubClient::slot_subscribe(&rpc_pubsub_url,)
             .unwrap_or_else(|err| panic!("sig sub err: {:#?}", err));
         tokio::spawn(async move {
             let _response = slot_sub.1.recv().unwrap();

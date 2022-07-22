@@ -90,7 +90,6 @@ use {
         cmp::{max, min},
         collections::{HashMap, HashSet},
         convert::TryFrom,
-        future::ready,
         net::SocketAddr,
         str::FromStr,
         sync::{
@@ -100,7 +99,6 @@ use {
         },
         time::{Duration, Instant},
     },
-    evm_rpc::Hex,
 };
 use tracing_attributes::instrument;
 
@@ -7297,8 +7295,8 @@ pub mod tests {
         } = start_rpc_handler_with_tx(&bob_pubkey);
 
         let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getConfirmedBlock","params":[0,{}]}}"#,
-            json!(RpcConfirmedBlockConfig {
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getBlock","params":[0,{}]}}"#,
+            json!(RpcBlockConfig {
                 encoding: None,
                 transaction_details: Some(TransactionDetails::Signatures),
                 rewards: Some(false),
@@ -7308,6 +7306,7 @@ pub mod tests {
         let res = io.handle_request_sync(&req, meta.clone());
         let result: Value = serde_json::from_str(&res.expect("actual response"))
             .expect("actual response deserialization");
+        // dbg!(&result);
         let confirmed_block: Option<UiConfirmedBlock> =
             serde_json::from_value(result["result"].clone()).unwrap();
         let confirmed_block = confirmed_block.unwrap();
@@ -7318,8 +7317,8 @@ pub mod tests {
         }
 
         let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getConfirmedBlock","params":[0,{}]}}"#,
-            json!(RpcConfirmedBlockConfig {
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getBlock","params":[0,{}]}}"#,
+            json!(RpcBlockConfig {
                 encoding: None,
                 transaction_details: Some(TransactionDetails::None),
                 rewards: Some(true),

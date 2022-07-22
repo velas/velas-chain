@@ -931,7 +931,7 @@ pub(crate) struct BankFieldsToDeserialize {
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) evm_chain_id: u64,
-    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
+    pub(crate) evm_persist_fields: evm_state::EvmPersistState,
     pub(crate) evm_blockhashes: BlockHashEvm,
     pub(crate) accounts_data_len: u64,
 }
@@ -973,7 +973,7 @@ pub(crate) struct BankFieldsToSerialize<'a> {
     pub(crate) epoch_stakes: &'a HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) evm_chain_id: u64,
-    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
+    pub(crate) evm_persist_fields: evm_state::EvmPersistState,
     pub(crate) evm_blockhashes: &'a RwLock<BlockHashEvm>,
     pub(crate) accounts_data_len: u64,
 }
@@ -2132,7 +2132,7 @@ impl Bank {
             blockhash_queue: &self.blockhash_queue,
             evm_blockhashes: &self.evm_blockhashes,
             evm_chain_id: self.evm_chain_id,
-            evm_persist_feilds: self.evm_state.read().unwrap().clone().save_state(),
+            evm_persist_fields: self.evm_state.read().unwrap().clone().save_state(),
             ancestors,
             hash: *self.hash.read().unwrap(),
             parent_hash: self.parent_hash,
@@ -4141,6 +4141,7 @@ impl Bank {
 
     /// Execute a transaction using the provided loaded accounts and update
     /// the executors cache if the transaction was successful.
+    #[allow(clippy::too_many_arguments)]
     fn execute_loaded_transaction(
         &self,
         tx: &SanitizedTransaction,
@@ -4182,7 +4183,7 @@ impl Bank {
             *evm_patch = evm_patch.take().or_else(|| evm_state_getter(self));
             let last_hashes = self.evm_hashes();
             if let Some(state) = &evm_patch {
-                let mut evm_executor = evm_state::Executor::with_config(
+                let evm_executor = evm_state::Executor::with_config(
                     state.clone(),
                     evm_state::ChainContext::new(last_hashes),
                     evm_state::EvmConfig::new(self.evm_chain_id, self.evm_burn_fee_activated()),
@@ -6901,8 +6902,8 @@ impl Bank {
             sysvar::epoch_schedule::id(),
             #[allow(deprecated)]
             sysvar::fees::id(),
-            #[allow(deprecated)]
             sysvar::recent_evm_blockhashes::id(),
+            #[allow(deprecated)]
             sysvar::recent_blockhashes::id(),
             sysvar::rent::id(),
             sysvar::rewards::id(),

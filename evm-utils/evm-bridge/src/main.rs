@@ -307,17 +307,15 @@ impl EvmBridge {
             bridge
                 .pool
                 .signature_of_cached_transaction(hash)
-                .map(|signature| {
+                .and_then(|signature| {
                     bridge
                         .rpc_client
                         .get_signature_status(&signature)
                         .ok()
                         .flatten()
-                        .map(|result| result.ok())
-                        .flatten()
+                        .and_then(|result| result.ok())
                         .map(|()| true)
                 })
-                .flatten()
         }
 
         is_receipt_exists(self, hash).or_else(|| is_signature_exists(self, hash))
@@ -346,7 +344,7 @@ impl BridgeERPC for BridgeErpcImpl {
         message_data.extend_from_slice(&data.0);
         let hash_to_sign = solana_sdk::keccak::hash(&message_data);
         let msg: Message = Message::from_slice(&hash_to_sign.to_bytes()).unwrap();
-        let sig = SECP256K1.sign_recoverable(&msg, &secret_key);
+        let sig = SECP256K1.sign_recoverable(&msg, secret_key);
         let (rid, sig) = { sig.serialize_compact() };
 
         let mut sig_data_arr = [0; 65];
@@ -1254,8 +1252,8 @@ fn send_and_confirm_transactions<T: Signers>(
         }
 
         // Re-sign any failed transactions with a new blockhash and retry
-        let (blockhash, _) = rpc_client
-            .get_new_blockhash(&transactions_signatures[0].0.message().recent_blockhash)?;
+        let blockhash = rpc_client
+            .get_new_latest_blockhash(&transactions_signatures[0].0.message().recent_blockhash)?;
 
         for (mut transaction, _) in transactions_signatures {
             transaction.try_sign(signer_keys, blockhash)?;
