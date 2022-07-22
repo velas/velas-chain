@@ -16,7 +16,7 @@ log = "0.4.11"
 reqwest = { version = "0.11.10", default-features = false }
 serde = "1.0.122"
 serde_json = "1.0.56"
-serde_yaml = "0.8.13"
+serde_yaml = "0.8.26"
 solana-core = { path = "../core", version = "=1.6.14" }
 solana-client = { path = "../client", version = "=1.6.14" }
 solana-logger = { path = "../logger", version = "=1.6.14" }

@@ -23,7 +23,7 @@ reqwest = { version = "0.11.2", default-features = false, features = ["blocking"
 semver = "1.0.4"
 serde = { version = "1.0.122", features = ["derive"] }
 serde_json = "1.0.62"
-serde_yaml = "0.8.13"
+serde_yaml = "0.8.26"
 solana-clap-utils = { path = "../clap-utils", version = "=1.6.14" }
 solana-client = { path = "../client", version = "=1.6.14" }
 solana-config-program = { path = "../programs/config", version = "=1.6.14" }
