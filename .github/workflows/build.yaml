@@ -16,24 +16,20 @@ jobs:
       image_tag: ${{ steps.build.outputs.image_tag }}
     steps:
       - uses: actions/checkout@v2
+      - uses: webfactory/ssh-agent@v0.5.4
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.REGISTRY_USER }}
           password: ${{ secrets.REGISTRY_PASS }}
           registry: ${{ secrets.REGISTRY_HOST }}
-      - uses: webfactory/ssh-agent@v0.5.4
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v2
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-      - name: Build, tag, and push image 
-        id: build
-        env:
-          REGISTRY: ${{ secrets.REGISTRY_HOST }}/velas
-          REPOSITORY: velas-solana
-          IMAGE_TAG: ${{github.sha}}
-        run: |
-          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG --no-cache  .
-          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
-          echo "::set-output name=repository::$REPOSITORY"
-          echo "::set-output name=image_tag::$IMAGE_TAG"
-
+          ssh: |
+            default=${{ env.SSH_AUTH_SOCK }}
+          push: true
+          tags: ${{ secrets.REGISTRY_HOST }}/velas/velas-solana:${{github.sha}}
