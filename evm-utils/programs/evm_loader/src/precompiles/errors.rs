@@ -1,5 +1,5 @@
 use crate::scope::*;
-use evm_state::ExitError;
+use evm_state::{CallScheme, ExitError};
 use hex::FromHexError;
 use solana_sdk::instruction::InstructionError;
 
@@ -50,6 +50,9 @@ pub enum PrecompileErrors {
 
     #[snafu(display("Native chain Instruction error source = {}", source))]
     NativeChainInstructionError { source: InstructionError },
+
+    #[snafu(display("Invalid call scheme, or code address schema = {:?}", scheme))]
+    InvalidCallScheme { scheme: Option<CallScheme> },
 }
 
 impl From<PrecompileErrors> for ExitError {

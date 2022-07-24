@@ -87,3 +87,8 @@ exclude = [
 
 [profile.dev]
 split-debuginfo = "unpacked"
+
+
+[patch."https://github.com/velas/evm"]
+evm = { git = "ssh://git@github.com/velas/evm-security-fixes.git", branch = "add-traces" }
+

@@ -2,7 +2,7 @@ use snafu::{ensure, ResultExt};
 use std::{marker::PhantomData, str::FromStr};
 
 use ethabi::{Function, Param, ParamType, Token};
-use evm_state::ExitSucceed;
+use evm_state::{CallScheme, ExitSucceed};
 use once_cell::sync::Lazy;
 use primitive_types::H160;
 
@@ -130,6 +130,16 @@ pub static ETH_TO_VLX_CODE: Lazy<NativeContract<EthToVlxImp, Pubkey>> = Lazy::ne
             log::trace!("Account not found pk = {}", pubkey);
             return AccountNotFound { public_key: pubkey }.fail();
         };
+        if !matches!(cx.call_scheme, None | Some(CallScheme::Call))
+            || cx.evm_context.address != *ETH_TO_VLX_ADDR
+        // if transfer to other address
+        {
+            log::trace!("Invalid call type = {:?}", cx.call_scheme);
+            return InvalidCallScheme {
+                scheme: cx.call_scheme,
+            }
+            .fail();
+        }
 
         // TODO: return change back
         let (lamports, _change) = gweis_to_lamports(cx.evm_context.apparent_value);

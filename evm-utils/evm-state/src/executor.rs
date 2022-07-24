@@ -22,7 +22,7 @@ use crate::{
         UnsignedTransaction, UnsignedTransactionWithCaller,
     },
 };
-use crate::{error::*, BlockVersion};
+use crate::{error::*, BlockVersion, CallScheme};
 
 pub use triedb::empty_trie_hash;
 
@@ -174,7 +174,13 @@ impl Executor {
         mut precompiles: F,
     ) -> Result<ExecutionResult, Error>
     where
-        F: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
+        F: FnMut(
+            H160,
+            &[u8],
+            Option<u64>,
+            Option<CallScheme>,
+            &Context,
+        ) -> Option<PrecompileCallResult>,
     {
         let state_account = self
             .evm_backend
@@ -322,7 +328,13 @@ impl Executor {
         precompiles: F,
     ) -> Result<ExecutionResult, Error>
     where
-        F: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
+        F: FnMut(
+            H160,
+            &[u8],
+            Option<u64>,
+            Option<CallScheme>,
+            &Context,
+        ) -> Option<PrecompileCallResult>,
     {
         let chain_id = self.config.chain_id;
 
@@ -356,7 +368,13 @@ impl Executor {
         precompiles: F,
     ) -> Result<ExecutionResult, Error>
     where
-        F: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
+        F: FnMut(
+            H160,
+            &[u8],
+            Option<u64>,
+            Option<CallScheme>,
+            &Context,
+        ) -> Option<PrecompileCallResult>,
     {
         let caller = evm_tx.caller()?; // This method verify signature.
 
@@ -398,7 +416,13 @@ impl Executor {
             &mut StackExecutor<'r, 'r, MemoryStackState<'r, 'r, ExecutorContext<'a, Incomming>>>,
         ) -> U,
 
-        P: FnMut(H160, &[u8], Option<u64>, &Context) -> Option<PrecompileCallResult>,
+        P: FnMut(
+            H160,
+            &[u8],
+            Option<u64>,
+            Option<CallScheme>,
+            &Context,
+        ) -> Option<PrecompileCallResult>,
     {
         let transaction_context = TransactionContext::default();
         let config = self.config.to_evm_params();
@@ -462,19 +486,14 @@ impl Executor {
     ///
     pub fn deposit(&mut self, recipient: H160, amount: U256) {
         self.with_executor(
-            |_, _, _, _| None,
+            |_, _, _, _, _| None,
             |e| e.state_mut().deposit(recipient, amount),
         );
     }
 
-    pub fn register_swap_tx_in_evm(
-        &mut self,
-        mint_address: H160,
-        recipient: H160,
-        amount: U256,
-    ) {
+    pub fn register_swap_tx_in_evm(&mut self, mint_address: H160, recipient: H160, amount: U256) {
         let nonce = self.with_executor(
-            |_, _, _, _| None,
+            |_, _, _, _, _| None,
             |e| {
                 let nonce = e.nonce(mint_address);
                 e.state_mut().inc_nonce(mint_address);
@@ -509,7 +528,7 @@ impl Executor {
     /// After "swap from evm" transaction EVM_MINT_ADDRESS will cleanup. Using this method.
     pub fn reset_balance(&mut self, swap_addr: H160, ignore_reset_on_cleared: bool) {
         self.with_executor(
-            |_, _, _, _| None,
+            |_, _, _, _, _| None,
             |e| {
                 if !ignore_reset_on_cleared || e.state().basic(swap_addr).balance != U256::zero() {
                     e.state_mut().reset_balance(swap_addr)
@@ -576,24 +595,24 @@ pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b5060043
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::str::FromStr;
     use ethabi::Token;
-    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use evm::backend::MemoryBackend;
     use evm::executor::{MemoryStackState, StackSubstateMetadata};
+    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use log::LevelFilter;
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
+    use std::collections::BTreeMap;
+    use std::str::FromStr;
 
     use super::{
         ExecutionResult, Executor, HELLO_WORLD_ABI, HELLO_WORLD_CODE, HELLO_WORLD_CODE_SAVED,
         HELLO_WORLD_RESULT,
     };
     use crate::context::EvmConfig;
+    use crate::executor::FeatureSet;
     use crate::*;
     use error::*;
-    use crate::executor::FeatureSet;
 
     #[allow(clippy::type_complexity)]
     fn noop_precompile(
@@ -758,11 +777,7 @@ mod tests {
 
         assert!(matches!(
             executor
-                .transaction_execute_unsinged(
-                    alice.address(),
-                    create_tx.clone(),
-                    noop_precompile
-                )
+                .transaction_execute_unsinged(alice.address(), create_tx.clone(), noop_precompile)
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -1415,8 +1430,13 @@ mod tests {
 
     #[test]
     fn test_call_inner_with_estimate() {
-        let _logger_error = simple_logger::SimpleLogger::new().with_level(LevelFilter::Debug).init();
-        let config_estimate = Config { estimate: true, ..Config::istanbul() };
+        let _logger_error = simple_logger::SimpleLogger::new()
+            .with_level(LevelFilter::Debug)
+            .init();
+        let config_estimate = Config {
+            estimate: true,
+            ..Config::istanbul()
+        };
         let config_no_estimate = Config::istanbul();
 
         let vicinity = MemoryVicinity {
@@ -1433,7 +1453,8 @@ mod tests {
 
         let mut state = BTreeMap::new();
         let caller_address = H160::from_str("0xf000000000000000000000000000000000000000").unwrap();
-        let contract_address = H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
+        let contract_address =
+            H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
         state.insert(caller_address, dummy_account());
         state.insert(
             contract_address,
@@ -1446,7 +1467,9 @@ mod tests {
             }
         );
 
-        let call_data = hex::decode("6057361d0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+        let call_data =
+            hex::decode("6057361d0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
         let transact_call = |config, gas_limit| {
             let backend = MemoryBackend::new(&vicinity, state.clone());
             let metadata = StackSubstateMetadata::new(gas_limit, config);
@@ -1485,8 +1508,13 @@ mod tests {
 
     #[test]
     fn test_create_inner_with_estimate() {
-        let _logger_error = simple_logger::SimpleLogger::new().with_level(LevelFilter::Debug).init();
-        let config_estimate = Config { estimate: true, ..Config::istanbul() };
+        let _logger_error = simple_logger::SimpleLogger::new()
+            .with_level(LevelFilter::Debug)
+            .init();
+        let config_estimate = Config {
+            estimate: true,
+            ..Config::istanbul()
+        };
         let config_no_estimate = Config::istanbul();
 
         let vicinity = MemoryVicinity {
@@ -1503,7 +1531,8 @@ mod tests {
 
         let mut state = BTreeMap::new();
         let caller_address = H160::from_str("0xf000000000000000000000000000000000000000").unwrap();
-        let contract_address = H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
+        let contract_address =
+            H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
         state.insert(caller_address, dummy_account());
         state.insert(
             contract_address,
