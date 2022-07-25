@@ -1695,7 +1695,7 @@ name = "evm-bridge"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.9.3",
+ "base64 0.13.0",
  "bincode",
  "borsh 0.8.2",
  "derivative",
@@ -2635,12 +2635,6 @@ source = "git+https://github.com/velas/parity-common?branch=borsh-support#e5dc25
 dependencies = [
  "serde",
 ]
-
-[[package]]
-name = "indexed"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d480125acf340d6a6e59dab69ae19d6fca3a906e1eade277671272cc8f73794b"
 
 [[package]]
 name = "indexmap"
@@ -8072,12 +8066,9 @@ checksum = "a7f741b240f1a48843f9b8e0444fb55fb2a4ff67293b50a9179dfd5ea67f8d41"
 
 [[package]]
 name = "trees"
-version = "0.2.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afa1821e85be4f56cc5bd08bdbc32c0e26d105c90bed9c637992f6c7f747c180"
-dependencies = [
- "indexed",
-]
+checksum = "0de5f738ceab88e2491a94ddc33c3feeadfa95fedc60363ef110845df12f3878"
 
 [[package]]
 name = "triedb"

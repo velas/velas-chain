@@ -107,7 +107,7 @@ tracing-opentelemetry  =  "0.16"
 opentelemetry = { version = "0.16", default-features = false, features = ["trace"] }
 opentelemetry-jaeger = { version = "0.15", features = [ "reqwest_collector_client", "rt-tokio" ] }
 
-trees = "0.2.1"
+trees = "0.4.2"
 snafu = "0.6"
 anyhow = "1"
 

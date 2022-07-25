@@ -54,7 +54,7 @@ tempfile = "3.1.0"
 thiserror = "1.0"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
-trees = "0.2.1"
+trees = "0.4.2"
 evm-state = { path = "../evm-utils/evm-state" }
 
 [dependencies.rocksdb]
