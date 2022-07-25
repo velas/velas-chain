@@ -5402,7 +5402,7 @@ version = "1.6.14"
 dependencies = [
  "bincode",
  "borsh 0.8.2",
- "borsh-derive 0.8.2",
+ "borsh-derive 0.9.3",
  "futures 0.3.16",
  "mio 0.7.13",
  "solana-banks-interface",
@@ -8334,7 +8334,7 @@ version = "0.0.1"
 dependencies = [
  "base64 0.13.0",
  "borsh 0.8.2",
- "borsh-derive 0.8.2",
+ "borsh-derive 0.9.3",
  "serde",
  "solana-sdk",
 ]
