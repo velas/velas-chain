@@ -1,4 +1,4 @@
-use solana_evm_loader_program::instructions::EvmInstruction;
+use solana_evm_loader_program::instructions::{EvmInstruction, ExecuteTransaction};
 use solana_sdk::{evm_loader::ID as STATIC_PROGRAM_ID, instruction::CompiledInstruction};
 use solana_transaction_status::{
     ConfirmedBlockWithOptionalMetadata, TransactionWithOptionalMetadata,
@@ -59,9 +59,14 @@ impl NativeBlockExt for ConfirmedBlockWithOptionalMetadata {
                 if transaction.message.account_keys[*program_id_index as usize] == STATIC_PROGRAM_ID
                 {
                     let instruction: EvmInstruction = bincode::deserialize(&data).unwrap();
-                    if !matches!(&instruction, EvmInstruction::ExecuteTransaction { .. }) {
-                        only_trivial_instructions = false;
+                    match &instruction {
+                        EvmInstruction::ExecuteTransaction { tx, .. } => match tx {
+                            ExecuteTransaction::Signed { .. } => (),
+                            ExecuteTransaction::ProgramAuthorized { .. } => only_trivial_instructions = false,
+                        },
+                        _ => only_trivial_instructions = false
                     }
+
                     instructions.push(instruction);
                 }
             }
