@@ -16,7 +16,7 @@ use evm_rpc::{
     RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{
-    AccountProvider, AccountState, Address, Gas, LogFilter, TransactionAction, H160, H256, U256,
+    AccountProvider, AccountState, Address, Gas, LogFilter, TransactionAction, H160, H256, U256, Block,
 };
 use jsonrpc_core::BoxFuture;
 use snafu::ensure;
@@ -741,6 +741,69 @@ impl TraceERPC for TraceErpcImpl {
                 Some(block.number.as_u64().saturating_sub(1).into()),
             ).await
         })
+    }
+
+    fn recover_block_header(
+        &self,
+        meta: JsonRpcRequestProcessor,
+        txs: Vec<(RPCTransaction, Vec<String>)>,
+        last_hashes: Vec<H256>,
+        block_header: BlockHeader,
+        state_root: H256,
+    ) -> Result<(Block, Vec<Hex<H256>>), Error> {
+        let mut evm_state = meta
+            .evm_state_archive()
+            .ok_or(Error::ArchiveNotSupported)?
+            .new_incomming_for_root(state_root)
+            .ok_or(Error::StateNotFoundForBlock {
+                block: BlockId::Num(Hex(block_header.block_number)),
+            })?;
+        evm_state.state.block_number = block_header.block_number;
+        evm_state.state.timestamp = block_header.timestamp;
+        evm_state.state.last_block_hash = block_header.parent_hash;
+
+        let evm_config = evm_state::EvmConfig {
+            chain_id: meta.bank(None).evm_chain_id,
+            estimate: false,
+            ..Default::default()
+        };
+
+        let last_hashes = last_hashes
+            .try_into()
+            .map_err(|_| Error::InvalidParams {})?;
+        let mut executor = evm_state::Executor::with_config(
+            evm_state,
+            evm_state::ChainContext::new(last_hashes),
+            evm_config,
+        );
+
+        let mut warn = vec![];
+        debug!("running evm executor = {:?}", executor);
+        for (tx, meta_keys) in txs {
+            let meta_keys = meta_keys
+                .iter()
+                .map(|s| solana_sdk::pubkey::Pubkey::from_str(s))
+                .collect::<Result<Vec<Pubkey>, _>>()
+                .map_err(|_| Error::InvalidParams {})?;
+            match simulate_transaction(&mut executor, tx.clone(), meta_keys) {
+                Ok(_result) => (),
+                Err(err) => {
+                    log::warn!("Tx {:?} simulation failed: {:?}", &tx.hash, &tx);
+                    log::warn!("RPC Error: {:?}", &err);
+                    warn.push(tx.hash.unwrap_or_default());
+                },
+            };
+        }
+
+        let Committed { block: header, committed_transactions: transactions } = executor
+            .evm_backend
+            .commit_block(
+                block_header.native_chain_slot,
+                block_header.native_chain_hash,
+            )
+            .state;
+
+        Ok((Block { header, transactions }, warn))
     }
 }
 
