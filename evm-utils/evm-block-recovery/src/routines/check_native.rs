@@ -15,14 +15,10 @@ pub async fn check_native(ledger: LedgerStorage, slot: Slot) -> Result<()> {
         "Native block {slot} timstamp {} contains instructions:",
         native_block.block_time.unwrap()
     );
-    log::info!("EvmTransaction: {}", txs.instr_evm_transaction());
+    log::info!("EvmTransaction: {}", txs.instr_execute_transaction());
     log::info!("SwapNativeToEther: {}", txs.instr_evm_swap_to_native());
     log::info!("FreeOwnership: {}", txs.instr_evm_free_ownership());
     log::info!("EvmBigTransaction: {}", txs.instr_evm_big_transaction());
-    log::info!(
-        "EvmAuthorizedTransaction: {}",
-        txs.instr_evm_authorized_transaction()
-    );
 
     Ok(())
 }
