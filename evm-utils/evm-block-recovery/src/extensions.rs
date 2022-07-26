@@ -11,13 +11,6 @@ pub struct ParsedInstructions {
 }
 
 impl ParsedInstructions {
-    pub fn instr_evm_transaction(&self) -> usize {
-        self.instructions
-            .iter()
-            .filter(|i| matches!(i, EvmInstruction::EvmTransaction { .. }))
-            .count()
-    }
-
     pub fn instr_evm_swap_to_native(&self) -> usize {
         self.instructions
             .iter()
@@ -39,10 +32,10 @@ impl ParsedInstructions {
             .count()
     }
 
-    pub fn instr_evm_authorized_transaction(&self) -> usize {
+    pub fn instr_execute_transaction(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|i| matches!(i, EvmInstruction::EvmAuthorizedTransaction { .. }))
+            .filter(|i| matches!(i, EvmInstruction::ExecuteTransaction { .. }))
             .count()
     }
 }
