@@ -71,7 +71,7 @@ impl BlockRange {
         if first == last {
             return Self::SingleBlock(first);
         }
-        return Self::InclusiveRange(first, last);
+        Self::InclusiveRange(first, last)
     }
 
     pub fn first(&self) -> u64 {
