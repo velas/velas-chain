@@ -847,7 +847,7 @@ impl TraceERPC for TraceErpcImpl {
                     value,
                     Some(tx_chain_id),
                     tx_hash,
-                    false,
+                    true,
                     solana_evm_loader_program::precompiles::simulation_entrypoint(
                         executor.support_precompile(),
                         evm_state_balance,
@@ -910,7 +910,7 @@ impl TraceERPC for TraceErpcImpl {
 
         Box::pin(async move {
             let mut evm_state = meta
-                .evm_state_archive(None)
+                .evm_state_archive(Some(block_header.block_number))
                 .ok_or(Error::ArchiveNotSupported)?
                 .new_incomming_for_root(state_root)
                 .ok_or(Error::StateNotFoundForBlock {

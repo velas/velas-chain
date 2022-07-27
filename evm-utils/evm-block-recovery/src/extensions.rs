@@ -1,4 +1,4 @@
-use solana_evm_loader_program::instructions::{EvmInstruction, ExecuteTransaction};
+use solana_evm_loader_program::instructions::v0;
 use solana_sdk::{evm_loader::ID as STATIC_PROGRAM_ID, instruction::CompiledInstruction};
 use solana_transaction_status::{
     ConfirmedBlockWithOptionalMetadata, TransactionWithOptionalMetadata,
@@ -6,36 +6,43 @@ use solana_transaction_status::{
 
 #[derive(Debug)]
 pub struct ParsedInstructions {
-    pub instructions: Vec<EvmInstruction>,
+    pub instructions: Vec<v0::EvmInstruction>,
     pub only_trivial_instructions: bool,
 }
 
 impl ParsedInstructions {
+    pub fn instr_evm_transaction(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter(|i| matches!(i, v0::EvmInstruction::EvmTransaction { .. }))
+            .count()
+    }
+
     pub fn instr_evm_swap_to_native(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|i| matches!(i, EvmInstruction::SwapNativeToEther { .. }))
+            .filter(|i| matches!(i, v0::EvmInstruction::SwapNativeToEther { .. }))
             .count()
     }
 
     pub fn instr_evm_free_ownership(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|i| matches!(i, EvmInstruction::FreeOwnership {}))
+            .filter(|i| matches!(i, v0::EvmInstruction::FreeOwnership {}))
             .count()
     }
 
     pub fn instr_evm_big_transaction(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|i| matches!(i, EvmInstruction::EvmBigTransaction(_)))
+            .filter(|i| matches!(i, v0::EvmInstruction::EvmBigTransaction(_)))
             .count()
     }
 
-    pub fn instr_execute_transaction(&self) -> usize {
+    pub fn instr_evm_authorized_transaction(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|i| matches!(i, EvmInstruction::ExecuteTransaction { .. }))
+            .filter(|i| matches!(i, v0::EvmInstruction::EvmAuthorizedTransaction { .. }))
             .count()
     }
 }
@@ -58,13 +65,10 @@ impl NativeBlockExt for ConfirmedBlockWithOptionalMetadata {
             {
                 if transaction.message.account_keys[*program_id_index as usize] == STATIC_PROGRAM_ID
                 {
-                    let instruction: EvmInstruction = bincode::deserialize(&data).unwrap();
+                    let instruction: v0::EvmInstruction = bincode::deserialize(&data).unwrap();
                     match &instruction {
-                        EvmInstruction::ExecuteTransaction { tx, .. } => match tx {
-                            ExecuteTransaction::Signed { .. } => (),
-                            ExecuteTransaction::ProgramAuthorized { .. } => only_trivial_instructions = false,
-                        },
-                        _ => only_trivial_instructions = false
+                        v0::EvmInstruction::EvmTransaction { .. } => (),
+                        _ => only_trivial_instructions = false,
                     }
 
                     instructions.push(instruction);

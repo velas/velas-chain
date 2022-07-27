@@ -257,9 +257,7 @@ pub async fn repeat_native(
             block_number
         );
 
-        let block = src
-            .get_confirmed_block(block_number)
-            .await;
+        let block = src.get_confirmed_block(block_number).await;
 
         match block {
             Ok(block) => {
@@ -268,7 +266,7 @@ pub async fn repeat_native(
                     block,
                     block_number,
                 })?;
-            },
+            }
             Err(err) => {
                 log::warn!(
                     "[{}] Unable to read block {} from the Source Ledger",
@@ -276,7 +274,7 @@ pub async fn repeat_native(
                     block_number
                 );
                 log::warn!("{}", err.to_string())
-            },
+            }
         }
     }
 
@@ -306,4 +304,3 @@ pub async fn repeat_native(
 
     Ok(())
 }
-

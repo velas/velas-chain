@@ -3,7 +3,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use evm_state::{Address, Transaction, UnsignedTransaction};
 use serde::{Deserialize, Serialize};
 
-mod v0;
+pub mod v0;
 
 pub const EVM_INSTRUCTION_BORSH_PREFIX: u8 = 255u8;
 
