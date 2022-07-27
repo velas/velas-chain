@@ -964,6 +964,25 @@ impl TraceERPC for TraceErpcProxy {
             meta_info
         )))
     }
+
+    #[instrument]
+    fn recover_block_header(
+        &self,
+        meta: Self::Metadata,
+        txs: Vec<(RPCTransaction, Vec<String>)>,
+        last_hashes: Vec<H256>,
+        block_header: BlockHeader,
+        state_root: H256,
+    ) -> BoxFuture<EvmResult<(Block, Vec<Hex<H256>>)>> {
+        Box::pin(ready(proxy_evm_rpc!(
+            meta.rpc_client,
+            DebugRecoverBlockHeader,
+            txs,
+            last_hashes,
+            block_header,
+            state_root
+        )))
+    }
 }
 
 pub(crate) fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
