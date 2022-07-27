@@ -139,8 +139,8 @@ pub(crate) fn format_data(data: &Bytes) -> String {
     if data.0.len() > 4 {
         let hash = &data.0[0..4];
         // check that function hash is taken from "Error" function name
-        if dbg!(*hash == [0x08, 0xc3, 0x79, 0xa0]) {
-            if let Ok(input) = dbg!(func_decl.decode_input(&data.0[4..])) {
+        if *hash == [0x08, 0xc3, 0x79, 0xa0] {
+            if let Ok(input) = func_decl.decode_input(&data.0[4..]) {
                 if let Some(ethabi::Token::String(s)) = input.get(0) {
                     // on success decode return error from reason string.
                     return s.clone();

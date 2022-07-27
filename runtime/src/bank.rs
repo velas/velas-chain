@@ -3703,13 +3703,13 @@ impl Bank {
 
     pub fn take_evm_state_cloned(&self) -> Option<evm_state::EvmBackend<evm_state::Incomming>> {
         let is_frozen = self.is_frozen();
+        let slot = self.slot();
         match &*self.evm_state.read().expect("bank evm state was poisoned") {
             evm_state::EvmState::Incomming(i) => Some(i.clone()),
             evm_state::EvmState::Committed(_) => {
                 warn!(
                     "Take evm after freeze, bank_slot={}, bank_is_freeze={}",
-                    self.slot(),
-                    is_frozen
+                    slot, is_frozen
                 );
                 None // Return None, so this transaction will fail to execute,
                      // this transaction will be marked as retriable after bank realise that PoH is reached it's max height.

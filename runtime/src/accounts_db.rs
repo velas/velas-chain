@@ -4370,7 +4370,7 @@ impl AccountsDb {
             account.owner(),
             account.executable(),
             account.rent_epoch(),
-                account.data(),
+            account.data(),
             pubkey,
         )
     }
@@ -4404,7 +4404,7 @@ impl AccountsDb {
             hasher.update(&[0u8; 1]);
         }
 
-            hasher.update(owner.as_ref());
+        hasher.update(owner.as_ref());
         hasher.update(pubkey.as_ref());
 
         Hash::new_from_array(
@@ -5956,7 +5956,7 @@ impl AccountsDb {
                         slot,
                         pubkey,
                         pubkey_account.1.owner(),
-                pubkey_account.1.data(),
+                        pubkey_account.1.data(),
                         &self.account_indexes,
                         *info,
                         &mut reclaims,
@@ -9052,7 +9052,6 @@ pub mod tests {
         assert!(found_accounts.contains(&pubkey1));
         assert!(found_accounts.contains(&pubkey2));
 
-
         {
             accounts.account_indexes.keys = Some(AccountSecondaryIndexesIncludeExclude {
                 exclude: true,
@@ -10626,7 +10625,7 @@ pub mod tests {
 
             current_slot += 1;
             for pubkey in &pubkeys {
-            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
+                accounts.store_uncached(current_slot, &[(pubkey, &account)]);
             }
             let shrink_slot = current_slot;
             accounts.get_accounts_delta_hash(current_slot);
@@ -10637,7 +10636,7 @@ pub mod tests {
             let updated_pubkeys = &pubkeys[0..pubkey_count - pubkey_count_after_shrink];
 
             for pubkey in updated_pubkeys {
-            accounts.store_uncached(current_slot, &[(pubkey, &account)]);
+                accounts.store_uncached(current_slot, &[(pubkey, &account)]);
             }
             accounts.get_accounts_delta_hash(current_slot);
             accounts.add_root(current_slot);
