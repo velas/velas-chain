@@ -100,7 +100,10 @@ impl Backend for Rpc {
         let second_root = inner.second_root;
 
         let start_state_root = H256::from_hex(&first_root).expect("get hash from first_root");
+        info!("First root is: {:?}", start_state_root);
+
         let end_state_root = H256::from_hex(&second_root).expect("get hash from second_root");
+        info!("Second root is: {:?}", end_state_root);
 
         let dir = Path::new("./.tmp/db/");
         let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
@@ -149,4 +152,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Server::builder().add_service(backend).serve(addr).await?;
 
     Ok(())
+}
+
+#[cfg(tests)]
+mod tests {
+    #[tokio::test]
+    async fn my_test() {
+        assert!(true);
+    }
 }

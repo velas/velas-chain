@@ -69,13 +69,19 @@ fn generate_db(dir: &Path) -> H256 {
     };
     add_some_and_advance(&mut state, &params);
 
-    let db = state.kvs;
-    let state_root = state.state.state_root;
-    let last_block_hash = state.state.last_block_hash;
+    // let db = state.kvs;
+    // let state_root = state.state.state_root;
+    // let last_block_hash = state.state.last_block_hash;
 
-    let handle = db.typed_for::<H256, Vec<u8>>(state_root);
-    let val = db.db().get(&state_root);
-    state_root
+    // let handle = db.typed_for::<H256, Vec<u8>>(state_root);
+    // let val = db.db().get(&state_root);
+    // state_root
+    H256([1,2,2,3,3,4,5,6,4,2,3,3,4,5,6,4,7,8,9,4,3,4,5,4,5,6,4,4,4,5,5,5])
+
+    //     blockstore -> get_evm_block
+    //     get_evm_block получаем дифф
+    //     потом через гет дифф получаем изменения
+    //
 }
 
 fn add_some_and_advance(state: &mut EvmBackend<Incomming>, params: &Params) {
