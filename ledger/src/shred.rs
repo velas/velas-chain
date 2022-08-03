@@ -52,13 +52,12 @@
 use {
     crate::{blockstore::MAX_DATA_SHREDS_PER_SLOT, erasure::Session},
     bincode::config::Options,
-    num_derive::FromPrimitive,
-    num_traits::FromPrimitive,
+    num_enum::{IntoPrimitive, TryFromPrimitive},
     rayon::{prelude::*, ThreadPool},
-    serde::{Deserialize, Deserializer, Serialize, Serializer},
+    serde::{Deserialize, Serialize},
     solana_entry::entry::{create_ticks, Entry},
     solana_measure::measure::Measure,
-    solana_perf::packet::{limited_deserialize, Packet},
+    solana_perf::packet::Packet,
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank::Bank,
     solana_sdk::{
@@ -69,7 +68,7 @@ use {
         pubkey::Pubkey,
         signature::{Keypair, Signature, Signer},
     },
-    std::{cell::RefCell, convert::TryInto, mem::size_of},
+    std::{cell::RefCell, mem::size_of},
     thiserror::Error,
 };
 
@@ -165,7 +164,21 @@ pub enum ShredError {
 pub type Result<T> = std::result::Result<T, ShredError>;
 
 #[repr(u8)]
-#[derive(Copy, Clone, Debug, Eq, FromPrimitive, Hash, PartialEq, AbiEnumVisitor, AbiExample)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    PartialEq,
+    AbiEnumVisitor,
+    AbiExample,
+    Deserialize,
+    IntoPrimitive,
+    Serialize,
+    TryFromPrimitive,
+)]
+#[serde(into = "u8", try_from = "u8")]
 pub enum ShredType {
     Data = 0b1010_0101,
     Code = 0b0101_1010,
@@ -174,26 +187,6 @@ pub enum ShredType {
 impl Default for ShredType {
     fn default() -> Self {
         ShredType::Data
-    }
-}
-
-impl Serialize for ShredType {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        (*self as u8).serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for ShredType {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let shred_type = u8::deserialize(deserializer)?;
-        Self::from_u8(shred_type)
-            .ok_or_else(|| serde::de::Error::custom(ShredError::InvalidShredType))
     }
 }
 
@@ -504,9 +497,10 @@ impl Shred {
     pub(crate) fn first_coding_index(&self) -> Option<u32> {
         match self.shred_type() {
             ShredType::Data => None,
-            // TODO should be: self.index() - self.coding_header.position
-            // once position field is populated.
-            ShredType::Code => Some(self.fec_set_index()),
+            ShredType::Code => {
+                let position = u32::from(self.coding_header.position);
+                self.index().checked_sub(position)
+            }
         }
     }
 
@@ -536,25 +530,25 @@ impl Shred {
 
     // Returns the block index within the erasure coding set.
     fn erasure_block_index(&self) -> Option<usize> {
-        let index = self.index().checked_sub(self.fec_set_index())?;
-        let index = usize::try_from(index).ok()?;
         match self.shred_type() {
-            ShredType::Data => Some(index),
+            ShredType::Data => {
+                let index = self.index().checked_sub(self.fec_set_index())?;
+                usize::try_from(index).ok()
+            }
             ShredType::Code => {
-                // TODO should use first_coding_index once position field is
-                // populated.
                 // Assert that the last shred index in the erasure set does not
                 // overshoot u32.
                 self.fec_set_index().checked_add(u32::from(
-                    self.coding_header
-                        .num_data_shreds
-                        .max(self.coding_header.num_coding_shreds)
-                        .checked_sub(1)?,
+                    self.coding_header.num_data_shreds.checked_sub(1)?,
+                ))?;
+                self.first_coding_index()?.checked_add(u32::from(
+                    self.coding_header.num_coding_shreds.checked_sub(1)?,
                 ))?;
                 let num_data_shreds = usize::from(self.coding_header.num_data_shreds);
                 let num_coding_shreds = usize::from(self.coding_header.num_coding_shreds);
+                let position = usize::from(self.coding_header.position);
                 let fec_set_size = num_data_shreds.checked_add(num_coding_shreds)?;
-                let index = index.checked_add(num_data_shreds)?;
+                let index = position.checked_add(num_data_shreds)?;
                 (index < fec_set_size).then(|| index)
             }
         }
@@ -609,18 +603,21 @@ impl Shred {
     }
 
     pub fn seed(&self, leader_pubkey: Pubkey, root_bank: &Bank) -> [u8; 32] {
-        if enable_deterministic_seed(self.slot(), root_bank) {
+        if add_shred_type_to_shred_seed(self.slot(), root_bank) {
+            hashv(&[
+                &self.slot().to_le_bytes(),
+                &u8::from(self.shred_type()).to_le_bytes(),
+                &self.index().to_le_bytes(),
+                &leader_pubkey.to_bytes(),
+            ])
+        } else {
             hashv(&[
                 &self.slot().to_le_bytes(),
                 &self.index().to_le_bytes(),
                 &leader_pubkey.to_bytes(),
             ])
-            .to_bytes()
-        } else {
-            let signature = self.common_header.signature.as_ref();
-            let offset = signature.len().checked_sub(32).unwrap();
-            signature[offset..].try_into().unwrap()
         }
+        .to_bytes()
     }
 
     #[inline]
@@ -689,12 +686,7 @@ impl Shred {
     pub fn get_slot_from_packet(p: &Packet) -> Option<Slot> {
         let slot_start = OFFSET_OF_SHRED_SLOT;
         let slot_end = slot_start + SIZE_OF_SHRED_SLOT;
-
-        if slot_end > p.meta.size {
-            return None;
-        }
-
-        limited_deserialize::<Slot>(&p.data[slot_start..slot_end]).ok()
+        p.deserialize_slice(slot_start..slot_end).ok()
     }
 
     pub fn reference_tick_from_data(data: &[u8]) -> u8 {
@@ -707,21 +699,6 @@ impl Shred {
     pub fn verify(&self, pubkey: &Pubkey) -> bool {
         self.signature()
             .verify(pubkey.as_ref(), &self.payload[SIZE_OF_SIGNATURE..])
-    }
-}
-
-fn enable_deterministic_seed(shred_slot: Slot, bank: &Bank) -> bool {
-    let feature_slot = bank
-        .feature_set
-        .activated_slot(&feature_set::deterministic_shred_seed_enabled::id());
-    match feature_slot {
-        None => false,
-        Some(feature_slot) => {
-            let epoch_schedule = bank.epoch_schedule();
-            let feature_epoch = epoch_schedule.get_epoch(feature_slot);
-            let shred_epoch = epoch_schedule.get_epoch(shred_slot);
-            feature_epoch < shred_epoch
-        }
     }
 }
 
@@ -1152,37 +1129,33 @@ pub fn get_shred_slot_index_type(
         return None;
     }
 
-    let index;
-    match limited_deserialize::<u32>(&p.data[index_start..index_end]) {
-        Ok(x) => index = x,
+    let index = match p.deserialize_slice(index_start..index_end) {
+        Ok(x) => x,
         Err(_e) => {
             stats.index_bad_deserialize += 1;
             return None;
         }
-    }
+    };
 
     if index >= MAX_DATA_SHREDS_PER_SLOT as u32 {
         stats.index_out_of_bounds += 1;
         return None;
     }
 
-    let slot;
-    match limited_deserialize::<Slot>(&p.data[slot_start..slot_end]) {
-        Ok(x) => {
-            slot = x;
-        }
+    let slot = match p.deserialize_slice(slot_start..slot_end) {
+        Ok(x) => x,
         Err(_e) => {
             stats.slot_bad_deserialize += 1;
             return None;
         }
-    }
+    };
 
-    let shred_type = match ShredType::from_u8(p.data[OFFSET_OF_SHRED_TYPE]) {
-        None => {
+    let shred_type = match ShredType::try_from(p.data[OFFSET_OF_SHRED_TYPE]) {
+        Err(_) => {
             stats.bad_shred_type += 1;
             return None;
         }
-        Some(shred_type) => shred_type,
+        Ok(shred_type) => shred_type,
     };
     Some((slot, index, shred_type))
 }
@@ -1230,6 +1203,21 @@ pub fn verify_test_data_shred(
         assert!(shred.data_complete());
     } else {
         assert!(!shred.data_complete());
+    }
+}
+
+fn add_shred_type_to_shred_seed(shred_slot: Slot, bank: &Bank) -> bool {
+    let feature_slot = bank
+        .feature_set
+        .activated_slot(&feature_set::add_shred_type_to_shred_seed::id());
+    match feature_slot {
+        None => false,
+        Some(feature_slot) => {
+            let epoch_schedule = bank.epoch_schedule();
+            let feature_epoch = epoch_schedule.get_epoch(feature_slot);
+            let shred_epoch = epoch_schedule.get_epoch(shred_slot);
+            feature_epoch < shred_epoch
+        }
     }
 }
 
@@ -2080,12 +2068,14 @@ pub mod tests {
     #[test]
     fn test_shred_type_compat() {
         assert_eq!(std::mem::size_of::<ShredType>(), std::mem::size_of::<u8>());
-        assert_eq!(ShredType::from_u8(0), None);
-        assert_eq!(ShredType::from_u8(1), None);
+        assert_matches!(ShredType::try_from(0u8), Err(_));
+        assert_matches!(ShredType::try_from(1u8), Err(_));
         assert_matches!(bincode::deserialize::<ShredType>(&[0u8]), Err(_));
+        assert_matches!(bincode::deserialize::<ShredType>(&[1u8]), Err(_));
         // data shred
         assert_eq!(ShredType::Data as u8, 0b1010_0101);
-        assert_eq!(ShredType::from_u8(0b1010_0101), Some(ShredType::Data));
+        assert_eq!(u8::from(ShredType::Data), 0b1010_0101);
+        assert_eq!(ShredType::try_from(0b1010_0101), Ok(ShredType::Data));
         let buf = bincode::serialize(&ShredType::Data).unwrap();
         assert_eq!(buf, vec![0b1010_0101]);
         assert_matches!(
@@ -2094,7 +2084,8 @@ pub mod tests {
         );
         // coding shred
         assert_eq!(ShredType::Code as u8, 0b0101_1010);
-        assert_eq!(ShredType::from_u8(0b0101_1010), Some(ShredType::Code));
+        assert_eq!(u8::from(ShredType::Code), 0b0101_1010);
+        assert_eq!(ShredType::try_from(0b0101_1010), Ok(ShredType::Code));
         let buf = bincode::serialize(&ShredType::Code).unwrap();
         assert_eq!(buf, vec![0b0101_1010]);
         assert_matches!(

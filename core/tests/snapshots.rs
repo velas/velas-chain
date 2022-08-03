@@ -45,6 +45,7 @@ macro_rules! DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use {
         bincode::serialize_into,
         crossbeam_channel::unbounded,
@@ -62,7 +63,7 @@ mod tests {
                 SnapshotRequestHandler,
             },
             accounts_db::{self, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-        accounts_index::AccountSecondaryIndexes,
+            accounts_index::AccountSecondaryIndexes,
             bank::{Bank, BankSlotDelta},
             bank_forks::BankForks,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
@@ -98,6 +99,8 @@ mod tests {
         },
         tempfile::TempDir,
     };
+
+    use evm_state::AccountProvider;
 
     DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_4_0, Development, V1_4_0_Development);
     DEFINE_SNAPSHOT_VERSION_PARAMETERIZED_TEST_FUNCTIONS!(V1_4_0, Devnet, V1_4_0_Devnet);
@@ -135,7 +138,6 @@ mod tests {
             genesis_config_info.genesis_config.cluster_type = cluster_type;
             let bank0 = Bank::new_with_paths_for_tests(
                 &genesis_config_info.genesis_config,
-                None, // Skip EVM genesis
                 vec![accounts_dir.path().to_path_buf()],
                 None,
                 None,
@@ -196,6 +198,8 @@ mod tests {
 
         let (deserialized_bank, _timing) = snapshot_utils::bank_from_snapshot_archives(
             evm_state_path,
+            None,
+            false, // verify evm state
             account_paths,
             &old_bank_forks
                 .snapshot_config
@@ -219,10 +223,7 @@ mod tests {
         )
         .unwrap();
 
-        let bank = old_bank_forks
-            .get(deserialized_bank.slot())
-            .unwrap()
-            .clone();
+        let bank = old_bank_forks.get(deserialized_bank.slot()).unwrap();
         assert_eq!(*bank, deserialized_bank);
 
         let bank_snapshots = snapshot_utils::get_bank_snapshots(&snapshot_path);
@@ -300,6 +301,8 @@ mod tests {
             snapshot_version,
             None,
             Some(SnapshotType::FullSnapshot),
+            last_bank.evm_state.read().unwrap().last_root(),
+            last_bank.evm_state.read().unwrap().kvs().clone(),
         )
         .unwrap();
         let snapshot_package = SnapshotPackage::from(accounts_package);
@@ -382,7 +385,7 @@ mod tests {
         // Take snapshot of zeroth bank
         let bank0 = bank_forks.get(0).unwrap();
         let storages = bank0.get_snapshot_storages(None);
-        snapshot_utils::add_bank_snapshot(bank_snapshots_dir, bank0, &storages, snapshot_version)
+        snapshot_utils::add_bank_snapshot(bank_snapshots_dir, &bank0, &storages, snapshot_version)
             .unwrap();
 
         // Set up snapshotting channels
@@ -738,7 +741,8 @@ mod tests {
             // at the right interval
             if snapshot_utils::should_take_full_snapshot(slot, FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS)
             {
-                make_full_snapshot_archive(&bank, &snapshot_test_config.snapshot_config).unwrap();
+                make_full_snapshot_archive(bank.clone(), &snapshot_test_config.snapshot_config)
+                    .unwrap();
             }
             // Similarly, make an incremental snapshot archive at the right interval, but only if
             // there's been at least one full snapshot first, and a full snapshot wasn't already
@@ -752,7 +756,7 @@ mod tests {
             ) && slot != last_full_snapshot_slot.unwrap()
             {
                 make_incremental_snapshot_archive(
-                    &bank,
+                    bank.clone(),
                     last_full_snapshot_slot.unwrap(),
                     &snapshot_test_config.snapshot_config,
                 )
@@ -770,7 +774,7 @@ mod tests {
     }
 
     fn make_full_snapshot_archive(
-        bank: &Bank,
+        bank: Arc<Bank>,
         snapshot_config: &SnapshotConfig,
     ) -> snapshot_utils::Result<()> {
         let slot = bank.slot();
@@ -786,7 +790,7 @@ mod tests {
                     )
                 })?;
         snapshot_utils::package_and_archive_full_snapshot(
-            bank,
+            bank.clone(),
             &bank_snapshot_info,
             &snapshot_config.bank_snapshots_dir,
             &snapshot_config.snapshot_archives_dir,
@@ -801,7 +805,7 @@ mod tests {
     }
 
     fn make_incremental_snapshot_archive(
-        bank: &Bank,
+        bank: Arc<Bank>,
         incremental_snapshot_base_slot: Slot,
         snapshot_config: &SnapshotConfig,
     ) -> snapshot_utils::Result<()> {
@@ -843,7 +847,11 @@ mod tests {
         accounts_dir: PathBuf,
         genesis_config: &GenesisConfig,
     ) -> snapshot_utils::Result<()> {
+        let evm_state_path = TempDir::new().unwrap();
         let (deserialized_bank, ..) = snapshot_utils::bank_from_latest_snapshot_archives(
+            evm_state_path.path(),
+            None,
+            false,
             &snapshot_config.bank_snapshots_dir,
             &snapshot_config.snapshot_archives_dir,
             &[accounts_dir],
@@ -978,7 +986,7 @@ mod tests {
             // Make a new bank and perform some transactions
             let bank = {
                 let bank = Bank::new_from_parent(
-                    bank_forks.read().unwrap().get(slot - 1).unwrap(),
+                    &bank_forks.read().unwrap().get(slot - 1).unwrap(),
                     &Pubkey::default(),
                     slot,
                 );
@@ -1021,8 +1029,12 @@ mod tests {
         info!("Sleeping for 5 seconds to give background services time to process snapshot archives...");
         std::thread::sleep(Duration::from_secs(5));
         info!("Awake! Rebuilding bank from latest snapshot archives...");
+        let evm_state_path = TempDir::new().unwrap();
 
         let (deserialized_bank, ..) = snapshot_utils::bank_from_latest_snapshot_archives(
+            evm_state_path.path(),
+            None,
+            false,
             &snapshot_test_config.snapshot_config.bank_snapshots_dir,
             &snapshot_test_config.snapshot_config.snapshot_archives_dir,
             &[snapshot_test_config.accounts_dir.as_ref().to_path_buf()],
@@ -1041,14 +1053,15 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(deserialized_bank.slot(), LAST_SLOT,);
+        assert_eq!(deserialized_bank.slot(), LAST_SLOT);
         assert_eq!(
-            deserialized_bank,
-            **bank_forks
+            &deserialized_bank,
+            bank_forks
                 .read()
                 .unwrap()
                 .get(deserialized_bank.slot())
                 .unwrap()
+                .as_ref()
         );
 
         // Stop the background services

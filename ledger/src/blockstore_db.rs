@@ -1,5 +1,5 @@
-use columns::{EvmBlockHeader, EvmHeaderIndexByHash, EvmTransactionReceipts};
-use evm_state::H256;
+use evm_state::{BlockNum, H256};
+
 pub use rocksdb::Direction as IteratorDirection;
 use {
     crate::blockstore_meta,
@@ -86,6 +86,7 @@ const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
 const EVM_HEADERS: &str = "evm_headers";
 const EVM_BLOCK_BY_HASH: &str = "evm_block_by_hash";
+const EVM_BLOCK_BY_SLOT: &str = "evm_block_by_slot";
 const EVM_TRANSACTIONS: &str = "evm_transactions";
 
 #[derive(Error, Debug)]
@@ -215,11 +216,14 @@ pub mod columns {
     pub struct EvmHeaderIndexByHash;
 
     #[derive(Debug)]
+    pub struct EvmHeaderIndexBySlot;
+
+    #[derive(Debug)]
     /// The evm transaction with statuses.
     pub struct EvmTransactionReceipts;
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct EvmTransactionReceiptsIndex {
     pub index: u64,
     pub hash: H256,
@@ -298,8 +302,21 @@ impl OldestSlot {
     }
 }
 
+#[derive(Default, Clone, Debug)]
+struct OldestBlockNum(Arc<AtomicU64>);
+
+impl OldestBlockNum {
+    pub fn set(&self, oldest_block_num: BlockNum) {
+        self.0.store(oldest_block_num, Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> BlockNum {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
 #[derive(Debug)]
-struct Rocks(rocksdb::DB, ActualAccessType, OldestSlot);
+struct Rocks(rocksdb::DB, ActualAccessType, OldestSlot, OldestBlockNum);
 
 impl Rocks {
     fn open(
@@ -321,102 +338,106 @@ impl Rocks {
         }
 
         let oldest_slot = OldestSlot::default();
+        let oldest_block_num = OldestBlockNum::default();
 
         // Column family names
         let meta_cf_descriptor = ColumnFamilyDescriptor::new(
             SlotMeta::NAME,
-            get_cf_options::<SlotMeta>(&access_type, &oldest_slot),
+            get_cf_options::<SlotMeta>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let dead_slots_cf_descriptor = ColumnFamilyDescriptor::new(
             DeadSlots::NAME,
-            get_cf_options::<DeadSlots>(&access_type, &oldest_slot),
+            get_cf_options::<DeadSlots>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let duplicate_slots_cf_descriptor = ColumnFamilyDescriptor::new(
             DuplicateSlots::NAME,
-            get_cf_options::<DuplicateSlots>(&access_type, &oldest_slot),
+            get_cf_options::<DuplicateSlots>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let erasure_meta_cf_descriptor = ColumnFamilyDescriptor::new(
             ErasureMeta::NAME,
-            get_cf_options::<ErasureMeta>(&access_type, &oldest_slot),
+            get_cf_options::<ErasureMeta>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let orphans_cf_descriptor = ColumnFamilyDescriptor::new(
             Orphans::NAME,
-            get_cf_options::<Orphans>(&access_type, &oldest_slot),
+            get_cf_options::<Orphans>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let bank_hash_cf_descriptor = ColumnFamilyDescriptor::new(
             BankHash::NAME,
-            get_cf_options::<BankHash>(&access_type, &oldest_slot),
+            get_cf_options::<BankHash>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let root_cf_descriptor = ColumnFamilyDescriptor::new(
             Root::NAME,
-            get_cf_options::<Root>(&access_type, &oldest_slot),
+            get_cf_options::<Root>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let index_cf_descriptor = ColumnFamilyDescriptor::new(
             Index::NAME,
-            get_cf_options::<Index>(&access_type, &oldest_slot),
+            get_cf_options::<Index>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let shred_data_cf_descriptor = ColumnFamilyDescriptor::new(
             ShredData::NAME,
-            get_cf_options::<ShredData>(&access_type, &oldest_slot),
+            get_cf_options::<ShredData>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let shred_code_cf_descriptor = ColumnFamilyDescriptor::new(
             ShredCode::NAME,
-            get_cf_options::<ShredCode>(&access_type, &oldest_slot),
+            get_cf_options::<ShredCode>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let transaction_status_cf_descriptor = ColumnFamilyDescriptor::new(
             TransactionStatus::NAME,
-            get_cf_options::<TransactionStatus>(&access_type, &oldest_slot),
+            get_cf_options::<TransactionStatus>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let address_signatures_cf_descriptor = ColumnFamilyDescriptor::new(
             AddressSignatures::NAME,
-            get_cf_options::<AddressSignatures>(&access_type, &oldest_slot),
+            get_cf_options::<AddressSignatures>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let transaction_memos_cf_descriptor = ColumnFamilyDescriptor::new(
             TransactionMemos::NAME,
-            get_cf_options::<TransactionMemos>(&access_type, &oldest_slot),
+            get_cf_options::<TransactionMemos>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let transaction_status_index_cf_descriptor = ColumnFamilyDescriptor::new(
             TransactionStatusIndex::NAME,
-            get_cf_options::<TransactionStatusIndex>(&access_type, &oldest_slot),
+            get_cf_options::<TransactionStatusIndex>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let rewards_cf_descriptor = ColumnFamilyDescriptor::new(
             Rewards::NAME,
-            get_cf_options::<Rewards>(&access_type, &oldest_slot),
+            get_cf_options::<Rewards>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let blocktime_cf_descriptor = ColumnFamilyDescriptor::new(
             Blocktime::NAME,
-            get_cf_options::<Blocktime>(&access_type, &oldest_slot),
+            get_cf_options::<Blocktime>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let perf_samples_cf_descriptor = ColumnFamilyDescriptor::new(
             PerfSamples::NAME,
-            get_cf_options::<PerfSamples>(&access_type, &oldest_slot),
+            get_cf_options::<PerfSamples>(&access_type, &oldest_slot, &oldest_block_num),
         );
         let block_height_cf_descriptor = ColumnFamilyDescriptor::new(
             BlockHeight::NAME,
-            get_cf_options::<BlockHeight>(&access_type, &oldest_slot),
+            get_cf_options::<BlockHeight>(&access_type, &oldest_slot, &oldest_block_num),
         );
 
         let program_costs_cf_descriptor = ColumnFamilyDescriptor::new(
             ProgramCosts::NAME,
-            get_cf_options::<ProgramCosts>(&access_type, &oldest_slot),
+            get_cf_options::<ProgramCosts>(&access_type, &oldest_slot, &oldest_block_num),
         );
         // Don't forget to add to both run_purge_with_stats() and
         // compact_storage() in ledger/src/blockstore/blockstore_purge.rs!!
 
         let evm_headers_cf_descriptor = ColumnFamilyDescriptor::new(
             EvmBlockHeader::NAME,
-            get_cf_options::<EvmBlockHeader>(&access_type, &oldest_slot),
+            get_cf_options::<EvmBlockHeader>(&access_type, &oldest_slot, &oldest_block_num),
         );
-
-        let evm_transactions_cf_descriptor = ColumnFamilyDescriptor::new(
-            EvmTransactionReceipts::NAME,
-            get_cf_options::<EvmTransactionReceipts>(&access_type, &oldest_slot),
-        );
-
         let evm_headers_by_hash_cf_descriptor = ColumnFamilyDescriptor::new(
             EvmHeaderIndexByHash::NAME,
-            get_cf_options::<EvmHeaderIndexByHash>(&access_type, &oldest_slot),
+            get_cf_options::<EvmHeaderIndexByHash>(&access_type, &oldest_slot, &oldest_block_num),
         );
+        let evm_headers_by_slot_cf_descriptor = ColumnFamilyDescriptor::new(
+            EvmHeaderIndexBySlot::NAME,
+            get_cf_options::<EvmHeaderIndexBySlot>(&access_type, &oldest_slot, &oldest_block_num),
+        );
+        let evm_transactions_cf_descriptor = ColumnFamilyDescriptor::new(
+            EvmTransactionReceipts::NAME,
+            get_cf_options::<EvmTransactionReceipts>(&access_type, &oldest_slot, &oldest_block_num),
+        );
+
 
         let cfs = vec![
             (SlotMeta::NAME, meta_cf_descriptor),
@@ -448,6 +469,10 @@ impl Rocks {
                 EvmHeaderIndexByHash::NAME,
                 evm_headers_by_hash_cf_descriptor,
             ),
+            (
+                EvmHeaderIndexBySlot::NAME,
+                evm_headers_by_slot_cf_descriptor,
+            ),
         ];
         let cf_names: Vec<_> = cfs.iter().map(|c| c.0).collect();
 
@@ -457,10 +482,11 @@ impl Rocks {
                 DB::open_cf_descriptors(&db_options, path, cfs.into_iter().map(|c| c.1))?,
                 ActualAccessType::Primary,
                 oldest_slot,
+                oldest_block_num,
             ),
             AccessType::TryPrimaryThenSecondary => {
                 match DB::open_cf_descriptors(&db_options, path, cfs.into_iter().map(|c| c.1)) {
-                    Ok(db) => Rocks(db, ActualAccessType::Primary, oldest_slot),
+                    Ok(db) => Rocks(db, ActualAccessType::Primary, oldest_slot, oldest_block_num),
                     Err(err) => {
                         let secondary_path = path.join("solana-secondary");
 
@@ -480,6 +506,7 @@ impl Rocks {
                             )?,
                             ActualAccessType::Secondary,
                             oldest_slot,
+                            oldest_block_num,
                         )
                     }
                 }
@@ -572,6 +599,7 @@ impl Rocks {
             EvmBlockHeader::NAME,
             EvmTransactionReceipts::NAME,
             EvmHeaderIndexByHash::NAME,
+            EvmHeaderIndexBySlot::NAME,
         ]
     }
 
@@ -1135,6 +1163,10 @@ impl Column for columns::EvmHeaderIndexByHash {
     fn as_index(index: u64) -> Self::Index {
         (index, H256::default())
     }
+
+    fn slot(_index: Self::Index) -> Slot {
+        unimplemented!()
+    }
 }
 
 impl ColumnName for columns::EvmHeaderIndexByHash {
@@ -1146,6 +1178,16 @@ impl ColumnName for columns::EvmHeaderIndexByHash {
 // }
 
 impl ProtobufColumn for columns::EvmHeaderIndexByHash {
+    type Type = evm_state::BlockNum;
+}
+
+impl SlotColumn for columns::EvmHeaderIndexBySlot {}
+
+impl ColumnName for columns::EvmHeaderIndexBySlot {
+    const NAME: &'static str = EVM_BLOCK_BY_SLOT;
+}
+
+impl ProtobufColumn for columns::EvmHeaderIndexBySlot {
     type Type = evm_state::BlockNum;
 }
 
@@ -1210,6 +1252,10 @@ impl Column for columns::EvmTransactionReceipts {
             block_num: 0,
             slot: None,
         }
+    }
+
+    fn slot(_index: Self::Index) -> Slot {
+        unimplemented!()
     }
 }
 
@@ -1348,6 +1394,10 @@ impl Database {
 
     pub fn set_oldest_slot(&self, oldest_slot: Slot) {
         self.backend.2.set(oldest_slot);
+    }
+
+    pub fn set_oldest_block_num(&self, oldest_block_num: BlockNum) {
+        self.backend.3.set(oldest_block_num);
     }
 }
 
@@ -1592,9 +1642,61 @@ impl<C: Column + ColumnName> CompactionFilterFactory for PurgedSlotFilterFactory
     }
 }
 
+struct PurgedEvmBlockFilter<C: Column + ColumnName> {
+    oldest_block: BlockNum,
+    name: CString,
+    _phantom: PhantomData<C>,
+}
+
+impl<C: Column + ColumnName> CompactionFilter for PurgedEvmBlockFilter<C> {
+    fn filter(&mut self, _level: u32, key: &[u8], _value: &[u8]) -> CompactionDecision {
+        use rocksdb::CompactionDecision::*;
+
+        let block_num_in_key = BigEndian::read_u64(&key[..8]);
+        if block_num_in_key >= self.oldest_block {
+            Keep
+        } else {
+            Remove
+        }
+    }
+
+    fn name(&self) -> &CStr {
+        &self.name
+    }
+}
+
+struct PurgedEvmBlockFilterFactory<C: Column + ColumnName> {
+    oldest_block: OldestBlockNum,
+    name: CString,
+    _phantom: PhantomData<C>,
+}
+
+impl<C: Column + ColumnName> CompactionFilterFactory for PurgedEvmBlockFilterFactory<C> {
+    type Filter = PurgedEvmBlockFilter<C>;
+
+    fn create(&mut self, _context: CompactionFilterContext) -> Self::Filter {
+        let copied_oldest_block = self.oldest_block.get();
+        PurgedEvmBlockFilter::<C> {
+            oldest_block: copied_oldest_block,
+            name: CString::new(format!(
+                "purged_evm_block_filter({}, {:?})",
+                C::NAME,
+                copied_oldest_block
+            ))
+                .unwrap(),
+            _phantom: PhantomData::default(),
+        }
+    }
+
+    fn name(&self) -> &CStr {
+        &self.name
+    }
+}
+
 fn get_cf_options<C: 'static + Column + ColumnName>(
     access_type: &AccessType,
     oldest_slot: &OldestSlot,
+    oldest_block_num: &OldestBlockNum,
 ) -> Options {
     let mut options = Options::default();
     // 256 * 8 = 2GB. 6 of these columns should take at most 12GB of RAM
@@ -1612,10 +1714,21 @@ fn get_cf_options<C: 'static + Column + ColumnName>(
 
     // TransactionStatusIndex and ProgramCosts must be excluded from LedgerCleanupService's rocksdb
     // compactions....
-    if matches!(access_type, AccessType::PrimaryOnly) && !excludes_from_compaction(C::NAME) {
+    if matches!(access_type, AccessType::PrimaryOnly) && !excludes_from_compaction(C::NAME)
+        && C::NAME != columns::EvmBlockHeader::NAME // blockheader has special compaction
+    {
         options.set_compaction_filter_factory(PurgedSlotFilterFactory::<C> {
             oldest_slot: oldest_slot.clone(),
             name: CString::new(format!("purged_slot_filter_factory({})", C::NAME)).unwrap(),
+            _phantom: PhantomData::default(),
+        });
+    }
+    if matches!(access_type, AccessType::PrimaryOnly)
+        && C::NAME == columns::EvmBlockHeader::NAME
+    {
+        options.set_compaction_filter_factory(PurgedEvmBlockFilterFactory::<C> {
+            oldest_block: oldest_block_num.clone(),
+            name: CString::new(format!("purged_evm_block_filter_factory({})", C::NAME)).unwrap(),
             _phantom: PhantomData::default(),
         });
     }
@@ -1658,6 +1771,8 @@ fn excludes_from_compaction(cf_name: &str) -> bool {
         columns::TransactionStatusIndex::NAME,
         columns::ProgramCosts::NAME,
         columns::TransactionMemos::NAME,
+	columns::EvmTransactionReceipts::NAME,
+        columns::EvmHeaderIndexByHash::NAME,
     ]
     .into_iter()
     .collect();

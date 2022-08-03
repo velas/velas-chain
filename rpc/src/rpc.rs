@@ -90,7 +90,6 @@ use {
         cmp::{max, min},
         collections::{HashMap, HashSet},
         convert::TryFrom,
-        future::ready,
         net::SocketAddr,
         str::FromStr,
         sync::{
@@ -100,8 +99,9 @@ use {
         },
         time::{Duration, Instant},
     },
-    evm_rpc::Hex,
 };
+use tracing_attributes::instrument;
+
 use solana_runtime::accounts_index::ScanResult;
 use velas_account_program::{VelasAccountType, ACCOUNT_LEN as VELAS_ACCOUNT_SIZE};
 use velas_relying_party_program::RelyingPartyData;
@@ -188,6 +188,7 @@ pub struct JsonRpcRequestProcessor {
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     evm_state_archive: Option<evm_state::Storage>,
 }
+
 impl Metadata for JsonRpcRequestProcessor {}
 
 impl JsonRpcRequestProcessor {
@@ -195,10 +196,8 @@ impl JsonRpcRequestProcessor {
     // TODO(velas): hide it again
     pub(crate) fn bank(&self, commitment: Option<CommitmentConfig>) -> Arc<Bank> {
         debug!("RPC commitment_config: {:?}", commitment);
-        let r_bank_forks = self.bank_forks.read().unwrap();
 
         let commitment = commitment.unwrap_or_default();
-
         if commitment.is_confirmed() {
             let bank = self
                 .optimistically_confirmed_bank
@@ -236,7 +235,8 @@ impl JsonRpcRequestProcessor {
             CommitmentLevel::SingleGossip | CommitmentLevel::Confirmed => unreachable!(), // SingleGossip variant is deprecated
         };
 
-        r_bank_forks.get(slot).cloned().unwrap_or_else(|| {
+        let r_bank_forks = self.bank_forks.read().unwrap();
+        r_bank_forks.get(slot).unwrap_or_else(|| {
             // We log a warning instead of returning an error, because all known error cases
             // are due to known bugs that should be fixed instead.
             //
@@ -356,17 +356,24 @@ impl JsonRpcRequestProcessor {
         }
     }
 
+    pub fn get_health(&self) -> RpcHealthStatus {
+        self.health.check()
+    }
+
     pub fn evm_state_archive_storage(&self) -> &Option<evm_state::Storage> {
         &self.evm_state_archive
     }
 
-    pub fn evm_state_archive(&self) -> Option<evm_state::EvmBackend<evm_state::Incomming>> {
-        // TODO: timestamp
+    pub fn evm_state_archive(
+        &self,
+        timestamp: Option<u64>,
+    ) -> Option<evm_state::EvmBackend<evm_state::Incomming>> {
         // TODO: block_hashes history
         let arhive = self.evm_state_archive.clone()?;
         let bank = self.bank(Some(CommitmentConfig::processed()));
         let state_ref = bank.evm_state.read().expect("state was poisoned");
-        match state_ref.new_from_parent(bank.clock().unix_timestamp, true) {
+        let timestamp = timestamp.unwrap_or(bank.clock().unix_timestamp as u64);
+        match state_ref.new_from_parent(timestamp, true) {
             evm_state::EvmState::Incomming(mut i) => {
                 i.kvs = arhive;
                 Some(i)
@@ -1068,7 +1075,7 @@ impl JsonRpcRequestProcessor {
                             || confirmed_block.block_height.is_none()
                         {
                             let r_bank_forks = self.bank_forks.read().unwrap();
-                            let bank = r_bank_forks.get(slot).cloned();
+                            let bank = r_bank_forks.get(slot);
                             if let Some(bank) = bank {
                                 if confirmed_block.block_time.is_none() {
                                     confirmed_block.block_time = Some(bank.clock().unix_timestamp);
@@ -2105,6 +2112,7 @@ impl JsonRpcRequestProcessor {
     // Evm scope
     //
 
+    #[instrument(skip(self))]
     pub async fn get_evm_blocks_from_bigtable(
         &self,
         starting_block: evm_state::BlockNum,
@@ -2128,6 +2136,8 @@ impl JsonRpcRequestProcessor {
     /// Request blocks from bigtable if no confirmed block found in local db.
     /// Returns error if any gaps found.
     ///
+
+    #[instrument(skip(self))]
     pub async fn get_evm_blocks_by_ids(
         &self,
         starting_block: evm_state::BlockNum,
@@ -2195,7 +2205,9 @@ impl JsonRpcRequestProcessor {
                 missing_block,
                 ending_block
             );
-            let blocks_bigtable = self.get_evm_blocks_from_bigtable(missing_block, ending_block).await?;
+            let blocks_bigtable = self
+                .get_evm_blocks_from_bigtable(missing_block, ending_block)
+                .await?;
             trace!("bigtable_return = {:?}", blocks_bigtable);
             blocks.extend(blocks_bigtable);
             bigtable_request_time += bigtable_request.elapsed();
@@ -2208,6 +2220,7 @@ impl JsonRpcRequestProcessor {
         Ok(blocks)
     }
 
+    #[instrument(skip(self))]
     pub async fn filter_logs(
         &self,
         filter: evm_state::LogFilter,
@@ -2220,7 +2233,10 @@ impl JsonRpcRequestProcessor {
         filter_request_time += filter_request.elapsed();
 
         let mut logs = Vec::new();
-        for block in self.get_evm_blocks_by_ids(filter.from_block, filter.to_block).await? {
+        for block in self
+            .get_evm_blocks_by_ids(filter.from_block, filter.to_block)
+            .await?
+        {
             let filter_request = Instant::now();
             logs.extend(Blockstore::filter_block_logs(&block, &masks, &filter)?);
             filter_request_time += filter_request.elapsed();
@@ -2230,6 +2246,7 @@ impl JsonRpcRequestProcessor {
         Ok(logs)
     }
 
+    #[instrument(skip(self))]
     pub async fn get_first_available_evm_block(&self) -> u64 {
         let block = self
             .blockstore
@@ -2237,7 +2254,8 @@ impl JsonRpcRequestProcessor {
             .unwrap_or_default();
 
         if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-            let bigtable_block = bigtable_ledger_storage.get_evm_first_available_block()
+            let bigtable_block = bigtable_ledger_storage
+                .get_evm_first_available_block()
                 .await
                 .unwrap_or(None)
                 .unwrap_or(block);
@@ -2248,6 +2266,8 @@ impl JsonRpcRequestProcessor {
         }
         block
     }
+
+    #[instrument(skip(self))]
     pub fn get_last_available_evm_block(&self) -> Option<u64> {
         self.blockstore
             .get_last_available_evm_block()
@@ -2256,6 +2276,8 @@ impl JsonRpcRequestProcessor {
 
     ///
     /// Get last evm block which has respective native chain block rooted
+
+    #[instrument(skip(self))]
     pub fn get_last_confirmed_evm_block(&self) -> Option<u64> {
         self.blockstore
             .evm_blocks_reverse_iterator()
@@ -2264,6 +2286,7 @@ impl JsonRpcRequestProcessor {
             .map(|((block_num, _), _)| block_num)
     }
 
+    #[instrument(skip(self))]
     pub async fn get_evm_receipt_by_hash(
         &self,
         hash: evm_state::H256,
@@ -2289,7 +2312,12 @@ impl JsonRpcRequestProcessor {
         }
         receipt
     }
-    pub async fn get_evm_block_by_id(&self, id: evm_state::BlockNum) -> Option<(evm_state::Block, bool)> {
+
+    #[instrument(skip(self))]
+    pub async fn get_evm_block_by_id(
+        &self,
+        id: evm_state::BlockNum,
+    ) -> Option<(evm_state::Block, bool)> {
         let block = self.blockstore.get_evm_block(id).ok();
         if block.is_some() {
             return block;
@@ -2316,6 +2344,7 @@ impl JsonRpcRequestProcessor {
         None
     }
 
+    #[instrument(skip(self))]
     pub async fn get_evm_block_id_by_hash(&self, hash: evm_state::H256) -> Option<u64> {
         let block = self
             .blockstore
@@ -6083,7 +6112,7 @@ pub mod tests {
         let json: Value = serde_json::from_str(&res.unwrap()).unwrap();
         let accounts: Vec<RpcKeyedAccount> = serde_json::from_value(json["result"].clone())
             .expect("actual response deserialization");
-        assert_eq!(accounts.len(), 0);
+        assert_eq!(accounts.len(), 2);
 
         // Test dataSize filter
         let req = format!(
@@ -7056,6 +7085,7 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
+            None,
         );
         SendTransactionService::new::<NullTpuInfo>(
             tpu_address,
@@ -7265,8 +7295,8 @@ pub mod tests {
         } = start_rpc_handler_with_tx(&bob_pubkey);
 
         let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getConfirmedBlock","params":[0,{}]}}"#,
-            json!(RpcConfirmedBlockConfig {
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getBlock","params":[0,{}]}}"#,
+            json!(RpcBlockConfig {
                 encoding: None,
                 transaction_details: Some(TransactionDetails::Signatures),
                 rewards: Some(false),
@@ -7276,6 +7306,7 @@ pub mod tests {
         let res = io.handle_request_sync(&req, meta.clone());
         let result: Value = serde_json::from_str(&res.expect("actual response"))
             .expect("actual response deserialization");
+        // dbg!(&result);
         let confirmed_block: Option<UiConfirmedBlock> =
             serde_json::from_value(result["result"].clone()).unwrap();
         let confirmed_block = confirmed_block.unwrap();
@@ -7286,8 +7317,8 @@ pub mod tests {
         }
 
         let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getConfirmedBlock","params":[0,{}]}}"#,
-            json!(RpcConfirmedBlockConfig {
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getBlock","params":[0,{}]}}"#,
+            json!(RpcBlockConfig {
                 encoding: None,
                 transaction_details: Some(TransactionDetails::None),
                 rewards: Some(true),
@@ -7431,83 +7462,6 @@ pub mod tests {
         assert!(confirmed_block.transactions.is_none());
         assert!(confirmed_block.signatures.is_none());
         assert_eq!(confirmed_block.rewards.unwrap(), vec![]);
-    }
-
-    #[test]
-    fn test_get_block_production() {
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
-        let roots = vec![0, 1, 3, 4, 8];
-        let RpcHandler {
-            io,
-            meta,
-            block_commitment_cache,
-            leader_pubkey,
-            ..
-        } = start_rpc_handler_with_tx_and_blockstore(&bob_pubkey, roots);
-        block_commitment_cache
-            .write()
-            .unwrap()
-            .set_highest_confirmed_root(8);
-
-        let req = r#"{"jsonrpc":"2.0","id":1,"method":"getBlockProduction","params":[]}"#;
-        let res = io.handle_request_sync(req, meta.clone());
-        let result: Value = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-        let block_production: RpcBlockProduction =
-            serde_json::from_value(result["result"]["value"].clone()).unwrap();
-        assert_eq!(
-            block_production.by_identity.get(&leader_pubkey.to_string()),
-            Some(&(9, 5))
-        );
-        assert_eq!(
-            block_production.range,
-            RpcBlockProductionRange {
-                first_slot: 0,
-                last_slot: 8
-            }
-        );
-
-        let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getBlockProduction","params":[{{"identity": "{}"}}]}}"#,
-            leader_pubkey
-        );
-        let res = io.handle_request_sync(&req, meta.clone());
-        let result: Value = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-        let block_production: RpcBlockProduction =
-            serde_json::from_value(result["result"]["value"].clone()).unwrap();
-        assert_eq!(
-            block_production.by_identity.get(&leader_pubkey.to_string()),
-            Some(&(9, 5))
-        );
-        assert_eq!(
-            block_production.range,
-            RpcBlockProductionRange {
-                first_slot: 0,
-                last_slot: 8
-            }
-        );
-
-        let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getBlockProduction","params":[{{"range": {{"firstSlot": 0, "lastSlot": 4}}, "identity": "{}"}}]}}"#,
-            bob_pubkey
-        );
-        let res = io.handle_request_sync(&req, meta);
-        let result: Value = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-        let block_production: RpcBlockProduction =
-            serde_json::from_value(result["result"]["value"].clone()).unwrap();
-        assert_eq!(
-            block_production.by_identity.get(&leader_pubkey.to_string()),
-            None
-        );
-        assert_eq!(
-            block_production.range,
-            RpcBlockProductionRange {
-                first_slot: 0,
-                last_slot: 4
-            }
-        );
     }
 
     #[test]
@@ -8580,13 +8534,13 @@ pub mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
 
         let bank_forks = Arc::new(RwLock::new(BankForks::new(bank)));
-        let bank0 = bank_forks.read().unwrap().get(0).unwrap().clone();
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
         let bank1 = Bank::new_from_parent(&bank0, &Pubkey::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
-        let bank1 = bank_forks.read().unwrap().get(1).unwrap().clone();
+        let bank1 = bank_forks.read().unwrap().get(1).unwrap();
         let bank2 = Bank::new_from_parent(&bank1, &Pubkey::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
-        let bank2 = bank_forks.read().unwrap().get(2).unwrap().clone();
+        let bank2 = bank_forks.read().unwrap().get(2).unwrap();
         let bank3 = Bank::new_from_parent(&bank2, &Pubkey::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
 
@@ -8688,7 +8642,7 @@ pub mod tests {
         assert_eq!(slot, 2);
 
         // Test freezing an optimistically confirmed bank will update cache
-        let bank3 = bank_forks.read().unwrap().get(3).unwrap().clone();
+        let bank3 = bank_forks.read().unwrap().get(3).unwrap();
         OptimisticallyConfirmedBankTracker::process_notification(
             BankNotification::Frozen(bank3),
             &bank_forks,

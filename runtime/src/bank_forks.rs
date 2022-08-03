@@ -12,10 +12,12 @@ use {
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         ops::Index,
-        sync::Arc,
+        sync::{atomic::AtomicBool, Arc},
         time::Instant,
     },
 };
+
+pub const MAX_ROOT_DISTANCE_FOR_VOTE_ONLY: Slot = 400;
 
 struct SetRootTimings {
     total_parent_banks: i64,
@@ -41,6 +43,7 @@ pub struct BankForks {
 
     pub accounts_hash_interval_slots: Slot,
     last_accounts_hash_slot: Slot,
+    in_vote_only_mode: Arc<AtomicBool>,
 }
 
 impl Index<u64> for BankForks {
@@ -56,8 +59,20 @@ impl BankForks {
         Self::new_from_banks(&[Arc::new(bank)], root)
     }
 
-    pub fn banks(&self) -> &HashMap<Slot, Arc<Bank>> {
-        &self.banks
+    pub fn banks(&self) -> HashMap<Slot, Arc<Bank>> {
+        self.banks.clone()
+    }
+
+    pub fn get_vote_only_mode_signal(&self) -> Arc<AtomicBool> {
+        self.in_vote_only_mode.clone()
+    }
+
+    pub fn len(&self) -> usize {
+        self.banks.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.banks.is_empty()
     }
 
     /// Create a map of bank slot id to the set of ancestors for the bank slot.
@@ -73,8 +88,8 @@ impl BankForks {
     }
 
     /// Create a map of bank slot id to the set of all of its descendants
-    pub fn descendants(&self) -> &HashMap<Slot, HashSet<Slot>> {
-        &self.descendants
+    pub fn descendants(&self) -> HashMap<Slot, HashSet<Slot>> {
+        self.descendants.clone()
     }
 
     pub fn frozen_banks(&self) -> HashMap<Slot, Arc<Bank>> {
@@ -93,16 +108,16 @@ impl BankForks {
             .collect()
     }
 
-    pub fn get(&self, bank_slot: Slot) -> Option<&Arc<Bank>> {
-        self.banks.get(&bank_slot)
+    pub fn get(&self, bank_slot: Slot) -> Option<Arc<Bank>> {
+        self.banks.get(&bank_slot).cloned()
     }
 
     pub fn get_with_checked_hash(
         &self,
         (bank_slot, expected_hash): (Slot, Hash),
-    ) -> Option<&Arc<Bank>> {
-        let maybe_bank = self.banks.get(&bank_slot);
-        if let Some(bank) = maybe_bank {
+    ) -> Option<Arc<Bank>> {
+        let maybe_bank = self.get(bank_slot);
+        if let Some(bank) = &maybe_bank {
             assert_eq!(bank.hash(), expected_hash);
         }
         maybe_bank
@@ -145,6 +160,7 @@ impl BankForks {
             snapshot_config: None,
             accounts_hash_interval_slots: std::u64::MAX,
             last_accounts_hash_slot: root,
+            in_vote_only_mode: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -684,7 +700,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            *bank_forks.descendants(),
+            bank_forks.descendants(),
             make_hash_map(vec![
                 (0, vec![1, 2, 3, 4]),
                 (1, vec![2]),
@@ -701,7 +717,7 @@ mod tests {
         banks[2].squash();
         assert_eq!(bank_forks.ancestors(), make_hash_map(vec![(2, vec![]),]));
         assert_eq!(
-            *bank_forks.descendants(),
+            bank_forks.descendants(),
             make_hash_map(vec![(0, vec![2]), (1, vec![2]), (2, vec![]),])
         );
         banks.push(bank_forks.insert(Bank::new_from_parent(&banks[2], &Pubkey::default(), 5)));
@@ -711,7 +727,7 @@ mod tests {
             make_hash_map(vec![(2, vec![]), (5, vec![2]), (6, vec![2, 5])])
         );
         assert_eq!(
-            *bank_forks.descendants(),
+            bank_forks.descendants(),
             make_hash_map(vec![
                 (0, vec![2]),
                 (1, vec![2]),
@@ -743,7 +759,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            *bank_forks.descendants(),
+            bank_forks.descendants(),
             make_hash_map(vec![
                 (0, vec![1, 2, 3, 4]),
                 (1, vec![2]),
@@ -763,7 +779,7 @@ mod tests {
             make_hash_map(vec![(1, vec![]), (2, vec![]),])
         );
         assert_eq!(
-            *bank_forks.descendants(),
+            bank_forks.descendants(),
             make_hash_map(vec![(0, vec![1, 2]), (1, vec![2]), (2, vec![]),])
         );
         banks.push(bank_forks.insert(Bank::new_from_parent(&banks[2], &Pubkey::default(), 5)));
@@ -778,7 +794,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            *bank_forks.descendants(),
+            bank_forks.descendants(),
             make_hash_map(vec![
                 (0, vec![1, 2]),
                 (1, vec![2]),

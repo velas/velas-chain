@@ -6,9 +6,7 @@ use {
         blockstore::Blockstore,
         blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
     },
-    solana_runtime::bank::{
-        DurableNonceFee, TransactionExecutionDetails, TransactionExecutionResult,
-    },
+    solana_runtime::bank::{DurableNonceFee, TransactionExecutionDetails},
     solana_transaction_status::{
         extract_and_fmt_memos, InnerInstructions, Reward, TransactionStatusMeta,
     },
@@ -92,12 +90,13 @@ impl TransactionStatusService {
                     token_balances.post_token_balances,
                     rent_debits,
                 ) {
-                    if let TransactionExecutionResult::Executed(details) = execution_result {
+                    if let Some(details) = execution_result {
                         let TransactionExecutionDetails {
                             status,
                             log_messages,
                             inner_instructions,
                             durable_nonce_fee,
+                            ..
                         } = details;
                         let lamports_per_signature = match durable_nonce_fee {
                             Some(DurableNonceFee::Valid(lamports_per_signature)) => {
@@ -210,7 +209,8 @@ pub(crate) mod tests {
             hash::Hash,
             instruction::CompiledInstruction,
             message::{Message, MessageHeader, SanitizedMessage},
-            nonce, nonce_account,
+            nonce::{self, state::DurableNonce},
+            nonce_account,
             pubkey::Pubkey,
             signature::{Keypair, Signature, Signer},
             system_transaction,
@@ -306,11 +306,15 @@ pub(crate) mod tests {
         let expected_transaction = transaction.clone();
         let pubkey = Pubkey::new_unique();
 
-        let mut nonce_account = nonce_account::create_account(1).into_inner();
-        let data = nonce::state::Data::new(Pubkey::new(&[1u8; 32]), Hash::new(&[42u8; 32]), 42);
+        let mut nonce_account =
+            nonce_account::create_account(1, /*separate_domains:*/ true).into_inner();
+        let durable_nonce =
+            DurableNonce::from_blockhash(&Hash::new(&[42u8; 32]), /*separate_domains:*/ true);
+        let data = nonce::state::Data::new(Pubkey::new(&[1u8; 32]), durable_nonce, 42);
         nonce_account
-            .set_state(&nonce::state::Versions::new_current(
+            .set_state(&nonce::state::Versions::new(
                 nonce::State::Initialized(data),
+                true, // separate_domains
             ))
             .unwrap();
 
@@ -321,21 +325,21 @@ pub(crate) mod tests {
         let mut rent_debits = RentDebits::default();
         rent_debits.insert(&pubkey, 123, 456);
 
-        let transaction_result =
-            TransactionExecutionResult::Executed(TransactionExecutionDetails {
-                status: Ok(()),
-                log_messages: None,
-                inner_instructions: None,
-                durable_nonce_fee: Some(DurableNonceFee::from(
-                    &NonceFull::from_partial(
-                        rollback_partial,
-                        &SanitizedMessage::Legacy(message),
-                        &[(pubkey, nonce_account)],
-                        &rent_debits,
-                    )
-                    .unwrap(),
-                )),
-            });
+        let transaction_result = Some(TransactionExecutionDetails {
+            status: Ok(()),
+            log_messages: None,
+            inner_instructions: None,
+            durable_nonce_fee: Some(DurableNonceFee::from(
+                &NonceFull::from_partial(
+                    rollback_partial,
+                    &SanitizedMessage::Legacy(message),
+                    &[(pubkey, nonce_account)],
+                    &rent_debits,
+                )
+                .unwrap(),
+            )),
+            executed_units: 0u64,
+        });
 
         let balances = TransactionBalancesSet {
             pre_balances: vec![vec![123456]],

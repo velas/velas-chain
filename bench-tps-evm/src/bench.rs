@@ -19,16 +19,15 @@ use solana_measure::measure::Measure;
 use solana_metrics::{self, datapoint_info};
 use solana_sdk::{
     client::Client,
-    clock::{DEFAULT_TICKS_PER_SECOND, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
+    clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SECOND, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
     commitment_config::CommitmentConfig,
-    fee_calculator::FeeCalculator,
     hash::Hash,
     message::Message,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
     system_instruction,
     timing::duration_as_s,
-    transaction::Transaction,
+    transaction::Transaction, instruction::{AccountMeta, Instruction},
 };
 
 // The point at which transactions become "too old", in seconds.
@@ -46,11 +45,11 @@ pub type Result<T> = std::result::Result<T, BenchTpsError>;
 
 pub type SharedTransactions = Arc<RwLock<VecDeque<Vec<(Transaction, u64)>>>>;
 
-pub fn get_recent_blockhash<T: Client>(client: &T) -> (Hash, FeeCalculator) {
+pub fn get_recent_blockhash<T: Client>(client: &T) -> Hash {
     loop {
-        match client.get_recent_blockhash_with_commitment(CommitmentConfig::processed()) {
-            Ok((blockhash, fee_calculator, _last_valid_slot)) => {
-                return (blockhash, fee_calculator)
+        match client.get_latest_blockhash_with_commitment(CommitmentConfig::processed()) {
+            Ok((blockhash, _last_valid_height)) => {
+                return blockhash
             }
             Err(err) => {
                 info!("Couldn't get recent blockhash: {:?}", err);
@@ -116,6 +115,22 @@ pub fn metrics_submit_lamport_balance(lamport_balance: u64) {
     );
 }
 
+fn get_new_latest_blockhash<T: Client>(client: &Arc<T>, blockhash: &Hash) -> Option<Hash> {
+    let start = Instant::now();
+    while start.elapsed().as_secs() < 5 {
+        if let Ok(new_blockhash) = client.get_latest_blockhash() {
+            if new_blockhash != *blockhash {
+                return Some(new_blockhash);
+            }
+        }
+        debug!("Got same blockhash ({:?}), will retry...", blockhash);
+
+        // Retry ~twice during a slot
+        sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2));
+    }
+    None
+}
+
 pub fn poll_blockhash<T: Client>(
     exit_signal: &Arc<AtomicBool>,
     blockhash: &Arc<RwLock<Hash>>,
@@ -127,7 +142,7 @@ pub fn poll_blockhash<T: Client>(
     loop {
         let blockhash_updated = {
             let old_blockhash = *blockhash.read().unwrap();
-            if let Ok((new_blockhash, _fee)) = client.get_new_blockhash(&old_blockhash) {
+            if let Some(new_blockhash) = get_new_latest_blockhash(client, &old_blockhash) {
                 *blockhash.write().unwrap() = new_blockhash;
                 blockhash_last_updated = Instant::now();
                 true
@@ -204,7 +219,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, Transaction)> {
                 self.len(),
             );
 
-            let (blockhash, _fee_calculator) = get_recent_blockhash(client.as_ref());
+            let blockhash = get_recent_blockhash(client.as_ref());
 
             // re-sign retained to_fund_txes with updated blockhash
             self.sign(blockhash);
@@ -396,7 +411,7 @@ pub fn airdrop_lamports<T: Client>(
             id.pubkey(),
         );
 
-        let (blockhash, _fee_calculator) = get_recent_blockhash(client);
+        let blockhash = get_recent_blockhash(client);
         match request_airdrop_transaction(faucet_addr, &id.pubkey(), airdrop_amount, blockhash) {
             Ok(transaction) => {
                 let mut tries = 0;
@@ -554,8 +569,16 @@ pub fn generate_and_fund_keypairs<T: 'static + Client + Send + Sync>(
     //   pay for the transaction fees in a new run.
     let enough_lamports = 8 * lamports_per_account / 10;
     if first_keypair_balance < enough_lamports || last_keypair_balance < enough_lamports {
-        let fee_rate_governor = client.get_fee_rate_governor().unwrap();
-        let max_fee = fee_rate_governor.max_lamports_per_signature;
+        let single_sig_message = Message::new_with_blockhash(
+            &[Instruction::new_with_bytes(
+                Pubkey::new_unique(),
+                &[],
+                vec![AccountMeta::new(Pubkey::new_unique(), true)],
+            )],
+            None,
+            &client.get_latest_blockhash().unwrap(),
+        );
+        let max_fee = client.get_fee_for_message(&single_sig_message).unwrap();
         let extra_fees = extra * max_fee;
         let total_keypairs = keypairs.len() as u64 + 1; // Add one for funding keypair
 
@@ -603,7 +626,7 @@ mod tests {
     #[ignore]
     fn test_bench_tps_bank_client() {
         let (genesis_config, id) = create_genesis_config(10_000);
-        let bank = Bank::new(&genesis_config);
+        let bank = Bank::new_for_tests(&genesis_config);
         let client = Arc::new(BankClient::new(bank));
 
         let config = Config {
@@ -633,7 +656,7 @@ mod tests {
         let (mut genesis_config, id) = create_genesis_config(10_000);
         let fee_rate_governor = FeeRateGovernor::new(11, 0);
         genesis_config.fee_rate_governor = fee_rate_governor;
-        let bank = Bank::new(&genesis_config);
+        let bank = Bank::new_for_tests(&genesis_config);
         let client = Arc::new(BankClient::new(bank));
         let keypair_count = 20;
         let lamports = 20;

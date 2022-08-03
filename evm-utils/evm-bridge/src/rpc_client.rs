@@ -290,7 +290,7 @@ impl AsyncRpcClient {
 
             let recent_blockhash = if uses_durable_nonce(transaction).is_some() {
                 let (recent_blockhash, ..) = self
-                    .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+                    .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
                     .await?
                     .value;
                 recent_blockhash
@@ -418,16 +418,15 @@ impl AsyncRpcClient {
             .map_err(|err| ClientError::new_with_request(err.into(), request))
     }
 
-    pub async fn get_recent_blockhash_with_commitment(
+    pub async fn get_latest_blockhash_with_commitment(
         &self,
         commitment_config: CommitmentConfig,
-    ) -> RpcResult<(Hash, FeeCalculator, Slot)> {
-        let (context, blockhash, fee_calculator, last_valid_slot) = if let Ok(RpcResponse {
+    ) -> RpcResult<(Hash, Slot)> {
+        let (context, blockhash, last_valid_slot) = if let Ok(RpcResponse {
             context,
             value:
                 RpcFees {
                     blockhash,
-                    fee_calculator,
                     last_valid_slot,
                     ..
                 },
@@ -435,69 +434,70 @@ impl AsyncRpcClient {
             .send::<RpcResponse<RpcFees>>(RpcRequest::GetFees, json!([commitment_config]))
             .await
         {
-            (context, blockhash, fee_calculator, last_valid_slot)
+            (context, blockhash, last_valid_slot)
         } else if let Ok(RpcResponse {
             context,
             value:
                 DeprecatedRpcFees {
                     blockhash,
-                    fee_calculator,
                     last_valid_slot,
+                    ..
                 },
         }) = self
             .send::<RpcResponse<DeprecatedRpcFees>>(RpcRequest::GetFees, json!([commitment_config]))
             .await
         {
-            (context, blockhash, fee_calculator, last_valid_slot)
+            (context, blockhash, last_valid_slot)
         } else if let Ok(RpcResponse {
             context,
             value:
-                RpcBlockhashFeeCalculator {
-                    blockhash,
-                    fee_calculator,
-                },
+            RpcBlockhash {
+                blockhash,
+                last_valid_block_height:_,
+            },
         }) = self
-            .send::<RpcResponse<RpcBlockhashFeeCalculator>>(
-                RpcRequest::GetRecentBlockhash,
+            .send::<RpcResponse<RpcBlockhash>>(
+                RpcRequest::GetLatestBlockhash,
                 json!([commitment_config]),
             )
             .await
         {
-            (context, blockhash, fee_calculator, 0)
+            (context, blockhash, 0)
         } else {
             return Err(ClientError::new_with_request(
                 RpcError::ParseError("RpcBlockhashFeeCalculator or RpcFees".to_string()).into(),
-                RpcRequest::GetRecentBlockhash,
+                RpcRequest::GetLatestBlockhash,
             ));
         };
+        
 
         let blockhash = blockhash.parse().map_err(|_| {
             ClientError::new_with_request(
                 RpcError::ParseError("Hash".to_string()).into(),
-                RpcRequest::GetRecentBlockhash,
+                RpcRequest::GetLatestBlockhash,
             )
         })?;
         Ok(RpcResponse {
             context,
-            value: (blockhash, fee_calculator, last_valid_slot),
+            value: (blockhash, last_valid_slot),
         })
     }
 
-    pub async fn get_recent_blockhash(&self) -> ClientResult<(Hash, FeeCalculator)> {
-        let (blockhash, fee_calculator, _last_valid_slot) = self
-            .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+    pub async fn get_recent_blockhash(&self) -> ClientResult<Hash> {
+        let (blockhash, _last_valid_slot) = self
+            .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
             .await?
             .value;
-        Ok((blockhash, fee_calculator))
+        Ok(blockhash)
     }
 
-    pub async fn get_new_blockhash(&self, blockhash: &Hash) -> ClientResult<(Hash, FeeCalculator)> {
+    pub async fn get_new_blockhash(&self, blockhash: &Hash) -> ClientResult<Hash> {
         let mut num_retries = 0;
         let start = Instant::now();
         while start.elapsed().as_secs() < 5 {
-            if let Ok((new_blockhash, fee_calculator)) = self.get_recent_blockhash().await {
+            if let Ok(new_blockhash) = self.get_recent_blockhash().await {
                 if new_blockhash != *blockhash {
-                    return Ok((new_blockhash, fee_calculator));
+                    return Ok(new_blockhash);
                 }
             }
             debug!("Got same blockhash ({:?}), will retry...", blockhash);

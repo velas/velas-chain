@@ -1,6 +1,6 @@
 [package]
 name = "solana-streamer"
-version = "1.9.13"
+version = "1.9.29"
 description = "Solana Streamer"
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
 repository = "https://github.com/solana-labs/solana"
@@ -23,12 +23,12 @@ rcgen = "0.8.14"
 rustls = { version = "0.20.2", features = ["dangerous_configuration"] }
 pem = "1.0.2"
 pkcs8 = { version = "0.8.0", features = ["alloc"] }
-solana-logger = { path = "../logger", version = "=1.9.13" }
-solana-metrics = { path = "../metrics", version = "=1.9.13" }
-solana-sdk = { path = "../sdk", version = "=1.9.13" }
-solana-perf = { path = "../perf", version = "=1.9.13" }
+solana-logger = { path = "../logger", version = "=1.9.29" }
+solana-metrics = { path = "../metrics", version = "=1.9.29" }
+solana-sdk = { path = "../sdk", version = "=1.9.29" }
+solana-perf = { path = "../perf", version = "=1.9.29" }
 thiserror = "1.0"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "~1.14.1", features = ["full"] }
 
 [dev-dependencies]
 

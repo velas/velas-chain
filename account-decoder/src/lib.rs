@@ -142,14 +142,13 @@ impl UiAccount {
                 UiAccountEncoding::Base64 => base64::decode(blob).ok(),
                 UiAccountEncoding::Base64Zstd => base64::decode(blob)
                     .ok()
-                    .map(|zstd_data| {
+                    .and_then(|zstd_data| {
                         let mut data = vec![];
                         zstd::stream::read::Decoder::new(zstd_data.as_slice())
                             .and_then(|mut reader| reader.read_to_end(&mut data))
                             .map(|_| data)
                             .ok()
-                    })
-                    .flatten(),
+                    }),
                 UiAccountEncoding::Binary | UiAccountEncoding::JsonParsed => None,
             },
         }?;

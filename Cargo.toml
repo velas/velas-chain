@@ -45,6 +45,7 @@ members = [
     "metrics",
     "net-shaper",
     "notifier",
+    "evm-utils/evm-block-recovery",
     "evm-utils/evm-bridge",
     "evm-utils/programs/evm_loader",
     "evm-utils/evm-state",
@@ -99,3 +100,6 @@ resolver = "2"
 
 [profile.dev]
 split-debuginfo = "unpacked"
+
+[patch.crates-io]
+primitive-types = { git = "https://github.com/velas/parity-common", branch = "borsh-9-support" }

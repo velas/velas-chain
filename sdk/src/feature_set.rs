@@ -299,6 +299,40 @@ pub mod fixed_memcpy_nonoverlapping_check {
     solana_sdk::declare_id!("D5YEM15Fgox3JFqCGFRgnwqAcJ2QtB6MiJMAm7B38sQ3");
 }
 
+
+pub mod drop_redundant_turbine_path {
+    solana_sdk::declare_id!("9e9RFVCfsBA19iJ6w7v7w5gvoEP8C2SVMxCgRZNKEVaX");
+}
+
+pub mod default_units_per_instruction {
+    solana_sdk::declare_id!("HLtQsLVVBaCL3YYwt6UsH9gWoPHB285hTiYMa4rFpBbp");
+}
+
+pub mod add_shred_type_to_shred_seed {
+    solana_sdk::declare_id!("D63CT5jtNMSTnNmKvVdd22NTbGiW9DgZEowaAPFsDvD3");
+}
+
+pub mod warp_timestamp_with_a_vengeance {
+    solana_sdk::declare_id!("76k5t7davqtAHxLc4f84W7KVnwgUEBgeg6JxxrixE5jF");
+}
+
+pub mod separate_nonce_from_blockhash {
+    solana_sdk::declare_id!("HRXtnwaMAwH9b2P8jT4CpvChk3Tj5wbuQaLLKcuKz3vb");
+}
+
+pub mod enable_durable_nonce {
+    solana_sdk::declare_id!("m1HeqS9BpDqJ6NUu8oUgFxes1DZWQB1pbchbwmWTbyo");
+}
+
+pub mod nonce_must_be_authorized {
+    solana_sdk::declare_id!("2xLqXg2nj3UpdNonMxkwc6DBxmjPiyNYAWLh2NuHzNuk");
+}
+
+pub mod nonce_must_be_advanceable {
+    solana_sdk::declare_id!("4ViDUMd1axFfJxWViMkZ2nwdbYGxHer1MhoT3igGasPj");
+}
+
+
 pub mod cpi_data_cost {
     solana_sdk::declare_id!("CuYeffE36Bed4qExko1XwUDHB2b6TJ9pwphXw52Nm9UB");
 }
@@ -376,6 +410,18 @@ pub mod velas {
 
     pub mod burn_fee {
         solana_sdk::declare_id!("CjdrowBMM3drcSSciwPVpAWz4hBqWAKSLj9Ea9PD1vip");
+    }
+
+    pub mod clear_logs_on_error {
+        solana_sdk::declare_id!("9rZZ68tcDSZYkDMuFn59iRzoUxki2r16RWUucZQywFzS");
+    }
+
+    pub mod disable_durable_nonce {
+        solana_sdk::declare_id!("AKAGpT85PfoGDxCBPsxGHy8iZdaJoeAiVXq5oRxFS5TL");
+    }
+
+    pub mod evm_instruction_borsh_serialization {
+        solana_sdk::declare_id!("9NUVkN3PYJXz6z8cUgtGHYWd1CmcYF7ci3a552rASPQw");
     }
 }
 lazy_static! {
@@ -468,6 +514,14 @@ lazy_static! {
             (disable_bpf_unresolved_symbols_at_runtime::id(), "Disable reporting of unresolved BPF symbols at runtime"),
             (add_get_processed_sibling_instruction_syscall::id(), "add add_get_processed_sibling_instruction_syscall"),
             (fixed_memcpy_nonoverlapping_check::id(), "use correct check for nonoverlapping regions in memcpy syscall"),
+            (drop_redundant_turbine_path::id(), "drop redundant turbine path"),
+            (default_units_per_instruction::id(), "Default max tx-wide compute units calculated per instruction"),
+            (add_shred_type_to_shred_seed::id(), "add shred-type to shred seed #25556"),
+            (warp_timestamp_with_a_vengeance::id(), "warp timestamp again, adjust bounding to 150% slow #25666"),
+            (separate_nonce_from_blockhash::id(), "separate durable nonce and blockhash domains #25744"),
+            (enable_durable_nonce::id(), "enable durable nonce #25744"),
+            (nonce_must_be_authorized::id(), "nonce must be authorized"),
+            (nonce_must_be_advanceable::id(), "durable nonces must be advanceable"),
             // Velas features
             (velas::hardfork_pack::id(), "EVMblockhashes sysvar history, roothashes calculation. Apply old (reconfigure_native_token, unlock_switch_vote)."),
             (velas::evm_cross_execution::id(), "EVM cross execution."),
@@ -477,6 +531,9 @@ lazy_static! {
             (velas::ignore_reset_on_cleared::id(), "Don't reset evm_swap address balance, when it already swapped, to avoid empty blocks."),
             (velas::free_ownership_require_signer::id(), "Free ownership require signer."),
             (velas::burn_fee::id(), "Burn fee during transaction execution."),
+            (velas::clear_logs_on_error::id(), "Clear logs from receipt if transaction is failed or reverted."),
+            (velas::disable_durable_nonce::id(), "Disable durable nonce."),
+            (velas::evm_instruction_borsh_serialization::id(), "Support for Borsh serialization for EVM instructions."),
             /*************** ADD NEW FEATURES HERE ***************/
         ]
     ).collect();

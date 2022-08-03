@@ -220,22 +220,3 @@ mod tests {
         let _ = HttpSender::new("http://localhost:1234".to_string());
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn http_sender_on_tokio_multi_thread() {
-        let http_sender = HttpSender::new("http://localhost:1234".to_string());
-        let _ = http_sender.send(RpcRequest::GetVersion, serde_json::Value::Null);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    #[should_panic(expected = "can call blocking only when running on the multi-threaded runtime")]
-    async fn http_sender_ontokio_current_thread_should_panic() {
-        // RpcClient::new() will panic in the tokio current-thread runtime due to `tokio::task::block_in_place()` usage, and there
-        // doesn't seem to be a way to detect whether the tokio runtime is multi_thread or current_thread...
-        let _ = HttpSender::new("http://localhost:1234".to_string());
-    }
-}

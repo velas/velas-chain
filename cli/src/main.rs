@@ -1,5 +1,5 @@
 use {
-    clap::{crate_description, crate_name, value_t_or_exit, ArgMatches},
+    clap::{crate_description, value_t_or_exit, ArgMatches},
     console::style,
     solana_clap_utils::{
     input_validators::normalize_to_url_if_moniker,

@@ -338,10 +338,9 @@ fn wait_for_restart_window(
                         .unwrap_or_else(|| '-'.to_string()),
                     snapshot_slot_info
                         .as_ref()
-                        .map(|snapshot_slot_info| snapshot_slot_info
+                        .and_then(|snapshot_slot_info| snapshot_slot_info
                             .incremental
                             .map(|incremental| incremental.to_string()))
-                        .flatten()
                         .unwrap_or_else(|| '-'.to_string()),
                 )
             },
@@ -599,6 +598,13 @@ pub fn main() {
                 .takes_value(true)
                 .help("Use DIR as evm-state archive location"),
         ) 
+        .arg(
+            Arg::with_name("jaeger_collector_url")
+                .long("jaeger-collector")
+                .value_name("URL")
+                .takes_value(true)
+                .help("Use URL as location to jaegere collector /api/traces endpoint."),
+        )
         .arg(
             Arg::with_name("entrypoint")
                 .short("n")
@@ -887,10 +893,17 @@ pub fn main() {
                 .long("maximum-local-snapshot-age")
                 .value_name("NUMBER_OF_SLOTS")
                 .takes_value(true)
-                .default_value("500")
+                .default_value("2500")
                 .help("Reuse a local snapshot if it's less than this many \
                        slots behind the highest snapshot available for \
                        download from other validators"),
+        )
+        .arg(
+            // NOP arg for forward compatibility with ISS on-by-default in v1.10
+            Arg::with_name("no_incremental_snapshots")
+                .long("no-incremental-snapshots")
+                .hidden(true)
+                .conflicts_with("incremental_snapshots")
         )
         .arg(
             Arg::with_name("incremental_snapshots")
@@ -1127,6 +1140,7 @@ pub fn main() {
                 .alias("no-untrusted-rpc")
                 .long("only-known-rpc")
                 .takes_value(false)
+                .requires("known_validators")
                 .help("Use the RPC service of known validators only")
         )
         .arg(
@@ -2413,6 +2427,7 @@ pub fn main() {
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
         accounts_shrink_ratio,
         verify_evm_state: !matches.is_present("no_verify_evm_state"),
+        jaeger_collector_url: value_of(&matches, "jaeger_collector_url"),
         ..ValidatorConfig::default()
     };
 

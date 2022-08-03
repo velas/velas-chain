@@ -48,7 +48,7 @@ use {
         time::Duration,
     },
 };
-
+use evm_state::Storage;
 #[derive(Clone)]
 pub struct AccountInfo<'a> {
     pub address: Pubkey,
@@ -108,6 +108,7 @@ pub struct TestValidatorGenesis {
     pub geyser_plugin_config_files: Option<Vec<PathBuf>>,
     pub accounts_db_caching_enabled: bool,
     deactivate_feature_set: HashSet<Pubkey>,
+    evm_state_archive_enabled: bool,
 }
 
 impl Default for TestValidatorGenesis {
@@ -135,6 +136,7 @@ impl Default for TestValidatorGenesis {
             geyser_plugin_config_files: Option::<Vec<PathBuf>>::default(),
             accounts_db_caching_enabled: bool::default(),
             deactivate_feature_set: HashSet::<Pubkey>::default(),
+	    evm_state_archive_enabled: false,
         }
     }
 }
@@ -160,6 +162,11 @@ impl TestValidatorGenesis {
     /// Check if a given TestValidator ledger has already been initialized
     pub fn ledger_exists(ledger_path: &Path) -> bool {
         ledger_path.join("vote-account-keypair.json").exists()
+    }
+
+    pub fn enable_evm_state_archive(&mut self) -> &mut Self {
+        self.evm_state_archive_enabled = true;
+        self
     }
 
     pub fn fee_rate_governor(&mut self, fee_rate_governor: FeeRateGovernor) -> &mut Self {
@@ -672,7 +679,7 @@ impl TestValidator {
             &validator_config,
             true, // should_check_duplicate_instance
             config.start_progress.clone(),
-            None, // evm-state-archive
+            config.evm_state_archive_enabled.then(|| Storage::create_temporary().unwrap()),
             socket_addr_space,
         ));
 

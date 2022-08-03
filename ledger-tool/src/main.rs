@@ -803,7 +803,7 @@ fn compute_slot_cost(blockstore: &Blockstore, slot: Slot) -> Result<(), String> 
                 num_programs += transaction.message().instructions().len();
 
                 let tx_cost = cost_model.calculate_cost(&transaction);
-                let result = cost_tracker.try_add(&transaction, &tx_cost);
+                let result = cost_tracker.try_add(&tx_cost);
                 if result.is_err() {
                     println!(
                         "Slot: {}, CostModel rejected transaction {:?}, reason {:?}",
@@ -1327,7 +1327,7 @@ fn main() {
                     .index(2)
                     .value_name("DIR")
                     .takes_value(true)
-                    .help("Output directory for the snapshot [default: --ledger directory]"),
+                    .help("Output directory for the snapshot [default: --snapshot-archive-path if present else --ledger directory]"),
             )
             .arg(
                 Arg::with_name("warp_slot")
@@ -1965,40 +1965,41 @@ fn main() {
                 let log_file = PathBuf::from(value_t_or_exit!(arg_matches, "log_path", String));
                 let f = BufReader::new(File::open(log_file).unwrap());
                 println!("Reading log file");
-            for line in f.lines().flatten() {
-                let parse_results = {
-                    if let Some(slot_string) = frozen_regex.captures_iter(&line).next() {
-                        Some((slot_string, &mut frozen))
-                    } else {
-                        full_regex
-                            .captures_iter(&line)
-                            .next()
-                            .map(|slot_string| (slot_string, &mut full))
-                    }
-                };
+                for line in f.lines().flatten() {
+                    let parse_results = {
+                        if let Some(slot_string) = frozen_regex.captures_iter(&line).next() {
+                            Some((slot_string, &mut frozen))
+                        } else {
+                            full_regex
+                                .captures_iter(&line)
+                                .next()
+                                .map(|slot_string| (slot_string, &mut full))
+                        }
+                    };
 
-                if let Some((slot_string, map)) = parse_results {
-                    let slot = slot_string
-                        .get(1)
-                        .expect("Only one match group")
-                        .as_str()
-                        .parse::<u64>()
-                        .unwrap();
-                    if ancestors.contains(&slot) && !map.contains_key(&slot) {
-                        map.insert(slot, line);
+                    if let Some((slot_string, map)) = parse_results {
+                        let slot = slot_string
+                            .get(1)
+                            .expect("Only one match group")
+                            .as_str()
+                            .parse::<u64>()
+                            .unwrap();
+                        if ancestors.contains(&slot) && !map.contains_key(&slot) {
+                            map.insert(slot, line);
+                        }
+                        if slot == ending_slot && frozen.contains_key(&slot) && full.contains_key(&slot)
+                        {
+                            break;
+                        }
                     }
-                    if slot == ending_slot && frozen.contains_key(&slot) && full.contains_key(&slot)
-                    {
-                        break;
-                    }
-                }
 
-                for ((slot1, frozen_log), (slot2, full_log)) in frozen.iter().zip(full.iter()) {
-                    assert_eq!(slot1, slot2);
-                    println!(
-                        "Slot: {}\n, full: {}\n, frozen: {}",
-                        slot1, full_log, frozen_log
-                    );
+                    for ((slot1, frozen_log), (slot2, full_log)) in frozen.iter().zip(full.iter()) {
+                        assert_eq!(slot1, slot2);
+                        println!(
+                            "Slot: {}\n, full: {}\n, frozen: {}",
+                            slot1, full_log, frozen_log
+                        );
+                    }
                 }
             }
             ("verify", Some(arg_matches)) => {
@@ -2144,7 +2145,10 @@ fn main() {
             }
             ("create-snapshot", Some(arg_matches)) => {
                 let output_directory = value_t!(arg_matches, "output_directory", PathBuf)
-                    .unwrap_or_else(|_| ledger_path.clone());
+                    .unwrap_or_else(|_| match &snapshot_archive_path {
+                        Some(snapshot_archive_path) => snapshot_archive_path.clone(),
+                        None => ledger_path.clone(),
+                    });
                 let mut warp_slot = value_t!(arg_matches, "warp_slot", Slot).ok();
                 let remove_stake_accounts = arg_matches.is_present("remove_stake_accounts");
                 let new_hard_forks = hardforks_of(arg_matches, "hard_forks");
@@ -2234,13 +2238,10 @@ fn main() {
                     true,
                 ) {
                     Ok((bank_forks, .., starting_snapshot_hashes)) => {
-                        let mut bank = bank_forks
-                            .get(snapshot_slot)
-                            .unwrap_or_else(|| {
-                                eprintln!("Error: Slot {} is not available", snapshot_slot);
-                                exit(1);
-                            })
-                            .clone();
+                        let mut bank = bank_forks.get(snapshot_slot).unwrap_or_else(|| {
+                            eprintln!("Error: Slot {} is not available", snapshot_slot);
+                            exit(1);
+                        });
 
                         let child_bank_required = rent_burn_percentage.is_ok()
                             || hashes_per_tick.is_some()
@@ -2461,7 +2462,7 @@ fn main() {
                             let incremental_snapshot_archive_info =
                                 snapshot_utils::bank_to_incremental_snapshot_archive(
                                     ledger_path,
-                                    &bank,
+                                    bank.clone(),
                                     full_snapshot_slot,
                                     Some(snapshot_version),
                                     output_directory,
@@ -2485,7 +2486,7 @@ fn main() {
                             let full_snapshot_archive_info =
                                 snapshot_utils::bank_to_full_snapshot_archive(
                                     ledger_path,
-                                    &bank,
+                                    bank.clone(),
                                     Some(snapshot_version),
                                     output_directory,
                                     ArchiveFormat::TarZstd,
@@ -2787,7 +2788,7 @@ fn main() {
                                 }
                             };
                             let warped_bank = Bank::new_from_parent_with_tracer(
-                            base_bank,
+                                &base_bank,
                                 base_bank.collector_id(),
                                 next_epoch,
                                 tracer,
@@ -2804,7 +2805,7 @@ fn main() {
 
                             println!("Slot: {} => {}", base_bank.slot(), warped_bank.slot());
                             println!("Epoch: {} => {}", base_bank.epoch(), warped_bank.epoch());
-                        assert_capitalization(base_bank);
+                            assert_capitalization(&base_bank);
                             assert_capitalization(&warped_bank);
                             let interest_per_epoch = ((warped_bank.capitalization() as f64)
                                 / (base_bank.capitalization() as f64)
@@ -3051,9 +3052,9 @@ fn main() {
                                 );
                             }
 
-                        assert_capitalization(bank);
-                        println!("Inflation: {:?}", bank.inflation());
-                        println!("RentCollector: {:?}", bank.rent_collector());
+                            assert_capitalization(&bank);
+                            println!("Inflation: {:?}", bank.inflation());
+                            println!("RentCollector: {:?}", bank.rent_collector());
                             println!("Capitalization: {}", Sol(bank.capitalization()));
                         }
                     }

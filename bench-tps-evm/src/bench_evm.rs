@@ -132,7 +132,7 @@ impl<'a> FundingTransactions<'a> for Vec<(&'a Keypair, &'a evm::SecretKey, Trans
                 self.len(),
             );
 
-            let (blockhash, _fee_calculator) = crate::bench::get_recent_blockhash(client.as_ref());
+            let blockhash = crate::bench::get_recent_blockhash(client.as_ref());
 
             // re-sign retained to_fund_txes with updated blockhash
             self.sign(blockhash);
@@ -321,7 +321,12 @@ fn generate_system_txs(
             let tx_call = tx_call.sign(&from.1, chain_id);
 
             from.2 += 1;
-            let ix = solana_evm_loader_program::send_raw_tx(from.0.pubkey(), tx_call, None);
+            let ix = solana_evm_loader_program::send_raw_tx(
+                from.0.pubkey(),
+                tx_call,
+                None,
+                solana_evm_loader_program::instructions::FeePayerType::Evm,
+            );
 
             let message = Message::new(&[ix], Some(&from.0.pubkey()));
 
@@ -425,7 +430,7 @@ where
     let shared_txs: SharedTransactions = Arc::new(RwLock::new(VecDeque::new()));
 
     let recent_blockhash = Arc::new(RwLock::new(
-        crate::bench::get_recent_blockhash(client.as_ref()).0,
+        crate::bench::get_recent_blockhash(client.as_ref()),
     ));
     let shared_tx_active_thread_count = Arc::new(AtomicIsize::new(0));
     let total_tx_sent_count = Arc::new(AtomicUsize::new(0));

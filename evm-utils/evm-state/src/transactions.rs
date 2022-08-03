@@ -1,3 +1,4 @@
+use borsh::{BorshSerialize, BorshDeserialize, BorshSchema};
 use evm::backend::Log;
 use primitive_types::{H160, H256, U256};
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
@@ -20,6 +21,7 @@ pub type Gas = U256;
 const UNSIGNED_TX_MARKER: u8 = 0x1;
 
 /// Etherium transaction.
+#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct Transaction {
     pub nonce: U256,
@@ -101,6 +103,7 @@ impl Transaction {
     }
 }
 
+#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct UnsignedTransaction {
     pub nonce: U256,
@@ -166,6 +169,7 @@ impl UnsignedTransaction {
     }
 }
 
+#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum TransactionAction {
     Call(Address),
@@ -189,6 +193,7 @@ impl TransactionAction {
     }
 }
 
+#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct TransactionSignature {
     pub v: u64,
@@ -692,5 +697,70 @@ mod test {
         let public_key = PublicKey::from_secret_key(SECP256K1, &key);
         assert_eq!(addr_from_public_key(&public_key), t.caller().unwrap());
         assert_eq!(t.signature.chain_id(), Some(69));
+    }
+
+    #[test]
+    fn should_serialize_to_borsh_and_back() {
+        let mut buf: Vec<u8> = vec![];
+        {
+            let action_call = TransactionAction::Call(Address::repeat_byte(1));
+            BorshSerialize::serialize(&action_call, &mut buf).unwrap();
+            assert_eq!(buf.len(), 21);
+            let action_call_deserialized = BorshDeserialize::deserialize(&mut &buf[..]).unwrap();
+            assert_eq!(action_call, action_call_deserialized);
+        }
+        {
+            buf.clear();
+            let action_create = TransactionAction::Create;
+            BorshSerialize::serialize(&action_create, &mut buf).unwrap();
+            assert_eq!(buf.len(), 1);
+            let action_create_deserialized = BorshDeserialize::deserialize(&mut &buf[..]).unwrap();
+            assert_eq!(action_create, action_create_deserialized);
+        }
+        {
+            buf.clear();
+            let tx_signature = TransactionSignature {
+                v: 1u64,
+                r: H256::repeat_byte(1),
+                s: H256::repeat_byte(2),
+            };
+            BorshSerialize::serialize(&tx_signature, &mut buf).unwrap();
+            assert_eq!(buf.len(), 72);
+            let tx_signature_deserialized = BorshDeserialize::deserialize(&mut &buf[..]).unwrap();
+            assert_eq!(tx_signature, tx_signature_deserialized);
+        }
+        {
+            buf.clear();
+            let tx = UnsignedTransaction {
+                action: TransactionAction::Create,
+                nonce: U256::from(1),
+                gas_price: U256::from(3000),
+                gas_limit: U256::from(50_000),
+                value: U256::from(1),
+                input: b"Hello!".to_vec(),
+            };
+            BorshSerialize::serialize(&tx, &mut buf).unwrap();
+            assert_eq!(buf.len(), 139);
+            let tx_deserialized = BorshDeserialize::deserialize(&mut &buf[..]).unwrap();
+            assert_eq!(tx, tx_deserialized);
+        }
+        {
+            buf.clear();
+            let mut rng = secp256k1::rand::thread_rng();
+            let key = SecretKey::new(&mut rng);
+            let tx = UnsignedTransaction {
+                action: TransactionAction::Create,
+                nonce: U256::from(1),
+                gas_price: U256::from(3000),
+                gas_limit: U256::from(50_000),
+                value: U256::from(1),
+                input: b"Hello!".to_vec(),
+            }
+                .sign(&key, Some(69));
+            BorshSerialize::serialize(&tx, &mut buf).unwrap();
+            assert_eq!(buf.len(), 211);
+            let tx_deserialized = BorshDeserialize::deserialize(&mut &buf[..]).unwrap();
+            assert_eq!(tx, tx_deserialized);
+        }
     }
 }

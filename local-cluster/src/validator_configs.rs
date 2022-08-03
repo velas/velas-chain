@@ -63,6 +63,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         accounts_db_config: config.accounts_db_config.clone(),
         wait_to_vote_slot: config.wait_to_vote_slot,
         verify_evm_state: config.verify_evm_state,
+        jaeger_collector_url: config.jaeger_collector_url.clone(),
     }
 }
 

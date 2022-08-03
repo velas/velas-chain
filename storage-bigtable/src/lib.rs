@@ -1,5 +1,6 @@
 #![allow(clippy::integer_arithmetic)]
 use {
+    crate::bigtable::RowKey,
     log::*,
     serde::{Deserialize, Serialize},
     solana_metrics::inc_new_counter_debug,
@@ -361,6 +362,17 @@ impl LedgerStorage {
         Ok(Self { connection })
     }
 
+    pub async fn new_with_custom_instance(
+        read_only: bool,
+        timeout: Option<std::time::Duration>,
+        creds_path: Option<String>,
+        instance: String
+    ) -> Result<Self> {
+        let connection =
+            bigtable::BigTableConnection::new(&instance, read_only, timeout, creds_path).await?;
+        Ok(Self { connection })
+    }
+
     /// Return the available slot that contains a block
     pub async fn get_first_available_block(&self) -> Result<Option<Slot>> {
         debug!("LedgerStorage::get_first_available_block request received");
@@ -394,6 +406,37 @@ impl LedgerStorage {
             )
             .await?;
         Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
+    }
+
+    // Fetches and gets a vector of confirmed blocks via a multirow fetch
+    #[allow(clippy::needless_lifetimes)]
+    pub async fn get_confirmed_blocks_with_data<'a>(
+        &self,
+        slots: &'a [Slot],
+    ) -> Result<impl Iterator<Item = (Slot, ConfirmedBlockWithOptionalMetadata)> + 'a> {
+        debug!(
+            "LedgerStorage::get_confirmed_blocks_with_data request received: {:?}",
+            slots
+        );
+        inc_new_counter_debug!("storage-bigtable-query", 1);
+        let mut bigtable = self.connection.client();
+        let row_keys = slots.iter().copied().map(slot_to_blocks_key);
+        let data = bigtable
+            .get_protobuf_or_bincode_cells("blocks", row_keys)
+            .await?
+            .filter_map(
+                |(row_key, block_cell_data): (
+                    RowKey,
+                    bigtable::CellData<StoredConfirmedBlock, generated::ConfirmedBlock>,
+                )| {
+                    let block = match block_cell_data {
+                        bigtable::CellData::Bincode(block) => block.into(),
+                        bigtable::CellData::Protobuf(block) => block.try_into().ok()?,
+                    };
+                    Some((key_to_slot(&row_key).unwrap(), block))
+                },
+            );
+        Ok(data)
     }
 
     /// Fetch the confirmed block from the desired slot
@@ -871,6 +914,23 @@ impl LedgerStorage {
         Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
     }
 
+    pub async fn get_evm_confirmed_full_blocks_nums(
+        &self,
+        start_block: evm_state::BlockNum,
+        limit: usize,
+    ) -> Result<Vec<evm_state::BlockNum>> {
+        let mut bigtable = self.connection.client();
+        let blocks = bigtable
+            .get_row_keys(
+                "evm-full-blocks",
+                Some(slot_to_key(start_block)),
+                None,
+                limit as i64,
+            )
+            .await?;
+        Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
+    }
+
     pub async fn get_evm_block_by_hash(
         &self,
         block_hash: evm_state::H256,
@@ -890,7 +950,7 @@ impl LedgerStorage {
         let mut bigtable = self.connection.client();
         let block_cell_data = bigtable
             .get_protobuf_or_bincode_cell::<evm_state::BlockHeader, generated_evm::EvmBlockHeader>(
-                "evm-block",
+                "evm-blocks",
                 slot_to_key(block_num),
             )
             .await
@@ -1019,7 +1079,7 @@ impl LedgerStorage {
             bigtable::CellData::Protobuf(tx) => tx.try_into().map_err(|_err| {
                 bigtable::Error::ObjectCorrupt(format!(
                     "evm-tx/{}",
-                    evm_rpc::Hex(*hash).to_string()
+                    evm_rpc::Hex(*hash)
                 ))
             })?,
         }))

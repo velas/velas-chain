@@ -28,7 +28,7 @@ pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
 }
 
 fn retain_sort_stakers(stakes: &HashMap<Pubkey, u64>) -> Vec<(Pubkey, u64)> {
-    let mut stakes: Vec<_> = stakes.into_iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut stakes: Vec<_> = stakes.iter().map(|(k, v)| (*k, *v)).collect();
     sort_stakes(&mut stakes);
     if num_major_stakers(&stakes) >= NUM_MAJOR_STAKERS_FOR_FILTERING {
         retain_major_stakers(&mut stakes)
@@ -176,20 +176,20 @@ mod tests {
         for _ in 0..30 {
             stakes.insert(Pubkey::new_unique(), 1);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), 30);
 
         for _ in 0..30 {
             stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY - 1);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), 60);
 
         // Test case for majoirty < NUM_MAJOR_STAKERS_FOR_FILTERING
         for _ in 0..(NUM_MAJOR_STAKERS_FOR_FILTERING - 1) {
             stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(
             num_stakers.len(),
             60 + (NUM_MAJOR_STAKERS_FOR_FILTERING - 1)
@@ -199,14 +199,14 @@ mod tests {
         // Should remove all nodes without majoirty stake.
 
         stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY);
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), NUM_MAJOR_STAKERS_FOR_FILTERING);
 
         // Test case where more than NUM_MAJOR_STAKERS_FOR_FILTERING, should keep all majority in stakers.
         for n in 0..30 {
             stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY + n * 100);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), NUM_MAJOR_STAKERS_FOR_FILTERING + 30);
         assert_eq!(stakes.len(), NUM_MAJOR_STAKERS_FOR_FILTERING + 30 + 60)
     }

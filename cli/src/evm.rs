@@ -20,7 +20,7 @@ use crate::cli::{CliCommand, CliCommandInfo, CliConfig, CliError};
 
 use evm_rpc::Hex;
 use evm_state::{self as evm, FromKey};
-use solana_evm_loader_program::scope::evm::gweis_to_lamports;
+use solana_evm_loader_program::{instructions::FeePayerType, scope::evm::gweis_to_lamports};
 
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
@@ -262,9 +262,8 @@ fn transfer(
     let message = Message::new(&ixs, Some(&from.pubkey()));
     let mut create_account_tx = Transaction::new_unsigned(message);
 
-    let (blockhash, ..) = rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::default())?
-        .value;
+    let (blockhash, _last_height) = rpc_client
+        .get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
 
     create_account_tx.sign(&config.signers, blockhash);
 
@@ -291,7 +290,7 @@ fn find_block_header(
 
     let native_slot = block.native_chain_slot;
     for slot in native_slot - range..native_slot + range {
-        let native_block = match rpc_client.get_confirmed_block(slot) {
+        let native_block = match rpc_client.get_block(slot) {
             Ok(native_block) => native_block,
             Err(_) => {
                 debug!("Skiped slot = {:?}, Cannot request blockhash", slot);
@@ -329,13 +328,12 @@ fn send_raw_tx<P: AsRef<Path>>(
     let tx: evm::Transaction = solana_sdk::program_utils::limited_deserialize(&bytes)?;
     debug!("loaded tx: {:?}", tx);
 
-    let ix = solana_evm_loader_program::send_raw_tx(signer.pubkey(), tx, None);
+    let ix = solana_evm_loader_program::send_raw_tx(signer.pubkey(), tx, None, FeePayerType::Evm);
     let msg = Message::new(&[ix], Some(&signer.pubkey()));
     let mut tx = Transaction::new_unsigned(msg);
 
-    let (blockhash, ..) = rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::default())?
-        .value;
+    let (blockhash, _last_height) = rpc_client
+        .get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
     tx.sign(&config.signers, blockhash);
 
     debug!("sending tx: {:?}", tx);

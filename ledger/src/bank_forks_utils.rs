@@ -136,11 +136,12 @@ pub fn load(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_from_genesis(
     genesis_config: &GenesisConfig,
     evm_state_path: impl AsRef<Path>,
     evm_genesis_path: impl AsRef<Path>,
-    evm_archive: Option<evm_state::Storage>,
+    _evm_archive: Option<evm_state::Storage>,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
     process_options: ProcessOptions,

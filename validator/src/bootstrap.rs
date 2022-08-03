@@ -1109,34 +1109,32 @@ mod with_incremental_snapshots {
     ///
     /// The result is a vector of peers with snapshot hashes that:
     /// 1. match a snapshot hash from the known validators
-    /// 2. have the highest full snapshot slot
-    /// 3. have the highest incremental snapshot slot
-    ///
-    /// NOTE: If the node's full snapshot interval is different from its known validators, it may
-    /// be more likely to download full snapshots more often than necessary.
+    /// 2. have the highest incremental snapshot slot
+    /// 3. have the highest full snapshot slot of (2)
     fn get_peer_snapshot_hashes(
         cluster_info: &ClusterInfo,
         validator_config: &ValidatorConfig,
         bootstrap_config: &RpcBootstrapConfig,
         rpc_peers: &[ContactInfo],
     ) -> Vec<PeerSnapshotHash> {
-        let known_snapshot_hashes =
-            get_snapshot_hashes_from_known_validators(cluster_info, validator_config);
-
         let mut peer_snapshot_hashes = get_eligible_peer_snapshot_hashes(
             cluster_info,
             validator_config,
             bootstrap_config,
             rpc_peers,
         );
-        retain_peer_snapshot_hashes_that_match_known_snapshot_hashes(
-            &known_snapshot_hashes,
-            &mut peer_snapshot_hashes,
-        );
-        retain_peer_snapshot_hashes_with_highest_full_snapshot_slot(&mut peer_snapshot_hashes);
+        if validator_config.known_validators.is_some() {
+            let known_snapshot_hashes =
+                get_snapshot_hashes_from_known_validators(cluster_info, validator_config);
+            retain_peer_snapshot_hashes_that_match_known_snapshot_hashes(
+                &known_snapshot_hashes,
+                &mut peer_snapshot_hashes,
+            );
+        }
         retain_peer_snapshot_hashes_with_highest_incremental_snapshot_slot(
             &mut peer_snapshot_hashes,
         );
+        retain_peer_snapshot_hashes_with_highest_full_snapshot_slot(&mut peer_snapshot_hashes);
 
         peer_snapshot_hashes
     }

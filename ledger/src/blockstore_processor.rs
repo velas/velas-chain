@@ -22,8 +22,8 @@ use {
         accounts_index::AccountSecondaryIndexes,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         bank::{
-        Bank, TransactionExecutionResult, RentDebits, InnerInstructionsList, TransactionBalancesSet,
-            TransactionResults,
+            Bank, RentDebits, TransactionBalancesSet, TransactionExecutionDetails,
+            TransactionExecutionResult, TransactionResults,
         },
         bank_forks::BankForks,
         bank_utils,
@@ -567,6 +567,7 @@ pub struct ProcessOptions {
     pub shrink_ratio: AccountShrinkThreshold,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn process_blockstore(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
@@ -1513,7 +1514,7 @@ pub enum TransactionStatusMessage {
 pub struct TransactionStatusBatch {
     pub bank: Arc<Bank>,
     pub transactions: Vec<SanitizedTransaction>,
-    pub execution_results: Vec<TransactionExecutionResult>,
+    pub execution_results: Vec<Option<TransactionExecutionDetails>>,
     pub balances: TransactionBalancesSet,
     pub token_balances: TransactionTokenBalancesSet,
     pub rent_debits: Vec<RentDebits>,
@@ -1538,7 +1539,7 @@ impl TransactionStatusSender {
         let slot = bank.slot();
         if !self.enable_cpi_and_log_storage {
             execution_results.iter_mut().for_each(|execution_result| {
-                if let TransactionExecutionResult::Executed(details) = execution_result {
+                if let TransactionExecutionResult::Executed { details, .. } = execution_result {
                     details.log_messages.take();
                     details.inner_instructions.take();
                 }
@@ -1549,7 +1550,13 @@ impl TransactionStatusSender {
             .send(TransactionStatusMessage::Batch(TransactionStatusBatch {
                 bank,
                 transactions,
-                execution_results,
+                execution_results: execution_results
+                    .into_iter()
+                    .map(|result| match result {
+                        TransactionExecutionResult::Executed { details, .. } => Some(details),
+                        TransactionExecutionResult::NotExecuted(_) => None,
+                    })
+                    .collect(),
                 balances,
                 token_balances,
                 rent_debits,
@@ -1680,12 +1687,16 @@ pub mod tests {
     fn test_process_blockstore(
         genesis_config: &GenesisConfig,
         blockstore: &Blockstore,
+        evm_state_path: impl AsRef<Path>,
+        evm_genesis_path: impl AsRef<Path>,
         opts: ProcessOptions,
     ) -> BlockstoreProcessorInner {
         let (accounts_package_sender, _) = channel();
         process_blockstore(
             genesis_config,
             blockstore,
+            evm_state_path,
+            evm_genesis_path,
             Vec::new(),
             opts,
             None,
@@ -1729,9 +1740,9 @@ pub mod tests {
         );
 
         let evm_state_dir = TempDir::new().unwrap();
-        let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path, None)
+            .generate_evm_state(&ledger_path.path(), None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -1743,7 +1754,6 @@ pub mod tests {
                 poh_verify: true,
                 ..ProcessOptions::default()
             },
-            None,
         );
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
     }
@@ -1779,9 +1789,9 @@ pub mod tests {
         );
 
         let evm_state_dir = TempDir::new().unwrap();
-        let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path, None)
+            .generate_evm_state(&ledger_path.path(), None)
             .unwrap();
 
         // Should return slot 0, the last slot on the fork that is valid
@@ -1794,7 +1804,6 @@ pub mod tests {
                 poh_verify: true,
                 ..ProcessOptions::default()
             },
-            None,
         );
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
 
@@ -1803,9 +1812,9 @@ pub mod tests {
             fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 2, 0, blockhash);
 
         let evm_state_dir = TempDir::new().unwrap();
-        let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path, None)
+            .generate_evm_state(&ledger_path.path(), None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -1817,7 +1826,6 @@ pub mod tests {
                 poh_verify: true,
                 ..ProcessOptions::default()
             },
-            None,
         );
 
         // One valid fork, one bad fork.  process_blockstore() should only return the valid fork
@@ -1867,13 +1875,19 @@ pub mod tests {
             Ok(_)
         );
 
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
+
         let opts = ProcessOptions {
             poh_verify: true,
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
 
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts);
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
     }
 
@@ -1937,7 +1951,13 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts);
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]); // slot 1 isn't "full", we stop at slot zero
 
@@ -1956,8 +1976,12 @@ pub mod tests {
         };
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 3, 0, blockhash);
         // Slot 0 should not show up in the ending bank_forks_info
-
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts);
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
 
         // slot 1 isn't "full", we stop at slot zero
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0, 3]);
@@ -2023,8 +2047,14 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
 
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts);
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
 
         // One fork, other one is ignored b/c not a descendant of the root
         assert_eq!(frozen_bank_slots(&bank_forks), vec![4]);
@@ -2102,8 +2132,14 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
 
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts);
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![1, 2, 3, 4]);
         assert_eq!(bank_forks.working_bank().slot(), 4);
@@ -2158,8 +2194,15 @@ pub mod tests {
         blockstore.set_dead_slot(2).unwrap();
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 3, 1, slot1_blockhash);
 
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
+
         let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, ProcessOptions::default());
+            test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, ProcessOptions::default());
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0, 1, 3]);
         assert_eq!(bank_forks.working_bank().slot(), 3);
@@ -2202,8 +2245,15 @@ pub mod tests {
         blockstore.set_dead_slot(4).unwrap();
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 3, 1, slot1_blockhash);
 
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
+
         let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, ProcessOptions::default());
+            test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, ProcessOptions::default());
 
         // Should see the parent of the dead child
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0, 1, 2, 3]);
@@ -2249,8 +2299,14 @@ pub mod tests {
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 2, 0, blockhash);
         blockstore.set_dead_slot(1).unwrap();
         blockstore.set_dead_slot(2).unwrap();
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
         let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, ProcessOptions::default());
+            test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, ProcessOptions::default());
 
         // Should see only the parent of the dead children
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
@@ -2300,8 +2356,14 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
 
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts);
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
 
         // There is one fork, head is last_slot + 1
         assert_eq!(frozen_bank_slots(&bank_forks), vec![last_slot + 1]);
@@ -2444,8 +2506,14 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
 
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts);
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0, 1]);
         assert_eq!(bank_forks.root(), 0);
@@ -2474,8 +2542,14 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
 
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts);
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
         let bank = bank_forks[0].clone();
@@ -2493,7 +2567,13 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
-        test_process_blockstore(&genesis_config, &blockstore, opts);
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
+        test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
         PAR_THREAD_POOL.with(|pool| {
             assert_eq!(pool.borrow().current_num_threads(), 1);
         });
@@ -2510,9 +2590,15 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
 
         let (_bank_forks, leader_schedule, _) =
-            test_process_blockstore(&genesis_config, &blockstore, opts);
+            test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
         assert_eq!(leader_schedule.max_schedules(), std::usize::MAX);
     }
 
@@ -2572,7 +2658,13 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
-        test_process_blockstore(&genesis_config, &blockstore, opts);
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
+        test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
         assert_eq!(*callback_counter.write().unwrap(), 2);
     }
 
@@ -2947,7 +3039,7 @@ pub mod tests {
         let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
-        let mut entries: Vec<_> = (0..NUM_TRANSFERS)
+        let entries: Vec<_> = (0..NUM_TRANSFERS)
             .step_by(NUM_TRANSFERS_PER_ENTRY)
             .map(|i| {
                 let mut transactions = (0..NUM_TRANSFERS_PER_ENTRY)
@@ -3226,8 +3318,14 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
 
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts);
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
 
         // Should be able to fetch slot 0 because we specified halting at slot 0, even
         // if there is a greater root at slot 1.
@@ -3300,6 +3398,7 @@ pub mod tests {
             bank1,
             &opts,
             &recyclers,
+            None,
             None,
             None,
             None,
@@ -3407,6 +3506,7 @@ pub mod tests {
             &recyclers,
             None,
             None,
+            None,
             Some(&snapshot_config),
             accounts_package_sender.clone(),
             BankFromArchiveTimings::default(),
@@ -3469,7 +3569,7 @@ pub mod tests {
         let mut hash = bank.last_blockhash();
         let mut root: Option<Arc<Bank>> = None;
         loop {
-            let mut entries: Vec<_> = (0..NUM_TRANSFERS)
+            let entries: Vec<_> = (0..NUM_TRANSFERS)
                 .step_by(NUM_TRANSFERS_PER_ENTRY)
                 .map(|i| {
                     next_entry_mut(&mut hash, 0, {
@@ -3844,8 +3944,14 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
 
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts.clone());
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts.clone());
 
         // prepare to add votes
         let last_vote_bank_hash = bank_forks.get(last_main_fork_slot - 1).unwrap().hash();
@@ -3875,8 +3981,14 @@ pub mod tests {
             vote_tx,
             &leader_keypair,
         );
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
 
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts.clone());
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts.clone());
 
         assert_eq!(bank_forks.root(), expected_root_slot);
         assert_eq!(
@@ -3929,8 +4041,14 @@ pub mod tests {
             vote_tx,
             &leader_keypair,
         );
+        
+        let evm_state_dir = TempDir::new().unwrap();
+        let evm_genesis_path = ledger_path.path().join(solana_sdk::genesis_config::EVM_GENESIS);
+        genesis_config
+            .generate_evm_state(&ledger_path.path(), None)
+            .unwrap();
 
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, opts);
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, evm_state_dir, evm_genesis_path, opts);
 
         assert_eq!(bank_forks.root(), really_expected_root_slot);
     }

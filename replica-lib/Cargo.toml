@@ -3,7 +3,7 @@ authors = ["Solana Maintainers <maintainers@solana.foundation>"]
 edition = "2021"
 name = "solana-replica-lib"
 description = "The library used for replication by both the client and server"
-version = "1.9.13"
+version = "1.9.29"
 repository = "https://github.com/solana-labs/solana"
 license = "Apache-2.0"
 homepage = "https://solana.com/"
@@ -13,15 +13,15 @@ documentation = "https://docs.rs/solana-validator"
 crossbeam-channel = "0.5"
 futures-util = "0.3"
 log = "0.4.11"
-prost = "0.9.0"
-solana-rpc = { path = "../rpc", version = "=1.9.13" }
-solana-runtime = { path = "../runtime", version = "=1.9.13" }
-solana-sdk = { path = "../sdk", version = "=1.9.13" }
-tokio = { version = "1", features = ["full"] }
-tonic = { version = "0.6.1", features = ["tls", "transport"] }
+prost = "0.10.0"
+solana-rpc = { path = "../rpc", version = "=1.9.29" }
+solana-runtime = { path = "../runtime", version = "=1.9.29" }
+solana-sdk = { path = "../sdk", version = "=1.9.29" }
+tokio = { version = "1.14.1", features = ["full"] }
+tonic = { version = "0.7.1", features = ["tls", "transport"] }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [build-dependencies]
-tonic-build = "0.6.0"
+tonic-build = "0.7.0"

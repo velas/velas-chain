@@ -39,8 +39,7 @@ struct DeserializableVersionedBank {
     ns_per_slot: u128,
     genesis_creation_time: UnixTimestamp,
     slots_per_year: f64,
-    #[allow(dead_code)]
-    unused: u64,
+    accounts_data_len: u64,
     slot: Slot,
     epoch: Epoch,
     block_height: u64,
@@ -60,7 +59,7 @@ struct DeserializableVersionedBank {
 
     pub(crate) evm_chain_id: u64,
     pub(crate) evm_blockhashes: BlockHashEvm,
-    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
+    pub(crate) evm_persist_fields: evm_state::EvmPersistState,
 }
 
 impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
@@ -83,6 +82,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             ns_per_slot: dvb.ns_per_slot,
             genesis_creation_time: dvb.genesis_creation_time,
             slots_per_year: dvb.slots_per_year,
+            accounts_data_len: dvb.accounts_data_len,
             slot: dvb.slot,
             epoch: dvb.epoch,
             block_height: dvb.block_height,
@@ -98,7 +98,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             epoch_stakes: dvb.epoch_stakes,
             is_delta: dvb.is_delta,
             evm_chain_id: dvb.evm_chain_id,
-            evm_persist_feilds: dvb.evm_persist_feilds,
+            evm_persist_fields: dvb.evm_persist_fields,
         }
     }
 }
@@ -123,7 +123,7 @@ struct SerializableVersionedBank<'a> {
     ns_per_slot: u128,
     genesis_creation_time: UnixTimestamp,
     slots_per_year: f64,
-    unused: u64,
+    accounts_data_len: u64,
     slot: Slot,
     epoch: Epoch,
     block_height: u64,
@@ -141,7 +141,7 @@ struct SerializableVersionedBank<'a> {
     is_delta: bool,
     pub(crate) evm_chain_id: u64,
     pub(crate) evm_blockhashes: &'a RwLock<BlockHashEvm>,
-    pub(crate) evm_persist_feilds: evm_state::EvmPersistState,
+    pub(crate) evm_persist_fields: evm_state::EvmPersistState,
 }
 
 impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedBank<'a> {
@@ -164,7 +164,7 @@ impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedB
             ns_per_slot: rhs.ns_per_slot,
             genesis_creation_time: rhs.genesis_creation_time,
             slots_per_year: rhs.slots_per_year,
-            unused: u64::default(),
+            accounts_data_len: rhs.accounts_data_len,
             slot: rhs.slot,
             epoch: rhs.epoch,
             block_height: rhs.block_height,
@@ -181,7 +181,7 @@ impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedB
             epoch_stakes: rhs.epoch_stakes,
             is_delta: rhs.is_delta,
             evm_chain_id: rhs.evm_chain_id,
-            evm_persist_feilds: rhs.evm_persist_feilds,
+            evm_persist_fields: rhs.evm_persist_fields,
         }
     }
 }

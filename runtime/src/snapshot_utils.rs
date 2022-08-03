@@ -429,11 +429,20 @@ pub fn archive_snapshot_package(
         timer.as_ms(),
         metadata.len()
     );
+
     datapoint_info!(
-        "snapshot-package",
+        "archive-snapshot-package",
         ("slot", snapshot_package.slot(), i64),
         ("duration_ms", timer.as_ms(), i64),
-        ("size", metadata.len(), i64)
+        (
+            if snapshot_package.snapshot_type.is_full_snapshot() {
+                "full-snapshot-archive-size"
+            } else {
+                "incremental-snapshot-archive-size"
+            },
+            metadata.len(),
+            i64
+        ),
     );
     Ok(())
 }
@@ -3123,6 +3132,7 @@ mod tests {
     /// information about Account1, but the full snapshost _does_ have info for Account1, which is
     /// no longer correct!
     #[test]
+    #[ignore] // TODO: Add incremental snapshoting
     fn test_incremental_snapshots_handle_zero_lamport_accounts() {
         solana_logger::setup();
 

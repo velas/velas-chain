@@ -25,10 +25,12 @@ solana-measure = { path = "../measure", version = "1.4.0" }
 solana-net-utils = { path = "../net-utils", version = "1.4.0" }
 solana-runtime = { path = "../runtime", version = "1.4.0" }
 solana-sdk = { path = "../sdk", version = "1.4.0" }
+solana-gossip = { path = "../gossip", version = "1.9.23" }
+solana-streamer = { path = "../streamer", version = "=1.9.29" }
 solana-version = { path = "../version", version = "=0.6.0" }
 solana-evm-loader-program = { path = "../evm-utils/programs/evm_loader" }
 rand_isaac = "0.1.1"
-simple_logger = "1.11"
+simple_logger = "2.2"
 
 [dev-dependencies]
 serial_test = "0.4.0"

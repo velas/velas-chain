@@ -20,6 +20,8 @@ use {
     },
 };
 
+use evm_state::BlockNum;
+
 // - To try and keep the RocksDB size under 400GB:
 //   Seeing about 1600b/shred, using 2000b/shred for margin, so 200m shreds can be stored in 400gb.
 //   at 5k shreds/slot at 50k tps, this is 40k slots (~4.4 hours).
@@ -56,12 +58,18 @@ impl LedgerCleanupService {
         max_compaction_jitter: Option<u64>,
     ) -> Self {
         let exit = exit.clone();
-        let mut last_purge_slot = 0;
-        let mut last_compaction_slot = 0;
+        let mut last_purge_slot = 0; // used when purging as slot_from
+        let mut last_compaction_slot = 0; // used when compacting as slot_from
         let mut compaction_jitter = 0;
         let compaction_interval = compaction_interval.unwrap_or(DEFAULT_COMPACTION_SLOT_INTERVAL);
+        // points to oldest slot in blockstore
         let last_compact_slot = Arc::new(AtomicU64::new(0));
         let last_compact_slot2 = last_compact_slot.clone();
+
+        let first_purged_evm_block = Arc::new(AtomicU64::new(0));
+        let last_purged_evm_block = Arc::new(AtomicU64::new(0));
+        let first_purged_evm_block_cloned = first_purged_evm_block.clone();
+        let last_purged_evm_block_cloned = last_purged_evm_block.clone();
 
         info!(
             "LedgerCleanupService active. max ledger shreds={}, compaction interval={}",
@@ -84,6 +92,8 @@ impl LedgerCleanupService {
                     &mut last_purge_slot,
                     DEFAULT_PURGE_SLOT_INTERVAL,
                     &last_compact_slot,
+                    &first_purged_evm_block,
+                    &last_purged_evm_block,
                 ) {
                     match e {
                         RecvTimeoutError::Disconnected => break,
@@ -106,6 +116,8 @@ impl LedgerCleanupService {
                     &last_compact_slot2,
                     &mut compaction_jitter,
                     max_compaction_jitter,
+                    &first_purged_evm_block_cloned,
+                    &last_purged_evm_block_cloned,
                 );
                 sleep(Duration::from_secs(1));
             })
@@ -176,6 +188,8 @@ impl LedgerCleanupService {
         last_purge_slot: &mut u64,
         purge_interval: u64,
         last_compact_slot: &Arc<AtomicU64>,
+        first_purged_evm_block: &Arc<AtomicU64>,
+        last_purged_evm_block: &Arc<AtomicU64>,
     ) -> Result<(), RecvTimeoutError> {
         let root = Self::receive_new_roots(new_root_receiver)?;
         if root - *last_purge_slot <= purge_interval {
@@ -192,12 +206,26 @@ impl LedgerCleanupService {
 
         let (slots_to_clean, purge_first_slot, lowest_cleanup_slot, total_shreds) =
             Self::find_slots_to_clean(blockstore, root, max_ledger_shreds);
+        let mut first_purged_evm_block_num = 0;
+        let mut last_purged_evm_block_num = 0;
+        if let Ok(mut iter) = blockstore.evm_block_by_slot_iterator(purge_first_slot) {
+            if let Some(item) = iter.next() {
+                first_purged_evm_block_num = item.1;
+            }
+        }
+        if let Ok(mut iter) = blockstore.evm_block_by_slot_reverse_iterator(lowest_cleanup_slot) {
+            if let Some(item) = iter.next() {
+                last_purged_evm_block_num = item.1;
+            }
+        }
 
         if slots_to_clean {
             let purge_complete = Arc::new(AtomicBool::new(false));
             let blockstore = blockstore.clone();
             let purge_complete1 = purge_complete.clone();
             let last_compact_slot1 = last_compact_slot.clone();
+            let first_purged_evm_block_cloned = first_purged_evm_block.clone();
+            let last_purged_evm_block_cloned = last_purged_evm_block.clone();
             let _t_purge = Builder::new()
                 .name("solana-ledger-purge".to_string())
                 .spawn(move || {
@@ -229,11 +257,16 @@ impl LedgerCleanupService {
                     // transaction_status and address_signatures CFs. These are fine because they
                     // don't require strong consistent view for their operation.
                     blockstore.set_max_expired_slot(lowest_cleanup_slot);
+                    blockstore.set_max_expired_block_num(last_purged_evm_block_num);
 
                     purge_time.stop();
                     info!("{}", purge_time);
 
                     last_compact_slot1.store(lowest_cleanup_slot, Ordering::Relaxed);
+                    first_purged_evm_block_cloned
+                        .store(first_purged_evm_block_num, Ordering::Relaxed);
+                    last_purged_evm_block_cloned
+                        .store(last_purged_evm_block_num, Ordering::Relaxed);
 
                     purge_complete1.store(true, Ordering::Relaxed);
                 })
@@ -261,7 +294,12 @@ impl LedgerCleanupService {
         highest_compact_slot: &Arc<AtomicU64>,
         compaction_jitter: &mut u64,
         max_jitter: Option<u64>,
+        first_purged_evm_block: &Arc<AtomicU64>,
+        last_purged_evm_block: &Arc<AtomicU64>,
     ) {
+        let first_purged_evm_block = first_purged_evm_block.load(Ordering::Relaxed);
+        let last_purged_evm_block = last_purged_evm_block.load(Ordering::Relaxed);
+        let evm_block_compaction_range = Some((first_purged_evm_block, last_purged_evm_block.checked_add(1).unwrap_or(BlockNum::MAX)));
         let highest_compaction_slot = highest_compact_slot.load(Ordering::Relaxed);
         if highest_compaction_slot.saturating_sub(*last_compaction_slot)
             > (compaction_interval + *compaction_jitter)
@@ -270,9 +308,11 @@ impl LedgerCleanupService {
                 "compacting data from slots {} to {}",
                 *last_compaction_slot, highest_compaction_slot,
             );
-            if let Err(err) =
-                blockstore.compact_storage(*last_compaction_slot, highest_compaction_slot)
-            {
+            if let Err(err) = blockstore.compact_storage(
+                *last_compaction_slot,
+                highest_compaction_slot,
+                evm_block_compaction_range,
+            ) {
                 // This error is not fatal and indicates an internal error?
                 error!(
                     "Error: {:?}; Couldn't compact storage from {:?} to {:?}",
@@ -329,6 +369,8 @@ mod tests {
         //send a signal to kill all but 5 shreds, which will be in the newest slots
         let mut last_purge_slot = 0;
         let highest_compaction_slot = Arc::new(AtomicU64::new(0));
+        let first_purged_evm_block = Arc::new(AtomicU64::new(0));
+        let last_purged_evm_block = Arc::new(AtomicU64::new(0));
         sender.send(50).unwrap();
         LedgerCleanupService::cleanup_ledger(
             &receiver,
@@ -337,6 +379,8 @@ mod tests {
             &mut last_purge_slot,
             10,
             &highest_compaction_slot,
+            &first_purged_evm_block,
+            &last_purged_evm_block,
         )
         .unwrap();
         assert_eq!(last_purge_slot, 50);
@@ -357,6 +401,8 @@ mod tests {
             &highest_compaction_slot,
             &mut jitter,
             None,
+            &first_purged_evm_block,
+            &last_purged_evm_block,
         );
         assert_eq!(jitter, 0);
 
@@ -383,6 +429,8 @@ mod tests {
 
         let mut last_purge_slot = 0;
         let last_compaction_slot = Arc::new(AtomicU64::new(0));
+        let first_purged_evm_block = Arc::new(AtomicU64::new(0));
+        let last_purged_evm_block = Arc::new(AtomicU64::new(0));
         let mut slot = initial_slots;
         let mut num_slots = 6;
         for _ in 0..5 {
@@ -407,6 +455,8 @@ mod tests {
                 &mut last_purge_slot,
                 10,
                 &last_compaction_slot,
+                &first_purged_evm_block,
+                &last_purged_evm_block,
             )
             .unwrap();
             time.stop();
