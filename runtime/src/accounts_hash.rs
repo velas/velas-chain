@@ -556,6 +556,7 @@ impl AccountsHash {
         (hashes, lamports_sum)
     }
 
+    #[allow(clippy::ptr_arg)]
     // returns true if this vector was exhausted
     fn get_item<'a, 'b>(
         min_index: usize,

@@ -1574,6 +1574,7 @@ impl ReplayStage {
         }
     }
 
+    #[allow(clippy::map_identity)]
     fn replay_blockstore_into_bank(
         bank: &Arc<Bank>,
         blockstore: &Blockstore,

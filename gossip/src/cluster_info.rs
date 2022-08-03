@@ -713,9 +713,9 @@ impl ClusterInfo {
                 Some(format!(
                     "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}| {:5}| {}\n",
                     rpc_addr.to_string(),
-                    if node.id == my_pubkey { "me" } else { "" }.to_string(),
+                    if node.id == my_pubkey { "me" } else { "" },
                     now.saturating_sub(last_updated),
-                    node.id.to_string(),
+                    node.id,
                     if let Some(node_version) = node_version {
                         node_version.to_string()
                     } else {
@@ -783,9 +783,9 @@ impl ClusterInfo {
                         } else {
                             "none".to_string()
                         },
-                        if node.id == my_pubkey { "me" } else { "" }.to_string(),
+                        if node.id == my_pubkey { "me" } else { "" },
                         now.saturating_sub(last_updated),
-                        node.id.to_string(),
+                        node.id,
                         if let Some(node_version) = node_version {
                             node_version.to_string()
                         } else {

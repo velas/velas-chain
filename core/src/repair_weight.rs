@@ -613,6 +613,7 @@ impl RepairWeight {
         );
     }
 
+    #[allow(clippy::ptr_arg)]
     // Update all slots in the `tree1` to point to `root2`,
     fn rename_tree_root(&mut self, tree1: &HeaviestSubtreeForkChoice, root2: Slot) {
         let all_slots = tree1.all_slots_stake_voted_subtree();
@@ -642,6 +643,7 @@ impl RepairWeight {
     }
 
     // Heavier, smaller slots come first
+    #[allow(clippy::ptr_arg)]
     fn sort_by_stake_weight_slot(slot_stake_voted: &mut Vec<(Slot, u64)>) {
         slot_stake_voted.sort_by(|(slot, stake_voted), (slot_, stake_voted_)| {
             if stake_voted == stake_voted_ {

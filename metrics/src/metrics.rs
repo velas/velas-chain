@@ -11,6 +11,7 @@ use {
         collections::HashMap,
         convert::Into,
         env,
+        fmt::Write as _,
         sync::{
             mpsc::{channel, Receiver, RecvTimeoutError, Sender},
             Arc, Barrier, Mutex, Once, RwLock,
@@ -88,21 +89,22 @@ impl MetricsWriter for InfluxDbMetricsWriter {
 
             let mut line = String::new();
             for point in points {
-                line.push_str(&format!("{},host_id={}", &point.name, &host_id));
+                let _ = write!(line, "{},host_id={}", &point.name, &host_id);
 
                 let mut first = true;
                 for (name, value) in point.fields {
-                    line.push_str(&format!(
+                    let _ = write!(
+                        line,
                         "{}{}={}",
                         if first { ' ' } else { ',' },
                         name,
                         value
-                    ));
+                    );
                     first = false;
                 }
                 let timestamp = point.timestamp.duration_since(UNIX_EPOCH);
                 let nanos = timestamp.unwrap().as_nanos();
-                line.push_str(&format!(" {}\n", nanos));
+                let _ = writeln!(line, " {}", nanos);
             }
 
             let client = reqwest::blocking::Client::builder()
@@ -408,7 +410,7 @@ fn get_metrics_config() -> Result<MetricsConfig, String> {
 }
 
 pub fn query(q: &str) -> Result<String, String> {
-    let config = get_metrics_config().map_err(|err| err)?;
+    let config = get_metrics_config()?;
     let query_url = format!(
         "{}/query?u={}&p={}&q={}",
         &config.host, &config.username, &config.password, &q

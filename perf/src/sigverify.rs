@@ -574,6 +574,7 @@ pub fn ed25519_verify_disabled(batches: &mut [PacketBatch]) {
     inc_new_counter_debug!("ed25519_verify_disabled", packet_count);
 }
 
+#[allow(clippy::ptr_arg)]
 pub fn copy_return_values(sig_lens: &[Vec<u32>], out: &PinnedVec<u8>, rvs: &mut Vec<Vec<u8>>) {
     let mut num = 0;
     for (vs, sig_vs) in rvs.iter_mut().zip(sig_lens.iter()) {

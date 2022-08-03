@@ -544,7 +544,7 @@ impl JsonRpcRequestProcessor {
                     return Some(RpcInflationReward {
                         epoch,
                         effective_slot: first_confirmed_block_in_epoch,
-                        amount: reward.lamports.abs() as u64,
+                        amount: reward.lamports.unsigned_abs(),
                         post_balance: reward.post_balance,
                         commission: reward.commission,
                     });
@@ -2474,6 +2474,7 @@ impl JsonRpcRequestProcessor {
 
 }
 
+#[allow(clippy::ptr_arg)]
 fn optimize_filters(filters: &mut Vec<RpcFilterType>) {
     filters.iter_mut().for_each(|filter_type| {
         if let RpcFilterType::Memcmp(compare) = filter_type {
