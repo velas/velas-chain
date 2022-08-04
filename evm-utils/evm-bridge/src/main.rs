@@ -1,12 +1,11 @@
+mod middleware;
 mod pool;
-// mod sol_proxy;
+mod rpc_client;
 
 use log::*;
-use solana_sdk::commitment_config::CommitmentConfig;
 use std::future::ready;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::thread::sleep;
 use std::time::Duration;
 use std::{
     collections::{HashMap, HashSet},
@@ -16,9 +15,7 @@ use std::{
 use evm_rpc::bridge::BridgeERPC;
 use evm_rpc::chain::ChainERPC;
 use evm_rpc::general::GeneralERPC;
-use evm_rpc::trace::TraceERPC;
 use evm_rpc::error::{Error, *};
-use evm_rpc::trace::TraceMeta;
 use evm_rpc::*;
 use evm_state::*;
 use sha3::{Digest, Keccak256};
@@ -27,7 +24,6 @@ use jsonrpc_core::BoxFuture;
 use jsonrpc_http_server::jsonrpc_core::*;
 use jsonrpc_http_server::*;
 
-use serde_json::json;
 use snafu::ResultExt;
 
 use derivative::*;
@@ -39,9 +35,8 @@ use solana_sdk::{
 
 use solana_client::{
     client_error::{ClientError, ClientErrorKind},
-    rpc_client::RpcClient,
     rpc_config::*,
-    rpc_request::{RpcRequest, RpcResponseErrorData},
+    rpc_request::RpcResponseErrorData,
     rpc_response::Response as RpcResponse,
     rpc_response::*,
 };
@@ -55,11 +50,14 @@ use tracing_subscriber::{
 
 use ::tokio;
 use ::tokio::sync::mpsc;
+use ::tokio::time::sleep;
 
+use middleware::ProxyMiddleware;
 use pool::{
     worker_cleaner, worker_deploy, worker_signature_checker, EthPool, PooledTransaction,
     SystemClock,
 };
+use rpc_client::AsyncRpcClient;
 
 use rlp::Encodable;
 use secp256k1::Message;
@@ -166,23 +164,6 @@ mod compatibility {
     }
 }
 
-macro_rules! proxy_evm_rpc {
-    (@silent $rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
-        {
-            match RpcClient::send(&$rpc, RpcRequest::$rpc_call, json!([$($calls,)*])) {
-                Err(e) => Err(from_client_error(e).into()),
-                Ok(o) => Ok(o)
-            }
-        }
-    );
-    ($rpc: expr, $rpc_call:ident $(, $calls:expr)*) => (
-        {
-            debug!("evm proxy received {}", stringify!($rpc_call));
-            proxy_evm_rpc!(@silent $rpc, $rpc_call $(, $calls)* )
-        }
-    )
-
-}
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -190,9 +171,8 @@ pub struct EvmBridge {
     evm_chain_id: u64,
     key: solana_sdk::signature::Keypair,
     accounts: HashMap<evm_state::Address, evm_state::SecretKey>,
-
     #[derivative(Debug = "ignore")]
-    rpc_client: RpcClient,
+    rpc_client: AsyncRpcClient,
     verbose_errors: bool,
     simulate: bool,
     max_logs_blocks: u64,
@@ -224,7 +204,7 @@ impl EvmBridge {
             .collect();
 
         info!("Trying to create rpc client with addr: {}", addr);
-        let rpc_client = RpcClient::new_with_commitment(addr, CommitmentConfig::processed());
+        let rpc_client = AsyncRpcClient::new(addr);
 
         info!("Loading keypair from: {}", keypath);
         let key = solana_sdk::signature::read_keypair_file(&keypath).unwrap();
@@ -280,45 +260,50 @@ impl EvmBridge {
         }
     }
 
-    fn block_to_number(&self, block: Option<BlockId>) -> EvmResult<u64> {
+    async fn block_to_number(&self, block: Option<BlockId>) -> EvmResult<u64> {
         let block = block.unwrap_or_default();
         let block_num = match block {
             BlockId::Num(block) => block.0,
-            BlockId::RelativeId(BlockRelId::Latest) => {
-                let num: Hex<u64> = proxy_evm_rpc!(self.rpc_client, EthBlockNumber)?;
-                num.0
-            }
+            BlockId::RelativeId(BlockRelId::Latest) => self
+                .rpc_client
+                .get_evm_block_number()
+                .await
+                .map_err(|err| from_client_error(err))?,
             _ => return Err(Error::BlockNotFound { block }),
         };
         Ok(block_num)
     }
 
-    pub fn is_transaction_landed(&self, hash: &H256) -> Option<bool> {
-        fn is_receipt_exists(bridge: &EvmBridge, hash: &H256) -> Option<bool> {
+    pub async fn is_transaction_landed(&self, hash: &H256) -> Option<bool> {
+        async fn is_receipt_exists(bridge: &EvmBridge, hash: &H256) -> Option<bool> {
             bridge
                 .rpc_client
                 .get_evm_transaction_receipt(hash)
+                .await
                 .ok()
                 .flatten()
                 .map(|_receipt| true)
         }
 
-        fn is_signature_exists(bridge: &EvmBridge, hash: &H256) -> Option<bool> {
-            bridge
-                .pool
-                .signature_of_cached_transaction(hash)
-                .and_then(|signature| {
-                    bridge
-                        .rpc_client
-                        .get_signature_status(&signature)
-                        .ok()
-                        .flatten()
-                        .and_then(|result| result.ok())
-                        .map(|()| true)
-                })
+        async fn is_signature_exists(bridge: &EvmBridge, hash: &H256) -> Option<bool> {
+            match bridge.pool.signature_of_cached_transaction(hash) {
+                Some(signature) => bridge
+                    .rpc_client
+                    .get_signature_status(&signature)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|result| result.ok())
+                    .flatten()
+                    .map(|()| true),
+                None => None,
+            }
         }
 
-        is_receipt_exists(self, hash).or_else(|| is_signature_exists(self, hash))
+        match is_receipt_exists(self, hash).await {
+            Some(b) => Some(b),
+            None => is_signature_exists(self, hash).await,
+        }
     }
 }
 
@@ -369,12 +354,18 @@ impl BridgeERPC for BridgeErpcImpl {
                 .get(&address)
                 .ok_or(Error::KeyNotFound { account: address })?;
 
-            let nonce = tx
+            let nonce = match tx
                 .nonce
                 .map(|a| a.0)
                 .or_else(|| meta.pool.transaction_count(&address))
-                .or_else(|| meta.rpc_client.get_evm_transaction_count(&address).ok())
-                .unwrap_or_default();
+            {
+                Some(n) => n,
+                None => meta
+                    .rpc_client
+                    .get_evm_transaction_count(&address)
+                    .await
+                    .unwrap_or_default(),
+            };
 
             let tx = UnsignedTransaction {
                 nonce,
@@ -421,12 +412,18 @@ impl BridgeERPC for BridgeErpcImpl {
                 .get(&address)
                 .ok_or(Error::KeyNotFound { account: address })?;
 
-            let nonce = tx
+            let nonce = match tx
                 .nonce
                 .map(|a| a.0)
                 .or_else(|| meta.pool.transaction_count(&address))
-                .or_else(|| meta.rpc_client.get_evm_transaction_count(&address).ok())
-                .unwrap_or_default();
+            {
+                Some(n) => n,
+                None => meta
+                    .rpc_client
+                    .get_evm_transaction_count(&address)
+                    .await
+                    .unwrap_or_default(),
+            };
 
             let tx_create = evm::UnsignedTransaction {
                 nonce,
@@ -539,7 +536,7 @@ impl GeneralERPC for GeneralErpcProxy {
 
     #[instrument]
     fn is_syncing(&self, meta: Self::Metadata) -> EvmResult<bool> {
-        proxy_evm_rpc!(meta.rpc_client, EthSyncing)
+        Err(evm_rpc::Error::ProxyRequest)
     }
 
     #[instrument]
@@ -570,40 +567,29 @@ impl ChainERPC for ChainErpcProxy {
 
     #[instrument]
     // The same as get_slot
-    fn block_number(&self, meta: Self::Metadata) -> BoxFuture<EvmResult<Hex<usize>>> {
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthBlockNumber)))
+    fn block_number(&self, _meta: Self::Metadata) -> BoxFuture<EvmResult<Hex<usize>>> {
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument]
     fn balance(
         &self,
-        meta: Self::Metadata,
-        address: Hex<Address>,
-        block: Option<BlockId>,
+        _meta: Self::Metadata,
+        _address: Hex<Address>,
+        _block: Option<BlockId>,
     ) -> BoxFuture<EvmResult<Hex<U256>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetBalance,
-            address,
-            block
-        )))
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument]
     fn storage_at(
         &self,
-        meta: Self::Metadata,
-        address: Hex<Address>,
-        data: Hex<U256>,
-        block: Option<BlockId>,
+        _meta: Self::Metadata,
+        _address: Hex<Address>,
+        _data: Hex<U256>,
+        _block: Option<BlockId>,
     ) -> BoxFuture<EvmResult<Hex<H256>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetStorageAt,
-            address,
-            data,
-            block
-        )))
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument]
@@ -619,12 +605,7 @@ impl ChainERPC for ChainErpcProxy {
             }
         }
 
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetTransactionCount,
-            address,
-            block
-        )))
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument]
@@ -633,11 +614,7 @@ impl ChainERPC for ChainErpcProxy {
         meta: Self::Metadata,
         block: BlockId,
     ) -> BoxFuture<EvmResult<Hex<usize>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetBlockTransactionCountByNumber,
-            block
-        )))
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument]
@@ -646,26 +623,17 @@ impl ChainERPC for ChainErpcProxy {
         meta: Self::Metadata,
         block_hash: Hex<H256>,
     ) -> BoxFuture<EvmResult<Hex<usize>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetBlockTransactionCountByHash,
-            block_hash
-        )))
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument]
     fn code(
         &self,
-        meta: Self::Metadata,
-        address: Hex<Address>,
-        block: Option<BlockId>,
+        _meta: Self::Metadata,
+        _address: Hex<Address>,
+        _block: Option<BlockId>,
     ) -> BoxFuture<EvmResult<Bytes>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetCode,
-            address,
-            block
-        )))
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument]
@@ -678,10 +646,13 @@ impl ChainERPC for ChainErpcProxy {
         if block_hash == Hex(H256::zero()) {
             Box::pin(ready(Ok(Some(RPCBlock::default()))))
         } else {
-            Box::pin(ready(
-                proxy_evm_rpc!(meta.rpc_client, EthGetBlockByHash, block_hash, full)
-                    .map(|o: Option<_>| o.map(compatibility::patch_block)),
-            ))
+            Box::pin(async move {
+                meta.rpc_client
+                    .get_evm_block_by_hash(block_hash, full)
+                    .await
+                    .map(|o: Option<_>| o.map(compatibility::patch_block))
+                    .map_err(|err| from_client_error(err))
+            })
         }
     }
 
@@ -695,14 +666,17 @@ impl ChainERPC for ChainErpcProxy {
         if block == BlockId::Num(0x0.into()) {
             Box::pin(ready(Ok(Some(RPCBlock::default()))))
         } else {
-            Box::pin(ready(
-                proxy_evm_rpc!(meta.rpc_client, EthGetBlockByNumber, block, full)
-                    .map(|o: Option<_>| o.map(compatibility::patch_block)),
-            ))
+            Box::pin(async move {
+                meta.rpc_client
+                    .get_evm_block_by_number(block, full)
+                    .await
+                    .map(|o: Option<_>| o.map(compatibility::patch_block))
+                    .map_err(|err| from_client_error(err))
+            })
         }
     }
 
-    #[instrument]
+    #[instrument(skip(self))]
     fn transaction_by_hash(
         &self,
         meta: Self::Metadata,
@@ -715,10 +689,13 @@ impl ChainERPC for ChainErpcProxy {
                 return Box::pin(ready(Ok(Some(tx))));
             }
         }
-        Box::pin(ready(
-            proxy_evm_rpc!(meta.rpc_client, EthGetTransactionByHash, tx_hash)
-                .map(|o: Option<_>| o.map(compatibility::patch_tx)),
-        ))
+        Box::pin(async move {
+            meta.rpc_client
+                .get_evm_transaction_by_hash(tx_hash)
+                .await
+                .map(|o: Option<_>| o.map(compatibility::patch_tx))
+                .map_err(|err| from_client_error(err))
+        })
     }
 
     #[instrument]
@@ -728,12 +705,7 @@ impl ChainERPC for ChainErpcProxy {
         block_hash: Hex<H256>,
         tx_id: Hex<usize>,
     ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetTransactionByBlockHashAndIndex,
-            block_hash,
-            tx_id
-        )))
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument]
@@ -743,59 +715,38 @@ impl ChainERPC for ChainErpcProxy {
         block: BlockId,
         tx_id: Hex<usize>,
     ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetTransactionByBlockNumberAndIndex,
-            block,
-            tx_id
-        )))
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument]
     fn transaction_receipt(
         &self,
-        meta: Self::Metadata,
-        tx_hash: Hex<H256>,
+        _meta: Self::Metadata,
+        _tx_hash: Hex<H256>,
     ) -> BoxFuture<EvmResult<Option<RPCReceipt>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthGetTransactionReceipt,
-            tx_hash
-        )))
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument]
     fn call(
         &self,
-        meta: Self::Metadata,
-        tx: RPCTransaction,
-        block: Option<BlockId>,
-        meta_keys: Option<Vec<String>>,
+        _meta: Self::Metadata,
+        _tx: RPCTransaction,
+        _block: Option<BlockId>,
+        _meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<EvmResult<Bytes>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthCall,
-            tx,
-            block,
-            meta_keys
-        )))
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument]
     fn estimate_gas(
         &self,
-        meta: Self::Metadata,
-        tx: RPCTransaction,
-        block: Option<BlockId>,
-        meta_keys: Option<Vec<String>>,
+        _meta: Self::Metadata,
+        _tx: RPCTransaction,
+        _block: Option<BlockId>,
+        _meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<EvmResult<Hex<Gas>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthEstimateGas,
-            tx,
-            block,
-            meta_keys
-        )))
+        Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
     #[instrument(skip(self, meta))]
@@ -804,36 +755,28 @@ impl ChainERPC for ChainErpcProxy {
         meta: Self::Metadata,
         mut log_filter: RPCLogFilter,
     ) -> BoxFuture<EvmResult<Vec<RPCLog>>> {
-        let starting_block = match meta.block_to_number(log_filter.from_block) {
-            Ok(res) => res,
-            Err(err) => return Box::pin(ready(Err(err))),
-        };
-        let ending_block = match meta.block_to_number(log_filter.to_block) {
-            Ok(res) => res,
-            Err(err) => return Box::pin(ready(Err(err))),
-        };
-
-        if ending_block < starting_block {
-            return Box::pin(ready(Err(Error::InvalidBlocksRange {
-                starting: starting_block,
-                ending: ending_block,
-                batch_size: None,
-            })));
-        }
-
-        // request more than we can provide
-        if ending_block > starting_block + meta.max_logs_blocks {
-            return Box::pin(ready(Err(Error::InvalidBlocksRange {
-                starting: starting_block,
-                ending: ending_block,
-                batch_size: Some(meta.max_logs_blocks),
-            })));
-        }
-
-        let mut starting = starting_block;
-
-        // make execution parallel
         Box::pin(async move {
+            let starting_block = meta.block_to_number(log_filter.from_block).await?;
+            let ending_block = meta.block_to_number(log_filter.to_block).await?;
+
+            if ending_block < starting_block {
+                return Err(Error::InvalidBlocksRange {
+                    starting: starting_block,
+                    ending: ending_block,
+                    batch_size: None,
+                });
+            }
+
+            // request more than we can provide
+            if ending_block > starting_block + meta.max_logs_blocks {
+                return Err(Error::InvalidBlocksRange {
+                    starting: starting_block,
+                    ending: ending_block,
+                    batch_size: Some(meta.max_logs_blocks),
+                });
+            }
+
+            let mut starting = starting_block;
             let mut collector = Vec::new();
             while starting <= ending_block {
                 let ending = (starting.saturating_add(MAX_NUM_BLOCKS_IN_BATCH)).min(ending_block);
@@ -843,10 +786,13 @@ impl ChainERPC for ChainErpcProxy {
                 let cloned_filter = log_filter.clone();
                 let cloned_meta = meta.clone();
                 // Parallel execution:
-                collector.push(tokio::task::spawn_blocking(move || {
+                collector.push(tokio::task::spawn(async move {
                     info!("filter = {:?}", cloned_filter);
-                    let result: EvmResult<Vec<RPCLog>> =
-                        proxy_evm_rpc!(@silent cloned_meta.rpc_client, EthGetLogs, cloned_filter);
+                    let result: EvmResult<Vec<RPCLog>> = cloned_meta
+                        .rpc_client
+                        .get_evm_logs(&cloned_filter)
+                        .await
+                        .map_err(|err| from_client_error(err));
                     info!("logs = {:?}", result);
 
                     result
@@ -904,86 +850,6 @@ impl ChainERPC for ChainErpcProxy {
     }
 }
 
-#[derive(Debug)]
-pub struct TraceErpcProxy;
-impl TraceERPC for TraceErpcProxy {
-    type Metadata = Arc<EvmBridge>;
-
-    #[instrument]
-    fn trace_call(
-        &self,
-        meta: Self::Metadata,
-        tx: RPCTransaction,
-        traces: Vec<String>,
-        block: Option<BlockId>,
-        meta_info: Option<TraceMeta>,
-    ) -> BoxFuture<EvmResult<evm_rpc::trace::TraceResultsWithTransactionHash>> {
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthTraceCall, tx, traces, block, meta_info)))
-    }
-
-    #[instrument]
-    fn trace_call_many(
-        &self,
-        meta: Self::Metadata,
-        tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
-        block: Option<BlockId>,
-    ) -> BoxFuture<EvmResult<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>>> {
-        Box::pin(ready(proxy_evm_rpc!(meta.rpc_client, EthTraceCallMany, tx_traces, block)))
-    }
-
-    #[instrument]
-    fn trace_replay_transaction(
-        &self,
-        meta: Self::Metadata,
-        tx_hash: Hex<H256>,
-        traces: Vec<String>,
-        meta_info: Option<TraceMeta>,
-    ) -> BoxFuture<EvmResult<Option<trace::TraceResultsWithTransactionHash>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthTraceReplayTransaction,
-            tx_hash,
-            traces,
-            meta_info
-        )))
-    }
-
-    #[instrument]
-    fn trace_replay_block(
-        &self,
-        meta: Self::Metadata,
-        block: BlockId,
-        traces: Vec<String>,
-        meta_info: Option<TraceMeta>,
-    ) -> BoxFuture<EvmResult<Vec<trace::TraceResultsWithTransactionHash>>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            EthTraceReplayBlock,
-            block,
-            traces,
-            meta_info
-        )))
-    }
-
-    #[instrument]
-    fn recover_block_header(
-        &self,
-        meta: Self::Metadata,
-        txs: Vec<(RPCTransaction, Vec<String>)>,
-        last_hashes: Vec<H256>,
-        block_header: BlockHeader,
-        state_root: H256,
-    ) -> BoxFuture<EvmResult<(Block, Vec<Hex<H256>>)>> {
-        Box::pin(ready(proxy_evm_rpc!(
-            meta.rpc_client,
-            DebugRecoverBlockHeader,
-            txs,
-            last_hashes,
-            block_header,
-            state_root
-        )))
-    }
-}
 
 pub(crate) fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
     let client_error_kind = client_error.kind();
@@ -1140,18 +1006,7 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     );
     let meta = Arc::new(meta);
 
-    let mut io = MetaIoHandler::default();
-
-    // {
-    //     use solana_rpc::rpc::rpc_minimal::Minimal;
-    //     let minimal_rpc = sol_proxy::MinimalRpcSolProxy;
-    //     io.extend_with(minimal_rpc.to_delegate());
-    // }
-    // {
-    //     use solana_rpc::rpc::rpc_minimal::Full;
-    //     let full_rpc = sol_proxy::FullRpcSolProxy;
-    //     io.extend_with(full_rpc.to_delegate());
-    // }
+    let mut io = MetaIoHandler::with_middleware(ProxyMiddleware {});
 
     let ether_bridge = BridgeErpcImpl;
     io.extend_with(ether_bridge.to_delegate());
@@ -1159,8 +1014,6 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     io.extend_with(ether_chain.to_delegate());
     let ether_general = GeneralErpcProxy;
     io.extend_with(ether_general.to_delegate());
-    let ether_trace = TraceErpcProxy;
-    io.extend_with(ether_trace.to_delegate());
 
     let mempool_worker = worker_deploy(meta.clone());
 
@@ -1211,8 +1064,8 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn send_and_confirm_transactions<T: Signers>(
-    rpc_client: &RpcClient,
+async fn send_and_confirm_transactions<T: Signers>(
+    rpc_client: &AsyncRpcClient,
     mut transactions: Vec<solana::Transaction>,
     signer_keys: &T,
 ) -> StdResult<(), anyhow::Error> {
@@ -1221,49 +1074,59 @@ fn send_and_confirm_transactions<T: Signers>(
 
     for _ in 0..SEND_RETRIES {
         // Send all transactions
-        let mut transactions_signatures = transactions
-            .drain(..)
-            .map(|transaction| {
-                if cfg!(not(test)) {
-                    // Delay ~1 tick between write transactions in an attempt to reduce AccountInUse errors
-                    // when all the write transactions modify the same program account (eg, deploying a
-                    // new program)
-                    sleep(Duration::from_millis(MS_PER_TICK));
-                }
+        let mut transactions_signatures = vec![];
+        for transaction in transactions.drain(..) {
+            if cfg!(not(test)) {
+                // Delay ~1 tick between write transactions in an attempt to reduce AccountInUse errors
+                // when all the write transactions modify the same program account (eg, deploying a
+                // new program)
+                sleep(Duration::from_millis(MS_PER_TICK)).await;
+            }
 
-                debug!("Sending {:?}", transaction.signatures);
+            debug!("Sending {:?}", transaction.signatures);
 
-                let signature = rpc_client
-                    .send_transaction_with_config(
-                        &transaction,
-                        RpcSendTransactionConfig {
-                            skip_preflight: true, // NOTE: was true
-                            ..RpcSendTransactionConfig::default()
-                        },
-                    )
-                    .map_err(|e| error!("Send transaction error: {:?}", e))
-                    .ok();
+            let signature = rpc_client
+                .send_transaction_with_config(
+                    &transaction,
+                    RpcSendTransactionConfig {
+                        skip_preflight: true, // NOTE: was true
+                        ..RpcSendTransactionConfig::default()
+                    },
+                )
+                .await
+                .map_err(|e| error!("Send transaction error: {:?}", e))
+                .ok();
 
-                (transaction, signature)
-            })
-            .collect::<Vec<_>>();
+            transactions_signatures.push((transaction, signature));
+        }
 
         for _ in 0..STATUS_RETRIES {
             // Collect statuses for all the transactions, drop those that are confirmed
 
             if cfg!(not(test)) {
                 // Retry twice a second
-                sleep(Duration::from_millis(500));
+                sleep(Duration::from_millis(500)).await;
             }
 
-            transactions_signatures.retain(|(_transaction, signature)| {
-                signature
-                    .and_then(|signature| rpc_client.get_signature_statuses(&[signature]).ok())
-                    .and_then(|RpcResponse { mut value, .. }| value.remove(0))
-                    .and_then(|status| status.confirmations)
-                    .map(|confirmations| confirmations == 0) // retain unconfirmed only
-                    .unwrap_or(true)
-            });
+            let mut retained = vec![];
+            for (transaction, signature) in transactions_signatures {
+                if let Some(signature) = signature {
+                    if rpc_client
+                        .get_signature_statuses(&[signature])
+                        .await
+                        .ok()
+                        .and_then(|RpcResponse { mut value, .. }| value.remove(0))
+                        .and_then(|status| status.confirmations)
+                        .map(|confirmations| confirmations == 0) // retain unconfirmed only
+                        .unwrap_or(true)
+                    {
+                        retained.push((transaction, Some(signature)));
+                    }
+                } else {
+                    retained.push((transaction, signature));
+                }
+            }
+            transactions_signatures = retained;
 
             if transactions_signatures.is_empty() {
                 return Ok(());
@@ -1272,7 +1135,8 @@ fn send_and_confirm_transactions<T: Signers>(
 
         // Re-sign any failed transactions with a new blockhash and retry
         let blockhash = rpc_client
-            .get_new_latest_blockhash(&transactions_signatures[0].0.message().recent_blockhash)?;
+            .get_new_blockhash(&transactions_signatures[0].0.message().recent_blockhash)
+            .await?;
 
         for (mut transaction, _) in transactions_signatures {
             transaction.try_sign(signer_keys, blockhash)?;
@@ -1289,7 +1153,7 @@ mod tests {
     use evm_rpc::{BridgeERPC, Hex};
     use evm_state::Address;
     use secp256k1::SecretKey;
-    use solana_client::rpc_client::RpcClient;
+    use crate::AsyncRpcClient;
     use solana_sdk::signature::Keypair;
     use std::str::FromStr;
     use std::sync::Arc;
@@ -1305,7 +1169,7 @@ mod tests {
             evm_chain_id: 111u64,
             key: Keypair::new(),
             accounts: vec![(public_key, signing_key)].into_iter().collect(),
-            rpc_client: RpcClient::new("".to_string()),
+            rpc_client: AsyncRpcClient::new("".to_string()),
             verbose_errors: true,
             simulate: false,
             max_logs_blocks: 0u64,

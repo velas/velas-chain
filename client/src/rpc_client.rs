@@ -4868,8 +4868,8 @@ impl RpcClient {
 
     //
     // Evm scope
-    // 
-    
+    //
+
     pub fn get_evm_transaction_count(
         &self,
         address: &evm_state::Address,
