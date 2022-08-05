@@ -1,6 +1,13 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+
+//
+// std::{net::SocketAddr, sync::Arc},
+// tokio::runtime::Runtime,
+// tonic::{self, transport::Endpoint, Request},
+
+
 use tonic::{transport::Server, Request, Response, Status};
 use derive_more::Display;
 use log::{debug, error, log_enabled, info, Level};
@@ -18,7 +25,108 @@ pub mod app_grpc {
     tonic::include_proto!("rpcserver");
 }
 
-struct Rpc {}
+pub struct Config {
+    server_addr: String,
+}
+
+/// The service wraps the Rpc to make it runnable in the tokio runtime
+/// and handles start and stop of the service.
+pub struct StateRpcService {
+    state_rpc_server: Backend,
+    thread: JoinHandle<()>,
+    exit_signal_sender: Sender<()>,
+}
+
+impl StateRpcService {
+    pub fn new(
+        config: Config,
+        state_rpc_server: Arc<RwLock<Backend>>,
+    ) -> Self {
+        let worker_threads = config.worker_threads;
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(worker_threads)
+                .thread_name("velas-state-rpc-worker")
+                .enable_all()
+                .build()
+                .expect("Runtime for state rpc server should've been started"),
+        );
+
+        let server_cloned = state_rpc_server.clone();
+        let (exit_signal_sender, exit_signal_receiver) = oneshot::channel::<()>();
+
+        let thread = Builder::new()
+            .name("velas-state-rpc-runtime".to_string())
+            .spawn(move || {
+                Self::run_state_rpc_server_in_runtime(
+                    config,
+                    runtime,
+                    server_cloned,
+                    exit_signal_receiver,
+                );
+            })
+            .unwrap();
+
+        Self {
+            state_rpc_server,
+            thread,
+            exit_signal_sender,
+        }
+    }
+
+    // Runs server implementation with a provided configuration
+    async fn run_state_rpc_server(
+        config: AccountsDbReplServiceConfig,
+        server: AccountsDbReplServer,
+        exit_signal: Receiver<()>,
+    ) -> Result<(), tonic::transport::Error> {
+        info!(
+            "Running StateRpcServer at the endpoint: {:?}",
+            config.server_addr
+        );
+
+        transport::Server::builder()
+            .add_service(BackendServer::new(StateRpcServer {}))
+            .serve_with_shutdown(config.server_addr, exit_signal.map(drop))
+            .await
+    }
+
+    // Start StateRpcServer in a Tokio runtime
+    fn run_state_rpc_server_in_runtime(
+        config: AccountsDbReplServiceConfig,
+        runtime: Arc<Runtime>,
+        server: AccountsDbReplServer,
+        exit_signal: Receiver<()>,
+    ) {
+        let result = runtime.block_on(Self::run_accountsdb_repl_server(
+            config,
+            server,
+            exit_signal,
+        ));
+        match result {
+            Ok(_) => {
+                info!("StateRpcServer finished");
+            }
+            Err(err) => {
+                error!("StateRpcServer finished in error: {:}?", err);
+            }
+        }
+    }
+
+    pub fn join(self) -> thread::Result<()> {
+        let _ = self.exit_signal_sender.send(());
+        self.state_rpc_server.join()?;
+        self.thread.join()
+    }
+}
+
+trait StateRpcServer {
+    fn join(&mut self) -> thread::Result<()>;
+}
+
+struct Rpc {
+    state_rpc_server: Arc<RwLock<dyn StateRpcServer + Sync + Send>>
+}
 
 #[tonic::async_trait]
 impl Backend for Rpc {
@@ -146,10 +254,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: Move address to env var
     info!("Starting the State-RPC web server at 127.0.0.1:8000");
 
-    let addr = "127.0.0.1:8000".parse()?;
-    let backend = BackendServer::new(Rpc {});
+    let config = Config {
+        server_addr: "127.0.0.1:8000".parse()?,
+    };
 
-    Server::builder().add_service(backend).serve(addr).await?;
+    let server = Arc::new(RwLock::new(BackendServer::new(StateRpcServer {})));
+
+    // Sync interface to the async call
+    StateRpcService::new(config, server);
+
+    // Previous version of a runner:
+    //
+    // let addr = "127.0.0.1:8000".parse()?;
+    // let backend = BackendServer::new(StateRpcServer {});
+    // Server::builder().add_service(backend).serve(addr).await?;
 
     Ok(())
 }

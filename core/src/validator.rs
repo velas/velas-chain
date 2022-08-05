@@ -122,6 +122,7 @@ pub struct ValidatorConfig {
     pub account_shrink_paths: Option<Vec<PathBuf>>,
     pub rpc_config: JsonRpcConfig,
     pub accountsdb_repl_service_config: Option<AccountsDbReplServiceConfig>,
+    pub state_rpc_service_config: Option<StateRpcServiceConfig>,
     pub geyser_plugin_config_files: Option<Vec<PathBuf>>,
     pub rpc_addrs: Option<(SocketAddr, SocketAddr)>, // (JsonRpc, JsonRpcPubSub)
     pub pubsub_config: PubSubConfig,
@@ -185,6 +186,7 @@ impl Default for ValidatorConfig {
             account_shrink_paths: None,
             rpc_config: JsonRpcConfig::default(),
             accountsdb_repl_service_config: None,
+            state_rpc_service_config: None,
             geyser_plugin_config_files: None,
             rpc_addrs: None,
             pubsub_config: PubSubConfig::default(),
@@ -647,6 +649,10 @@ impl Validator {
                 bank_notification_senders.push(bank_notification_sender);
                 accountsdb_repl_server_factory::AccountsDbReplServerFactory::build_accountsdb_repl_server(
                     accountsdb_repl_service_config.clone(), bank_notification_receiver, bank_forks.clone())
+            });
+
+            let state_rpc_service = config.state_rpc_serivce_config.as_ref().map(|state_rpc_service_config| {
+                state_rpc::build(state_rpc_service_config)
             });
 
             let (bank_notification_sender, bank_notification_receiver) = unbounded();

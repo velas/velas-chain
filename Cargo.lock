@@ -1972,7 +1972,7 @@ dependencies = [
  "snafu",
  "tempfile",
  "thiserror",
- "triedb",
+ "triedb 0.5.0 (git+https://github.com/velas/triedb?branch=feat/gc-simple)",
 ]
 
 [[package]]
@@ -5371,9 +5371,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.81"
+version = "1.0.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b7ce2b32a1aed03c558dc61a5cd328f15aff2dbc17daad8fb8af04d2100e15c"
+checksum = "82c2c1fdcd807d1098552c5b9a36e425e42e9fbd7c6a37a8425f390f781f7fa7"
 dependencies = [
  "itoa 1.0.2",
  "ryu",
@@ -6734,7 +6734,7 @@ dependencies = [
  "solana-vote-program",
  "tikv-jemallocator",
  "tokio",
- "triedb",
+ "triedb 0.5.0 (git+https://github.com/velas/triedb?branch=feat/gc-simple)",
 ]
 
 [[package]]
@@ -7807,19 +7807,23 @@ name = "state-rpc"
 version = "0.1.0"
 dependencies = [
  "derive_more",
+ "env_logger 0.9.0",
  "evm-rpc",
  "evm-state",
+ "log 0.4.17",
  "primitive-types",
  "prost 0.8.0",
  "rand 0.8.5",
  "rayon",
- "rlp",
  "rocksdb",
+ "serde_json",
+ "solana-client",
+ "solana-core",
  "tempfile",
  "tokio",
  "tonic 0.5.2",
  "tonic-build 0.5.2",
- "triedb",
+ "triedb 0.5.0 (git+https://github.com/raventid/triedb?branch=state-diff)",
 ]
 
 [[package]]
@@ -8896,6 +8900,25 @@ dependencies = [
  "rocksdb",
  "sha3 0.9.1",
  "thiserror",
+]
+
+[[package]]
+name = "triedb"
+version = "0.5.0"
+source = "git+https://github.com/raventid/triedb?branch=state-diff#6c8ac75d030c4079aae171c22f9ba844697a6b80"
+dependencies = [
+ "anyhow",
+ "dashmap",
+ "derivative",
+ "log 0.4.17",
+ "primitive-types",
+ "rayon",
+ "rlp",
+ "rocksdb",
+ "sha3 0.9.1",
+ "thiserror",
+ "tracing",
+ "tracing-attributes",
 ]
 
 [[package]]
