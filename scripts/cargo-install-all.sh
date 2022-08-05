@@ -104,7 +104,7 @@ else
       cargo-build-bpf
       cargo-test-bpf
       solana-dos
-      solana-install-init
+      velas-install-init
       solana-stake-accounts
     )
   fi
