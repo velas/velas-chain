@@ -638,11 +638,13 @@ impl TraceERPC for TraceErpcImpl {
         meta_info: Option<TraceMeta>,
     ) -> BoxFuture<Result<evm_rpc::trace::TraceResultsWithTransactionHash, Error>> {
         Box::pin(async move {
-            Ok(trace_call_many(meta, vec![(tx, traces, meta_info)], block)
-                .await?
-                .into_iter()
-                .next()
-                .expect("One item should be returned"))
+            Ok(
+                trace_call_many(meta, vec![(tx, traces, meta_info)], block, true)
+                    .await?
+                    .into_iter()
+                    .next()
+                    .expect("One item should be returned")
+            )
         })
     }
 
@@ -653,7 +655,7 @@ impl TraceERPC for TraceErpcImpl {
         tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
         block: Option<BlockId>,
     ) -> BoxFuture<Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error>> {
-        Box::pin(trace_call_many(meta, tx_traces, block))
+        Box::pin(trace_call_many(meta, tx_traces, block, true))
     }
 
     #[instrument(skip(self, meta))]
@@ -698,7 +700,7 @@ impl TraceERPC for TraceErpcImpl {
                         None => return Ok(None),
                     };
 
-                    let traces = trace_call_many(meta, tx_traces, Some(base_block)).await?;
+                    let traces = trace_call_many(meta, tx_traces, Some(base_block), false).await?;
                     Ok(traces.get(tx_index - 1).cloned())
                 },
                 Ok(None) => Ok(None),
@@ -742,6 +744,7 @@ impl TraceERPC for TraceErpcImpl {
                 meta,
                 transactions,
                 Some(block.number.as_u64().saturating_sub(1).into()),
+                false,
             ).await
         })
     }
@@ -981,7 +984,7 @@ fn call(
     saved_state: StateRootWithBank,
     meta_keys: Vec<solana_sdk::pubkey::Pubkey>,
 ) -> Result<TxOutput, Error> {
-    let outputs = call_many(meta, &[(tx, meta_keys)], saved_state)?;
+    let outputs = call_many(meta, &[(tx, meta_keys)], saved_state, true)?;
 
     let TxOutput {
         exit_reason,
@@ -1008,6 +1011,7 @@ fn call_many(
     meta: JsonRpcRequestProcessor,
     txs: &[(RPCTransaction, Vec<solana_sdk::pubkey::Pubkey>)],
     saved_state: StateRootWithBank,
+    estimate: bool,
 ) -> Result<Vec<TxOutput>, Error> {
     // if we already found bank with some root, or we just cannot find state_root - use latest.
     let use_latest_state = saved_state.bank.is_some() || saved_state.state_root.is_none();
@@ -1034,7 +1038,7 @@ fn call_many(
     };
 
     let estimate_config = evm_state::EvmConfig {
-        estimate: true,
+        estimate,
         chain_id: bank.evm_chain_id,
         ..Default::default()
     };
@@ -1257,6 +1261,7 @@ async fn trace_call_many(
     meta: JsonRpcRequestProcessor,
     tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
     block: Option<BlockId>,
+    estimate: bool,
 ) -> Result<Vec<evm_rpc::trace::TraceResultsWithTransactionHash>, Error> {
     let saved_state = block_to_state_root(block, &meta).await;
 
@@ -1278,7 +1283,7 @@ async fn trace_call_many(
         txs_meta.push(meta);
     }
 
-    let traces = call_many(meta, &txs, saved_state)?.into_iter();
+    let traces = call_many(meta, &txs, saved_state, estimate)?.into_iter();
 
     let mut result = Vec::new();
     for (output, meta_tx) in traces.zip(txs_meta) {
