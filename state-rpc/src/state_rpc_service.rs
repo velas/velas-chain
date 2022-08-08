@@ -75,7 +75,7 @@ impl StateRpcService {
     // Runs server implementation with a provided configuration
     async fn run_state_rpc_server(
         config: StateRpcServiceConfig,
-        server: AccountsDbReplServer,
+        server: BackendServer,
         exit_signal: Receiver<()>,
     ) -> Result<(), tonic::transport::Error> {
         info!(
@@ -93,7 +93,7 @@ impl StateRpcService {
     fn run_state_rpc_server_in_runtime(
         config: StateRpcServiceConfig,
         runtime: Arc<Runtime>,
-        server: AccountsDbReplServer,
+        server: BackendServer,
         exit_signal: Receiver<()>,
     ) {
         let result = runtime.block_on(Self::run_accountsdb_repl_server(
