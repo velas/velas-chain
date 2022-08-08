@@ -28,6 +28,7 @@ pub enum Mode {
 pub struct ReleaseVersion {
     pub target: String,
     pub commit: String,
+    #[serde(rename="channel")]
     _channel: String,
 }
 
