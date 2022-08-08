@@ -4,11 +4,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-// std::{net::SocketAddr, sync::Arc},
-// tokio::runtime::Runtime,
-// tonic::{self, transport::Endpoint, Request},
-
-
 use tonic::{transport::Server, Request, Response, Status};
 use tonic::transport::Server;
 use derive_more::Display;
@@ -18,7 +13,7 @@ use evm_rpc::FormatHex;
 use evm_state::rand::Rng;
 use evm_state::*;
 
-use state_rpc::finder;
+use crate::finder;
 use triedb::state_diff::DiffFinder;
 
 use app_grpc::backend_server::{Backend, BackendServer};
@@ -43,7 +38,7 @@ pub struct StateRpcService {
 impl StateRpcService {
     pub fn new(
         config: StateRpcServiceConfig,
-        state_rpc_server: Arc<RwLock<Backend>>,
+        state_rpc_server: Arc<RwLock<dyn Backend>>,
     ) -> Self {
         let worker_threads = config.worker_threads;
         let runtime = Arc::new(
@@ -247,39 +242,5 @@ impl Backend for StateRpcServer {
         let reply = app_grpc::GetStateDiffReply { changeset };
 
         Ok(Response::new(reply))
-    }
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
-
-    // TODO: Move address to env var
-    info!("Starting the State-RPC web server at 127.0.0.1:8000");
-
-    let config = StateRpcServiceConfig {
-        server_addr: "127.0.0.1:8000".parse()?,
-        worker_threads: 10
-    };
-
-    let server = Arc::new(RwLock::new(BackendServer::new(StateRpcServer {})));
-
-    // Sync interface to the async call
-    StateRpcService::new(config, server);
-
-    // Previous version of a runner:
-    //
-    // let addr = "127.0.0.1:8000".parse()?;
-    // let backend = BackendServer::new(StateRpcServer {});
-    // Server::builder().add_service(backend).serve(addr).await?;
-
-    Ok(())
-}
-
-#[cfg(tests)]
-mod tests {
-    #[tokio::test]
-    async fn my_test() {
-        assert!(true);
     }
 }

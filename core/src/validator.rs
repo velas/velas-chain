@@ -53,6 +53,7 @@ use {
         accountsdb_repl_server::{AccountsDbReplService, AccountsDbReplServiceConfig},
         accountsdb_repl_server_factory,
     },
+    state_rpc::state_rpc_service::StateRpcConfig,
     solana_rpc::{
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{

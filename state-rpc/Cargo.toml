@@ -19,7 +19,7 @@ path = "src/bin/generate_state.rs"
 [dependencies]
 solana-client = { path = "../client" }
 evm-state = { path = "../evm-utils/evm-state" }
-solana-core = { path = "../core" }
+# solana-core = { path = "../core" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
 tempfile = "3.1.0"
 rand = "0.8.3"
