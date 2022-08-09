@@ -12,6 +12,7 @@ use {
     crossbeam_channel::{Receiver as CrossbeamReceiver, RecvTimeoutError},
     histogram::Histogram,
     itertools::Itertools,
+    retain_mut::RetainMut,
     solana_entry::entry::hash_transactions,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_ledger::blockstore_processor::TransactionStatusSender,
@@ -541,7 +542,7 @@ impl BankingStage {
         let mut proc_start = Measure::start("consume_buffered_process");
         let mut reached_end_of_slot: Option<EndOfSlot> = None;
 
-        #[allow(unstable_name_collisions)]
+        // #[allow(unstable_name_collisions)]
         buffered_packet_batches.retain_mut(|buffered_packet_batch_and_offsets| {
             let (packet_batch, ref mut original_unprocessed_indexes, _forwarded) =
                 buffered_packet_batch_and_offsets;
