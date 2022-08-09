@@ -3,10 +3,10 @@ use std::{collections::HashSet, iter, time::Instant};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use evm::{ExitReason, ExitSucceed};
+use evm_state::executor::FeatureSet;
 use evm_state::*;
 use primitive_types::{H160 as Address, H256, U256};
 use sha3::{Digest, Keccak256};
-use evm_state::executor::FeatureSet;
 
 fn name_to_key<S: AsRef<str>>(name: S) -> H160 {
     H256::from_slice(Keccak256::digest(name.as_ref().as_bytes()).as_slice()).into()
@@ -52,7 +52,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         );
 
         let exit_reason = executor.with_executor(
-            |_, _, _, _| None,
+            |_, _, _, _, _| None,
             |executor| {
                 executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
             },
@@ -66,7 +66,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             let exit_reason = black_box(executor.with_executor(
-                |_, _, _, _| None,
+                |_, _, _, _, _| None,
                 |executor| {
                     executor.transact_call(
                         accounts[idx % accounts.len()],
@@ -106,7 +106,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         );
 
         let exit_reason = executor.with_executor(
-            |_, _, _, _| None,
+            |_, _, _, _, _| None,
             |executor| {
                 executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
             },
@@ -132,7 +132,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             );
 
             let exit_reason = black_box(executor.with_executor(
-                |_, _, _, _| None,
+                |_, _, _, _, _| None,
                 |executor| {
                     executor.transact_call(
                         accounts[idx % accounts.len()],
@@ -163,7 +163,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         );
 
         let exit_reason = executor.with_executor(
-            |_, _, _, _| None,
+            |_, _, _, _, _| None,
             |executor| {
                 executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
             },
@@ -206,7 +206,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 caller,
                 tx.clone(),
                 true,
-                |_, _, _, _| None,
+                |_, _, _, _, _| None,
             ))
             .unwrap();
 
@@ -227,7 +227,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         );
 
         let exit_reason = executor.with_executor(
-            |_, _, _, _| None,
+            |_, _, _, _, _| None,
             |executor| {
                 executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
             },
@@ -271,7 +271,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 caller,
                 tx.clone(),
                 true,
-                |_, _, _, _| None,
+                |_, _, _, _, _| None,
             ))
             .unwrap();
             updated_state = executor
@@ -303,7 +303,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             );
 
             let exit_reason = executor.with_executor(
-                |_, _, _, _| None,
+                |_, _, _, _, _| None,
                 |executor| {
                     executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
                 },
@@ -348,7 +348,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     caller,
                     tx.clone(),
                     true,
-                    |_, _, _, _| None,
+                    |_, _, _, _, _| None,
                 ))
                 .unwrap();
                 let state = executor.deconstruct();
@@ -399,7 +399,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             );
 
             let exit_reason = executor.with_executor(
-                |_, _, _, _| None,
+                |_, _, _, _, _| None,
                 |executor| {
                     executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
                 },
@@ -444,7 +444,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     caller,
                     tx.clone(),
                     true,
-                    |_, _, _, _| None,
+                    |_, _, _, _, _| None,
                 ))
                 .unwrap();
                 let state = executor.deconstruct();
@@ -477,7 +477,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         );
 
         let exit_reason = executor.with_executor(
-            |_, _, _, _| None,
+            |_, _, _, _, _| None,
             |executor| {
                 executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
             },
@@ -518,7 +518,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                 exit_reason,
                 exit_data,
                 ..
-            } = black_box(executor.transaction_execute(tx.clone(), true, |_, _, _, _| None)).unwrap();
+            } = black_box(executor.transaction_execute(tx.clone(), true, |_, _, _, _, _| None))
+                .unwrap();
 
             assert!(matches!(
                 exit_reason,

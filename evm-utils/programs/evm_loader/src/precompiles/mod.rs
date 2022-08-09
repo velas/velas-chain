@@ -1,4 +1,4 @@
-use evm_state::{Context, ExitSucceed};
+use evm_state::{CallScheme, Context, ExitSucceed};
 
 use once_cell::sync::Lazy;
 use primitive_types::H160;
@@ -48,17 +48,20 @@ pub struct PrecompileContext<'a> {
     #[allow(unused)]
     gas_limit: Option<u64>,
     evm_context: &'a Context,
+    call_scheme: Option<CallScheme>,
 }
 impl<'a> PrecompileContext<'a> {
     fn new(
         accounts: AccountStructure<'a>,
         gas_limit: Option<u64>,
         evm_context: &'a Context,
+        call_scheme: Option<CallScheme>,
     ) -> Self {
         Self {
             accounts,
             gas_limit,
             evm_context,
+            call_scheme,
         }
     }
 }
@@ -108,9 +111,15 @@ pub fn simulation_entrypoint<'a>(
     activate_precompile: bool,
     evm_state_balance: u64,
     users_accounts: &'a [KeyedAccount],
-) -> impl FnMut(H160, &[u8], Option<u64>, &Context) -> Option<evm_state::PrecompileCallResult> + 'a
-{
-    move |address, function_abi_input, gas_left, cx| {
+) -> impl FnMut(
+    H160,
+    &[u8],
+    Option<u64>,
+    Option<CallScheme>,
+    &Context,
+) -> Option<evm_state::PrecompileCallResult>
+       + 'a {
+    move |address, function_abi_input, gas_left, call_scheme, cx| {
         let evm_account = RefCell::new(crate::create_state_account(evm_state_balance));
         let evm_keyed_account = KeyedAccount::new(&solana_sdk::evm_state::ID, false, &evm_account);
 
@@ -118,7 +127,7 @@ pub fn simulation_entrypoint<'a>(
         entrypoint_static(
             address,
             function_abi_input,
-            PrecompileContext::new(accounts, gas_left, cx),
+            PrecompileContext::new(accounts, gas_left, cx, call_scheme),
             activate_precompile,
         )
     }
@@ -127,13 +136,19 @@ pub fn simulation_entrypoint<'a>(
 pub(crate) fn entrypoint(
     accounts: AccountStructure,
     activate_precompile: bool,
-) -> impl FnMut(H160, &[u8], Option<u64>, &Context) -> Option<evm_state::PrecompileCallResult> + '_
-{
-    move |address, function_abi_input, gas_left, cx| {
+) -> impl FnMut(
+    H160,
+    &[u8],
+    Option<u64>,
+    Option<CallScheme>,
+    &Context,
+) -> Option<evm_state::PrecompileCallResult>
+       + '_ {
+    move |address, function_abi_input, gas_left, call_scheme, cx| {
         entrypoint_static(
             address,
             function_abi_input,
-            PrecompileContext::new(accounts, gas_left, cx),
+            PrecompileContext::new(accounts, gas_left, cx, call_scheme),
             activate_precompile,
         )
     }
@@ -172,7 +187,7 @@ mod test {
         };
         AccountStructure::testing(0, |accounts| {
             assert_eq!(
-                dbg!(entrypoint_static(addr, &input, PrecompileContext::new(accounts, None, &cx), false).unwrap()),
+                dbg!(entrypoint_static(addr, &input, PrecompileContext::new(accounts, None, &cx, None), false).unwrap()),
                 Err(ExitError::Other("Failed to find account, account_pk = 29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2".into())) // equal to 0x111..111 in base58
             );
         })
@@ -199,7 +214,7 @@ mod test {
                 dbg!(entrypoint_static(
                     addr,
                     &input,
-                    PrecompileContext::new(accounts, None, &cx),
+                    PrecompileContext::new(accounts, None, &cx, None),
                     false
                 )),
                 Some(Ok((ExitSucceed::Returned, _, 0)))
@@ -224,7 +239,7 @@ mod test {
             let result = entrypoint_static(
                 addr,
                 &input,
-                PrecompileContext::new(accounts, None, &cx),
+                PrecompileContext::new(accounts, None, &cx, None),
                 true,
             );
             let result = result.unwrap().unwrap();
@@ -255,7 +270,7 @@ mod test {
             let result = entrypoint_static(
                 addr,
                 &input,
-                PrecompileContext::new(accounts, None, &cx),
+                PrecompileContext::new(accounts, None, &cx, None),
                 true,
             );
             let result = result.unwrap().unwrap();
@@ -277,7 +292,7 @@ mod test {
             let result = entrypoint_static(
                 addr,
                 &input,
-                PrecompileContext::new(accounts, None, &cx),
+                PrecompileContext::new(accounts, None, &cx, None),
                 false,
             );
             assert!(result.is_none());
@@ -298,7 +313,7 @@ mod test {
             let result = entrypoint_static(
                 addr,
                 &input,
-                PrecompileContext::new(accounts, None, &cx),
+                PrecompileContext::new(accounts, None, &cx, None),
                 true,
             );
             let result = result.unwrap().unwrap();
@@ -330,7 +345,7 @@ mod test {
             let result = entrypoint_static(
                 addr,
                 &input,
-                PrecompileContext::new(accounts, None, &cx),
+                PrecompileContext::new(accounts, None, &cx, None),
                 true,
             );
             let result = result.unwrap().unwrap();
@@ -343,7 +358,7 @@ mod test {
             let result = entrypoint_static(
                 addr,
                 &input,
-                PrecompileContext::new(accounts, None, &cx),
+                PrecompileContext::new(accounts, None, &cx, None),
                 true,
             );
             let result = result.unwrap().unwrap();
