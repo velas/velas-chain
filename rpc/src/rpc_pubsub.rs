@@ -1319,6 +1319,7 @@ mod tests {
                    "value": {
                        "owner": system_program::id().to_string(),
                        "lamports": 100,
+                       "lamportsStr": 100.to_string(),
                        "data": "",
                        "executable": false,
                        "rentEpoch": 0,
