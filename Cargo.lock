@@ -4770,6 +4770,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rbpf-cli"
+version = "1.9.29"
+dependencies = [
+ "clap 3.2.8",
+ "serde",
+ "serde_json",
+ "solana-bpf-loader-program",
+ "solana-logger",
+ "solana-program-runtime",
+ "solana-sdk",
+ "solana_rbpf",
+ "time 0.3.9",
+]
+
+[[package]]
 name = "rcgen"
 version = "0.8.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"

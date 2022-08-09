@@ -87,6 +87,7 @@ members = [
     "test-validator",
     "rpc-test",
     "client-test",
+    "rbpf-cli"
 ]
 
 exclude = [
