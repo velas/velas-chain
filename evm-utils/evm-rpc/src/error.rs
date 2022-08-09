@@ -70,6 +70,9 @@ pub enum Error {
     #[snafu(display("Failed to process native chain request: {}", source))]
     ProxyRpcError { source: JRpcError },
 
+    #[snafu(display("Method needs to be redirected to node"))]
+    ProxyRequest,
+
     #[snafu(display("Failed to execute request, rpc return error: {}", source))]
     NativeRpcError {
         details: String,
@@ -194,6 +197,7 @@ impl From<Error> for JRpcError {
                 Self::invalid_params_with_details(err.to_string(), error)
             }
             Error::ProxyRpcError { source } => source.clone(),
+            Error::ProxyRequest => Self::method_not_found(),
             Error::WrongChainId { .. } => Self::invalid_params(err.to_string()),
             Error::EvmStateError { source } => {
                 internal_error_with_details(EVM_STATE_RPC_ERROR, &err, &source)

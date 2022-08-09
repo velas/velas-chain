@@ -410,11 +410,7 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
             );
             let cloned_bridge = bridge.clone();
 
-            let processed_tx = tokio::task::spawn_blocking(move || {
-                process_tx(cloned_bridge, tx, hash, sender, meta_keys)
-            })
-            .await
-            .expect("tokio should allow new spawns");
+            let processed_tx = process_tx(cloned_bridge, tx, hash, sender, meta_keys).await;
 
             match processed_tx {
                 Ok(hash) => {
@@ -489,7 +485,7 @@ pub async fn worker_signature_checker(bridge: Arc<EvmBridge>) {
 
             let now = bridge.pool.clock.now();
 
-            match bridge.is_transaction_landed(&hash) {
+            match bridge.is_transaction_landed(&hash).await {
                 Some(true) => {
                     info!("Transaction {} finalized.", &hash);
                     bridge.pool.drop_from_cache(&hash);
@@ -540,7 +536,7 @@ pub async fn worker_signature_checker(bridge: Arc<EvmBridge>) {
 }
 
 #[instrument]
-fn process_tx(
+async fn process_tx(
     bridge: Arc<EvmBridge>,
     tx: evm_state::Transaction,
     hash: H256,
@@ -557,12 +553,13 @@ fn process_tx(
         bridge
             .rpc_client
             .send::<Bytes>(RpcRequest::EthCall, json!([rpc_tx, "latest"]))
+            .await
             .map_err(from_client_error)?;
     }
 
     if bytes.len() > evm::TX_MTU {
         debug!("Sending tx = {}, by chunks", hash);
-        match deploy_big_tx(&bridge, &bridge.key, &tx) {
+        match deploy_big_tx(&bridge, &bridge.key, &tx).await {
             Ok(_tx) => {
                 return Ok(Hex(hash));
             }
@@ -618,6 +615,7 @@ fn process_tx(
     let (blockhash, _fee_calculator, _) = bridge
         .rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+        .await
         .map(|response| response.value)
         // NOTE: into_native_error?
         .map_err(|e| evm_rpc::Error::NativeRpcError {
@@ -644,6 +642,7 @@ fn process_tx(
                 ..Default::default()
             },
         )
+        .await
         .map_err(from_client_error)?;
 
     bridge
@@ -654,7 +653,7 @@ fn process_tx(
 }
 
 #[instrument]
-fn deploy_big_tx(
+async fn deploy_big_tx(
     bridge: &EvmBridge,
     payer: &solana_sdk::signature::Keypair,
     tx: &evm::Transaction,
@@ -682,11 +681,13 @@ fn deploy_big_tx(
     let balance = bridge
         .rpc_client
         .get_minimum_balance_for_rent_exemption(tx_bytes.len())
+        .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     let (blockhash, _, _) = bridge
         .rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::finalized())
+        .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
         .value;
 
@@ -721,6 +722,7 @@ fn deploy_big_tx(
     match bridge
         .rpc_client
         .send_and_confirm_transaction_with_config(&create_and_allocate_tx, rpc_send_cfg)
+        .await
     {
         Ok(signature) => {
             debug!(
@@ -742,6 +744,7 @@ fn deploy_big_tx(
     let (blockhash, _) = bridge
         .rpc_client
         .get_new_blockhash(&blockhash)
+        .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     let write_data_txs: Vec<solana::Transaction> = tx_bytes
@@ -768,6 +771,7 @@ fn deploy_big_tx(
     debug!("Write data txs: {:?}", write_data_txs);
 
     send_and_confirm_transactions(&bridge.rpc_client, write_data_txs, &signers)
+        .await
         .map(|_| debug!("All write txs for storage {} was done", storage_pubkey))
         .map_err(|e| {
             error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
@@ -777,6 +781,7 @@ fn deploy_big_tx(
     let (blockhash, _, _) = bridge
         .rpc_client
         .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+        .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
         .value;
 
@@ -796,6 +801,7 @@ fn deploy_big_tx(
     match bridge
         .rpc_client
         .send_transaction_with_config(&execute_tx, rpc_send_cfg)
+        .await
     {
         Ok(signature) => {
             debug!(

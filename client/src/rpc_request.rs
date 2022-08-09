@@ -100,7 +100,6 @@ pub enum RpcRequest {
     EthCall,
     EthEstimateGas,
     EthGetLogs,
-    EthSyncing,
     EthTraceCall,
     EthTraceCallMany,
     EthTraceReplayTransaction,
@@ -199,7 +198,6 @@ impl fmt::Display for RpcRequest {
             RpcRequest::EthTraceReplayBlock => "trace_replayBlockTransactions",
             RpcRequest::EthEstimateGas => "eth_estimateGas",
             RpcRequest::EthGetLogs => "eth_getLogs",
-            RpcRequest::EthSyncing => "eth_syncing",
             RpcRequest::GetVelasAccountsByOperationalKey => "getVelasAccountsByOperationalKey",
             RpcRequest::GetVelasAccountsByOwnerKey => "getVelasAccountsByOwnerKey",
             RpcRequest::GetVelasRelyingPartiesByOwnerKey => "getVelasRelyingPartiesByOwnerKey",
@@ -222,7 +220,7 @@ pub const MAX_GET_SLOT_LEADERS: usize = 5000;
 pub const DELINQUENT_VALIDATOR_SLOT_DISTANCE: u64 = 128;
 
 impl RpcRequest {
-    pub(crate) fn build_request_json(self, id: u64, params: Value) -> Value {
+    pub fn build_request_json(self, id: u64, params: Value) -> Value {
         let jsonrpc = "2.0";
         json!({
            "jsonrpc": jsonrpc,
