@@ -42,7 +42,7 @@ solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.9.29" }
 solana-version = { path = "../version", version = "=0.6.0" }
 solana-vote-program = { path = "../programs/vote", version = "=1.9.29" }
-spl-memo = { version = "=3.0.1", features = ["no-entrypoint"] }
+spl-memo = { version = "=3.0.1", git = "https://github.com/velas/spl-memo", branch = "solana-1.9.29", features = ["no-entrypoint"] }
 thiserror = "1.0.30"
 tiny-bip39 = "0.8.2"
 
