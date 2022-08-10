@@ -1023,6 +1023,7 @@ mod tests {
                    "value": {
                        "owner": stake_program_id.to_string(),
                        "lamports": 51,
+                       "lamportsStr": 51.to_string(),
                        "data": [base64::encode(expected_data), encoding],
                        "executable": false,
                        "rentEpoch": 0,
@@ -1141,6 +1142,7 @@ mod tests {
                    "value": {
                        "owner": system_program::id().to_string(),
                        "lamports": 100,
+                       "lamportsStr": 100.to_string(),
                        "data": expected_data,
                        "executable": false,
                        "rentEpoch": 0,
