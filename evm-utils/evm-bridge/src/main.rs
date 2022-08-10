@@ -14,8 +14,8 @@ use std::{
 
 use evm_rpc::bridge::BridgeERPC;
 use evm_rpc::chain::ChainERPC;
-use evm_rpc::general::GeneralERPC;
 use evm_rpc::error::{Error, *};
+use evm_rpc::general::GeneralERPC;
 use evm_rpc::*;
 use evm_state::*;
 use sha3::{Digest, Keccak256};
@@ -164,7 +164,6 @@ mod compatibility {
     }
 }
 
-
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct EvmBridge {
@@ -174,6 +173,7 @@ pub struct EvmBridge {
     #[derivative(Debug = "ignore")]
     rpc_client: AsyncRpcClient,
     verbose_errors: bool,
+    borsh_encoding: bool,
     simulate: bool,
     max_logs_blocks: u64,
     pool: EthPool<SystemClock>,
@@ -187,6 +187,7 @@ impl EvmBridge {
         evm_keys: Vec<SecretKey>,
         addr: String,
         verbose_errors: bool,
+        borsh_encoding: bool,
         simulate: bool,
         max_logs_blocks: u64,
         min_gas_price: U256,
@@ -218,6 +219,7 @@ impl EvmBridge {
             accounts,
             rpc_client,
             verbose_errors,
+            borsh_encoding,
             simulate,
             max_logs_blocks,
             pool,
@@ -850,7 +852,6 @@ impl ChainERPC for ChainErpcProxy {
     }
 }
 
-
 pub(crate) fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
     let client_error_kind = client_error.kind();
     match client_error_kind {
@@ -911,6 +912,8 @@ struct Args {
     min_gas_price: Option<String>,
     #[structopt(long = "verbose-errors")]
     verbose_errors: bool,
+    #[structopt(long = "borsh-encoding")]
+    borsh_encoding: bool,
     #[structopt(long = "no-simulate")]
     no_simulate: bool, // parse inverted to keep false default
     /// Maximum number of blocks to return in eth_getLogs rpc.
@@ -1000,6 +1003,7 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         vec![evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap()],
         server_path,
         args.verbose_errors,
+        args.borsh_encoding,
         !args.no_simulate, // invert argument
         args.max_logs_blocks,
         min_gas_price,
@@ -1149,11 +1153,11 @@ async fn send_and_confirm_transactions<T: Signers>(
 
 #[cfg(test)]
 mod tests {
+    use crate::AsyncRpcClient;
     use crate::{BridgeErpcImpl, EthPool, EvmBridge, SystemClock};
     use evm_rpc::{BridgeERPC, Hex};
     use evm_state::Address;
     use secp256k1::SecretKey;
-    use crate::AsyncRpcClient;
     use solana_sdk::signature::Keypair;
     use std::str::FromStr;
     use std::sync::Arc;
@@ -1171,6 +1175,7 @@ mod tests {
             accounts: vec![(public_key, signing_key)].into_iter().collect(),
             rpc_client: AsyncRpcClient::new("".to_string()),
             verbose_errors: true,
+            borsh_encoding: false,
             simulate: false,
             max_logs_blocks: 0u64,
             pool: EthPool::new(SystemClock),

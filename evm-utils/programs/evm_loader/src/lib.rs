@@ -42,7 +42,7 @@ pub mod scope {
     }
 }
 use instructions::{
-    EvmBigTransaction, EvmInstruction, FeePayerType, ExecuteTransaction,
+    v0, EvmBigTransaction, EvmInstruction, ExecuteTransaction, FeePayerType,
     EVM_INSTRUCTION_BORSH_PREFIX,
 };
 use scope::*;
@@ -57,6 +57,16 @@ pub fn create_evm_instruction_with_borsh(
 ) -> solana::Instruction {
     let mut res = Instruction::new_with_borsh(program_id, data, accounts);
     res.data.insert(0, EVM_INSTRUCTION_BORSH_PREFIX);
+    res
+}
+
+/// Create an old version of evm instruction
+pub fn create_evm_instruction_with_bincode(
+    program_id: solana_sdk::pubkey::Pubkey,
+    data: &v0::EvmInstruction,
+    accounts: Vec<AccountMeta>,
+) -> solana::Instruction {
+    let res = Instruction::new_with_bincode(program_id, data, accounts);
     res
 }
 
@@ -98,7 +108,10 @@ pub fn authorized_tx(
     create_evm_instruction_with_borsh(
         crate::ID,
         &EvmInstruction::ExecuteTransaction {
-            tx: ExecuteTransaction::ProgramAuthorized { tx: Some(unsigned_tx), from },
+            tx: ExecuteTransaction::ProgramAuthorized {
+                tx: Some(unsigned_tx),
+                from,
+            },
             fee_type,
         },
         account_metas,
@@ -208,7 +221,7 @@ pub fn big_tx_execute_authorized(
     create_evm_instruction_with_borsh(
         crate::ID,
         &EvmInstruction::ExecuteTransaction {
-            tx: ExecuteTransaction::ProgramAuthorized { tx: None, from},
+            tx: ExecuteTransaction::ProgramAuthorized { tx: None, from },
             fee_type,
         },
         account_metas,
@@ -235,7 +248,8 @@ pub fn create_state_account(lamports: u64) -> solana_sdk::account::AccountShared
         data: b"Evm state".to_vec(),
         executable: false,
         rent_epoch: 0,
-    }.into()
+    }
+    .into()
 }
 
 ///
@@ -272,4 +286,85 @@ pub fn evm_transfer(
         input: vec![],
     };
     tx.sign(&from, chain_id)
+}
+
+// old instructions for emv bridge
+
+pub fn send_raw_tx_old(
+    signer: solana::Address,
+    evm_tx: evm::Transaction,
+    gas_collector: Option<solana::Address>,
+) -> solana::Instruction {
+    let mut account_metas = vec![
+        AccountMeta::new(solana::evm_state::ID, false),
+        AccountMeta::new(signer, true),
+    ];
+    if let Some(gas_collector) = gas_collector {
+        account_metas.push(AccountMeta::new(gas_collector, false))
+    }
+
+    create_evm_instruction_with_bincode(
+        crate::ID,
+        &v0::EvmInstruction::EvmTransaction { evm_tx: evm_tx },
+        account_metas,
+    )
+}
+
+pub fn big_tx_allocate_old(storage: solana::Address, size: usize) -> solana::Instruction {
+    let account_metas = vec![
+        AccountMeta::new(solana::evm_state::ID, false),
+        AccountMeta::new(storage, true),
+    ];
+
+    let big_tx = v0::EvmBigTransaction::EvmTransactionAllocate { size: size as u64 };
+
+    create_evm_instruction_with_bincode(
+        crate::ID,
+        &v0::EvmInstruction::EvmBigTransaction(big_tx),
+        account_metas,
+    )
+}
+
+pub fn big_tx_write_old(
+    storage: solana::Address,
+    offset: u64,
+    chunk: Vec<u8>,
+) -> solana::Instruction {
+    let account_metas = vec![
+        AccountMeta::new(solana::evm_state::ID, false),
+        AccountMeta::new(storage, true),
+    ];
+
+    let big_tx = v0::EvmBigTransaction::EvmTransactionWrite {
+        offset,
+        data: chunk,
+    };
+
+    create_evm_instruction_with_bincode(
+        crate::ID,
+        &v0::EvmInstruction::EvmBigTransaction(big_tx),
+        account_metas,
+    )
+}
+
+pub fn big_tx_execute_old(
+    storage: solana::Address,
+    gas_collector: Option<&solana::Address>,
+) -> solana::Instruction {
+    let mut account_metas = vec![
+        AccountMeta::new(solana::evm_state::ID, false),
+        AccountMeta::new(storage, true),
+    ];
+
+    if let Some(gas_collector) = gas_collector {
+        account_metas.push(AccountMeta::new(*gas_collector, false))
+    }
+
+    let big_tx = v0::EvmBigTransaction::EvmTransactionExecute {};
+
+    create_evm_instruction_with_bincode(
+        crate::ID,
+        &v0::EvmInstruction::EvmBigTransaction(big_tx),
+        account_metas,
+    )
 }

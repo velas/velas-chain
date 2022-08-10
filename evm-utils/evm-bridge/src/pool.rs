@@ -596,12 +596,20 @@ async fn process_tx(
         }
     }
 
-    let mut ix = solana_evm_loader_program::send_raw_tx(
-        bridge.key.pubkey(),
-        tx.clone(),
-        Some(bridge.key.pubkey()),
-        FeePayerType::Evm,
-    );
+    let mut ix = if bridge.borsh_encoding {
+        solana_evm_loader_program::send_raw_tx(
+            bridge.key.pubkey(),
+            tx.clone(),
+            Some(bridge.key.pubkey()),
+            FeePayerType::Evm,
+        )
+    } else {
+        solana_evm_loader_program::send_raw_tx_old(
+            bridge.key.pubkey(),
+            tx.clone(),
+            Some(bridge.key.pubkey()),
+        )
+    };
 
     // Add meta accounts as additional arguments
     for account in meta_keys.clone() {
@@ -699,8 +707,11 @@ async fn deploy_big_tx(
         &solana_evm_loader_program::ID,
     );
 
-    let allocate_storage_ix =
-        solana_evm_loader_program::big_tx_allocate(storage_pubkey, tx_bytes.len());
+    let allocate_storage_ix = if bridge.borsh_encoding {
+        solana_evm_loader_program::big_tx_allocate(storage_pubkey, tx_bytes.len())
+    } else {
+        solana_evm_loader_program::big_tx_allocate_old(storage_pubkey, tx_bytes.len())
+    };
 
     let create_and_allocate_tx = solana::Transaction::new_signed_with_payer(
         &[create_storage_ix, allocate_storage_ix],
@@ -752,11 +763,19 @@ async fn deploy_big_tx(
         .chunks(evm_state::TX_MTU)
         .enumerate()
         .map(|(i, chunk)| {
-            solana_evm_loader_program::big_tx_write(
-                storage_pubkey,
-                (i * evm_state::TX_MTU) as u64,
-                chunk.to_vec(),
-            )
+            if bridge.borsh_encoding {
+                solana_evm_loader_program::big_tx_write(
+                    storage_pubkey,
+                    (i * evm_state::TX_MTU) as u64,
+                    chunk.to_vec(),
+                )
+            } else {
+                solana_evm_loader_program::big_tx_write_old(
+                    storage_pubkey,
+                    (i * evm_state::TX_MTU) as u64,
+                    chunk.to_vec(),
+                )
+            }
         })
         .map(|instruction| {
             solana::Transaction::new_signed_with_payer(
@@ -785,16 +804,17 @@ async fn deploy_big_tx(
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
         .value;
 
-    let execute_tx = solana::Transaction::new_signed_with_payer(
-        &[solana_evm_loader_program::big_tx_execute(
+    let ix = if bridge.borsh_encoding {
+        solana_evm_loader_program::big_tx_execute(
             storage_pubkey,
             Some(&payer_pubkey),
             FeePayerType::Evm,
-        )],
-        Some(&payer_pubkey),
-        &signers,
-        blockhash,
-    );
+        )
+    } else {
+        solana_evm_loader_program::big_tx_execute_old(storage_pubkey, Some(&payer_pubkey))
+    };
+    let execute_tx =
+        solana::Transaction::new_signed_with_payer(&[ix], Some(&payer_pubkey), &signers, blockhash);
 
     debug!("Execute EVM transaction at storage {} ...", storage_pubkey);
 
