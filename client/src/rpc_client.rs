@@ -455,7 +455,6 @@ impl RpcClient {
         Self::new_with_timeout(url, timeout)
     }
 
-    #[allow(dead_code)] // NOTE(velas): single usage was removed, but keep this field
     fn get_node_version(&self) -> Result<semver::Version, RpcError> {
         let r_node_version = self.node_version.read().unwrap();
         if let Some(version) = &*r_node_version {
@@ -648,9 +647,7 @@ impl RpcClient {
         self.send_and_confirm_transaction_with_config(
             transaction,
             RpcSendTransactionConfig {
-                preflight_commitment: Some(
-                    self.commitment().commitment
-                ),
+                preflight_commitment: Some(self.commitment().commitment),
                 ..RpcSendTransactionConfig::default()
             },
         )
@@ -4865,7 +4862,6 @@ impl RpcClient {
         self.sender.get_transport_stats()
     }
 
-
     //
     // Evm scope
     //
@@ -4889,10 +4885,13 @@ impl RpcClient {
         .map(|h| h.0)
     }
 
-    pub fn get_evm_transaction_receipt(&self, hash: &evm_state::H256) -> ClientResult<Option<evm_rpc::RPCReceipt>> {
+    pub fn get_evm_transaction_receipt(
+        &self,
+        hash: &evm_state::H256,
+    ) -> ClientResult<Option<evm_rpc::RPCReceipt>> {
         self.send::<Option<evm_rpc::RPCReceipt>>(
             RpcRequest::EthGetTransactionReceipt,
-            json!([evm_rpc::Hex(*hash)])
+            json!([evm_rpc::Hex(*hash)]),
         )
     }
 }

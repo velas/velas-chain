@@ -1852,6 +1852,7 @@ dependencies = [
  "reqwest",
  "rlp",
  "secp256k1",
+ "semver 1.0.10",
  "serde",
  "serde_json",
  "sha3 0.9.1",

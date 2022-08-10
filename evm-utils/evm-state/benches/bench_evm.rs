@@ -546,7 +546,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     Default::default(),
                     FeatureSet::new_with_all_enabled(),
                 );
-                let create_transaction_result = executor.with_executor(|_,_,_,_| None,|executor| {
+                let create_transaction_result = executor.with_executor(|_,_,_,_,_| None,|executor| {
                     executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
                 });
                 assert!(matches!(
@@ -583,7 +583,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     for idx in 0..iters {
                         let caller = accounts[idx as usize % accounts.len()];
                         let call_transaction_result =
-                            black_box(executor.with_executor(|_,_,_,_| None,|executor| {
+                            black_box(executor.with_executor(|_,_,_,_,_| None,|executor| {
                                 executor.transact_call(
                                     caller,
                                     contract,
@@ -624,7 +624,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             FeatureSet::new_with_all_enabled(),
         );
 
-        let exit_reason = executor.with_executor(|_,_,_,_| None,|executor| {
+        let exit_reason = executor.with_executor(|_,_,_,_,_| None,|executor| {
             executor.transact_create(contract, U256::zero(), code.clone(), u64::max_value())
         });
         assert!(matches!(
@@ -645,7 +645,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 FeatureSet::new_with_all_enabled(),
             );
 
-            let exit_reason = executor.with_executor(|_,_,_,_| None,|executor| {
+            let exit_reason = executor.with_executor(|_,_,_,_,_| None,|executor| {
                 executor.transact_call(
                     accounts[idx % accounts.len()],
                     contract_address,

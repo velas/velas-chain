@@ -11,6 +11,7 @@ use reqwest::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tokio::sync::RwLock;
 use tokio::time::sleep;
 
 use solana_client::{
@@ -27,6 +28,7 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     fee_calculator::FeeCalculator,
     hash::Hash,
+    message::Message,
     signature::Signature,
     transaction::uses_durable_nonce,
 };
@@ -49,6 +51,7 @@ pub struct AsyncRpcClient {
     client: Arc<reqwest::Client>,
     url: String,
     request_id: AtomicU64,
+    node_version: RwLock<Option<semver::Version>>,
 }
 
 impl AsyncRpcClient {
@@ -68,6 +71,7 @@ impl AsyncRpcClient {
             client,
             url,
             request_id: AtomicU64::new(0),
+            node_version: RwLock::new(None),
         }
     }
 
@@ -232,6 +236,33 @@ impl AsyncRpcClient {
         .await
     }
 
+    pub async fn get_version(&self) -> ClientResult<RpcVersionInfo> {
+        self.send(RpcRequest::GetVersion, Value::Null).await
+    }
+
+    async fn get_node_version(&self) -> Result<semver::Version, RpcError> {
+        let r_node_version = self.node_version.read().await;
+        if let Some(version) = &*r_node_version {
+            Ok(version.clone())
+        } else {
+            drop(r_node_version);
+            let mut w_node_version = self.node_version.write().await;
+            let node_version = self.get_version().await.map_err(|e| {
+                RpcError::RpcRequestError(format!("cluster version query failed: {}", e))
+            })?;
+            let node_version = semver::Version::parse(&node_version.solana_core).map_err(|e| {
+                RpcError::RpcRequestError(format!("failed to parse cluster version: {}", e))
+            })?;
+            *w_node_version = Some(node_version.clone());
+            Ok(node_version)
+        }
+    }
+
+    #[deprecated(
+        since = "0.6.0",
+        note = "Please `get_latest_blockhash_with_commitment` and `get_fee_for_message` instead"
+    )]
+    #[allow(deprecated)]
     pub async fn get_fee_calculator_for_blockhash_with_commitment(
         &self,
         blockhash: &Hash,
@@ -248,6 +279,36 @@ impl AsyncRpcClient {
             context,
             value: value.map(|rf| rf.fee_calculator),
         })
+    }
+
+    #[allow(deprecated)]
+    #[allow(dead_code)]
+    pub async fn get_fee_for_message(&self, message: &Message) -> ClientResult<u64> {
+        if self.get_node_version().await? < semver::Version::new(0, 6, 0) {
+            let fee_calculator = self
+                .get_fee_calculator_for_blockhash_with_commitment(
+                    &message.recent_blockhash,
+                    CommitmentConfig::default(),
+                )
+                .await?
+                .value
+                .ok_or_else(|| ClientErrorKind::Custom("Invalid blockhash".to_string()))?;
+            Ok(fee_calculator
+                .lamports_per_signature
+                .saturating_mul(message.header.num_required_signatures as u64))
+        } else {
+            let serialized_encoded =
+                serialize_and_encode::<Message>(message, UiTransactionEncoding::Base64)?;
+            let result = self
+                .send::<Response<Option<u64>>>(
+                    RpcRequest::GetFeeForMessage,
+                    json!([serialized_encoded, CommitmentConfig::default()]),
+                )
+                .await?;
+            result
+                .value
+                .ok_or_else(|| ClientErrorKind::Custom("Invalid blockhash".to_string()).into())
+        }
     }
 
     pub async fn get_signature_status_with_commitment(
@@ -273,6 +334,28 @@ impl AsyncRpcClient {
     ) -> ClientResult<Option<solana_sdk::transaction::Result<()>>> {
         self.get_signature_status_with_commitment(signature, CommitmentConfig::processed())
             .await
+    }
+
+    #[allow(deprecated)]
+    pub async fn is_blockhash_valid(
+        &self,
+        blockhash: &Hash,
+        commitment: CommitmentConfig,
+    ) -> ClientResult<bool> {
+        let result = if self.get_node_version().await? < semver::Version::new(0, 6, 0) {
+            self.get_fee_calculator_for_blockhash_with_commitment(blockhash, commitment)
+                .await?
+                .value
+                .is_some()
+        } else {
+            self.send::<Response<bool>>(
+                RpcRequest::IsBlockhashValid,
+                json!([blockhash.to_string(), commitment,]),
+            )
+            .await?
+            .value
+        };
+        Ok(result)
     }
 
     pub async fn send_and_confirm_transaction_with_config(
@@ -303,14 +386,10 @@ impl AsyncRpcClient {
                     Some(Ok(_)) => return Ok(signature),
                     Some(Err(e)) => return Err(e.into()),
                     None => {
-                        let fee_calculator = self
-                            .get_fee_calculator_for_blockhash_with_commitment(
-                                &recent_blockhash,
-                                CommitmentConfig::processed(),
-                            )
+                        if !self
+                            .is_blockhash_valid(&recent_blockhash, CommitmentConfig::processed())
                             .await?
-                            .value;
-                        if fee_calculator.is_none() {
+                        {
                             // Block hash is not found by some reason
                             break 'sending;
                         } else if cfg!(not(test))
@@ -349,7 +428,8 @@ impl AsyncRpcClient {
             preflight_commitment: Some(preflight_commitment.commitment),
             ..config
         };
-        let serialized_encoded = serialize_and_encode::<solana::Transaction>(transaction, encoding)?;
+        let serialized_encoded =
+            serialize_and_encode::<solana::Transaction>(transaction, encoding)?;
         let request = RpcRequest::SendTransaction;
         let response = match self
             .send_request(request, json!([serialized_encoded, config]))
@@ -418,6 +498,7 @@ impl AsyncRpcClient {
             .map_err(|err| ClientError::new_with_request(err.into(), request))
     }
 
+    #[allow(deprecated)]
     pub async fn get_latest_blockhash_with_commitment(
         &self,
         commitment_config: CommitmentConfig,
@@ -451,10 +532,10 @@ impl AsyncRpcClient {
         } else if let Ok(RpcResponse {
             context,
             value:
-            RpcBlockhash {
-                blockhash,
-                last_valid_block_height:_,
-            },
+                RpcBlockhash {
+                    blockhash,
+                    last_valid_block_height: _,
+                },
         }) = self
             .send::<RpcResponse<RpcBlockhash>>(
                 RpcRequest::GetLatestBlockhash,
@@ -469,7 +550,6 @@ impl AsyncRpcClient {
                 RpcRequest::GetLatestBlockhash,
             ));
         };
-        
 
         let blockhash = blockhash.parse().map_err(|_| {
             ClientError::new_with_request(

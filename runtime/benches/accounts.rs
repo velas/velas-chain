@@ -48,7 +48,6 @@ fn test_accounts_create(bencher: &mut Bencher) {
     let (genesis_config, _) = create_genesis_config(10_000);
     let bank0 = Bank::new_with_paths_for_benches(
         &genesis_config,
-        None,
         vec![PathBuf::from("bench_a0")],
         None,
         None,
@@ -69,7 +68,6 @@ fn test_accounts_squash(bencher: &mut Bencher) {
     genesis_config.rent.burn_percent = 100; // Avoid triggering an assert in Bank::distribute_rent_to_validators()
     let mut prev_bank = Arc::new(Bank::new_with_paths_for_benches(
         &genesis_config,
-        None,
         vec![PathBuf::from("bench_a1")],
         None,
         None,
