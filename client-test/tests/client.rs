@@ -177,6 +177,7 @@ fn test_account_subscription() {
         "value": {
             "owner": system_program::id().to_string(),
             "lamports": 100,
+            "lamportsStr": "100",
             "data": "",
             "executable": false,
             "rentEpoch": 0,

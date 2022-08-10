@@ -65,6 +65,7 @@ use {
     std::{
         collections::{BTreeMap, BTreeSet, HashMap, HashSet},
         ffi::OsStr,
+        fmt::Write as _,
         fs::File,
         io::{self, stdout, BufRead, BufReader, Write},
         path::{Path, PathBuf},
@@ -118,7 +119,7 @@ fn output_slot_rewards(blockstore: &Blockstore, slot: Slot, method: &LedgerOutpu
                             "-".to_string()
                         },
                         sign,
-                        lamports_to_sol(reward.lamports.abs() as u64),
+                        lamports_to_sol(reward.lamports.unsigned_abs()),
                         lamports_to_sol(reward.post_balance),
                         reward
                             .commission
@@ -2781,7 +2782,7 @@ fn main() {
                                         if detail.skipped_reasons.is_empty() {
                                             detail.skipped_reasons = format!("{:?}", skipped_reason);
                                         } else {
-                                            detail.skipped_reasons += &format!("/{:?}", skipped_reason);
+                                            let _ = write!(detail.skipped_reasons, "/{:?}", skipped_reason);
                                         }
                                     }
                                 }

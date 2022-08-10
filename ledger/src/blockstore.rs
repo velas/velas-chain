@@ -54,6 +54,7 @@ use {
         cmp,
         collections::{hash_map::Entry as HashMapEntry, BTreeMap, BTreeSet, HashMap, HashSet},
         convert::TryInto,
+        fmt::Write as _,
         fs,
         io::{Error as IoError, ErrorKind},
         path::{Path, PathBuf},
@@ -4131,27 +4132,29 @@ pub fn create_new_ledger(
                 ledger_path.join(format!("{}.failed", DEFAULT_GENESIS_ARCHIVE)),
             )
             .unwrap_or_else(|e| {
-                error_messages += &format!(
+                let _ = write!(
+                    error_messages,
                     "/failed to stash problematic {}: {}",
                     DEFAULT_GENESIS_ARCHIVE, e
-                )
+                );
             });
             fs::rename(
                 &ledger_path.join(DEFAULT_GENESIS_FILE),
                 ledger_path.join(format!("{}.failed", DEFAULT_GENESIS_FILE)),
             )
             .unwrap_or_else(|e| {
-                error_messages += &format!(
-                    "/failed to stash problematic {}: {}",
+                let _ = write!(
+                    error_messages, 
+                    "/failed to stash problematic {}: {}", 
                     DEFAULT_GENESIS_FILE, e
-                )
+                );
             });
             fs::rename(
                 &ledger_path.join("rocksdb"),
                 ledger_path.join("rocksdb.failed"),
             )
             .unwrap_or_else(|e| {
-                error_messages += &format!("/failed to stash problematic rocksdb: {}", e)
+                let _ = write!(error_messages, "/failed to stash problematic rocksdb: {}", e);
             });
 
             return Err(BlockstoreError::Io(IoError::new(

@@ -2285,6 +2285,7 @@ impl QuietDisplay for CliBlock {}
 impl VerboseDisplay for CliBlock {}
 
 impl fmt::Display for CliBlock {
+    #[allow(clippy::format_in_format_args)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "Slot: {}", self.slot)?;
         writeln!(
@@ -2330,7 +2331,7 @@ impl fmt::Display for CliBlock {
                     format!(
                         "{}◎{:<14.9}",
                         sign,
-                        lamports_to_sol(reward.lamports.abs() as u64)
+                        lamports_to_sol(reward.lamports.unsigned_abs())
                     ),
                     if reward.post_balance == 0 {
                         "          -                 -".to_string()
@@ -2355,7 +2356,7 @@ impl fmt::Display for CliBlock {
                 f,
                 "Total Rewards: {}◎{:<12.9}",
                 sign,
-                lamports_to_sol(total_rewards.abs() as u64)
+                lamports_to_sol(total_rewards.unsigned_abs())
             )?;
         }
         for (index, transaction_with_meta) in

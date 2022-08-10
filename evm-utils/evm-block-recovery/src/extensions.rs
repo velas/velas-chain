@@ -65,7 +65,7 @@ impl NativeBlockExt for ConfirmedBlockWithOptionalMetadata {
             {
                 if transaction.message.account_keys[*program_id_index as usize] == STATIC_PROGRAM_ID
                 {
-                    let instruction: v0::EvmInstruction = bincode::deserialize(&data).unwrap();
+                    let instruction: v0::EvmInstruction = bincode::deserialize(data).unwrap();
                     match &instruction {
                         v0::EvmInstruction::EvmTransaction { .. } => (),
                         _ => only_trivial_instructions = false,

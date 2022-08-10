@@ -105,6 +105,7 @@ where
         .unwrap()
 }
 
+#[allow(clippy::ptr_arg)]
 fn generate_chunked_transfers(
     recent_blockhash: Arc<RwLock<Hash>>,
     shared_txs: &SharedTransactions,

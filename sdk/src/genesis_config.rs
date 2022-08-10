@@ -496,7 +496,7 @@ pub mod evm_genesis {
         reader: R,
     }
 
-    impl<'a, R: BufRead> StreamAccountReader<IoRead<R>> {
+    impl<R: BufRead> StreamAccountReader<IoRead<R>> {
         pub fn new(mut reader: R) -> Result<Self, Error> {
             let mut buffer = String::new();
 

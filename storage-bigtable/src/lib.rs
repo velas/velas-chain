@@ -1000,7 +1000,7 @@ impl LedgerStorage {
                 )
                 .await?
         };
-        let deserialized_blocks: Result<Vec<_>> = evm_full_blocks
+        evm_full_blocks
             .into_iter()
             .map(|(key, row_data)| {
                 let deserialized_block =
@@ -1019,8 +1019,7 @@ impl LedgerStorage {
                 };
                 Ok(block)
             })
-            .collect();
-        Ok(deserialized_blocks?)
+            .collect()
     }
 
     pub async fn get_evm_confirmed_full_block(

@@ -1,3 +1,5 @@
+#![allow(clippy::await_holding_lock)]
+
 use {
     crate::consensus::{Result, Tower, TowerError},
     solana_sdk::{
