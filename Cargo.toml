@@ -104,6 +104,3 @@ split-debuginfo = "unpacked"
 
 [patch.crates-io]
 primitive-types = { git = "https://github.com/velas/parity-common", branch = "borsh-9-support" }
-
-[patch."https://github.com/velas/evm"]
-evm = { git = "ssh://git@github.com/velas/evm-security-fixes.git", branch = "add-traces" }

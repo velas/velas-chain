@@ -1792,7 +1792,7 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "0.23.0"
-source = "git+ssh://git@github.com/velas/evm-security-fixes.git?branch=add-traces#0eceaa7d83d1562a6b7cf464d5ee4f15a6e7b679"
+source = "git+https://github.com/velas/evm?branch=add-traces-precompile-fix#0eceaa7d83d1562a6b7cf464d5ee4f15a6e7b679"
 dependencies = [
  "ethereum",
  "evm-core",
@@ -1858,7 +1858,7 @@ dependencies = [
  "reqwest",
  "rlp",
  "secp256k1",
- "semver 1.0.10",
+ "semver 1.0.13",
  "serde",
  "serde_json",
  "sha3 0.9.1",
@@ -1887,7 +1887,7 @@ dependencies = [
 [[package]]
 name = "evm-core"
 version = "0.23.0"
-source = "git+ssh://git@github.com/velas/evm-security-fixes.git?branch=add-traces#0eceaa7d83d1562a6b7cf464d5ee4f15a6e7b679"
+source = "git+https://github.com/velas/evm?branch=add-traces-precompile-fix#0eceaa7d83d1562a6b7cf464d5ee4f15a6e7b679"
 dependencies = [
  "parity-scale-codec",
  "primitive-types",
@@ -1897,7 +1897,7 @@ dependencies = [
 [[package]]
 name = "evm-gasometer"
 version = "0.23.0"
-source = "git+ssh://git@github.com/velas/evm-security-fixes.git?branch=add-traces#0eceaa7d83d1562a6b7cf464d5ee4f15a6e7b679"
+source = "git+https://github.com/velas/evm?branch=add-traces-precompile-fix#0eceaa7d83d1562a6b7cf464d5ee4f15a6e7b679"
 dependencies = [
  "evm-core",
  "evm-runtime",
@@ -1932,7 +1932,7 @@ dependencies = [
 [[package]]
 name = "evm-runtime"
 version = "0.23.0"
-source = "git+ssh://git@github.com/velas/evm-security-fixes.git?branch=add-traces#0eceaa7d83d1562a6b7cf464d5ee4f15a6e7b679"
+source = "git+https://github.com/velas/evm?branch=add-traces-precompile-fix#0eceaa7d83d1562a6b7cf464d5ee4f15a6e7b679"
 dependencies = [
  "evm-core",
  "primitive-types",
