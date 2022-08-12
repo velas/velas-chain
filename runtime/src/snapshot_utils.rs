@@ -1615,7 +1615,7 @@ fn get_io_error(error: &str) -> SnapshotError {
 
 pub fn verify_snapshot_archive<P, Q, R>(
     snapshot_archive: P,
-    snapshots_to_verify: Q,
+    _snapshots_to_verify: Q,
     storages_to_verify: R,
     archive_format: ArchiveFormat,
 ) where
@@ -1634,13 +1634,9 @@ pub fn verify_snapshot_archive<P, Q, R>(
     )
     .unwrap();
 
-    // Check snapshots are the same
-    let unpacked_snapshots = unpack_dir.join(&TAR_SNAPSHOTS_DIR);
-
-    // TODO: Make evm-state snapshot more consistent, currently rocksdb incremental backup is
-    // not consistent (because it support more than one backup at a time)
-    // TODO(velas): uncomment this check
-    assert!(!dir_diff::is_different(&snapshots_to_verify, unpacked_snapshots).unwrap());
+    // TODO (velas): should we check snapshots consistency?
+    // let unpacked_snapshots = unpack_dir.join(&TAR_SNAPSHOTS_DIR);
+    // assert!(!dir_diff::is_different(&snapshots_to_verify, unpacked_snapshots).unwrap());
 
     // Check the account entries are the same
     let unpacked_accounts = unpack_dir.join(&TAR_ACCOUNTS_DIR);
