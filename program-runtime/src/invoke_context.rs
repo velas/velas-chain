@@ -670,7 +670,6 @@ impl<'a> InvokeContext<'a> {
             })
             .collect::<Result<Vec<_>, InstructionError>>()?;
 
-        #[allow(clippy::unnecessary_find_map)]
         // Check for privilege escalation
         for account in instruction.accounts.iter() {
             let keyed_account = callee_keyed_accounts

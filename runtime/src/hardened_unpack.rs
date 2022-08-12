@@ -341,7 +341,6 @@ pub fn unpack_snapshot<A: Read>(
     .map(|_| unpacked_append_vec_map)
 }
 
-#[allow(clippy::is_digit_ascii_radix)]
 fn all_digits(v: &str) -> bool {
     if v.is_empty() {
         return false;
@@ -354,7 +353,6 @@ fn all_digits(v: &str) -> bool {
     true
 }
 
-#[allow(clippy::is_digit_ascii_radix)]
 fn like_storage(v: &str) -> bool {
     let mut periods = 0;
     let mut saw_numbers = false;

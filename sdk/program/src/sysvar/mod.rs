@@ -117,7 +117,6 @@ pub trait Sysvar:
     }
 }
 
-#[allow(clippy::crate_in_macro_def)]
 #[macro_export]
 macro_rules! impl_sysvar_get {
     ($syscall_name:ident) => {
