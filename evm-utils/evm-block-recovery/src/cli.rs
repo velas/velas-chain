@@ -36,9 +36,9 @@ pub enum Commands {
         #[clap(long, value_name = "NUM")]
         start_slot: u64,
 
-        /// Limit of Native Blocks to search
+        /// Last Native Block to search
         #[clap(long, value_name = "NUM")]
-        limit: usize,
+        end_slot: u64,
     },
 
     /// Restores EVM subchain

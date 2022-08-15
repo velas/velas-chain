@@ -42,11 +42,14 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
         }
-        Commands::FindNative { start_slot, limit } => {
+        Commands::FindNative {
+            start_slot,
+            end_slot,
+        } => {
             routines::find_native(
                 ledger::with_params(cli.creds, cli.instance).await?,
                 start_slot,
-                limit,
+                end_slot,
             )
             .await
         }
