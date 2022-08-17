@@ -262,227 +262,228 @@ pub fn archive_snapshot_package(
     maximum_full_snapshot_archives_to_retain: usize,
     maximum_incremental_snapshot_archives_to_retain: usize,
 ) -> Result<()> {
-    info!(
-        "Generating snapshot archive for slot {}",
-        snapshot_package.slot()
-    );
+    info!("Skipping archive_snapshot_package");
+    // info!(
+//         "Generating snapshot archive for slot {}",
+//         snapshot_package.slot()
+//     );
 
-    serialize_status_cache(
-        snapshot_package.slot(),
-        &snapshot_package.slot_deltas,
-        &snapshot_package
-            .snapshot_links
-            .path()
-            .join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
-    )?;
+//     serialize_status_cache(
+//         snapshot_package.slot(),
+//         &snapshot_package.slot_deltas,
+//         &snapshot_package
+//             .snapshot_links
+//             .path()
+//             .join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
+//     )?;
 
-    let mut timer = Measure::start("snapshot_package-package_snapshots");
-    let tar_dir = snapshot_package
-        .path()
-        .parent()
-        .expect("Tar output path is invalid");
+//     let mut timer = Measure::start("snapshot_package-package_snapshots");
+//     let tar_dir = snapshot_package
+//         .path()
+//         .parent()
+//         .expect("Tar output path is invalid");
 
-    fs::create_dir_all(tar_dir)
-        .map_err(|e| SnapshotError::IoWithSource(e, "create archive path"))?;
+//     fs::create_dir_all(tar_dir)
+//         .map_err(|e| SnapshotError::IoWithSource(e, "create archive path"))?;
 
-    // Create the staging directories
-    let staging_dir_prefix = TMP_SNAPSHOT_ARCHIVE_PREFIX;
-    let staging_dir = tempfile::Builder::new()
-        .prefix(&format!(
-            "{}{}-",
-            staging_dir_prefix,
-            snapshot_package.slot()
-        ))
-        .tempdir_in(tar_dir)
-        .map_err(|e| SnapshotError::IoWithSource(e, "create archive tempdir"))?;
+//     // Create the staging directories
+//     let staging_dir_prefix = TMP_SNAPSHOT_ARCHIVE_PREFIX;
+//     let staging_dir = tempfile::Builder::new()
+//         .prefix(&format!(
+//             "{}{}-",
+//             staging_dir_prefix,
+//             snapshot_package.slot()
+//         ))
+//         .tempdir_in(tar_dir)
+//         .map_err(|e| SnapshotError::IoWithSource(e, "create archive tempdir"))?;
 
-    let staging_accounts_dir = staging_dir.path().join(TAR_ACCOUNTS_DIR);
-    let staging_snapshots_dir = staging_dir.path().join(TAR_SNAPSHOTS_DIR);
-    let staging_version_file = staging_dir.path().join(TAR_VERSION_FILE);
-    fs::create_dir_all(&staging_accounts_dir)
-        .map_err(|e| SnapshotError::IoWithSource(e, "create staging path"))?;
+//     let staging_accounts_dir = staging_dir.path().join(TAR_ACCOUNTS_DIR);
+//     let staging_snapshots_dir = staging_dir.path().join(TAR_SNAPSHOTS_DIR);
+//     let staging_version_file = staging_dir.path().join(TAR_VERSION_FILE);
+//     fs::create_dir_all(&staging_accounts_dir)
+//         .map_err(|e| SnapshotError::IoWithSource(e, "create staging path"))?;
 
-    // Add the snapshots to the staging directory
-    symlink::symlink_dir(
-        snapshot_package.snapshot_links.path(),
-        &staging_snapshots_dir,
-    )
-    .map_err(|e| SnapshotError::IoWithSource(e, "create staging symlinks"))?;
-    // Add the AppendVecs into the compressible list
-    for storage in snapshot_package.snapshot_storages.iter().flatten() {
-        storage.flush()?;
-        let storage_path = storage.get_path();
-        let output_path = staging_accounts_dir.join(crate::append_vec::AppendVec::file_name(
-            storage.slot(),
-            storage.append_vec_id(),
-        ));
+//     // Add the snapshots to the staging directory
+//     symlink::symlink_dir(
+//         snapshot_package.snapshot_links.path(),
+//         &staging_snapshots_dir,
+//     )
+//     .map_err(|e| SnapshotError::IoWithSource(e, "create staging symlinks"))?;
+//     // Add the AppendVecs into the compressible list
+//     for storage in snapshot_package.snapshot_storages.iter().flatten() {
+//         storage.flush()?;
+//         let storage_path = storage.get_path();
+//         let output_path = staging_accounts_dir.join(crate::append_vec::AppendVec::file_name(
+//             storage.slot(),
+//             storage.append_vec_id(),
+//         ));
 
-        // `storage_path` - The file path where the AppendVec itself is located
-        // `output_path` - The file path where the AppendVec will be placed in the staging directory.
-        let storage_path =
-            fs::canonicalize(storage_path).expect("Could not get absolute path for accounts");
-        symlink::symlink_file(storage_path, &output_path)
-            .map_err(|e| SnapshotError::IoWithSource(e, "create storage symlink"))?;
-        if !output_path.is_file() {
-            return Err(SnapshotError::StoragePathSymlinkInvalid);
-        }
-    }
+//         // `storage_path` - The file path where the AppendVec itself is located
+//         // `output_path` - The file path where the AppendVec will be placed in the staging directory.
+//         let storage_path =
+//             fs::canonicalize(storage_path).expect("Could not get absolute path for accounts");
+//         symlink::symlink_file(storage_path, &output_path)
+//             .map_err(|e| SnapshotError::IoWithSource(e, "create storage symlink"))?;
+//         if !output_path.is_file() {
+//             return Err(SnapshotError::StoragePathSymlinkInvalid);
+//         }
+//     }
 
-    // Write version file
-    {
-        let mut f = fs::File::create(staging_version_file)
-            .map_err(|e| SnapshotError::IoWithSource(e, "create version file"))?;
-        f.write_all(snapshot_package.snapshot_version.as_str().as_bytes())
-            .map_err(|e| SnapshotError::IoWithSource(e, "write version file"))?;
-    }
+//     // Write version file
+//     {
+//         let mut f = fs::File::create(staging_version_file)
+//             .map_err(|e| SnapshotError::IoWithSource(e, "create version file"))?;
+//         f.write_all(snapshot_package.snapshot_version.as_str().as_bytes())
+//             .map_err(|e| SnapshotError::IoWithSource(e, "write version file"))?;
+//     }
 
-    let file_ext = get_archive_ext(snapshot_package.archive_format());
+//     let file_ext = get_archive_ext(snapshot_package.archive_format());
 
-    //
-    // Create evm state backup
-    //
-    {
-        let slot = snapshot_package.slot();
-        let snapshot_tmpdir = snapshot_package.snapshot_links.path();
-        let snapshot_hardlink_dir = snapshot_tmpdir.join(slot.to_string());
+//     //
+//     // Create evm state backup
+//     //
+//     {
+//         let slot = snapshot_package.slot();
+//         let snapshot_tmpdir = snapshot_package.snapshot_links.path();
+//         let snapshot_hardlink_dir = snapshot_tmpdir.join(slot.to_string());
 
-        let evm_target = snapshot_hardlink_dir.join(EVM_STATE_DIR);
-        std::fs::create_dir_all(&evm_target)?;
-        let mut evm_state_backup = Measure::start("evm-state-backup-ms");
-        let backup_path = snapshot_package
-            .evm_db
-            .backup(evm_target.into())
-            .map_err(|e| SnapshotError::EvmStateError(e.into()))?;
-        evm_state_backup.stop();
-        inc_new_counter_info!("evm-state-backup-ms", evm_state_backup.as_ms() as usize);
-        info!(
-            "EVM state backup {} for slot {} at {:?}",
-            evm_state_backup, slot, backup_path
-        );
-    }
+//         let evm_target = snapshot_hardlink_dir.join(EVM_STATE_DIR);
+//         std::fs::create_dir_all(&evm_target)?;
+//         let mut evm_state_backup = Measure::start("evm-state-backup-ms");
+//         let backup_path = snapshot_package
+//             .evm_db
+//             .backup(evm_target.into())
+//             .map_err(|e| SnapshotError::EvmStateError(e.into()))?;
+//         evm_state_backup.stop();
+//         inc_new_counter_info!("evm-state-backup-ms", evm_state_backup.as_ms() as usize);
+//         info!(
+//             "EVM state backup {} for slot {} at {:?}",
+//             evm_state_backup, slot, backup_path
+//         );
+//     }
 
-    // Tar the staging directory into the archive at `archive_path`
-    let archive_path = tar_dir.join(format!(
-        "{}{}.{}",
-        staging_dir_prefix,
-        snapshot_package.slot(),
-        file_ext
-    ));
+//     // Tar the staging directory into the archive at `archive_path`
+//     let archive_path = tar_dir.join(format!(
+//         "{}{}.{}",
+//         staging_dir_prefix,
+//         snapshot_package.slot(),
+//         file_ext
+//     ));
 
-    {
-        let mut archive_file = fs::File::create(&archive_path)?;
+//     {
+//         let mut archive_file = fs::File::create(&archive_path)?;
 
-        let do_archive_files = |encoder: &mut dyn Write| -> Result<()> {
-            let mut archive = tar::Builder::new(encoder);
-            for dir in [TAR_ACCOUNTS_DIR, TAR_SNAPSHOTS_DIR] {
-                archive.append_dir_all(dir, staging_dir.as_ref().join(dir))?;
-            }
-            archive.append_path_with_name(
-                staging_dir.as_ref().join(TAR_VERSION_FILE),
-                TAR_VERSION_FILE,
-            )?;
-            archive.into_inner()?;
-            Ok(())
-        };
+//         let do_archive_files = |encoder: &mut dyn Write| -> Result<()> {
+//             let mut archive = tar::Builder::new(encoder);
+//             for dir in [TAR_ACCOUNTS_DIR, TAR_SNAPSHOTS_DIR] {
+//                 archive.append_dir_all(dir, staging_dir.as_ref().join(dir))?;
+//             }
+//             archive.append_path_with_name(
+//                 staging_dir.as_ref().join(TAR_VERSION_FILE),
+//                 TAR_VERSION_FILE,
+//             )?;
+//             archive.into_inner()?;
+//             Ok(())
+//         };
 
-        match snapshot_package.archive_format() {
-            ArchiveFormat::TarBzip2 => {
-                let mut encoder =
-                    bzip2::write::BzEncoder::new(archive_file, bzip2::Compression::best());
-                do_archive_files(&mut encoder)?;
-                encoder.finish()?;
-            }
-            ArchiveFormat::TarGzip => {
-                let mut encoder =
-                    flate2::write::GzEncoder::new(archive_file, flate2::Compression::default());
-                do_archive_files(&mut encoder)?;
-                encoder.finish()?;
-            }
-            ArchiveFormat::TarZstd => {
-                let mut encoder = zstd::stream::Encoder::new(archive_file, 0)?;
-                do_archive_files(&mut encoder)?;
-                encoder.finish()?;
-            }
-            ArchiveFormat::Tar => {
-                do_archive_files(&mut archive_file)?;
-            }
-        };
-    }
+//         match snapshot_package.archive_format() {
+//             ArchiveFormat::TarBzip2 => {
+//                 let mut encoder =
+//                     bzip2::write::BzEncoder::new(archive_file, bzip2::Compression::best());
+//                 do_archive_files(&mut encoder)?;
+//                 encoder.finish()?;
+//             }
+//             ArchiveFormat::TarGzip => {
+//                 let mut encoder =
+//                     flate2::write::GzEncoder::new(archive_file, flate2::Compression::default());
+//                 do_archive_files(&mut encoder)?;
+//                 encoder.finish()?;
+//             }
+//             ArchiveFormat::TarZstd => {
+//                 let mut encoder = zstd::stream::Encoder::new(archive_file, 0)?;
+//                 do_archive_files(&mut encoder)?;
+//                 encoder.finish()?;
+//             }
+//             ArchiveFormat::Tar => {
+//                 do_archive_files(&mut archive_file)?;
+//             }
+//         };
+//     }
 
-    // Atomically move the archive into position for other validators to find
-    let metadata = fs::metadata(&archive_path)
-        .map_err(|e| SnapshotError::IoWithSource(e, "archive path stat"))?;
-    fs::rename(&archive_path, &snapshot_package.path())
-        .map_err(|e| SnapshotError::IoWithSource(e, "archive path rename"))?;
+//     // Atomically move the archive into position for other validators to find
+//     let metadata = fs::metadata(&archive_path)
+//         .map_err(|e| SnapshotError::IoWithSource(e, "archive path stat"))?;
+//     fs::rename(&archive_path, &snapshot_package.path())
+//         .map_err(|e| SnapshotError::IoWithSource(e, "archive path rename"))?;
 
-    purge_old_snapshot_archives(
-        tar_dir,
-        maximum_full_snapshot_archives_to_retain,
-        maximum_incremental_snapshot_archives_to_retain,
-    );
+//     purge_old_snapshot_archives(
+//         tar_dir,
+//         maximum_full_snapshot_archives_to_retain,
+//         maximum_incremental_snapshot_archives_to_retain,
+//     );
 
-    timer.stop();
-    info!(
-        "Successfully created {:?}. slot: {}, elapsed ms: {}, size={}",
-        snapshot_package.path(),
-        snapshot_package.slot(),
-        timer.as_ms(),
-        metadata.len()
-    );
+//     timer.stop();
+//     info!(
+//         "Successfully created {:?}. slot: {}, elapsed ms: {}, size={}",
+//         snapshot_package.path(),
+//         snapshot_package.slot(),
+//         timer.as_ms(),
+//         metadata.len()
+//     );
 
-    datapoint_info!(
-        "archive-snapshot-package",
-        ("slot", snapshot_package.slot(), i64),
-        ("duration_ms", timer.as_ms(), i64),
-        (
-            if snapshot_package.snapshot_type.is_full_snapshot() {
-                "full-snapshot-archive-size"
-            } else {
-                "incremental-snapshot-archive-size"
-            },
-            metadata.len(),
-            i64
-        ),
-    );
-    Ok(())
-}
+//     datapoint_info!(
+//         "archive-snapshot-package",
+//         ("slot", snapshot_package.slot(), i64),
+//         ("duration_ms", timer.as_ms(), i64),
+//         (
+//             if snapshot_package.snapshot_type.is_full_snapshot() {
+//                 "full-snapshot-archive-size"
+//             } else {
+//                 "incremental-snapshot-archive-size"
+//             },
+//             metadata.len(),
+//             i64
+//         ),
+//     );
+//     Ok(())
+// }
 
-/// Get a list of bank snapshots in a directory
-pub fn get_bank_snapshots<P>(bank_snapshots_dir: P) -> Vec<BankSnapshotInfo>
-where
-    P: AsRef<Path>,
-{
-    match fs::read_dir(&bank_snapshots_dir) {
-        Ok(paths) => paths
-            .filter_map(|entry| {
-                entry.ok().and_then(|e| {
-                    e.path()
-                        .file_name()
-                        .and_then(|n| n.to_str().map(|s| s.parse::<Slot>().ok()))
-                        .unwrap_or(None)
-                })
-            })
-            .map(|slot| {
-                let snapshot_file_name = get_snapshot_file_name(slot);
-                // So nice I join-ed it twice!  The redundant `snapshot_file_name` is unintentional
-                // and should be simplified.  Kept for compatibility.
-                let snapshot_path = bank_snapshots_dir.as_ref().join(&snapshot_file_name);
-                BankSnapshotInfo {
-                    slot,
-                    evm_state_backup_path: snapshot_path.join(EVM_STATE_DIR),
-                    snapshot_path: snapshot_path.join(snapshot_file_name),
-                }
-            })
-            .collect::<Vec<BankSnapshotInfo>>(),
-        Err(err) => {
-            info!(
-                "Unable to read snapshots directory {}: {}",
-                bank_snapshots_dir.as_ref().display(),
-                err
-            );
-            vec![]
-        }
-    }
+// /// Get a list of bank snapshots in a directory
+// pub fn get_bank_snapshots<P>(bank_snapshots_dir: P) -> Vec<BankSnapshotInfo>
+// where
+//     P: AsRef<Path>,
+// {
+//     match fs::read_dir(&bank_snapshots_dir) {
+//         Ok(paths) => paths
+//             .filter_map(|entry| {
+//                 entry.ok().and_then(|e| {
+//                     e.path()
+//                         .file_name()
+//                         .and_then(|n| n.to_str().map(|s| s.parse::<Slot>().ok()))
+//                         .unwrap_or(None)
+//                 })
+//             })
+//             .map(|slot| {
+//                 let snapshot_file_name = get_snapshot_file_name(slot);
+//                 // So nice I join-ed it twice!  The redundant `snapshot_file_name` is unintentional
+//                 // and should be simplified.  Kept for compatibility.
+//                 let snapshot_path = bank_snapshots_dir.as_ref().join(&snapshot_file_name);
+//                 BankSnapshotInfo {
+//                     slot,
+//                     evm_state_backup_path: snapshot_path.join(EVM_STATE_DIR),
+//                     snapshot_path: snapshot_path.join(snapshot_file_name),
+//                 }
+//             })
+//             .collect::<Vec<BankSnapshotInfo>>(),
+//         Err(err) => {
+//             info!(
+//                 "Unable to read snapshots directory {}: {}",
+//                 bank_snapshots_dir.as_ref().display(),
+//                 err
+//             );
+//             vec![]
+//         }
+//     }
 }
 
 /// Get the bank snapshot with the highest slot in a directory

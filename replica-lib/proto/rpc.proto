@@ -1,0 +1,57 @@
+syntax = "proto3";
+package rpcserver;
+
+import "google/protobuf/empty.proto";
+
+service Backend {
+  rpc ping (google.protobuf.Empty) returns (PingReply);
+  rpc getBlock (GetBlockRequest) returns (GetBlockReply);
+  rpc getBlockMulti (GetBlockMultiRequest) returns (GetBlockMultiReply);
+  rpc getStateDiff (GetStateDiffRequest) returns (GetStateDiffReply);
+}
+
+message PingReply {
+  string message = 1;
+}
+
+message GetBlockRequest {
+  string hash = 1;
+}
+
+message GetBlockReply {
+  map<string, bytes> blocks_data = 1;
+}
+
+message GetBlockMultiRequest {
+  repeated string hashes = 1;
+}
+
+message GetBlockMultiReply {
+  map<string, bytes> blocks_data = 1;
+}
+
+message GetStateDiffRequest {
+  string first_root = 1;
+  string second_root = 2;
+}
+
+message Insert {
+  string hash = 1;
+  bytes data = 2;
+}
+
+message Removal {
+  string hash = 1;
+  bytes data = 2;
+}
+
+message Change {
+  oneof change {
+    Insert insert = 3;
+    Removal removal = 4;
+  }
+}
+
+message GetStateDiffReply {
+  repeated Change changeset = 1;
+}
