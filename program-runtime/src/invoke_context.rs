@@ -642,6 +642,7 @@ impl<'a> InvokeContext<'a> {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_find_map)]
     /// Helper to prepare for process_instruction()
     pub fn create_message(
         &mut self,

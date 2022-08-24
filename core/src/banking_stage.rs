@@ -72,9 +72,6 @@ use {
     },
 };
 
-#[allow(deprecated)]
-use retain_mut::RetainMut;
-
 /// (packets, valid_indexes, forwarded)
 /// Batch of packets with a list of which are valid and if this batch has been forwarded.
 type PacketBatchAndOffsets = (PacketBatch, Vec<usize>, bool);

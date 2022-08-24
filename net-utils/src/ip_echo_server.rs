@@ -56,6 +56,7 @@ pub(crate) fn ip_echo_server_request_length() -> usize {
         + REQUEST_TERMINUS_LENGTH
 }
 
+#[allow(clippy::drop_non_drop)]
 async fn process_connection(
     mut socket: TcpStream,
     peer_addr: SocketAddr,
