@@ -26,7 +26,7 @@ solana-runtime = { path = "../runtime", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-vote-program = { path = "../programs/vote", version = "=1.9.29" }
 spl-associated-token-account = { version = "=1.0.3", features = ["no-entrypoint"] }
-spl-memo = { version = "=3.0.1", git = "https://github.com/velas/spl-memo", branch = "solana-1.9.29", features = ["no-entrypoint"] }
+spl-memo = { version = "=3.0.1", features = ["no-entrypoint"] }
 spl-token = { version = "=3.2.0", features = ["no-entrypoint"] }
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }

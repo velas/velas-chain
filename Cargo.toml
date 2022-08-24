@@ -104,3 +104,4 @@ split-debuginfo = "unpacked"
 
 [patch.crates-io]
 primitive-types = { git = "https://github.com/velas/parity-common", branch = "borsh-9-support" }
+spl-memo = { git = "https://github.com/velas/spl-memo", branch = "solana-1.9.29" }
