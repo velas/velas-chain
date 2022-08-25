@@ -587,6 +587,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_archive_is_valid_archive_entry() {
         let path = Path::new("");
         assert_eq!(
