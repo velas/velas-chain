@@ -255,7 +255,7 @@ impl Executor {
 
         let block_gas_limit_left = execution_context.gas_left();
         let metadata = StackSubstateMetadata::new(block_gas_limit_left, &config);
-        let state = MemoryStackState::new(metadata, &execution_context);
+        let state = MemoryStackState::new(metadata, &execution_context, clear_logs_on_error_enabled);
         let mut executor = StackExecutor::new_with_precompiles(state, &config, &precompiles);
         let (exit_reason, exit_data) = match action {
             TransactionAction::Call(addr) => {
@@ -410,7 +410,7 @@ impl Executor {
 
         let gas_limit = execution_context.gas_left();
         let metadata = StackSubstateMetadata::new(gas_limit, &config);
-        let state = MemoryStackState::new(metadata, &execution_context);
+        let state = MemoryStackState::new(metadata, &execution_context, self.feature_set.is_clear_logs_on_error_enabled());
         let mut executor = StackExecutor::new_with_precompiles(state, &config, &precompiles);
         let result = func(&mut executor);
         let used_gas = executor.used_gas();
@@ -1472,7 +1472,7 @@ mod tests {
         let transact_call = |config, gas_limit| {
             let backend = MemoryBackend::new(&vicinity, state.clone());
             let metadata = StackSubstateMetadata::new(gas_limit, config);
-            let state = MemoryStackState::new(metadata, &backend);
+            let state = MemoryStackState::new(metadata, &backend, false);
             let precompiles = BTreeMap::new();
             let mut executor = StackExecutor::new_with_precompiles(state, config, &precompiles);
 
@@ -1551,7 +1551,7 @@ mod tests {
         let transact_call = |config, gas_limit| {
             let backend = MemoryBackend::new(&vicinity, state.clone());
             let metadata = StackSubstateMetadata::new(gas_limit, config);
-            let state = MemoryStackState::new(metadata, &backend);
+            let state = MemoryStackState::new(metadata, &backend, false);
             let precompiles = BTreeMap::new();
             let mut executor = StackExecutor::new_with_precompiles(state, config, &precompiles);
 
