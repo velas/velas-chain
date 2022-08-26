@@ -1,33 +1,34 @@
 //! Config program
 
-use crate::ConfigKeys;
-use bincode::deserialize;
-use solana_sdk::{
-    account::{ReadableAccount, WritableAccount},
-    feature_set, ic_msg,
-    instruction::InstructionError,
-    keyed_account::{next_keyed_account, KeyedAccount},
-    process_instruction::InvokeContext,
-    program_utils::limited_deserialize,
-    pubkey::Pubkey,
+use {
+    crate::ConfigKeys,
+    bincode::deserialize,
+    solana_program_runtime::{ic_msg, invoke_context::InvokeContext},
+    solana_sdk::{
+        account::{ReadableAccount, WritableAccount},
+        feature_set,
+        instruction::InstructionError,
+        keyed_account::keyed_account_at_index,
+        program_utils::limited_deserialize,
+        pubkey::Pubkey,
+    },
+    std::collections::BTreeSet,
 };
 
 #[allow(clippy::search_is_some)]
 pub fn process_instruction(
-    _program_id: &Pubkey,
-    keyed_accounts: &[KeyedAccount],
+    first_instruction_account: usize,
     data: &[u8],
-    invoke_context: &mut dyn InvokeContext,
+    invoke_context: &mut InvokeContext,
 ) -> Result<(), InstructionError> {
-    let key_list: ConfigKeys = limited_deserialize(data)?;
-    let keyed_accounts_iter = &mut keyed_accounts.iter();
-    let config_keyed_account = &mut next_keyed_account(keyed_accounts_iter)?;
+    let keyed_accounts = invoke_context.get_keyed_accounts()?;
 
+    let key_list: ConfigKeys = limited_deserialize(data)?;
+    let config_keyed_account =
+        &mut keyed_account_at_index(keyed_accounts, first_instruction_account)?;
     let current_data: ConfigKeys = {
         let config_account = config_keyed_account.try_account_ref_mut()?;
-        if invoke_context.is_feature_active(&feature_set::check_program_owner::id())
-            && config_account.owner != crate::id()
-        {
+        if config_account.owner() != &crate::id() {
             return Err(InstructionError::InvalidAccountOwner);
         }
 
@@ -59,16 +60,16 @@ pub fn process_instruction(
     for (signer, _) in key_list.keys.iter().filter(|(_, is_signer)| *is_signer) {
         counter += 1;
         if signer != config_keyed_account.unsigned_key() {
-            let signer_account = keyed_accounts_iter.next();
-            if signer_account.is_none() {
-                ic_msg!(
-                    invoke_context,
-                    "account {:?} is not in account list",
-                    signer
-                );
-                return Err(InstructionError::MissingRequiredSignature);
-            }
-            let signer_key = signer_account.unwrap().signer_key();
+            let signer_account =
+                keyed_account_at_index(keyed_accounts, counter + 1).map_err(|_| {
+                    ic_msg!(
+                        invoke_context,
+                        "account {:?} is not in account list",
+                        signer,
+                    );
+                    InstructionError::MissingRequiredSignature
+                })?;
+            let signer_key = signer_account.signer_key();
             if signer_key.is_none() {
                 ic_msg!(
                     invoke_context,
@@ -102,6 +103,18 @@ pub fn process_instruction(
         }
     }
 
+    if invoke_context
+        .feature_set
+        .is_active(&feature_set::dedupe_config_program_signers::id())
+    {
+        let total_new_keys = key_list.keys.len();
+        let unique_new_keys = key_list.keys.into_iter().collect::<BTreeSet<_>>();
+        if unique_new_keys.len() != total_new_keys {
+            ic_msg!(invoke_context, "new config contains duplicate keys");
+            return Err(InstructionError::InvalidArgument);
+        }
+    }
+
     // Check for Config data signers not present in incoming account update
     if current_signer_keys.len() > counter {
         ic_msg!(
@@ -127,18 +140,33 @@ pub fn process_instruction(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{config_instruction, get_config_data, id, ConfigKeys, ConfigState};
-    use bincode::serialized_size;
-    use serde_derive::{Deserialize, Serialize};
-    use solana_sdk::{
-        account::{Account, AccountSharedData},
-        keyed_account::create_keyed_is_signer_accounts,
-        process_instruction::MockInvokeContext,
-        signature::{Keypair, Signer},
-        system_instruction::SystemInstruction,
+    use {
+        super::*,
+        crate::{config_instruction, get_config_data, id, ConfigKeys, ConfigState},
+        bincode::serialized_size,
+        serde_derive::{Deserialize, Serialize},
+        solana_program_runtime::invoke_context::mock_process_instruction,
+        solana_sdk::{
+            account::AccountSharedData,
+            pubkey::Pubkey,
+            signature::{Keypair, Signer},
+            system_instruction::SystemInstruction,
+        },
+        std::{cell::RefCell, rc::Rc},
     };
-    use std::cell::RefCell;
+
+    fn process_instruction(
+        instruction_data: &[u8],
+        keyed_accounts: &[(bool, bool, Pubkey, Rc<RefCell<AccountSharedData>>)],
+    ) -> Result<(), InstructionError> {
+        mock_process_instruction(
+            &id(),
+            Vec::new(),
+            instruction_data,
+            keyed_accounts,
+            super::process_instruction,
+        )
+    }
 
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct MyConfig {
@@ -164,8 +192,10 @@ mod tests {
         }
     }
 
-    fn create_config_account(keys: Vec<(Pubkey, bool)>) -> (Keypair, RefCell<AccountSharedData>) {
-        let from_pubkey = solana_sdk::pubkey::new_rand();
+    fn create_config_account(
+        keys: Vec<(Pubkey, bool)>,
+    ) -> (Keypair, Rc<RefCell<AccountSharedData>>) {
+        let from_pubkey = Pubkey::new_unique();
         let config_keypair = Keypair::new();
         let config_pubkey = config_keypair.pubkey();
 
@@ -181,20 +211,10 @@ mod tests {
             } => space,
             _ => panic!("Not a CreateAccount system instruction"),
         };
-        let config_account = RefCell::new(AccountSharedData::from(Account {
-            data: vec![0; space as usize],
-            owner: id(),
-            ..Account::default()
-        }));
-        let accounts = vec![(&config_pubkey, true, &config_account)];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
+        let config_account = AccountSharedData::new_ref(0, space as usize, &id());
+        let keyed_accounts = [(true, false, config_pubkey, config_account.clone())];
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instructions[1].data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instructions[1].data, &keyed_accounts),
             Ok(())
         );
 
@@ -204,8 +224,7 @@ mod tests {
     #[test]
     fn test_process_create_ok() {
         solana_logger::setup();
-        let keys = vec![];
-        let (_, config_account) = create_config_account(keys);
+        let (_, config_account) = create_config_account(vec![]);
         assert_eq!(
             Some(MyConfig::default()),
             deserialize(get_config_data(config_account.borrow().data()).unwrap()).ok()
@@ -221,15 +240,9 @@ mod tests {
         let my_config = MyConfig::new(42);
 
         let instruction = config_instruction::store(&config_pubkey, true, keys, &my_config);
-        let accounts = vec![(&config_pubkey, true, &config_account)];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
+        let keyed_accounts = [(true, false, config_pubkey, config_account.clone())];
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Ok(())
         );
         assert_eq!(
@@ -248,15 +261,9 @@ mod tests {
 
         let mut instruction = config_instruction::store(&config_pubkey, true, keys, &my_config);
         instruction.data = vec![0; 123]; // <-- Replace data with a vector that's too large
-        let accounts = vec![(&config_pubkey, true, &config_account)];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
+        let keyed_accounts = [(true, false, config_pubkey, config_account)];
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Err(InstructionError::InvalidInstructionData)
         );
     }
@@ -271,15 +278,9 @@ mod tests {
 
         let mut instruction = config_instruction::store(&config_pubkey, true, vec![], &my_config);
         instruction.accounts[0].is_signer = false; // <----- not a signer
-        let accounts = vec![(&config_pubkey, false, &config_account)];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
+        let keyed_accounts = [(false, false, config_pubkey, config_account)];
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Err(InstructionError::MissingRequiredSignature)
         );
     }
@@ -287,9 +288,9 @@ mod tests {
     #[test]
     fn test_process_store_with_additional_signers() {
         solana_logger::setup();
-        let pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_pubkey = solana_sdk::pubkey::new_rand();
-        let signer1_pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = Pubkey::new_unique();
+        let signer0_pubkey = Pubkey::new_unique();
+        let signer1_pubkey = Pubkey::new_unique();
         let keys = vec![
             (pubkey, false),
             (signer0_pubkey, true),
@@ -300,21 +301,15 @@ mod tests {
         let my_config = MyConfig::new(42);
 
         let instruction = config_instruction::store(&config_pubkey, true, keys.clone(), &my_config);
-        let signer0_account = RefCell::new(AccountSharedData::default());
-        let signer1_account = RefCell::new(AccountSharedData::default());
-        let accounts = vec![
-            (&config_pubkey, true, &config_account),
-            (&signer0_pubkey, true, &signer0_account),
-            (&signer1_pubkey, true, &signer1_account),
+        let signer0_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
+        let signer1_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
+        let keyed_accounts = [
+            (true, false, config_pubkey, config_account.clone()),
+            (true, false, signer0_pubkey, signer0_account),
+            (true, false, signer1_pubkey, signer1_account),
         ];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Ok(())
         );
         let meta_data: ConfigKeys = deserialize(config_account.borrow().data()).unwrap();
@@ -328,27 +323,18 @@ mod tests {
     #[test]
     fn test_process_store_without_config_signer() {
         solana_logger::setup();
-        let pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = Pubkey::new_unique();
+        let signer0_pubkey = Pubkey::new_unique();
         let keys = vec![(pubkey, false), (signer0_pubkey, true)];
         let (config_keypair, _) = create_config_account(keys.clone());
         let config_pubkey = config_keypair.pubkey();
         let my_config = MyConfig::new(42);
 
         let instruction = config_instruction::store(&config_pubkey, false, keys, &my_config);
-        let signer0_account = RefCell::new(AccountSharedData::from(Account {
-            owner: id(),
-            ..Account::default()
-        }));
-        let accounts = vec![(&signer0_pubkey, true, &signer0_account)];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
+        let signer0_account = AccountSharedData::new_ref(0, 0, &id());
+        let keyed_accounts = [(true, false, signer0_pubkey, signer0_account)];
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Err(InstructionError::InvalidAccountData)
         );
     }
@@ -356,10 +342,10 @@ mod tests {
     #[test]
     fn test_process_store_with_bad_additional_signer() {
         solana_logger::setup();
-        let signer0_pubkey = solana_sdk::pubkey::new_rand();
-        let signer1_pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_account = RefCell::new(AccountSharedData::default());
-        let signer1_account = RefCell::new(AccountSharedData::default());
+        let signer0_pubkey = Pubkey::new_unique();
+        let signer1_pubkey = Pubkey::new_unique();
+        let signer0_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
+        let signer1_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
         let keys = vec![(signer0_pubkey, true)];
         let (config_keypair, config_account) = create_config_account(keys.clone());
         let config_pubkey = config_keypair.pubkey();
@@ -368,34 +354,19 @@ mod tests {
         let instruction = config_instruction::store(&config_pubkey, true, keys, &my_config);
 
         // Config-data pubkey doesn't match signer
-        let accounts = vec![
-            (&config_pubkey, true, &config_account),
-            (&signer1_pubkey, true, &signer1_account),
+        let mut keyed_accounts = [
+            (true, false, config_pubkey, config_account),
+            (true, false, signer1_pubkey, signer1_account),
         ];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Err(InstructionError::MissingRequiredSignature)
         );
 
         // Config-data pubkey not a signer
-        let accounts = vec![
-            (&config_pubkey, true, &config_account),
-            (&signer0_pubkey, false, &signer0_account),
-        ];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
+        keyed_accounts[1] = (false, false, signer0_pubkey, signer0_account);
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Err(InstructionError::MissingRequiredSignature)
         );
     }
@@ -403,13 +374,13 @@ mod tests {
     #[test]
     fn test_config_updates() {
         solana_logger::setup();
-        let pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_pubkey = solana_sdk::pubkey::new_rand();
-        let signer1_pubkey = solana_sdk::pubkey::new_rand();
-        let signer2_pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_account = RefCell::new(AccountSharedData::default());
-        let signer1_account = RefCell::new(AccountSharedData::default());
-        let signer2_account = RefCell::new(AccountSharedData::default());
+        let pubkey = Pubkey::new_unique();
+        let signer0_pubkey = Pubkey::new_unique();
+        let signer1_pubkey = Pubkey::new_unique();
+        let signer2_pubkey = Pubkey::new_unique();
+        let signer0_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
+        let signer1_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
+        let signer2_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
         let keys = vec![
             (pubkey, false),
             (signer0_pubkey, true),
@@ -420,19 +391,13 @@ mod tests {
         let my_config = MyConfig::new(42);
 
         let instruction = config_instruction::store(&config_pubkey, true, keys.clone(), &my_config);
-        let accounts = vec![
-            (&config_pubkey, true, &config_account),
-            (&signer0_pubkey, true, &signer0_account),
-            (&signer1_pubkey, true, &signer1_account),
+        let mut keyed_accounts = [
+            (true, false, config_pubkey, config_account.clone()),
+            (true, false, signer0_pubkey, signer0_account),
+            (true, false, signer1_pubkey, signer1_account),
         ];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Ok(())
         );
 
@@ -440,19 +405,9 @@ mod tests {
         let new_config = MyConfig::new(84);
         let instruction =
             config_instruction::store(&config_pubkey, false, keys.clone(), &new_config);
-        let accounts = vec![
-            (&config_pubkey, false, &config_account),
-            (&signer0_pubkey, true, &signer0_account),
-            (&signer1_pubkey, true, &signer1_account),
-        ];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
+        keyed_accounts[0].0 = false;
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Ok(())
         );
         let meta_data: ConfigKeys = deserialize(config_account.borrow().data()).unwrap();
@@ -466,19 +421,9 @@ mod tests {
         // Attempt update with incomplete signatures
         let keys = vec![(pubkey, false), (signer0_pubkey, true)];
         let instruction = config_instruction::store(&config_pubkey, false, keys, &my_config);
-        let accounts = vec![
-            (&config_pubkey, false, &config_account),
-            (&signer0_pubkey, true, &signer0_account),
-            (&signer1_pubkey, false, &signer1_account),
-        ];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
+        keyed_accounts[2].0 = false;
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Err(InstructionError::MissingRequiredSignature)
         );
 
@@ -489,29 +434,90 @@ mod tests {
             (signer2_pubkey, true),
         ];
         let instruction = config_instruction::store(&config_pubkey, false, keys, &my_config);
-        let accounts = vec![
-            (&config_pubkey, false, &config_account),
-            (&signer0_pubkey, true, &signer0_account),
-            (&signer2_pubkey, true, &signer2_account),
-        ];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
+        keyed_accounts[2] = (true, false, signer2_pubkey, signer2_account);
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Err(InstructionError::MissingRequiredSignature)
+        );
+    }
+
+    #[test]
+    fn test_config_initialize_contains_duplicates_fails() {
+        solana_logger::setup();
+        let config_address = Pubkey::new_unique();
+        let signer0_pubkey = Pubkey::new_unique();
+        let signer0_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
+        let keys = vec![
+            (config_address, false),
+            (signer0_pubkey, true),
+            (signer0_pubkey, true),
+        ];
+        let (config_keypair, config_account) = create_config_account(keys.clone());
+        let config_pubkey = config_keypair.pubkey();
+        let my_config = MyConfig::new(42);
+
+        // Attempt initialization with duplicate signer inputs
+        let instruction = config_instruction::store(&config_pubkey, true, keys, &my_config);
+        let keyed_accounts = [
+            (true, false, config_pubkey, config_account),
+            (true, false, signer0_pubkey, signer0_account.clone()),
+            (true, false, signer0_pubkey, signer0_account),
+        ];
+        assert_eq!(
+            process_instruction(&instruction.data, &keyed_accounts),
+            Err(InstructionError::InvalidArgument),
+        );
+    }
+
+    #[test]
+    fn test_config_update_contains_duplicates_fails() {
+        solana_logger::setup();
+        let config_address = Pubkey::new_unique();
+        let signer0_pubkey = Pubkey::new_unique();
+        let signer1_pubkey = Pubkey::new_unique();
+        let signer0_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
+        let signer1_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
+        let keys = vec![
+            (config_address, false),
+            (signer0_pubkey, true),
+            (signer1_pubkey, true),
+        ];
+        let (config_keypair, config_account) = create_config_account(keys.clone());
+        let config_pubkey = config_keypair.pubkey();
+        let my_config = MyConfig::new(42);
+
+        let instruction = config_instruction::store(&config_pubkey, true, keys, &my_config);
+        let mut keyed_accounts = [
+            (true, false, config_pubkey, config_account),
+            (true, false, signer0_pubkey, signer0_account),
+            (true, false, signer1_pubkey, signer1_account),
+        ];
+        assert_eq!(
+            process_instruction(&instruction.data, &keyed_accounts),
+            Ok(()),
+        );
+
+        // Attempt update with duplicate signer inputs
+        let new_config = MyConfig::new(84);
+        let dupe_keys = vec![
+            (config_address, false),
+            (signer0_pubkey, true),
+            (signer0_pubkey, true),
+        ];
+        let instruction = config_instruction::store(&config_pubkey, false, dupe_keys, &new_config);
+        keyed_accounts[2] = keyed_accounts[1].clone();
+        assert_eq!(
+            process_instruction(&instruction.data, &keyed_accounts),
+            Err(InstructionError::InvalidArgument),
         );
     }
 
     #[test]
     fn test_config_updates_requiring_config() {
         solana_logger::setup();
-        let pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_account = RefCell::new(AccountSharedData::default());
+        let pubkey = Pubkey::new_unique();
+        let signer0_pubkey = Pubkey::new_unique();
+        let signer0_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
         let keys = vec![
             (pubkey, false),
             (signer0_pubkey, true),
@@ -528,18 +534,12 @@ mod tests {
         ];
 
         let instruction = config_instruction::store(&config_pubkey, true, keys.clone(), &my_config);
-        let accounts = vec![
-            (&config_pubkey, true, &config_account),
-            (&signer0_pubkey, true, &signer0_account),
+        let keyed_accounts = [
+            (true, false, config_pubkey, config_account.clone()),
+            (true, false, signer0_pubkey, signer0_account),
         ];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Ok(())
         );
 
@@ -547,18 +547,8 @@ mod tests {
         let new_config = MyConfig::new(84);
         let instruction =
             config_instruction::store(&config_pubkey, true, keys.clone(), &new_config);
-        let accounts = vec![
-            (&config_pubkey, true, &config_account),
-            (&signer0_pubkey, true, &signer0_account),
-        ];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Ok(())
         );
         let meta_data: ConfigKeys = deserialize(config_account.borrow().data()).unwrap();
@@ -572,46 +562,34 @@ mod tests {
         // Attempt update with incomplete signatures
         let keys = vec![(pubkey, false), (config_keypair.pubkey(), true)];
         let instruction = config_instruction::store(&config_pubkey, true, keys, &my_config);
-        let accounts = vec![(&config_pubkey, true, &config_account)];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts[0..1]),
             Err(InstructionError::MissingRequiredSignature)
         );
     }
 
     #[test]
     fn test_config_initialize_no_panic() {
-        let from_pubkey = solana_sdk::pubkey::new_rand();
-        let config_pubkey = solana_sdk::pubkey::new_rand();
+        let from_pubkey = Pubkey::new_unique();
+        let config_pubkey = Pubkey::new_unique();
+        let (_, _config_account) = create_config_account(vec![]);
         let instructions =
             config_instruction::create_account::<MyConfig>(&from_pubkey, &config_pubkey, 1, vec![]);
-        let accounts = vec![];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instructions[1].data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instructions[1].data, &[]),
             Err(InstructionError::NotEnoughAccountKeys)
         );
     }
 
     #[test]
     fn test_config_bad_owner() {
-        let from_pubkey = solana_sdk::pubkey::new_rand();
-        let config_pubkey = solana_sdk::pubkey::new_rand();
+        let from_pubkey = Pubkey::new_unique();
+        let config_pubkey = Pubkey::new_unique();
         let new_config = MyConfig::new(84);
-        let signer0_pubkey = solana_sdk::pubkey::new_rand();
-        let signer0_account = RefCell::new(AccountSharedData::default());
-        let config_account = RefCell::new(AccountSharedData::default());
+        let signer0_pubkey = Pubkey::new_unique();
+        let signer0_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
+        let config_account = AccountSharedData::new_ref(0, 0, &Pubkey::new_unique());
+        let (_, _config_account) = create_config_account(vec![]);
         let keys = vec![
             (from_pubkey, false),
             (signer0_pubkey, true),
@@ -619,18 +597,12 @@ mod tests {
         ];
 
         let instruction = config_instruction::store(&config_pubkey, true, keys, &new_config);
-        let accounts = vec![
-            (&config_pubkey, true, &config_account),
-            (&signer0_pubkey, true, &signer0_account),
+        let keyed_accounts = [
+            (true, false, config_pubkey, config_account),
+            (true, false, signer0_pubkey, signer0_account),
         ];
-        let keyed_accounts = create_keyed_is_signer_accounts(&accounts);
         assert_eq!(
-            process_instruction(
-                &id(),
-                &keyed_accounts,
-                &instruction.data,
-                &mut MockInvokeContext::default()
-            ),
+            process_instruction(&instruction.data, &keyed_accounts),
             Err(InstructionError::InvalidAccountOwner)
         );
     }

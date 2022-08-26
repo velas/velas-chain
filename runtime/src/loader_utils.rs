@@ -1,14 +1,18 @@
-use serde::Serialize;
-use solana_sdk::{
-    bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-    client::Client,
-    instruction::{AccountMeta, Instruction},
-    loader_instruction,
-    message::Message,
-    pubkey::Pubkey,
-    signature::{Keypair, Signer},
-    system_instruction,
+use {
+    serde::Serialize,
+    solana_sdk::{
+        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
+        client::Client,
+        instruction::{AccountMeta, Instruction},
+        loader_instruction,
+        message::Message,
+        pubkey::Pubkey,
+        signature::{Keypair, Signer},
+        system_instruction,
+    },
 };
+
+const CHUNK_SIZE: usize = 512; // Size of chunk just needs to fit into tx
 
 pub fn load_program<T: Client>(
     bank_client: &T,
@@ -22,7 +26,11 @@ pub fn load_program<T: Client>(
     let instruction = system_instruction::create_account(
         &from_keypair.pubkey(),
         &program_pubkey,
-        1,
+        1.max(
+            bank_client
+                .get_minimum_balance_for_rent_exemption(program.len())
+                .unwrap(),
+        ),
         program.len() as u64,
         loader_pubkey,
     );
@@ -33,7 +41,7 @@ pub fn load_program<T: Client>(
         )
         .unwrap();
 
-    let chunk_size = 256; // Size of chunk just needs to fit into tx
+    let chunk_size = CHUNK_SIZE;
     let mut offset = 0;
     for chunk in program.chunks(chunk_size) {
         let instruction =
@@ -85,7 +93,7 @@ pub fn load_buffer_account<T: Client>(
         )
         .unwrap();
 
-    let chunk_size = 256; // Size of chunk just needs to fit into tx
+    let chunk_size = CHUNK_SIZE;
     let mut offset = 0;
     for chunk in program.chunks(chunk_size) {
         let message = Message::new(

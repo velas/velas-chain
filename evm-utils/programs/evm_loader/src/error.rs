@@ -5,6 +5,7 @@ use snafu::Snafu;
 
 /// Reasons the evm execution can fail.
 #[derive(Debug, Clone, PartialEq, FromPrimitive, ToPrimitive, Snafu)]
+#[snafu(context(suffix(false)))]
 pub enum EvmError {
     #[snafu(display("Cross-Program EVM execution disabled."))]
     CrossExecutionNotEnabled,
@@ -36,7 +37,7 @@ pub enum EvmError {
     #[snafu(display("Cannot free ownership of an account that EVM didn't own."))]
     FreeNotEvmAccount,
 
-    #[snafu(display("Cannot process swap, sender has no enoght tokens."))]
+    #[snafu(display("Cannot process swap, sender has not enough tokens."))]
     SwapInsufficient,
 
     #[snafu(display("Internal Error: Cannot borrow some of account."))]
@@ -59,6 +60,9 @@ pub enum EvmError {
 
     #[snafu(display("This instruction cause overflow in fee refund calculation."))]
     OverflowInRefund,
+
+    #[snafu(display("Native account has not enough tokens."))]
+    NativeAccountInsufficientFunds, // TODO: can we merge this with SwapInsufficient?
 }
 
 impl<E> DecodeError<E> for EvmError {

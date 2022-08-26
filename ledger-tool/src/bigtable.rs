@@ -1,21 +1,31 @@
 /// The `bigtable` subcommand
-use clap::{value_t, value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand};
-use solana_clap_utils::{
-    input_parsers::pubkey_of,
-    input_validators::{is_slot, is_valid_pubkey},
-};
-use solana_cli_output::{
-    display::println_transaction, CliBlock, CliTransaction, CliTransactionConfirmation,
-    OutputFormat,
-};
-use solana_ledger::{blockstore::Blockstore, blockstore_db::AccessType};
-use solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Signature};
-use solana_transaction_status::{ConfirmedBlock, EncodedTransaction, UiTransactionEncoding};
-use std::{
-    path::Path,
-    process::exit,
-    result::Result,
-    sync::{atomic::AtomicBool, Arc},
+use {
+    crate::ledger_path::canonicalize_ledger_path,
+    clap::{
+        value_t, value_t_or_exit, values_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand,
+    },
+    log::info,
+    serde_json::json,
+    solana_clap_utils::{
+        input_parsers::pubkey_of,
+        input_validators::{is_slot, is_valid_pubkey},
+    },
+    solana_cli_output::{
+        display::println_transaction, CliBlock, CliTransaction, CliTransactionConfirmation,
+        OutputFormat,
+    },
+    solana_ledger::{blockstore::Blockstore, blockstore_db::AccessType},
+    solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Signature},
+    solana_transaction_status::{
+        ConfirmedBlockWithOptionalMetadata, EncodedTransaction, UiTransactionEncoding,
+    },
+    std::{
+        collections::HashSet,
+        path::Path,
+        process::exit,
+        result::Result,
+        sync::{atomic::AtomicBool, Arc},
+    },
 };
 
 mod evm {
@@ -27,7 +37,7 @@ mod evm {
         push_not_confirmed: bool,
         force_reupload: bool,
     ) -> Result<Slot, Box<dyn std::error::Error>> {
-        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
             .await
             .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
@@ -44,7 +54,7 @@ mod evm {
     }
 
     pub async fn first_available_block() -> Result<(), Box<dyn std::error::Error>> {
-        let bigtable = solana_storage_bigtable::LedgerStorage::new(true, None).await?;
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(true, None, None).await?;
         match bigtable.get_evm_first_available_block().await? {
             Some(block) => println!("{}", block),
             None => println!("No blocks available"),
@@ -54,7 +64,7 @@ mod evm {
     }
 
     pub async fn block(block_num: evm_state::BlockNum) -> Result<(), Box<dyn std::error::Error>> {
-        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
             .await
             .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
@@ -68,7 +78,7 @@ mod evm {
         starting_slot: Slot,
         limit: usize,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+        let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
             .await
             .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
@@ -86,10 +96,9 @@ async fn upload(
     blockstore: Blockstore,
     starting_slot: Slot,
     ending_slot: Option<Slot>,
-    allow_missing_metadata: bool,
     force_reupload: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
         .await
         .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
@@ -98,15 +107,23 @@ async fn upload(
         bigtable,
         starting_slot,
         ending_slot,
-        allow_missing_metadata,
         force_reupload,
         Arc::new(AtomicBool::new(false)),
     )
     .await
 }
 
+async fn delete_slots(slots: Vec<Slot>, dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let read_only = dry_run;
+    let bigtable = solana_storage_bigtable::LedgerStorage::new(read_only, None, None)
+        .await
+        .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
+
+    solana_ledger::bigtable_delete::delete_confirmed_blocks(bigtable, slots, dry_run).await
+}
+
 async fn first_available_block() -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(true, None).await?;
+    let bigtable = solana_storage_bigtable::LedgerStorage::new(true, None, None).await?;
     match bigtable.get_first_available_block().await? {
         Some(block) => println!("{}", block),
         None => println!("No blocks available"),
@@ -116,7 +133,7 @@ async fn first_available_block() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn block(slot: Slot, output_format: OutputFormat) -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
         .await
         .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
@@ -131,7 +148,7 @@ async fn block(slot: Slot, output_format: OutputFormat) -> Result<(), Box<dyn st
 }
 
 async fn blocks(starting_slot: Slot, limit: usize) -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
         .await
         .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
@@ -142,12 +159,55 @@ async fn blocks(starting_slot: Slot, limit: usize) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+async fn compare_blocks(
+    starting_slot: Slot,
+    limit: usize,
+    credential_path: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert!(!credential_path.is_empty());
+
+    let owned_bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
+        .await
+        .map_err(|err| format!("failed to connect to owned bigtable: {:?}", err))?;
+    let owned_bigtable_slots = owned_bigtable
+        .get_confirmed_blocks(starting_slot, limit)
+        .await?;
+    info!(
+        "owned bigtable {} blocks found ",
+        owned_bigtable_slots.len()
+    );
+    let reference_bigtable =
+        solana_storage_bigtable::LedgerStorage::new(false, None, Some(credential_path))
+            .await
+            .map_err(|err| format!("failed to connect to reference bigtable: {:?}", err))?;
+
+    let reference_bigtable_slots = reference_bigtable
+        .get_confirmed_blocks(starting_slot, limit)
+        .await?;
+    info!(
+        "reference bigtable {} blocks found ",
+        reference_bigtable_slots.len(),
+    );
+
+    println!(
+        "{}",
+        json!({
+            "num_reference_slots": json!(reference_bigtable_slots.len()),
+            "num_owned_slots": json!(owned_bigtable_slots.len()),
+            "reference_last_block": json!(reference_bigtable_slots.len().checked_sub(1).map(|i| reference_bigtable_slots[i])),
+            "missing_blocks":  json!(missing_blocks(&reference_bigtable_slots, &owned_bigtable_slots)),
+        })
+    );
+
+    Ok(())
+}
+
 async fn confirm(
     signature: &Signature,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None)
+    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
         .await
         .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
@@ -196,9 +256,9 @@ pub async fn transaction_history(
     show_transactions: bool,
     query_chunk_size: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(true, None).await?;
+    let bigtable = solana_storage_bigtable::LedgerStorage::new(true, None, None).await?;
 
-    let mut loaded_block: Option<(Slot, ConfirmedBlock)> = None;
+    let mut loaded_block: Option<(Slot, ConfirmedBlockWithOptionalMetadata)> = None;
     while limit > 0 {
         let results = bigtable
             .get_confirmed_signatures_for_address(
@@ -382,7 +442,7 @@ impl BigTableSubCommand for App<'_, '_> {
                             Arg::with_name("starting_slot")
                                 .long("starting-slot")
                                 .validator(is_slot)
-                                .value_name("SLOT")
+                                .value_name("START_SLOT")
                                 .takes_value(true)
                                 .index(1)
                                 .help(
@@ -393,16 +453,10 @@ impl BigTableSubCommand for App<'_, '_> {
                             Arg::with_name("ending_slot")
                                 .long("ending-slot")
                                 .validator(is_slot)
-                                .value_name("SLOT")
+                                .value_name("END_SLOT")
                                 .takes_value(true)
                                 .index(2)
                                 .help("Stop uploading at this slot [default: last available slot]"),
-                        )
-                        .arg(
-                            Arg::with_name("allow_missing_metadata")
-                                .long("allow-missing-metadata")
-                                .takes_value(false)
-                                .help("Don't panic if transaction metadata is missing"),
                         )
                         .arg(
                             Arg::with_name("force_reupload")
@@ -415,6 +469,28 @@ impl BigTableSubCommand for App<'_, '_> {
                                 ),
                         ),
                 )
+                .subcommand(
+                    SubCommand::with_name("delete-slots")
+                        .about("Delete ledger information from BigTable")
+                        .arg(
+                                Arg::with_name("slots")
+                                    .index(1)
+                                    .value_name("SLOTS")
+                                    .takes_value(true)
+                                    .multiple(true)
+                                    .required(true)
+                                    .help("Slots to delete"),
+                                )
+                            .arg(
+                                Arg::with_name("force")
+                                    .long("force")
+                                    .takes_value(false)
+                                    .help(
+                                        "Deletions are only performed when the force flag is enabled. \
+                                        If force is not enabled, show stats about what ledger data \
+                                        will be deleted in a real deletion. "),
+                            ),
+                        )
                 .subcommand(
                     SubCommand::with_name("first-available-block")
                         .about("Get the first available block in the storage"),
@@ -443,6 +519,39 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .required(true)
                                 .default_value("1000")
                                 .help("Maximum number of slots to return"),
+                        ),
+                )
+                .subcommand(
+                    SubCommand::with_name("compare-blocks")
+                        .about("Find the missing confirmed blocks of an owned bigtable for a given range \
+                                by comparing to a reference bigtable")
+                        .arg(
+                            Arg::with_name("starting_slot")
+                                .validator(is_slot)
+                                .value_name("SLOT")
+                                .takes_value(true)
+                                .index(1)
+                                .required(true)
+                                .default_value("0")
+                                .help("Start listing at this slot"),
+                        )
+                        .arg(
+                            Arg::with_name("limit")
+                                .validator(is_slot)
+                                .value_name("LIMIT")
+                                .takes_value(true)
+                                .index(2)
+                                .required(true)
+                                .default_value("1000")
+                                .help("Maximum number of slots to check"),
+                        ).arg(
+                            Arg::with_name("reference_credential")
+                                .long("reference-credential")
+                                .short("c")
+                                .value_name("REFERENCE_CREDENTIAL_FILEPATH")
+                                .takes_value(true)
+                                .required(true)
+                                .help("File path for a credential to a reference bigtable"),
                         ),
                 )
                 .subcommand(
@@ -537,35 +646,30 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
     let verbose = matches.is_present("verbose");
-    let output_format = matches
-        .value_of("output_format")
-        .map(|value| match value {
-            "json" => OutputFormat::Json,
-            "json-compact" => OutputFormat::JsonCompact,
-            _ => unreachable!(),
-        })
-        .unwrap_or(if verbose {
-            OutputFormat::DisplayVerbose
-        } else {
-            OutputFormat::Display
-        });
+    let output_format = OutputFormat::from_matches(matches, "output_format", verbose);
 
     let future = match matches.subcommand() {
         ("upload", Some(arg_matches)) => {
             let starting_slot = value_t!(arg_matches, "starting_slot", Slot).unwrap_or(0);
             let ending_slot = value_t!(arg_matches, "ending_slot", Slot).ok();
-            let allow_missing_metadata = arg_matches.is_present("allow_missing_metadata");
             let force_reupload = arg_matches.is_present("force_reupload");
-            let blockstore =
-                crate::open_blockstore(ledger_path, AccessType::TryPrimaryThenSecondary, None);
+            let blockstore = crate::open_blockstore(
+                &canonicalize_ledger_path(ledger_path),
+                AccessType::TryPrimaryThenSecondary,
+                None,
+            );
 
             runtime.block_on(upload(
                 blockstore,
                 starting_slot,
                 ending_slot,
-                allow_missing_metadata,
                 force_reupload,
             ))
+        }
+        ("delete-slots", Some(arg_matches)) => {
+            let slots = values_t_or_exit!(arg_matches, "slots", Slot);
+            let dry_run = !arg_matches.is_present("force");
+            runtime.block_on(delete_slots(slots, dry_run))
         }
         ("first-available-block", Some(_arg_matches)) => runtime.block_on(first_available_block()),
         ("block", Some(arg_matches)) => {
@@ -577,6 +681,18 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
             let limit = value_t_or_exit!(arg_matches, "limit", usize);
 
             runtime.block_on(blocks(starting_slot, limit))
+        }
+        ("compare-blocks", Some(arg_matches)) => {
+            let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
+            let limit = value_t_or_exit!(arg_matches, "limit", usize);
+            let reference_credential_filepath =
+                value_t_or_exit!(arg_matches, "reference_credential", String);
+
+            runtime.block_on(compare_blocks(
+                starting_slot,
+                limit,
+                reference_credential_filepath,
+            ))
         }
         ("confirm", Some(arg_matches)) => {
             let signature = arg_matches
@@ -650,4 +766,55 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
         eprintln!("{:?}", err);
         exit(1);
     });
+}
+
+fn missing_blocks(reference: &[Slot], owned: &[Slot]) -> Vec<Slot> {
+    if owned.is_empty() && !reference.is_empty() {
+        return reference.to_owned();
+    } else if owned.is_empty() {
+        return vec![];
+    }
+
+    let owned_hashset: HashSet<_> = owned.iter().collect();
+    let mut missing_slots = vec![];
+    for slot in reference {
+        if !owned_hashset.contains(slot) {
+            missing_slots.push(slot.to_owned());
+        }
+    }
+    missing_slots
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_missing_blocks() {
+        let reference_slots = vec![0, 37, 38, 39, 40, 41, 42, 43, 44, 45];
+        let owned_slots = vec![0, 38, 39, 40, 43, 44, 45, 46, 47];
+        let owned_slots_leftshift = vec![0, 25, 26, 27, 28, 29, 30, 31, 32];
+        let owned_slots_rightshift = vec![0, 44, 46, 47, 48, 49, 50, 51, 52, 53, 54];
+        let missing_slots = vec![37, 41, 42];
+        let missing_slots_leftshift = vec![37, 38, 39, 40, 41, 42, 43, 44, 45];
+        let missing_slots_rightshift = vec![37, 38, 39, 40, 41, 42, 43, 45];
+        assert!(missing_blocks(&[], &[]).is_empty());
+        assert!(missing_blocks(&[], &owned_slots).is_empty());
+        assert_eq!(
+            missing_blocks(&reference_slots, &[]),
+            reference_slots.to_owned()
+        );
+        assert_eq!(
+            missing_blocks(&reference_slots, &owned_slots),
+            missing_slots
+        );
+        assert_eq!(
+            missing_blocks(&reference_slots, &owned_slots_leftshift),
+            missing_slots_leftshift
+        );
+        assert_eq!(
+            missing_blocks(&reference_slots, &owned_slots_rightshift),
+            missing_slots_rightshift
+        );
+    }
 }

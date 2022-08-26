@@ -1,28 +1,41 @@
-use dashmap::DashMap;
-use solana_sdk::{
-    account::{AccountSharedData, ReadableAccount},
-    clock::Slot,
-    hash::Hash,
-    pubkey::Pubkey,
-};
-use std::{
-    collections::BTreeSet,
-    ops::Deref,
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, RwLock,
+use {
+    dashmap::DashMap,
+    solana_sdk::{
+        account::{AccountSharedData, ReadableAccount},
+        clock::Slot,
+        hash::Hash,
+        pubkey::Pubkey,
+    },
+    std::{
+        borrow::Borrow,
+        collections::BTreeSet,
+        ops::Deref,
+        sync::{
+            atomic::{AtomicBool, AtomicU64, Ordering},
+            Arc, RwLock,
+        },
     },
 };
 
 pub type SlotCache = Arc<SlotCacheInner>;
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct SlotCacheInner {
     cache: DashMap<Pubkey, CachedAccount>,
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
     unique_account_writes_size: AtomicU64,
+    size: AtomicU64,
+    total_size: Arc<AtomicU64>,
     is_frozen: AtomicBool,
+}
+
+impl Drop for SlotCacheInner {
+    fn drop(&mut self) {
+        // broader cache no longer holds our size in memory
+        self.total_size
+            .fetch_sub(self.size.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
 }
 
 impl SlotCacheInner {
@@ -43,20 +56,53 @@ impl SlotCacheInner {
                 "unique_account_writes_size",
                 self.unique_account_writes_size.load(Ordering::Relaxed),
                 i64
-            )
+            ),
+            ("size", self.size.load(Ordering::Relaxed), i64)
         );
     }
 
-    pub fn insert(&self, pubkey: &Pubkey, account: AccountSharedData, hash: Hash) {
-        if self.cache.contains_key(pubkey) {
+    pub fn get_all_pubkeys(&self) -> Vec<Pubkey> {
+        self.cache.iter().map(|item| *item.key()).collect()
+    }
+
+    pub fn insert(
+        &self,
+        pubkey: &Pubkey,
+        account: AccountSharedData,
+        hash: Option<impl Borrow<Hash>>,
+        slot: Slot,
+    ) -> CachedAccount {
+        let data_len = account.data().len() as u64;
+        let item = Arc::new(CachedAccountInner {
+            account,
+            hash: RwLock::new(hash.map(|h| *h.borrow())),
+            slot,
+            pubkey: *pubkey,
+        });
+        if let Some(old) = self.cache.insert(*pubkey, item.clone()) {
             self.same_account_writes.fetch_add(1, Ordering::Relaxed);
             self.same_account_writes_size
-                .fetch_add(account.data().len() as u64, Ordering::Relaxed);
+                .fetch_add(data_len, Ordering::Relaxed);
+
+            let old_len = old.account.data().len() as u64;
+            let grow = old_len.saturating_sub(data_len);
+            if grow > 0 {
+                self.size.fetch_add(grow, Ordering::Relaxed);
+                self.total_size.fetch_add(grow, Ordering::Relaxed);
+            } else {
+                let shrink = data_len.saturating_sub(old_len);
+                if shrink > 0 {
+                    self.size.fetch_add(shrink, Ordering::Relaxed);
+                    self.total_size.fetch_sub(shrink, Ordering::Relaxed);
+                }
+            }
         } else {
+            self.size.fetch_add(data_len, Ordering::Relaxed);
+            self.total_size.fetch_add(data_len, Ordering::Relaxed);
             self.unique_account_writes_size
-                .fetch_add(account.data().len() as u64, Ordering::Relaxed);
+                .fetch_add(data_len, Ordering::Relaxed);
         }
-        self.cache.insert(*pubkey, CachedAccount { account, hash });
+        item
     }
 
     pub fn get_cloned(&self, pubkey: &Pubkey) -> Option<CachedAccount> {
@@ -89,10 +135,36 @@ impl Deref for SlotCacheInner {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct CachedAccount {
+pub type CachedAccount = Arc<CachedAccountInner>;
+
+#[derive(Debug)]
+pub struct CachedAccountInner {
     pub account: AccountSharedData,
-    pub hash: Hash,
+    hash: RwLock<Option<Hash>>,
+    slot: Slot,
+    pubkey: Pubkey,
+}
+
+impl CachedAccountInner {
+    pub fn hash(&self) -> Hash {
+        let hash = self.hash.read().unwrap();
+        match *hash {
+            Some(hash) => hash,
+            None => {
+                drop(hash);
+                let hash = crate::accounts_db::AccountsDb::hash_account(
+                    self.slot,
+                    &self.account,
+                    &self.pubkey,
+                );
+                *self.hash.write().unwrap() = Some(hash);
+                hash
+            }
+        }
+    }
+    pub fn pubkey(&self) -> &Pubkey {
+        &self.pubkey
+    }
 }
 
 #[derive(Debug, Default)]
@@ -102,12 +174,23 @@ pub struct AccountsCache {
     // could have triggered a flush of this slot already
     maybe_unflushed_roots: RwLock<BTreeSet<Slot>>,
     max_flushed_root: AtomicU64,
+    total_size: Arc<AtomicU64>,
 }
 
 impl AccountsCache {
-    pub fn report_size(&self) {
-        let total_unique_writes_size: u64 = self
-            .cache
+    pub fn new_inner(&self) -> SlotCache {
+        Arc::new(SlotCacheInner {
+            cache: DashMap::default(),
+            same_account_writes: AtomicU64::default(),
+            same_account_writes_size: AtomicU64::default(),
+            unique_account_writes_size: AtomicU64::default(),
+            size: AtomicU64::default(),
+            total_size: Arc::clone(&self.total_size),
+            is_frozen: AtomicBool::default(),
+        })
+    }
+    fn unique_account_writes_size(&self) -> u64 {
+        self.cache
             .iter()
             .map(|item| {
                 let slot_cache = item.value();
@@ -115,7 +198,12 @@ impl AccountsCache {
                     .unique_account_writes_size
                     .load(Ordering::Relaxed)
             })
-            .sum();
+            .sum()
+    }
+    pub fn size(&self) -> u64 {
+        self.total_size.load(Ordering::Relaxed)
+    }
+    pub fn report_size(&self) {
         datapoint_info!(
             "accounts_cache_size",
             (
@@ -124,11 +212,22 @@ impl AccountsCache {
                 i64
             ),
             ("num_slots", self.cache.len(), i64),
-            ("total_unique_writes_size", total_unique_writes_size, i64),
+            (
+                "total_unique_writes_size",
+                self.unique_account_writes_size(),
+                i64
+            ),
+            ("total_size", self.size(), i64),
         );
     }
 
-    pub fn store(&self, slot: Slot, pubkey: &Pubkey, account: AccountSharedData, hash: Hash) {
+    pub fn store(
+        &self,
+        slot: Slot,
+        pubkey: &Pubkey,
+        account: AccountSharedData,
+        hash: Option<impl Borrow<Hash>>,
+    ) -> CachedAccount {
         let slot_cache = self.slot_cache(slot).unwrap_or_else(||
             // DashMap entry.or_insert() returns a RefMut, essentially a write lock,
             // which is dropped after this block ends, minimizing time held by the lock.
@@ -137,10 +236,10 @@ impl AccountsCache {
             self
                 .cache
                 .entry(slot)
-                .or_insert(Arc::new(SlotCacheInner::default()))
+                .or_insert(self.new_inner())
                 .clone());
 
-        slot_cache.insert(pubkey, account, hash);
+        slot_cache.insert(pubkey, account, hash, slot)
     }
 
     pub fn load(&self, slot: Slot, pubkey: &Pubkey) -> Option<CachedAccount> {
@@ -193,26 +292,21 @@ impl AccountsCache {
         removed_slots
     }
 
-    pub fn find_older_frozen_slots(&self, num_to_retain: usize) -> Vec<Slot> {
-        if self.cache.len() > num_to_retain {
-            let mut slots: Vec<_> = self
-                .cache
-                .iter()
-                .filter_map(|item| {
-                    let (slot, slot_cache) = item.pair();
-                    if slot_cache.is_frozen() {
-                        Some(*slot)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            slots.sort_unstable();
-            slots.truncate(slots.len().saturating_sub(num_to_retain));
-            slots
-        } else {
-            vec![]
-        }
+    pub fn cached_frozen_slots(&self) -> Vec<Slot> {
+        let mut slots: Vec<_> = self
+            .cache
+            .iter()
+            .filter_map(|item| {
+                let (slot, slot_cache) = item.pair();
+                if slot_cache.is_frozen() {
+                    Some(*slot)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        slots.sort_unstable();
+        slots
     }
 
     pub fn num_slots(&self) -> usize {
@@ -242,7 +336,7 @@ pub mod tests {
             inserted_slot,
             &Pubkey::new_unique(),
             AccountSharedData::new(1, 0, &Pubkey::default()),
-            Hash::default(),
+            Some(&Hash::default()),
         );
         // If the cache is told the size limit is 0, it should return the one slot
         let removed = cache.remove_slots_le(0);
@@ -251,26 +345,23 @@ pub mod tests {
     }
 
     #[test]
-    fn test_find_older_frozen_slots() {
+    fn test_cached_frozen_slots() {
         let cache = AccountsCache::default();
         // Cache is empty, should return nothing
-        assert!(cache.find_older_frozen_slots(0).is_empty());
+        assert!(cache.cached_frozen_slots().is_empty());
         let inserted_slot = 0;
         cache.store(
             inserted_slot,
             &Pubkey::new_unique(),
             AccountSharedData::new(1, 0, &Pubkey::default()),
-            Hash::default(),
+            Some(&Hash::default()),
         );
 
-        // If the cache is told the size limit is 0, it should return nothing because there's only
-        // one cached slot
-        assert!(cache.find_older_frozen_slots(1).is_empty());
         // If the cache is told the size limit is 0, it should return nothing, because there's no
         // frozen slots
-        assert!(cache.find_older_frozen_slots(0).is_empty());
+        assert!(cache.cached_frozen_slots().is_empty());
         cache.slot_cache(inserted_slot).unwrap().mark_slot_frozen();
         // If the cache is told the size limit is 0, it should return the one frozen slot
-        assert_eq!(cache.find_older_frozen_slots(0), vec![inserted_slot]);
+        assert_eq!(cache.cached_frozen_slots(), vec![inserted_slot]);
     }
 }

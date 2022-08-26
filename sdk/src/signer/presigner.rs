@@ -46,6 +46,10 @@ impl Signer for Presigner {
             Err(PresignerError::VerificationFailure.into())
         }
     }
+
+    fn is_interactive(&self) -> bool {
+        false
+    }
 }
 
 impl<T> PartialEq<T> for Presigner
@@ -59,8 +63,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::signer::keypair::keypair_from_seed;
+    use {super::*, crate::signer::keypair::keypair_from_seed};
 
     #[test]
     fn test_presigner() {

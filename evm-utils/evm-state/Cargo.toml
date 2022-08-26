@@ -5,7 +5,8 @@ authors = ["Vladimir Motylenko <vld@stegos.com>"]
 edition = "2018"
 
 [dependencies]
-evm = { git = "https://github.com/gBaGu/evm", branch = "add-traces-new", features = ["with-serde"] }
+# TODO: change to velas/evm:master
+evm = { git = "https://github.com/gBaGu/evm", branch = "merge-upstream-master", features = ["with-serde"] }
 secp256k1 = { version = "0.19.0", features = ["recovery", "global-context"] }
 # force rand version, because 0.6.5 break compatibility with secp256k1
 rand2 = { version = "=0.6.1", package = "rand" }
@@ -17,7 +18,7 @@ triedb = { git = "https://github.com/gBaGu/triedb", branch = "bump-primitive-typ
 primitive-types = "0.11.0"
 keccak-hash = "0.9.0"
 log = "0.4.11"
-simple_logger = "1.11"
+simple_logger = "2.2"
 hex = "0.4.2"
 serde = "1.0"
 sha3 = "0.9.1"
@@ -26,9 +27,10 @@ rlp = "0.5.0"
 thiserror = "1.0.22"
 anyhow = "1.0.34"
 bincode = "1.3.1"
+borsh = "0.9.3"
 lazy_static = "1.4.0"
 bytes = "0.6.0"
-snafu = "0.6.8"
+snafu = "0.7"
 derive_more = "0.99.11"
 tempfile = "3.1.0"
 itertools = "0.10"

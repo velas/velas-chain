@@ -1,8 +1,13 @@
-use crate::metrics::submit_counter;
-use log::*;
-use solana_sdk::timing;
-use std::env;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use {
+    crate::metrics::submit_counter,
+    log::*,
+    solana_sdk::timing,
+    std::{
+        env,
+        sync::atomic::{AtomicU64, AtomicUsize, Ordering},
+        time::SystemTime,
+    },
+};
 
 const DEFAULT_LOG_RATE: usize = 1000;
 // Submit a datapoint every second by default
@@ -23,7 +28,7 @@ pub struct Counter {
 pub struct CounterPoint {
     pub name: &'static str,
     pub count: i64,
-    pub timestamp: u64,
+    pub timestamp: SystemTime,
 }
 
 impl CounterPoint {
@@ -32,7 +37,7 @@ impl CounterPoint {
         CounterPoint {
             name,
             count: 0,
-            timestamp: 0,
+            timestamp: std::time::UNIX_EPOCH,
         }
     }
 }
@@ -198,7 +203,7 @@ impl Counter {
             let counter = CounterPoint {
                 name: self.name,
                 count: counts as i64 - lastlog as i64,
-                timestamp: now,
+                timestamp: SystemTime::now(),
             };
             submit_counter(counter, level, bucket);
         }
@@ -206,13 +211,15 @@ impl Counter {
 }
 #[cfg(test)]
 mod tests {
-    use crate::counter::{Counter, DEFAULT_LOG_RATE, DEFAULT_METRICS_RATE};
-    use log::Level;
-    use log::*;
-    use serial_test::serial;
-    use std::env;
-    use std::sync::atomic::Ordering;
-    use std::sync::{Once, RwLock};
+    use {
+        crate::counter::{Counter, DEFAULT_LOG_RATE, DEFAULT_METRICS_RATE},
+        log::{Level, *},
+        serial_test::serial,
+        std::{
+            env,
+            sync::{atomic::Ordering, Once, RwLock},
+        },
+    };
 
     fn get_env_lock() -> &'static RwLock<()> {
         static mut ENV_LOCK: Option<RwLock<()>> = None;

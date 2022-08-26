@@ -1,13 +1,12 @@
-use crate::{
-    cli::*, cluster_query::*, evm::EvmSubCommands, feature::*, inflation::*, nonce::*, program::*,
-    stake::*, validator_info::*, vote::*
+use {
+    crate::{
+        cli::*, cluster_query::*, evm::EvmSubCommands, feature::*, inflation::*, nonce::*, program::*, stake::*,
+        validator_info::*, vote::*, wallet::*,
+    },
+    clap::{App, AppSettings, Arg, ArgGroup, SubCommand},
+    solana_clap_utils::{self, nonce::NonceArgs, offline::OfflineArgs, fee_payer::fee_payer_arg, memo::memo_arg, input_validators::*, keypair::*},
+    solana_cli_config::CONFIG_FILE,
 };
-use clap::{App, AppSettings, Arg, ArgGroup, SubCommand};
-use solana_clap_utils::{
-    self, fee_payer::fee_payer_arg, input_validators::*, keypair::*, memo::memo_arg, nonce::*,
-    offline::*,
-};
-use solana_cli_config::CONFIG_FILE;
 
 pub fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'ab, 'v> {
     App::new(name)
@@ -260,7 +259,7 @@ pub fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> A
                 )
                 .offline_args()
                 .nonce_args(false)
-		.arg(memo_arg())
+		        .arg(memo_arg())
                 .arg(fee_payer_arg()),
         )
         .subcommand(
@@ -393,6 +392,25 @@ pub fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> A
                 .hidden(true)
                 .help("Timeout value for RPC requests"),
         )
+        .arg(
+            Arg::with_name("confirm_transaction_initial_timeout")
+                .long("confirm-timeout")
+                .value_name("SECONDS")
+                .takes_value(true)
+                .default_value(DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS)
+                .global(true)
+                .hidden(true)
+                .help("Timeout value for initial transaction status"),
+        )
+        .cluster_query_subcommands()
+        .feature_subcommands()
+        .inflation_subcommands()
+        .nonce_subcommands()
+        .program_subcommands()
+        .stake_subcommands()
+        .validator_info_subcommands()
+        .vote_subcommands()
+        .wallet_subcommands()
         .subcommand(
             SubCommand::with_name("config")
                 .about("Solana command-line tool configuration settings")

@@ -8,6 +8,7 @@ use {
         QuietDisplay, VerboseDisplay,
     },
     chrono::{Local, TimeZone},
+    clap::ArgMatches,
     console::{style, Emoji},
     inflector::cases::titlecase::to_title_case,
     serde::{Deserialize, Serialize},
@@ -25,10 +26,10 @@ use {
         native_token::lamports_to_sol,
         pubkey::Pubkey,
         signature::Signature,
+        stake::state::{Authorized, Lockup},
         stake_history::StakeHistoryEntry,
         transaction::{Transaction, TransactionError},
     },
-    solana_stake_program::stake_state::{Authorized, Lockup},
     solana_transaction_status::{
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
@@ -45,9 +46,11 @@ use {
     },
 };
 
+static CHECK_MARK: Emoji = Emoji("✅ ", "");
+static CROSS_MARK: Emoji = Emoji("❌ ", "");
 static WARNING: Emoji = Emoji("⚠️", "!");
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum OutputFormat {
     Display,
     Json,
@@ -77,13 +80,28 @@ impl OutputFormat {
             OutputFormat::JsonCompact => serde_json::to_value(item).unwrap().to_string(),
         }
     }
+
+    pub fn from_matches(matches: &ArgMatches<'_>, output_name: &str, verbose: bool) -> Self {
+        matches
+            .value_of(output_name)
+            .map(|value| match value {
+                "json" => OutputFormat::Json,
+                "json-compact" => OutputFormat::JsonCompact,
+                _ => unreachable!(),
+            })
+            .unwrap_or(if verbose {
+                OutputFormat::DisplayVerbose
+            } else {
+                OutputFormat::Display
+            })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct CliAccount {
     #[serde(flatten)]
     pub keyed_account: RpcKeyedAccount,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, skip_deserializing)]
     pub use_lamports_unit: bool,
 }
 
@@ -233,6 +251,10 @@ pub struct CliEpochInfo {
     pub epoch_info: EpochInfo,
     #[serde(skip)]
     pub average_slot_time_ms: u64,
+    #[serde(skip)]
+    pub start_block_time: Option<UnixTimestamp>,
+    #[serde(skip)]
+    pub current_block_time: Option<UnixTimestamp>,
 }
 
 impl QuietDisplay for CliEpochInfo {}
@@ -277,21 +299,41 @@ impl fmt::Display for CliEpochInfo {
                 remaining_slots_in_epoch
             ),
         )?;
+        let (time_elapsed, annotation) = if let (Some(start_block_time), Some(current_block_time)) =
+            (self.start_block_time, self.current_block_time)
+        {
+            (
+                Duration::from_secs((current_block_time - start_block_time) as u64),
+                None,
+            )
+        } else {
+            (
+                slot_to_duration(self.epoch_info.slot_index, self.average_slot_time_ms),
+                Some("* estimated based on current slot durations"),
+            )
+        };
+        let time_remaining = slot_to_duration(remaining_slots_in_epoch, self.average_slot_time_ms);
         writeln_name_value(
             f,
             "Epoch Completed Time:",
             &format!(
-                "{}/{} ({} remaining)",
-                slot_to_human_time(self.epoch_info.slot_index, self.average_slot_time_ms),
-                slot_to_human_time(self.epoch_info.slots_in_epoch, self.average_slot_time_ms),
-                slot_to_human_time(remaining_slots_in_epoch, self.average_slot_time_ms)
+                "{}{}/{} ({} remaining)",
+                humantime::format_duration(time_elapsed),
+                if annotation.is_some() { "*" } else { "" },
+                humantime::format_duration(time_elapsed + time_remaining),
+                humantime::format_duration(time_remaining),
             ),
-        )
+        )?;
+        if let Some(annotation) = annotation {
+            writeln!(f)?;
+            writeln!(f, "{}", annotation)?;
+        }
+        Ok(())
     }
 }
 
-fn slot_to_human_time(slot: Slot, slot_time_ms: u64) -> String {
-    humantime::format_duration(Duration::from_secs((slot * slot_time_ms) / 1000)).to_string()
+fn slot_to_duration(slot: Slot, slot_time_ms: u64) -> Duration {
+    Duration::from_secs((slot * slot_time_ms) / 1000)
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -314,16 +356,18 @@ pub enum CliValidatorsSortOrder {
     SkipRate,
     Stake,
     VoteAccount,
+    Version,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliValidators {
-    pub majority_count: u64,
     pub total_active_stake: u64,
     pub total_current_stake: u64,
     pub total_delinquent_stake: u64,
     pub validators: Vec<CliValidator>,
+    pub average_skip_rate: f64,
+    pub average_stake_weighted_skip_rate: f64,
     #[serde(skip_serializing)]
     pub validators_sort_order: CliValidatorsSortOrder,
     #[serde(skip_serializing)]
@@ -333,6 +377,7 @@ pub struct CliValidators {
     pub stake_by_version: BTreeMap<String, CliValidatorsStakeByVersion>,
     #[serde(skip_serializing)]
     pub use_lamports_unit: bool,
+    pub majority_count: u64,
 }
 
 impl QuietDisplay for CliValidators {}
@@ -347,22 +392,22 @@ impl fmt::Display for CliValidators {
             use_lamports_unit: bool,
             highest_last_vote: u64,
             highest_root: u64,
+            enable_majority_filtering: bool,
         ) -> fmt::Result {
             fn non_zero_or_dash(v: u64, max_v: u64) -> String {
                 if v == 0 {
-                    "-         ".into()
+                    "        -      ".into()
                 } else if v == max_v {
-                    format!("{:>8} (  0)", v)
+                    format!("{:>9} (  0)", v)
                 } else if v > max_v.saturating_sub(100) {
-                    format!("{:>8} ({:>3})", v, -(max_v.saturating_sub(v) as isize))
+                    format!("{:>9} ({:>3})", v, -(max_v.saturating_sub(v) as isize))
                 } else {
-                    format!("{:>8}      ", v)
+                    format!("{:>9}      ", v)
                 }
             }
 
-            writeln!(
-                f,
-                "{} {:<44}  {:<44}  {:>3}%  {:>14}  {:>14} {:>7} {:>8}  {:>7}  {}",
+            let output = format!(
+                "{} {:<44}  {:<44}  {:>3}%  {:>14}  {:>14} {:>7} {:>8}  {:>7}  {:>22} ({:.2}%)",
                 if validator.delinquent {
                     WARNING.to_string()
                 } else {
@@ -376,20 +421,26 @@ impl fmt::Display for CliValidators {
                 if let Some(skip_rate) = validator.skip_rate {
                     format!("{:.2}%", skip_rate)
                 } else {
-                    "- ".to_string()
+                    "-   ".to_string()
                 },
                 validator.epoch_credits,
                 validator.version,
-                if validator.activated_stake > 0 {
-                    format!(
-                        "{} ({:.2}%)",
-                        build_balance_message(validator.activated_stake, use_lamports_unit, true),
-                        100. * validator.activated_stake as f64 / total_active_stake as f64,
-                    )
-                } else {
-                    "-".into()
-                },
-            )
+                build_balance_message_with_config(
+                    validator.activated_stake,
+                    &BuildBalanceMessageConfig {
+                        use_lamports_unit,
+                        trim_trailing_zeros: false,
+                        ..BuildBalanceMessageConfig::default()
+                    }
+                ),
+                100. * validator.activated_stake as f64 / total_active_stake as f64,
+            );
+            let style = if enable_majority_filtering && validator.activated_stake <= solana_vote_program::MIN_STAKERS_TO_BE_MAJORITY {
+                style(output).dim()
+            } else {
+                style(output)
+            };
+            writeln!(f, "{}", style)
         }
 
         let padding = if self.number_validators {
@@ -398,13 +449,13 @@ impl fmt::Display for CliValidators {
             0
         };
         let header = style(format!(
-            "{:padding$} {:<44}  {:<38}  {}  {}  {} {}  {}  {}  {}",
+            "{:padding$} {:<44}  {:<38}  {}  {}  {} {}  {}  {}    {}",
             " ",
             "Identity",
             "Vote Account",
             "Commission",
-            "Last Vote     ",
-            "Root Slot   ",
+            "Last Vote      ",
+            "Root Slot    ",
             "Skip Rate",
             "Credits",
             "Version",
@@ -451,6 +502,22 @@ impl fmt::Display for CliValidators {
             CliValidatorsSortOrder::Stake => {
                 sorted_validators.sort_by_key(|a| a.activated_stake);
             }
+            CliValidatorsSortOrder::Version => {
+                sorted_validators.sort_by(|a, b| {
+                    use std::cmp::Ordering;
+                    let a_version = semver::Version::parse(a.version.as_str()).ok();
+                    let b_version = semver::Version::parse(b.version.as_str()).ok();
+                    match (a_version, b_version) {
+                        (None, None) => a.version.cmp(&b.version),
+                        (None, Some(_)) => Ordering::Less,
+                        (Some(_), None) => Ordering::Greater,
+                        (Some(va), Some(vb)) => match va.cmp(&vb) {
+                            Ordering::Equal => a.activated_stake.cmp(&b.activated_stake),
+                            ordering => ordering,
+                        },
+                    }
+                });
+            }
         }
 
         if self.validators_reverse_sort {
@@ -479,6 +546,7 @@ impl fmt::Display for CliValidators {
                 self.use_lamports_unit,
                 highest_last_vote,
                 highest_root,
+                self.majority_count >= solana_vote_program::NUM_MAJOR_STAKERS_FOR_FILTERING as u64
             )?;
         }
 
@@ -486,6 +554,24 @@ impl fmt::Display for CliValidators {
         if self.validators.len() > 100 {
             writeln!(f, "{}", header)?;
         }
+
+        writeln_name_value(
+            f,
+            "Majority count:",
+            &format!("{}%", self.majority_count,),
+        )?;
+
+        writeln!(f)?;
+        writeln_name_value(
+            f,
+            "Average Stake-Weighted Skip Rate:",
+            &format!("{:.2}%", self.average_stake_weighted_skip_rate,),
+        )?;
+        writeln_name_value(
+            f,
+            "Average Unweighted Skip Rate:    ",
+            &format!("{:.2}%", self.average_skip_rate),
+        )?;
 
         writeln!(f)?;
         writeln_name_value(
@@ -523,7 +609,7 @@ impl fmt::Display for CliValidators {
         for (version, info) in self.stake_by_version.iter() {
             writeln!(
                 f,
-                "{:<8} - {:3} current validators ({:>5.2}%){}",
+                "{:<8} - {:4} current validators ({:>5.2}%){}",
                 version,
                 info.current_validators,
                 100. * info.current_active_stake as f64 / self.total_active_stake as f64,
@@ -734,6 +820,7 @@ pub struct CliEpochReward {
     pub post_balance: u64, // lamports
     pub percent_change: f64,
     pub apr: Option<f64>,
+    pub commission: Option<u8>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -778,23 +865,27 @@ impl fmt::Display for CliKeyedEpochRewards {
         writeln!(f, "Epoch Rewards:")?;
         writeln!(
             f,
-            "  {:<44}  {:<18}  {:<18}  {:>14}  {:>14}",
-            "Address", "Amount", "New Balance", "Percent Change", "APR"
+            "  {:<44}  {:<18}  {:<18}  {:>14}  {:>14}  {:>10}",
+            "Address", "Amount", "New Balance", "Percent Change", "APR", "Commission"
         )?;
         for keyed_reward in &self.rewards {
             match &keyed_reward.reward {
                 Some(reward) => {
                     writeln!(
                         f,
-                        "  {:<44}  ◎{:<17.9}  ◎{:<17.9}  {:>13.2}%  {}",
+                        "  {:<44}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>14}  {:>10}",
                         keyed_reward.address,
                         lamports_to_sol(reward.amount),
                         lamports_to_sol(reward.post_balance),
                         reward.percent_change,
                         reward
                             .apr
-                            .map(|apr| format!("{:>13.2}%", apr))
+                            .map(|apr| format!("{:.2}%", apr))
                             .unwrap_or_default(),
+                        reward
+                            .commission
+                            .map(|commission| format!("{}%", commission))
+                            .unwrap_or_else(|| "-".to_string())
                     )?;
                 }
                 None => {
@@ -911,13 +1002,13 @@ fn show_epoch_rewards(
         writeln!(f, "Epoch Rewards:")?;
         writeln!(
             f,
-            "  {:<6}  {:<11}  {:<18}  {:<18}  {:>14}  {:>14}",
-            "Epoch", "Reward Slot", "Amount", "New Balance", "Percent Change", "APR"
+            "  {:<6}  {:<11}  {:<18}  {:<18}  {:>14}  {:>14}  {:>10}",
+            "Epoch", "Reward Slot", "Amount", "New Balance", "Percent Change", "APR", "Commission"
         )?;
         for reward in epoch_rewards {
             writeln!(
                 f,
-                "  {:<6}  {:<11}  ◎{:<17.9}  ◎{:<17.9}  {:>13.2}%  {}",
+                "  {:<6}  {:<11}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>14}  {:>10}",
                 reward.epoch,
                 reward.effective_slot,
                 lamports_to_sol(reward.amount),
@@ -925,8 +1016,12 @@ fn show_epoch_rewards(
                 reward.percent_change,
                 reward
                     .apr
-                    .map(|apr| format!("{:>13.2}%", apr))
+                    .map(|apr| format!("{:.2}%", apr))
                     .unwrap_or_default(),
+                reward
+                    .commission
+                    .map(|commission| format!("{}%", commission))
+                    .unwrap_or_else(|| "-".to_string())
             )?;
         }
     }
@@ -1326,8 +1421,8 @@ impl fmt::Display for CliVoteAccount {
             build_balance_message(self.account_balance, self.use_lamports_unit, true)
         )?;
         writeln!(f, "Validator Identity: {}", self.validator_identity)?;
-        writeln!(f, "Authorized Voters: {}", self.authorized_voters)?;
-        writeln!(f, "Authorized Withdrawer: {}", self.authorized_withdrawer)?;
+        writeln!(f, "Vote Authority: {}", self.authorized_voters)?;
+        writeln!(f, "Withdraw Authority: {}", self.authorized_withdrawer)?;
         writeln!(f, "Credits: {}", self.credits)?;
         writeln!(f, "Commission: {}%", self.commission)?;
         writeln!(
@@ -1514,15 +1609,19 @@ impl fmt::Display for CliInflation {
             "Staking rate:            {:>5.2}%",
             self.current_rate.validator * 100.
         )?;
-        writeln!(
-            f,
-            "Foundation rate:         {:>5.2}%",
-            self.current_rate.foundation * 100.
-        )
+
+        if self.current_rate.foundation > 0. {
+            writeln!(
+                f,
+                "Foundation rate:         {:>5.2}%",
+                self.current_rate.foundation * 100.
+            )?;
+        }
+        Ok(())
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CliSignOnlyData {
     pub blockhash: String,
@@ -1670,6 +1769,7 @@ pub struct CliFeesInner {
     pub blockhash: String,
     pub lamports_per_signature: u64,
     pub last_valid_slot: Option<Slot>,
+    pub last_valid_block_height: Option<Slot>,
 }
 
 impl QuietDisplay for CliFeesInner {}
@@ -1683,11 +1783,11 @@ impl fmt::Display for CliFeesInner {
             "Lamports per signature:",
             &self.lamports_per_signature.to_string(),
         )?;
-        let last_valid_slot = self
-            .last_valid_slot
+        let last_valid_block_height = self
+            .last_valid_block_height
             .map(|s| s.to_string())
             .unwrap_or_default();
-        writeln_name_value(f, "Last valid slot:", &last_valid_slot)
+        writeln_name_value(f, "Last valid block height:", &last_valid_block_height)
     }
 }
 
@@ -1716,6 +1816,7 @@ impl CliFees {
         blockhash: Hash,
         lamports_per_signature: u64,
         last_valid_slot: Option<Slot>,
+        last_valid_block_height: Option<Slot>,
     ) -> Self {
         Self {
             inner: Some(CliFeesInner {
@@ -1723,6 +1824,7 @@ impl CliFees {
                 blockhash: blockhash.to_string(),
                 lamports_per_signature,
                 last_valid_slot,
+                last_valid_block_height,
             }),
         }
     }
@@ -1861,6 +1963,9 @@ pub struct CliUpgradeableProgram {
     pub authority: String,
     pub last_deploy_slot: u64,
     pub data_len: usize,
+    pub lamports: u64,
+    #[serde(skip_serializing)]
+    pub use_lamports_unit: bool,
 }
 impl QuietDisplay for CliUpgradeableProgram {}
 impl VerboseDisplay for CliUpgradeableProgram {}
@@ -1881,11 +1986,77 @@ impl fmt::Display for CliUpgradeableProgram {
             "Data Length:",
             &format!("{:?} ({:#x?}) bytes", self.data_len, self.data_len),
         )?;
+        writeln_name_value(
+            f,
+            "Balance:",
+            &build_balance_message(self.lamports, self.use_lamports_unit, true),
+        )?;
         Ok(())
     }
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliUpgradeablePrograms {
+    pub programs: Vec<CliUpgradeableProgram>,
+    #[serde(skip_serializing)]
+    pub use_lamports_unit: bool,
+}
+impl QuietDisplay for CliUpgradeablePrograms {}
+impl VerboseDisplay for CliUpgradeablePrograms {}
+impl fmt::Display for CliUpgradeablePrograms {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f)?;
+        writeln!(
+            f,
+            "{}",
+            style(format!(
+                "{:<44} | {:<9} | {:<44} | {}",
+                "Program Id", "Slot", "Authority", "Balance"
+            ))
+            .bold()
+        )?;
+        for program in self.programs.iter() {
+            writeln!(
+                f,
+                "{}",
+                &format!(
+                    "{:<44} | {:<9} | {:<44} | {}",
+                    program.program_id,
+                    program.last_deploy_slot,
+                    program.authority,
+                    build_balance_message(program.lamports, self.use_lamports_unit, true)
+                )
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliUpgradeableProgramClosed {
+    pub program_id: String,
+    pub lamports: u64,
+    #[serde(skip_serializing)]
+    pub use_lamports_unit: bool,
+}
+impl QuietDisplay for CliUpgradeableProgramClosed {}
+impl VerboseDisplay for CliUpgradeableProgramClosed {}
+impl fmt::Display for CliUpgradeableProgramClosed {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f)?;
+        writeln!(
+            f,
+            "Closed Program Id {}, {} reclaimed",
+            &self.program_id,
+            &build_balance_message(self.lamports, self.use_lamports_unit, true)
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliUpgradeableBuffer {
     pub address: String,
@@ -1971,6 +2142,11 @@ pub fn return_signers_with_config(
     output_format: &OutputFormat,
     config: &ReturnSignersConfig,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let cli_command = return_signers_data(tx, config);
+    Ok(output_format.formatted_string(&cli_command))
+}
+
+pub fn return_signers_data(tx: &Transaction, config: &ReturnSignersConfig) -> CliSignOnlyData {
     let verify_results = tx.verify_with_results();
     let mut signers = Vec::new();
     let mut absent = Vec::new();
@@ -1995,15 +2171,13 @@ pub fn return_signers_with_config(
         None
     };
 
-    let cli_command = CliSignOnlyData {
+    CliSignOnlyData {
         blockhash: tx.message.recent_blockhash.to_string(),
         message,
         signers,
         absent,
         bad_sig,
-    };
-
-    Ok(output_format.formatted_string(&cli_command))
+    }
 }
 
 pub fn parse_sign_only_reply_string(reply: &str) -> SignOnly {
@@ -2111,6 +2285,7 @@ impl QuietDisplay for CliBlock {}
 impl VerboseDisplay for CliBlock {}
 
 impl fmt::Display for CliBlock {
+    #[allow(clippy::format_in_format_args)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "Slot: {}", self.slot)?;
         writeln!(
@@ -2137,8 +2312,8 @@ impl fmt::Display for CliBlock {
             writeln!(f, "Rewards:")?;
             writeln!(
                 f,
-                "  {:<44}  {:^15}  {:<15}  {:<20}  {:>14}",
-                "Address", "Type", "Amount", "New Balance", "Percent Change"
+                "  {:<44}  {:^15}  {:<15}  {:<20}  {:>14}  {:>10}",
+                "Address", "Type", "Amount", "New Balance", "Percent Change", "Commission"
             )?;
             for reward in rewards {
                 let sign = if reward.lamports < 0 { "-" } else { "" };
@@ -2146,7 +2321,7 @@ impl fmt::Display for CliBlock {
                 total_rewards += reward.lamports;
                 writeln!(
                     f,
-                    "  {:<44}  {:^15}  {:>15}  {}",
+                    "  {:<44}  {:^15}  {:>15}  {}  {}",
                     reward.pubkey,
                     if let Some(reward_type) = reward.reward_type {
                         format!("{}", reward_type)
@@ -2156,7 +2331,7 @@ impl fmt::Display for CliBlock {
                     format!(
                         "{}◎{:<14.9}",
                         sign,
-                        lamports_to_sol(reward.lamports.abs() as u64)
+                        lamports_to_sol(reward.lamports.unsigned_abs())
                     ),
                     if reward.post_balance == 0 {
                         "          -                 -".to_string()
@@ -2168,7 +2343,11 @@ impl fmt::Display for CliBlock {
                                 / (reward.post_balance as f64 - reward.lamports as f64))
                                 * 100.0
                         )
-                    }
+                    },
+                    reward
+                        .commission
+                        .map(|commission| format!("{:>9}%", commission))
+                        .unwrap_or_else(|| "    -".to_string())
                 )?;
             }
 
@@ -2177,7 +2356,7 @@ impl fmt::Display for CliBlock {
                 f,
                 "Total Rewards: {}◎{:<12.9}",
                 sign,
-                lamports_to_sol(total_rewards.abs() as u64)
+                lamports_to_sol(total_rewards.unsigned_abs())
             )?;
         }
         for (index, transaction_with_meta) in
@@ -2378,15 +2557,184 @@ impl fmt::Display for CliGossipNodes {
 impl QuietDisplay for CliGossipNodes {}
 impl VerboseDisplay for CliGossipNodes {}
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliPing {
+    pub source_pubkey: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_blockhash: Option<String>,
+    #[serde(skip_serializing)]
+    pub blockhash_from_cluster: bool,
+    pub pings: Vec<CliPingData>,
+    pub transaction_stats: CliPingTxStats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmation_stats: Option<CliPingConfirmationStats>,
+}
+
+impl fmt::Display for CliPing {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f)?;
+        writeln_name_value(f, "Source Account:", &self.source_pubkey)?;
+        if let Some(fixed_blockhash) = &self.fixed_blockhash {
+            let blockhash_origin = if self.blockhash_from_cluster {
+                "fetched from cluster"
+            } else {
+                "supplied from cli arguments"
+            };
+            writeln!(
+                f,
+                "Fixed blockhash is used: {} ({})",
+                fixed_blockhash, blockhash_origin
+            )?;
+        }
+        writeln!(f)?;
+        for ping in &self.pings {
+            write!(f, "{}", ping)?;
+        }
+        writeln!(f)?;
+        writeln!(f, "--- transaction statistics ---")?;
+        write!(f, "{}", self.transaction_stats)?;
+        if let Some(confirmation_stats) = &self.confirmation_stats {
+            write!(f, "{}", confirmation_stats)?;
+        }
+        Ok(())
+    }
+}
+
+impl QuietDisplay for CliPing {}
+impl VerboseDisplay for CliPing {}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliPingData {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing)]
+    pub print_timestamp: bool,
+    pub timestamp: String,
+    pub sequence: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lamports: Option<u64>,
+}
+impl fmt::Display for CliPingData {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let (mark, msg) = if let Some(signature) = &self.signature {
+            if self.success {
+                (
+                    CHECK_MARK,
+                    format!(
+                        "{} lamport(s) transferred: seq={:<3} time={:>4}ms signature={}",
+                        self.lamports.unwrap(),
+                        self.sequence,
+                        self.ms.unwrap(),
+                        signature
+                    ),
+                )
+            } else if let Some(error) = &self.error {
+                (
+                    CROSS_MARK,
+                    format!(
+                        "Transaction failed:    seq={:<3} error={:?} signature={}",
+                        self.sequence, error, signature
+                    ),
+                )
+            } else {
+                (
+                    CROSS_MARK,
+                    format!(
+                        "Confirmation timeout:  seq={:<3}             signature={}",
+                        self.sequence, signature
+                    ),
+                )
+            }
+        } else {
+            (
+                CROSS_MARK,
+                format!(
+                    "Submit failed:         seq={:<3} error={:?}",
+                    self.sequence,
+                    self.error.as_ref().unwrap(),
+                ),
+            )
+        };
+
+        writeln!(
+            f,
+            "{}{}{}",
+            if self.print_timestamp {
+                &self.timestamp
+            } else {
+                ""
+            },
+            mark,
+            msg
+        )
+    }
+}
+
+impl QuietDisplay for CliPingData {}
+impl VerboseDisplay for CliPingData {}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliPingTxStats {
+    pub num_transactions: u32,
+    pub num_transaction_confirmed: u32,
+}
+impl fmt::Display for CliPingTxStats {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(
+            f,
+            "{} transactions submitted, {} transactions confirmed, {:.1}% transaction loss",
+            self.num_transactions,
+            self.num_transaction_confirmed,
+            (100.
+                - f64::from(self.num_transaction_confirmed) / f64::from(self.num_transactions)
+                    * 100.)
+        )
+    }
+}
+
+impl QuietDisplay for CliPingTxStats {}
+impl VerboseDisplay for CliPingTxStats {}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliPingConfirmationStats {
+    pub min: f64,
+    pub mean: f64,
+    pub max: f64,
+    pub std_dev: f64,
+}
+impl fmt::Display for CliPingConfirmationStats {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(
+            f,
+            "confirmation min/mean/max/stddev = {:.0}/{:.0}/{:.0}/{:.0} ms",
+            self.min, self.mean, self.max, self.std_dev,
+        )
+    }
+}
+impl QuietDisplay for CliPingConfirmationStats {}
+impl VerboseDisplay for CliPingConfirmationStats {}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use solana_sdk::{
-        message::Message,
-        pubkey::Pubkey,
-        signature::{keypair_from_seed, NullSigner, Signature, Signer, SignerError},
-        system_instruction,
-        transaction::Transaction,
+    use {
+        super::*,
+        clap::{App, Arg},
+        solana_sdk::{
+            message::Message,
+            pubkey::Pubkey,
+            signature::{keypair_from_seed, NullSigner, Signature, Signer, SignerError},
+            system_instruction,
+            transaction::Transaction,
+        },
     };
 
     #[test]
@@ -2408,6 +2756,10 @@ mod tests {
 
             fn try_sign_message(&self, _message: &[u8]) -> Result<Signature, SignerError> {
                 Ok(Signature::new(&[1u8; 64]))
+            }
+
+            fn is_interactive(&self) -> bool {
+                false
             }
         }
 
@@ -2437,6 +2789,18 @@ mod tests {
         assert_eq!(sign_only.absent_signers[0], absent.pubkey());
         assert_eq!(sign_only.bad_signers[0], bad.pubkey());
 
+        let res_data = return_signers_data(&tx, &ReturnSignersConfig::default());
+        assert_eq!(
+            res_data,
+            CliSignOnlyData {
+                blockhash: blockhash.to_string(),
+                message: None,
+                signers: vec![format!("{}={}", present.pubkey(), tx.signatures[1])],
+                absent: vec![absent.pubkey().to_string()],
+                bad_sig: vec![bad.pubkey().to_string()],
+            }
+        );
+
         let expected_msg = "AwECBwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDgTl3Dqh9\
             F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5QEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\
             BAQEBAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQUFBQUFBQUFBQUFBQUFBQUF\
@@ -2450,10 +2814,22 @@ mod tests {
         let res = return_signers_with_config(&tx, &OutputFormat::JsonCompact, &config).unwrap();
         let sign_only = parse_sign_only_reply_string(&res);
         assert_eq!(sign_only.blockhash, blockhash);
-        assert_eq!(sign_only.message, Some(expected_msg));
+        assert_eq!(sign_only.message, Some(expected_msg.clone()));
         assert_eq!(sign_only.present_signers[0].0, present.pubkey());
         assert_eq!(sign_only.absent_signers[0], absent.pubkey());
         assert_eq!(sign_only.bad_signers[0], bad.pubkey());
+
+        let res_data = return_signers_data(&tx, &config);
+        assert_eq!(
+            res_data,
+            CliSignOnlyData {
+                blockhash: blockhash.to_string(),
+                message: Some(expected_msg),
+                signers: vec![format!("{}={}", present.pubkey(), tx.signatures[1])],
+                absent: vec![absent.pubkey().to_string()],
+                bad_sig: vec![bad.pubkey().to_string()],
+            }
+        );
     }
 
     #[test]
@@ -2500,6 +2876,52 @@ mod tests {
         assert_eq!(
             &OutputFormat::DisplayVerbose.formatted_string(&f),
             "verbose"
+        );
+    }
+
+    #[test]
+    fn test_output_format_from_matches() {
+        let app = App::new("test").arg(
+            Arg::with_name("output_format")
+                .long("output")
+                .value_name("FORMAT")
+                .global(true)
+                .takes_value(true)
+                .possible_values(&["json", "json-compact"])
+                .help("Return information in specified output format"),
+        );
+        let matches = app
+            .clone()
+            .get_matches_from(vec!["test", "--output", "json"]);
+        assert_eq!(
+            OutputFormat::from_matches(&matches, "output_format", false),
+            OutputFormat::Json
+        );
+        assert_eq!(
+            OutputFormat::from_matches(&matches, "output_format", true),
+            OutputFormat::Json
+        );
+
+        let matches = app
+            .clone()
+            .get_matches_from(vec!["test", "--output", "json-compact"]);
+        assert_eq!(
+            OutputFormat::from_matches(&matches, "output_format", false),
+            OutputFormat::JsonCompact
+        );
+        assert_eq!(
+            OutputFormat::from_matches(&matches, "output_format", true),
+            OutputFormat::JsonCompact
+        );
+
+        let matches = app.clone().get_matches_from(vec!["test"]);
+        assert_eq!(
+            OutputFormat::from_matches(&matches, "output_format", false),
+            OutputFormat::Display
+        );
+        assert_eq!(
+            OutputFormat::from_matches(&matches, "output_format", true),
+            OutputFormat::DisplayVerbose
         );
     }
 }

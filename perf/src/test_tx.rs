@@ -1,16 +1,29 @@
-use solana_sdk::hash::Hash;
-use solana_sdk::instruction::CompiledInstruction;
-use solana_sdk::signature::{Keypair, Signer};
-use solana_sdk::system_instruction::SystemInstruction;
-use solana_sdk::system_program;
-use solana_sdk::system_transaction;
-use solana_sdk::transaction::Transaction;
+use {
+    rand::{CryptoRng, Rng, RngCore},
+    solana_sdk::{
+        clock::Slot,
+        hash::Hash,
+        instruction::CompiledInstruction,
+        signature::{Keypair, Signer},
+        stake,
+        system_instruction::SystemInstruction,
+        system_program, system_transaction,
+        transaction::Transaction,
+    },
+    solana_vote_program::vote_transaction,
+};
 
 pub fn test_tx() -> Transaction {
     let keypair1 = Keypair::new();
     let pubkey1 = keypair1.pubkey();
     let zero = Hash::default();
     system_transaction::transfer(&keypair1, &pubkey1, 42, zero)
+}
+
+pub fn test_invalid_tx() -> Transaction {
+    let mut tx = test_tx();
+    tx.signatures = vec![Transaction::get_invalid_signature()];
+    tx
 }
 
 pub fn test_multisig_tx() -> Transaction {
@@ -22,7 +35,7 @@ pub fn test_multisig_tx() -> Transaction {
 
     let transfer_instruction = SystemInstruction::Transfer { lamports };
 
-    let program_ids = vec![system_program::id(), solana_budget_program::id()];
+    let program_ids = vec![system_program::id(), stake::program::id()];
 
     let instructions = vec![CompiledInstruction::new(
         0,
@@ -36,5 +49,24 @@ pub fn test_multisig_tx() -> Transaction {
         blockhash,
         program_ids,
         instructions,
+    )
+}
+
+pub fn new_test_vote_tx<R>(rng: &mut R) -> Transaction
+where
+    R: CryptoRng + RngCore,
+{
+    let mut slots: Vec<Slot> = std::iter::repeat_with(|| rng.gen()).take(5).collect();
+    slots.sort_unstable();
+    slots.dedup();
+    let switch_proof_hash = rng.gen_bool(0.5).then(|| solana_sdk::hash::new_rand(rng));
+    vote_transaction::new_vote_transaction(
+        slots,
+        solana_sdk::hash::new_rand(rng), // bank_hash
+        solana_sdk::hash::new_rand(rng), // blockhash
+        &Keypair::generate(rng),         // node_keypair
+        &Keypair::generate(rng),         // vote_keypair
+        &Keypair::generate(rng),         // authorized_voter_keypair
+        switch_proof_hash,
     )
 }

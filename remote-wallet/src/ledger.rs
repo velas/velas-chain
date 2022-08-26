@@ -15,13 +15,7 @@ use {
 
 static CHECK_MARK: Emoji = Emoji("✅ ", "");
 
-const DEPRECATE_VERSION_BEFORE: FirmwareVersion = FirmwareVersion {
-    major: 0,
-    minor: 2,
-    patch: 0,
-    pre: Vec::new(),
-    build: Vec::new(),
-};
+const DEPRECATE_VERSION_BEFORE: FirmwareVersion = FirmwareVersion::new(0, 2, 0);
 
 const APDU_TAG: u8 = 0x05;
 const APDU_CLA: u8 = 0xe0;
@@ -371,7 +365,7 @@ impl RemoteWallet for LedgerWallet {
             .product_string()
             .unwrap_or("Unknown")
             .to_lowercase()
-            .replace(" ", "-");
+            .replace(' ', "-");
         let serial = dev_info.serial_number().unwrap_or("Unknown").to_string();
         let host_device_path = dev_info.path().to_string_lossy().to_string();
         let version = self.get_firmware_version()?;

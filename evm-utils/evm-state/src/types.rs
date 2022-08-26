@@ -206,7 +206,7 @@ pub struct LogWithLocation {
     pub topics: Vec<H256>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LogFilter {
     pub from_block: u64,
     pub to_block: u64,
@@ -214,7 +214,7 @@ pub struct LogFilter {
     pub topics: Vec<LogFilterTopicEntry>, // None - mean any topic
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LogFilterTopicEntry {
     Any,
     One(H256),

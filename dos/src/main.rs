@@ -1,16 +1,27 @@
 #![allow(clippy::integer_arithmetic)]
-use clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg};
-use log::*;
-use rand::{thread_rng, Rng};
-use solana_client::rpc_client::RpcClient;
-use solana_core::{
-    contact_info::ContactInfo, gossip_service::discover, serve_repair::RepairProtocol,
+use {
+    clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg},
+    log::*,
+    rand::{thread_rng, Rng},
+    solana_client::rpc_client::RpcClient,
+    solana_core::serve_repair::RepairProtocol,
+    solana_gossip::{contact_info::ContactInfo, gossip_service::discover},
+    solana_sdk::pubkey::Pubkey,
+    solana_streamer::socket::SocketAddrSpace,
+    std::{
+        net::{SocketAddr, UdpSocket},
+        process::exit,
+        str::FromStr,
+        time::{Duration, Instant},
+    },
 };
-use solana_sdk::pubkey::Pubkey;
-use std::net::{SocketAddr, UdpSocket};
-use std::process::exit;
-use std::str::FromStr;
-use std::time::{Duration, Instant};
+
+fn get_repair_contact(nodes: &[ContactInfo]) -> ContactInfo {
+    let source = thread_rng().gen_range(0, nodes.len());
+    let mut contact = nodes[source].clone();
+    contact.id = solana_sdk::pubkey::new_rand();
+    contact
+}
 
 fn run_dos(
     nodes: &[ContactInfo],
@@ -56,34 +67,35 @@ fn run_dos(
 
     let mut data = Vec::new();
 
-    if !nodes.is_empty() {
-        let source = thread_rng().gen_range(0, nodes.len());
-        let mut contact = nodes[source].clone();
-        contact.id = solana_sdk::pubkey::new_rand();
-        match data_type.as_str() {
-            "repair_highest" => {
-                let slot = 100;
-                let req = RepairProtocol::WindowIndexWithNonce(contact, slot, 0, 0);
-                data = bincode::serialize(&req).unwrap();
-            }
-            "repair_shred" => {
-                let slot = 100;
-                let req = RepairProtocol::HighestWindowIndexWithNonce(contact, slot, 0, 0);
-                data = bincode::serialize(&req).unwrap();
-            }
-            "repair_orphan" => {
-                let slot = 100;
-                let req = RepairProtocol::OrphanWithNonce(contact, slot, 0);
-                data = bincode::serialize(&req).unwrap();
-            }
-            "random" => {
-                data.resize(data_size, 0);
-            }
-            "get_account_info" => {}
-            "get_program_accounts" => {}
-            &_ => {
-                panic!("unknown data type");
-            }
+    match data_type.as_str() {
+        "repair_highest" => {
+            let slot = 100;
+            let req = RepairProtocol::WindowIndexWithNonce(get_repair_contact(nodes), slot, 0, 0);
+            data = bincode::serialize(&req).unwrap();
+        }
+        "repair_shred" => {
+            let slot = 100;
+            let req =
+                RepairProtocol::HighestWindowIndexWithNonce(get_repair_contact(nodes), slot, 0, 0);
+            data = bincode::serialize(&req).unwrap();
+        }
+        "repair_orphan" => {
+            let slot = 100;
+            let req = RepairProtocol::OrphanWithNonce(get_repair_contact(nodes), slot, 0);
+            data = bincode::serialize(&req).unwrap();
+        }
+        "random" => {
+            data.resize(data_size, 0);
+        }
+        "transaction" => {
+            let tx = solana_perf::test_tx::test_tx();
+            info!("{:?}", tx);
+            data = bincode::serialize(&tx).unwrap();
+        }
+        "get_account_info" => {}
+        "get_program_accounts" => {}
+        &_ => {
+            panic!("unknown data type");
         }
     }
 
@@ -183,6 +195,7 @@ fn main() {
                     "random",
                     "get_account_info",
                     "get_program_accounts",
+                    "transaction",
                 ])
                 .help("Type of data to send"),
         )
@@ -197,6 +210,13 @@ fn main() {
             Arg::with_name("skip_gossip")
                 .long("skip-gossip")
                 .help("Just use entrypoint address directly"),
+        )
+        .arg(
+            Arg::with_name("allow_private_addr")
+                .long("allow-private-addr")
+                .takes_value(false)
+                .help("Allow contacting private ip addresses")
+                .hidden(true),
         )
         .get_matches();
 
@@ -217,6 +237,7 @@ fn main() {
     let mut nodes = vec![];
     if !skip_gossip {
         info!("Finding cluster entry: {:?}", entrypoint_addr);
+        let socket_addr_space = SocketAddrSpace::new(matches.is_present("allow_private_addr"));
         let (gossip_nodes, _validators) = discover(
             None, // keypair
             Some(&entrypoint_addr),
@@ -226,6 +247,7 @@ fn main() {
             Some(&entrypoint_addr),  // find_node_by_gossip_addr
             None,                    // my_gossip_addr
             0,                       // my_shred_version
+            socket_addr_space,
         )
         .unwrap_or_else(|err| {
             eprintln!("Failed to discover {} node: {:?}", entrypoint_addr, err);
@@ -249,8 +271,7 @@ fn main() {
 
 #[cfg(test)]
 pub mod test {
-    use super::*;
-    use solana_sdk::timing::timestamp;
+    use {super::*, solana_sdk::timing::timestamp};
 
     #[test]
     fn test_dos() {

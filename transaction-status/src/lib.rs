@@ -4,6 +4,7 @@ extern crate lazy_static;
 #[macro_use]
 extern crate serde_derive;
 
+pub mod extract_memos;
 pub mod parse_accounts;
 pub mod parse_associated_token;
 pub mod parse_bpf_loader;
@@ -15,24 +16,26 @@ pub mod parse_token;
 pub mod parse_vote;
 pub mod token_balances;
 
-use crate::{
-    parse_accounts::{parse_accounts, ParsedAccount},
-    parse_instruction::{parse, ParsedInstruction},
+pub use {crate::extract_memos::extract_and_fmt_memos, solana_runtime::bank::RewardType};
+use {
+    crate::{
+        parse_accounts::{parse_accounts, ParsedAccount},
+        parse_instruction::{parse, ParsedInstruction},
+    },
+    solana_account_decoder::parse_token::UiTokenAmount,
+    solana_sdk::{
+        clock::{Slot, UnixTimestamp},
+        commitment_config::CommitmentConfig,
+        deserialize_utils::default_on_eof,
+        instruction::CompiledInstruction,
+        message::{Message, MessageHeader},
+        pubkey::Pubkey,
+        sanitize::Sanitize,
+        signature::Signature,
+        transaction::{Result, Transaction, TransactionError},
+    },
+    std::fmt,
 };
-use solana_account_decoder::parse_token::UiTokenAmount;
-pub use solana_runtime::bank::RewardType;
-use solana_sdk::{
-    clock::{Slot, UnixTimestamp},
-    commitment_config::CommitmentConfig,
-    deserialize_utils::default_on_eof,
-    instruction::CompiledInstruction,
-    message::{Message, MessageHeader},
-    pubkey::Pubkey,
-    sanitize::Sanitize,
-    signature::Signature,
-    transaction::{Result, Transaction, TransactionError},
-};
-use std::fmt;
 /// A duplicate representation of an Instruction for pretty JSON serialization
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", untagged)]
@@ -125,6 +128,7 @@ pub struct TransactionTokenBalance {
     pub account_index: u8,
     pub mint: String,
     pub ui_token_amount: UiTokenAmount,
+    pub owner: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -133,6 +137,8 @@ pub struct UiTransactionTokenBalance {
     pub account_index: u8,
     pub mint: String,
     pub ui_token_amount: UiTokenAmount,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
 }
 
 impl From<TransactionTokenBalance> for UiTransactionTokenBalance {
@@ -141,6 +147,11 @@ impl From<TransactionTokenBalance> for UiTransactionTokenBalance {
             account_index: token_balance.account_index,
             mint: token_balance.mint,
             ui_token_amount: token_balance.ui_token_amount,
+            owner: if !token_balance.owner.is_empty() {
+                Some(token_balance.owner)
+            } else {
+                None
+            },
         }
     }
 }
@@ -340,23 +351,48 @@ pub struct Reward {
     pub lamports: i64,
     pub post_balance: u64, // Account balance in lamports after `lamports` was applied
     pub reward_type: Option<RewardType>,
+    pub commission: Option<u8>, // Vote account commission when the reward was credited, only present for voting and staking rewards
 }
 
 pub type Rewards = Vec<Reward>;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ConfirmedBlock {
     pub previous_blockhash: String,
     pub blockhash: String,
     pub parent_slot: Slot,
-    pub transactions: Vec<TransactionWithStatusMeta>,
+    pub transactions: Vec<TransactionWithMetadata>,
     pub rewards: Rewards,
     pub block_time: Option<UnixTimestamp>,
     pub block_height: Option<u64>,
 }
 
-impl ConfirmedBlock {
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConfirmedBlockWithOptionalMetadata {
+    pub previous_blockhash: String,
+    pub blockhash: String,
+    pub parent_slot: Slot,
+    pub transactions: Vec<TransactionWithOptionalMetadata>,
+    pub rewards: Rewards,
+    pub block_time: Option<UnixTimestamp>,
+    pub block_height: Option<u64>,
+}
+
+impl From<ConfirmedBlock> for ConfirmedBlockWithOptionalMetadata {
+    fn from(block: ConfirmedBlock) -> Self {
+        Self {
+            previous_blockhash: block.previous_blockhash,
+            blockhash: block.blockhash,
+            parent_slot: block.parent_slot,
+            transactions: block.transactions.into_iter().map(Into::into).collect(),
+            rewards: block.rewards,
+            block_time: block.block_time,
+            block_height: block.block_height,
+        }
+    }
+}
+
+impl ConfirmedBlockWithOptionalMetadata {
     pub fn encode(self, encoding: UiTransactionEncoding) -> EncodedConfirmedBlock {
         EncodedConfirmedBlock {
             previous_blockhash: self.previous_blockhash,
@@ -474,7 +510,7 @@ impl From<UiConfirmedBlock> for EncodedConfirmedBlock {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TransactionDetails {
     Full,
@@ -488,16 +524,31 @@ impl Default for TransactionDetails {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConfirmedTransaction {
     pub slot: Slot,
-    #[serde(flatten)]
-    pub transaction: TransactionWithStatusMeta,
+    pub transaction: TransactionWithMetadata,
     pub block_time: Option<UnixTimestamp>,
 }
 
-impl ConfirmedTransaction {
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConfirmedTransactionWithOptionalMetadata {
+    pub slot: Slot,
+    pub transaction: TransactionWithOptionalMetadata,
+    pub block_time: Option<UnixTimestamp>,
+}
+
+impl From<ConfirmedTransaction> for ConfirmedTransactionWithOptionalMetadata {
+    fn from(confirmed_tx: ConfirmedTransaction) -> Self {
+        Self {
+            slot: confirmed_tx.slot,
+            transaction: confirmed_tx.transaction.into(),
+            block_time: confirmed_tx.block_time,
+        }
+    }
+}
+
+impl ConfirmedTransactionWithOptionalMetadata {
     pub fn encode(self, encoding: UiTransactionEncoding) -> EncodedConfirmedTransaction {
         EncodedConfirmedTransaction {
             slot: self.slot,
@@ -550,14 +601,28 @@ pub struct UiParsedMessage {
     pub instructions: Vec<UiInstruction>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TransactionWithStatusMeta {
+#[derive(Clone, Debug, PartialEq)]
+pub struct TransactionWithMetadata {
+    pub transaction: Transaction,
+    pub meta: TransactionStatusMeta,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TransactionWithOptionalMetadata {
     pub transaction: Transaction,
     pub meta: Option<TransactionStatusMeta>,
 }
 
-impl TransactionWithStatusMeta {
+impl From<TransactionWithMetadata> for TransactionWithOptionalMetadata {
+    fn from(tx_with_meta: TransactionWithMetadata) -> Self {
+        Self {
+            transaction: tx_with_meta.transaction,
+            meta: Some(tx_with_meta.meta),
+        }
+    }
+}
+
+impl TransactionWithOptionalMetadata {
     fn encode(self, encoding: UiTransactionEncoding) -> EncodedTransactionWithStatusMeta {
         let message = self.transaction.message();
         let meta = self.meta.map(|meta| meta.encode(encoding, message));
@@ -568,7 +633,7 @@ impl TransactionWithStatusMeta {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EncodedTransactionWithStatusMeta {
     pub transaction: EncodedTransaction,
@@ -584,7 +649,7 @@ impl TransactionStatusMeta {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum UiTransactionEncoding {
     Binary, // Legacy. Retained for RPC backwards compatibility

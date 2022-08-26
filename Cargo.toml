@@ -1,15 +1,17 @@
 [workspace]
 members = [
-    "accounts-cluster-bench",
-    "bench-exchange",
-    "bench-streamer",
-    "bench-tps",
-    "bench-tps-evm",
+    "account-decoder",
     "accounts-bench",
+    "accounts-cluster-bench",
     "banking-bench",
     "banks-client",
     "banks-interface",
     "banks-server",
+    "bench-streamer",
+    "bench-tps",
+    "bench-tps-evm",
+    "bucket_map",
+    "bloom",
     "clap-utils",
     "cli-config",
     "cli-output",
@@ -17,11 +19,15 @@ members = [
     "core",
     "dos",
     "download-utils",
+    "entry",
     "faucet",
     "frozen-abi",
     "perf",
     "validator",
     "genesis",
+    "genesis-utils",
+    "geyser-plugin-interface",
+    "geyser-plugin-manager",
     "gossip",
     "install",
     "keygen",
@@ -32,7 +38,6 @@ members = [
     "log-analyzer",
     "merkle-root-bench",
     "merkle-tree",
-    "stake-o-matic",
     "storage-bigtable",
     "storage-proto",
     "streamer",
@@ -40,50 +45,64 @@ members = [
     "metrics",
     "net-shaper",
     "notifier",
+    "evm-utils/evm-block-recovery",
     "evm-utils/evm-bridge",
     "evm-utils/programs/evm_loader",
     "evm-utils/evm-state",
     "evm-utils/evm-rpc",
+    "poh",
     "poh-bench",
     "program-test",
-    "programs/secp256k1",
+    "programs/address-lookup-table",
+    "programs/address-lookup-table-tests",
+    "programs/ed25519-tests",
     "programs/bpf_loader",
-    "programs/budget",
+    "programs/bpf_loader/gen-syscall-list",
+    "programs/compute-budget",
     "programs/config",
-    "programs/exchange",
-    "programs/failure",
-    "programs/noop",
     "programs/sleep",
-    "programs/ownable",
     "programs/stake",
-    "programs/vest",
     "programs/vote",
-    "programs/velas-account-program",
     "remote-wallet",
-    "ramp-tps",
+    "rpc",
     "runtime",
     "runtime/store-tool",
     "sdk",
     "sdk/cargo-build-bpf",
     "sdk/cargo-test-bpf",
-    "scripts",
+    "send-transaction-service",
     "stake-accounts",
-    "stake-monitor",
     "sys-tuner",
     "tokens",
+    "transaction-dos",
     "transaction-status",
-    "account-decoder",
     "upload-perf",
     "net-utils",
     "version",
     "cli",
     "rayon-threadlimit",
     "watchtower",
+    "replica-node",
+    "replica-lib",
+    "test-validator",
+    "rpc-test",
+    "client-test",
+    "rbpf-cli"
 ]
 
 exclude = [
     "programs/bpf",
 ]
 
+# TODO: Remove once the "simd-accel" feature from the reed-solomon-erasure
+# dependency is supported on Apple M1. v2 of the feature resolver is needed to
+# specify arch-specific features.
+resolver = "2"
+
 [profile.dev]
 split-debuginfo = "unpacked"
+
+[patch.crates-io]
+# TODO: change to velas/parity-common:borsh-support
+primitive-types = { git = "https://github.com/gBaGu/parity-common", branch = "feature-add-borsh-support" }
+uint = { git = "https://github.com/gBaGu/parity-common", branch = "feature-add-borsh-support" }

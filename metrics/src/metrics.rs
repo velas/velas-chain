@@ -1,20 +1,24 @@
 //! The `metrics` module enables sending measurements to an `InfluxDB` instance
 
-use crate::{counter::CounterPoint, datapoint::DataPoint};
-use gethostname::gethostname;
-use lazy_static::lazy_static;
-use log::*;
-use solana_sdk::hash::hash;
-use std::{
-    collections::HashMap,
-    convert::Into,
-    sync::{
-        mpsc::{channel, Receiver, RecvTimeoutError, Sender},
-        Arc, Barrier, Mutex, Once, RwLock,
+use {
+    crate::{counter::CounterPoint, datapoint::DataPoint},
+    gethostname::gethostname,
+    lazy_static::lazy_static,
+    log::*,
+    solana_sdk::hash::hash,
+    std::{
+        cmp,
+        collections::HashMap,
+        convert::Into,
+        env,
+        fmt::Write as _,
+        sync::{
+            mpsc::{channel, Receiver, RecvTimeoutError, Sender},
+            Arc, Barrier, Mutex, Once, RwLock,
+        },
+        thread,
+        time::{Duration, Instant, UNIX_EPOCH},
     },
-    thread,
-    time::{Duration, Instant},
-    {cmp, env},
 };
 
 type CounterMap = HashMap<(&'static str, u64), CounterPoint>;
@@ -68,7 +72,7 @@ impl InfluxDbMetricsWriter {
         );
 
         let write_url = format!(
-            "{}/write?db={}&u={}&p={}&precision=ms",
+            "{}/write?db={}&u={}&p={}&precision=n",
             &config.host, &config.db, &config.username, &config.password
         );
 
@@ -85,20 +89,22 @@ impl MetricsWriter for InfluxDbMetricsWriter {
 
             let mut line = String::new();
             for point in points {
-                line.push_str(&format!("{},host_id={}", &point.name, &host_id));
+                let _ = write!(line, "{},host_id={}", &point.name, &host_id);
 
                 let mut first = true;
                 for (name, value) in point.fields {
-                    line.push_str(&format!(
+                    let _ = write!(
+                        line,
                         "{}{}={}",
                         if first { ' ' } else { ',' },
                         name,
                         value
-                    ));
+                    );
                     first = false;
                 }
-
-                line.push_str(&format!(" {}\n", &point.timestamp));
+                let timestamp = point.timestamp.duration_since(UNIX_EPOCH);
+                let nanos = timestamp.unwrap().as_nanos();
+                let _ = writeln!(line, " {}", nanos);
             }
 
             let client = reqwest::blocking::Client::builder()
@@ -404,7 +410,7 @@ fn get_metrics_config() -> Result<MetricsConfig, String> {
 }
 
 pub fn query(q: &str) -> Result<String, String> {
-    let config = get_metrics_config().map_err(|err| err)?;
+    let config = get_metrics_config()?;
     let query_url = format!(
         "{}/query?u={}&p={}&q={}",
         &config.host, &config.username, &config.password, &q
@@ -427,7 +433,7 @@ pub fn flush() {
 }
 
 /// Hook the panic handler to generate a data point on each panic
-pub fn set_panic_hook(program: &'static str) {
+pub fn set_panic_hook(program: &'static str, version: Option<String>) {
     static SET_HOOK: Once = Once::new();
     SET_HOOK.call_once(|| {
         let default_hook = std::panic::take_hook();
@@ -448,6 +454,7 @@ pub fn set_panic_hook(program: &'static str) {
                     .add_field_i64("one", 1)
                     .add_field_str("message", &ono.to_string())
                     .add_field_str("location", &location)
+                    .add_field_str("version", version.as_ref().unwrap_or(&"".to_string()))
                     .to_owned(),
                 Level::Error,
             );
@@ -542,7 +549,7 @@ mod test {
                 CounterPoint {
                     name: "counter",
                     count: 10,
-                    timestamp: 0,
+                    timestamp: UNIX_EPOCH,
                 },
                 Level::Info,
                 0, // use the same bucket

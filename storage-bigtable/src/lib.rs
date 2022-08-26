@@ -1,24 +1,34 @@
 #![allow(clippy::integer_arithmetic)]
-use log::*;
-use serde::{Deserialize, Serialize};
-use solana_sdk::{
-    clock::{Slot, UnixTimestamp},
+use {
+    crate::bigtable::RowKey,
+    log::*,
+    serde::{Deserialize, Serialize},
+    solana_metrics::inc_new_counter_debug,
+    solana_sdk::{
+        clock::{Slot, UnixTimestamp},
     deserialize_utils::default_on_eof,
-    pubkey::Pubkey,
-    signature::Signature,
-    sysvar::is_sysvar_id,
-    transaction::{Transaction, TransactionError},
+        pubkey::Pubkey,
+        signature::Signature,
+        sysvar::is_sysvar_id,
+        transaction::{Transaction, TransactionError},
+    },
+    solana_storage_proto::convert::generated_evm,
+    solana_storage_proto::convert::{generated, tx_by_addr},
+    solana_transaction_status::{
+        extract_and_fmt_memos, ConfirmedBlock, ConfirmedBlockWithOptionalMetadata,
+        ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithOptionalMetadata, Reward,
+        TransactionByAddrInfo, TransactionConfirmationStatus, TransactionStatus,
+        TransactionStatusMeta, TransactionWithMetadata, TransactionWithOptionalMetadata,
+    },
+    std::{
+        collections::{HashMap, HashSet},
+        convert::TryInto,
+    },
+    thiserror::Error,
 };
-use solana_storage_proto::convert::generated;
-use solana_storage_proto::convert::generated_evm;
-use solana_storage_proto::convert::tx_by_addr;
-use solana_transaction_status::{
-    ConfirmedBlock, ConfirmedTransaction, ConfirmedTransactionStatusWithSignature, Reward,
-    TransactionByAddrInfo, TransactionConfirmationStatus, TransactionStatus, TransactionStatusMeta,
-    TransactionWithStatusMeta,
-};
-use std::{collections::HashMap, convert::TryInto};
-use thiserror::Error;
+
+#[macro_use]
+extern crate solana_metrics;
 
 #[macro_use]
 extern crate serde_derive;
@@ -68,6 +78,14 @@ fn slot_to_key(slot: Slot) -> String {
     format!("{:016x}", slot)
 }
 
+fn slot_to_blocks_key(slot: Slot) -> String {
+    slot_to_key(slot)
+}
+
+fn slot_to_tx_by_addr_key(slot: Slot) -> String {
+    slot_to_key(!slot)
+}
+
 // Reverse of `slot_to_key`
 fn key_to_slot(key: &str) -> Option<Slot> {
     match Slot::from_str_radix(key, 16) {
@@ -100,9 +118,10 @@ struct StoredConfirmedBlock {
     block_height: Option<u64>,
 }
 
-impl From<ConfirmedBlock> for StoredConfirmedBlock {
-    fn from(confirmed_block: ConfirmedBlock) -> Self {
-        let ConfirmedBlock {
+#[cfg(test)]
+impl From<ConfirmedBlockWithOptionalMetadata> for StoredConfirmedBlock {
+    fn from(confirmed_block: ConfirmedBlockWithOptionalMetadata) -> Self {
+        let ConfirmedBlockWithOptionalMetadata {
             previous_blockhash,
             blockhash,
             parent_slot,
@@ -124,7 +143,7 @@ impl From<ConfirmedBlock> for StoredConfirmedBlock {
     }
 }
 
-impl From<StoredConfirmedBlock> for ConfirmedBlock {
+impl From<StoredConfirmedBlock> for ConfirmedBlockWithOptionalMetadata {
     fn from(confirmed_block: StoredConfirmedBlock) -> Self {
         let StoredConfirmedBlock {
             previous_blockhash,
@@ -154,8 +173,9 @@ struct StoredConfirmedBlockTransaction {
     meta: Option<StoredConfirmedBlockTransactionStatusMeta>,
 }
 
-impl From<TransactionWithStatusMeta> for StoredConfirmedBlockTransaction {
-    fn from(value: TransactionWithStatusMeta) -> Self {
+#[cfg(test)]
+impl From<TransactionWithOptionalMetadata> for StoredConfirmedBlockTransaction {
+    fn from(value: TransactionWithOptionalMetadata) -> Self {
         Self {
             transaction: value.transaction,
             meta: value.meta.map(|meta| meta.into()),
@@ -163,7 +183,7 @@ impl From<TransactionWithStatusMeta> for StoredConfirmedBlockTransaction {
     }
 }
 
-impl From<StoredConfirmedBlockTransaction> for TransactionWithStatusMeta {
+impl From<StoredConfirmedBlockTransaction> for TransactionWithOptionalMetadata {
     fn from(value: StoredConfirmedBlockTransaction) -> Self {
         Self {
             transaction: value.transaction,
@@ -240,6 +260,7 @@ impl From<StoredConfirmedBlockReward> for Reward {
             lamports,
             post_balance: 0,
             reward_type: None,
+            commission: None,
         }
     }
 }
@@ -254,12 +275,30 @@ impl From<Reward> for StoredConfirmedBlockReward {
 }
 
 // A serialized `TransactionInfo` is stored in the `tx` table
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct TransactionInfo {
     slot: Slot, // The slot that contains the block with this transaction in it
     index: u32, // Where the transaction is located in the block
     err: Option<TransactionError>, // None if the transaction executed successfully
     memo: Option<String>, // Transaction memo
+}
+
+// Part of a serialized `TransactionInfo` which is stored in the `tx` table
+#[derive(PartialEq, Debug)]
+struct UploadedTransaction {
+    slot: Slot, // The slot that contains the block with this transaction in it
+    index: u32, // Where the transaction is located in the block
+    err: Option<TransactionError>, // None if the transaction executed successfully
+}
+
+impl From<TransactionInfo> for UploadedTransaction {
+    fn from(transaction_info: TransactionInfo) -> Self {
+        Self {
+            slot: transaction_info.slot,
+            index: transaction_info.index,
+            err: transaction_info.err,
+        }
+    }
 }
 
 impl From<TransactionInfo> for TransactionStatus {
@@ -312,14 +351,32 @@ pub struct LedgerStorage {
 }
 
 impl LedgerStorage {
-    pub async fn new(read_only: bool, timeout: Option<std::time::Duration>) -> Result<Self> {
+    pub async fn new(
+        read_only: bool,
+        timeout: Option<std::time::Duration>,
+        credential_path: Option<String>,
+    ) -> Result<Self> {
         let connection =
-            bigtable::BigTableConnection::new("solana-ledger", read_only, timeout).await?;
+            bigtable::BigTableConnection::new("solana-ledger", read_only, timeout, credential_path)
+                .await?;
+        Ok(Self { connection })
+    }
+
+    pub async fn new_with_custom_instance(
+        read_only: bool,
+        timeout: Option<std::time::Duration>,
+        creds_path: Option<String>,
+        instance: String
+    ) -> Result<Self> {
+        let connection =
+            bigtable::BigTableConnection::new(&instance, read_only, timeout, creds_path).await?;
         Ok(Self { connection })
     }
 
     /// Return the available slot that contains a block
     pub async fn get_first_available_block(&self) -> Result<Option<Slot>> {
+        debug!("LedgerStorage::get_first_available_block request received");
+        inc_new_counter_debug!("storage-bigtable-query", 1);
         let mut bigtable = self.connection.client();
         let blocks = bigtable.get_row_keys("blocks", None, None, 1).await?;
         if blocks.is_empty() {
@@ -334,20 +391,69 @@ impl LedgerStorage {
     /// limit: stop after this many slots have been found; if limit==0, all records in the table
     /// after start_slot will be read
     pub async fn get_confirmed_blocks(&self, start_slot: Slot, limit: usize) -> Result<Vec<Slot>> {
+        debug!(
+            "LedgerStorage::get_confirmed_blocks request received: {:?} {:?}",
+            start_slot, limit
+        );
+        inc_new_counter_debug!("storage-bigtable-query", 1);
         let mut bigtable = self.connection.client();
         let blocks = bigtable
-            .get_row_keys("blocks", Some(slot_to_key(start_slot)), None, limit as i64)
+            .get_row_keys(
+                "blocks",
+                Some(slot_to_blocks_key(start_slot)),
+                None,
+                limit as i64,
+            )
             .await?;
         Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
     }
 
+    // Fetches and gets a vector of confirmed blocks via a multirow fetch
+    #[allow(clippy::needless_lifetimes)]
+    pub async fn get_confirmed_blocks_with_data<'a>(
+        &self,
+        slots: &'a [Slot],
+    ) -> Result<impl Iterator<Item = (Slot, ConfirmedBlockWithOptionalMetadata)> + 'a> {
+        debug!(
+            "LedgerStorage::get_confirmed_blocks_with_data request received: {:?}",
+            slots
+        );
+        inc_new_counter_debug!("storage-bigtable-query", 1);
+        let mut bigtable = self.connection.client();
+        let row_keys = slots.iter().copied().map(slot_to_blocks_key);
+        let data = bigtable
+            .get_protobuf_or_bincode_cells("blocks", row_keys)
+            .await?
+            .filter_map(
+                |(row_key, block_cell_data): (
+                    RowKey,
+                    bigtable::CellData<StoredConfirmedBlock, generated::ConfirmedBlock>,
+                )| {
+                    let block = match block_cell_data {
+                        bigtable::CellData::Bincode(block) => block.into(),
+                        bigtable::CellData::Protobuf(block) => block.try_into().ok()?,
+                    };
+                    Some((key_to_slot(&row_key).unwrap(), block))
+                },
+            );
+        Ok(data)
+    }
+
     /// Fetch the confirmed block from the desired slot
-    pub async fn get_confirmed_block(&self, slot: Slot) -> Result<ConfirmedBlock> {
+    pub async fn get_confirmed_block(
+        &self,
+        slot: Slot,
+    ) -> Result<ConfirmedBlockWithOptionalMetadata> {
+        debug!(
+            "LedgerStorage::get_confirmed_block request received: {:?}",
+            slot
+        );
+        inc_new_counter_debug!("storage-bigtable-query", 1);
         let mut bigtable = self.connection.client();
         let block_cell_data = bigtable
             .get_protobuf_or_bincode_cell::<StoredConfirmedBlock, generated::ConfirmedBlock>(
                 "blocks",
-                slot_to_key(slot),
+                slot_to_blocks_key(slot),
             )
             .await
             .map_err(|err| match err {
@@ -357,7 +463,7 @@ impl LedgerStorage {
         Ok(match block_cell_data {
             bigtable::CellData::Bincode(block) => block.into(),
             bigtable::CellData::Protobuf(block) => block.try_into().map_err(|_err| {
-                bigtable::Error::ObjectCorrupt(format!("blocks/{}", slot_to_key(slot)))
+                bigtable::Error::ObjectCorrupt(format!("blocks/{}", slot_to_blocks_key(slot)))
             })?,
         })
     }
@@ -372,6 +478,11 @@ impl LedgerStorage {
     }
 
     pub async fn get_signature_status(&self, signature: &Signature) -> Result<TransactionStatus> {
+        debug!(
+            "LedgerStorage::get_signature_status request received: {:?}",
+            signature
+        );
+        inc_new_counter_debug!("storage-bigtable-query", 1);
         let mut bigtable = self.connection.client();
         let transaction_info = bigtable
             .get_bincode_cell::<TransactionInfo>("tx", signature.to_string())
@@ -387,7 +498,12 @@ impl LedgerStorage {
     pub async fn get_confirmed_transaction(
         &self,
         signature: &Signature,
-    ) -> Result<Option<ConfirmedTransaction>> {
+    ) -> Result<Option<ConfirmedTransactionWithOptionalMetadata>> {
+        debug!(
+            "LedgerStorage::get_confirmed_transaction request received: {:?}",
+            signature
+        );
+        inc_new_counter_debug!("storage-bigtable-query", 1);
         let mut bigtable = self.connection.client();
 
         // Figure out which block the transaction is located in
@@ -403,6 +519,7 @@ impl LedgerStorage {
         let block = self.get_confirmed_block(slot).await?;
         match block.transactions.into_iter().nth(index as usize) {
             None => {
+                // report this somewhere actionable?
                 warn!("Transaction info for {} is corrupt", signature);
                 Ok(None)
             }
@@ -414,7 +531,7 @@ impl LedgerStorage {
                     );
                     Ok(None)
                 } else {
-                    Ok(Some(ConfirmedTransaction {
+                    Ok(Some(ConfirmedTransactionWithOptionalMetadata {
                         slot,
                         transaction: bucket_block_transaction,
                         block_time: block.block_time,
@@ -442,6 +559,11 @@ impl LedgerStorage {
             u32, /*slot index*/
         )>,
     > {
+        debug!(
+            "LedgerStorage::get_confirmed_signatures_for_address request received: {:?}",
+            address
+        );
+        inc_new_counter_debug!("storage-bigtable-query", 1);
         let mut bigtable = self.connection.client();
         let address_prefix = format!("{}/", address);
 
@@ -474,7 +596,7 @@ impl LedgerStorage {
         let starting_slot_tx_len = bigtable
             .get_protobuf_or_bincode_cell::<Vec<LegacyTransactionByAddrInfo>, tx_by_addr::TransactionByAddr>(
                 "tx-by-addr",
-                format!("{}{}", address_prefix, slot_to_key(!first_slot)),
+                format!("{}{}", address_prefix, slot_to_tx_by_addr_key(first_slot)),
             )
             .await
             .map(|cell_data| {
@@ -490,8 +612,16 @@ impl LedgerStorage {
         let tx_by_addr_data = bigtable
             .get_row_data(
                 "tx-by-addr",
-                Some(format!("{}{}", address_prefix, slot_to_key(!first_slot))),
-                Some(format!("{}{}", address_prefix, slot_to_key(!last_slot))),
+                Some(format!(
+                    "{}{}",
+                    address_prefix,
+                    slot_to_tx_by_addr_key(first_slot),
+                )),
+                Some(format!(
+                    "{}{}",
+                    address_prefix,
+                    slot_to_tx_by_addr_key(last_slot),
+                )),
                 limit as i64 + starting_slot_tx_len as i64,
             )
             .await?;
@@ -565,10 +695,11 @@ impl LedgerStorage {
 
         let mut tx_cells = vec![];
         for (index, transaction_with_meta) in confirmed_block.transactions.iter().enumerate() {
-            let TransactionWithStatusMeta { meta, transaction } = transaction_with_meta;
-            let err = meta.as_ref().and_then(|meta| meta.status.clone().err());
+            let TransactionWithMetadata { meta, transaction } = transaction_with_meta;
+            let err = meta.status.clone().err();
             let index = index as u32;
             let signature = transaction.signatures[0];
+            let memo = extract_and_fmt_memos(&transaction.message);
 
             for address in &transaction.message.account_keys {
                 if !is_sysvar_id(address) {
@@ -579,7 +710,7 @@ impl LedgerStorage {
                             signature,
                             err: err.clone(),
                             index,
-                            memo: None, // TODO
+                            memo: memo.clone(),
                             block_time: confirmed_block.block_time,
                         });
                 }
@@ -591,7 +722,7 @@ impl LedgerStorage {
                     slot,
                     index,
                     err,
-                    memo: None, // TODO
+                    memo,
                 },
             ));
         }
@@ -600,7 +731,7 @@ impl LedgerStorage {
             .into_iter()
             .map(|(address, transaction_info_by_addr)| {
                 (
-                    format!("{}/{}", address, slot_to_key(!slot)),
+                    format!("{}/{}", address, slot_to_tx_by_addr_key(slot)),
                     tx_by_addr::TransactionByAddr {
                         tx_by_addrs: transaction_info_by_addr
                             .into_iter()
@@ -633,7 +764,7 @@ impl LedgerStorage {
         // Store the block itself last, after all other metadata about the block has been
         // successfully stored.  This avoids partial uploaded blocks from becoming visible to
         // `get_confirmed_block()` and `get_confirmed_blocks()`
-        let blocks_cells = [(slot_to_key(slot), confirmed_block.into())];
+        let blocks_cells = [(slot_to_blocks_key(slot), confirmed_block.into())];
         bytes_written += self
             .connection
             .put_protobuf_cells_with_retry::<generated::ConfirmedBlock>("blocks", &blocks_cells)
@@ -641,6 +772,107 @@ impl LedgerStorage {
         info!(
             "uploaded block for slot {}: {} transactions, {} bytes",
             slot, num_transactions, bytes_written
+        );
+
+        Ok(())
+    }
+
+    // Delete a confirmed block and associated meta data.
+    pub async fn delete_confirmed_block(&self, slot: Slot, dry_run: bool) -> Result<()> {
+        let mut addresses: HashSet<&Pubkey> = HashSet::new();
+        let mut expected_tx_infos: HashMap<String, UploadedTransaction> = HashMap::new();
+        let confirmed_block = self.get_confirmed_block(slot).await?;
+        for (index, transaction_with_meta) in confirmed_block.transactions.iter().enumerate() {
+            let TransactionWithOptionalMetadata { meta, transaction } = transaction_with_meta;
+            let signature = transaction.signatures[0];
+            let index = index as u32;
+            let err = meta.as_ref().and_then(|meta| meta.status.clone().err());
+
+            for address in &transaction.message.account_keys {
+                if !is_sysvar_id(address) {
+                    addresses.insert(address);
+                }
+            }
+
+            expected_tx_infos.insert(
+                signature.to_string(),
+                UploadedTransaction { slot, index, err },
+            );
+        }
+
+        let address_slot_rows: Vec<_> = addresses
+            .into_iter()
+            .map(|address| format!("{}/{}", address, slot_to_tx_by_addr_key(slot)))
+            .collect();
+
+        let tx_deletion_rows = if !expected_tx_infos.is_empty() {
+            let signatures = expected_tx_infos
+                .iter()
+                .map(|(signature, _info)| signature)
+                .cloned()
+                .collect::<Vec<_>>();
+            let fetched_tx_infos: HashMap<String, std::result::Result<UploadedTransaction, _>> =
+                self.connection
+                    .get_bincode_cells_with_retry::<TransactionInfo>("tx", &signatures)
+                    .await?
+                    .into_iter()
+                    .map(|(signature, tx_info_res)| (signature, tx_info_res.map(Into::into)))
+                    .collect::<HashMap<_, _>>();
+
+            let mut deletion_rows = Vec::with_capacity(expected_tx_infos.len());
+            for (signature, expected_tx_info) in expected_tx_infos {
+                match fetched_tx_infos.get(&signature) {
+                    Some(Ok(fetched_tx_info)) if fetched_tx_info == &expected_tx_info => {
+                        deletion_rows.push(signature);
+                    }
+                    Some(Ok(fetched_tx_info)) => {
+                        warn!(
+                            "skipped tx row {} because the bigtable entry ({:?}) did not match to {:?}",
+                            signature,
+                            fetched_tx_info,
+                            &expected_tx_info,
+                        );
+                    }
+                    Some(Err(err)) => {
+                        warn!(
+                            "skipped tx row {} because the bigtable entry was corrupted: {:?}",
+                            signature, err
+                        );
+                    }
+                    None => {
+                        warn!("skipped tx row {} because it was not found", signature);
+                    }
+                }
+            }
+            deletion_rows
+        } else {
+            vec![]
+        };
+
+        if !dry_run {
+            if !address_slot_rows.is_empty() {
+                self.connection
+                    .delete_rows_with_retry("tx-by-addr", &address_slot_rows)
+                    .await?;
+            }
+
+            if !tx_deletion_rows.is_empty() {
+                self.connection
+                    .delete_rows_with_retry("tx", &tx_deletion_rows)
+                    .await?;
+            }
+
+            self.connection
+                .delete_rows_with_retry("blocks", &[slot_to_blocks_key(slot)])
+                .await?;
+        }
+
+        info!(
+            "{}deleted ledger data for slot {}: {} transaction rows, {} address slot rows",
+            if dry_run { "[dry run] " } else { "" },
+            slot,
+            tx_deletion_rows.len(),
+            address_slot_rows.len()
         );
 
         Ok(())
@@ -682,6 +914,23 @@ impl LedgerStorage {
         Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
     }
 
+    pub async fn get_evm_confirmed_full_blocks_nums(
+        &self,
+        start_block: evm_state::BlockNum,
+        limit: usize,
+    ) -> Result<Vec<evm_state::BlockNum>> {
+        let mut bigtable = self.connection.client();
+        let blocks = bigtable
+            .get_row_keys(
+                "evm-full-blocks",
+                Some(slot_to_key(start_block)),
+                None,
+                limit as i64,
+            )
+            .await?;
+        Ok(blocks.into_iter().filter_map(|s| key_to_slot(&s)).collect())
+    }
+
     pub async fn get_evm_block_by_hash(
         &self,
         block_hash: evm_state::H256,
@@ -701,7 +950,7 @@ impl LedgerStorage {
         let mut bigtable = self.connection.client();
         let block_cell_data = bigtable
             .get_protobuf_or_bincode_cell::<evm_state::BlockHeader, generated_evm::EvmBlockHeader>(
-                "evm-block",
+                "evm-blocks",
                 slot_to_key(block_num),
             )
             .await
@@ -751,7 +1000,7 @@ impl LedgerStorage {
                 )
                 .await?
         };
-        let deserialized_blocks: Result<Vec<_>> = evm_full_blocks
+        evm_full_blocks
             .into_iter()
             .map(|(key, row_data)| {
                 let deserialized_block =
@@ -770,8 +1019,7 @@ impl LedgerStorage {
                 };
                 Ok(block)
             })
-            .collect();
-        Ok(deserialized_blocks?)
+            .collect()
     }
 
     pub async fn get_evm_confirmed_full_block(
@@ -830,7 +1078,7 @@ impl LedgerStorage {
             bigtable::CellData::Protobuf(tx) => tx.try_into().map_err(|_err| {
                 bigtable::Error::ObjectCorrupt(format!(
                     "evm-tx/{}",
-                    evm_rpc::Hex(*hash).to_string()
+                    evm_rpc::Hex(*hash)
                 ))
             })?,
         }))

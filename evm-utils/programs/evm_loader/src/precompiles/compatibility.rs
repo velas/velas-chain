@@ -179,12 +179,13 @@ pub fn extend_precompile_map(map: &mut HashMap<H160, BuiltinEval>) {
 fn execute_precompile<T: Precompile>(source: &[u8], cx: PrecompileContext) -> CallResult {
     let gas_used = T::pricer().calculate_price(source);
     let bytes = T::implementation(source, cx)?;
-    Ok(PrecompileOutput {
-        exit_status: evm_state::ExitSucceed::Returned,
-        cost: gas_used,
-        output: bytes,
-        logs: vec![],
-    })
+    Ok((
+        PrecompileOutput {
+            exit_status: evm_state::ExitSucceed::Returned,
+            output: bytes,
+        },
+        gas_used,
+    ))
 }
 
 //TODO:

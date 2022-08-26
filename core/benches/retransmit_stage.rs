@@ -3,43 +3,62 @@
 extern crate solana_core;
 extern crate test;
 
-use log::*;
-use solana_core::cluster_info::{ClusterInfo, Node};
-use solana_core::contact_info::ContactInfo;
-use solana_core::max_slots::MaxSlots;
-use solana_core::retransmit_stage::retransmitter;
-use solana_ledger::entry::Entry;
-use solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo};
-use solana_ledger::leader_schedule_cache::LeaderScheduleCache;
-use solana_ledger::shred::Shredder;
-use solana_measure::measure::Measure;
-use solana_perf::packet::{Packet, Packets};
-use solana_runtime::bank::Bank;
-use solana_runtime::bank_forks::BankForks;
-use solana_sdk::hash::Hash;
-use solana_sdk::pubkey;
-use solana_sdk::signature::{Keypair, Signer};
-use solana_sdk::system_transaction;
-use solana_sdk::timing::timestamp;
-use std::net::UdpSocket;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::channel;
-use std::sync::Mutex;
-use std::sync::{Arc, RwLock};
-use std::thread::sleep;
-use std::thread::Builder;
-use std::time::Duration;
-use test::Bencher;
+use {
+    log::*,
+    solana_core::retransmit_stage::retransmitter,
+    solana_entry::entry::Entry,
+    solana_gossip::{
+        cluster_info::{ClusterInfo, Node},
+        contact_info::ContactInfo,
+    },
+    solana_ledger::{
+        genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        leader_schedule_cache::LeaderScheduleCache,
+        shred::Shredder,
+    },
+    solana_measure::measure::Measure,
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_sdk::{
+        hash::Hash,
+        pubkey::Pubkey,
+        signature::{Keypair, Signer},
+        system_transaction,
+        timing::timestamp,
+    },
+    solana_streamer::socket::SocketAddrSpace,
+    std::{
+        net::UdpSocket,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc::channel,
+            Arc, RwLock,
+        },
+        thread::{sleep, Builder},
+        time::Duration,
+    },
+    test::Bencher,
+};
 
+// TODO: The benchmark is ignored as it currently may indefinitely block.
+// The code incorrectly expects that the node receiving the shred on tvu socket
+// retransmits that to other nodes in its neighborhood. But that is no longer
+// the case since https://github.com/solana-labs/solana/pull/17716.
+// So depending on shred seed, peers may not receive packets and the receive
+// threads loop indefinitely.
+#[ignore]
 #[bench]
 #[allow(clippy::same_item_push)]
 fn bench_retransmitter(bencher: &mut Bencher) {
     solana_logger::setup();
-    let cluster_info = ClusterInfo::new_with_invalid_keypair(Node::new_localhost().info);
+    let cluster_info = ClusterInfo::new(
+        Node::new_localhost().info,
+        Arc::new(Keypair::new()),
+        SocketAddrSpace::Unspecified,
+    );
     const NUM_PEERS: usize = 4;
     let mut peer_sockets = Vec::new();
     for _ in 0..NUM_PEERS {
-        let id = pubkey::new_rand();
+        let id = Pubkey::new_unique();
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
         let mut contact_info = ContactInfo::new_localhost(&id, timestamp());
         contact_info.tvu = socket.local_addr().unwrap();
@@ -54,12 +73,11 @@ fn bench_retransmitter(bencher: &mut Bencher) {
     let cluster_info = Arc::new(cluster_info);
 
     let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100_000);
-    let bank0 = Bank::new(&genesis_config);
+    let bank0 = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new(bank0);
     let bank = bank_forks.working_bank();
     let bank_forks = Arc::new(RwLock::new(bank_forks));
-    let (packet_sender, packet_receiver) = channel();
-    let packet_receiver = Arc::new(Mutex::new(packet_receiver));
+    let (shreds_sender, shreds_receiver) = channel();
     const NUM_THREADS: usize = 2;
     let sockets = (0..NUM_THREADS)
         .map(|_| UdpSocket::bind("0.0.0.0:0").unwrap())
@@ -78,21 +96,25 @@ fn bench_retransmitter(bencher: &mut Bencher) {
         })
         .collect();
 
-    let keypair = Arc::new(Keypair::new());
+    let keypair = Keypair::new();
     let slot = 0;
     let parent = 0;
-    let shredder = Shredder::new(slot, parent, keypair, 0, 0).unwrap();
-    let mut data_shreds = shredder.entries_to_shreds(&entries, true, 0).0;
+    let shredder = Shredder::new(slot, parent, 0, 0).unwrap();
+    let (mut data_shreds, _) = shredder.entries_to_shreds(
+        &keypair, &entries, true, // is_last_in_slot
+        0,    // next_shred_index
+        0,    // next_code_index
+    );
 
     let num_packets = data_shreds.len();
 
     let retransmitter_handles = retransmitter(
         Arc::new(sockets),
         bank_forks,
-        &leader_schedule_cache,
+        leader_schedule_cache,
         cluster_info,
-        packet_receiver,
-        &Arc::new(MaxSlots::default()),
+        shreds_receiver,
+        Arc::default(), // solana_rpc::max_slots::MaxSlots
         None,
     );
 
@@ -130,9 +152,7 @@ fn bench_retransmitter(bencher: &mut Bencher) {
             shred.set_index(index);
             index += 1;
             index %= 200;
-            let mut p = Packet::default();
-            shred.copy_to_packet(&mut p);
-            let _ = packet_sender.send(Packets::new(vec![p]));
+            let _ = shreds_sender.send(vec![shred.clone()]);
         }
         slot += 1;
 
@@ -148,7 +168,5 @@ fn bench_retransmitter(bencher: &mut Bencher) {
         total.store(0, Ordering::Relaxed);
     });
 
-    for t in retransmitter_handles {
-        t.join().unwrap();
-    }
+    retransmitter_handles.join().unwrap();
 }

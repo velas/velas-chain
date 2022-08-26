@@ -1,3 +1,4 @@
+#![allow(clippy::integer_arithmetic)]
 //! Borsh utils
 use {
     borsh::{
@@ -43,7 +44,7 @@ fn get_declaration_packed_len(
             .map(|element| get_declaration_packed_len(element, definitions))
             .sum(),
         None => match declaration {
-            "u8" | "i8" => 1,
+            "bool" | "u8" | "i8" => 1,
             "u16" | "i16" => 2,
             "u32" | "i32" => 4,
             "u64" | "i64" => 8,
@@ -119,8 +120,8 @@ mod tests {
     #[derive(PartialEq, Clone, Debug, BorshSerialize, BorshDeserialize, BorshSchema)]
     enum TestEnum {
         NoValue,
-        Value(u32),
-        StructValue {
+        Number(u32),
+        Struct {
             #[allow(dead_code)]
             number: u64,
             #[allow(dead_code)]
@@ -142,6 +143,7 @@ mod tests {
         pub number_u32: u32,
         pub tuple: (u8, u16),
         pub enumeration: TestEnum,
+        pub r#bool: bool,
     }
 
     #[derive(Debug, PartialEq, BorshSerialize, BorshDeserialize, BorshSchema)]
@@ -191,6 +193,7 @@ mod tests {
         assert_eq!(
             get_packed_len::<TestStruct>(),
             size_of::<u64>() * 16
+                + size_of::<bool>()
                 + size_of::<u128>()
                 + size_of::<u32>()
                 + size_of::<u8>()
@@ -201,7 +204,7 @@ mod tests {
 
     #[test]
     fn instance_packed_len_matches_packed_len() {
-        let enumeration = TestEnum::StructValue {
+        let enumeration = TestEnum::Struct {
             number: u64::MAX,
             array: [255; 8],
         };
@@ -275,9 +278,9 @@ mod tests {
         let string1 = "the first string, it's actually really really long".to_string();
         let enum1 = TestEnum::NoValue;
         let string2 = "second string, shorter".to_string();
-        let enum2 = TestEnum::Value(u32::MAX);
+        let enum2 = TestEnum::Number(u32::MAX);
         let string3 = "third".to_string();
-        let enum3 = TestEnum::StructValue {
+        let enum3 = TestEnum::Struct {
             number: 0,
             array: [0; 8],
         };

@@ -13,7 +13,7 @@ pub fn parse_accounts(message: &Message) -> Vec<ParsedAccount> {
     for (i, account_key) in message.account_keys.iter().enumerate() {
         accounts.push(ParsedAccount {
             pubkey: account_key.to_string(),
-            writable: message.is_writable(i, /*demote_sysvar_write_locks=*/ true),
+            writable: message.is_writable(i),
             signer: message.is_signer(i),
         });
     }
@@ -22,8 +22,7 @@ pub fn parse_accounts(message: &Message) -> Vec<ParsedAccount> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use solana_sdk::message::MessageHeader;
+    use {super::*, solana_sdk::message::MessageHeader};
 
     #[test]
     fn test_parse_accounts() {

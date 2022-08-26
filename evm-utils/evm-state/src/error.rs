@@ -6,7 +6,8 @@ use primitive_types::{H256, U256};
 
 #[derive(Derivative, Debug, Snafu)]
 #[derivative(PartialEq)]
-#[snafu(visibility = "pub(crate)")]
+#[snafu(visibility(pub(crate)))]
+#[snafu(context(suffix(false)))]
 pub enum Error {
     #[snafu(display(
         "Failed to recover tx sender pubkey {:x}: {}",

@@ -51,7 +51,6 @@ macro_rules! socketaddr {
 const ERROR_RESPONSE: [u8; 2] = 0u16.to_le_bytes();
 
 pub const TIME_SLICE: u64 = 60;
-pub const REQUEST_CAP: u64 = solana_sdk::native_token::LAMPORTS_PER_VLX * 10_000_000;
 pub const FAUCET_PORT: u16 = 9900;
 pub const FAUCET_PORT_STR: &str = "9900";
 
@@ -85,20 +84,11 @@ pub enum FaucetRequest {
     },
 }
 
-impl Default for FaucetRequest {
-    fn default() -> Self {
-        Self::GetAirdrop {
-            lamports: u64::default(),
-            to: Pubkey::default(),
-            blockhash: Hash::default(),
-        }
-    }
-}
-
 pub enum FaucetTransaction {
     Airdrop(Transaction),
     Memo((Transaction, String)),
 }
+
 
 pub struct Faucet {
     faucet_keypair: Keypair,
@@ -417,7 +407,15 @@ async fn process(
     mut stream: TokioTcpStream,
     faucet: Arc<Mutex<Faucet>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut request = vec![0u8; serialized_size(&FaucetRequest::default()).unwrap() as usize];
+    let mut request = vec![
+        0u8;
+        serialized_size(&FaucetRequest::GetAirdrop {
+            lamports: u64::default(),
+            to: Pubkey::default(),
+            blockhash: Hash::default(),
+        })
+        .unwrap() as usize
+    ];
     while stream.read_exact(&mut request).await.is_ok() {
         trace!("{:?}", request);
 
@@ -495,9 +493,7 @@ impl LimitByTime for Pubkey {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use solana_sdk::system_instruction::SystemInstruction;
-    use std::time::Duration;
+    use {super::*, solana_sdk::system_instruction::SystemInstruction, std::time::Duration};
 
     #[test]
     fn test_check_time_request_limit() {

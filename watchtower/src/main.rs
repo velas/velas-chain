@@ -152,9 +152,7 @@ fn get_config() -> Config {
     let json_rpc_url =
         value_t!(matches, "json_rpc_url", String).unwrap_or_else(|_| config.json_rpc_url.clone());
     let validator_identity_pubkeys: Vec<_> = pubkeys_of(&matches, "validator_identities")
-        .unwrap_or_else(Vec::new)
-        .into_iter()
-        .collect();
+        .unwrap_or_default();
 
     let monitor_active_stake = matches.is_present("monitor_active_stake");
     let ignore_http_bad_gateway = matches.is_present("ignore_http_bad_gateway");
@@ -183,7 +181,7 @@ fn get_cluster_info(
     rpc_client: &RpcClient,
 ) -> client_error::Result<(u64, Hash, RpcVoteAccountStatus, HashMap<Pubkey, u64>)> {
     let transaction_count = rpc_client.get_transaction_count()?;
-    let recent_blockhash = rpc_client.get_recent_blockhash()?.0;
+    let recent_blockhash = rpc_client.get_latest_blockhash()?;
     let vote_accounts = rpc_client.get_vote_accounts()?;
 
     let mut validator_balances = HashMap::new();
@@ -204,7 +202,7 @@ fn get_cluster_info(
 
 fn main() -> Result<(), Box<dyn error::Error>> {
     solana_logger::setup_with_default("solana=info");
-    solana_metrics::set_panic_hook("watchtower");
+    solana_metrics::set_panic_hook("watchtower", /*version:*/ None);
 
     let config = get_config();
 

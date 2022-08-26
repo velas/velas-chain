@@ -1,19 +1,31 @@
 //! The `fetch_stage` batches input from a UDP socket and sends it to a channel.
 
-use crate::banking_stage::HOLD_TRANSACTIONS_SLOT_OFFSET;
-use crate::poh_recorder::PohRecorder;
-use crate::result::{Error, Result};
-use solana_measure::thread_mem_usage;
-use solana_metrics::{inc_new_counter_debug, inc_new_counter_info};
-use solana_perf::packet::PacketsRecycler;
-use solana_perf::recycler::Recycler;
-use solana_sdk::clock::DEFAULT_TICKS_PER_SLOT;
-use solana_streamer::streamer::{self, PacketReceiver, PacketSender};
-use std::net::UdpSocket;
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::{channel, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
-use std::thread::{self, Builder, JoinHandle};
+use {
+    crate::{
+        banking_stage::HOLD_TRANSACTIONS_SLOT_OFFSET,
+        result::{Error, Result},
+    },
+    solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
+    solana_perf::{packet::PacketBatchRecycler, recycler::Recycler},
+    solana_poh::poh_recorder::PohRecorder,
+    solana_sdk::{
+        clock::DEFAULT_TICKS_PER_SLOT,
+        packet::{Packet, PacketFlags},
+    },
+    solana_streamer::streamer::{
+        self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats,
+    },
+    std::{
+        net::UdpSocket,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc::{channel, RecvTimeoutError},
+            Arc, Mutex,
+        },
+        thread::{self, sleep, Builder, JoinHandle},
+        time::Duration,
+    },
+};
 
 pub struct FetchStage {
     thread_hdls: Vec<JoinHandle<()>>,
@@ -24,59 +36,76 @@ impl FetchStage {
     pub fn new(
         sockets: Vec<UdpSocket>,
         tpu_forwards_sockets: Vec<UdpSocket>,
+        tpu_vote_sockets: Vec<UdpSocket>,
         exit: &Arc<AtomicBool>,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
         coalesce_ms: u64,
-    ) -> (Self, PacketReceiver) {
+    ) -> (Self, PacketBatchReceiver, PacketBatchReceiver) {
         let (sender, receiver) = channel();
+        let (vote_sender, vote_receiver) = channel();
         (
             Self::new_with_sender(
                 sockets,
                 tpu_forwards_sockets,
+                tpu_vote_sockets,
                 exit,
                 &sender,
+                &vote_sender,
                 poh_recorder,
-                None,
                 coalesce_ms,
+                None,
             ),
             receiver,
+            vote_receiver,
         )
     }
+
     pub fn new_with_sender(
         sockets: Vec<UdpSocket>,
         tpu_forwards_sockets: Vec<UdpSocket>,
+        tpu_vote_sockets: Vec<UdpSocket>,
         exit: &Arc<AtomicBool>,
-        sender: &PacketSender,
+        sender: &PacketBatchSender,
+        vote_sender: &PacketBatchSender,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
-        allocated_packet_limit: Option<u32>,
         coalesce_ms: u64,
+        in_vote_only_mode: Option<Arc<AtomicBool>>,
     ) -> Self {
         let tx_sockets = sockets.into_iter().map(Arc::new).collect();
         let tpu_forwards_sockets = tpu_forwards_sockets.into_iter().map(Arc::new).collect();
+        let tpu_vote_sockets = tpu_vote_sockets.into_iter().map(Arc::new).collect();
         Self::new_multi_socket(
             tx_sockets,
             tpu_forwards_sockets,
+            tpu_vote_sockets,
             exit,
             sender,
+            vote_sender,
             poh_recorder,
-            allocated_packet_limit,
             coalesce_ms,
+            in_vote_only_mode,
         )
     }
 
     fn handle_forwarded_packets(
-        recvr: &PacketReceiver,
-        sendr: &PacketSender,
+        recvr: &PacketBatchReceiver,
+        sendr: &PacketBatchSender,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
     ) -> Result<()> {
-        let msgs = recvr.recv()?;
-        let mut len = msgs.packets.len();
-        let mut batch = vec![msgs];
-        while let Ok(more) = recvr.try_recv() {
-            len += more.packets.len();
-            batch.push(more);
+        let mark_forwarded = |packet: &mut Packet| {
+            packet.meta.flags |= PacketFlags::FORWARDED;
+        };
+
+        let mut packet_batch = recvr.recv()?;
+        let mut num_packets = packet_batch.packets.len();
+        packet_batch.packets.iter_mut().for_each(mark_forwarded);
+        let mut packet_batches = vec![packet_batch];
+        while let Ok(mut packet_batch) = recvr.try_recv() {
+            packet_batch.packets.iter_mut().for_each(mark_forwarded);
+            num_packets += packet_batch.packets.len();
+            packet_batches.push(packet_batch);
             // Read at most 1K transactions in a loop
-            if len > 1024 {
+            if num_packets > 1024 {
                 break;
             }
         }
@@ -86,53 +115,84 @@ impl FetchStage {
             .unwrap()
             .would_be_leader(HOLD_TRANSACTIONS_SLOT_OFFSET.saturating_mul(DEFAULT_TICKS_PER_SLOT))
         {
-            inc_new_counter_debug!("fetch_stage-honor_forwards", len);
-            for packets in batch {
-                if sendr.send(packets).is_err() {
-                    return Err(Error::SendError);
+            inc_new_counter_debug!("fetch_stage-honor_forwards", num_packets);
+            for packet_batch in packet_batches {
+                #[allow(clippy::question_mark)]
+                if sendr.send(packet_batch).is_err() {
+                    return Err(Error::Send);
                 }
             }
         } else {
-            inc_new_counter_info!("fetch_stage-discard_forwards", len);
+            inc_new_counter_info!("fetch_stage-discard_forwards", num_packets);
         }
 
         Ok(())
     }
 
     fn new_multi_socket(
-        sockets: Vec<Arc<UdpSocket>>,
+        tpu_sockets: Vec<Arc<UdpSocket>>,
         tpu_forwards_sockets: Vec<Arc<UdpSocket>>,
+        tpu_vote_sockets: Vec<Arc<UdpSocket>>,
         exit: &Arc<AtomicBool>,
-        sender: &PacketSender,
+        sender: &PacketBatchSender,
+        vote_sender: &PacketBatchSender,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
-        limit: Option<u32>,
         coalesce_ms: u64,
+        in_vote_only_mode: Option<Arc<AtomicBool>>,
     ) -> Self {
-        let recycler: PacketsRecycler =
-            Recycler::warmed(1000, 1024, limit, "fetch_stage_recycler_shrink");
+        let recycler: PacketBatchRecycler = Recycler::warmed(1000, 1024);
 
-        let tpu_threads = sockets.into_iter().map(|socket| {
-            streamer::receiver(
-                socket,
-                exit,
-                sender.clone(),
-                recycler.clone(),
-                "fetch_stage",
-                coalesce_ms,
-            )
-        });
+        let tpu_stats = Arc::new(StreamerReceiveStats::new("tpu_receiver"));
+        let tpu_threads: Vec<_> = tpu_sockets
+            .into_iter()
+            .map(|socket| {
+                streamer::receiver(
+                    socket,
+                    exit.clone(),
+                    sender.clone(),
+                    recycler.clone(),
+                    tpu_stats.clone(),
+                    coalesce_ms,
+                    true,
+                    in_vote_only_mode.clone(),
+                )
+            })
+            .collect();
 
+        let tpu_forward_stats = Arc::new(StreamerReceiveStats::new("tpu_forwards_receiver"));
         let (forward_sender, forward_receiver) = channel();
-        let tpu_forwards_threads = tpu_forwards_sockets.into_iter().map(|socket| {
-            streamer::receiver(
-                socket,
-                exit,
-                forward_sender.clone(),
-                recycler.clone(),
-                "fetch_forward_stage",
-                coalesce_ms,
-            )
-        });
+        let tpu_forwards_threads = tpu_forwards_sockets
+            .into_iter()
+            .map(|socket| {
+                streamer::receiver(
+                    socket,
+                    exit.clone(),
+                    forward_sender.clone(),
+                    recycler.clone(),
+                    tpu_forward_stats.clone(),
+                    coalesce_ms,
+                    true,
+                    in_vote_only_mode.clone(),
+                )
+            })
+            .collect();
+
+        let tpu_vote_stats = Arc::new(StreamerReceiveStats::new("tpu_vote_receiver"));
+        let tpu_vote_threads: Vec<_> = tpu_vote_sockets
+            .into_iter()
+            .map(|socket| {
+                streamer::receiver(
+                    socket,
+                    exit.clone(),
+                    vote_sender.clone(),
+                    recycler.clone(),
+                    tpu_vote_stats.clone(),
+                    coalesce_ms,
+                    true,
+                    None,
+                )
+            })
+            .collect();
 
         let sender = sender.clone();
         let poh_recorder = poh_recorder.clone();
@@ -140,24 +200,47 @@ impl FetchStage {
         let fwd_thread_hdl = Builder::new()
             .name("solana-fetch-stage-fwd-rcvr".to_string())
             .spawn(move || loop {
-                thread_mem_usage::datapoint("solana-fetch-stage-fwd-rcvr");
                 if let Err(e) =
                     Self::handle_forwarded_packets(&forward_receiver, &sender, &poh_recorder)
                 {
                     match e {
-                        Error::RecvTimeoutError(RecvTimeoutError::Disconnected) => break,
-                        Error::RecvTimeoutError(RecvTimeoutError::Timeout) => (),
-                        Error::RecvError(_) => break,
-                        Error::SendError => break,
+                        Error::RecvTimeout(RecvTimeoutError::Disconnected) => break,
+                        Error::RecvTimeout(RecvTimeoutError::Timeout) => (),
+                        Error::Recv(_) => break,
+                        Error::Send => break,
                         _ => error!("{:?}", e),
                     }
                 }
             })
             .unwrap();
 
-        let mut thread_hdls: Vec<_> = tpu_threads.chain(tpu_forwards_threads).collect();
-        thread_hdls.push(fwd_thread_hdl);
-        Self { thread_hdls }
+        let exit = exit.clone();
+        let metrics_thread_hdl = Builder::new()
+            .name("solana-fetch-stage-metrics".to_string())
+            .spawn(move || loop {
+                sleep(Duration::from_secs(1));
+
+                tpu_stats.report();
+                tpu_vote_stats.report();
+                tpu_forward_stats.report();
+
+                if exit.load(Ordering::Relaxed) {
+                    return;
+                }
+            })
+            .unwrap();
+
+        Self {
+            thread_hdls: [
+                tpu_threads,
+                tpu_forwards_threads,
+                tpu_vote_threads,
+                vec![fwd_thread_hdl, metrics_thread_hdl],
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        }
     }
 
     pub fn join(self) -> thread::Result<()> {

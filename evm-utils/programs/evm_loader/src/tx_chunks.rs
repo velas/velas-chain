@@ -5,6 +5,7 @@ use snafu::{ensure, Snafu};
 pub struct TxChunks<T>(T);
 
 #[derive(Debug, Snafu)]
+#[snafu(context(suffix(false)))]
 pub enum Error {
     #[snafu(display("Expected storage size {}, but available {}", expected, actual))]
     MismatchedSizes { actual: usize, expected: usize },
@@ -65,8 +66,7 @@ impl<T: BorrowMut<[u8]>> TxChunks<T> {
     }
 
     pub fn take(self) -> Vec<u8> {
-        // self.0.borrow_mut().iter_mut().map(std::mem::take).collect()
-        self.0.borrow().iter().copied().collect()
+        self.0.borrow().to_vec()
     }
 }
 

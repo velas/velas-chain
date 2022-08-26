@@ -2,7 +2,7 @@ use snafu::{ensure, ResultExt};
 use std::{marker::PhantomData, str::FromStr};
 
 use ethabi::{Function, Param, ParamType, StateMutability, Token};
-use evm_state::{ExitSucceed, executor::PrecompileOutput};
+use evm_state::{CallScheme, ExitSucceed, executor::PrecompileOutput};
 use once_cell::sync::Lazy;
 use primitive_types::H160;
 
@@ -11,16 +11,17 @@ use super::errors::*;
 use super::{PrecompileContext, Result};
 use crate::scope::evm::gweis_to_lamports;
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::account::{ReadableAccount, WritableAccount};
 
 pub trait NativeFunction<Inputs> {
-    fn call(&self, inputs: Inputs, cx: PrecompileContext<'_, '_>) -> Result<PrecompileOutput>;
+    fn call(&self, inputs: Inputs, cx: PrecompileContext<'_, '_>) -> Result<(PrecompileOutput, u64)>;
 }
 
 impl<F, Inputs> NativeFunction<Inputs> for F
 where
-    F: Fn(Inputs, PrecompileContext<'_, '_>) -> Result<PrecompileOutput>,
+    F: Fn(Inputs, PrecompileContext<'_, '_>) -> Result<(PrecompileOutput, u64)>,
 {
-    fn call(&self, inputs: Inputs, cx: PrecompileContext<'_, '_>) -> Result<PrecompileOutput> {
+    fn call(&self, inputs: Inputs, cx: PrecompileContext<'_, '_>) -> Result<(PrecompileOutput, u64)> {
         (*self)(inputs, cx)
     }
 }
@@ -78,7 +79,7 @@ where
 
         self.abi
             .decode_input(input)
-            .with_context(|| FailedToParse {
+            .with_context(|_| FailedToParse {
                 name: self.abi.name.clone(),
             })
             .and_then(|tokens| self.check_args(&tokens).map(|_| tokens))
@@ -89,7 +90,7 @@ where
         &self,
         function_abi_input: &[u8],
         cx: PrecompileContext,
-    ) -> Result<PrecompileOutput> {
+    ) -> Result<(PrecompileOutput, u64)> {
         let params = self.parse_abi(function_abi_input)?;
 
         self.implementation.call(params, cx)
@@ -110,7 +111,7 @@ pub static ETH_TO_VLX_ADDR: Lazy<H160> = Lazy::new(|| {
     .expect("Serialization of static data should be determenistic and never fail.")
 });
 
-type EthToVlxImp = fn(Pubkey, PrecompileContext) -> Result<PrecompileOutput>;
+type EthToVlxImp = fn(Pubkey, PrecompileContext) -> Result<(PrecompileOutput, u64)>;
 
 pub static ETH_TO_VLX_CODE: Lazy<NativeContract<EthToVlxImp, Pubkey>> = Lazy::new(|| {
     #[allow(deprecated)]
@@ -127,7 +128,7 @@ pub static ETH_TO_VLX_CODE: Lazy<NativeContract<EthToVlxImp, Pubkey>> = Lazy::ne
     };
 
     // TOOD: Modify gas left.
-    fn implementation(pubkey: Pubkey, cx: PrecompileContext) -> Result<PrecompileOutput> {
+    fn implementation(pubkey: Pubkey, cx: PrecompileContext) -> Result<(PrecompileOutput, u64)> {
         // EVM should ensure that user has enough tokens, before calling this precompile.
 
         log::trace!("Precompile ETH_TO_VLX");
@@ -137,6 +138,16 @@ pub static ETH_TO_VLX_CODE: Lazy<NativeContract<EthToVlxImp, Pubkey>> = Lazy::ne
             log::trace!("Account not found pk = {}", pubkey);
             return AccountNotFound { public_key: pubkey }.fail();
         };
+        if !matches!(cx.call_scheme, None | Some(CallScheme::Call))
+            || cx.evm_context.address != *ETH_TO_VLX_ADDR
+        // if transfer to other address
+        {
+            log::trace!("Invalid call type = {:?}", cx.call_scheme);
+            return InvalidCallScheme {
+                scheme: cx.call_scheme,
+            }
+            .fail();
+        }
 
         // TODO: return change back
         let (lamports, _change) = gweis_to_lamports(cx.evm_context.apparent_value);
@@ -145,24 +156,26 @@ pub static ETH_TO_VLX_CODE: Lazy<NativeContract<EthToVlxImp, Pubkey>> = Lazy::ne
             .accounts
             .evm
             .try_account_ref_mut()
-            .with_context(|| NativeChainInstructionError {})?;
+            .with_context(|_| NativeChainInstructionError {})?;
 
         let mut user_account = user
             .try_account_ref_mut()
-            .with_context(|| NativeChainInstructionError {})?;
+            .with_context(|_| NativeChainInstructionError {})?;
 
-        if lamports > evm_account.lamports {
+        if lamports > evm_account.lamports() {
             return InsufficientFunds { lamports }.fail();
         }
-
-        evm_account.lamports -= lamports;
-        user_account.lamports += lamports;
-        Ok(PrecompileOutput {
-            exit_status: ExitSucceed::Returned,
-            cost: 0,
-            output: vec![],
-            logs: vec![],
-        })
+        let evm_account_lamports = evm_account.lamports().saturating_sub(lamports);
+        let user_account_lamports = user_account.lamports().saturating_add(lamports);
+        evm_account.set_lamports(evm_account_lamports);
+        user_account.set_lamports(user_account_lamports);
+        Ok((
+            PrecompileOutput {
+                exit_status: ExitSucceed::Returned,
+                output: vec![],
+            },
+            0,
+        ))
     }
 
     NativeContract::new([0xb1, 0xd6, 0x92, 0x7a], abi, implementation)

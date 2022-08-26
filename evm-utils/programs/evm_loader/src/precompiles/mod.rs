@@ -1,6 +1,6 @@
 use evm_state::{
-    executor::{OwnedPrecompile, PrecompileFailure, PrecompileOutput, PrecompileResult},
-    Context, ExitError,
+    executor::{OwnedPrecompile, PrecompileFailure, PrecompileOutput},
+    CallScheme, Context, ExitError,
 };
 use once_cell::sync::Lazy;
 use primitive_types::H160;
@@ -18,24 +18,27 @@ pub use errors::PrecompileErrors;
 use crate::account_structure::AccountStructure;
 
 pub type Result<T, Err = PrecompileErrors> = std::result::Result<T, Err>;
-type CallResult = Result<PrecompileOutput>;
+type CallResult = Result<(PrecompileOutput, u64)>;
 
 pub struct PrecompileContext<'a, 'b> {
     accounts: AccountStructure<'a>,
     #[allow(unused)]
     gas_limit: Option<u64>,
     evm_context: &'b Context,
+    call_scheme: Option<CallScheme>,
 }
 impl<'a, 'b> PrecompileContext<'a, 'b> {
     fn new(
         accounts: AccountStructure<'a>,
         gas_limit: Option<u64>,
         evm_context: &'b Context,
+        call_scheme: Option<CallScheme>,
     ) -> Self {
         Self {
             accounts,
             gas_limit,
             evm_context,
+            call_scheme,
         }
     }
 }
@@ -67,8 +70,8 @@ pub fn entrypoint(accounts: AccountStructure, activate_precompile: bool) -> Owne
             (
                 *k,
                 Box::new(
-                    move |function_abi_input: &[u8], gas_left, cx: &Context, _is_static| {
-                        let cx = PrecompileContext::new(accounts, gas_left, cx);
+                    move |function_abi_input: &[u8], gas_left, call_scheme, cx: &Context, _is_static| {
+                        let cx = PrecompileContext::new(accounts, gas_left, cx, call_scheme);
                         let result = method(function_abi_input, cx).map_err(|err| {
                             let exit_err: ExitError = Into::into(err);
                             PrecompileFailure::Error {
@@ -82,9 +85,10 @@ pub fn entrypoint(accounts: AccountStructure, activate_precompile: bool) -> Owne
                         dyn for<'a, 'b> Fn(
                             &'a [u8],
                             Option<u64>,
+                            Option<CallScheme>,
                             &'b Context,
                             bool,
-                        ) -> PrecompileResult,
+                        ) -> Result<(PrecompileOutput, u64), PrecompileFailure>,
                     >,
             )
         }));
@@ -94,8 +98,8 @@ pub fn entrypoint(accounts: AccountStructure, activate_precompile: bool) -> Owne
         (
             *k,
             Box::new(
-                move |function_abi_input: &[u8], gas_left, cx: &Context, _is_static| {
-                    let cx = PrecompileContext::new(accounts, gas_left, cx);
+                move |function_abi_input: &[u8], gas_left, call_scheme, cx: &Context, _is_static| {
+                    let cx = PrecompileContext::new(accounts, gas_left, cx, call_scheme);
                     let result = method(function_abi_input, cx).map_err(|err| {
                         let exit_err: ExitError = Into::into(err);
                         PrecompileFailure::Error {
@@ -105,7 +109,7 @@ pub fn entrypoint(accounts: AccountStructure, activate_precompile: bool) -> Owne
                     result
                 },
             )
-                as Box<dyn for<'a, 'b> Fn(&[u8], Option<u64>, &Context, bool) -> PrecompileResult>,
+                as Box<dyn for<'a, 'b> Fn(&[u8], Option<u64>, Option<CallScheme>, &Context, bool) -> Result<(PrecompileOutput, u64), PrecompileFailure>>,
         )
     }));
     map
@@ -145,7 +149,7 @@ mod test {
         AccountStructure::testing(0, |accounts| {
             let precompiles = entrypoint(accounts, false);
             assert_eq!(
-                dbg!(precompiles.get(&addr).unwrap()(&input, None, &cx, false).unwrap_err()),
+                dbg!(precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap_err()),
                 PrecompileFailure::Error { exit_status: ExitError::Other("Failed to find account, account_pk = 29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2".into()) } // equal to 0x111..111 in base58
             );
         })
@@ -170,12 +174,14 @@ mod test {
             .unwrap();
             let lamports_before = user.lamports().unwrap();
             assert!(matches!(
-                dbg!(precompiles.get(&addr).unwrap()(&input, None, &cx, false)),
-                Ok(PrecompileOutput {
-                    exit_status: ExitSucceed::Returned,
-                    cost: 0,
-                    ..
-                })
+                dbg!(precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)),
+                Ok((
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        ..
+                    },
+                    0
+                ))
             ));
 
             let lamports_after = user.lamports().unwrap();
@@ -195,19 +201,20 @@ mod test {
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, true);
             let input = [0u8; 0];
-            let result = precompiles.get(&addr).unwrap()(&input, None, &cx, false).unwrap();
-            println!("{}", hex::encode(&result.output));
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            println!("{}", hex::encode(&result.0.output));
             assert_eq!(
                 result,
-                PrecompileOutput {
-                    exit_status: ExitSucceed::Returned,
-                    cost: 60,
-                    output: hex!(
-                        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                    )
-                    .to_vec(),
-                    logs: vec![]
-                }
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!(
+                            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        )
+                            .to_vec(),
+                    },
+                    60
+                )
             );
         })
     }
@@ -224,16 +231,17 @@ mod test {
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, true);
             let input = [1, 2, 3, 4];
-            let result = precompiles.get(&addr).unwrap()(&input, None, &cx, false).unwrap();
-            println!("{}", hex::encode(&result.output));
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            println!("{}", hex::encode(&result.0.output));
             assert_eq!(
                 result,
-                PrecompileOutput {
-                    exit_status: ExitSucceed::Returned,
-                    cost: 15,
-                    output: input.to_vec(),
-                    logs: vec![]
-                }
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: input.to_vec(),
+                    },
+                    15
+                )
             );
         })
     }
@@ -259,19 +267,20 @@ mod test {
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, true);
             let input = [0u8; 0];
-            let result = precompiles.get(&addr).unwrap()(&input, None, &cx, false).unwrap();
-            println!("{}", hex::encode(&result.output));
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            println!("{}", hex::encode(&result.0.output));
             assert_eq!(
                 result,
-                PrecompileOutput {
-                    exit_status: ExitSucceed::Returned,
-                    cost: 60,
-                    output: hex!(
-                        "0000000000000000000000009c1185a5c5e9fc54612808977ee8f548b2258d31"
-                    )
-                    .to_vec(),
-                    logs: vec![]
-                }
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!(
+                            "0000000000000000000000009c1185a5c5e9fc54612808977ee8f548b2258d31"
+                        )
+                            .to_vec(),
+                    },
+                    60
+                )
             );
         })
     }
@@ -289,35 +298,37 @@ mod test {
             let precompiles = entrypoint(accounts, true);
             let input = hex!("47173285a8d7341e5e972fc677286384f802f8ef42a5ec5f03bbfa254cb01fad000000000000000000000000000000000000000000000000000000000000001a650acf9d3f5f0a2c799776a1254355d5f4061762a237396a99a0e0e3fc2bcd6729514a0dacb2e623ac4abd157cb18163ff942280db4d5caad66ddf941ba12e03");
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, &cx, false).unwrap();
-            println!("{}", hex::encode(&result.output));
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            println!("{}", hex::encode(&result.0.output));
             assert_eq!(
                 result,
-                PrecompileOutput {
-                    exit_status: ExitSucceed::Returned,
-                    cost: 108,
-                    output: vec![],
-                    logs: vec![]
-                }
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: vec![],
+                    },
+                    108
+                )
             );
         });
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, true);
             let input = hex!("47173285a8d7341e5e972fc677286384f802f8ef42a5ec5f03bbfa254cb01fad000000000000000000000000000000000000000000000000000000000000001b650acf9d3f5f0a2c799776a1254355d5f4061762a237396a99a0e0e3fc2bcd6729514a0dacb2e623ac4abd157cb18163ff942280db4d5caad66ddf941ba12e03");
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, &cx, false).unwrap();
-            println!("{}", hex::encode(&result.output));
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            println!("{}", hex::encode(&result.0.output));
             assert_eq!(
                 result,
-                PrecompileOutput {
-                    exit_status: ExitSucceed::Returned,
-                    cost: 108,
-                    output: hex!(
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!(
                         "000000000000000000000000c08b5542d177ac6686946920409741463a15dddb"
                     )
-                    .to_vec(),
-                    logs: vec![]
-                }
+                            .to_vec(),
+                    },
+                    108
+                )
             );
         });
     }

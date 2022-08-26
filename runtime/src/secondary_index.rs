@@ -1,11 +1,13 @@
-use dashmap::{mapref::entry::Entry::Occupied, DashMap};
-use solana_sdk::pubkey::Pubkey;
-use std::{
-    collections::HashSet,
-    fmt::Debug,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        RwLock,
+use {
+    dashmap::{mapref::entry::Entry::Occupied, DashMap},
+    solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
+    std::{
+        collections::HashSet,
+        fmt::Debug,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            RwLock,
+        },
     },
 };
 
@@ -26,7 +28,7 @@ pub trait SecondaryIndexEntry: Debug {
 
 #[derive(Debug, Default)]
 pub struct SecondaryIndexStats {
-    last_report: AtomicU64,
+    last_report: AtomicInterval,
     num_inner_keys: AtomicU64,
 }
 
@@ -142,17 +144,7 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
             }
         }
 
-        let now = solana_sdk::timing::timestamp();
-        let last = self.stats.last_report.load(Ordering::Relaxed);
-        let should_report = now.saturating_sub(last) > 1000
-            && self.stats.last_report.compare_exchange(
-                last,
-                now,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) == Ok(last);
-
-        if should_report {
+        if self.stats.last_report.should_update(1000) {
             datapoint_info!(
                 self.metrics_name,
                 ("num_secondary_keys", self.index.len() as i64, i64),

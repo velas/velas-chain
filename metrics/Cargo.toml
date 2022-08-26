@@ -1,25 +1,25 @@
 [package]
 name = "solana-metrics"
-version = "1.6.14"
+version = "1.9.29"
 description = "Solana Metrics"
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
 repository = "https://github.com/solana-labs/solana"
 license = "Apache-2.0"
 homepage = "https://solana.com/"
 documentation = "https://docs.rs/solana-metrics"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-env_logger = "0.8.3"
+env_logger = "0.9.0"
 gethostname = "0.2.1"
 lazy_static = "1.4.0"
-log = "0.4.11"
-reqwest = { version = "0.11.10", default-features = false, features = ["blocking", "rustls-tls", "json"] }
-solana-sdk = { path = "../sdk", version = "=1.6.14" }
+log = "0.4.14"
+reqwest = { version = "0.11.6", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+solana-sdk = { path = "../sdk", version = "=1.9.29" }
 
 [dev-dependencies]
 rand = "0.7.0"
-serial_test = "0.4.0"
+serial_test = "0.5.1"
 
 [lib]
 name = "solana_metrics"

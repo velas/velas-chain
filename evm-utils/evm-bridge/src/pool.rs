@@ -8,6 +8,7 @@ use std::{
 };
 
 use ::tokio::sync::mpsc;
+use borsh::BorshSerialize;
 use evm_rpc::{error::into_native_error, Bytes, Hex, RPCTransaction};
 use evm_state::{Address, TransactionAction, H160, H256, U256};
 use listener::PoolListener;
@@ -16,6 +17,7 @@ use once_cell::sync::Lazy;
 use serde_json::json;
 use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
 use solana_evm_loader_program::{
+    instructions::FeePayerType,
     scope::{evm, solana},
     tx_chunks::TxChunks,
 };
@@ -32,6 +34,8 @@ use tokio::sync::mpsc::error::SendError;
 use txpool::{
     scoring::Choice, Pool, Readiness, Ready, Scoring, ShouldReplace, VerifiedTransaction,
 };
+
+use tracing_attributes::instrument;
 
 use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult};
 
@@ -52,6 +56,7 @@ const SENDER_PAUSE: Duration = Duration::from_secs(15);
 /// TODO: adjust value
 const TX_REIMPORT_THRESHOLD: Duration = Duration::from_secs(30);
 
+#[derive(Debug)]
 pub struct CachedTransaction {
     evm_tx: evm_state::Transaction,
     meta_keys: HashSet<Pubkey>,
@@ -65,6 +70,8 @@ pub trait Clock: Send + Sync {
 }
 
 /// Real clock used for production
+
+#[derive(Debug)]
 pub struct SystemClock;
 
 impl Clock for SystemClock {
@@ -85,6 +92,7 @@ impl<T> Ready<T> for AlwaysReady {
     }
 }
 
+#[derive(Debug)]
 pub struct EthPool<C: Clock> {
     /// A pool of transactions, waiting to be deployed
     pool: Mutex<Pool<PooledTransaction, MyScoring, PoolListener>>,
@@ -140,7 +148,7 @@ impl<C: Clock> EthPool<C> {
                 .map(|tx| tx.hash)
         };
 
-        hash.map(|hash| self.remove(&hash)).flatten()
+        hash.and_then(|hash| self.remove(&hash))
     }
 
     /// Gets reference to the next transaction in queue ready to be deployed
@@ -402,11 +410,7 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
             );
             let cloned_bridge = bridge.clone();
 
-            let processed_tx = tokio::task::spawn_blocking(move || {
-                process_tx(cloned_bridge, tx, hash, sender, meta_keys)
-            })
-            .await
-            .expect("tokio should allow new spawns");
+            let processed_tx = process_tx(cloned_bridge, tx, hash, sender, meta_keys).await;
 
             match processed_tx {
                 Ok(hash) => {
@@ -481,7 +485,7 @@ pub async fn worker_signature_checker(bridge: Arc<EvmBridge>) {
 
             let now = bridge.pool.clock.now();
 
-            match bridge.is_transaction_landed(&hash) {
+            match bridge.is_transaction_landed(&hash).await {
                 Some(true) => {
                     info!("Transaction {} finalized.", &hash);
                     bridge.pool.drop_from_cache(&hash);
@@ -531,14 +535,16 @@ pub async fn worker_signature_checker(bridge: Arc<EvmBridge>) {
     }
 }
 
-fn process_tx(
+#[instrument]
+async fn process_tx(
     bridge: Arc<EvmBridge>,
     tx: evm_state::Transaction,
     hash: H256,
     sender: H160,
     mut meta_keys: HashSet<Pubkey>,
 ) -> EvmResult<Hex<H256>> {
-    let bytes = bincode::serialize(&tx).unwrap();
+    let mut bytes = vec![];
+    BorshSerialize::serialize(&tx, &mut bytes).unwrap();
 
     let rpc_tx = RPCTransaction::from_transaction(tx.clone().into())?;
 
@@ -547,12 +553,13 @@ fn process_tx(
         bridge
             .rpc_client
             .send::<Bytes>(RpcRequest::EthCall, json!([rpc_tx, "latest"]))
+            .await
             .map_err(from_client_error)?;
     }
 
     if bytes.len() > evm::TX_MTU {
         debug!("Sending tx = {}, by chunks", hash);
-        match deploy_big_tx(&bridge, &bridge.key, &tx) {
+        match deploy_big_tx(&bridge, &bridge.key, &tx).await {
             Ok(_tx) => {
                 return Ok(Hex(hash));
             }
@@ -589,11 +596,20 @@ fn process_tx(
         }
     }
 
-    let mut ix = solana_evm_loader_program::send_raw_tx(
-        bridge.key.pubkey(),
-        tx.clone(),
-        Some(bridge.key.pubkey()),
-    );
+    let mut ix = if bridge.borsh_encoding {
+        solana_evm_loader_program::send_raw_tx(
+            bridge.key.pubkey(),
+            tx.clone(),
+            Some(bridge.key.pubkey()),
+            FeePayerType::Evm,
+        )
+    } else {
+        solana_evm_loader_program::send_raw_tx_old(
+            bridge.key.pubkey(),
+            tx.clone(),
+            Some(bridge.key.pubkey()),
+        )
+    };
 
     // Add meta accounts as additional arguments
     for account in meta_keys.clone() {
@@ -604,9 +620,10 @@ fn process_tx(
     let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
 
     debug!("Getting block hash");
-    let (blockhash, _fee_calculator, _) = bridge
+    let (blockhash, _height) = bridge
         .rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+        .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+        .await
         .map(|response| response.value)
         // NOTE: into_native_error?
         .map_err(|e| evm_rpc::Error::NativeRpcError {
@@ -618,6 +635,11 @@ fn process_tx(
     send_raw_tx.sign(&[&bridge.key], blockhash);
     debug!("Sending tx = {:?}", send_raw_tx);
 
+    debug!(
+        "Sending tx raw = {:?}",
+        base64::encode(&send_raw_tx.message_data())
+    );
+
     let signature = bridge
         .rpc_client
         .send_transaction_with_config(
@@ -628,6 +650,7 @@ fn process_tx(
                 ..Default::default()
             },
         )
+        .await
         .map_err(from_client_error)?;
 
     bridge
@@ -637,7 +660,8 @@ fn process_tx(
     Ok(Hex(hash))
 }
 
-fn deploy_big_tx(
+#[instrument]
+async fn deploy_big_tx(
     bridge: &EvmBridge,
     payer: &solana_sdk::signature::Keypair,
     tx: &evm::Transaction,
@@ -651,8 +675,9 @@ fn deploy_big_tx(
 
     debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
-    let tx_bytes =
-        bincode::serialize(&tx).map_err(|e| into_native_error(e, bridge.verbose_errors))?;
+    let mut tx_bytes = vec![];
+    BorshSerialize::serialize(&tx, &mut tx_bytes)
+        .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     debug!(
         "Storage {} : tx bytes size = {}, chunks crc = {:#x}",
@@ -664,11 +689,13 @@ fn deploy_big_tx(
     let balance = bridge
         .rpc_client
         .get_minimum_balance_for_rent_exemption(tx_bytes.len())
+        .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
-    let (blockhash, _, _) = bridge
+    let (blockhash, _height) = bridge
         .rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::finalized())
+        .get_latest_blockhash_with_commitment(CommitmentConfig::finalized())
+        .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
         .value;
 
@@ -680,8 +707,11 @@ fn deploy_big_tx(
         &solana_evm_loader_program::ID,
     );
 
-    let allocate_storage_ix =
-        solana_evm_loader_program::big_tx_allocate(&storage_pubkey, tx_bytes.len());
+    let allocate_storage_ix = if bridge.borsh_encoding {
+        solana_evm_loader_program::big_tx_allocate(storage_pubkey, tx_bytes.len())
+    } else {
+        solana_evm_loader_program::big_tx_allocate_old(storage_pubkey, tx_bytes.len())
+    };
 
     let create_and_allocate_tx = solana::Transaction::new_signed_with_payer(
         &[create_storage_ix, allocate_storage_ix],
@@ -703,6 +733,7 @@ fn deploy_big_tx(
     match bridge
         .rpc_client
         .send_and_confirm_transaction_with_config(&create_and_allocate_tx, rpc_send_cfg)
+        .await
     {
         Ok(signature) => {
             debug!(
@@ -721,9 +752,10 @@ fn deploy_big_tx(
         }
     }
 
-    let (blockhash, _) = bridge
+    let blockhash = bridge
         .rpc_client
         .get_new_blockhash(&blockhash)
+        .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
 
     let write_data_txs: Vec<solana::Transaction> = tx_bytes
@@ -731,11 +763,19 @@ fn deploy_big_tx(
         .chunks(evm_state::TX_MTU)
         .enumerate()
         .map(|(i, chunk)| {
-            solana_evm_loader_program::big_tx_write(
-                &storage_pubkey,
-                (i * evm_state::TX_MTU) as u64,
-                chunk.to_vec(),
-            )
+            if bridge.borsh_encoding {
+                solana_evm_loader_program::big_tx_write(
+                    storage_pubkey,
+                    (i * evm_state::TX_MTU) as u64,
+                    chunk.to_vec(),
+                )
+            } else {
+                solana_evm_loader_program::big_tx_write_old(
+                    storage_pubkey,
+                    (i * evm_state::TX_MTU) as u64,
+                    chunk.to_vec(),
+                )
+            }
         })
         .map(|instruction| {
             solana::Transaction::new_signed_with_payer(
@@ -750,33 +790,38 @@ fn deploy_big_tx(
     debug!("Write data txs: {:?}", write_data_txs);
 
     send_and_confirm_transactions(&bridge.rpc_client, write_data_txs, &signers)
+        .await
         .map(|_| debug!("All write txs for storage {} was done", storage_pubkey))
         .map_err(|e| {
             error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
             into_native_error(e, bridge.verbose_errors)
         })?;
 
-    let (blockhash, _, _) = bridge
+    let (blockhash, _height) = bridge
         .rpc_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+        .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+        .await
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
         .value;
 
-    let execute_tx = solana::Transaction::new_signed_with_payer(
-        &[solana_evm_loader_program::big_tx_execute(
-            &storage_pubkey,
+    let ix = if bridge.borsh_encoding {
+        solana_evm_loader_program::big_tx_execute(
+            storage_pubkey,
             Some(&payer_pubkey),
-        )],
-        Some(&payer_pubkey),
-        &signers,
-        blockhash,
-    );
+            FeePayerType::Evm,
+        )
+    } else {
+        solana_evm_loader_program::big_tx_execute_old(storage_pubkey, Some(&payer_pubkey))
+    };
+    let execute_tx =
+        solana::Transaction::new_signed_with_payer(&[ix], Some(&payer_pubkey), &signers, blockhash);
 
     debug!("Execute EVM transaction at storage {} ...", storage_pubkey);
 
     match bridge
         .rpc_client
         .send_transaction_with_config(&execute_tx, rpc_send_cfg)
+        .await
     {
         Ok(signature) => {
             debug!(

@@ -1,51 +1,49 @@
 //! A command-line executable for generating the chain's genesis config.
 #![allow(clippy::integer_arithmetic)]
 
-#[macro_use]
-extern crate solana_budget_program;
-#[macro_use]
-extern crate solana_exchange_program;
-#[macro_use]
-extern crate solana_vest_program;
-
-use clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches};
-use evm_state::U256;
-use log::{error, info};
-use solana_clap_utils::{
-    input_parsers::{cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime},
-    input_validators::{is_pubkey_or_keypair, is_rfc3339_datetime, is_slot, is_valid_percentage},
-};
-use solana_genesis::Base64Account;
-use solana_ledger::{
-    blockstore::create_new_ledger, blockstore_db::AccessType, poh::compute_hashes_per_tick,
-};
-use solana_runtime::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE;
-use solana_sdk::{
-    account::{Account, AccountSharedData},
-    clock,
-    epoch_schedule::EpochSchedule,
-    fee_calculator::FeeRateGovernor,
+use {
+    clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
+    evm_state::U256,
+    log::{error, info},
+    solana_clap_utils::{
+        input_parsers::{
+            cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime,
+        },
+        input_validators::{
+            is_pubkey_or_keypair, is_rfc3339_datetime, is_slot, is_valid_percentage,
+        },
+    },
+    solana_entry::poh::compute_hashes_per_tick,
+    solana_genesis::Base64Account,
+    solana_ledger::{blockstore::create_new_ledger, blockstore_db::AccessType},
+    solana_runtime::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+    solana_sdk::{
+        account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        clock,
+        epoch_schedule::EpochSchedule,
+        fee_calculator::FeeRateGovernor,
     genesis_config::{self, ClusterType, GenesisConfig},
-    inflation::Inflation,
-    native_token::sol_to_lamports,
-    poh_config::PohConfig,
-    pubkey::Pubkey,
-    rent::Rent,
-    signature::{Keypair, Signer},
-    system_program, timing,
-};
-use solana_stake_program::stake_state::{self, StakeState};
-use solana_vote_program::vote_state::{self, VoteState};
-use stake_state::MIN_DELEGATE_STAKE_AMOUNT;
-use std::{
-    collections::HashMap,
-    error,
-    fs::File,
-    io::{self, Read},
-    path::PathBuf,
-    process,
-    str::FromStr,
-    time::Duration,
+        inflation::Inflation,
+        native_token::sol_to_lamports,
+        poh_config::PohConfig,
+        pubkey::Pubkey,
+        rent::Rent,
+        signature::{Keypair, Signer},
+        stake::state::StakeState,
+        system_program, timing,
+    },
+    solana_stake_program::stake_state,
+    solana_vote_program::vote_state::{self, VoteState},
+    std::{
+        collections::HashMap,
+        error,
+        fs::File,
+        io::{self, Read},
+        path::PathBuf,
+        process,
+        str::FromStr,
+        time::Duration,
+    },
 };
 
 pub enum AccountFileFormat {
@@ -64,7 +62,7 @@ fn pubkey_from_str(key_str: &str) -> Result<Pubkey, Box<dyn error::Error>> {
 
 pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> io::Result<u64> {
     let mut lamports = 0;
-    let accounts_file = File::open(file.to_string())?;
+    let accounts_file = File::open(file)?;
 
     let genesis_accounts: HashMap<String, Base64Account> =
         serde_yaml::from_reader(accounts_file)
@@ -96,8 +94,8 @@ pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> 
                 })?,
             );
         }
-        account.executable = account_details.executable;
-        lamports += account.lamports;
+        account.set_executable(account_details.executable);
+        lamports += account.lamports();
         genesis_config.add_account(pubkey, account);
     }
 
@@ -139,7 +137,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .to_string();
     // stake account
     let default_bootstrap_validator_stake_lamports = &sol_to_lamports(0.5)
-        .max(StakeState::get_rent_exempt_reserve(&rent) + MIN_DELEGATE_STAKE_AMOUNT)
+        .max(StakeState::get_rent_exempt_reserve(&rent))
         .to_string();
 
     let default_target_tick_duration =
@@ -492,7 +490,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             ClusterType::Development => {
                 let hashes_per_tick =
                     compute_hashes_per_tick(poh_config.target_tick_duration, 1_000_000);
-                poh_config.hashes_per_tick = Some(hashes_per_tick);
+                poh_config.hashes_per_tick = Some(hashes_per_tick / 2); // use 50% of peak ability
             }
             ClusterType::Devnet | ClusterType::Testnet | ClusterType::MainnetBeta => {
                 poh_config.hashes_per_tick = Some(clock::DEFAULT_HASHES_PER_TICK);
@@ -522,16 +520,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         matches.is_present("enable_warmup_epochs"),
     );
 
-    let native_instruction_processors = if cluster_type == ClusterType::Development {
-        vec![
-            solana_vest_program!(),
-            solana_budget_program!(),
-            solana_exchange_program!(),
-        ]
-    } else {
-        vec![]
-    };
-
     let evm_chain_id = if matches.value_of("evm-chain-id").is_some() {
         value_t_or_exit!(matches, "evm-chain-id", u64)
     } else {
@@ -543,7 +531,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     let mut genesis_config = GenesisConfig {
-        native_instruction_processors,
+        native_instruction_processors: vec![],
         ticks_per_slot,
         poh_config,
         fee_rate_governor,
@@ -739,12 +727,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use solana_sdk::genesis_config::GenesisConfig;
-    use std::collections::HashMap;
-    use std::fs::remove_file;
-    use std::io::Write;
-    use std::path::Path;
+    use {
+        super::*,
+        solana_sdk::genesis_config::GenesisConfig,
+        std::{collections::HashMap, fs::remove_file, io::Write, path::Path},
+    };
 
     #[test]
     fn test_append_primordial_accounts_to_genesis() {

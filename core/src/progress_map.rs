@@ -1,23 +1,25 @@
-use crate::{
-    cluster_info_vote_listener::SlotVoteTracker,
-    cluster_slots::SlotPubkeys,
-    replay_stage::SUPERMINORITY_THRESHOLD,
-    {consensus::Stake, consensus::VotedStakes},
-};
-use solana_ledger::blockstore_processor::{ConfirmationProgress, ConfirmationTiming};
-use solana_runtime::{bank::Bank, bank_forks::BankForks, vote_account::ArcVoteAccount};
-use solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey};
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    sync::{Arc, RwLock},
+use {
+    crate::{
+        cluster_info_vote_listener::SlotVoteTracker,
+        cluster_slots::SlotPubkeys,
+        consensus::{Stake, VotedStakes},
+        replay_stage::SUPERMINORITY_THRESHOLD,
+    },
+    solana_ledger::blockstore_processor::{ConfirmationProgress, ConfirmationTiming},
+    solana_runtime::{bank::Bank, bank_forks::BankForks, vote_account::VoteAccount},
+    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
+    std::{
+        collections::{BTreeMap, HashMap, HashSet},
+        sync::{Arc, RwLock},
+    },
 };
 
 type VotedSlot = Slot;
 type ExpirationSlot = Slot;
-pub(crate) type LockoutIntervals = BTreeMap<ExpirationSlot, Vec<(VotedSlot, Pubkey)>>;
+pub type LockoutIntervals = BTreeMap<ExpirationSlot, Vec<(VotedSlot, Pubkey)>>;
 
 #[derive(Default)]
-pub(crate) struct ReplaySlotStats(ConfirmationTiming);
+pub struct ReplaySlotStats(ConfirmationTiming);
 impl std::ops::Deref for ReplaySlotStats {
     type Target = ConfirmationTiming;
     fn deref(&self) -> &Self::Target {
@@ -64,12 +66,27 @@ impl ReplaySlotStats {
             ("execute_us", self.execute_timings.execute_us, i64),
             ("store_us", self.execute_timings.store_us, i64),
             (
-                "serialize_us",
+                "update_stakes_cache_us",
+                self.execute_timings.update_stakes_cache_us,
+                i64
+            ),
+            (
+                "total_batches_len",
+                self.execute_timings.total_batches_len,
+                i64
+            ),
+            (
+                "num_execute_batches",
+                self.execute_timings.num_execute_batches,
+                i64
+            ),
+            (
+                "execute_details_serialize_us",
                 self.execute_timings.details.serialize_us,
                 i64
             ),
             (
-                "create_vm_us",
+                "execute_details_create_vm_us",
                 self.execute_timings.details.create_vm_us,
                 i64
             ),
@@ -79,41 +96,177 @@ impl ReplaySlotStats {
                 i64
             ),
             (
-                "execute_inner_us",
+                "execute_details_execute_inner_us",
                 self.execute_timings.details.execute_us,
                 i64
             ),
             (
-                "deserialize_us",
+                "execute_details_deserialize_us",
                 self.execute_timings.details.deserialize_us,
                 i64
             ),
             (
-                "changed_account_count",
+                "execute_details_get_or_create_executor_us",
+                self.execute_timings.details.get_or_create_executor_us,
+                i64
+            ),
+            (
+                "execute_details_changed_account_count",
                 self.execute_timings.details.changed_account_count,
                 i64
             ),
             (
-                "total_account_count",
+                "execute_details_total_account_count",
                 self.execute_timings.details.total_account_count,
                 i64
             ),
             (
-                "total_data_size",
+                "execute_details_total_data_size",
                 self.execute_timings.details.total_data_size,
                 i64
             ),
             (
-                "data_size_changed",
+                "execute_details_data_size_changed",
                 self.execute_timings.details.data_size_changed,
                 i64
             ),
+            (
+                "execute_details_create_executor_register_syscalls_us",
+                self.execute_timings
+                    .details
+                    .create_executor_register_syscalls_us,
+                i64
+            ),
+            (
+                "execute_details_create_executor_load_elf_us",
+                self.execute_timings.details.create_executor_load_elf_us,
+                i64
+            ),
+            (
+                "execute_details_create_executor_verify_code_us",
+                self.execute_timings.details.create_executor_verify_code_us,
+                i64
+            ),
+            (
+                "execute_details_create_executor_jit_compile_us",
+                self.execute_timings.details.create_executor_jit_compile_us,
+                i64
+            ),
+            (
+                "execute_accessories_feature_set_clone_us",
+                self.execute_timings
+                    .execute_accessories
+                    .feature_set_clone_us,
+                i64
+            ),
+            (
+                "execute_accessories_compute_budget_process_transaction_us",
+                self.execute_timings
+                    .execute_accessories
+                    .compute_budget_process_transaction_us,
+                i64
+            ),
+            (
+                "execute_accessories_get_executors_us",
+                self.execute_timings.execute_accessories.get_executors_us,
+                i64
+            ),
+            (
+                "execute_accessories_process_message_us",
+                self.execute_timings.execute_accessories.process_message_us,
+                i64
+            ),
+            (
+                "execute_accessories_update_executors_us",
+                self.execute_timings.execute_accessories.update_executors_us,
+                i64
+            ),
+            (
+                "execute_accessories_process_instructions_total_us",
+                self.execute_timings
+                    .execute_accessories
+                    .process_instructions
+                    .total_us,
+                i64
+            ),
+            (
+                "execute_accessories_process_instructions_verify_caller_us",
+                self.execute_timings
+                    .execute_accessories
+                    .process_instructions
+                    .verify_caller_us,
+                i64
+            ),
+            (
+                "execute_accessories_process_instructions_process_executable_chain_us",
+                self.execute_timings
+                    .execute_accessories
+                    .process_instructions
+                    .process_executable_chain_us,
+                i64
+            ),
+            (
+                "execute_accessories_process_instructions_verify_callee_us",
+                self.execute_timings
+                    .execute_accessories
+                    .process_instructions
+                    .verify_callee_us,
+                i64
+            ),
+        );
+
+        let mut per_pubkey_timings: Vec<_> = self
+            .execute_timings
+            .details
+            .per_program_timings
+            .iter()
+            .collect();
+        per_pubkey_timings.sort_by(|a, b| b.1.accumulated_us.cmp(&a.1.accumulated_us));
+        let (total_us, total_units, total_count, total_errored_units, total_errored_count) =
+            per_pubkey_timings.iter().fold(
+                (0, 0, 0, 0, 0),
+                |(sum_us, sum_units, sum_count, sum_errored_units, sum_errored_count), a| {
+                    (
+                        sum_us + a.1.accumulated_us,
+                        sum_units + a.1.accumulated_units,
+                        sum_count + a.1.count,
+                        sum_errored_units + a.1.total_errored_units,
+                        sum_errored_count + a.1.errored_txs_compute_consumed.len(),
+                    )
+                },
+            );
+
+        for (pubkey, time) in per_pubkey_timings.iter().take(5) {
+            datapoint_trace!(
+                "per_program_timings",
+                ("slot", slot as i64, i64),
+                ("pubkey", pubkey.to_string(), String),
+                ("execute_us", time.accumulated_us, i64),
+                ("accumulated_units", time.accumulated_units, i64),
+                ("errored_units", time.total_errored_units, i64),
+                ("count", time.count, i64),
+                (
+                    "errored_count",
+                    time.errored_txs_compute_consumed.len(),
+                    i64
+                ),
+            );
+        }
+        datapoint_info!(
+            "per_program_timings",
+            ("slot", slot as i64, i64),
+            ("pubkey", "all", String),
+            ("execute_us", total_us, i64),
+            ("accumulated_units", total_units, i64),
+            ("count", total_count, i64),
+            ("errored_units", total_errored_units, i64),
+            ("errored_count", total_errored_count, i64)
         );
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct ValidatorStakeInfo {
+pub struct ValidatorStakeInfo {
     pub validator_vote_pubkey: Pubkey,
     pub stake: u64,
     pub total_epoch_stake: u64,
@@ -139,26 +292,24 @@ impl ValidatorStakeInfo {
     }
 }
 
-pub(crate) struct ForkProgress {
-    pub(crate) is_dead: bool,
-    pub(crate) fork_stats: ForkStats,
-    pub(crate) propagated_stats: PropagatedStats,
-    pub(crate) replay_stats: ReplaySlotStats,
-    pub(crate) replay_progress: ConfirmationProgress,
-    pub(crate) duplicate_stats: DuplicateStats,
+pub struct ForkProgress {
+    pub is_dead: bool,
+    pub fork_stats: ForkStats,
+    pub propagated_stats: PropagatedStats,
+    pub replay_stats: ReplaySlotStats,
+    pub replay_progress: ConfirmationProgress,
     // Note `num_blocks_on_fork` and `num_dropped_blocks_on_fork` only
     // count new blocks replayed since last restart, which won't include
     // blocks already existing in the ledger/before snapshot at start,
     // so these stats do not span all of time
-    pub(crate) num_blocks_on_fork: u64,
-    pub(crate) num_dropped_blocks_on_fork: u64,
+    pub num_blocks_on_fork: u64,
+    pub num_dropped_blocks_on_fork: u64,
 }
 
 impl ForkProgress {
     pub fn new(
         last_entry: Hash,
         prev_leader_slot: Option<Slot>,
-        duplicate_stats: DuplicateStats,
         validator_stake_info: Option<ValidatorStakeInfo>,
         num_blocks_on_fork: u64,
         num_dropped_blocks_on_fork: u64,
@@ -187,12 +338,12 @@ impl ForkProgress {
                 )
             })
             .unwrap_or((false, 0, HashSet::new(), false, 0));
+
         Self {
             is_dead: false,
             fork_stats: ForkStats::default(),
             replay_stats: ReplaySlotStats::default(),
             replay_progress: ConfirmationProgress::new(last_entry),
-            duplicate_stats,
             num_blocks_on_fork,
             num_dropped_blocks_on_fork,
             propagated_stats: PropagatedStats {
@@ -209,19 +360,17 @@ impl ForkProgress {
 
     pub fn new_from_bank(
         bank: &Bank,
-        my_pubkey: &Pubkey,
-        voting_pubkey: &Pubkey,
+        validator_identity: &Pubkey,
+        validator_vote_pubkey: &Pubkey,
         prev_leader_slot: Option<Slot>,
-        duplicate_stats: DuplicateStats,
         num_blocks_on_fork: u64,
         num_dropped_blocks_on_fork: u64,
     ) -> Self {
-        let validator_fork_info = {
-            if bank.collector_id() == my_pubkey {
-                let stake = bank.epoch_vote_account_stake(voting_pubkey);
+        let validator_stake_info = {
+            if bank.collector_id() == validator_identity {
                 Some(ValidatorStakeInfo::new(
-                    *voting_pubkey,
-                    stake,
+                    *validator_vote_pubkey,
+                    bank.epoch_vote_account_stake(validator_vote_pubkey),
                     bank.total_epoch_stake(),
                 ))
             } else {
@@ -229,87 +378,51 @@ impl ForkProgress {
             }
         };
 
-        Self::new(
+        let mut new_progress = Self::new(
             bank.last_blockhash(),
             prev_leader_slot,
-            duplicate_stats,
-            validator_fork_info,
+            validator_stake_info,
             num_blocks_on_fork,
             num_dropped_blocks_on_fork,
-        )
-    }
+        );
 
-    pub fn is_duplicate_confirmed(&self) -> bool {
-        self.duplicate_stats.is_duplicate_confirmed
-    }
-
-    pub fn set_duplicate_confirmed(&mut self) {
-        self.duplicate_stats.set_duplicate_confirmed();
+        if bank.is_frozen() {
+            new_progress.fork_stats.bank_hash = Some(bank.hash());
+        }
+        new_progress
     }
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ForkStats {
-    pub(crate) weight: u128,
-    pub(crate) fork_weight: u128,
-    pub(crate) total_stake: Stake,
-    pub(crate) block_height: u64,
-    pub(crate) has_voted: bool,
-    pub(crate) is_recent: bool,
-    pub(crate) is_empty: bool,
-    pub(crate) vote_threshold: bool,
-    pub(crate) is_locked_out: bool,
-    pub(crate) voted_stakes: VotedStakes,
-    pub(crate) is_supermajority_confirmed: bool,
-    pub(crate) computed: bool,
-    pub(crate) lockout_intervals: LockoutIntervals,
-    pub(crate) bank_hash: Option<Hash>,
-    pub(crate) my_latest_landed_vote: Option<Slot>,
+pub struct ForkStats {
+    pub weight: u128,
+    pub fork_weight: u128,
+    pub total_stake: Stake,
+    pub block_height: u64,
+    pub has_voted: bool,
+    pub is_recent: bool,
+    pub is_empty: bool,
+    pub vote_threshold: bool,
+    pub is_locked_out: bool,
+    pub voted_stakes: VotedStakes,
+    pub is_supermajority_confirmed: bool,
+    pub computed: bool,
+    pub lockout_intervals: LockoutIntervals,
+    pub bank_hash: Option<Hash>,
+    pub my_latest_landed_vote: Option<Slot>,
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct PropagatedStats {
-    pub(crate) propagated_validators: HashSet<Pubkey>,
-    pub(crate) propagated_node_ids: HashSet<Pubkey>,
-    pub(crate) propagated_validators_stake: u64,
-    pub(crate) is_propagated: bool,
-    pub(crate) is_leader_slot: bool,
-    pub(crate) prev_leader_slot: Option<Slot>,
-    pub(crate) slot_vote_tracker: Option<Arc<RwLock<SlotVoteTracker>>>,
-    pub(crate) cluster_slot_pubkeys: Option<Arc<RwLock<SlotPubkeys>>>,
-    pub(crate) total_epoch_stake: u64,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct DuplicateStats {
-    latest_unconfirmed_duplicate_ancestor: Option<Slot>,
-    is_duplicate_confirmed: bool,
-}
-
-impl DuplicateStats {
-    pub fn new_with_unconfirmed_duplicate_ancestor(
-        latest_unconfirmed_duplicate_ancestor: Option<Slot>,
-    ) -> Self {
-        Self {
-            latest_unconfirmed_duplicate_ancestor,
-            is_duplicate_confirmed: false,
-        }
-    }
-
-    fn set_duplicate_confirmed(&mut self) {
-        self.is_duplicate_confirmed = true;
-        self.latest_unconfirmed_duplicate_ancestor = None;
-    }
-
-    fn update_with_newly_confirmed_duplicate_ancestor(&mut self, newly_confirmed_ancestor: Slot) {
-        if let Some(latest_unconfirmed_duplicate_ancestor) =
-            self.latest_unconfirmed_duplicate_ancestor
-        {
-            if latest_unconfirmed_duplicate_ancestor <= newly_confirmed_ancestor {
-                self.latest_unconfirmed_duplicate_ancestor = None;
-            }
-        }
-    }
+pub struct PropagatedStats {
+    pub propagated_validators: HashSet<Pubkey>,
+    pub propagated_node_ids: HashSet<Pubkey>,
+    pub propagated_validators_stake: u64,
+    pub is_propagated: bool,
+    pub is_leader_slot: bool,
+    pub prev_leader_slot: Option<Slot>,
+    pub slot_vote_tracker: Option<Arc<RwLock<SlotVoteTracker>>>,
+    pub cluster_slot_pubkeys: Option<Arc<RwLock<SlotPubkeys>>>,
+    pub total_epoch_stake: u64,
 }
 
 impl PropagatedStats {
@@ -340,7 +453,7 @@ impl PropagatedStats {
         &mut self,
         node_pubkey: &Pubkey,
         vote_account_pubkeys: &[Pubkey],
-        epoch_vote_accounts: &HashMap<Pubkey, (u64, ArcVoteAccount)>,
+        epoch_vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
     ) {
         self.propagated_node_ids.insert(*node_pubkey);
         for vote_account_pubkey in vote_account_pubkeys.iter() {
@@ -354,7 +467,7 @@ impl PropagatedStats {
 }
 
 #[derive(Default)]
-pub(crate) struct ProgressMap {
+pub struct ProgressMap {
     progress_map: HashMap<Slot, ForkProgress>,
 }
 
@@ -443,102 +556,6 @@ impl ProgressMap {
         }
     }
 
-    #[cfg(test)]
-    pub fn is_unconfirmed_duplicate(&self, slot: Slot) -> Option<bool> {
-        self.get(&slot).map(|p| {
-            p.duplicate_stats
-                .latest_unconfirmed_duplicate_ancestor
-                .map(|ancestor| ancestor == slot)
-                .unwrap_or(false)
-        })
-    }
-
-    pub fn latest_unconfirmed_duplicate_ancestor(&self, slot: Slot) -> Option<Slot> {
-        self.get(&slot)
-            .map(|p| p.duplicate_stats.latest_unconfirmed_duplicate_ancestor)
-            .unwrap_or(None)
-    }
-
-    pub fn set_unconfirmed_duplicate_slot(&mut self, slot: Slot, descendants: &HashSet<u64>) {
-        if let Some(fork_progress) = self.get_mut(&slot) {
-            if fork_progress.is_duplicate_confirmed() {
-                assert!(fork_progress
-                    .duplicate_stats
-                    .latest_unconfirmed_duplicate_ancestor
-                    .is_none());
-                return;
-            }
-
-            if fork_progress
-                .duplicate_stats
-                .latest_unconfirmed_duplicate_ancestor
-                == Some(slot)
-            {
-                // Already been marked
-                return;
-            }
-            fork_progress
-                .duplicate_stats
-                .latest_unconfirmed_duplicate_ancestor = Some(slot);
-
-            for d in descendants {
-                if let Some(fork_progress) = self.get_mut(d) {
-                    fork_progress
-                        .duplicate_stats
-                        .latest_unconfirmed_duplicate_ancestor = Some(std::cmp::max(
-                        fork_progress
-                            .duplicate_stats
-                            .latest_unconfirmed_duplicate_ancestor
-                            .unwrap_or(0),
-                        slot,
-                    ));
-                }
-            }
-        }
-    }
-
-    pub fn set_confirmed_duplicate_slot(
-        &mut self,
-        slot: Slot,
-        ancestors: &HashSet<u64>,
-        descendants: &HashSet<u64>,
-    ) {
-        for a in ancestors {
-            if let Some(fork_progress) = self.get_mut(a) {
-                fork_progress.set_duplicate_confirmed();
-            }
-        }
-
-        if let Some(slot_fork_progress) = self.get_mut(&slot) {
-            // Setting the fields here is nly correct and necessary if the loop above didn't
-            // already do this, so check with an assert.
-            assert!(!ancestors.contains(&slot));
-            let slot_had_unconfirmed_duplicate_ancestor = slot_fork_progress
-                .duplicate_stats
-                .latest_unconfirmed_duplicate_ancestor
-                .is_some();
-            slot_fork_progress.set_duplicate_confirmed();
-
-            if slot_had_unconfirmed_duplicate_ancestor {
-                for d in descendants {
-                    if let Some(descendant_fork_progress) = self.get_mut(d) {
-                        descendant_fork_progress
-                            .duplicate_stats
-                            .update_with_newly_confirmed_duplicate_ancestor(slot);
-                    }
-                }
-            } else {
-                // Neither this slot `S`, nor earlier ancestors were marked as duplicate,
-                // so this means all descendants either:
-                // 1) Have no duplicate ancestors
-                // 2) Have a duplicate ancestor > `S`
-
-                // In both cases, there's no need to iterate through descendants because
-                // this confirmation on `S` is irrelevant to them.
-            }
-        }
-    }
-
     pub fn my_latest_landed_vote(&self, slot: Slot) -> Option<Slot> {
         self.progress_map
             .get(&slot)
@@ -554,12 +571,6 @@ impl ProgressMap {
         self.progress_map
             .get(&slot)
             .map(|s| s.fork_stats.is_supermajority_confirmed)
-    }
-
-    pub fn is_duplicate_confirmed(&self, slot: Slot) -> Option<bool> {
-        self.progress_map
-            .get(&slot)
-            .map(|s| s.is_duplicate_confirmed())
     }
 
     pub fn get_bank_prev_leader_slot(&self, bank: &Bank) -> Option<Slot> {
@@ -604,8 +615,6 @@ impl ProgressMap {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::consensus::test::VoteSimulator;
-    use trees::tr;
 
     #[test]
     fn test_add_vote_pubkey() {
@@ -640,7 +649,7 @@ mod test {
         let epoch_vote_accounts: HashMap<_, _> = vote_account_pubkeys
             .iter()
             .skip(num_vote_accounts - staked_vote_accounts)
-            .map(|pubkey| (*pubkey, (1, ArcVoteAccount::default())))
+            .map(|pubkey| (*pubkey, (1, VoteAccount::default())))
             .collect();
 
         let mut stats = PropagatedStats::default();
@@ -682,7 +691,7 @@ mod test {
         let epoch_vote_accounts: HashMap<_, _> = vote_account_pubkeys
             .iter()
             .skip(num_vote_accounts - staked_vote_accounts)
-            .map(|pubkey| (*pubkey, (1, ArcVoteAccount::default())))
+            .map(|pubkey| (*pubkey, (1, VoteAccount::default())))
             .collect();
         stats.add_node_pubkey_internal(&node_pubkey, &vote_account_pubkeys, &epoch_vote_accounts);
         assert!(stats.propagated_node_ids.contains(&node_pubkey));
@@ -696,21 +705,13 @@ mod test {
     fn test_is_propagated_status_on_construction() {
         // If the given ValidatorStakeInfo == None, then this is not
         // a leader slot and is_propagated == false
-        let progress = ForkProgress::new(
-            Hash::default(),
-            Some(9),
-            DuplicateStats::default(),
-            None,
-            0,
-            0,
-        );
+        let progress = ForkProgress::new(Hash::default(), Some(9), None, 0, 0);
         assert!(!progress.propagated_stats.is_propagated);
 
         // If the stake is zero, then threshold is always achieved
         let progress = ForkProgress::new(
             Hash::default(),
             Some(9),
-            DuplicateStats::default(),
             Some(ValidatorStakeInfo {
                 total_epoch_stake: 0,
                 ..ValidatorStakeInfo::default()
@@ -725,7 +726,6 @@ mod test {
         let progress = ForkProgress::new(
             Hash::default(),
             Some(9),
-            DuplicateStats::default(),
             Some(ValidatorStakeInfo {
                 total_epoch_stake: 2,
                 ..ValidatorStakeInfo::default()
@@ -739,7 +739,6 @@ mod test {
         let progress = ForkProgress::new(
             Hash::default(),
             Some(9),
-            DuplicateStats::default(),
             Some(ValidatorStakeInfo {
                 stake: 1,
                 total_epoch_stake: 2,
@@ -756,7 +755,6 @@ mod test {
         let progress = ForkProgress::new(
             Hash::default(),
             Some(9),
-            DuplicateStats::default(),
             Some(ValidatorStakeInfo::default()),
             0,
             0,
@@ -770,23 +768,12 @@ mod test {
 
         // Insert new ForkProgress for slot 10 (not a leader slot) and its
         // previous leader slot 9 (leader slot)
-        progress_map.insert(
-            10,
-            ForkProgress::new(
-                Hash::default(),
-                Some(9),
-                DuplicateStats::default(),
-                None,
-                0,
-                0,
-            ),
-        );
+        progress_map.insert(10, ForkProgress::new(Hash::default(), Some(9), None, 0, 0));
         progress_map.insert(
             9,
             ForkProgress::new(
                 Hash::default(),
                 None,
-                DuplicateStats::default(),
                 Some(ValidatorStakeInfo::default()),
                 0,
                 0,
@@ -801,17 +788,7 @@ mod test {
         // The previous leader before 8, slot 7, does not exist in
         // progress map, so is_propagated(8) should return true as
         // this implies the parent is rooted
-        progress_map.insert(
-            8,
-            ForkProgress::new(
-                Hash::default(),
-                Some(7),
-                DuplicateStats::default(),
-                None,
-                0,
-                0,
-            ),
-        );
+        progress_map.insert(8, ForkProgress::new(Hash::default(), Some(7), None, 0, 0));
         assert!(progress_map.is_propagated(8));
 
         // If we set the is_propagated = true, is_propagated should return true
@@ -833,158 +810,5 @@ mod test {
             .unwrap()
             .is_leader_slot = true;
         assert!(!progress_map.is_propagated(10));
-    }
-
-    fn setup_set_unconfirmed_and_confirmed_duplicate_slot_tests(
-        smaller_duplicate_slot: Slot,
-        larger_duplicate_slot: Slot,
-    ) -> (ProgressMap, RwLock<BankForks>) {
-        // Create simple fork 0 -> 1 -> 2 -> 3 -> 4 -> 5
-        let forks = tr(0) / (tr(1) / (tr(2) / (tr(3) / (tr(4) / tr(5)))));
-        let mut vote_simulator = VoteSimulator::new(1);
-        vote_simulator.fill_bank_forks(forks, &HashMap::new());
-        let VoteSimulator {
-            mut progress,
-            bank_forks,
-            ..
-        } = vote_simulator;
-        let descendants = bank_forks.read().unwrap().descendants().clone();
-
-        // Mark the slots as unconfirmed duplicates
-        progress.set_unconfirmed_duplicate_slot(
-            smaller_duplicate_slot,
-            descendants.get(&smaller_duplicate_slot).unwrap(),
-        );
-        progress.set_unconfirmed_duplicate_slot(
-            larger_duplicate_slot,
-            descendants.get(&larger_duplicate_slot).unwrap(),
-        );
-
-        // Correctness checks
-        for slot in bank_forks.read().unwrap().banks().keys() {
-            if *slot < smaller_duplicate_slot {
-                assert!(progress
-                    .latest_unconfirmed_duplicate_ancestor(*slot)
-                    .is_none());
-            } else if *slot < larger_duplicate_slot {
-                assert_eq!(
-                    progress
-                        .latest_unconfirmed_duplicate_ancestor(*slot)
-                        .unwrap(),
-                    smaller_duplicate_slot
-                );
-            } else {
-                assert_eq!(
-                    progress
-                        .latest_unconfirmed_duplicate_ancestor(*slot)
-                        .unwrap(),
-                    larger_duplicate_slot
-                );
-            }
-        }
-
-        (progress, bank_forks)
-    }
-
-    #[test]
-    fn test_set_unconfirmed_duplicate_confirm_smaller_slot_first() {
-        let smaller_duplicate_slot = 1;
-        let larger_duplicate_slot = 4;
-        let (mut progress, bank_forks) = setup_set_unconfirmed_and_confirmed_duplicate_slot_tests(
-            smaller_duplicate_slot,
-            larger_duplicate_slot,
-        );
-        let descendants = bank_forks.read().unwrap().descendants().clone();
-        let ancestors = bank_forks.read().unwrap().ancestors();
-
-        // Mark the smaller duplicate slot as confirmed
-        progress.set_confirmed_duplicate_slot(
-            smaller_duplicate_slot,
-            ancestors.get(&smaller_duplicate_slot).unwrap(),
-            descendants.get(&smaller_duplicate_slot).unwrap(),
-        );
-        for slot in bank_forks.read().unwrap().banks().keys() {
-            if *slot < larger_duplicate_slot {
-                // Only slots <= smaller_duplicate_slot have been duplicate confirmed
-                if *slot <= smaller_duplicate_slot {
-                    assert!(progress.is_duplicate_confirmed(*slot).unwrap());
-                } else {
-                    assert!(!progress.is_duplicate_confirmed(*slot).unwrap());
-                }
-                // The unconfirmed duplicate flag has been cleared on the smaller
-                // descendants because their most recent duplicate ancestor has
-                // been confirmed
-                assert!(progress
-                    .latest_unconfirmed_duplicate_ancestor(*slot)
-                    .is_none());
-            } else {
-                assert!(!progress.is_duplicate_confirmed(*slot).unwrap(),);
-                // The unconfirmed duplicate flag has not been cleared on the smaller
-                // descendants because their most recent duplicate ancestor,
-                // `larger_duplicate_slot` has  not yet been confirmed
-                assert_eq!(
-                    progress
-                        .latest_unconfirmed_duplicate_ancestor(*slot)
-                        .unwrap(),
-                    larger_duplicate_slot
-                );
-            }
-        }
-
-        // Mark the larger duplicate slot as confirmed, all slots should no longer
-        // have any unconfirmed duplicate ancestors, and should be marked as duplciate confirmed
-        progress.set_confirmed_duplicate_slot(
-            larger_duplicate_slot,
-            ancestors.get(&larger_duplicate_slot).unwrap(),
-            descendants.get(&larger_duplicate_slot).unwrap(),
-        );
-        for slot in bank_forks.read().unwrap().banks().keys() {
-            // All slots <= the latest duplciate confirmed slot are ancestors of
-            // that slot, so they should all be marked duplicate confirmed
-            assert_eq!(
-                progress.is_duplicate_confirmed(*slot).unwrap(),
-                *slot <= larger_duplicate_slot
-            );
-            assert!(progress
-                .latest_unconfirmed_duplicate_ancestor(*slot)
-                .is_none());
-        }
-    }
-
-    #[test]
-    fn test_set_unconfirmed_duplicate_confirm_larger_slot_first() {
-        let smaller_duplicate_slot = 1;
-        let larger_duplicate_slot = 4;
-        let (mut progress, bank_forks) = setup_set_unconfirmed_and_confirmed_duplicate_slot_tests(
-            smaller_duplicate_slot,
-            larger_duplicate_slot,
-        );
-        let descendants = bank_forks.read().unwrap().descendants().clone();
-        let ancestors = bank_forks.read().unwrap().ancestors();
-
-        // Mark the larger duplicate slot as confirmed
-        progress.set_confirmed_duplicate_slot(
-            larger_duplicate_slot,
-            ancestors.get(&larger_duplicate_slot).unwrap(),
-            descendants.get(&larger_duplicate_slot).unwrap(),
-        );
-
-        // All slots should no longer have any unconfirmed duplicate ancestors
-        progress.set_confirmed_duplicate_slot(
-            larger_duplicate_slot,
-            ancestors.get(&larger_duplicate_slot).unwrap(),
-            descendants.get(&larger_duplicate_slot).unwrap(),
-        );
-        for slot in bank_forks.read().unwrap().banks().keys() {
-            // All slots <= the latest duplciate confirmed slot are ancestors of
-            // that slot, so they should all be marked duplicate confirmed
-            assert_eq!(
-                progress.is_duplicate_confirmed(*slot).unwrap(),
-                *slot <= larger_duplicate_slot
-            );
-            assert!(progress
-                .latest_unconfirmed_duplicate_ancestor(*slot)
-                .is_none());
-        }
     }
 }

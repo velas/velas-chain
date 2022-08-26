@@ -1,12 +1,17 @@
-use crate::serve_repair::ServeRepair;
-use solana_ledger::blockstore::Blockstore;
-use solana_perf::recycler::Recycler;
-use solana_streamer::streamer;
-use std::net::UdpSocket;
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::channel;
-use std::sync::{Arc, RwLock};
-use std::thread::{self, JoinHandle};
+use {
+    crate::serve_repair::ServeRepair,
+    solana_ledger::blockstore::Blockstore,
+    solana_perf::recycler::Recycler,
+    solana_streamer::{
+        socket::SocketAddrSpace,
+        streamer::{self, StreamerReceiveStats},
+    },
+    std::{
+        net::UdpSocket,
+        sync::{atomic::AtomicBool, mpsc::channel, Arc, RwLock},
+        thread::{self, JoinHandle},
+    },
+};
 
 pub struct ServeRepairService {
     thread_hdls: Vec<JoinHandle<()>>,
@@ -17,26 +22,33 @@ impl ServeRepairService {
         serve_repair: &Arc<RwLock<ServeRepair>>,
         blockstore: Option<Arc<Blockstore>>,
         serve_repair_socket: UdpSocket,
+        socket_addr_space: SocketAddrSpace,
         exit: &Arc<AtomicBool>,
     ) -> Self {
         let (request_sender, request_receiver) = channel();
         let serve_repair_socket = Arc::new(serve_repair_socket);
         trace!(
             "ServeRepairService: id: {}, listening on: {:?}",
-            &serve_repair.read().unwrap().my_info().id,
+            &serve_repair.read().unwrap().my_id(),
             serve_repair_socket.local_addr().unwrap()
         );
         let t_receiver = streamer::receiver(
             serve_repair_socket.clone(),
-            exit,
+            exit.clone(),
             request_sender,
-            Recycler::new_without_limit("serve-repair-receiver-recycler-shrink-stats"),
-            "serve_repair_receiver",
+            Recycler::default(),
+            Arc::new(StreamerReceiveStats::new("serve_repair_receiver")),
             1,
+            false,
+            None,
         );
         let (response_sender, response_receiver) = channel();
-        let t_responder =
-            streamer::responder("serve-repairs", serve_repair_socket, response_receiver);
+        let t_responder = streamer::responder(
+            "serve-repairs",
+            serve_repair_socket,
+            response_receiver,
+            socket_addr_space,
+        );
         let t_listen = ServeRepair::listen(
             serve_repair.clone(),
             blockstore,

@@ -3,16 +3,29 @@
 # Pull requests to not run these steps.
 steps:
   - command: "ci/publish-tarball.sh"
+    agents:
+      - "queue=release-build"
     timeout_in_minutes: 60
     name: "publish tarball"
-  - command: "ci/publish-bpf-sdk.sh"
-    timeout_in_minutes: 5
-    name: "publish bpf sdk"
   - wait
   - command: "sdk/docker-solana/build.sh"
+    agents:
+      - "queue=release-build"
     timeout_in_minutes: 60
     name: "publish docker"
   - command: "ci/publish-crate.sh"
-    timeout_in_minutes: 240
+    agents:
+      - "queue=release-build"
+    timeout_in_minutes: 360
     name: "publish crate"
     branches: "!master"
+  - command: "ci/publish-tarball.sh"
+    agents:
+      - "queue=release-build-aarch64-apple-darwin"
+    timeout_in_minutes: 60
+    name: "publish tarball (aarch64-apple-darwin)"
+  - command: "ci/publish-tarball.sh"
+    agents:
+      - "queue=release-build-x86_64-apple-darwin"
+    timeout_in_minutes: 60
+    name: "publish tarball (x86_64-apple-darwin)"

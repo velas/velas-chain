@@ -1,14 +1,15 @@
-//! @brief Example Rust-based BPF program that issues a cross-program-invocation
+//! Example Rust-based BPF program that issues a cross-program-invocation
 
 #![cfg(feature = "program")]
 
-use crate::instruction::*;
+use crate::instructions::*;
 use solana_program::{
     account_info::AccountInfo,
     bpf_loader, entrypoint,
     entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
+    log::sol_log_64,
     msg,
-    program::{invoke, invoke_signed},
+    program::{get_return_data, invoke, invoke_signed, set_return_data},
     program_error::ProgramError,
     pubkey::Pubkey,
     system_instruction,
@@ -26,6 +27,8 @@ fn process_instruction(
     if instruction_data.is_empty() {
         return Ok(());
     }
+
+    assert_eq!(get_return_data(), None);
 
     match instruction_data[0] {
         VERIFY_TRANSLATIONS => {
@@ -103,7 +106,7 @@ fn process_instruction(
                 assert!(accounts[INVOKED_PROGRAM_DUP_INDEX]
                     .try_borrow_mut_data()
                     .is_err());
-                msg!(data[0], 0, 0, 0, 0);
+                sol_log_64(data[0] as u64, 0, 0, 0, 0);
             }
         }
         RETURN_OK => {
@@ -285,6 +288,11 @@ fn process_instruction(
                     data[i] = i as u8;
                 }
             }
+        }
+        SET_RETURN_DATA => {
+            msg!("Set return data");
+
+            set_return_data(b"Set by invoked");
         }
         _ => panic!(),
     }

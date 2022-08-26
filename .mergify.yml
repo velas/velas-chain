@@ -4,24 +4,77 @@
 #
 # https://doc.mergify.io/
 pull_request_rules:
+  - name: label changes from community
+    conditions:
+      - author≠@core-contributors
+      - author≠mergify[bot]
+      - author≠dependabot[bot]
+    actions:
+      label:
+        add:
+          - community
+  - name: request review for community changes
+    conditions:
+      - author≠@core-contributors
+      - author≠mergify[bot]
+      - author≠dependabot[bot]
+      # Only request reviews from the pr subscribers group if no one
+      # has reviewed the community PR yet. These checks only match
+      # reviewers with admin, write or maintain permission on the repository.
+      - "#approved-reviews-by=0"
+      - "#commented-reviews-by=0"
+      - "#changes-requested-reviews-by=0"
+      - "#review-requested=0"
+    actions:
+      request_reviews:
+        teams:
+          - "@solana-labs/community-pr-subscribers"
   - name: automatic merge (squash) on CI success
     conditions:
-      - status-success=buildkite/solana
-      - status-success=Travis CI - Pull Request
-      - status-success=ci-gate
-      - label=automerge
-      - author≠@dont-squash-my-commits
+      - and:
+        - status-success=buildkite/solana
+        - status-success=ci-gate
+        - label=automerge
+        - label!=no-automerge
+        - author≠@dont-squash-my-commits
+        - or:
+          # only require docs checks if docs files changed
+          - status-success=docs-build
+          - -files~=^docs/
+        - or:
+          # only require explorer checks if explorer files changed
+          - status-success=check-explorer
+          - -files~=^explorer/
+        - or:
+          - and:
+            - status-success=all-web3-checks
+            - status-success=web3-commit-lint
+          # only require web3 checks if web3.js files changed
+          - -files~=^web3.js/
     actions:
       merge:
         method: squash
   # Join the dont-squash-my-commits group if you won't like your commits squashed
   - name: automatic merge (rebase) on CI success
     conditions:
-      - status-success=buildkite/solana
-      - status-success=Travis CI - Pull Request
-      - status-success=ci-gate
-      - label=automerge
-      - author=@dont-squash-my-commits
+      - and:
+        - status-success=buildkite/solana
+        - status-success=ci-gate
+        - label=automerge
+        - label!=no-automerge
+        - author=@dont-squash-my-commits
+        - or:
+          # only require docs checks if docs files changed
+          - status-success=docs-build
+          - -files~=^docs/
+        - or:
+          # only require explorer checks if explorer files changed
+          - status-success=check-explorer
+          - -files~=^explorer/
+        - or:
+          # only require web3 checks if web3.js files changed
+          - status-success=all-web3-checks
+          - -files~=^web3.js/
     actions:
       merge:
         method: rebase
@@ -46,39 +99,32 @@ pull_request_rules:
       - author=mergify[bot]
       - head~=^mergify/bp/
       - "#status-failure=0"
+      - "-merged"
+      - label!=no-automerge
     actions:
       label:
         add:
           - automerge
-  - name: v1.4 backport
+  - name: v1.8 backport
     conditions:
-      - label=v1.4
+      - label=v1.8
     actions:
       backport:
         ignore_conflicts: true
         branches:
-          - v1.4
-  - name: v1.5 backport
+          - v1.8
+  - name: v1.9 backport
     conditions:
-      - label=v1.5
+      - label=v1.9
     actions:
       backport:
         ignore_conflicts: true
         branches:
-          - v1.5
-  - name: v1.6 backport
+          - v1.9
+
+commands_restrictions:
+  # The author of copied PRs is the Mergify user.
+  # Restrict `copy` access to Core Contributors
+  copy:
     conditions:
-      - label=v1.6
-    actions:
-      backport:
-        ignore_conflicts: true
-        branches:
-          - v1.6
-  - name: v1.7 backport
-    conditions:
-      - label=v1.7
-    actions:
-      backport:
-        ignore_conflicts: true
-        branches:
-          - v1.7
+    - author=@core-contributors

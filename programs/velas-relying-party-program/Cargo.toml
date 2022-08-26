@@ -7,9 +7,9 @@ edition = "2018"
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-borsh = "0.8.1"
-borsh-derive = "0.8.1"
+borsh = "0.9.1"
+borsh-derive = "0.9.1"
 serde = { version = "1.0.125", features = ["derive"] }
 serde_with = "1.9"
 
-solana-program = { path = "../../sdk/program", version = "1.5.14" }
+solana-program = { path = "../../sdk/program", version = "1.9.13" }

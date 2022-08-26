@@ -54,7 +54,7 @@ pub struct Incomming {
     pub timestamp: u64,
     pub used_gas: u64,
     pub(crate) state_root: H256,
-    pub(crate) last_block_hash: H256,
+    pub last_block_hash: H256,
     /// Maybe::Nothing indicates removed account
     pub(crate) state_updates: ChangedState,
 
@@ -513,12 +513,14 @@ impl EvmBackend<Committed> {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum EvmState {
     Committed(EvmBackend<Committed>),
     Incomming(EvmBackend<Incomming>),
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvmPersistState {
     Committed(Committed),
@@ -581,11 +583,11 @@ impl EvmState {
 
     /// Ignores all unapplied updates.
     /// spv_compatibility - is oneway feature flag, if activated change current version from InitVersion to VersionConsistentHashes (dont change if version is feature).
-    pub fn new_from_parent(&self, block_start_time: i64, spv_compatibility: bool) -> Self {
+    pub fn new_from_parent(&self, block_start_time: u64, spv_compatibility: bool) -> Self {
         let mut b = match self {
-            EvmState::Committed(committed) => committed.next_incomming(block_start_time as u64),
+            EvmState::Committed(committed) => committed.next_incomming(block_start_time),
             EvmState::Incomming(incomming) => EvmBackend {
-                state: incomming.state.new_update_time(block_start_time as u64),
+                state: incomming.state.new_update_time(block_start_time),
                 kvs: incomming.kvs.clone(),
             },
         };
@@ -607,14 +609,14 @@ impl EvmState {
 
     pub fn load_from<P: AsRef<Path>>(
         path: P,
-        evm_persist_feilds: impl Into<EvmPersistState>,
+        evm_persist_fields: impl Into<EvmPersistState>,
         gc_enabled: bool,
     ) -> Result<Self, anyhow::Error> {
         info!("Open EVM storage {}", path.as_ref().display());
 
         let kvs = KVS::open_persistent(path, gc_enabled)?;
 
-        Ok(match evm_persist_feilds.into() {
+        Ok(match evm_persist_fields.into() {
             EvmPersistState::Incomming(i) => EvmBackend::new(i, kvs).into(),
             EvmPersistState::Committed(c) => EvmBackend::new(c, kvs).into(),
         })
@@ -981,7 +983,7 @@ mod tests {
     #[test]
     fn reads_the_same_after_consequent_dumps() {
         use std::ops::Bound::Included;
-        let _ = simple_logger::SimpleLogger::new().env().init();
+        let _ = simple_logger::SimpleLogger::new().with_utc_timestamps().env().init();
 
         const N_VERSIONS: usize = 10;
         const ACCOUNTS_PER_VERSION: usize = 10;
@@ -1026,7 +1028,7 @@ mod tests {
 
     #[test]
     fn lookups_thru_forks() {
-        let _ = simple_logger::SimpleLogger::new().init();
+        let _ = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
 
         let mut state = EvmBackend::default();
 
@@ -1049,7 +1051,7 @@ mod tests {
 
     #[test]
     fn it_handles_accounts_state_get_set_expectations() {
-        let _ = simple_logger::SimpleLogger::new().init();
+        let _ = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
 
         let mut state = EvmBackend::default();
 

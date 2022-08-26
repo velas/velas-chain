@@ -1,78 +1,78 @@
-use crate::{
-    cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
-    spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
-    stake::is_stake_program_v2_enabled,
-};
-use clap::{value_t, value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand};
-use console::{style, Emoji};
-use serde::{Deserialize, Serialize};
-use solana_clap_utils::{
-    input_parsers::*,
-    input_validators::*,
-    keypair::DefaultSigner,
-    offline::{blockhash_arg, BLOCKHASH_ARG},
-};
-use solana_cli_output::{
-    display::{
-        build_balance_message, format_labeled_address, new_spinner_progress_bar,
-        println_name_value, println_transaction, unix_timestamp_to_string, writeln_name_value,
+use {
+    crate::{
+        cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
+        spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
     },
-    *,
-};
-use solana_client::{
-    client_error::ClientErrorKind,
-    pubsub_client::PubsubClient,
-    rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
-    rpc_config::{
-        RpcAccountInfoConfig, RpcConfirmedBlockConfig, RpcConfirmedTransactionConfig,
-        RpcLargestAccountsConfig, RpcLargestAccountsFilter, RpcProgramAccountsConfig,
-        RpcTransactionLogsConfig, RpcTransactionLogsFilter,
+    clap::{value_t, value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand},
+    console::style,
+    serde::{Deserialize, Serialize},
+    solana_clap_utils::{
+        input_parsers::*,
+        input_validators::*,
+        keypair::DefaultSigner,
+        offline::{blockhash_arg, BLOCKHASH_ARG},
     },
-    rpc_filter,
-    rpc_response::SlotInfo,
-};
-use solana_remote_wallet::remote_wallet::RemoteWalletManager;
-use solana_sdk::{
-    account::from_account,
-    account_utils::StateMut,
-    clock::{self, Clock, Slot},
-    commitment_config::CommitmentConfig,
-    epoch_schedule::Epoch,
-    hash::Hash,
-    message::Message,
-    native_token::lamports_to_sol,
+    solana_cli_output::{
+        display::{
+            build_balance_message, format_labeled_address, new_spinner_progress_bar,
+            println_transaction, unix_timestamp_to_string, writeln_name_value,
+        },
+        *,
+    },
+    solana_client::{
+        client_error::ClientErrorKind,
+        pubsub_client::PubsubClient,
+        rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
+        rpc_config::{
+            RpcAccountInfoConfig, RpcBlockConfig, RpcGetVoteAccountsConfig,
+            RpcLargestAccountsConfig, RpcLargestAccountsFilter, RpcProgramAccountsConfig,
+            RpcTransactionConfig, RpcTransactionLogsConfig, RpcTransactionLogsFilter,
+        },
+        rpc_filter,
+        rpc_request::DELINQUENT_VALIDATOR_SLOT_DISTANCE,
+        rpc_response::SlotInfo,
+    },
+    solana_remote_wallet::remote_wallet::RemoteWalletManager,
+    solana_sdk::{
+        account::from_account,
+        account_utils::StateMut,
+        clock::{self, Clock, Slot},
+        commitment_config::CommitmentConfig,
+        epoch_schedule::Epoch,
+        hash::Hash,
+        message::Message,
+        native_token::lamports_to_sol,
     nonce::State as NonceState,
-    pubkey::{self, Pubkey},
-    rent::Rent,
-    rpc_port::DEFAULT_RPC_PORT_STR,
-    signature::Signature,
-    slot_history, system_instruction, system_program,
-    sysvar::{
-        self,
+        pubkey::Pubkey,
+        rent::Rent,
+        rpc_port::DEFAULT_RPC_PORT_STR,
+        signature::Signature,
+        slot_history,
+        stake::{self, state::StakeState},
+        system_instruction,
+        sysvar::{
+            self,
         slot_history::SlotHistory,
-        stake_history::{self},
+            stake_history::{self},
+        },
+        timing,
+        transaction::Transaction,
     },
-    timing,
-    transaction::Transaction,
-};
-use solana_stake_program::stake_state::StakeState;
-use solana_transaction_status::UiTransactionEncoding;
-use solana_vote_program::vote_state::VoteState;
-use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
-    fmt,
+    solana_transaction_status::UiTransactionEncoding,
+    solana_vote_program::vote_state::VoteState,
+    std::{
+        collections::{BTreeMap, HashMap, VecDeque},
+        fmt,
     str::FromStr,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        thread::sleep,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
-    thread::sleep,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    thiserror::Error,
 };
-use thiserror::Error;
-
-static CHECK_MARK: Emoji = Emoji("✅ ", "");
-static CROSS_MARK: Emoji = Emoji("❌ ", "");
 
 pub trait ClusterQuerySubCommands {
     fn cluster_query_subcommands(self) -> Self;
@@ -140,9 +140,10 @@ impl ClusterQuerySubCommands for App<'_, '_> {
             SubCommand::with_name("cluster-version")
                 .about("Get the version of the cluster entrypoint"),
         )
+        // Deprecated in v1.8.0
         .subcommand(
             SubCommand::with_name("fees")
-            .about("Display current cluster fees")
+            .about("Display current cluster fees (Deprecated in v1.8.0)")
             .arg(
                 Arg::with_name("blockhash")
                     .long("blockhash")
@@ -175,7 +176,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                     .takes_value(true)
                     .value_name("EPOCH")
                     .validator(is_epoch)
-                    .help("Epoch to show leader schedule for. (default: current)")
+                    .help("Epoch to show leader schedule for. [default: current]")
             )
         )
         .subcommand(
@@ -257,15 +258,6 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .long("print-timestamp")
                         .takes_value(false)
                         .help("Print timestamp (unix time + microseconds as in gettimeofday) before each line"),
-                )
-                .arg(
-                    Arg::with_name("lamports")
-                        .long("lamports")
-                        .value_name("NUMBER")
-                        .takes_value(true)
-                        .default_value("1")
-                        .validator(is_amount)
-                        .help("Number of lamports to transfer for each transaction"),
                 )
                 .arg(
                     Arg::with_name("timeout")
@@ -377,10 +369,30 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                             "root",
                             "skip-rate",
                             "stake",
+                            "version",
                             "vote-account",
                         ])
                         .default_value("stake")
                         .help("Sort order (does not affect JSON output)"),
+                )
+                .arg(
+                    Arg::with_name("keep_unstaked_delinquents")
+                        .long("keep-unstaked-delinquents")
+                        .takes_value(false)
+                        .help("Don't discard unstaked, delinquent validators")
+                )
+                .arg(
+                    Arg::with_name("delinquent_slot_distance")
+                        .long("delinquent-slot-distance")
+                        .takes_value(true)
+                        .value_name("SLOT_DISTANCE")
+                        .validator(is_slot)
+                        .help(
+                            concatcp!(
+                                "Minimum slot distance from the tip to consider a validator delinquent. [default: ",
+                                DELINQUENT_VALIDATOR_SLOT_DISTANCE,
+                                "]",
+                        ))
                 ),
         )
         .subcommand(
@@ -430,7 +442,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
         )
         .subcommand(
             SubCommand::with_name("rent")
-                .about("Calculate per-epoch and rent-exempt-minimum values for a given account data length.")
+                .about("Calculate per-epoch and rent-exempt-minimum values for a given account data field length.")
                 .arg(
                     Arg::with_name("data_length")
                         .index(1)
@@ -441,7 +453,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                                 .map(|_| ())
                                 .map_err(|e| e.to_string())
                         })
-                        .help("Length of data in the account to calculate rent for, or moniker: [nonce, stake, system, vote]"),
+                        .help("Length of data field in the account to calculate rent for, or moniker: [nonce, stake, system, vote]"),
                 )
                 .arg(
                     Arg::with_name("lamports")
@@ -492,7 +504,6 @@ pub fn parse_cluster_ping(
     default_signer: &DefaultSigner,
     wallet_manager: &mut Option<Arc<RemoteWalletManager>>,
 ) -> Result<CliCommandInfo, CliError> {
-    let lamports = value_t_or_exit!(matches, "lamports", u64);
     let interval = Duration::from_secs(value_t_or_exit!(matches, "interval", u64));
     let count = if matches.is_present("count") {
         Some(value_t_or_exit!(matches, "count", u64))
@@ -504,7 +515,6 @@ pub fn parse_cluster_ping(
     let print_timestamp = matches.is_present("print_timestamp");
     Ok(CliCommandInfo {
         command: CliCommand::Ping {
-            lamports,
             interval,
             count,
             timeout,
@@ -616,6 +626,8 @@ pub fn parse_show_validators(matches: &ArgMatches<'_>) -> Result<CliCommandInfo,
     let use_lamports_unit = matches.is_present("lamports");
     let number_validators = matches.is_present("number");
     let reverse_sort = matches.is_present("reverse");
+    let keep_unstaked_delinquents = matches.is_present("keep_unstaked_delinquents");
+    let delinquent_slot_distance = value_of(matches, "delinquent_slot_distance");
 
     let sort_order = match value_t_or_exit!(matches, "sort", String).as_str() {
         "delinquent" => CliValidatorsSortOrder::Delinquent,
@@ -627,6 +639,7 @@ pub fn parse_show_validators(matches: &ArgMatches<'_>) -> Result<CliCommandInfo,
         "skip-rate" => CliValidatorsSortOrder::SkipRate,
         "stake" => CliValidatorsSortOrder::Stake,
         "vote-account" => CliValidatorsSortOrder::VoteAccount,
+        "version" => CliValidatorsSortOrder::Version,
         _ => unreachable!(),
     };
 
@@ -636,6 +649,8 @@ pub fn parse_show_validators(matches: &ArgMatches<'_>) -> Result<CliCommandInfo,
             sort_order,
             reverse_sort,
             number_validators,
+            keep_unstaked_delinquents,
+            delinquent_slot_distance,
         },
         signers: vec![],
     })
@@ -737,12 +752,10 @@ pub fn process_catchup(
                     if let Some(rpc_addr) = contact_info.rpc {
                         break rpc_addr;
                     }
-                    progress_bar.set_message(&format!("RPC service not found for {}", node_pubkey));
+                    progress_bar.set_message(format!("RPC service not found for {}", node_pubkey));
                 } else {
-                    progress_bar.set_message(&format!(
-                        "Contact information not found for {}",
-                        node_pubkey
-                    ));
+                    progress_bar
+                        .set_message(format!("Contact information not found for {}", node_pubkey));
                 }
                 sleep(Duration::from_secs(sleep_interval as u64));
             };
@@ -758,7 +771,7 @@ pub fn process_catchup(
             Ok(reported_node_pubkey) => break reported_node_pubkey,
             Err(err) => {
                 if let ClientErrorKind::Reqwest(err) = err.kind() {
-                    progress_bar.set_message(&format!("Connection failed: {}", err));
+                    progress_bar.set_message(format!("Connection failed: {}", err));
                     sleep(Duration::from_secs(sleep_interval as u64));
                     continue;
                 }
@@ -858,7 +871,7 @@ pub fn process_catchup(
             }
         };
 
-        progress_bar.set_message(&format!(
+        progress_bar.set_message(format!(
             "{} slot(s) {} (us:{} them:{}){}",
             slot_distance.abs(),
             if slot_distance >= 0 {
@@ -927,6 +940,7 @@ pub fn process_fees(
     blockhash: Option<&Hash>,
 ) -> ProcessResult {
     let fees = if let Some(recent_blockhash) = blockhash {
+        #[allow(deprecated)]
         let result = rpc_client.get_fee_calculator_for_blockhash_with_commitment(
             recent_blockhash,
             config.commitment,
@@ -937,18 +951,20 @@ pub fn process_fees(
                 *recent_blockhash,
                 fee_calculator.lamports_per_signature,
                 None,
+                None,
             )
         } else {
             CliFees::none()
         }
     } else {
-        let result = rpc_client.get_recent_blockhash_with_commitment(config.commitment)?;
-        let (recent_blockhash, fee_calculator, last_valid_slot) = result.value;
+        #[allow(deprecated)]
+        let result = rpc_client.get_fees_with_commitment(config.commitment)?;
         CliFees::some(
             result.context.slot,
-            recent_blockhash,
-            fee_calculator.lamports_per_signature,
-            Some(last_valid_slot),
+            result.value.blockhash,
+            result.value.fee_calculator.lamports_per_signature,
+            None,
+            Some(result.value.last_valid_block_height),
         )
     };
     Ok(config.output_format.formatted_string(&fees))
@@ -1027,12 +1043,12 @@ pub fn process_get_block(
     };
 
     let encoded_confirmed_block = rpc_client
-        .get_confirmed_block_with_config(
+        .get_block_with_config(
             slot,
-            RpcConfirmedBlockConfig {
+            RpcBlockConfig {
                 encoding: Some(UiTransactionEncoding::Base64),
                 commitment: Some(CommitmentConfig::confirmed()),
-                ..RpcConfirmedBlockConfig::default()
+                ..RpcBlockConfig::default()
             },
         )?
         .into();
@@ -1075,9 +1091,15 @@ pub fn process_get_epoch_info(rpc_client: &RpcClient, config: &CliConfig) -> Pro
             (secs as u64).saturating_mul(1000).checked_div(slots)
         })
         .unwrap_or(clock::DEFAULT_MS_PER_SLOT);
+    let start_block_time = rpc_client
+        .get_block_time(epoch_info.absolute_slot - epoch_info.slot_index)
+        .ok();
+    let current_block_time = rpc_client.get_block_time(epoch_info.absolute_slot).ok();
     let epoch_info = CliEpochInfo {
         epoch_info,
         average_slot_time_ms,
+        start_block_time,
+        current_block_time,
     };
     Ok(config.output_format.formatted_string(&epoch_info))
 }
@@ -1134,7 +1156,7 @@ pub fn process_show_block_production(
     };
 
     let progress_bar = new_spinner_progress_bar();
-    progress_bar.set_message(&format!(
+    progress_bar.set_message(format!(
         "Fetching confirmed blocks between slots {} and {}...",
         start_slot, end_slot
     ));
@@ -1184,7 +1206,7 @@ pub fn process_show_block_production(
                 start_slot = minimum_ledger_slot;
             }
 
-            let confirmed_blocks = rpc_client.get_confirmed_blocks(start_slot, Some(end_slot))?;
+            let confirmed_blocks = rpc_client.get_blocks(start_slot, Some(end_slot))?;
             (confirmed_blocks, start_slot)
         };
 
@@ -1197,7 +1219,7 @@ pub fn process_show_block_production(
     let mut leader_slot_count = HashMap::new();
     let mut leader_skipped_slots = HashMap::new();
 
-    progress_bar.set_message(&format!("Fetching leader schedule for epoch {}...", epoch));
+    progress_bar.set_message(format!("Fetching leader schedule for epoch {}...", epoch));
     let leader_schedule = rpc_client
         .get_leader_schedule_with_commitment(Some(start_slot), CommitmentConfig::finalized())?;
     if leader_schedule.is_none() {
@@ -1216,7 +1238,7 @@ pub fn process_show_block_production(
         }
     }
 
-    progress_bar.set_message(&format!(
+    progress_bar.set_message(format!(
         "Processing {} slots containing {} blocks and {} empty slots...",
         total_slots, total_blocks_produced, total_slots_skipped
     ));
@@ -1324,57 +1346,47 @@ pub fn process_get_transaction_count(rpc_client: &RpcClient, _config: &CliConfig
 pub fn process_ping(
     rpc_client: &RpcClient,
     config: &CliConfig,
-    lamports: u64,
     interval: &Duration,
     count: &Option<u64>,
     timeout: &Duration,
     fixed_blockhash: &Option<Hash>,
     print_timestamp: bool,
 ) -> ProcessResult {
-    println_name_value("Source Account:", &config.signers[0].pubkey().to_string());
-    println!();
-
     let (signal_sender, signal_receiver) = std::sync::mpsc::channel();
     ctrlc::set_handler(move || {
         let _ = signal_sender.send(());
     })
     .expect("Error setting Ctrl-C handler");
 
+    let mut cli_pings = vec![];
+
     let mut submit_count = 0;
     let mut confirmed_count = 0;
     let mut confirmation_time: VecDeque<u64> = VecDeque::with_capacity(1024);
 
-    let (mut blockhash, mut fee_calculator) = rpc_client.get_recent_blockhash()?;
-    let mut blockhash_transaction_count = 0;
+    let mut blockhash = rpc_client.get_latest_blockhash()?;
+    let mut lamports = 0;
     let mut blockhash_acquired = Instant::now();
+    let mut blockhash_from_cluster = false;
     if let Some(fixed_blockhash) = fixed_blockhash {
-        let blockhash_origin = if *fixed_blockhash != Hash::default() {
+        if *fixed_blockhash != Hash::default() {
             blockhash = *fixed_blockhash;
-            "supplied from cli arguments"
         } else {
-            "fetched from cluster"
-        };
-        println!(
-            "Fixed blockhash is used: {} ({})",
-            blockhash, blockhash_origin
-        );
+            blockhash_from_cluster = true;
+        }
     }
     'mainloop: for seq in 0..count.unwrap_or(std::u64::MAX) {
         let now = Instant::now();
         if fixed_blockhash.is_none() && now.duration_since(blockhash_acquired).as_secs() > 60 {
             // Fetch a new blockhash every minute
-            let (new_blockhash, new_fee_calculator) = rpc_client.get_new_blockhash(&blockhash)?;
+            let new_blockhash = rpc_client.get_new_latest_blockhash(&blockhash)?;
             blockhash = new_blockhash;
-            fee_calculator = new_fee_calculator;
-            blockhash_transaction_count = 0;
+            lamports = 0;
             blockhash_acquired = Instant::now();
         }
 
-        let seed =
-            &format!("{}{}", blockhash_transaction_count, blockhash)[0..pubkey::MAX_SEED_LEN];
-        let to = Pubkey::create_with_seed(&config.signers[0].pubkey(), seed, &system_program::id())
-            .unwrap();
-        blockhash_transaction_count += 1;
+        let to = config.signers[0].pubkey();
+        lamports += 1;
 
         let build_message = |lamports| {
             let ix = system_instruction::transfer(&config.signers[0].pubkey(), &to, lamports);
@@ -1384,7 +1396,7 @@ pub fn process_ping(
             rpc_client,
             false,
             SpendAmount::Some(lamports),
-            &fee_calculator,
+            &blockhash,
             &config.signers[0].pubkey(),
             build_message,
             config.commitment,
@@ -1397,11 +1409,7 @@ pub fn process_ping(
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_micros();
-            if print_timestamp {
-                format!("[{}.{:06}] ", micros / 1_000_000, micros % 1_000_000)
-            } else {
-                format!("")
-            }
+            format!("[{}.{:06}] ", micros / 1_000_000, micros % 1_000_000)
         };
 
         match rpc_client.send_transaction(&tx) {
@@ -1415,35 +1423,51 @@ pub fn process_ping(
                             Ok(()) => {
                                 let elapsed_time_millis = elapsed_time.as_millis() as u64;
                                 confirmation_time.push_back(elapsed_time_millis);
-                                println!(
-                                    "{}{}{} lamport(s) transferred: seq={:<3} time={:>4}ms signature={}",
-                                    timestamp(),
-                                    CHECK_MARK, lamports, seq, elapsed_time_millis, signature
-                                );
+                                let cli_ping_data = CliPingData {
+                                    success: true,
+                                    signature: Some(signature.to_string()),
+                                    ms: Some(elapsed_time_millis),
+                                    error: None,
+                                    timestamp: timestamp(),
+                                    print_timestamp,
+                                    sequence: seq,
+                                    lamports: Some(lamports),
+                                };
+                                eprint!("{}", cli_ping_data);
+                                cli_pings.push(cli_ping_data);
                                 confirmed_count += 1;
                             }
                             Err(err) => {
-                                println!(
-                                    "{}{}Transaction failed:    seq={:<3} error={:?} signature={}",
-                                    timestamp(),
-                                    CROSS_MARK,
-                                    seq,
-                                    err,
-                                    signature
-                                );
+                                let cli_ping_data = CliPingData {
+                                    success: false,
+                                    signature: Some(signature.to_string()),
+                                    ms: None,
+                                    error: Some(err.to_string()),
+                                    timestamp: timestamp(),
+                                    print_timestamp,
+                                    sequence: seq,
+                                    lamports: None,
+                                };
+                                eprint!("{}", cli_ping_data);
+                                cli_pings.push(cli_ping_data);
                             }
                         }
                         break;
                     }
 
                     if elapsed_time >= *timeout {
-                        println!(
-                            "{}{}Confirmation timeout:  seq={:<3}             signature={}",
-                            timestamp(),
-                            CROSS_MARK,
-                            seq,
-                            signature
-                        );
+                        let cli_ping_data = CliPingData {
+                            success: false,
+                            signature: Some(signature.to_string()),
+                            ms: None,
+                            error: None,
+                            timestamp: timestamp(),
+                            print_timestamp,
+                            sequence: seq,
+                            lamports: None,
+                        };
+                        eprint!("{}", cli_ping_data);
+                        cli_pings.push(cli_ping_data);
                         break;
                     }
 
@@ -1457,13 +1481,18 @@ pub fn process_ping(
                 }
             }
             Err(err) => {
-                println!(
-                    "{}{}Submit failed:         seq={:<3} error={:?}",
-                    timestamp(),
-                    CROSS_MARK,
-                    seq,
-                    err
-                );
+                let cli_ping_data = CliPingData {
+                    success: false,
+                    signature: None,
+                    ms: None,
+                    error: Some(err.to_string()),
+                    timestamp: timestamp(),
+                    print_timestamp,
+                    sequence: seq,
+                    lamports: None,
+                };
+                eprint!("{}", cli_ping_data);
+                cli_pings.push(cli_ping_data);
             }
         }
         submit_count += 1;
@@ -1473,28 +1502,34 @@ pub fn process_ping(
         }
     }
 
-    println!();
-    println!("--- transaction statistics ---");
-    println!(
-        "{} transactions submitted, {} transactions confirmed, {:.1}% transaction loss",
-        submit_count,
-        confirmed_count,
-        (100. - f64::from(confirmed_count) / f64::from(submit_count) * 100.)
-    );
-    if !confirmation_time.is_empty() {
+    let transaction_stats = CliPingTxStats {
+        num_transactions: submit_count,
+        num_transaction_confirmed: confirmed_count,
+    };
+    let confirmation_stats = if !confirmation_time.is_empty() {
         let samples: Vec<f64> = confirmation_time.iter().map(|t| *t as f64).collect();
         let dist = criterion_stats::Distribution::from(samples.into_boxed_slice());
         let mean = dist.mean();
-        println!(
-            "confirmation min/mean/max/stddev = {:.0}/{:.0}/{:.0}/{:.0} ms",
-            dist.min(),
+        Some(CliPingConfirmationStats {
+            min: dist.min(),
             mean,
-            dist.max(),
-            dist.std_dev(Some(mean))
-        );
-    }
+            max: dist.max(),
+            std_dev: dist.std_dev(Some(mean)),
+        })
+    } else {
+        None
+    };
 
-    Ok("".to_string())
+    let cli_ping = CliPing {
+        source_pubkey: config.signers[0].pubkey().to_string(),
+        fixed_blockhash: fixed_blockhash.map(|_| blockhash.to_string()),
+        blockhash_from_cluster,
+        pings: cli_pings,
+        transaction_stats,
+        confirmation_stats,
+    };
+
+    Ok(config.output_format.formatted_string(&cli_ping))
 }
 
 pub fn parse_logs(
@@ -1610,9 +1645,8 @@ pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
                         "{:?} | root slot advancing at {:.2} slots/second",
                         new_info, slots_per_second
                     )
-                }
-                .to_owned();
-                slot_progress.set_message(&message);
+                };
+                slot_progress.set_message(message.clone());
 
                 if let Some(previous) = current {
                     let slot_delta: i64 = new_info.slot as i64 - previous.slot as i64;
@@ -1690,7 +1724,7 @@ pub fn process_show_stakes(
                 // Filter by `StakeState::Stake(_, _)`
                 rpc_filter::RpcFilterType::Memcmp(rpc_filter::Memcmp {
                     offset: 0,
-                    bytes: rpc_filter::MemcmpEncodedBytes::Binary(
+                    bytes: rpc_filter::MemcmpEncodedBytes::Base58(
                         bs58::encode([2, 0, 0, 0]).into_string(),
                     ),
                     encoding: Some(rpc_filter::MemcmpEncoding::Binary),
@@ -1698,7 +1732,7 @@ pub fn process_show_stakes(
                 // Filter by `Delegation::voter_pubkey`, which begins at byte offset 124
                 rpc_filter::RpcFilterType::Memcmp(rpc_filter::Memcmp {
                     offset: 124,
-                    bytes: rpc_filter::MemcmpEncodedBytes::Binary(
+                    bytes: rpc_filter::MemcmpEncodedBytes::Base58(
                         vote_account_pubkeys[0].to_string(),
                     ),
                     encoding: Some(rpc_filter::MemcmpEncoding::Binary),
@@ -1707,7 +1741,7 @@ pub fn process_show_stakes(
         }
     }
     let all_stake_accounts = rpc_client
-        .get_program_accounts_with_config(&solana_stake_program::id(), program_accounts_config)?;
+        .get_program_accounts_with_config(&stake::program::id(), program_accounts_config)?;
     let stake_history_account = rpc_client.get_account(&stake_history::id())?;
     let clock_account = rpc_client.get_account(&sysvar::clock::id())?;
     let clock: Clock = from_account(&clock_account).ok_or_else(|| {
@@ -1718,8 +1752,6 @@ pub fn process_show_stakes(
     let stake_history = from_account(&stake_history_account).ok_or_else(|| {
         CliError::RpcRequestError("Failed to deserialize stake history".to_string())
     })?;
-    // At v1.6, this check can be removed and simply passed as `true`
-    let stake_program_v2_enabled = is_stake_program_v2_enabled(rpc_client)?;
 
     let mut stake_accounts: Vec<CliKeyedStakeState> = vec![];
     for (stake_pubkey, stake_account) in all_stake_accounts {
@@ -1735,7 +1767,6 @@ pub fn process_show_stakes(
                                 use_lamports_unit,
                                 &stake_history,
                                 &clock,
-                                stake_program_v2_enabled,
                             ),
                         });
                     }
@@ -1754,7 +1785,6 @@ pub fn process_show_stakes(
                                 use_lamports_unit,
                                 &stake_history,
                                 &clock,
-                                stake_program_v2_enabled,
                             ),
                         });
                     }
@@ -1785,11 +1815,17 @@ pub fn process_show_validators(
     validators_sort_order: CliValidatorsSortOrder,
     validators_reverse_sort: bool,
     number_validators: bool,
+    keep_unstaked_delinquents: bool,
+    delinquent_slot_distance: Option<Slot>,
 ) -> ProcessResult {
     let progress_bar = new_spinner_progress_bar();
     progress_bar.set_message("Fetching vote accounts...");
     let epoch_info = rpc_client.get_epoch_info()?;
-    let vote_accounts = rpc_client.get_vote_accounts()?;
+    let vote_accounts = rpc_client.get_vote_accounts_with_config(RpcGetVoteAccountsConfig {
+        keep_unstaked_delinquents: Some(keep_unstaked_delinquents),
+        delinquent_slot_distance,
+        ..RpcGetVoteAccountsConfig::default()
+    })?;
 
     progress_bar.set_message("Fetching block production...");
     let skip_rate: HashMap<_, _> = rpc_client
@@ -1826,7 +1862,7 @@ pub fn process_show_validators(
         .current
         .iter()
         .filter(|v| {
-            v.activated_stake >= solana_stake_program::stake_state::MIN_STAKERS_TO_BE_MAJORITY
+            v.activated_stake >= solana_vote_program::MIN_STAKERS_TO_BE_MAJORITY
         })
         .count() as u64;
 
@@ -1895,15 +1931,41 @@ pub fn process_show_validators(
         entry.delinquent_active_stake += validator.activated_stake;
     }
 
+    let validators: Vec<_> = current_validators
+        .into_iter()
+        .chain(delinquent_validators.into_iter())
+        .collect();
+
+    let (average_skip_rate, average_stake_weighted_skip_rate) = {
+        let mut skip_rate_len = 0;
+        let mut skip_rate_sum = 0.;
+        let mut skip_rate_weighted_sum = 0.;
+        for validator in validators.iter() {
+            if let Some(skip_rate) = validator.skip_rate {
+                skip_rate_sum += skip_rate;
+                skip_rate_len += 1;
+                skip_rate_weighted_sum += skip_rate * validator.activated_stake as f64;
+            }
+        }
+
+        if skip_rate_len > 0 && total_active_stake > 0 {
+            (
+                skip_rate_sum / skip_rate_len as f64,
+                skip_rate_weighted_sum / total_active_stake as f64,
+            )
+        } else {
+            (100., 100.) // Impossible?
+        }
+    };
+
     let cli_validators = CliValidators {
         majority_count,
         total_active_stake,
         total_current_stake,
         total_delinquent_stake,
-        validators: current_validators
-            .into_iter()
-            .chain(delinquent_validators.into_iter())
-            .collect(),
+        validators,
+        average_skip_rate,
+        average_stake_weighted_skip_rate,
         validators_sort_order,
         validators_reverse_sort,
         number_validators,
@@ -1922,7 +1984,7 @@ pub fn process_transaction_history(
     limit: usize,
     show_transactions: bool,
 ) -> ProcessResult {
-    let results = rpc_client.get_confirmed_signatures_for_address2_with_config(
+    let results = rpc_client.get_signatures_for_address_with_config(
         address,
         GetConfirmedSignaturesForAddress2Config {
             before,
@@ -1961,9 +2023,9 @@ pub fn process_transaction_history(
 
         if show_transactions {
             if let Ok(signature) = result.signature.parse::<Signature>() {
-                match rpc_client.get_confirmed_transaction_with_config(
+                match rpc_client.get_transaction_with_config(
                     &signature,
-                    RpcConfirmedTransactionConfig {
+                    RpcTransactionConfig {
                         encoding: Some(UiTransactionEncoding::Base64),
                         commitment: Some(CommitmentConfig::confirmed()),
                     },
@@ -2076,7 +2138,7 @@ pub fn process_calculate_rent(
         timing::years_as_slots(1.0, &seconds_per_tick, clock::DEFAULT_TICKS_PER_SLOT);
     let slots_per_epoch = epoch_schedule.slots_per_epoch as f64;
     let years_per_epoch = slots_per_epoch / slots_per_year;
-    let (lamports_per_epoch, _) = rent.due(0, data_length, years_per_epoch);
+    let lamports_per_epoch = rent.due(0, data_length, years_per_epoch).lamports();
     let cli_rent_calculation = CliRentCalculation {
         lamports_per_byte_year: rent.lamports_per_byte_year,
         lamports_per_epoch,
@@ -2089,11 +2151,13 @@ pub fn process_calculate_rent(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{clap_app::get_clap_app, cli::parse_command};
-    use solana_sdk::signature::{write_keypair, Keypair};
-    use std::str::FromStr;
-    use tempfile::NamedTempFile;
+    use {
+        super::*,
+        crate::{clap_app::get_clap_app, cli::parse_command},
+        solana_sdk::signature::{write_keypair, Keypair},
+        std::str::FromStr,
+        tempfile::NamedTempFile,
+    };
 
     fn make_tmp_file() -> (String, NamedTempFile) {
         let tmp_file = NamedTempFile::new().unwrap();
@@ -2250,7 +2314,6 @@ mod tests {
             parse_command(&test_ping, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
                 command: CliCommand::Ping {
-                    lamports: 1,
                     interval: Duration::from_secs(1),
                     count: Some(2),
                     timeout: Duration::from_secs(3),

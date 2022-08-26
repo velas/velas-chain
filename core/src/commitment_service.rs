@@ -1,20 +1,25 @@
-use crate::{consensus::Stake, rpc_subscriptions::RpcSubscriptions};
-use solana_measure::measure::Measure;
-use solana_metrics::datapoint_info;
-use solana_runtime::{
-    bank::Bank,
-    commitment::{BlockCommitment, BlockCommitmentCache, CommitmentSlots, VOTE_THRESHOLD_SIZE},
-};
-use solana_sdk::clock::Slot;
-use solana_vote_program::vote_state::VoteState;
-use std::{
-    cmp::max,
-    collections::HashMap,
-    sync::atomic::{AtomicBool, Ordering},
-    sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender},
-    sync::{Arc, RwLock},
-    thread::{self, Builder, JoinHandle},
-    time::Duration,
+use {
+    crate::consensus::Stake,
+    solana_measure::measure::Measure,
+    solana_metrics::datapoint_info,
+    solana_rpc::rpc_subscriptions::RpcSubscriptions,
+    solana_runtime::{
+        bank::Bank,
+        commitment::{BlockCommitment, BlockCommitmentCache, CommitmentSlots, VOTE_THRESHOLD_SIZE},
+    },
+    solana_sdk::clock::Slot,
+    solana_vote_program::vote_state::VoteState,
+    std::{
+        cmp::max,
+        collections::HashMap,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc::{channel, Receiver, RecvTimeoutError, Sender},
+            Arc, RwLock,
+        },
+        thread::{self, Builder, JoinHandle},
+        time::Duration,
+    },
 };
 
 pub struct CommitmentAggregationData {
@@ -92,11 +97,8 @@ impl AggregateCommitmentService {
                 return Ok(());
             }
 
-            let mut aggregation_data = receiver.recv_timeout(Duration::from_secs(1))?;
-
-            while let Ok(new_data) = receiver.try_recv() {
-                aggregation_data = new_data;
-            }
+            let aggregation_data = receiver.recv_timeout(Duration::from_secs(1))?;
+            let aggregation_data = receiver.try_iter().last().unwrap_or(aggregation_data);
 
             let ancestors = aggregation_data.bank.status_cache_ancestors();
             if ancestors.is_empty() {
@@ -182,8 +184,8 @@ impl AggregateCommitmentService {
 
         let mut commitment = HashMap::new();
         let mut rooted_stake: Vec<(Slot, u64)> = Vec::new();
-        for (_, (lamports, account)) in bank.vote_accounts().into_iter() {
-            if lamports == 0 {
+        for (lamports, account) in bank.vote_accounts().values() {
+            if *lamports == 0 {
                 continue;
             }
             if let Ok(vote_state) = account.vote_state().as_ref() {
@@ -192,7 +194,7 @@ impl AggregateCommitmentService {
                     &mut rooted_stake,
                     vote_state,
                     ancestors,
-                    lamports,
+                    *lamports,
                 );
             }
         }
@@ -246,18 +248,20 @@ impl AggregateCommitmentService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo};
-    use solana_runtime::{
-        accounts_background_service::AbsRequestSender,
-        bank_forks::BankForks,
-        genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
-    };
-    use solana_sdk::{account::Account, pubkey::Pubkey, signature::Signer};
-    use solana_stake_program::stake_state;
-    use solana_vote_program::{
-        vote_state::{self, VoteStateVersions},
-        vote_transaction,
+    use {
+        super::*,
+        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_runtime::{
+            accounts_background_service::AbsRequestSender,
+            bank_forks::BankForks,
+            genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
+        },
+        solana_sdk::{account::Account, pubkey::Pubkey, signature::Signer},
+        solana_stake_program::stake_state,
+        solana_vote_program::{
+            vote_state::{self, VoteStateVersions},
+            vote_transaction,
+        },
     };
 
     #[test]
@@ -426,7 +430,7 @@ mod tests {
         );
 
         // Create bank
-        let bank = Arc::new(Bank::new(&genesis_config));
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
         let mut vote_state1 = VoteState::from(&vote_account1).unwrap();
         vote_state1.process_slot_vote_unchecked(3);
@@ -500,24 +504,20 @@ mod tests {
 
         let validator_vote_keypairs = ValidatorVoteKeypairs::new_rand();
         let validator_keypairs = vec![&validator_vote_keypairs];
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair: _,
-            voting_keypair: _,
-        } = create_genesis_config_with_vote_accounts(
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
             1_000_000_000,
             &validator_keypairs,
             vec![100; 1],
         );
 
-        let bank0 = Bank::new(&genesis_config);
+        let bank0 = Bank::new_for_tests(&genesis_config);
         let mut bank_forks = BankForks::new(bank0);
 
         // Fill bank_forks with banks with votes landing in the next slot
         // Create enough banks such that vote account will root slots 0 and 1
         for x in 0..33 {
             let previous_bank = bank_forks.get(x).unwrap();
-            let bank = Bank::new_from_parent(previous_bank, &Pubkey::default(), x + 1);
+            let bank = Bank::new_from_parent(&previous_bank, &Pubkey::default(), x + 1);
             let vote = vote_transaction::new_vote_transaction(
                 vec![x],
                 previous_bank.hash(),
@@ -542,7 +542,7 @@ mod tests {
 
         // Add an additional bank/vote that will root slot 2
         let bank33 = bank_forks.get(33).unwrap();
-        let bank34 = Bank::new_from_parent(bank33, &Pubkey::default(), 34);
+        let bank34 = Bank::new_from_parent(&bank33, &Pubkey::default(), 34);
         let vote33 = vote_transaction::new_vote_transaction(
             vec![33],
             bank33.hash(),
@@ -585,7 +585,7 @@ mod tests {
         // Add a forked bank. Because the vote for bank 33 landed in the non-ancestor, the vote
         // account's root (and thus the highest_confirmed_root) rolls back to slot 1
         let bank33 = bank_forks.get(33).unwrap();
-        let bank35 = Bank::new_from_parent(bank33, &Pubkey::default(), 35);
+        let bank35 = Bank::new_from_parent(&bank33, &Pubkey::default(), 35);
         bank_forks.insert(bank35);
 
         let working_bank = bank_forks.working_bank();
@@ -610,7 +610,7 @@ mod tests {
         // continues normally
         for x in 35..=37 {
             let previous_bank = bank_forks.get(x).unwrap();
-            let bank = Bank::new_from_parent(previous_bank, &Pubkey::default(), x + 1);
+            let bank = Bank::new_from_parent(&previous_bank, &Pubkey::default(), x + 1);
             let vote = vote_transaction::new_vote_transaction(
                 vec![x],
                 previous_bank.hash(),

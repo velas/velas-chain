@@ -12,9 +12,11 @@ use snafu::Snafu;
 use crate::Bytes;
 
 #[derive(Debug, Snafu)]
-#[snafu(visibility = "pub")]
+#[snafu(context(suffix(false)))]
+#[snafu(visibility(pub))]
 pub enum Error {
     #[snafu(display("Failed to decode Hex({})", input_data))]
+    #[snafu(context(suffix(Error)))]
     HexError {
         input_data: String,
         source: FromHexError,
@@ -35,9 +37,11 @@ pub enum Error {
         batch_size: Option<u64>,
     },
     #[snafu(display("Tokio runtime error: {}", details))]
+    #[snafu(context(suffix(Error)))]
     RuntimeError { details: String },
 
     #[snafu(display("Failed to decode Rlp struct {} ({})", struct_name, input_data))]
+    #[snafu(context(suffix(Error)))]
     RlpError {
         struct_name: String,
         input_data: String,
@@ -45,12 +49,14 @@ pub enum Error {
     },
 
     #[snafu(display("Failed to parse integer({})", input_data))]
+    #[snafu(context(suffix(Error)))]
     IntError {
         input_data: String,
         source: ParseIntError,
     },
 
     #[snafu(display("Failed to parse BigInt({})", input_data))]
+    #[snafu(context(suffix(Error)))]
     BigIntError {
         input_data: String,
         source: uint::FromHexError,
@@ -69,9 +75,14 @@ pub enum Error {
     StateNotFoundForBlock { block: BlockId },
 
     #[snafu(display("Failed to process native chain request: {}", source))]
+    #[snafu(context(suffix(Error)))]
     ProxyRpcError { source: JRpcError },
 
+    #[snafu(display("Method needs to be redirected to node"))]
+    ProxyRequest,
+
     #[snafu(display("Failed to execute request, rpc return error: {}", source))]
+    #[snafu(context(suffix(Error)))]
     NativeRpcError {
         details: String,
         source: anyhow::Error,
@@ -79,11 +90,13 @@ pub enum Error {
     },
 
     #[snafu(display("Error in evm processing layer: {}", source))]
+    #[snafu(context(suffix(Error)))]
     EvmStateError { source: evm_state::error::Error },
 
     #[snafu(display("Method unimplemented"))]
     Unimplemented {},
     #[snafu(display("ServerError(-32005)"))]
+    #[snafu(context(suffix(Error)))]
     ServerError {},
 
     #[snafu(display("Wrong EVM chain id, expected={}, but tx={:?}", chain_id, tx_chain_id))]
@@ -95,6 +108,7 @@ pub enum Error {
     #[snafu(display("Secret key for account not found, account: {:?}", account))]
     KeyNotFound { account: evm_state::H160 },
     #[snafu(display("execution error: {}", format_data_with_error(data, error)))]
+    #[snafu(context(suffix(Error)))]
     CallError { data: Bytes, error: ExitError },
     #[snafu(display("execution reverted: {}", format_data(data)))]
     CallRevert { data: Bytes, error: ExitRevert },
@@ -104,6 +118,8 @@ pub enum Error {
     GasPriceTooLow { need: U256 },
     #[snafu(display("Transaction was removed from mempool"))]
     TransactionRemoved {},
+    #[snafu(display("Invalid rpc params"))]
+    InvalidParams {},
     // InvalidParams {},
     // UnsupportedTrieQuery,
     // NotFound,
@@ -130,8 +146,8 @@ pub(crate) fn format_data(data: &Bytes) -> String {
     if data.0.len() > 4 {
         let hash = &data.0[0..4];
         // check that function hash is taken from "Error" function name
-        if dbg!(*hash == [0x08, 0xc3, 0x79, 0xa0]) {
-            if let Ok(input) = dbg!(func_decl.decode_input(&data.0[4..])) {
+        if *hash == [0x08, 0xc3, 0x79, 0xa0] {
+            if let Ok(input) = func_decl.decode_input(&data.0[4..]) {
                 if let Some(ethabi::Token::String(s)) = input.get(0) {
                     // on success decode return error from reason string.
                     return s.clone();
@@ -198,7 +214,10 @@ impl From<Error> for JRpcError {
                 Self::invalid_params_with_details(err.to_string(), error)
             }
             Error::ProxyRpcError { source } => source.clone(),
+            Error::ProxyRequest => Self::method_not_found(),
             Error::WrongChainId { .. } => Self::invalid_params(err.to_string()),
+            // NOTE: add context information of the error
+            Error::InvalidParams {} => Self::invalid_params(err.to_string()),
             Error::EvmStateError { source } => {
                 internal_error_with_details(EVM_STATE_RPC_ERROR, &err, &source)
             }
@@ -240,7 +259,7 @@ impl From<Error> for JRpcError {
                     ExitError::StackOverflow => 12,
                     ExitError::StackUnderflow => 13,
                     ExitError::Other(_) => 14,
-                    ExitError::InvalidCode => 15,
+                    ExitError::InvalidCode(_) => 15,
                 };
                 let error_code = ERROR_EVM_BASE_SUBCODE + error_code;
                 assert!(error_code < ERROR_EVM_BASE_SUBCODE + ERROR_EVM_BASE_SUBRANGE);

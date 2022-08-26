@@ -1,5 +1,7 @@
-use crate::{blockstore::*, blockstore_meta::SlotMeta};
-use solana_sdk::clock::Slot;
+use {
+    crate::{blockstore::*, blockstore_meta::SlotMeta},
+    solana_sdk::clock::Slot,
+};
 
 pub struct NextSlotsIterator<'a> {
     pending_slots: Vec<Slot>,
@@ -34,16 +36,16 @@ impl<'a> Iterator for NextSlotsIterator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::blockstore_processor::fill_blockstore_slot_with_ticks;
-    use solana_sdk::hash::Hash;
-    use std::collections::HashSet;
+    use {
+        super::*, crate::blockstore_processor::fill_blockstore_slot_with_ticks,
+        solana_sdk::hash::Hash, std::collections::HashSet,
+    };
 
     #[test]
     fn test_next_slots_iterator() {
-        let blockstore_path = get_tmp_ledger_path!();
-        let blockstore = Blockstore::open(&blockstore_path).unwrap();
-        blockstore.set_roots(&[0]).unwrap();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        blockstore.set_roots(std::iter::once(&0)).unwrap();
         let ticks_per_slot = 5;
         /*
             Build a blockstore in the ledger with the following fork structure:
@@ -107,8 +109,5 @@ mod tests {
             .collect();
         let expected = vec![4].into_iter().collect();
         assert_eq!(result, expected);
-
-        drop(blockstore);
-        Blockstore::destroy(&blockstore_path).expect("Expected successful database destruction");
     }
 }

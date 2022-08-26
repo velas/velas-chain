@@ -2,39 +2,44 @@
 
 #![cfg(feature = "full")]
 
-use crate::{
-    account::Account,
-    account::AccountSharedData,
-    clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
-    epoch_schedule::EpochSchedule,
-    fee_calculator::FeeRateGovernor,
-    hash::{hash, Hash},
-    inflation::Inflation,
-    native_token::lamports_to_sol,
-    poh_config::PohConfig,
-    pubkey::Pubkey,
-    rent::Rent,
-    shred_version::compute_shred_version,
-    signature::{Keypair, Signer},
-    system_program,
-    timing::years_as_slots,
+use {
+    crate::{
+        account::{Account, AccountSharedData},
+        clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
+        epoch_schedule::EpochSchedule,
+        fee_calculator::FeeRateGovernor,
+        hash::{hash, Hash},
+        inflation::Inflation,
+        native_token::lamports_to_sol,
+        poh_config::PohConfig,
+        pubkey::Pubkey,
+        rent::Rent,
+        shred_version::compute_shred_version,
+        signature::{Keypair, Signer},
+        system_program,
+        timing::years_as_slots,
+    },
+
+    bincode::{deserialize, serialize},
+    chrono::{TimeZone, Utc},
+    evm_state::H256,
+    itertools::Itertools,
+    log::warn,
+    memmap2::Mmap,
+    std::{
+        collections::BTreeMap,
+        fmt,
+        fs::{File, OpenOptions},
+        io::Write,
+        path::{Path, PathBuf},
+        str::FromStr,
+        time::{SystemTime, UNIX_EPOCH},
+    },
 };
 
-use bincode::{deserialize, serialize};
-use chrono::{TimeZone, Utc};
-use evm_state::H256;
-use itertools::Itertools;
-use log::warn;
-use memmap2::Mmap;
-use std::{
-    collections::BTreeMap,
-    fmt,
-    fs::{File, OpenOptions},
-    io::Write,
-    path::{Path, PathBuf},
-    str::FromStr,
-    time::{SystemTime, UNIX_EPOCH},
-};
+pub const DEFAULT_GENESIS_FILE: &str = "genesis.bin";
+pub const DEFAULT_GENESIS_ARCHIVE: &str = "genesis.tar.bz2";
+pub const DEFAULT_GENESIS_DOWNLOAD_PATH: &str = "/genesis.tar.bz2";
 
 // deprecated default that is no longer used
 pub const UNUSED_DEFAULT: u64 = 1024;
@@ -69,7 +74,7 @@ impl FromStr for ClusterType {
     }
 }
 
-#[frozen_abi(digest = "FX48h9vjJZPvka4J9UvcPQkVcMdYLQujhbvUmVFq6qLx")]
+#[frozen_abi(digest = "3V3ZVRyzNhRfe8RJwDeGpeTP8xBWGGFBEbwTkvKKVjEa")]
 #[derive(Serialize, Deserialize, Debug, Clone, AbiExample)]
 pub struct GenesisConfig {
     /// when the network (bootstrap validator) was started relative to the UNIX Epoch
@@ -169,7 +174,7 @@ impl GenesisConfig {
     }
 
     fn genesis_filename(ledger_path: &Path) -> PathBuf {
-        Path::new(ledger_path).join("genesis.bin")
+        Path::new(ledger_path).join(DEFAULT_GENESIS_FILE)
     }
 
     pub fn load(ledger_path: &Path) -> Result<Self, std::io::Error> {
@@ -349,9 +354,7 @@ impl fmt::Display for GenesisConfig {
                 self.accounts
                     .iter()
                     .map(|(pubkey, account)| {
-                        if account.lamports == 0 {
-                            panic!("{:?}", (pubkey, account));
-                        }
+                        assert!(account.lamports > 0, "{:?}", (pubkey, account));
                         account.lamports
                     })
                     .sum::<u64>()
@@ -493,7 +496,7 @@ pub mod evm_genesis {
         reader: R,
     }
 
-    impl<'a, R: BufRead> StreamAccountReader<IoRead<R>> {
+    impl<R: BufRead> StreamAccountReader<IoRead<R>> {
         pub fn new(mut reader: R) -> Result<Self, Error> {
             let mut buffer = String::new();
 
@@ -651,11 +654,12 @@ pub mod evm_genesis {
 #[cfg(test)]
 mod tests {
     use evm_state::{MemoryAccount, H160};
-
-    use super::evm_genesis::*;
-    use super::*;
-    use crate::signature::{Keypair, Signer};
-    use std::path::PathBuf;
+    use {
+        super::evm_genesis::*,
+        super::*,
+        crate::signature::{Keypair, Signer},
+        std::path::PathBuf,
+    };
 
     fn make_tmp_path(name: &str) -> PathBuf {
         let out_dir = std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string());

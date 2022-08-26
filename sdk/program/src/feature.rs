@@ -1,12 +1,16 @@
-/// Runtime features.
-///
-/// Feature activation is accomplished by:
-/// 1. Activation is requested by the feature authority, who issues a transaction to create the
-///    feature account.  The newly created feature account will have the value of
-///    `Feature::default()`
-/// 2. When the next epoch is entered the runtime will check for new activation requests and
-///    active them.  When this occurs, the activation slot is recorded in the feature account
-///
+//! Runtime features.
+//!
+//! Runtime features provide a mechanism for features to be simultaneously activated across the
+//! network. Since validators may choose when to upgrade, features must remain dormant until a
+//! sufficient majority of the network is running a version that would support a given feature.
+//!
+//! Feature activation is accomplished by:
+//! 1. Activation is requested by the feature authority, who issues a transaction to create the
+//!    feature account. The newly created feature account will have the value of
+//!    `Feature::default()`
+//! 2. When the next epoch is entered the runtime will check for new activation requests and
+//!    active them.  When this occurs, the activation slot is recorded in the feature account
+
 use crate::{
     account_info::AccountInfo, clock::Slot, instruction::Instruction, program_error::ProgramError,
     pubkey::Pubkey, rent::Rent, system_instruction,
@@ -58,8 +62,7 @@ pub fn activate_with_lamports(
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use solana_program::clock::Slot;
+    use {super::*, solana_program::clock::Slot};
 
     #[test]
     fn feature_sizeof() {

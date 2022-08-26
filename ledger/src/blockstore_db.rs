@@ -1,40 +1,41 @@
-use crate::blockstore_meta;
-use bincode::{deserialize, serialize};
-use byteorder::{BigEndian, ByteOrder};
-use columns::{EvmBlockHeader, EvmHeaderIndexByHash, EvmHeaderIndexBySlot, EvmTransactionReceipts};
 use evm_state::{BlockNum, H256};
-use log::*;
-use prost::Message;
+
 pub use rocksdb::Direction as IteratorDirection;
-use rocksdb::{
+use {
+    crate::blockstore_meta,
+    bincode::{deserialize, serialize},
+    byteorder::{BigEndian, ByteOrder},
+    log::*,
+    prost::Message,
+    rocksdb::{
     self,
     compaction_filter::CompactionFilter,
     compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
     ColumnFamily, ColumnFamilyDescriptor, CompactionDecision, DBIterator, DBRawIterator,
     DBRecoveryMode, IteratorMode as RocksIteratorMode, Options, WriteBatch as RWriteBatch, DB,
-};
-
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use solana_runtime::hardened_unpack::UnpackError;
-use solana_sdk::{
-    clock::{Slot, UnixTimestamp},
-    pubkey::Pubkey,
-    signature::Signature,
-};
-use solana_storage_proto::convert::{generated, generated_evm};
-use std::{
-    collections::HashMap,
-    ffi::{CStr, CString},
-    fs,
-    marker::PhantomData,
-    path::Path,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
     },
+
+    serde::{de::DeserializeOwned, Serialize},
+    solana_runtime::hardened_unpack::UnpackError,
+    solana_sdk::{
+        clock::{Slot, UnixTimestamp},
+        pubkey::Pubkey,
+        signature::Signature,
+    },
+    solana_storage_proto::convert::{generated, generated_evm},
+    std::{
+        collections::{HashMap, HashSet},
+        ffi::{CStr, CString},
+        fs,
+        marker::PhantomData,
+        path::Path,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
+    },
+    thiserror::Error,
 };
-use thiserror::Error;
 
 const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 
@@ -49,6 +50,8 @@ const DUPLICATE_SLOTS_CF: &str = "duplicate_slots";
 const ERASURE_META_CF: &str = "erasure_meta";
 // Column family for orphans data
 const ORPHANS_CF: &str = "orphans";
+/// Column family for bank hashes
+const BANK_HASH_CF: &str = "bank_hashes";
 // Column family for root data
 const ROOT_CF: &str = "root";
 /// Column family for indexes
@@ -61,6 +64,8 @@ const CODE_SHRED_CF: &str = "code_shred";
 const TRANSACTION_STATUS_CF: &str = "transaction_status";
 /// Column family for Address Signatures
 const ADDRESS_SIGNATURES_CF: &str = "address_signatures";
+/// Column family for TransactionMemos
+const TRANSACTION_MEMOS_CF: &str = "transaction_memos";
 /// Column family for the Transaction Status Index.
 /// This column family is used for tracking the active primary index for columns that for
 /// query performance reasons should not be indexed by Slot.
@@ -73,6 +78,8 @@ const BLOCKTIME_CF: &str = "blocktime";
 const PERF_SAMPLES_CF: &str = "perf_samples";
 /// Column family for BlockHeight
 const BLOCK_HEIGHT_CF: &str = "block_height";
+/// Column family for ProgramCosts
+const PROGRAM_COSTS_CF: &str = "program_costs";
 
 // 1 day is chosen for the same reasoning of DEFAULT_COMPACTION_SLOT_INTERVAL
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
@@ -107,6 +114,8 @@ pub enum BlockstoreError {
     ProtobufDecodeError(#[from] prost::DecodeError),
     ParentEntriesUnavailable,
     SlotUnavailable,
+    UnsupportedTransactionVersion,
+    MissingTransactionMetadata,
     Other(&'static str), // TODO(velas): remove, use specific error variant
 }
 pub type Result<T> = std::result::Result<T, BlockstoreError>;
@@ -145,6 +154,10 @@ pub mod columns {
     pub struct ErasureMeta;
 
     #[derive(Debug)]
+    /// The bank hash column
+    pub struct BankHash;
+
+    #[derive(Debug)]
     /// The root column
     pub struct Root;
 
@@ -169,6 +182,10 @@ pub mod columns {
     pub struct AddressSignatures;
 
     #[derive(Debug)]
+    // The transaction memos column
+    pub struct TransactionMemos;
+
+    #[derive(Debug)]
     /// The transaction status index column
     pub struct TransactionStatusIndex;
 
@@ -188,6 +205,9 @@ pub mod columns {
     /// The block height column
     pub struct BlockHeight;
 
+    #[derive(Debug)]
+    // The program costs column
+    pub struct ProgramCosts;
     /// The evm block header.
     pub struct EvmBlockHeader;
 
@@ -304,11 +324,7 @@ impl Rocks {
         access_type: AccessType,
         recovery_mode: Option<BlockstoreRecoveryMode>,
     ) -> Result<Rocks> {
-        use columns::{
-            AddressSignatures, BlockHeight, Blocktime, DeadSlots, DuplicateSlots, ErasureMeta,
-            Index, Orphans, PerfSamples, Rewards, Root, ShredCode, ShredData, SlotMeta,
-            TransactionStatus, TransactionStatusIndex,
-        };
+        use columns::*;
 
         fs::create_dir_all(&path)?;
 
@@ -345,6 +361,10 @@ impl Rocks {
             Orphans::NAME,
             get_cf_options::<Orphans>(&access_type, &oldest_slot, &oldest_block_num),
         );
+        let bank_hash_cf_descriptor = ColumnFamilyDescriptor::new(
+            BankHash::NAME,
+            get_cf_options::<BankHash>(&access_type, &oldest_slot, &oldest_block_num),
+        );
         let root_cf_descriptor = ColumnFamilyDescriptor::new(
             Root::NAME,
             get_cf_options::<Root>(&access_type, &oldest_slot, &oldest_block_num),
@@ -369,6 +389,10 @@ impl Rocks {
             AddressSignatures::NAME,
             get_cf_options::<AddressSignatures>(&access_type, &oldest_slot, &oldest_block_num),
         );
+        let transaction_memos_cf_descriptor = ColumnFamilyDescriptor::new(
+            TransactionMemos::NAME,
+            get_cf_options::<TransactionMemos>(&access_type, &oldest_slot, &oldest_block_num),
+        );
         let transaction_status_index_cf_descriptor = ColumnFamilyDescriptor::new(
             TransactionStatusIndex::NAME,
             get_cf_options::<TransactionStatusIndex>(&access_type, &oldest_slot, &oldest_block_num),
@@ -388,6 +412,11 @@ impl Rocks {
         let block_height_cf_descriptor = ColumnFamilyDescriptor::new(
             BlockHeight::NAME,
             get_cf_options::<BlockHeight>(&access_type, &oldest_slot, &oldest_block_num),
+        );
+
+        let program_costs_cf_descriptor = ColumnFamilyDescriptor::new(
+            ProgramCosts::NAME,
+            get_cf_options::<ProgramCosts>(&access_type, &oldest_slot, &oldest_block_num),
         );
         // Don't forget to add to both run_purge_with_stats() and
         // compact_storage() in ledger/src/blockstore/blockstore_purge.rs!!
@@ -409,18 +438,21 @@ impl Rocks {
             get_cf_options::<EvmTransactionReceipts>(&access_type, &oldest_slot, &oldest_block_num),
         );
 
+
         let cfs = vec![
             (SlotMeta::NAME, meta_cf_descriptor),
             (DeadSlots::NAME, dead_slots_cf_descriptor),
             (DuplicateSlots::NAME, duplicate_slots_cf_descriptor),
             (ErasureMeta::NAME, erasure_meta_cf_descriptor),
             (Orphans::NAME, orphans_cf_descriptor),
+            (BankHash::NAME, bank_hash_cf_descriptor),
             (Root::NAME, root_cf_descriptor),
             (Index::NAME, index_cf_descriptor),
             (ShredData::NAME, shred_data_cf_descriptor),
             (ShredCode::NAME, shred_code_cf_descriptor),
             (TransactionStatus::NAME, transaction_status_cf_descriptor),
             (AddressSignatures::NAME, address_signatures_cf_descriptor),
+            (TransactionMemos::NAME, transaction_memos_cf_descriptor),
             (
                 TransactionStatusIndex::NAME,
                 transaction_status_index_cf_descriptor,
@@ -429,6 +461,7 @@ impl Rocks {
             (Blocktime::NAME, blocktime_cf_descriptor),
             (PerfSamples::NAME, perf_samples_cf_descriptor),
             (BlockHeight::NAME, block_height_cf_descriptor),
+            (ProgramCosts::NAME, program_costs_cf_descriptor),
             // EVM tail args
             (EvmBlockHeader::NAME, evm_headers_cf_descriptor),
             (EvmTransactionReceipts::NAME, evm_transactions_cf_descriptor),
@@ -479,13 +512,12 @@ impl Rocks {
                 }
             }
         };
-        // this is only needed for LedgerCleanupService. so guard with PrimaryOnly (i.e. running solana-validator)
+        // this is only needed for LedgerCleanupService. so guard with PrimaryOnly (i.e. running velas-validator)
         if matches!(access_type, AccessType::PrimaryOnly) {
             for cf_name in cf_names {
-                // this special column family must be excluded from LedgerCleanupService's rocksdb
+                // these special column families must be excluded from LedgerCleanupService's rocksdb
                 // compactions
-                if cf_name == TransactionStatusIndex::NAME || cf_name == EvmTransactionReceipts::NAME
-                    || cf_name == EvmHeaderIndexByHash::NAME {
+                if excludes_from_compaction(cf_name) {
                     continue;
                 }
 
@@ -541,11 +573,7 @@ impl Rocks {
     }
 
     fn columns(&self) -> Vec<&'static str> {
-        use columns::{
-            AddressSignatures, BlockHeight, Blocktime, DeadSlots, DuplicateSlots, ErasureMeta,
-            Index, Orphans, PerfSamples, Rewards, Root, ShredCode, ShredData, SlotMeta,
-            TransactionStatus, TransactionStatusIndex,
-        };
+        use columns::*;
 
         vec![
             ErasureMeta::NAME,
@@ -553,17 +581,20 @@ impl Rocks {
             DuplicateSlots::NAME,
             Index::NAME,
             Orphans::NAME,
+            BankHash::NAME,
             Root::NAME,
             SlotMeta::NAME,
             ShredData::NAME,
             ShredCode::NAME,
             TransactionStatus::NAME,
             AddressSignatures::NAME,
+            TransactionMemos::NAME,
             TransactionStatusIndex::NAME,
             Rewards::NAME,
             Blocktime::NAME,
             PerfSamples::NAME,
             BlockHeight::NAME,
+            ProgramCosts::NAME,
             // EVM scope
             EvmBlockHeader::NAME,
             EvmTransactionReceipts::NAME,
@@ -585,12 +616,17 @@ impl Rocks {
     }
 
     fn get_cf(&self, cf: &ColumnFamily, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let opt = self.0.get_cf(cf, key)?.map(|db_vec| db_vec.to_vec());
+        let opt = self.0.get_cf(cf, key)?;
         Ok(opt)
     }
 
     fn put_cf(&self, cf: &ColumnFamily, key: &[u8], value: &[u8]) -> Result<()> {
         self.0.put_cf(cf, key, value)?;
+        Ok(())
+    }
+
+    fn delete_cf(&self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
+        self.0.delete_cf(cf, key)?;
         Ok(())
     }
 
@@ -656,6 +692,10 @@ pub trait TypedColumn: Column {
 
 impl TypedColumn for columns::AddressSignatures {
     type Type = blockstore_meta::AddressSignatureMeta;
+}
+
+impl TypedColumn for columns::TransactionMemos {
+    type Type = String;
 }
 
 impl TypedColumn for columns::TransactionStatusIndex {
@@ -772,6 +812,37 @@ impl ColumnName for columns::AddressSignatures {
     const NAME: &'static str = ADDRESS_SIGNATURES_CF;
 }
 
+impl Column for columns::TransactionMemos {
+    type Index = Signature;
+
+    fn key(signature: Signature) -> Vec<u8> {
+        let mut key = vec![0; 64]; // size_of Signature
+        key[0..64].clone_from_slice(&signature.as_ref()[0..64]);
+        key
+    }
+
+    fn index(key: &[u8]) -> Signature {
+        Signature::new(&key[0..64])
+    }
+
+    fn primary_index(_index: Self::Index) -> u64 {
+        unimplemented!()
+    }
+
+    fn slot(_index: Self::Index) -> Slot {
+        unimplemented!()
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    fn as_index(_index: u64) -> Self::Index {
+        Signature::default()
+    }
+}
+
+impl ColumnName for columns::TransactionMemos {
+    const NAME: &'static str = TRANSACTION_MEMOS_CF;
+}
+
 impl Column for columns::TransactionStatusIndex {
     type Index = u64;
 
@@ -833,6 +904,39 @@ impl ColumnName for columns::BlockHeight {
 }
 impl TypedColumn for columns::BlockHeight {
     type Type = u64;
+}
+
+impl ColumnName for columns::ProgramCosts {
+    const NAME: &'static str = PROGRAM_COSTS_CF;
+}
+impl TypedColumn for columns::ProgramCosts {
+    type Type = blockstore_meta::ProgramCost;
+}
+impl Column for columns::ProgramCosts {
+    type Index = Pubkey;
+
+    fn key(pubkey: Pubkey) -> Vec<u8> {
+        let mut key = vec![0; 32]; // size_of Pubkey
+        key[0..32].clone_from_slice(&pubkey.as_ref()[0..32]);
+        key
+    }
+
+    fn index(key: &[u8]) -> Self::Index {
+        Pubkey::new(&key[0..32])
+    }
+
+    fn primary_index(_index: Self::Index) -> u64 {
+        unimplemented!()
+    }
+
+    fn slot(_index: Self::Index) -> Slot {
+        unimplemented!()
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    fn as_index(_index: u64) -> Self::Index {
+        Pubkey::default()
+    }
 }
 
 impl Column for columns::ShredCode {
@@ -920,6 +1024,14 @@ impl ColumnName for columns::Orphans {
 }
 impl TypedColumn for columns::Orphans {
     type Type = bool;
+}
+
+impl SlotColumn for columns::BankHash {}
+impl ColumnName for columns::BankHash {
+    const NAME: &'static str = BANK_HASH_CF;
+}
+impl TypedColumn for columns::BankHash {
+    type Type = blockstore_meta::FrozenHashVersioned;
 }
 
 impl SlotColumn for columns::Root {}
@@ -1388,6 +1500,10 @@ where
         self.backend
             .put_cf(self.handle(), &C::key(key), &serialized_value)
     }
+
+    pub fn delete(&self, key: C::Index) -> Result<()> {
+        self.backend.delete_cf(self.handle(), &C::key(key))
+    }
 }
 
 impl<C> LedgerColumn<C>
@@ -1596,13 +1712,10 @@ fn get_cf_options<C: 'static + Column + ColumnName>(
     options.set_max_bytes_for_level_base(total_size_base);
     options.set_target_file_size_base(file_size_base);
 
-    // TransactionStatusIndex must be excluded from LedgerCleanupService's rocksdb
+    // TransactionStatusIndex and ProgramCosts must be excluded from LedgerCleanupService's rocksdb
     // compactions....
-    if matches!(access_type, AccessType::PrimaryOnly)
-        && C::NAME != columns::TransactionStatusIndex::NAME
-        && C::NAME != columns::EvmTransactionReceipts::NAME
-        && C::NAME != columns::EvmHeaderIndexByHash::NAME
-        && C::NAME != columns::EvmBlockHeader::NAME
+    if matches!(access_type, AccessType::PrimaryOnly) && !excludes_from_compaction(C::NAME)
+        && C::NAME != columns::EvmBlockHeader::NAME // blockheader has special compaction
     {
         options.set_compaction_filter_factory(PurgedSlotFilterFactory::<C> {
             oldest_slot: oldest_slot.clone(),
@@ -1615,7 +1728,7 @@ fn get_cf_options<C: 'static + Column + ColumnName>(
     {
         options.set_compaction_filter_factory(PurgedEvmBlockFilterFactory::<C> {
             oldest_block: oldest_block_num.clone(),
-            name: CString::new(format!("purged_slot_filter_factory({})", C::NAME)).unwrap(),
+            name: CString::new(format!("purged_evm_block_filter_factory({})", C::NAME)).unwrap(),
             _phantom: PhantomData::default(),
         });
     }
@@ -1652,10 +1765,24 @@ fn get_db_options(access_type: &AccessType) -> Options {
     options
 }
 
+fn excludes_from_compaction(cf_name: &str) -> bool {
+    // list of Column Families must be excluded from compaction:
+    let no_compaction_cfs: HashSet<&'static str> = vec![
+        columns::TransactionStatusIndex::NAME,
+        columns::ProgramCosts::NAME,
+        columns::TransactionMemos::NAME,
+	columns::EvmTransactionReceipts::NAME,
+        columns::EvmHeaderIndexByHash::NAME,
+    ]
+    .into_iter()
+    .collect();
+
+    no_compaction_cfs.get(cf_name).is_some()
+}
+
 #[cfg(test)]
 pub mod tests {
-    use super::*;
-    use crate::blockstore_db::columns::ShredData;
+    use {super::*, crate::blockstore_db::columns::ShredData};
 
     #[test]
     fn test_compaction_filter() {
@@ -1703,5 +1830,16 @@ pub mod tests {
             compaction_filter.filter(dummy_level, &key, &dummy_value),
             CompactionDecision::Keep
         );
+    }
+
+    #[test]
+    fn test_excludes_from_compaction() {
+        // currently there are two CFs are excluded from compaction:
+        assert!(excludes_from_compaction(
+            columns::TransactionStatusIndex::NAME
+        ));
+        assert!(excludes_from_compaction(columns::ProgramCosts::NAME));
+        assert!(excludes_from_compaction(columns::TransactionMemos::NAME));
+        assert!(!excludes_from_compaction("something else"));
     }
 }

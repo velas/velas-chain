@@ -1,10 +1,9 @@
 //! Implementation defined RPC server errors
-
 use {
     crate::rpc_response::RpcSimulateTransactionResult,
     jsonrpc_core::{Error, ErrorCode},
-    solana_runtime::accounts_index::AccountIndex,
     solana_sdk::clock::Slot,
+    thiserror::Error,
 };
 
 pub const JSON_RPC_SERVER_ERROR_BLOCK_CLEANED_UP: i64 = -32001;
@@ -18,37 +17,49 @@ pub const JSON_RPC_SERVER_ERROR_NO_SNAPSHOT: i64 = -32008;
 pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_SLOT_SKIPPED: i64 = -32009;
 pub const JSON_RPC_SERVER_ERROR_KEY_EXCLUDED_FROM_SECONDARY_INDEX: i64 = -32010;
 pub const JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE: i64 = -32011;
+pub const JSON_RPC_SCAN_ERROR: i64 = -32012;
+pub const JSON_RPC_SERVER_ERROR_TRANSACTION_SIGNATURE_LEN_MISMATCH: i64 = -32013;
+pub const JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET: i64 = -32014;
 pub const JSON_RPC_SERVER_ERROR_INDEX_NOT_AVALABLE: i64 = -32101; // TDB error range
 
+#[derive(Error, Debug)]
 pub enum RpcCustomError {
+    #[error("BlockCleanedUp")]
     BlockCleanedUp {
         slot: Slot,
         first_available_block: Slot,
     },
+    #[error("SendTransactionPreflightFailure")]
     SendTransactionPreflightFailure {
         message: String,
         result: RpcSimulateTransactionResult,
     },
+    #[error("TransactionSignatureVerificationFailure")]
     TransactionSignatureVerificationFailure,
-    BlockNotAvailable {
-        slot: Slot,
-    },
-    NodeUnhealthy {
-        num_slots_behind: Option<Slot>,
-    },
+    #[error("BlockNotAvailable")]
+    BlockNotAvailable { slot: Slot },
+    #[error("NodeUnhealthy")]
+    NodeUnhealthy { num_slots_behind: Option<Slot> },
+    #[error("TransactionPrecompileVerificationFailure")]
     TransactionPrecompileVerificationFailure(solana_sdk::transaction::TransactionError),
-    SlotSkipped {
-        slot: Slot,
-    },
+    #[error("SlotSkipped")]
+    SlotSkipped { slot: Slot },
+    #[error("NoSnapshot")]
     NoSnapshot,
-    LongTermStorageSlotSkipped {
-        slot: Slot,
-    },
-    KeyExcludedFromSecondaryIndex {
-        index_key: String,
-    },
+    #[error("LongTermStorageSlotSkipped")]
+    LongTermStorageSlotSkipped { slot: Slot },
+    #[error("KeyExcludedFromSecondaryIndex")]
+    KeyExcludedFromSecondaryIndex { index_key: String },
+    #[error("TransactionHistoryNotAvailable")]
     TransactionHistoryNotAvailable,
-    DisabledIndex(AccountIndex),
+    #[error("DisabledIndex")]
+    DisabledIndex(String),
+    #[error("ScanError")]
+    ScanError { message: String },
+    #[error("TransactionSignatureLenMismatch")]
+    TransactionSignatureLenMismatch,
+    #[error("BlockStatusNotAvailableYet")]
+    BlockStatusNotAvailableYet { slot: Slot },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -148,15 +159,24 @@ impl From<RpcCustomError> for Error {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_INDEX_NOT_AVALABLE),
                 message: format!(
                     "Request for indexed accounts is not available from this node due disabled index: {}",
-                    match index {
-                        AccountIndex::ProgramId => "Program ID",
-                        AccountIndex::SplTokenMint => "SPL Token Mint",
-                        AccountIndex::SplTokenOwner => "SPL Token Owner",
-                        AccountIndex::VelasAccountStorage => "Velas Account Storage",
-                        AccountIndex::VelasAccountOwner => "Velas Account Owner",
-                        AccountIndex::VelasAccountOperational => "Velas Account Operational",
-                        AccountIndex::VelasRelyingOwner => "Velas Relying Owner",
-                    }),
+                    index),
+                data: None,
+            },
+            RpcCustomError::ScanError { message } => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SCAN_ERROR),
+                message,
+                data: None,
+            },
+            RpcCustomError::TransactionSignatureLenMismatch => Self {
+                code: ErrorCode::ServerError(
+                    JSON_RPC_SERVER_ERROR_TRANSACTION_SIGNATURE_LEN_MISMATCH,
+                ),
+                message: "Transaction signature length mismatch".to_string(),
+                data: None,
+            },
+            RpcCustomError::BlockStatusNotAvailableYet { slot } => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET),
+                message: format!("Block status not yet available for slot {}", slot),
                 data: None,
             },
         }

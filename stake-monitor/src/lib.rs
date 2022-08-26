@@ -371,7 +371,6 @@ mod test {
         system_transaction,
         transaction::Transaction,
     };
-    use solana_stake_program::stake_state::MIN_DELEGATE_STAKE_AMOUNT;
     use solana_stake_program::{stake_instruction, stake_state::Authorized};
 
     #[test]
@@ -381,10 +380,10 @@ mod test {
         solana_logger::setup();
         let mut accounts_info = AccountsInfo::default();
 
-        let min_sol = MIN_DELEGATE_STAKE_AMOUNT + 400;
+        let min_sol = 400;
         let cluster = LocalCluster::new(&mut ClusterConfig {
             cluster_type: ClusterType::MainnetBeta,
-            node_stakes: vec![MIN_DELEGATE_STAKE_AMOUNT + 400; 1],
+            node_stakes: vec![400; 1],
             cluster_lamports: sol_to_lamports(1_000_000_000.0),
             validator_configs: vec![ValidatorConfig {
                 rpc_config: JsonRpcConfig {

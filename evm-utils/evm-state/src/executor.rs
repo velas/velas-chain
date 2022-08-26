@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
-use evm::executor::stack::{MemoryStackState, StackState, StackSubstateMetadata};
 pub use evm::{
     backend::{Apply, ApplyBackend, Backend, Log, MemoryAccount, MemoryVicinity},
     executor::traces::*,
-    executor::stack::StackExecutor,
+    executor::stack::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
     Config, Context, Handler, Transfer,
     {ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed},
 };
@@ -23,7 +22,7 @@ use crate::{
         UnsignedTransaction, UnsignedTransactionWithCaller,
     },
 };
-use crate::{error::*, BlockVersion};
+use crate::{error::*, BlockVersion, CallScheme};
 pub use evm::executor::stack::{Precompile, PrecompileFailure, PrecompileOutput, PrecompileResult};
 pub use triedb::empty_trie_hash;
 
@@ -38,7 +37,7 @@ pub type PrecompileCallResult = Result<(ExitSucceed, Vec<u8>, u64), ExitError>;
 
 pub type OwnedPrecompile<'precompile> = BTreeMap<
     H160,
-    Box<dyn Fn(&[u8], Option<u64>, &Context, bool) -> PrecompileResult + 'precompile>,
+    Box<dyn Fn(&[u8], Option<u64>, Option<CallScheme>, &Context, bool) -> Result<(PrecompileOutput, u64), PrecompileFailure> + 'precompile>,
 >;
 
 #[derive(Clone, Debug)]
@@ -85,31 +84,75 @@ impl fmt::Display for ExecutionResult {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
+pub struct FeatureSet {
+    unsigned_tx_fix: bool,
+    clear_logs_on_error: bool,
+}
+
+impl FeatureSet {
+    pub fn new(unsigned_tx_fix: bool, clear_logs_on_error: bool) -> Self {
+        FeatureSet {
+            unsigned_tx_fix,
+            clear_logs_on_error,
+        }
+    }
+
+    pub fn new_with_all_enabled() -> Self {
+        FeatureSet {
+            unsigned_tx_fix: true,
+            clear_logs_on_error: true,
+        }
+    }
+
+    pub fn is_unsigned_tx_fix_enabled(&self) -> bool {
+        self.unsigned_tx_fix
+    }
+
+    pub fn is_clear_logs_on_error_enabled(&self) -> bool {
+        self.clear_logs_on_error
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Executor {
     pub evm_backend: EvmBackend<Incomming>,
     chain_context: ChainContext,
     config: EvmConfig,
+
+    pub feature_set: FeatureSet,
 }
 
 impl Executor {
     // Return new default executor, with empty state stored in temporary dirrectory
     pub fn testing() -> Self {
-        Self::with_config(Default::default(), Default::default(), Default::default())
+        Self::with_config(
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
     }
     pub fn default_configs(state: EvmBackend<Incomming>) -> Self {
-        Self::with_config(state, Default::default(), Default::default())
+        Self::with_config(
+            state,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
     }
 
     pub fn with_config(
         evm_backend: EvmBackend<Incomming>,
         chain_context: ChainContext,
         config: EvmConfig,
+        feature_set: FeatureSet,
     ) -> Self {
         Executor {
             evm_backend,
             chain_context,
             config,
+            feature_set,
         }
     }
 
@@ -133,6 +176,7 @@ impl Executor {
         value: U256,
         tx_chain_id: Option<u64>,
         tx_hash: H256,
+        withdraw_fee: bool,
         precompiles: OwnedPrecompile,
     ) -> Result<ExecutionResult, Error> {
         let state_account = self
@@ -187,16 +231,19 @@ impl Executor {
         );
 
         let max_fee = gas_limit * gas_price;
-        ensure!(
-            max_fee + value <= state_account.balance,
-            CantPayTheBills {
-                value,
-                max_fee,
-                state_balance: state_account.balance,
-            }
-        );
+        if withdraw_fee {
+            ensure!(
+                max_fee + value <= state_account.balance,
+                CantPayTheBills {
+                    value,
+                    max_fee,
+                    state_balance: state_account.balance,
+                }
+            );
+        }
 
         let precompiles: Precompile = precompiles.iter().map(|(k, v)| (*k, &**v)).collect();
+        let clear_logs_on_error_enabled = self.feature_set.is_clear_logs_on_error_enabled();
         let config = self.config.to_evm_params();
         let transaction_context = TransactionContext::new(gas_price.as_u64(), caller);
         let execution_context = ExecutorContext::new(
@@ -232,8 +279,7 @@ impl Executor {
         let fee = executor.fee(gas_price);
         let mut executor_state = executor.into_state();
 
-        let burn_fee = matches!(exit_reason, ExitReason::Succeed(_));
-        if burn_fee {
+        if withdraw_fee && matches!(exit_reason, ExitReason::Succeed(_)) {
             // Burn the fee, if transaction executed correctly
             executor_state
                 .withdraw(caller, fee)
@@ -254,7 +300,10 @@ impl Executor {
         );
         let (updates, logs) = executor_state.deconstruct();
 
-        let tx_logs: Vec<_> = logs.into_iter().collect();
+        let tx_logs = match clear_logs_on_error_enabled && !exit_reason.is_succeed() {
+            true => vec![],
+            false => logs.into_iter().collect(),
+        };
         execution_context.apply(updates, used_gas);
 
         Ok(ExecutionResult {
@@ -272,7 +321,7 @@ impl Executor {
         &mut self,
         caller: H160,
         tx: UnsignedTransaction,
-        calculate_tx_hash_with_caller: bool,
+        withdraw_fee: bool,
         precompiles: OwnedPrecompile,
     ) -> Result<ExecutionResult, Error> {
         let chain_id = self.config.chain_id;
@@ -281,7 +330,7 @@ impl Executor {
             unsigned_tx: tx.clone(),
             caller,
             chain_id,
-            signed_compatible: calculate_tx_hash_with_caller,
+            signed_compatible: self.feature_set.is_unsigned_tx_fix_enabled(),
         };
         let tx_hash = unsigned_tx.tx_id_hash();
         let result = self.transaction_execute_raw(
@@ -294,6 +343,7 @@ impl Executor {
             tx.value,
             Some(chain_id),
             tx_hash,
+            withdraw_fee,
             precompiles,
         )?;
 
@@ -304,6 +354,7 @@ impl Executor {
     pub fn transaction_execute(
         &mut self,
         evm_tx: Transaction,
+        withdraw_fee: bool,
         precompiles: OwnedPrecompile,
     ) -> Result<ExecutionResult, Error> {
         let caller = evm_tx.caller()?; // This method verify signature.
@@ -326,6 +377,7 @@ impl Executor {
             value,
             evm_tx.signature.chain_id(),
             tx_hash,
+            withdraw_fee,
             precompiles,
         )?;
 
@@ -413,13 +465,7 @@ impl Executor {
         });
     }
 
-    pub fn register_swap_tx_in_evm(
-        &mut self,
-        mint_address: H160,
-        recipient: H160,
-        amount: U256,
-        signed_compatible: bool,
-    ) {
+    pub fn register_swap_tx_in_evm(&mut self, mint_address: H160, recipient: H160, amount: U256) {
         let nonce = self.with_executor(OwnedPrecompile::new(), |e| {
             let nonce = e.nonce(mint_address);
             e.state_mut().inc_nonce(mint_address);
@@ -437,7 +483,7 @@ impl Executor {
             unsigned_tx: tx,
             caller: mint_address,
             chain_id: self.config.chain_id,
-            signed_compatible,
+            signed_compatible: self.feature_set.is_unsigned_tx_fix_enabled(),
         };
         let result = ExecutionResult {
             tx_logs: Vec::new(),
@@ -497,6 +543,14 @@ impl Executor {
     pub fn chain_id(&self) -> u64 {
         self.config.chain_id
     }
+
+    pub fn balance(&self, addr: H160) -> U256 {
+        self.evm_backend
+            .get_account_state(addr)
+            .unwrap_or_default()
+            .balance
+    }
+
     pub fn nonce(&self, addr: H160) -> U256 {
         self.evm_backend
             .get_account_state(addr)
@@ -517,21 +571,22 @@ pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b5060043
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::str::FromStr;
     use ethabi::Token;
-    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use evm::backend::MemoryBackend;
     use evm::executor::stack::{MemoryStackState, StackSubstateMetadata};
+    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
     use log::LevelFilter;
     use primitive_types::{H160, H256, U256};
     use sha3::{Digest, Keccak256};
+    use std::collections::BTreeMap;
+    use std::str::FromStr;
 
     use super::{
         ExecutionResult, Executor, HELLO_WORLD_ABI, HELLO_WORLD_CODE, HELLO_WORLD_CODE_SAVED,
         HELLO_WORLD_RESULT,
     };
     use crate::context::EvmConfig;
+    use crate::executor::FeatureSet;
     use crate::*;
     use error::*;
     use crate::executor::OwnedPrecompile;
@@ -638,15 +693,21 @@ mod tests {
 
     #[test]
     fn handle_duplicate_txs() {
-        let _logger = simple_logger::SimpleLogger::new().init();
+        let _logger = simple_logger::SimpleLogger::new()
+            .with_utc_timestamps()
+            .init();
 
         let chain_id = TEST_CHAIN_ID;
         let evm_config = EvmConfig {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -656,7 +717,7 @@ mod tests {
         let create_tx = create_tx.sign(&alice.secret, Some(chain_id));
         assert!(matches!(
             executor
-                .transaction_execute(create_tx.clone(), OwnedPrecompile::new())
+                .transaction_execute(create_tx.clone(), true, OwnedPrecompile::new())
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -665,7 +726,7 @@ mod tests {
         let hash = create_tx.tx_id_hash();
         assert!(matches!(
             executor
-                .transaction_execute(create_tx, OwnedPrecompile::new())
+                .transaction_execute(create_tx, true, OwnedPrecompile::new())
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash } if tx_hash == hash
         ));
@@ -673,15 +734,21 @@ mod tests {
 
     #[test]
     fn handle_duplicate_txs_unsigned() {
-        let _logger = simple_logger::SimpleLogger::new().init();
+        let _logger = simple_logger::SimpleLogger::new()
+            .with_utc_timestamps()
+            .init();
 
         let chain_id = TEST_CHAIN_ID;
         let evm_config = EvmConfig {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new(false, true),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -693,7 +760,7 @@ mod tests {
                 .transaction_execute_unsinged(
                     alice.address(),
                     create_tx.clone(),
-                    false,
+                    true,
                     OwnedPrecompile::new()
                 )
                 .unwrap()
@@ -704,7 +771,7 @@ mod tests {
         let hash = create_tx.signing_hash(Some(chain_id));
         assert!(matches!(
             executor
-            .transaction_execute_unsinged(alice.address(), create_tx, false, OwnedPrecompile::new())
+            .transaction_execute_unsinged(alice.address(), create_tx, true, OwnedPrecompile::new())
                 .unwrap_err(),
             Error::DuplicateTx { tx_hash } if tx_hash == hash
         ));
@@ -714,7 +781,9 @@ mod tests {
     fn handle_execute_and_commit() {
         for gc in [true, false] {
             println!("Executing with gc_enabled={}", gc);
-            let _logger = simple_logger::SimpleLogger::new().init();
+            let _logger = simple_logger::SimpleLogger::new()
+                .with_utc_timestamps()
+                .init();
 
             let chain_id = TEST_CHAIN_ID;
             let evm_config = EvmConfig {
@@ -727,7 +796,12 @@ mod tests {
                 Storage::create_temporary()
             };
             let backend = EvmBackend::new(Incomming::default(), storage.unwrap());
-            let mut executor = Executor::with_config(backend, Default::default(), evm_config);
+            let mut executor = Executor::with_config(
+                backend,
+                Default::default(),
+                evm_config,
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -735,7 +809,7 @@ mod tests {
             let create_tx = alice.create(&code);
             assert!(matches!(
                 executor
-                    .transaction_execute(create_tx.clone(), OwnedPrecompile::new())
+                    .transaction_execute(create_tx.clone(), true, OwnedPrecompile::new())
                     .unwrap()
                     .exit_reason,
                 ExitReason::Succeed(ExitSucceed::Returned)
@@ -752,7 +826,12 @@ mod tests {
                 .register_slot(slot, first_root, false)
                 .unwrap();
 
-            let mut executor = Executor::with_config(backend, Default::default(), evm_config);
+            let mut executor = Executor::with_config(
+                backend,
+                Default::default(),
+                evm_config,
+                FeatureSet::new_with_all_enabled(),
+            );
             let contract_address = create_tx.address().unwrap();
 
             alice.nonce += 1;
@@ -768,7 +847,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, OwnedPrecompile::new())
+                .transaction_execute(call_tx, true, OwnedPrecompile::new())
                 .unwrap();
 
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
@@ -800,15 +879,21 @@ mod tests {
 
     #[test]
     fn handle_burn_fee() {
-        let _logger = simple_logger::SimpleLogger::new().init();
+        let _logger = simple_logger::SimpleLogger::new()
+            .with_utc_timestamps()
+            .init();
 
         let chain_id = 0xeba;
         let evm_config = EvmConfig {
             chain_id,
             ..EvmConfig::new(chain_id, true)
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let alice = Persona::new();
         let mut create_tx = alice.unsigned(TransactionAction::Call(H160::zero()), &[]);
@@ -842,15 +927,21 @@ mod tests {
 
     #[test]
     fn handle_duplicate_txs_unsigned_new_hash() {
-        let _logger = simple_logger::SimpleLogger::new().init();
+        let _logger = simple_logger::SimpleLogger::new()
+            .with_utc_timestamps()
+            .init();
 
         let chain_id = 0xeba;
         let evm_config = EvmConfig {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -886,7 +977,9 @@ mod tests {
 
     #[test]
     fn it_execute_only_txs_with_correct_chain_id() {
-        let _logger = simple_logger::SimpleLogger::new().init();
+        let _logger = simple_logger::SimpleLogger::new()
+            .with_utc_timestamps()
+            .init();
 
         let chain_id = 0xeba;
         let another_chain_id = 0xb0ba;
@@ -894,8 +987,12 @@ mod tests {
             chain_id,
             ..EvmConfig::default()
         };
-        let mut executor =
-            Executor::with_config(EvmBackend::default(), Default::default(), evm_config);
+        let mut executor = Executor::with_config(
+            EvmBackend::default(),
+            Default::default(),
+            evm_config,
+            FeatureSet::new_with_all_enabled(),
+        );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -905,7 +1002,7 @@ mod tests {
         let wrong_tx = create_tx.clone().sign(&alice.secret, None);
         assert!(matches!(
             dbg!(executor
-                .transaction_execute(wrong_tx, OwnedPrecompile::new())
+                .transaction_execute(wrong_tx, true, OwnedPrecompile::new())
                 .unwrap_err()),
             Error::WrongChainId {
                 chain_id: err_chain_id,
@@ -918,7 +1015,7 @@ mod tests {
             .sign(&alice.secret, Some(another_chain_id));
         assert!(matches!(
             executor
-                .transaction_execute(wrong_tx, OwnedPrecompile::new())
+                .transaction_execute(wrong_tx, true, OwnedPrecompile::new())
                 .unwrap_err(),
             Error::WrongChainId {
                 chain_id: err_chain_id,
@@ -929,7 +1026,7 @@ mod tests {
         let create_tx = create_tx.sign(&alice.secret, Some(chain_id));
         assert!(matches!(
             executor
-                .transaction_execute(create_tx, OwnedPrecompile::new())
+                .transaction_execute(create_tx, true, OwnedPrecompile::new())
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -940,7 +1037,9 @@ mod tests {
     fn it_handles_metacoin() {
         use ethabi::Token;
 
-        let _logger = simple_logger::SimpleLogger::new().init();
+        let _logger = simple_logger::SimpleLogger::new()
+            .with_utc_timestamps()
+            .init();
 
         let code = hex::decode(METACOIN_CODE).unwrap();
 
@@ -948,6 +1047,7 @@ mod tests {
             EvmBackend::default(),
             Default::default(),
             Default::default(),
+            FeatureSet::new_with_all_enabled(),
         );
 
         let mut alice = Persona::new();
@@ -956,7 +1056,7 @@ mod tests {
 
         assert!(matches!(
             executor
-                .transaction_execute(create_tx, OwnedPrecompile::new())
+                .transaction_execute(create_tx, true, OwnedPrecompile::new())
                 .unwrap()
                 .exit_reason,
             ExitReason::Succeed(ExitSucceed::Returned)
@@ -976,7 +1076,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(call_tx, OwnedPrecompile::new())
+            .transaction_execute(call_tx, true, OwnedPrecompile::new())
             .unwrap();
 
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
@@ -1006,7 +1106,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(send_tx, OwnedPrecompile::new())
+            .transaction_execute(send_tx, true, OwnedPrecompile::new())
             .unwrap();
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
         assert_eq!(
@@ -1030,7 +1130,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(call_tx, OwnedPrecompile::new())
+            .transaction_execute(call_tx, true, OwnedPrecompile::new())
             .unwrap();
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
         assert_eq!(
@@ -1054,7 +1154,7 @@ mod tests {
             exit_data: bytes,
             ..
         } = executor
-            .transaction_execute(call_tx, OwnedPrecompile::new())
+            .transaction_execute(call_tx, true, OwnedPrecompile::new())
             .unwrap();
         assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
         assert_eq!(
@@ -1073,7 +1173,12 @@ mod tests {
             let mut bob = bob.clone();
 
             let state = committed.next_incomming(0);
-            let mut executor = Executor::with_config(state, Default::default(), Default::default());
+            let mut executor = Executor::with_config(
+                state,
+                Default::default(),
+                Default::default(),
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let send_tx = bob.call(
                 contract,
@@ -1090,7 +1195,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(send_tx, OwnedPrecompile::new())
+                .transaction_execute(send_tx, true, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1114,7 +1219,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, OwnedPrecompile::new())
+                .transaction_execute(call_tx, true, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1138,7 +1243,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, OwnedPrecompile::new())
+                .transaction_execute(call_tx, true, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1151,7 +1256,12 @@ mod tests {
         {
             // NOTE: ensure blockss are different
             let state = committed.next_incomming(0);
-            let mut executor = Executor::with_config(state, Default::default(), Default::default());
+            let mut executor = Executor::with_config(
+                state,
+                Default::default(),
+                Default::default(),
+                FeatureSet::new_with_all_enabled(),
+            );
 
             let send_tx = alice.call(
                 contract,
@@ -1168,7 +1278,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(send_tx, OwnedPrecompile::new())
+                .transaction_execute(send_tx, true, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1192,7 +1302,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, OwnedPrecompile::new())
+                .transaction_execute(call_tx, true, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1216,7 +1326,7 @@ mod tests {
                 exit_data: bytes,
                 ..
             } = executor
-                .transaction_execute(call_tx, OwnedPrecompile::new())
+                .transaction_execute(call_tx, true, OwnedPrecompile::new())
                 .unwrap();
             assert_eq!(exit_reason, ExitReason::Succeed(ExitSucceed::Returned));
             assert_eq!(
@@ -1228,7 +1338,9 @@ mod tests {
 
     #[test]
     fn test_evm_bytecode() {
-        let _logger_error = simple_logger::SimpleLogger::new().init();
+        let _logger_error = simple_logger::SimpleLogger::new()
+            .with_utc_timestamps()
+            .init();
 
         let code = hex::decode(HELLO_WORLD_CODE).unwrap();
         let data = hex::decode(HELLO_WORLD_ABI).unwrap();
@@ -1237,6 +1349,7 @@ mod tests {
             EvmBackend::default(),
             Default::default(),
             Default::default(),
+            FeatureSet::new(false, true),
         );
 
         let exit_reason = match executor.with_executor(OwnedPrecompile::new(), |e| {
@@ -1268,7 +1381,7 @@ mod tests {
                     value: U256::zero(),
                     input: data.to_vec(),
                 },
-                false, /* calculate_tx_hash_with_caller */
+                true,
                 OwnedPrecompile::new(),
             )
             .unwrap();
@@ -1315,8 +1428,13 @@ mod tests {
 
     #[test]
     fn test_call_inner_with_estimate() {
-        let _logger_error = simple_logger::SimpleLogger::new().with_level(LevelFilter::Debug).init();
-        let config_estimate = Config { estimate: true, ..Config::istanbul() };
+        let _logger_error = simple_logger::SimpleLogger::new()
+            .with_level(LevelFilter::Debug)
+            .init();
+        let config_estimate = Config {
+            estimate: true,
+            ..Config::istanbul()
+        };
         let config_no_estimate = Config::istanbul();
 
         let vicinity = MemoryVicinity {
@@ -1334,7 +1452,8 @@ mod tests {
 
         let mut state = BTreeMap::new();
         let caller_address = H160::from_str("0xf000000000000000000000000000000000000000").unwrap();
-        let contract_address = H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
+        let contract_address =
+            H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
         state.insert(caller_address, dummy_account());
         state.insert(
             contract_address,
@@ -1347,7 +1466,9 @@ mod tests {
             }
         );
 
-        let call_data = hex::decode("6057361d0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+        let call_data =
+            hex::decode("6057361d0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
         let transact_call = |config, gas_limit| {
             let backend = MemoryBackend::new(&vicinity, state.clone());
             let metadata = StackSubstateMetadata::new(gas_limit, config);
@@ -1388,8 +1509,13 @@ mod tests {
 
     #[test]
     fn test_create_inner_with_estimate() {
-        let _logger_error = simple_logger::SimpleLogger::new().with_level(LevelFilter::Debug).init();
-        let config_estimate = Config { estimate: true, ..Config::istanbul() };
+        let _logger_error = simple_logger::SimpleLogger::new()
+            .with_level(LevelFilter::Debug)
+            .init();
+        let config_estimate = Config {
+            estimate: true,
+            ..Config::istanbul()
+        };
         let config_no_estimate = Config::istanbul();
 
         let vicinity = MemoryVicinity {
@@ -1407,7 +1533,8 @@ mod tests {
 
         let mut state = BTreeMap::new();
         let caller_address = H160::from_str("0xf000000000000000000000000000000000000000").unwrap();
-        let contract_address = H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
+        let contract_address =
+            H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
         state.insert(caller_address, dummy_account());
         state.insert(
             contract_address,

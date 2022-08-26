@@ -1,18 +1,19 @@
 #![allow(clippy::integer_arithmetic)]
+#[cfg(not(target_env = "msvc"))]
+use jemallocator::Jemalloc;
 use {
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, App,
         AppSettings, Arg, ArgMatches, SubCommand,
     },
     console::style,
-    fd_lock::FdLock,
     log::*,
-    rand::{seq::SliceRandom, thread_rng, Rng},
+    rand::{seq::SliceRandom, thread_rng},
     solana_clap_utils::{
         input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of},
         input_validators::{
-            is_keypair, is_keypair_or_ask_keyword, is_parsable, is_pubkey, is_pubkey_or_keypair,
-            is_slot,
+            is_keypair, is_keypair_or_ask_keyword, is_niceness_adjustment_valid, is_parsable,
+            is_pow2, is_pubkey, is_pubkey_or_keypair, is_slot, is_valid_percentage,
         },
         keypair::SKIP_SEED_PHRASE_VALIDATION_ARG,
     },
@@ -20,60 +21,69 @@ use {
         rpc_client::RpcClient, rpc_config::RpcLeaderScheduleConfig,
         rpc_request::MAX_MULTIPLE_ACCOUNTS,
     },
-    solana_core::ledger_cleanup_service::{
-        DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS,
-    },
     solana_core::{
-        cluster_info::{ClusterInfo, Node, VALIDATOR_PORT_RANGE},
-        contact_info::ContactInfo,
-        gossip_service::GossipService,
-        poh_service,
-        rpc::JsonRpcConfig,
-        rpc_pubsub_service::PubSubConfig,
+        ledger_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
+        tower_storage,
         tpu::DEFAULT_TPU_COALESCE_MS,
-        validator::{
-            is_snapshot_config_invalid, Validator, ValidatorConfig, ValidatorStartProgress,
-        },
+        validator::{is_snapshot_config_valid, Validator, ValidatorConfig, ValidatorStartProgress},
     },
-    solana_download_utils::{download_genesis_if_missing, download_snapshot},
+    solana_gossip::{
+        cluster_info::{Node, VALIDATOR_PORT_RANGE},
+        contact_info::ContactInfo,
+    },
     solana_ledger::blockstore_db::BlockstoreRecoveryMode,
+    solana_metrics::datapoint_info,
     solana_perf::recycler::enable_recycler_warming,
+    solana_poh::poh_service,
+    solana_replica_lib::accountsdb_repl_server::AccountsDbReplServiceConfig,
+    solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_runtime::{
+        accounts_db::{
+            AccountShrinkThreshold, AccountsDbConfig, DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE,
+            DEFAULT_ACCOUNTS_SHRINK_RATIO,
+        },
         accounts_index::{
             AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
+            AccountsIndexConfig,
         },
-        bank_forks::{ArchiveFormat, SnapshotConfig, SnapshotVersion},
-        hardened_unpack::{unpack_genesis_archive, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
-        snapshot_utils::get_highest_snapshot_archive_path,
+        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        snapshot_config::SnapshotConfig,
+        snapshot_utils::{
+            self, ArchiveFormat, SnapshotVersion, DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+        },
     },
     solana_sdk::{
         clock::{Slot, DEFAULT_S_PER_SLOT},
         commitment_config::CommitmentConfig,
-        genesis_config::GenesisConfig,
         hash::Hash,
         pubkey::Pubkey,
         signature::{Keypair, Signer},
+    },
+    solana_send_transaction_service::send_transaction_service,
+    solana_streamer::socket::SocketAddrSpace,
+    velas_validator::{
+        admin_rpc_service, bootstrap, dashboard::Dashboard, ledger_lockfile, lock_ledger,
+        new_spinner_progress_bar, println_name_value, redirect_stderr_to_file,
     },
     std::{
         collections::{HashSet, VecDeque},
         env,
         fs::{self, File},
-        net::{IpAddr, SocketAddr, TcpListener, UdpSocket},
+        net::{IpAddr, SocketAddr},
         path::{Path, PathBuf},
         process::exit,
         str::FromStr,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc, RwLock,
-        },
-        thread::sleep,
-        time::{Duration, Instant, SystemTime},
-    },
-    velas_validator::{
-        admin_rpc_service, dashboard::Dashboard, new_spinner_progress_bar, println_name_value,
-        redirect_stderr_to_file,
+        sync::{Arc, RwLock},
+        time::{Duration, SystemTime},
     },
 };
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 #[derive(Debug, PartialEq)]
 enum Operation {
@@ -83,6 +93,10 @@ enum Operation {
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
+// The default minimal snapshot download speed (bytes/second)
+const DEFAULT_MIN_SNAPSHOT_DOWNLOAD_SPEED: u64 = 10485760;
+// The maximum times of snapshot download abort and retry
+const MAX_SNAPSHOT_DOWNLOAD_ABORT: u32 = 5;
 
 fn monitor_validator(ledger_path: &Path) {
     let dashboard = Dashboard::new(ledger_path, None, None).unwrap_or_else(|err| {
@@ -98,10 +112,12 @@ fn monitor_validator(ledger_path: &Path) {
 
 fn wait_for_restart_window(
     ledger_path: &Path,
+    identity: Option<Pubkey>,
     min_idle_time_in_minutes: usize,
+    max_delinquency_percentage: u8,
+    skip_new_snapshot_check: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let sleep_interval = Duration::from_secs(5);
-    let min_delinquency_percentage = 0.05;
 
     let min_idle_slots = (min_idle_time_in_minutes as f64 * 60. / DEFAULT_S_PER_SLOT) as Slot;
 
@@ -115,7 +131,9 @@ fn wait_for_restart_window(
         Some(rpc_addr) => RpcClient::new_socket(rpc_addr),
     };
 
-    let identity = rpc_client.get_identity()?;
+    let my_identity = rpc_client.get_identity()?;
+    let identity = identity.unwrap_or(my_identity);
+    let monitoring_another_validator = identity != my_identity;
     println_name_value("Identity:", &identity.to_string());
     println_name_value(
         "Minimum Idle Time:",
@@ -123,6 +141,11 @@ fn wait_for_restart_window(
             "{} slots (~{} minutes)",
             min_idle_slots, min_idle_time_in_minutes
         ),
+    );
+
+    println!(
+        "Maximum permitted delinquency: {}%",
+        max_delinquency_percentage
     );
 
     let mut current_epoch = None;
@@ -133,7 +156,7 @@ fn wait_for_restart_window(
     let progress_bar = new_spinner_progress_bar();
     let monitor_start_time = SystemTime::now();
     loop {
-        let snapshot_slot = rpc_client.get_snapshot_slot().ok();
+        let snapshot_slot_info = rpc_client.get_highest_snapshot_slot().ok();
         let epoch_info = rpc_client.get_epoch_info_with_commitment(CommitmentConfig::processed())?;
         let healthy = rpc_client.get_health().ok().is_some();
         let delinquent_stake_percentage = {
@@ -156,7 +179,7 @@ fn wait_for_restart_window(
             None => true,
             Some(current_epoch) => current_epoch != epoch_info.epoch,
         } {
-            progress_bar.set_message(&format!(
+            progress_bar.set_message(format!(
                 "Fetching leader schedule for epoch {}...",
                 epoch_info.epoch
             ));
@@ -262,15 +285,24 @@ fn wait_for_restart_window(
                     }
                 };
 
+                let snapshot_slot = snapshot_slot_info.map(|snapshot_slot_info| {
+                    snapshot_slot_info
+                        .incremental
+                        .unwrap_or(snapshot_slot_info.full)
+                });
                 match in_leader_schedule_hole {
                     Ok(_) => {
+                        if skip_new_snapshot_check {
+                            break; // Restart!
+                        }
                         if restart_snapshot == None {
                             restart_snapshot = snapshot_slot;
                         }
-
-                        if restart_snapshot == snapshot_slot {
+                        if restart_snapshot == snapshot_slot && !monitoring_another_validator {
                             "Waiting for a new snapshot".to_string()
-                        } else if delinquent_stake_percentage >= min_delinquency_percentage {
+                        } else if delinquent_stake_percentage
+                            >= (max_delinquency_percentage as f64 / 100.)
+                        {
                             style("Delinquency too high").red().to_string()
                         } else {
                             break; // Restart!
@@ -281,8 +313,8 @@ fn wait_for_restart_window(
             }
         };
 
-        progress_bar.set_message(&format!(
-            "{} | Processed Slot: {} | Snapshot Slot: {} | {:.2}% delinquent stake | {}",
+        progress_bar.set_message(format!(
+            "{} | Processed Slot: {} {} | {:.2}% delinquent stake | {}",
             {
                 let elapsed =
                     chrono::Duration::from_std(monitor_start_time.elapsed().unwrap()).unwrap();
@@ -295,9 +327,23 @@ fn wait_for_restart_window(
                 )
             },
             epoch_info.absolute_slot,
-            snapshot_slot
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "-".to_string()),
+            if monitoring_another_validator {
+                "".to_string()
+            } else {
+                format!(
+                    "| Full Snapshot Slot: {} | Incremental Snapshot Slot: {}",
+                    snapshot_slot_info
+                        .as_ref()
+                        .map(|snapshot_slot_info| snapshot_slot_info.full.to_string())
+                        .unwrap_or_else(|| '-'.to_string()),
+                    snapshot_slot_info
+                        .as_ref()
+                        .and_then(|snapshot_slot_info| snapshot_slot_info
+                            .incremental
+                            .map(|incremental| incremental.to_string()))
+                        .unwrap_or_else(|| '-'.to_string()),
+                )
+            },
             delinquent_stake_percentage * 100.,
             status
         ));
@@ -312,308 +358,6 @@ fn hash_validator(hash: String) -> Result<(), String> {
     Hash::from_str(&hash)
         .map(|_| ())
         .map_err(|e| format!("{:?}", e))
-}
-
-fn is_trusted_validator(id: &Pubkey, trusted_validators: &Option<HashSet<Pubkey>>) -> bool {
-    if let Some(trusted_validators) = trusted_validators {
-        trusted_validators.contains(id)
-    } else {
-        false
-    }
-}
-
-fn get_trusted_snapshot_hashes(
-    cluster_info: &ClusterInfo,
-    trusted_validators: &Option<HashSet<Pubkey>>,
-) -> Option<HashSet<(Slot, Hash)>> {
-    if let Some(trusted_validators) = trusted_validators {
-        let mut trusted_snapshot_hashes = HashSet::new();
-        for trusted_validator in trusted_validators {
-            cluster_info.get_snapshot_hash_for_node(trusted_validator, |snapshot_hashes| {
-                for snapshot_hash in snapshot_hashes {
-                    trusted_snapshot_hashes.insert(*snapshot_hash);
-                }
-            });
-        }
-        Some(trusted_snapshot_hashes)
-    } else {
-        None
-    }
-}
-
-fn start_gossip_node(
-    identity_keypair: &Arc<Keypair>,
-    cluster_entrypoints: &[ContactInfo],
-    ledger_path: &Path,
-    gossip_addr: &SocketAddr,
-    gossip_socket: UdpSocket,
-    expected_shred_version: Option<u16>,
-    gossip_validators: Option<HashSet<Pubkey>>,
-    should_check_duplicate_instance: bool,
-) -> (Arc<ClusterInfo>, Arc<AtomicBool>, GossipService) {
-    let mut cluster_info = ClusterInfo::new(
-        ClusterInfo::gossip_contact_info(
-            &identity_keypair.pubkey(),
-            *gossip_addr,
-            expected_shred_version.unwrap_or(0),
-        ),
-        identity_keypair.clone(),
-    );
-    cluster_info.set_entrypoints(cluster_entrypoints.to_vec());
-    cluster_info.restore_contact_info(ledger_path, 0);
-    let cluster_info = Arc::new(cluster_info);
-
-    let gossip_exit_flag = Arc::new(AtomicBool::new(false));
-    let gossip_service = GossipService::new(
-        &cluster_info,
-        None,
-        gossip_socket,
-        gossip_validators,
-        should_check_duplicate_instance,
-        &gossip_exit_flag,
-    );
-    (cluster_info, gossip_exit_flag, gossip_service)
-}
-
-fn get_rpc_node(
-    cluster_info: &ClusterInfo,
-    cluster_entrypoints: &[ContactInfo],
-    validator_config: &ValidatorConfig,
-    blacklisted_rpc_nodes: &mut HashSet<Pubkey>,
-    snapshot_not_required: bool,
-    no_untrusted_rpc: bool,
-    snapshot_output_dir: &Path,
-) -> Option<(ContactInfo, Option<(Slot, Hash)>)> {
-    let mut blacklist_timeout = Instant::now();
-    let mut newer_cluster_snapshot_timeout = None;
-    let mut retry_reason = None;
-    loop {
-        sleep(Duration::from_secs(1));
-        info!("\n{}", cluster_info.rpc_info_trace());
-
-        let shred_version = validator_config
-            .expected_shred_version
-            .unwrap_or_else(|| cluster_info.my_shred_version());
-        if shred_version == 0 {
-            let all_zero_shred_versions = cluster_entrypoints.iter().all(|cluster_entrypoint| {
-                cluster_info
-                    .lookup_contact_info_by_gossip_addr(&cluster_entrypoint.gossip)
-                    .map_or(false, |entrypoint| entrypoint.shred_version == 0)
-            });
-
-            if all_zero_shred_versions {
-                eprintln!(
-                    "Entrypoint shred version is zero.  Restart with --expected-shred-version"
-                );
-                exit(1);
-            }
-            info!("Waiting to adopt entrypoint shred version...");
-            continue;
-        }
-
-        info!(
-            "Searching for an RPC service with shred version {}{}...",
-            shred_version,
-            retry_reason
-                .as_ref()
-                .map(|s| format!(" (Retrying: {})", s))
-                .unwrap_or_default()
-        );
-
-        let rpc_peers = cluster_info
-            .all_rpc_peers()
-            .into_iter()
-            .filter(|contact_info| contact_info.shred_version == shred_version)
-            .collect::<Vec<_>>();
-        let rpc_peers_total = rpc_peers.len();
-
-        // Filter out blacklisted nodes
-        let rpc_peers: Vec<_> = rpc_peers
-            .into_iter()
-            .filter(|rpc_peer| !blacklisted_rpc_nodes.contains(&rpc_peer.id))
-            .collect();
-        let rpc_peers_blacklisted = rpc_peers_total - rpc_peers.len();
-        let rpc_peers_trusted = rpc_peers
-            .iter()
-            .filter(|rpc_peer| {
-                is_trusted_validator(&rpc_peer.id, &validator_config.trusted_validators)
-            })
-            .count();
-
-        info!(
-            "Total {} RPC nodes found. {} trusted, {} blacklisted ",
-            rpc_peers_total, rpc_peers_trusted, rpc_peers_blacklisted
-        );
-
-        if rpc_peers_blacklisted == rpc_peers_total {
-            retry_reason = if !blacklisted_rpc_nodes.is_empty()
-                && blacklist_timeout.elapsed().as_secs() > 60
-            {
-                // If all nodes are blacklisted and no additional nodes are discovered after 60 seconds,
-                // remove the blacklist and try them all again
-                blacklisted_rpc_nodes.clear();
-                Some("Blacklist timeout expired".to_owned())
-            } else {
-                Some("Wait for trusted rpc peers".to_owned())
-            };
-            continue;
-        }
-        blacklist_timeout = Instant::now();
-
-        let mut highest_snapshot_hash: Option<(Slot, Hash)> =
-            get_highest_snapshot_archive_path(snapshot_output_dir)
-                .map(|(_path, (slot, hash, _compression))| (slot, hash));
-        let eligible_rpc_peers = if snapshot_not_required {
-            rpc_peers
-        } else {
-            let trusted_snapshot_hashes =
-                get_trusted_snapshot_hashes(cluster_info, &validator_config.trusted_validators);
-
-            let mut eligible_rpc_peers = vec![];
-
-            for rpc_peer in rpc_peers.iter() {
-                if no_untrusted_rpc
-                    && !is_trusted_validator(&rpc_peer.id, &validator_config.trusted_validators)
-                {
-                    continue;
-                }
-                cluster_info.get_snapshot_hash_for_node(&rpc_peer.id, |snapshot_hashes| {
-                    for snapshot_hash in snapshot_hashes {
-                        if let Some(ref trusted_snapshot_hashes) = trusted_snapshot_hashes {
-                            if !trusted_snapshot_hashes.contains(snapshot_hash) {
-                                // Ignore all untrusted snapshot hashes
-                                continue;
-                            }
-                        }
-
-                        if highest_snapshot_hash.is_none()
-                            || snapshot_hash.0 > highest_snapshot_hash.unwrap().0
-                        {
-                            // Found a higher snapshot, remove all nodes with a lower snapshot
-                            eligible_rpc_peers.clear();
-                            highest_snapshot_hash = Some(*snapshot_hash)
-                        }
-
-                        if Some(*snapshot_hash) == highest_snapshot_hash {
-                            eligible_rpc_peers.push(rpc_peer.clone());
-                        }
-                    }
-                });
-            }
-
-            match highest_snapshot_hash {
-                None => {
-                    assert!(eligible_rpc_peers.is_empty());
-                }
-                Some(highest_snapshot_hash) => {
-                    if eligible_rpc_peers.is_empty() {
-                        match newer_cluster_snapshot_timeout {
-                            None => newer_cluster_snapshot_timeout = Some(Instant::now()),
-                            Some(newer_cluster_snapshot_timeout) => {
-                                if newer_cluster_snapshot_timeout.elapsed().as_secs() > 180 {
-                                    warn!("giving up newer snapshot from the cluster");
-                                    return None;
-                                }
-                            }
-                        }
-                        retry_reason = Some(format!(
-                            "Wait for newer snapshot than local: {:?}",
-                            highest_snapshot_hash
-                        ));
-                        continue;
-                    }
-
-                    info!(
-                        "Highest available snapshot slot is {}, available from {} node{}: {:?}",
-                        highest_snapshot_hash.0,
-                        eligible_rpc_peers.len(),
-                        if eligible_rpc_peers.len() > 1 {
-                            "s"
-                        } else {
-                            ""
-                        },
-                        eligible_rpc_peers
-                            .iter()
-                            .map(|contact_info| contact_info.id)
-                            .collect::<Vec<_>>()
-                    );
-                }
-            }
-            eligible_rpc_peers
-        };
-
-        if !eligible_rpc_peers.is_empty() {
-            let contact_info =
-                &eligible_rpc_peers[thread_rng().gen_range(0, eligible_rpc_peers.len())];
-            return Some((contact_info.clone(), highest_snapshot_hash));
-        } else {
-            retry_reason = Some("No snapshots available".to_owned());
-        }
-    }
-}
-
-fn check_vote_account(
-    rpc_client: &RpcClient,
-    identity_pubkey: &Pubkey,
-    vote_account_address: &Pubkey,
-    authorized_voter_pubkeys: &[Pubkey],
-) -> Result<(), String> {
-    let vote_account = rpc_client
-        .get_account_with_commitment(vote_account_address, CommitmentConfig::confirmed())
-        .map_err(|err| format!("failed to fetch vote account: {}", err.to_string()))?
-        .value
-        .ok_or_else(|| format!("vote account does not exist: {}", vote_account_address))?;
-
-    if vote_account.owner != solana_vote_program::id() {
-        return Err(format!(
-            "not a vote account (owned by {}): {}",
-            vote_account.owner, vote_account_address
-        ));
-    }
-
-    let identity_account = rpc_client
-        .get_account_with_commitment(identity_pubkey, CommitmentConfig::confirmed())
-        .map_err(|err| format!("failed to fetch identity account: {}", err.to_string()))?
-        .value
-        .ok_or_else(|| format!("identity account does not exist: {}", identity_pubkey))?;
-
-    let vote_state = solana_vote_program::vote_state::VoteState::from(&vote_account);
-    if let Some(vote_state) = vote_state {
-        if vote_state.authorized_voters().is_empty() {
-            return Err("Vote account not yet initialized".to_string());
-        }
-
-        if vote_state.node_pubkey != *identity_pubkey {
-            return Err(format!(
-                "vote account's identity ({}) does not match the validator's identity {}).",
-                vote_state.node_pubkey, identity_pubkey
-            ));
-        }
-
-        for (_, vote_account_authorized_voter_pubkey) in vote_state.authorized_voters().iter() {
-            if !authorized_voter_pubkeys.contains(vote_account_authorized_voter_pubkey) {
-                return Err(format!(
-                    "authorized voter {} not available",
-                    vote_account_authorized_voter_pubkey
-                ));
-            }
-        }
-    } else {
-        return Err(format!(
-            "invalid vote account data for {}",
-            vote_account_address
-        ));
-    }
-
-    // Maybe we can calculate minimum voting fee; rather than 1 lamport
-    if identity_account.lamports <= 1 {
-        return Err(format!(
-            "underfunded identity account ({}): only {} lamports available",
-            identity_pubkey, identity_account.lamports
-        ));
-    }
-
-    Ok(())
 }
 
 // This function is duplicated in ledger-tool/src/main.rs...
@@ -648,376 +392,105 @@ fn validators_set(
     }
 }
 
-fn check_genesis_hash(
-    genesis_config: &GenesisConfig,
-    expected_genesis_hash: Option<Hash>,
-) -> Result<(), String> {
-    let genesis_hash = genesis_config.hash();
-
-    if let Some(expected_genesis_hash) = expected_genesis_hash {
-        if expected_genesis_hash != genesis_hash {
-            return Err(format!(
-                "Genesis hash mismatch: expected {} but downloaded genesis hash is {}",
-                expected_genesis_hash, genesis_hash,
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn load_local_genesis(
-    ledger_path: &std::path::Path,
-    expected_genesis_hash: Option<Hash>,
-) -> Result<GenesisConfig, String> {
-    let existing_genesis = GenesisConfig::load(ledger_path)
-        .map_err(|err| format!("Failed to load genesis config: {}", err))?;
-    check_genesis_hash(&existing_genesis, expected_genesis_hash)?;
-
-    Ok(existing_genesis)
-}
-
-fn download_then_check_genesis_hash(
-    rpc_addr: &SocketAddr,
-    ledger_path: &std::path::Path,
-    expected_genesis_hash: Option<Hash>,
-    max_genesis_archive_unpacked_size: u64,
-    no_genesis_fetch: bool,
-    use_progress_bar: bool,
-) -> Result<Hash, String> {
-    if no_genesis_fetch {
-        let genesis_config = load_local_genesis(ledger_path, expected_genesis_hash)?;
-        return Ok(genesis_config.hash());
-    }
-
-    let genesis_package = ledger_path.join("genesis.tar.bz2");
-    let genesis_config = if let Ok(tmp_genesis_package) =
-        download_genesis_if_missing(rpc_addr, &genesis_package, use_progress_bar)
-    {
-        unpack_genesis_archive(
-            &tmp_genesis_package,
-            ledger_path,
-            max_genesis_archive_unpacked_size,
-        )
-        .map_err(|err| format!("Failed to unpack downloaded genesis config: {}", err))?;
-
-        let downloaded_genesis = GenesisConfig::load(ledger_path)
-            .map_err(|err| format!("Failed to load downloaded genesis config: {}", err))?;
-
-        check_genesis_hash(&downloaded_genesis, expected_genesis_hash)?;
-        std::fs::rename(tmp_genesis_package, genesis_package)
-            .map_err(|err| format!("Unable to rename: {:?}", err))?;
-
-        downloaded_genesis
-    } else {
-        load_local_genesis(ledger_path, expected_genesis_hash)?
+fn get_cluster_shred_version(entrypoints: &[SocketAddr]) -> Option<u16> {
+    let entrypoints = {
+        let mut index: Vec<_> = (0..entrypoints.len()).collect();
+        index.shuffle(&mut rand::thread_rng());
+        index.into_iter().map(|i| &entrypoints[i])
     };
-
-    Ok(genesis_config.hash())
-}
-
-fn verify_reachable_ports(
-    node: &Node,
-    cluster_entrypoint: &ContactInfo,
-    validator_config: &ValidatorConfig,
-) -> bool {
-    let mut udp_sockets = vec![&node.sockets.gossip, &node.sockets.repair];
-
-    if ContactInfo::is_valid_address(&node.info.serve_repair) {
-        udp_sockets.push(&node.sockets.serve_repair);
-    }
-    if ContactInfo::is_valid_address(&node.info.tpu) {
-        udp_sockets.extend(node.sockets.tpu.iter());
-    }
-    if ContactInfo::is_valid_address(&node.info.tpu_forwards) {
-        udp_sockets.extend(node.sockets.tpu_forwards.iter());
-    }
-    if ContactInfo::is_valid_address(&node.info.tvu) {
-        udp_sockets.extend(node.sockets.tvu.iter());
-        udp_sockets.extend(node.sockets.broadcast.iter());
-        udp_sockets.extend(node.sockets.retransmit_sockets.iter());
-    }
-    if ContactInfo::is_valid_address(&node.info.tvu_forwards) {
-        udp_sockets.extend(node.sockets.tvu_forwards.iter());
-    }
-
-    let mut tcp_listeners = vec![];
-    if let Some((rpc_addr, rpc_pubsub_addr)) = validator_config.rpc_addrs {
-        for (purpose, bind_addr, public_addr) in &[
-            ("RPC", rpc_addr, &node.info.rpc),
-            ("RPC pubsub", rpc_pubsub_addr, &node.info.rpc_pubsub),
-        ] {
-            if ContactInfo::is_valid_address(public_addr) {
-                tcp_listeners.push((
-                    bind_addr.port(),
-                    TcpListener::bind(bind_addr).unwrap_or_else(|err| {
-                        error!(
-                            "Unable to bind to tcp {:?} for {}: {}",
-                            bind_addr, purpose, err
-                        );
-                        exit(1);
-                    }),
-                ));
+    for entrypoint in entrypoints {
+        match solana_net_utils::get_cluster_shred_version(entrypoint) {
+            Err(err) => eprintln!("get_cluster_shred_version failed: {}, {}", entrypoint, err),
+            Ok(0) => eprintln!("zero sherd-version from entrypoint: {}", entrypoint),
+            Ok(shred_version) => {
+                info!(
+                    "obtained shred-version {} from {}",
+                    shred_version, entrypoint
+                );
+                return Some(shred_version);
             }
         }
     }
+    None
+}
 
-    if let Some(ip_echo) = &node.sockets.ip_echo {
-        let ip_echo = ip_echo.try_clone().expect("unable to clone tcp_listener");
-        tcp_listeners.push((ip_echo.local_addr().unwrap().port(), ip_echo));
-    }
-
-    solana_net_utils::verify_reachable_ports(
-        &cluster_entrypoint.gossip,
-        tcp_listeners,
-        &udp_sockets,
+fn platform_id() -> String {
+    format!(
+        "{}/{}/{}",
+        std::env::consts::FAMILY,
+        std::env::consts::OS,
+        std::env::consts::ARCH
     )
 }
 
-struct RpcBootstrapConfig {
-    no_genesis_fetch: bool,
-    no_snapshot_fetch: bool,
-    no_untrusted_rpc: bool,
-    max_genesis_archive_unpacked_size: u64,
-    no_check_vote_account: bool,
-}
+#[cfg(target_os = "linux")]
+fn check_os_network_limits() {
+    use {solana_metrics::datapoint_warn, std::collections::HashMap, sysctl::Sysctl};
 
-impl Default for RpcBootstrapConfig {
-    fn default() -> Self {
-        Self {
-            no_genesis_fetch: true,
-            no_snapshot_fetch: true,
-            no_untrusted_rpc: true,
-            max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-            no_check_vote_account: true,
-        }
+    fn sysctl_read(name: &str) -> Result<String, sysctl::SysctlError> {
+        let ctl = sysctl::Ctl::new(name)?;
+        let val = ctl.value_string()?;
+        Ok(val)
     }
-}
+    let mut check_failed = false;
 
-#[allow(clippy::too_many_arguments)]
-fn rpc_bootstrap(
-    node: &Node,
-    identity_keypair: &Arc<Keypair>,
-    ledger_path: &Path,
-    snapshot_output_dir: &Path,
-    vote_account: &Pubkey,
-    authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
-    cluster_entrypoints: &[ContactInfo],
-    validator_config: &mut ValidatorConfig,
-    bootstrap_config: RpcBootstrapConfig,
-    no_port_check: bool,
-    use_progress_bar: bool,
-    maximum_local_snapshot_age: Slot,
-    should_check_duplicate_instance: bool,
-    start_progress: &Arc<RwLock<ValidatorStartProgress>>,
-) {
-    if !no_port_check {
-        let mut order: Vec<_> = (0..cluster_entrypoints.len()).collect();
-        order.shuffle(&mut thread_rng());
-        if order
-            .into_iter()
-            .all(|i| !verify_reachable_ports(node, &cluster_entrypoints[i], validator_config))
-        {
-            exit(1);
-        }
+    info!("Testing OS network limits:");
+
+    // Reference: https://medium.com/@CameronSparr/increase-os-udp-buffers-to-improve-performance-51d167bb1360
+    let mut recommended_limits: HashMap<&str, i64> = HashMap::default();
+    recommended_limits.insert("net.core.rmem_max", 134217728);
+    recommended_limits.insert("net.core.rmem_default", 134217728);
+    recommended_limits.insert("net.core.wmem_max", 134217728);
+    recommended_limits.insert("net.core.wmem_default", 134217728);
+    recommended_limits.insert("vm.max_map_count", 1000000);
+
+    // Additionally collect the following limits
+    recommended_limits.insert("net.core.optmem_max", 0);
+    recommended_limits.insert("net.core.netdev_max_backlog", 0);
+
+    let mut current_limits: HashMap<&str, i64> = HashMap::default();
+    for (key, _) in recommended_limits.iter() {
+        let current_val = match sysctl_read(key) {
+            Ok(val) => val.parse::<i64>().unwrap(),
+            Err(e) => {
+                error!("Failed to query value for {}: {}", key, e);
+                check_failed = true;
+                -1
+            }
+        };
+        current_limits.insert(key, current_val);
     }
 
-    if bootstrap_config.no_genesis_fetch && bootstrap_config.no_snapshot_fetch {
-        return;
-    }
-
-    let mut blacklisted_rpc_nodes = HashSet::new();
-    let mut gossip = None;
-    let mut retry = 0;
-    const RETRY_RPC_REQUEST_COUNT: usize = 10;
-    loop {
-        if gossip.is_none() {
-            *start_progress.write().unwrap() = ValidatorStartProgress::SearchingForRpcService;
-
-            gossip = Some(start_gossip_node(
-                identity_keypair,
-                cluster_entrypoints,
-                ledger_path,
-                &node.info.gossip,
-                node.sockets.gossip.try_clone().unwrap(),
-                validator_config.expected_shred_version,
-                validator_config.gossip_validators.clone(),
-                should_check_duplicate_instance,
-            ));
-        }
-
-        let rpc_node_details = get_rpc_node(
-            &gossip.as_ref().unwrap().0,
-            cluster_entrypoints,
-            validator_config,
-            &mut blacklisted_rpc_nodes,
-            bootstrap_config.no_snapshot_fetch,
-            bootstrap_config.no_untrusted_rpc,
-            snapshot_output_dir,
-        );
-        if rpc_node_details.is_none() {
-            if retry == RETRY_RPC_REQUEST_COUNT {
-                error!("Cannot find rpc node with active snapshot.");
-                return;
-            }
-            retry += 1;
-
-            warn!("No rpc found retring.");
-            continue;
-        }
-        let (rpc_contact_info, snapshot_hash) = rpc_node_details.unwrap();
-
-        info!(
-            "Using RPC service from node {}: {:?}",
-            rpc_contact_info.id, rpc_contact_info.rpc
-        );
-        let rpc_client = RpcClient::new_socket(rpc_contact_info.rpc);
-
-        let result = match rpc_client.get_version() {
-            Ok(rpc_version) => {
-                info!("RPC node version: {}", rpc_version.solana_core);
-                Ok(())
-            }
-            Err(err) => Err(format!("Failed to get RPC node version: {}", err)),
-        }
-        .and_then(|_| {
-            if let Some(expected_genesis_hash) = validator_config.expected_genesis_hash {
-                // Sanity check that the RPC node is using the expected genesis hash before
-                // downloading a snapshot from it
-                let rpc_genesis_hash = rpc_client
-                    .get_genesis_hash()
-                    .map_err(|err| format!("Failed to get genesis hash: {}", err))?;
-
-                if expected_genesis_hash != rpc_genesis_hash {
-                    return Err(format!(
-                        "Genesis hash mismatch: expected {} but RPC node genesis hash is {}",
-                        expected_genesis_hash, rpc_genesis_hash
-                    ));
-                }
-            }
-            let genesis_hash = download_then_check_genesis_hash(
-                &rpc_contact_info.rpc,
-                ledger_path,
-                validator_config.expected_genesis_hash,
-                bootstrap_config.max_genesis_archive_unpacked_size,
-                bootstrap_config.no_genesis_fetch,
-                use_progress_bar,
+    for (key, recommended_val) in recommended_limits.iter() {
+        let current_val = *current_limits.get(key).unwrap();
+        if current_val < *recommended_val {
+            datapoint_warn!("os-config", (key, current_val, i64));
+            warn!(
+                "  {}: recommended={} current={}, too small",
+                key, recommended_val, current_val
             );
-
-            match genesis_hash {
-                Ok(genesis_hash) => {
-                    if validator_config.expected_genesis_hash.is_none() {
-                        info!("Expected genesis hash set to {}", genesis_hash);
-                        validator_config.expected_genesis_hash = Some(genesis_hash);
-                    }
-                }
-                Err(err) => return Err(format!("Cannot download or open genesis: {}", err)),
-            }
-
-            if let Some(snapshot_hash) = snapshot_hash {
-                let mut use_local_snapshot = false;
-
-                if let Some(highest_local_snapshot_slot) =
-                    get_highest_snapshot_archive_path(snapshot_output_dir)
-                        .map(|(_path, (slot, _hash, _compression))| slot)
-                {
-                    if highest_local_snapshot_slot
-                        > snapshot_hash.0.saturating_sub(maximum_local_snapshot_age)
-                    {
-                        info!(
-                            "Reusing local snapshot at slot {} instead \
-                               of downloading a snapshot for slot {}",
-                            highest_local_snapshot_slot, snapshot_hash.0
-                        );
-                        use_local_snapshot = true;
-                    } else {
-                        info!(
-                            "Local snapshot from slot {} is too old. \
-                              Downloading a newer snapshot for slot {}",
-                            highest_local_snapshot_slot, snapshot_hash.0
-                        );
-                    }
-                }
-
-                if use_local_snapshot {
-                    Ok(())
-                } else {
-                    rpc_client
-                        .get_slot_with_commitment(CommitmentConfig::finalized())
-                        .map_err(|err| format!("Failed to get RPC node slot: {}", err))
-                        .and_then(|slot| {
-                            *start_progress.write().unwrap() =
-                                ValidatorStartProgress::DownloadingSnapshot {
-                                    slot: snapshot_hash.0,
-                                    rpc_addr: rpc_contact_info.rpc,
-                                };
-                            info!("RPC node root slot: {}", slot);
-                            let (cluster_info, gossip_exit_flag, gossip_service) =
-                                gossip.take().unwrap();
-                            cluster_info.save_contact_info();
-                            gossip_exit_flag.store(true, Ordering::Relaxed);
-                            let ret = download_snapshot(
-                                &rpc_contact_info.rpc,
-                                snapshot_output_dir,
-                                snapshot_hash,
-                                use_progress_bar,
-                            );
-                            gossip_service.join().unwrap();
-                            ret
-                        })
-                }
-            } else {
-                Ok(())
-            }
-        })
-        .map(|_| {
-            if !validator_config.voting_disabled && !bootstrap_config.no_check_vote_account {
-                check_vote_account(
-                    &rpc_client,
-                    &identity_keypair.pubkey(),
-                    vote_account,
-                    &authorized_voter_keypairs
-                        .read()
-                        .unwrap()
-                        .iter()
-                        .map(|k| k.pubkey())
-                        .collect::<Vec<_>>(),
-                )
-                .unwrap_or_else(|err| {
-                    // Consider failures here to be more likely due to user error (eg,
-                    // incorrect `velas-validator` command-line arguments) rather than the
-                    // RPC node failing.
-                    //
-                    // Power users can always use the `--no-check-vote-account` option to
-                    // bypass this check entirely
-                    error!("{}", err);
-                    exit(1);
-                });
-            }
-        });
-
-        if result.is_ok() {
-            break;
+            check_failed = true;
+        } else {
+            datapoint_info!("os-config", (key, current_val, i64));
+            info!(
+                "  {}: recommended={} current={}",
+                key, recommended_val, current_val
+            );
         }
-        warn!("{}", result.unwrap_err());
-
-        if let Some(ref trusted_validators) = validator_config.trusted_validators {
-            if trusted_validators.contains(&rpc_contact_info.id) {
-                continue; // Never blacklist a trusted node
-            }
-        }
-
-        info!(
-            "Excluding {} as a future RPC candidate",
-            rpc_contact_info.id
-        );
-        blacklisted_rpc_nodes.insert(rpc_contact_info.id);
     }
-    if let Some((cluster_info, gossip_exit_flag, gossip_service)) = gossip.take() {
-        cluster_info.save_contact_info();
-        gossip_exit_flag.store(true, Ordering::Relaxed);
-        gossip_service.join().unwrap();
+    datapoint_info!("os-config", ("platform", platform_id(), String));
+
+    if check_failed {
+        datapoint_warn!("os-config", ("network_limit_test_failed", 1, i64));
+        warn!("OS network limit test failed. solana-sys-tuner may be used to configure OS network limits. Bypass check with --no-os-network-limits-test.");
+    } else {
+        info!("OS network limits test passed.");
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn check_os_network_limits() {
+    datapoint_info!("os-config", ("platform", platform_id(), String));
 }
 
 pub fn main() {
@@ -1025,22 +498,38 @@ pub fn main() {
         &format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1);
     let default_genesis_archive_unpacked_size = &MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string();
     let default_rpc_max_multiple_accounts = &MAX_MULTIPLE_ACCOUNTS.to_string();
-    let default_rpc_pubsub_max_connections = PubSubConfig::default().max_connections.to_string();
-    let default_rpc_pubsub_max_fragment_size =
-        PubSubConfig::default().max_fragment_size.to_string();
-    let default_rpc_pubsub_max_in_buffer_capacity =
-        PubSubConfig::default().max_in_buffer_capacity.to_string();
-    let default_rpc_pubsub_max_out_buffer_capacity =
-        PubSubConfig::default().max_out_buffer_capacity.to_string();
+
     let default_rpc_pubsub_max_active_subscriptions =
         PubSubConfig::default().max_active_subscriptions.to_string();
-    let default_rpc_send_transaction_retry_ms = ValidatorConfig::default()
-        .send_transaction_retry_ms
+    let default_rpc_pubsub_queue_capacity_items =
+        PubSubConfig::default().queue_capacity_items.to_string();
+    let default_rpc_pubsub_queue_capacity_bytes =
+        PubSubConfig::default().queue_capacity_bytes.to_string();
+    let default_send_transaction_service_config = send_transaction_service::Config::default();
+    let default_rpc_send_transaction_retry_ms = default_send_transaction_service_config
+        .retry_rate_ms
         .to_string();
-    let default_rpc_send_transaction_leader_forward_count = ValidatorConfig::default()
-        .send_transaction_leader_forward_count
+    let default_rpc_send_transaction_leader_forward_count = default_send_transaction_service_config
+        .leader_forward_count
+        .to_string();
+    let default_rpc_send_transaction_service_max_retries = default_send_transaction_service_config
+        .service_max_retries
         .to_string();
     let default_rpc_threads = num_cpus::get().to_string();
+    let default_accountsdb_repl_threads = num_cpus::get().to_string();
+    let default_maximum_full_snapshot_archives_to_retain =
+        &DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN.to_string();
+    let default_maximum_incremental_snapshot_archives_to_retain =
+        &DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN.to_string();
+    let default_full_snapshot_archive_interval_slots =
+        &DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS.to_string();
+    let default_incremental_snapshot_archive_interval_slots =
+        &DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS.to_string();
+    let default_min_snapshot_download_speed = &DEFAULT_MIN_SNAPSHOT_DOWNLOAD_SPEED.to_string();
+    let default_max_snapshot_download_abort = &MAX_SNAPSHOT_DOWNLOAD_ABORT.to_string();
+    let default_accounts_shrink_optimize_total_space =
+        &DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE.to_string();
+    let default_accounts_shrink_ratio = &DEFAULT_ACCOUNTS_SHRINK_RATIO.to_string();
 
     let matches = App::new(crate_name!()).about(crate_description!())
         .version(solana_version::version!())
@@ -1108,6 +597,13 @@ pub fn main() {
                 .value_name("DIR")
                 .takes_value(true)
                 .help("Use DIR as evm-state archive location"),
+        ) 
+        .arg(
+            Arg::with_name("jaeger_collector_url")
+                .long("jaeger-collector")
+                .value_name("URL")
+                .takes_value(true)
+                .help("Use URL as location to jaegere collector /api/traces endpoint."),
         )
         .arg(
             Arg::with_name("entrypoint")
@@ -1144,7 +640,17 @@ pub fn main() {
                 .takes_value(false)
                 .conflicts_with("no_voting")
                 .requires("entrypoint")
+                .hidden(true)
                 .help("Skip the RPC vote account sanity check")
+        )
+        .arg(
+            Arg::with_name("check_vote_account")
+                .long("check-vote-account")
+                .takes_value(true)
+                .value_name("RPC_URL")
+                .requires("entrypoint")
+                .conflicts_with_all(&["no_check_vote_account", "no_voting"])
+                .help("Sanity check vote account state at startup. The JSON RPC endpoint at RPC_URL must expose `--full-rpc-api`")
         )
         .arg(
             Arg::with_name("restricted_repair_only_mode")
@@ -1177,7 +683,21 @@ pub fn main() {
             Arg::with_name("minimal_rpc_api")
                 .long("--minimal-rpc-api")
                 .takes_value(false)
+                .hidden(true)
                 .help("Only expose the RPC methods required to serve snapshots to other nodes"),
+        )
+        .arg(
+            Arg::with_name("full_rpc_api")
+                .long("--full-rpc-api")
+                .conflicts_with("minimal_rpc_api")
+                .takes_value(false)
+                .help("Expose RPC methods for querying chain state and transaction history"),
+        )
+        .arg(
+            Arg::with_name("obsolete_v1_7_rpc_api")
+                .long("--enable-rpc-obsolete_v1_7")
+                .takes_value(false)
+                .help("Enable the obsolete RPC methods removed in v1.7"),
         )
         .arg(
             Arg::with_name("private_rpc")
@@ -1237,10 +757,10 @@ pub fn main() {
                 .value_name("SLOT_DISTANCE")
                 .takes_value(true)
                 .default_value("150")
-                .help("If --trusted-validators are specified, report this validator healthy \
+                .help("If --known-validators are specified, report this validator healthy \
                        if its latest account hash is no further behind than this number of \
-                       slots from the latest trusted validator account hash. \
-                       If no --trusted-validators are specified, the validator will always \
+                       slots from the latest known validator account hash. \
+                       If no --known-validators are specified, the validator will always \
                        report itself to be healthy")
         )
         .arg(
@@ -1279,7 +799,58 @@ pub fn main() {
                 .long("tower")
                 .value_name("DIR")
                 .takes_value(true)
-                .help("Use DIR as tower location [default: --ledger value]"),
+                .help("Use DIR as file tower storage location [default: --ledger value]"),
+        )
+        .arg(
+            Arg::with_name("tower_storage")
+                .long("tower-storage")
+                .possible_values(&["file", "etcd"])
+                .default_value("file")
+                .takes_value(true)
+                .help("Where to store the tower"),
+        )
+        .arg(
+            Arg::with_name("etcd_endpoint")
+                .long("etcd-endpoint")
+                .required_if("tower_storage", "etcd")
+                .value_name("HOST:PORT")
+                .takes_value(true)
+                .multiple(true)
+                .validator(solana_net_utils::is_host_port)
+                .help("etcd gRPC endpoint to connect with")
+        )
+        .arg(
+            Arg::with_name("etcd_domain_name")
+                .long("etcd-domain-name")
+                .required_if("tower_storage", "etcd")
+                .value_name("DOMAIN")
+                .default_value("localhost")
+                .takes_value(true)
+                .help("domain name against which to verify the etcd server’s TLS certificate")
+        )
+        .arg(
+            Arg::with_name("etcd_cacert_file")
+                .long("etcd-cacert-file")
+                .required_if("tower_storage", "etcd")
+                .value_name("FILE")
+                .takes_value(true)
+                .help("verify the TLS certificate of the etcd endpoint using this CA bundle")
+        )
+        .arg(
+            Arg::with_name("etcd_key_file")
+                .long("etcd-key-file")
+                .required_if("tower_storage", "etcd")
+                .value_name("FILE")
+                .takes_value(true)
+                .help("TLS key file to use when establishing a connection to the etcd endpoint")
+        )
+        .arg(
+            Arg::with_name("etcd_cert_file")
+                .long("etcd-cert-file")
+                .required_if("tower_storage", "etcd")
+                .value_name("FILE")
+                .takes_value(true)
+                .help("TLS certificate to use when establishing a connection to the etcd endpoint")
         )
         .arg(
             Arg::with_name("gossip_port")
@@ -1296,7 +867,6 @@ pub fn main() {
                 .validator(solana_net_utils::is_host)
                 .help("Gossip DNS name or IP address for the validator to advertise in gossip \
                        [default: ask --entrypoint, or 127.0.0.1 when --entrypoint is not provided]"),
-
         )
         .arg(
             Arg::with_name("public_rpc_addr")
@@ -1323,19 +893,90 @@ pub fn main() {
                 .long("maximum-local-snapshot-age")
                 .value_name("NUMBER_OF_SLOTS")
                 .takes_value(true)
-                .default_value("500")
+                .default_value("2500")
                 .help("Reuse a local snapshot if it's less than this many \
                        slots behind the highest snapshot available for \
                        download from other validators"),
         )
         .arg(
-            Arg::with_name("snapshot_interval_slots")
-                .long("snapshot-interval-slots")
-                .value_name("SNAPSHOT_INTERVAL_SLOTS")
+            // NOP arg for forward compatibility with ISS on-by-default in v1.10
+            Arg::with_name("no_incremental_snapshots")
+                .long("no-incremental-snapshots")
+                .hidden(true)
+                .conflicts_with("incremental_snapshots")
+        )
+        .arg(
+            Arg::with_name("incremental_snapshots")
+                .long("incremental-snapshots")
+                .takes_value(false)
+                .long_help("Enable incremental snapshots by setting this flag. \
+                   When enabled, --snapshot-interval-slots will set the \
+                   incremental snapshot interval. To set the full snapshot \
+                   interval, use --full-snapshot-interval-slots.")
+         )
+        .arg(
+            Arg::with_name("incremental_snapshot_interval_slots")
+                .long("incremental-snapshot-interval-slots")
+                .alias("snapshot-interval-slots")
+                .value_name("NUMBER")
                 .takes_value(true)
-                .default_value("100")
+                .default_value(default_incremental_snapshot_archive_interval_slots)
                 .help("Number of slots between generating snapshots, \
                       0 to disable snapshots"),
+        )
+        .arg(
+            Arg::with_name("full_snapshot_interval_slots")
+                .long("full-snapshot-interval-slots")
+                .value_name("NUMBER")
+                .takes_value(true)
+                .default_value(default_full_snapshot_archive_interval_slots)
+                .help("Number of slots between generating full snapshots")
+        )
+        .arg(
+            Arg::with_name("maximum_full_snapshots_to_retain")
+                .long("maximum-full-snapshots-to-retain")
+                .alias("maximum-snapshots-to-retain")
+                .value_name("NUMBER")
+                .takes_value(true)
+                .default_value(default_maximum_full_snapshot_archives_to_retain)
+                .help("The maximum number of full snapshot archives to hold on to when purging older snapshots.")
+        )
+        .arg(
+            Arg::with_name("maximum_incremental_snapshots_to_retain")
+                .long("maximum-incremental-snapshots-to-retain")
+                .value_name("NUMBER")
+                .takes_value(true)
+                .default_value(default_maximum_incremental_snapshot_archives_to_retain)
+                .help("The maximum number of incremental snapshot archives to hold on to when purging older snapshots.")
+        )
+        .arg(
+            Arg::with_name("snapshot_packager_niceness_adj")
+                .long("snapshot-packager-niceness-adjustment")
+                .value_name("ADJUSTMENT")
+                .takes_value(true)
+                .validator(is_niceness_adjustment_valid)
+                .default_value("0")
+                .help("Add this value to niceness of snapshot packager thread. Negative value \
+                      increases priority, positive value decreases priority.")
+        )
+        .arg(
+            Arg::with_name("minimal_snapshot_download_speed")
+                .long("minimal-snapshot-download-speed")
+                .value_name("MINIMAL_SNAPSHOT_DOWNLOAD_SPEED")
+                .takes_value(true)
+                .default_value(default_min_snapshot_download_speed)
+                .help("The minimal speed of snapshot downloads measured in bytes/second. \
+                      If the initial download speed falls below this threshold, the system will \
+                      retry the download against a different rpc node."),
+        )
+        .arg(
+            Arg::with_name("maximum_snapshot_download_abort")
+                .long("maximum-snapshot-download-abort")
+                .value_name("MAXIMUM_SNAPSHOT_DOWNLOAD_ABORT")
+                .takes_value(true)
+                .default_value(default_max_snapshot_download_abort)
+                .help("The maximum number of times to abort and retry when encountering a \
+                      slow snapshot download."),
         )
         .arg(
             Arg::with_name("contact_debug_interval")
@@ -1351,12 +992,31 @@ pub fn main() {
                 .help("Skip the check for PoH speed."),
         )
         .arg(
-            Arg::with_name("accounts_hash_interval_slots")
-                .long("accounts-hash-slots")
-                .value_name("ACCOUNTS_HASH_INTERVAL_SLOTS")
+            Arg::with_name("no_os_network_limits_test")
+                .hidden(true)
+                .long("no-os-network-limits-test")
+                .help("Skip checks for OS network limits.")
+        )
+        .arg(
+            Arg::with_name("no_os_network_stats_reporting")
+                .long("no-os-network-stats-reporting")
+                .help("Disable reporting of OS network statistics.")
+        )
+        .arg(
+            Arg::with_name("accounts-hash-interval-slots")
+                .long("accounts-hash-interval-slots")
+                .value_name("NUMBER")
                 .takes_value(true)
                 .default_value("100")
-                .help("Number of slots between generating accounts hash."),
+                .help("Number of slots between generating accounts hash.")
+                .validator(|val| {
+                    if val.eq("0") {
+                        Err(String::from("Accounts hash interval cannot be zero"))
+                    }
+                    else {
+                        Ok(())
+                    }
+                }),
         )
         .arg(
             Arg::with_name("snapshot_version")
@@ -1456,8 +1116,9 @@ pub fn main() {
                 .help("Add a hard fork at this slot"),
         )
         .arg(
-            Arg::with_name("trusted_validators")
-                .long("trusted-validator")
+            Arg::with_name("known_validators")
+                .alias("trusted-validator")
+                .long("known-validator")
                 .validator(is_pubkey)
                 .value_name("VALIDATOR IDENTITY")
                 .multiple(true)
@@ -1475,10 +1136,12 @@ pub fn main() {
                 .help("Log when transactions are processed which reference a given key."),
         )
         .arg(
-            Arg::with_name("no_untrusted_rpc")
-                .long("no-untrusted-rpc")
+            Arg::with_name("only_known_rpc")
+                .alias("no-untrusted-rpc")
+                .long("only-known-rpc")
                 .takes_value(false)
-                .help("Use the RPC service of trusted validators only")
+                .requires("known_validators")
+                .help("Use the RPC service of known validators only")
         )
         .arg(
             Arg::with_name("repair_validators")
@@ -1544,7 +1207,7 @@ pub fn main() {
                 .value_name("HOST")
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
-                .help("IP address to bind the RPC port [default: use --bind-address]"),
+                .help("IP address to bind the RPC port [default: 127.0.0.1 if --private-rpc is present, otherwise use --bind-address]"),
         )
         .arg(
             Arg::with_name("rpc_threads")
@@ -1556,6 +1219,16 @@ pub fn main() {
                 .help("Number of threads to use for servicing RPC requests"),
         )
         .arg(
+            Arg::with_name("rpc_niceness_adj")
+                .long("rpc-niceness-adjustment")
+                .value_name("ADJUSTMENT")
+                .takes_value(true)
+                .validator(is_niceness_adjustment_valid)
+                .default_value("0")
+                .help("Add this value to niceness of RPC threads. Negative value \
+                      increases priority, positive value decreases priority.")
+        )
+        .arg(
             Arg::with_name("rpc_bigtable_timeout")
                 .long("rpc-bigtable-timeout")
                 .value_name("SECONDS")
@@ -1563,6 +1236,22 @@ pub fn main() {
                 .takes_value(true)
                 .default_value("30")
                 .help("Number of seconds before timing out RPC requests backed by BigTable"),
+        )
+        .arg(
+            Arg::with_name("rpc_pubsub_worker_threads")
+                .long("rpc-pubsub-worker-threads")
+                .takes_value(true)
+                .value_name("NUMBER")
+                .validator(is_parsable::<usize>)
+                .default_value("4")
+                .help("PubSub worker threads"),
+        )
+        .arg(
+            Arg::with_name("rpc_pubsub_enable_block_subscription")
+                .long("rpc-pubsub-enable-block-subscription")
+                .requires("enable_rpc_transaction_history")
+                .takes_value(false)
+                .help("Enable the unstable RPC PubSub `blockSubscribe` subscription"),
         )
         .arg(
             Arg::with_name("rpc_pubsub_enable_vote_subscription")
@@ -1576,10 +1265,10 @@ pub fn main() {
                 .value_name("NUMBER")
                 .takes_value(true)
                 .validator(is_parsable::<usize>)
-                .default_value(&default_rpc_pubsub_max_connections)
+                .hidden(true)
                 .help("The maximum number of connections that RPC PubSub will support. \
                        This is a hard limit and no new connections beyond this limit can \
-                       be made until an old connection is dropped."),
+                       be made until an old connection is dropped. (Obsolete)"),
         )
         .arg(
             Arg::with_name("rpc_pubsub_max_fragment_size")
@@ -1587,9 +1276,9 @@ pub fn main() {
                 .value_name("BYTES")
                 .takes_value(true)
                 .validator(is_parsable::<usize>)
-                .default_value(&default_rpc_pubsub_max_fragment_size)
+                .hidden(true)
                 .help("The maximum length in bytes of acceptable incoming frames. Messages longer \
-                       than this will be rejected."),
+                       than this will be rejected. (Obsolete)"),
         )
         .arg(
             Arg::with_name("rpc_pubsub_max_in_buffer_capacity")
@@ -1597,8 +1286,9 @@ pub fn main() {
                 .value_name("BYTES")
                 .takes_value(true)
                 .validator(is_parsable::<usize>)
-                .default_value(&default_rpc_pubsub_max_in_buffer_capacity)
-                .help("The maximum size in bytes to which the incoming websocket buffer can grow."),
+                .hidden(true)
+                .help("The maximum size in bytes to which the incoming websocket buffer can grow. \
+                      (Obsolete)"),
         )
         .arg(
             Arg::with_name("rpc_pubsub_max_out_buffer_capacity")
@@ -1606,8 +1296,9 @@ pub fn main() {
                 .value_name("BYTES")
                 .takes_value(true)
                 .validator(is_parsable::<usize>)
-                .default_value(&default_rpc_pubsub_max_out_buffer_capacity)
-                .help("The maximum size in bytes to which the outgoing websocket buffer can grow."),
+                .hidden(true)
+                .help("The maximum size in bytes to which the outgoing websocket buffer can grow. \
+                       (Obsolete)"),
         )
         .arg(
             Arg::with_name("rpc_pubsub_max_active_subscriptions")
@@ -1618,6 +1309,35 @@ pub fn main() {
                 .default_value(&default_rpc_pubsub_max_active_subscriptions)
                 .help("The maximum number of active subscriptions that RPC PubSub will accept \
                        across all connections."),
+        )
+        .arg(
+            Arg::with_name("rpc_pubsub_queue_capacity_items")
+                .long("rpc-pubsub-queue-capacity-items")
+                .takes_value(true)
+                .value_name("NUMBER")
+                .validator(is_parsable::<usize>)
+                .default_value(&default_rpc_pubsub_queue_capacity_items)
+                .help("The maximum number of notifications that RPC PubSub will store \
+                       across all connections."),
+        )
+        .arg(
+            Arg::with_name("rpc_pubsub_queue_capacity_bytes")
+                .long("rpc-pubsub-queue-capacity-bytes")
+                .takes_value(true)
+                .value_name("BYTES")
+                .validator(is_parsable::<usize>)
+                .default_value(&default_rpc_pubsub_queue_capacity_bytes)
+                .help("The maximum total size of notifications that RPC PubSub will store \
+                       across all connections."),
+        )
+        .arg(
+            Arg::with_name("rpc_pubsub_notification_threads")
+                .long("rpc-pubsub-notification-threads")
+                .takes_value(true)
+                .value_name("NUM_THREADS")
+                .validator(is_parsable::<usize>)
+                .help("The maximum number of threads that RPC PubSub will use \
+                       for generating notifications."),
         )
         .arg(
             Arg::with_name("rpc_send_transaction_retry_ms")
@@ -1638,6 +1358,23 @@ pub fn main() {
                 .help("The number of upcoming leaders to which to forward transactions sent via rpc service."),
         )
         .arg(
+            Arg::with_name("rpc_send_transaction_default_max_retries")
+                .long("rpc-send-default-max-retries")
+                .value_name("NUMBER")
+                .takes_value(true)
+                .validator(is_parsable::<usize>)
+                .help("The maximum number of transaction broadcast retries when unspecified by the request, otherwise retried until expiration."),
+        )
+        .arg(
+            Arg::with_name("rpc_send_transaction_service_max_retries")
+                .long("rpc-send-service-max-retries")
+                .value_name("NUMBER")
+                .takes_value(true)
+                .validator(is_parsable::<usize>)
+                .default_value(&default_rpc_send_transaction_service_max_retries)
+                .help("The maximum number of transaction broadcast retries, regardless of requested value."),
+        )
+        .arg(
             Arg::with_name("rpc_scan_and_fix_roots")
                 .long("rpc-scan-and-fix-roots")
                 .takes_value(false)
@@ -1645,22 +1382,57 @@ pub fn main() {
                 .help("Verifies blockstore roots on boot and fixes any gaps"),
         )
         .arg(
-            Arg::with_name("halt_on_trusted_validators_accounts_hash_mismatch")
-                .long("halt-on-trusted-validators-accounts-hash-mismatch")
-                .requires("trusted_validators")
+            Arg::with_name("enable_accountsdb_repl")
+                .long("enable-accountsdb-repl")
                 .takes_value(false)
-                .help("Abort the validator if a bank hash mismatch is detected within trusted validator set"),
+                .hidden(true)
+                .help("Enable AccountsDb Replication"),
         )
         .arg(
-            Arg::with_name("frozen_accounts")
-                .long("frozen-account")
-                .validator(is_pubkey)
-                .value_name("PUBKEY")
-                .multiple(true)
+            Arg::with_name("accountsdb_repl_bind_address")
+                .long("accountsdb-repl-bind-address")
+                .value_name("HOST")
                 .takes_value(true)
-                .help("Freeze the specified account.  This will cause the validator to \
-                       intentionally crash should any transaction modify the frozen account in any way \
-                       other than increasing the account balance"),
+                .validator(solana_net_utils::is_host)
+                .hidden(true)
+                .help("IP address to bind the AccountsDb Replication port [default: use --bind-address]"),
+        )
+        .arg(
+            Arg::with_name("accountsdb_repl_port")
+                .long("accountsdb-repl-port")
+                .value_name("PORT")
+                .takes_value(true)
+                .validator(velas_validator::port_validator)
+                .hidden(true)
+                .help("Enable AccountsDb Replication Service on this port"),
+        )
+        .arg(
+            Arg::with_name("accountsdb_repl_threads")
+                .long("accountsdb-repl-threads")
+                .value_name("NUMBER")
+                .validator(is_parsable::<usize>)
+                .takes_value(true)
+                .default_value(&default_accountsdb_repl_threads)
+                .hidden(true)
+                .help("Number of threads to use for servicing AccountsDb Replication requests"),
+        )
+        .arg(
+            Arg::with_name("geyser_plugin_config")
+                .long("geyser-plugin-config")
+                .alias("accountsdb-plugin-config")
+                .value_name("FILE")
+                .takes_value(true)
+                .multiple(true)
+                .hidden(true)
+                .help("Specify the configuration file for the Geyser plugin."),
+        )
+        .arg(
+            Arg::with_name("halt_on_known_validators_accounts_hash_mismatch")
+                .alias("halt-on-trusted-validators-accounts-hash-mismatch")
+                .long("halt-on-known-validators-accounts-hash-mismatch")
+                .requires("known_validators")
+                .takes_value(false)
+                .help("Abort the validator if a bank hash mismatch is detected within known validator set"),
         )
         .arg(
             Arg::with_name("snapshot_archive_format")
@@ -1698,15 +1470,15 @@ pub fn main() {
         )
         .arg(
             Arg::with_name("no_bpf_jit")
-                .hidden(true)
                 .long("no-bpf-jit")
                 .takes_value(false)
                 .help("Disable the just-in-time compiler and instead use the interpreter for BPF"),
         )
         .arg(
-            // return back argument doe to lack of jit tests
+            // legacy nop argument
             Arg::with_name("bpf_jit")
                 .long("bpf-jit")
+                .hidden(true)
                 .takes_value(false)
                 .conflicts_with("no_bpf_jit")
         )
@@ -1776,6 +1548,68 @@ pub fn main() {
                 .help("Disables accounts caching"),
         )
         .arg(
+            Arg::with_name("accounts_db_skip_shrink")
+                .long("accounts-db-skip-shrink")
+                .help("Enables faster starting of validators by skipping shrink. \
+                      This option is for use during testing."),
+        )
+        .arg(
+            Arg::with_name("accounts_db_cache_limit_mb")
+                .long("accounts-db-cache-limit-mb")
+                .value_name("MEGABYTES")
+                .validator(is_parsable::<u64>)
+                .takes_value(true)
+                .help("How large the write cache for account data can become. If this is exceeded, the cache is flushed more aggressively."),
+        )
+        .arg(
+            Arg::with_name("accounts_index_scan_results_limit_mb")
+                .long("accounts-index-scan-results-limit-mb")
+                .value_name("MEGABYTES")
+                .validator(is_parsable::<usize>)
+                .takes_value(true)
+                .help("How large accumulated results from an accounts index scan can become. If this is exceeded, the scan aborts."),
+        )
+        .arg(
+            Arg::with_name("accounts_index_memory_limit_mb")
+                .long("accounts-index-memory-limit-mb")
+                .value_name("MEGABYTES")
+                .validator(is_parsable::<usize>)
+                .takes_value(true)
+                .help("How much memory the accounts index can consume. If this is exceeded, some account index entries will be stored on disk. If missing, the entire index is stored in memory."),
+        )
+        .arg(
+            Arg::with_name("accounts_index_bins")
+                .long("accounts-index-bins")
+                .value_name("BINS")
+                .validator(is_pow2)
+                .takes_value(true)
+                .help("Number of bins to divide the accounts index into"),
+        )
+        .arg(
+            Arg::with_name("accounts_hash_num_passes")
+                .long("accounts-hash-num-passes")
+                .value_name("PASSES")
+                .validator(is_pow2)
+                .takes_value(true)
+                .help("Number of passes to calculate the hash of all accounts"),
+        )
+        .arg(
+            Arg::with_name("accounts_index_path")
+                .long("accounts-index-path")
+                .value_name("PATH")
+                .takes_value(true)
+                .multiple(true)
+                .help("Persistent accounts-index location. \
+                       May be specified multiple times. \
+                       [default: [ledger]/accounts_index]"),
+         )
+         .arg(Arg::with_name("accounts_filler_count")
+            .long("accounts-filler-count")
+            .value_name("COUNT")
+            .validator(is_parsable::<usize>)
+            .takes_value(true)
+            .help("How many accounts to add to stress the system. Accounts are ignored in operations related to correctness."))
+         .arg(
             Arg::with_name("accounts_db_test_hash_calculation")
                 .long("accounts-db-test-hash-calculation")
                 .help("Enables testing of hash calculation using stores in \
@@ -1802,6 +1636,29 @@ pub fn main() {
                 .hidden(true)
         )
         .arg(
+            Arg::with_name("accounts_shrink_optimize_total_space")
+                .long("accounts-shrink-optimize-total-space")
+                .takes_value(true)
+                .value_name("BOOLEAN")
+                .default_value(default_accounts_shrink_optimize_total_space)
+                .help("When this is set to true, the system will shrink the most \
+                       sparse accounts and when the overall shrink ratio is above \
+                       the specified accounts-shrink-ratio, the shrink will stop and \
+                       it will skip all other less sparse accounts."),
+        )
+        .arg(
+            Arg::with_name("accounts_shrink_ratio")
+                .long("accounts-shrink-ratio")
+                .takes_value(true)
+                .value_name("RATIO")
+                .default_value(default_accounts_shrink_ratio)
+                .help("Specifies the shrink ratio for the accounts to be shrunk. \
+                       The shrink ratio is defined as the ratio of the bytes alive over the  \
+                       total bytes used. If the account's shrink ratio is less than this ratio \
+                       it becomes a candidate for shrinking. The value must between 0. and 1.0 \
+                       inclusive."),
+        )
+        .arg(
             Arg::with_name("no_duplicate_instance_check")
                 .long("no-duplicate-instance-check")
                 .takes_value(false)
@@ -1809,10 +1666,17 @@ pub fn main() {
                 .hidden(true),
         )
         .arg(
-            Arg::with_name("verify_evm_state")
-                .long("verify-evm-state")
+            Arg::with_name("no_verify_evm_state")
+                .long("no-verify-evm-state")
                 .takes_value(false)
-                .help("Verify EVM state from snapshot")
+                .help("Disable EVM snapshot verification")
+        )
+        .arg(
+            Arg::with_name("allow_private_addr")
+                .long("allow-private-addr")
+                .takes_value(false)
+                .help("Allow contacting private ip addresses")
+                .hidden(true),
         )
         .after_help("The default subcommand is run")
         .subcommand(
@@ -1834,12 +1698,43 @@ pub fn main() {
             )
             .arg(
                 Arg::with_name("min_idle_time")
-                    .takes_value(true)
                     .long("min-idle-time")
-                    .value_name("MINUTES")
+                    .takes_value(true)
                     .validator(is_parsable::<usize>)
+                    .value_name("MINUTES")
                     .default_value("10")
                     .help("Minimum time that the validator should not be leader before restarting")
+            )
+            .arg(
+                Arg::with_name("max_delinquent_stake")
+                    .long("max-delinquent-stake")
+                    .takes_value(true)
+                    .validator(is_valid_percentage)
+                    .default_value("5")
+                    .value_name("PERCENT")
+                    .help("The maximum delinquent stake % permitted for an exit")
+            )
+            .arg(
+                Arg::with_name("skip_new_snapshot_check")
+                    .long("skip-new-snapshot-check")
+                    .help("Skip check for a new snapshot")
+            )
+        )
+        .subcommand(
+            SubCommand::with_name("merge-evm-state-subarchive")
+            .about("Merge one archive to another")
+            .arg(
+                Arg::with_name("evm-state-path")
+                    .takes_value(true)
+                    .index(1)
+                    .value_name("PATH")
+                    .help("Path to evm-state database that should be merged into archive")
+            )
+            .arg(
+                Arg::with_name("restore_backup")
+                    .takes_value(false)
+                    .long("restore-backup")
+                    .help("Notify that evm-state-path is actually path to rocksdb backup")
             )
         )
         .subcommand(
@@ -1881,6 +1776,26 @@ pub fn main() {
             .about("Run the validator")
         )
         .subcommand(
+            SubCommand::with_name("set-identity")
+            .about("Set the validator identity")
+            .arg(
+                Arg::with_name("identity")
+                    .index(1)
+                    .value_name("KEYPAIR")
+                    .takes_value(true)
+                    .validator(is_keypair)
+                    .help("Validator identity keypair")
+            )
+            .arg(
+                clap::Arg::with_name("require_tower")
+                    .long("require-tower")
+                    .takes_value(false)
+                    .help("Refuse to set the validator identity if saved tower state is not found"),
+            )
+            .after_help("Note: the new identity only applies to the \
+                         currently running validator instance")
+        )
+        .subcommand(
             SubCommand::with_name("set-log-filter")
             .about("Adjust the validator log filter")
             .arg(
@@ -1896,35 +1811,41 @@ pub fn main() {
             .about("Monitor the validator for a good time to restart")
             .arg(
                 Arg::with_name("min_idle_time")
+                    .long("min-idle-time")
                     .takes_value(true)
-                    .index(1)
                     .validator(is_parsable::<usize>)
                     .value_name("MINUTES")
                     .default_value("10")
                     .help("Minimum time that the validator should not be leader before restarting")
             )
+            .arg(
+                Arg::with_name("identity")
+                    .long("identity")
+                    .value_name("ADDRESS")
+                    .takes_value(true)
+                    .validator(is_pubkey_or_keypair)
+                    .help("Validator identity to monitor [default: your validator]")
+            )
+            .arg(
+                Arg::with_name("max_delinquent_stake")
+                    .long("max-delinquent-stake")
+                    .takes_value(true)
+                    .validator(is_valid_percentage)
+                    .default_value("5")
+                    .value_name("PERCENT")
+                    .help("The maximum delinquent stake % permitted for a restart")
+            )
+            .arg(
+                Arg::with_name("skip_new_snapshot_check")
+                    .long("skip-new-snapshot-check")
+                    .help("Skip check for a new snapshot")
+            )
             .after_help("Note: If this command exits with a non-zero status \
                          then this not a good time for a restart")
         )
-        .subcommand(
-            SubCommand::with_name("merge-evm-state-subarchive")
-            .about("Merge one archive to another")
-            .arg(
-                Arg::with_name("evm-state-path")
-                    .takes_value(true)
-                    .index(1)
-                    .value_name("PATH")
-                    .help("Path to evm-state database that should be merged into archive")
-            )
-            .arg(
-                Arg::with_name("restore_backup")
-                    .takes_value(false)
-                    .long("restore-backup")
-                    .help("Notify that evm-state-path is actually path to rocksdb backup")
-            )
-        )
         .get_matches();
 
+    let socket_addr_space = SocketAddrSpace::new(matches.is_present("allow_private_addr"));
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
     let operation = match matches.subcommand() {
@@ -1985,9 +1906,19 @@ pub fn main() {
             let min_idle_time = value_t_or_exit!(subcommand_matches, "min_idle_time", usize);
             let force = subcommand_matches.is_present("force");
             let monitor = subcommand_matches.is_present("monitor");
+            let skip_new_snapshot_check = subcommand_matches.is_present("skip_new_snapshot_check");
+            let max_delinquent_stake =
+                value_t_or_exit!(subcommand_matches, "max_delinquent_stake", u8);
 
             if !force {
-                wait_for_restart_window(&ledger_path, min_idle_time).unwrap_or_else(|err| {
+                wait_for_restart_window(
+                    &ledger_path,
+                    None,
+                    min_idle_time,
+                    max_delinquent_stake,
+                    skip_new_snapshot_check,
+                )
+                .unwrap_or_else(|err| {
                     println!("{}", err);
                     exit(1);
                 });
@@ -2005,29 +1936,6 @@ pub fn main() {
             if monitor {
                 monitor_validator(&ledger_path);
             }
-            return;
-        }
-        ("monitor", _) => {
-            monitor_validator(&ledger_path);
-            return;
-        }
-        ("set-log-filter", Some(subcommand_matches)) => {
-            let filter = value_t_or_exit!(subcommand_matches, "filter", String);
-            let admin_client = admin_rpc_service::connect(&ledger_path);
-            admin_rpc_service::runtime()
-                .block_on(async move { admin_client.await?.set_log_filter(filter).await })
-                .unwrap_or_else(|err| {
-                    println!("set log filter failed: {}", err);
-                    exit(1);
-                });
-            return;
-        }
-        ("wait-for-restart-window", Some(subcommand_matches)) => {
-            let min_idle_time = value_t_or_exit!(subcommand_matches, "min_idle_time", usize);
-            wait_for_restart_window(&ledger_path, min_idle_time).unwrap_or_else(|err| {
-                println!("{}", err);
-                exit(1);
-            });
             return;
         }
         ("merge-evm-state-subarchive", Some(subcommand_matches)) => {
@@ -2048,34 +1956,137 @@ pub fn main() {
                 });
             return;
         }
+        ("monitor", _) => {
+            monitor_validator(&ledger_path);
+            return;
+        }
+        ("set-identity", Some(subcommand_matches)) => {
+            let require_tower = subcommand_matches.is_present("require_tower");
+            let identity_keypair = value_t_or_exit!(subcommand_matches, "identity", String);
 
+            let identity_keypair = fs::canonicalize(&identity_keypair).unwrap_or_else(|err| {
+                println!("Unable to access path: {}: {:?}", identity_keypair, err);
+                exit(1);
+            });
+            println!("Validator identity: {}", identity_keypair.display());
+
+            let admin_client = admin_rpc_service::connect(&ledger_path);
+            admin_rpc_service::runtime()
+                .block_on(async move {
+                    admin_client
+                        .await?
+                        .set_identity(identity_keypair.display().to_string(), require_tower)
+                        .await
+                })
+                .unwrap_or_else(|err| {
+                    println!("setIdentity request failed: {}", err);
+                    exit(1);
+                });
+            return;
+        }
+        ("set-log-filter", Some(subcommand_matches)) => {
+            let filter = value_t_or_exit!(subcommand_matches, "filter", String);
+            let admin_client = admin_rpc_service::connect(&ledger_path);
+            admin_rpc_service::runtime()
+                .block_on(async move { admin_client.await?.set_log_filter(filter).await })
+                .unwrap_or_else(|err| {
+                    println!("set log filter failed: {}", err);
+                    exit(1);
+                });
+            return;
+        }
+        ("wait-for-restart-window", Some(subcommand_matches)) => {
+            let min_idle_time = value_t_or_exit!(subcommand_matches, "min_idle_time", usize);
+            let identity = pubkey_of(subcommand_matches, "identity");
+            let max_delinquent_stake =
+                value_t_or_exit!(subcommand_matches, "max_delinquent_stake", u8);
+            let skip_new_snapshot_check = subcommand_matches.is_present("skip_new_snapshot_check");
+
+            wait_for_restart_window(
+                &ledger_path,
+                identity,
+                min_idle_time,
+                max_delinquent_stake,
+                skip_new_snapshot_check,
+            )
+            .unwrap_or_else(|err| {
+                println!("{}", err);
+                exit(1);
+            });
+            return;
+        }
         _ => unreachable!(),
     };
 
     let identity_keypair = Arc::new(keypair_of(&matches, "identity").unwrap_or_else(Keypair::new));
 
+    let logfile = {
+        let logfile = matches
+            .value_of("logfile")
+            .map(|s| s.into())
+            .unwrap_or_else(|| format!("velas-validator-{}.log", identity_keypair.pubkey()));
+
+        if logfile == "-" {
+            None
+        } else {
+            println!("log file: {}", logfile);
+            Some(logfile)
+        }
+    };
+    let use_progress_bar = logfile.is_none();
+    let _logger_thread = redirect_stderr_to_file(logfile);
+
+    info!("{} {}", crate_name!(), solana_version::version!());
+    info!("Starting validator with: {:#?}", std::env::args_os());
+
+    let cuda = matches.is_present("cuda");
+    if cuda {
+        solana_perf::perf_libs::init_cuda();
+        enable_recycler_warming();
+    }
+
+    solana_core::validator::report_target_features();
+
+    let evm_state_archive = matches.value_of("evm_state_archive_path").map(|path| {
+        info!("Opening evm archive storage");
+        evm_state::Storage::open_persistent(
+            path, false, // gc disabled
+        )
+        .expect("Cannot open evm archive folder")
+    });
+
     let authorized_voter_keypairs = keypairs_of(&matches, "authorized_voter_keypairs")
         .map(|keypairs| keypairs.into_iter().map(Arc::new).collect())
-        .unwrap_or_else(|| vec![identity_keypair.clone()]);
+        .unwrap_or_else(|| {
+            vec![
+                identity_keypair.clone(),
+            ]
+        });
     let authorized_voter_keypairs = Arc::new(RwLock::new(authorized_voter_keypairs));
 
     let init_complete_file = matches.value_of("init_complete_file");
 
-    let rpc_bootstrap_config = RpcBootstrapConfig {
+    if matches.is_present("no_check_vote_account") {
+        info!("vote account sanity checks are no longer performed by default. --no-check-vote-account is deprecated and can be removed from the command line");
+    }
+    let rpc_bootstrap_config = bootstrap::RpcBootstrapConfig {
         no_genesis_fetch: matches.is_present("no_genesis_fetch"),
         no_snapshot_fetch: matches.is_present("no_snapshot_fetch"),
-        no_check_vote_account: matches.is_present("no_check_vote_account"),
-        no_untrusted_rpc: matches.is_present("no_untrusted_rpc"),
+        check_vote_account: matches
+            .value_of("check_vote_account")
+            .map(|url| url.to_string()),
+        only_known_rpc: matches.is_present("only_known_rpc"),
         max_genesis_archive_unpacked_size: value_t_or_exit!(
             matches,
             "max_genesis_archive_unpacked_size",
             u64
         ),
+        incremental_snapshot_fetch: matches.is_present("incremental_snapshots"),
     };
 
     let private_rpc = matches.is_present("private_rpc");
-    let no_port_check = matches.is_present("no_port_check");
-    let no_rocksdb_compaction = matches.is_present("no_rocksdb_compaction");
+    let do_port_check = !matches.is_present("no_port_check");
+    let no_rocksdb_compaction = true;
     let rocksdb_compaction_interval = value_t!(matches, "rocksdb_compaction_interval", u64).ok();
     let rocksdb_max_compaction_jitter =
         value_t!(matches, "rocksdb_max_compaction_jitter", u64).ok();
@@ -2102,11 +2113,11 @@ pub fn main() {
         None
     };
 
-    let trusted_validators = validators_set(
+    let known_validators = validators_set(
         &identity_keypair.pubkey(),
         &matches,
-        "trusted_validators",
-        "--trusted-validator",
+        "known_validators",
+        "--known-validator",
     );
     let repair_validators = validators_set(
         &identity_keypair.pubkey(),
@@ -2126,6 +2137,8 @@ pub fn main() {
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
+    } else if private_rpc {
+        solana_net_utils::parse_host("127.0.0.1").unwrap()
     } else {
         bind_address
     };
@@ -2135,18 +2148,175 @@ pub fn main() {
     let account_indexes = process_account_indexes(&matches);
 
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
+    let accounts_shrink_optimize_total_space =
+        value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
+    let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
+    if !(0.0..=1.0).contains(&shrink_ratio) {
+        eprintln!(
+            "The specified account-shrink-ratio is invalid, it must be between 0. and 1.0 inclusive: {}",
+            shrink_ratio
+        );
+        exit(1);
+    }
+
+    let accounts_shrink_ratio = if accounts_shrink_optimize_total_space {
+        AccountShrinkThreshold::TotalSpace { shrink_ratio }
+    } else {
+        AccountShrinkThreshold::IndividalStore { shrink_ratio }
+    };
+    let entrypoint_addrs = values_t!(matches, "entrypoint", String)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entrypoint| {
+            solana_net_utils::parse_host_port(&entrypoint).unwrap_or_else(|e| {
+                eprintln!("failed to parse entrypoint address: {}", e);
+                exit(1);
+            })
+        })
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    // TODO: Once entrypoints are updated to return shred-version, this should
+    // abort if it fails to obtain a shred-version, so that nodes always join
+    // gossip with a valid shred-version. The code to adopt entrypoint shred
+    // version can then be deleted from gossip and get_rpc_node above.
+    let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
+        .ok()
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs));
+
+    let tower_storage: Arc<dyn solana_core::tower_storage::TowerStorage> =
+        match value_t_or_exit!(matches, "tower_storage", String).as_str() {
+            "file" => {
+                let tower_path = value_t!(matches, "tower", PathBuf)
+                    .ok()
+                    .unwrap_or_else(|| ledger_path.clone());
+
+                Arc::new(tower_storage::FileTowerStorage::new(tower_path))
+            }
+            "etcd" => {
+                let endpoints = values_t_or_exit!(matches, "etcd_endpoint", String);
+                let domain_name = value_t_or_exit!(matches, "etcd_domain_name", String);
+                let ca_certificate_file = value_t_or_exit!(matches, "etcd_cacert_file", String);
+                let identity_certificate_file = value_t_or_exit!(matches, "etcd_cert_file", String);
+                let identity_private_key_file = value_t_or_exit!(matches, "etcd_key_file", String);
+
+                let read = |file| {
+                    fs::read(&file).unwrap_or_else(|err| {
+                        eprintln!("Unable to read {}: {}", file, err);
+                        exit(1)
+                    })
+                };
+
+                let tls_config = tower_storage::EtcdTlsConfig {
+                    domain_name,
+                    ca_certificate: read(ca_certificate_file),
+                    identity_certificate: read(identity_certificate_file),
+                    identity_private_key: read(identity_private_key_file),
+                };
+
+                Arc::new(
+                    tower_storage::EtcdTowerStorage::new(endpoints, Some(tls_config))
+                        .unwrap_or_else(|err| {
+                            eprintln!("Failed to connect to etcd: {}", err);
+                            exit(1);
+                        }),
+                )
+            }
+            _ => unreachable!(),
+        };
+
+    let mut accounts_index_config = AccountsIndexConfig::default();
+    if let Some(bins) = value_t!(matches, "accounts_index_bins", usize).ok() {
+        accounts_index_config.bins = Some(bins);
+    }
+
+    if let Some(limit) = value_t!(matches, "accounts_index_memory_limit_mb", usize).ok() {
+        accounts_index_config.index_limit_mb = Some(limit);
+    }
+
+    {
+        let mut accounts_index_paths: Vec<PathBuf> = if matches.is_present("accounts_index_path") {
+            values_t_or_exit!(matches, "accounts_index_path", String)
+                .into_iter()
+                .map(PathBuf::from)
+                .collect()
+        } else {
+            vec![]
+        };
+        if accounts_index_paths.is_empty() {
+            accounts_index_paths = vec![ledger_path.join("accounts_index")];
+        }
+        accounts_index_config.drives = Some(accounts_index_paths);
+    }
+
+    const MB: usize = 1_024 * 1_024;
+    accounts_index_config.scan_results_limit_bytes =
+        value_t!(matches, "accounts_index_scan_results_limit_mb", usize)
+            .ok()
+            .map(|mb| mb * MB);
+
+    let filler_account_count = value_t!(matches, "accounts_filler_count", usize).ok();
+    let mut accounts_db_config = AccountsDbConfig {
+        index: Some(accounts_index_config),
+        accounts_hash_cache_path: Some(ledger_path.clone()),
+        filler_account_count,
+        write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
+            .ok()
+            .map(|mb| mb * MB as u64),
+        ..AccountsDbConfig::default()
+    };
+
+    if let Some(passes) = value_t!(matches, "accounts_hash_num_passes", usize).ok() {
+        accounts_db_config.hash_calc_num_passes = Some(passes);
+    }
+    let accounts_db_config = Some(accounts_db_config);
+
+    let accountsdb_repl_service_config = if matches.is_present("enable_accountsdb_repl") {
+        let accountsdb_repl_bind_address = if matches.is_present("accountsdb_repl_bind_address") {
+            solana_net_utils::parse_host(matches.value_of("accountsdb_repl_bind_address").unwrap())
+                .expect("invalid accountsdb_repl_bind_address")
+        } else {
+            bind_address
+        };
+        let accountsdb_repl_port = value_t_or_exit!(matches, "accountsdb_repl_port", u16);
+
+        Some(AccountsDbReplServiceConfig {
+            worker_threads: value_t_or_exit!(matches, "accountsdb_repl_threads", usize),
+            replica_server_addr: SocketAddr::new(
+                accountsdb_repl_bind_address,
+                accountsdb_repl_port,
+            ),
+        })
+    } else {
+        None
+    };
+
+    let geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
+        Some(
+            values_t_or_exit!(matches, "geyser_plugin_config", String)
+                .into_iter()
+                .map(PathBuf::from)
+                .collect(),
+        )
+    } else {
+        None
+    };
+
+    if matches.is_present("minimal_rpc_api") {
+        warn!("--minimal-rpc-api is now the default behavior. This flag is deprecated and can be removed from the launch args")
+    }
+
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
-        tower_path: value_t!(matches, "tower", PathBuf).ok(),
+        tower_storage,
         dev_halt_at_slot: value_t!(matches, "dev_halt_at_slot", Slot).ok(),
-        cuda: matches.is_present("cuda"),
         expected_genesis_hash: matches
             .value_of("expected_genesis_hash")
             .map(|s| Hash::from_str(s).unwrap()),
         expected_bank_hash: matches
             .value_of("expected_bank_hash")
             .map(|s| Hash::from_str(s).unwrap()),
-        expected_shred_version: value_t!(matches, "expected_shred_version", u16).ok(),
+        expected_shred_version,
         new_hard_forks: hardforks_of(&matches, "hard_forks"),
         rpc_config: JsonRpcConfig {
             enable_rpc_transaction_history: matches.is_present("enable_rpc_transaction_history"),
@@ -2154,11 +2324,11 @@ pub fn main() {
             enable_bigtable_ledger_storage: matches
                 .is_present("enable_rpc_bigtable_ledger_storage"),
             enable_bigtable_ledger_upload: matches.is_present("enable_bigtable_ledger_upload"),
-            identity_pubkey: identity_keypair.pubkey(),
             faucet_addr: matches.value_of("rpc_faucet_addr").map(|address| {
                 solana_net_utils::parse_host_port(address).expect("failed to parse faucet address")
             }),
-            minimal_api: matches.is_present("minimal_rpc_api"),
+            full_api: matches.is_present("full_rpc_api"),
+            obsolete_v1_7_api: matches.is_present("obsolete_v1_7_rpc_api"),
             max_multiple_accounts: Some(value_t_or_exit!(
                 matches,
                 "rpc_max_multiple_accounts",
@@ -2170,12 +2340,15 @@ pub fn main() {
                 u64
             ),
             rpc_threads: value_t_or_exit!(matches, "rpc_threads", usize),
+            rpc_niceness_adj: value_t_or_exit!(matches, "rpc_niceness_adj", i8),
             rpc_bigtable_timeout: value_t!(matches, "rpc_bigtable_timeout", u64)
                 .ok()
                 .map(Duration::from_secs),
             account_indexes: account_indexes.clone(),
             rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
         },
+        accountsdb_repl_service_config,
+        geyser_plugin_config_files,
         rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
             (
                 SocketAddr::new(rpc_bind_address, rpc_port),
@@ -2186,31 +2359,31 @@ pub fn main() {
             )
         }),
         pubsub_config: PubSubConfig {
+            enable_block_subscription: matches.is_present("rpc_pubsub_enable_block_subscription"),
             enable_vote_subscription: matches.is_present("rpc_pubsub_enable_vote_subscription"),
-            max_connections: value_t_or_exit!(matches, "rpc_pubsub_max_connections", usize),
-            max_fragment_size: value_t_or_exit!(matches, "rpc_pubsub_max_fragment_size", usize),
-            max_in_buffer_capacity: value_t_or_exit!(
-                matches,
-                "rpc_pubsub_max_in_buffer_capacity",
-                usize
-            ),
-            max_out_buffer_capacity: value_t_or_exit!(
-                matches,
-                "rpc_pubsub_max_out_buffer_capacity",
-                usize
-            ),
             max_active_subscriptions: value_t_or_exit!(
                 matches,
                 "rpc_pubsub_max_active_subscriptions",
                 usize
             ),
+            queue_capacity_items: value_t_or_exit!(
+                matches,
+                "rpc_pubsub_queue_capacity_items",
+                usize
+            ),
+            queue_capacity_bytes: value_t_or_exit!(
+                matches,
+                "rpc_pubsub_queue_capacity_bytes",
+                usize
+            ),
+            worker_threads: value_t_or_exit!(matches, "rpc_pubsub_worker_threads", usize),
+            notification_threads: value_of(&matches, "rpc_pubsub_notification_threads"),
         },
         voting_disabled: matches.is_present("no_voting") || restricted_repair_only_mode,
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
-        trusted_validators,
+        known_validators,
         repair_validators,
         gossip_validators,
-        frozen_accounts: values_t!(matches, "frozen_accounts", Pubkey).unwrap_or_default(),
         no_rocksdb_compaction,
         rocksdb_compaction_interval,
         rocksdb_max_compaction_jitter,
@@ -2218,14 +2391,28 @@ pub fn main() {
         poh_verify: !matches.is_present("skip_poh_verify"),
         debug_keys,
         contact_debug_interval,
-        bpf_jit: matches.is_present("bpf_jit"),
-        send_transaction_retry_ms: value_t_or_exit!(matches, "rpc_send_transaction_retry_ms", u64),
-        send_transaction_leader_forward_count: value_t_or_exit!(
-            matches,
-            "rpc_send_transaction_leader_forward_count",
-            u64
-        ),
+        bpf_jit: !matches.is_present("no_bpf_jit"),
+        send_transaction_service_config: send_transaction_service::Config {
+            retry_rate_ms: value_t_or_exit!(matches, "rpc_send_transaction_retry_ms", u64),
+            leader_forward_count: value_t_or_exit!(
+                matches,
+                "rpc_send_transaction_leader_forward_count",
+                u64
+            ),
+            default_max_retries: value_t!(
+                matches,
+                "rpc_send_transaction_default_max_retries",
+                usize
+            )
+            .ok(),
+            service_max_retries: value_t_or_exit!(
+                matches,
+                "rpc_send_transaction_service_max_retries",
+                usize
+            ),
+        },
         no_poh_speed_test: matches.is_present("no_poh_speed_test"),
+        no_os_network_stats_reporting: matches.is_present("no_os_network_stats_reporting"),
         poh_pinned_cpu_core: value_of(&matches, "poh_pinned_cpu_core")
             .unwrap_or(poh_service::DEFAULT_PINNED_CPU_CORE),
         poh_hashes_per_batch: value_of(&matches, "poh_hashes_per_batch")
@@ -2233,11 +2420,14 @@ pub fn main() {
         account_indexes,
         accounts_db_caching_enabled: !matches.is_present("no_accounts_db_caching"),
         accounts_db_test_hash_calculation: matches.is_present("accounts_db_test_hash_calculation"),
+        accounts_db_config,
+        accounts_db_skip_shrink: matches.is_present("accounts_db_skip_shrink"),
         accounts_db_use_index_hash_calculation: matches.is_present("accounts_db_index_hashing"),
         tpu_coalesce_ms,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
-        verify_evm_state: matches.is_present("verify_evm_state"),
-
+        accounts_shrink_ratio,
+        verify_evm_state: !matches.is_present("no_verify_evm_state"),
+        jaeger_collector_url: value_of(&matches, "jaeger_collector_url"),
         ..ValidatorConfig::default()
     };
 
@@ -2305,18 +2495,28 @@ pub fn main() {
             .collect()
     });
 
-    let snapshot_interval_slots = value_t_or_exit!(matches, "snapshot_interval_slots", u64);
     let maximum_local_snapshot_age = value_t_or_exit!(matches, "maximum_local_snapshot_age", u64);
-    let snapshot_output_dir = if matches.is_present("snapshots") {
+    let maximum_full_snapshot_archives_to_retain =
+        value_t_or_exit!(matches, "maximum_full_snapshots_to_retain", usize);
+    let maximum_incremental_snapshot_archives_to_retain =
+        value_t_or_exit!(matches, "maximum_incremental_snapshots_to_retain", usize);
+    let snapshot_packager_niceness_adj =
+        value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8);
+    let minimal_snapshot_download_speed =
+        value_t_or_exit!(matches, "minimal_snapshot_download_speed", f32);
+    let maximum_snapshot_download_abort =
+        value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
+
+    let snapshot_archives_dir = if matches.is_present("snapshots") {
         PathBuf::from(matches.value_of("snapshots").unwrap())
     } else {
         ledger_path.clone()
     };
-    let snapshot_path = snapshot_output_dir.join("snapshot");
-    fs::create_dir_all(&snapshot_path).unwrap_or_else(|err| {
+    let bank_snapshots_dir = snapshot_archives_dir.join("snapshot");
+    fs::create_dir_all(&bank_snapshots_dir).unwrap_or_else(|err| {
         eprintln!(
             "Failed to create snapshots directory {:?}: {}",
-            snapshot_path, err
+            bank_snapshots_dir, err
         );
         exit(1);
     });
@@ -2348,32 +2548,56 @@ pub fn main() {
             exit(1)
         }
     }
-    validator_config.snapshot_config = Some(SnapshotConfig {
-        snapshot_interval_slots: if snapshot_interval_slots > 0 {
-            snapshot_interval_slots
+
+    let incremental_snapshot_interval_slots =
+        value_t_or_exit!(matches, "incremental_snapshot_interval_slots", u64);
+    let (full_snapshot_archive_interval_slots, incremental_snapshot_archive_interval_slots) =
+        if incremental_snapshot_interval_slots > 0 {
+            if matches.is_present("incremental_snapshots") {
+                (
+                    value_t_or_exit!(matches, "full_snapshot_interval_slots", u64),
+                    incremental_snapshot_interval_slots,
+                )
+            } else {
+                (incremental_snapshot_interval_slots, Slot::MAX)
+            }
         } else {
-            std::u64::MAX
-        },
-        snapshot_path,
-        snapshot_package_output_path: snapshot_output_dir.clone(),
+            (Slot::MAX, Slot::MAX)
+        };
+
+    validator_config.snapshot_config = Some(SnapshotConfig {
+        full_snapshot_archive_interval_slots,
+        incremental_snapshot_archive_interval_slots,
+        bank_snapshots_dir,
+        snapshot_archives_dir: snapshot_archives_dir.clone(),
         archive_format,
         snapshot_version,
+        maximum_full_snapshot_archives_to_retain,
+        maximum_incremental_snapshot_archives_to_retain,
+        accounts_hash_use_index: validator_config.accounts_db_use_index_hash_calculation,
+        accounts_hash_debug_verify: validator_config.accounts_db_test_hash_calculation,
+        packager_thread_niceness_adj: snapshot_packager_niceness_adj,
     });
 
     validator_config.accounts_hash_interval_slots =
-        value_t_or_exit!(matches, "accounts_hash_interval_slots", u64);
-    if validator_config.accounts_hash_interval_slots == 0 {
-        eprintln!("Accounts hash interval should not be 0.");
-        exit(1);
-    }
-    if is_snapshot_config_invalid(
-        snapshot_interval_slots,
+        value_t_or_exit!(matches, "accounts-hash-interval-slots", u64);
+    if !is_snapshot_config_valid(
+        full_snapshot_archive_interval_slots,
+        incremental_snapshot_archive_interval_slots,
         validator_config.accounts_hash_interval_slots,
     ) {
-        eprintln!("Invalid snapshot interval provided ({}), must be a multiple of accounts_hash_interval_slots ({})",
-            snapshot_interval_slots,
-            validator_config.accounts_hash_interval_slots,
-        );
+        eprintln!("Invalid snapshot configuration provided: snapshot intervals are incompatible. \
+            \n\t- full snapshot interval MUST be a multiple of accounts hash interval (if enabled) \
+            \n\t- incremental snapshot interval MUST be a multiple of accounts hash interval (if enabled) \
+            \n\t- full snapshot interval MUST be larger than incremental snapshot interval (if enabled) \
+            \nSnapshot configuration values: \
+            \n\tfull snapshot interval: {} \
+            \n\tincremental snapshot interval: {} \
+            \n\taccounts hash interval: {}",
+            if full_snapshot_archive_interval_slots == Slot::MAX { "disabled".to_string() } else { full_snapshot_archive_interval_slots.to_string() },
+            if incremental_snapshot_archive_interval_slots == Slot::MAX { "disabled".to_string() } else { incremental_snapshot_archive_interval_slots.to_string() },
+            validator_config.accounts_hash_interval_slots);
+
         exit(1);
     }
 
@@ -2392,22 +2616,9 @@ pub fn main() {
         validator_config.max_ledger_shreds = Some(limit_ledger_size);
     }
 
-    if matches.is_present("halt_on_trusted_validators_accounts_hash_mismatch") {
-        validator_config.halt_on_trusted_validators_accounts_hash_mismatch = true;
+    if matches.is_present("halt_on_known_validators_accounts_hash_mismatch") {
+        validator_config.halt_on_known_validators_accounts_hash_mismatch = true;
     }
-
-    let entrypoint_addrs = values_t!(matches, "entrypoint", String)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|entrypoint| {
-            solana_net_utils::parse_host_port(&entrypoint).unwrap_or_else(|e| {
-                eprintln!("failed to parse entrypoint address: {}", e);
-                exit(1);
-            })
-        })
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
 
     let public_rpc_addr = matches.value_of("public_rpc_addr").map(|addr| {
         solana_net_utils::parse_host_port(addr).unwrap_or_else(|e| {
@@ -2416,44 +2627,15 @@ pub fn main() {
         })
     });
 
-    let mut ledger_fd_lock = FdLock::new(fs::File::open(&ledger_path).unwrap());
-    let _ledger_lock = ledger_fd_lock.try_lock().unwrap_or_else(|_| {
-        println!(
-            "Error: Unable to lock {} directory. Check if another validator is running",
-            ledger_path.display()
-        );
-        exit(1);
-    });
+    if !matches.is_present("no_os_network_limits_test") {
+        check_os_network_limits();
+    }
 
-    let logfile = {
-        let logfile = matches
-            .value_of("logfile")
-            .map(|s| s.into())
-            .unwrap_or_else(|| format!("velas-validator-{}.log", identity_keypair.pubkey()));
-
-        if logfile == "-" {
-            None
-        } else {
-            println!("log file: {}", logfile);
-            Some(logfile)
-        }
-    };
-    let use_progress_bar = logfile.is_none();
-    let _logger_thread = redirect_stderr_to_file(logfile);
-
-    info!("{} {}", crate_name!(), solana_version::version!());
-
-    let evm_state_archive = matches.value_of("evm_state_archive_path").map(|path| {
-        info!("Opening evm archive storage");
-        evm_state::Storage::open_persistent(
-            path, false, // gc disabled
-        )
-        .expect("Cannot open evm archive folder")
-    });
-
-    info!("Starting validator with: {:#?}", std::env::args_os());
+    let mut ledger_lock = ledger_lockfile(&ledger_path);
+    let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
 
     let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
+    let admin_service_post_init = Arc::new(RwLock::new(None));
     admin_rpc_service::run(
         &ledger_path,
         admin_rpc_service::AdminRpcRequestMetadata {
@@ -2462,6 +2644,8 @@ pub fn main() {
             validator_exit: validator_config.validator_exit.clone(),
             start_progress: start_progress.clone(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
+            post_init: admin_service_post_init.clone(),
+            tower_storage: validator_config.tower_storage.clone(),
             archive_evm_state: evm_state_archive.clone(),
         },
     );
@@ -2556,32 +2740,35 @@ pub fn main() {
     }
 
     solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
-    solana_metrics::set_panic_hook("validator");
+    solana_metrics::set_panic_hook("validator", {
+        let version = format!("{:?}", solana_version::version!());
+        Some(version)
+    });
+    solana_entry::entry::init_poh();
+    snapshot_utils::remove_tmp_snapshot_archives(&snapshot_archives_dir);
 
-    if validator_config.cuda {
-        solana_perf::perf_libs::init_cuda();
-        enable_recycler_warming();
-    }
-    solana_ledger::entry::init_poh();
-    solana_runtime::snapshot_utils::remove_tmp_snapshot_archives(&snapshot_output_dir);
+    let identity_keypair = identity_keypair;
 
     let should_check_duplicate_instance = !matches.is_present("no_duplicate_instance_check");
     if !cluster_entrypoints.is_empty() {
-        rpc_bootstrap(
+        bootstrap::rpc_bootstrap(
             &node,
             &identity_keypair,
             &ledger_path,
-            &snapshot_output_dir,
+            &snapshot_archives_dir,
             &vote_account,
             authorized_voter_keypairs.clone(),
             &cluster_entrypoints,
             &mut validator_config,
             rpc_bootstrap_config,
-            no_port_check,
+            do_port_check,
             use_progress_bar,
             maximum_local_snapshot_age,
             should_check_duplicate_instance,
             &start_progress,
+            minimal_snapshot_download_speed,
+            maximum_snapshot_download_abort,
+            socket_addr_space,
         );
         *start_progress.write().unwrap() = ValidatorStartProgress::Initializing;
     }
@@ -2593,7 +2780,7 @@ pub fn main() {
 
     let validator = Validator::new(
         node,
-        &identity_keypair,
+        identity_keypair,
         &ledger_path,
         &vote_account,
         authorized_voter_keypairs,
@@ -2602,7 +2789,14 @@ pub fn main() {
         should_check_duplicate_instance,
         start_progress,
         evm_state_archive,
+        socket_addr_space,
     );
+    *admin_service_post_init.write().unwrap() =
+        Some(admin_rpc_service::AdminRpcRequestMetadataPostInit {
+            bank_forks: validator.bank_forks.clone(),
+            cluster_info: validator.cluster_info.clone(),
+            vote_account,
+        });
 
     if let Some(filename) = init_complete_file {
         File::create(filename).unwrap_or_else(|_| {
@@ -2627,7 +2821,7 @@ fn process_account_indexes(matches: &ArgMatches) -> AccountSecondaryIndexes {
             "velas-accounts-owners" => AccountIndex::VelasAccountOwner,
             "velas-accounts-operationals" => AccountIndex::VelasAccountOperational,
             "velas-relying-party-owners" => AccountIndex::VelasRelyingOwner,
-            unexpected => panic!("Unable to handle 'account_indexes' flag {}", unexpected),
+            unexpected => panic!("Unable to handle account_index {}", unexpected),
         })
         .collect();
 

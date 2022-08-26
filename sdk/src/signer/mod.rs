@@ -68,6 +68,8 @@ pub trait Signer {
     }
     /// Fallibly produces an Ed25519 signature over the provided `message` bytes.
     fn try_sign_message(&self, message: &[u8]) -> Result<Signature, SignerError>;
+    /// Whether the impelmentation requires user interaction to sign
+    fn is_interactive(&self) -> bool;
 }
 
 impl<T> From<T> for Box<dyn Signer>
@@ -98,8 +100,7 @@ pub fn unique_signers(signers: Vec<&dyn Signer>) -> Vec<&dyn Signer> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::signer::keypair::Keypair;
+    use {super::*, crate::signer::keypair::Keypair};
 
     fn pubkeys(signers: &[&dyn Signer]) -> Vec<Pubkey> {
         signers.iter().map(|x| x.pubkey()).collect()

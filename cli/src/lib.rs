@@ -18,6 +18,9 @@ macro_rules! pubkey {
     };
 }
 
+#[macro_use]
+extern crate const_format;
+
 extern crate serde_derive;
 
 pub mod checks;
@@ -35,4 +38,5 @@ pub mod test_utils;
 pub mod validator_info;
 pub mod vote;
 
+pub mod wallet;
 pub mod evm;

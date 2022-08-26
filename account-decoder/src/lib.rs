@@ -17,8 +17,10 @@ pub mod validator_info;
 use {
     crate::parse_account_data::{parse_account_data, AccountAdditionalData, ParsedAccount},
     solana_sdk::{
-        account::ReadableAccount, account::WritableAccount, clock::Epoch,
-        fee_calculator::FeeCalculator, pubkey::Pubkey,
+        account::{ReadableAccount, WritableAccount},
+        clock::Epoch,
+        fee_calculator::FeeCalculator,
+        pubkey::Pubkey,
     },
     std::{
         io::{Read, Write},
@@ -28,6 +30,7 @@ use {
 
 pub type StringAmount = String;
 pub type StringDecimals = String;
+pub const MAX_BASE58_BYTES: usize = 128;
 
 /// A duplicate representation of an Account for pretty JSON serialization
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -50,7 +53,7 @@ pub enum UiAccountData {
     Binary(String, UiAccountEncoding),
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum UiAccountEncoding {
     Binary, // Legacy. Retained for RPC backwards compatibility
@@ -62,6 +65,17 @@ pub enum UiAccountEncoding {
 }
 
 impl UiAccount {
+    fn encode_bs58<T: ReadableAccount>(
+        account: &T,
+        data_slice_config: Option<UiDataSliceConfig>,
+    ) -> String {
+        if account.data().len() <= MAX_BASE58_BYTES {
+            bs58::encode(slice_data(account.data(), data_slice_config)).into_string()
+        } else {
+            "error: data too large for bs58 encoding".to_string()
+        }
+    }
+
     pub fn encode<T: ReadableAccount>(
         pubkey: &Pubkey,
         account: &T,
@@ -70,13 +84,14 @@ impl UiAccount {
         data_slice_config: Option<UiDataSliceConfig>,
     ) -> Self {
         let data = match encoding {
-            UiAccountEncoding::Binary => UiAccountData::LegacyBinary(
-                bs58::encode(slice_data(account.data(), data_slice_config)).into_string(),
-            ),
-            UiAccountEncoding::Base58 => UiAccountData::Binary(
-                bs58::encode(slice_data(account.data(), data_slice_config)).into_string(),
-                encoding,
-            ),
+            UiAccountEncoding::Binary => {
+                let data = Self::encode_bs58(account, data_slice_config);
+                UiAccountData::LegacyBinary(data)
+            }
+            UiAccountEncoding::Base58 => {
+                let data = Self::encode_bs58(account, data_slice_config);
+                UiAccountData::Binary(data, encoding)
+            }
             UiAccountEncoding::Base64 => UiAccountData::Binary(
                 base64::encode(slice_data(account.data(), data_slice_config)),
                 encoding,
@@ -127,14 +142,13 @@ impl UiAccount {
                 UiAccountEncoding::Base64 => base64::decode(blob).ok(),
                 UiAccountEncoding::Base64Zstd => base64::decode(blob)
                     .ok()
-                    .map(|zstd_data| {
+                    .and_then(|zstd_data| {
                         let mut data = vec![];
                         zstd::stream::read::Decoder::new(zstd_data.as_slice())
                             .and_then(|mut reader| reader.read_to_end(&mut data))
                             .map(|_| data)
                             .ok()
-                    })
-                    .flatten(),
+                    }),
                 UiAccountEncoding::Binary | UiAccountEncoding::JsonParsed => None,
             },
         }?;
@@ -172,7 +186,7 @@ impl Default for UiFeeCalculator {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiDataSliceConfig {
     pub offset: usize,
@@ -195,8 +209,10 @@ fn slice_data(data: &[u8], data_slice_config: Option<UiDataSliceConfig>) -> &[u8
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use solana_sdk::account::{Account, AccountSharedData};
+    use {
+        super::*,
+        solana_sdk::account::{Account, AccountSharedData},
+    };
 
     #[test]
     fn test_slice_data() {

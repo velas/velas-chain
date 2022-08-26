@@ -1,28 +1,33 @@
-use crate::{
-    parse_associated_token::{parse_associated_token, spl_associated_token_id_v1_0},
-    parse_bpf_loader::{parse_bpf_loader, parse_bpf_upgradeable_loader},
-    parse_evm::parse_evm,
-    parse_stake::parse_stake,
-    parse_system::parse_system,
-    parse_token::parse_token,
-    parse_vote::parse_vote,
+use {
+    crate::{
+        extract_memos::{spl_memo_id_v1, spl_memo_id_v3},
+        parse_associated_token::{parse_associated_token, spl_associated_token_id},
+        parse_bpf_loader::{parse_bpf_loader, parse_bpf_upgradeable_loader},
+        parse_evm::parse_evm,
+        parse_stake::parse_stake,
+        parse_system::parse_system,
+        parse_token::parse_token,
+        parse_vote::parse_vote,
+    },
+    inflector::Inflector,
+    serde_json::Value,
+    solana_account_decoder::parse_token::spl_token_ids,
+    solana_sdk::{instruction::CompiledInstruction, pubkey::Pubkey, stake, system_program},
+    std::{
+        collections::HashMap,
+        str::{from_utf8, Utf8Error},
+    },
+    thiserror::Error,
 };
-use inflector::Inflector;
-use serde_json::Value;
-use solana_account_decoder::parse_token::spl_token_id_v2_0;
-use solana_sdk::{instruction::CompiledInstruction, pubkey::Pubkey, system_program};
-use std::{collections::HashMap, str::from_utf8};
-use thiserror::Error;
 
 lazy_static! {
-    static ref ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey = spl_associated_token_id_v1_0();
+    static ref ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey = spl_associated_token_id();
     static ref BPF_LOADER_PROGRAM_ID: Pubkey = solana_sdk::bpf_loader::id();
     static ref BPF_UPGRADEABLE_LOADER_PROGRAM_ID: Pubkey = solana_sdk::bpf_loader_upgradeable::id();
-    static ref MEMO_V1_PROGRAM_ID: Pubkey = Pubkey::new_from_array(spl_memo::v1::id().to_bytes());
-    static ref MEMO_V3_PROGRAM_ID: Pubkey = Pubkey::new_from_array(spl_memo::id().to_bytes());
-    static ref STAKE_PROGRAM_ID: Pubkey = solana_stake_program::id();
+    static ref MEMO_V1_PROGRAM_ID: Pubkey = spl_memo_id_v1();
+    static ref MEMO_V3_PROGRAM_ID: Pubkey = spl_memo_id_v3();
+    static ref STAKE_PROGRAM_ID: Pubkey = stake::program::id();
     static ref SYSTEM_PROGRAM_ID: Pubkey = system_program::id();
-    static ref TOKEN_PROGRAM_ID: Pubkey = spl_token_id_v2_0();
     static ref VOTE_PROGRAM_ID: Pubkey = solana_vote_program::id();
     static ref EVM_PROGRAM_ID: Pubkey = solana_evm_loader_program::ID;
     static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableProgram> = {
@@ -33,7 +38,9 @@ lazy_static! {
         );
         m.insert(*MEMO_V1_PROGRAM_ID, ParsableProgram::SplMemo);
         m.insert(*MEMO_V3_PROGRAM_ID, ParsableProgram::SplMemo);
-        m.insert(*TOKEN_PROGRAM_ID, ParsableProgram::SplToken);
+        for spl_token_id in spl_token_ids() {
+            m.insert(spl_token_id, ParsableProgram::SplToken);
+        }
         m.insert(*BPF_LOADER_PROGRAM_ID, ParsableProgram::BpfLoader);
         m.insert(
             *BPF_UPGRADEABLE_LOADER_PROGRAM_ID,
@@ -105,7 +112,7 @@ pub fn parse(
         ParsableProgram::SplAssociatedTokenAccount => {
             serde_json::to_value(parse_associated_token(instruction, account_keys)?)?
         }
-        ParsableProgram::SplMemo => parse_memo(instruction),
+        ParsableProgram::SplMemo => parse_memo(instruction)?,
         ParsableProgram::SplToken => serde_json::to_value(parse_token(instruction, account_keys)?)?,
         ParsableProgram::BpfLoader => {
             serde_json::to_value(parse_bpf_loader(instruction, account_keys)?)?
@@ -125,8 +132,14 @@ pub fn parse(
     })
 }
 
-fn parse_memo(instruction: &CompiledInstruction) -> Value {
-    Value::String(from_utf8(&instruction.data).unwrap().to_string())
+fn parse_memo(instruction: &CompiledInstruction) -> Result<Value, ParseInstructionError> {
+    parse_memo_data(&instruction.data)
+        .map(Value::String)
+        .map_err(|_| ParseInstructionError::InstructionNotParsable(ParsableProgram::SplMemo))
+}
+
+pub fn parse_memo_data(data: &[u8]) -> Result<String, Utf8Error> {
+    from_utf8(data).map(|s| s.to_string())
 }
 
 pub(crate) fn check_num_accounts(
@@ -145,8 +158,7 @@ pub(crate) fn check_num_accounts(
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use serde_json::json;
+    use {super::*, serde_json::json};
 
     #[test]
     fn test_parse() {
@@ -174,5 +186,28 @@ mod test {
 
         let non_parsable_program_id = Pubkey::new(&[1; 32]);
         assert!(parse(&non_parsable_program_id, &memo_instruction, &[]).is_err());
+    }
+
+    #[test]
+    fn test_parse_memo() {
+        let good_memo = "good memo".to_string();
+        assert_eq!(
+            parse_memo(&CompiledInstruction {
+                program_id_index: 0,
+                accounts: vec![],
+                data: good_memo.as_bytes().to_vec(),
+            })
+            .unwrap(),
+            Value::String(good_memo),
+        );
+
+        let bad_memo = vec![128u8];
+        assert!(std::str::from_utf8(&bad_memo).is_err());
+        assert!(parse_memo(&CompiledInstruction {
+            program_id_index: 0,
+            data: bad_memo,
+            accounts: vec![],
+        })
+        .is_err(),);
     }
 }

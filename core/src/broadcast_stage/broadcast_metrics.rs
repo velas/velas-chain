@@ -2,7 +2,7 @@ use super::*;
 
 pub(crate) trait BroadcastStats {
     fn update(&mut self, new_stats: &Self);
-    fn report_stats(&mut self, slot: Slot, slot_start: Instant);
+    fn report_stats(&mut self, slot: Slot, slot_start: Instant, was_interrupted: bool);
 }
 
 #[derive(Clone)]
@@ -10,6 +10,7 @@ pub(crate) struct BroadcastShredBatchInfo {
     pub(crate) slot: Slot,
     pub(crate) num_expected_batches: Option<usize>,
     pub(crate) slot_start_ts: Instant,
+    pub(crate) was_interrupted: bool,
 }
 
 #[derive(Default, Clone)]
@@ -19,6 +20,8 @@ pub struct TransmitShredsStats {
     pub get_peers_elapsed: u64,
     pub shred_select: u64,
     pub num_shreds: usize,
+    pub total_packets: usize,
+    pub dropped_packets: usize,
 }
 
 impl BroadcastStats for TransmitShredsStats {
@@ -28,24 +31,42 @@ impl BroadcastStats for TransmitShredsStats {
         self.get_peers_elapsed += new_stats.get_peers_elapsed;
         self.num_shreds += new_stats.num_shreds;
         self.shred_select += new_stats.shred_select;
+        self.total_packets += new_stats.total_packets;
+        self.dropped_packets += new_stats.dropped_packets;
     }
-    fn report_stats(&mut self, slot: Slot, slot_start: Instant) {
-        datapoint_info!(
-            "broadcast-transmit-shreds-stats",
-            ("slot", slot as i64, i64),
-            (
-                "end_to_end_elapsed",
-                // `slot_start` signals when the first batch of shreds was
-                // received, used to measure duration of broadcast
-                slot_start.elapsed().as_micros() as i64,
-                i64
-            ),
-            ("transmit_elapsed", self.transmit_elapsed as i64, i64),
-            ("send_mmsg_elapsed", self.send_mmsg_elapsed as i64, i64),
-            ("get_peers_elapsed", self.get_peers_elapsed as i64, i64),
-            ("num_shreds", self.num_shreds as i64, i64),
-            ("shred_select", self.shred_select as i64, i64),
-        );
+    fn report_stats(&mut self, slot: Slot, slot_start: Instant, was_interrupted: bool) {
+        if was_interrupted {
+            datapoint_info!(
+                "broadcast-transmit-shreds-interrupted-stats",
+                ("slot", slot as i64, i64),
+                ("transmit_elapsed", self.transmit_elapsed as i64, i64),
+                ("send_mmsg_elapsed", self.send_mmsg_elapsed as i64, i64),
+                ("get_peers_elapsed", self.get_peers_elapsed as i64, i64),
+                ("num_shreds", self.num_shreds as i64, i64),
+                ("shred_select", self.shred_select as i64, i64),
+                ("total_packets", self.total_packets as i64, i64),
+                ("dropped_packets", self.dropped_packets as i64, i64),
+            );
+        } else {
+            datapoint_info!(
+                "broadcast-transmit-shreds-stats",
+                ("slot", slot as i64, i64),
+                (
+                    "end_to_end_elapsed",
+                    // `slot_start` signals when the first batch of shreds was
+                    // received, used to measure duration of broadcast
+                    slot_start.elapsed().as_micros() as i64,
+                    i64
+                ),
+                ("transmit_elapsed", self.transmit_elapsed as i64, i64),
+                ("send_mmsg_elapsed", self.send_mmsg_elapsed as i64, i64),
+                ("get_peers_elapsed", self.get_peers_elapsed as i64, i64),
+                ("num_shreds", self.num_shreds as i64, i64),
+                ("shred_select", self.shred_select as i64, i64),
+                ("total_packets", self.total_packets as i64, i64),
+                ("dropped_packets", self.dropped_packets as i64, i64),
+            );
+        }
     }
 }
 
@@ -59,24 +80,37 @@ impl BroadcastStats for InsertShredsStats {
         self.insert_shreds_elapsed += new_stats.insert_shreds_elapsed;
         self.num_shreds += new_stats.num_shreds;
     }
-    fn report_stats(&mut self, slot: Slot, slot_start: Instant) {
-        datapoint_info!(
-            "broadcast-insert-shreds-stats",
-            ("slot", slot as i64, i64),
-            (
-                "end_to_end_elapsed",
-                // `slot_start` signals when the first batch of shreds was
-                // received, used to measure duration of broadcast
-                slot_start.elapsed().as_micros() as i64,
-                i64
-            ),
-            (
-                "insert_shreds_elapsed",
-                self.insert_shreds_elapsed as i64,
-                i64
-            ),
-            ("num_shreds", self.num_shreds as i64, i64),
-        );
+    fn report_stats(&mut self, slot: Slot, slot_start: Instant, was_interrupted: bool) {
+        if was_interrupted {
+            datapoint_info!(
+                "broadcast-insert-shreds-interrupted-stats",
+                ("slot", slot as i64, i64),
+                (
+                    "insert_shreds_elapsed",
+                    self.insert_shreds_elapsed as i64,
+                    i64
+                ),
+                ("num_shreds", self.num_shreds as i64, i64),
+            );
+        } else {
+            datapoint_info!(
+                "broadcast-insert-shreds-stats",
+                ("slot", slot as i64, i64),
+                (
+                    "end_to_end_elapsed",
+                    // `slot_start` signals when the first batch of shreds was
+                    // received, used to measure duration of broadcast
+                    slot_start.elapsed().as_micros() as i64,
+                    i64
+                ),
+                (
+                    "insert_shreds_elapsed",
+                    self.insert_shreds_elapsed as i64,
+                    i64
+                ),
+                ("num_shreds", self.num_shreds as i64, i64),
+            );
+        }
     }
 }
 
@@ -122,9 +156,11 @@ impl<T: BroadcastStats + Default> SlotBroadcastStats<T> {
                 }
                 if let Some(num_expected_batches) = slot_batch_counter.num_expected_batches {
                     if slot_batch_counter.num_batches == num_expected_batches {
-                        slot_batch_counter
-                            .broadcast_shred_stats
-                            .report_stats(batch_info.slot, batch_info.slot_start_ts);
+                        slot_batch_counter.broadcast_shred_stats.report_stats(
+                            batch_info.slot,
+                            batch_info.slot_start_ts,
+                            batch_info.was_interrupted,
+                        );
                         should_delete = true;
                     }
                 }
@@ -153,7 +189,7 @@ mod test {
             self.count += new_stats.count;
             self.sender = new_stats.sender.clone();
         }
-        fn report_stats(&mut self, slot: Slot, slot_start: Instant) {
+        fn report_stats(&mut self, slot: Slot, slot_start: Instant, _was_interrupted: bool) {
             self.sender
                 .as_ref()
                 .unwrap()
@@ -173,11 +209,14 @@ mod test {
                 send_mmsg_elapsed: 3,
                 shred_select: 4,
                 num_shreds: 5,
+                total_packets: 6,
+                dropped_packets: 7,
             },
             &Some(BroadcastShredBatchInfo {
                 slot: 0,
                 num_expected_batches: Some(2),
                 slot_start_ts: start,
+                was_interrupted: false,
             }),
         );
 
@@ -190,14 +229,18 @@ mod test {
         assert_eq!(slot_0_stats.broadcast_shred_stats.send_mmsg_elapsed, 3);
         assert_eq!(slot_0_stats.broadcast_shred_stats.shred_select, 4);
         assert_eq!(slot_0_stats.broadcast_shred_stats.num_shreds, 5);
+        assert_eq!(slot_0_stats.broadcast_shred_stats.total_packets, 6);
+        assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets, 7);
 
         slot_broadcast_stats.update(
             &TransmitShredsStats {
-                transmit_elapsed: 7,
-                get_peers_elapsed: 8,
-                send_mmsg_elapsed: 9,
-                shred_select: 10,
-                num_shreds: 11,
+                transmit_elapsed: 11,
+                get_peers_elapsed: 12,
+                send_mmsg_elapsed: 13,
+                shred_select: 14,
+                num_shreds: 15,
+                total_packets: 16,
+                dropped_packets: 17,
             },
             &None,
         );
@@ -211,6 +254,8 @@ mod test {
         assert_eq!(slot_0_stats.broadcast_shred_stats.send_mmsg_elapsed, 3);
         assert_eq!(slot_0_stats.broadcast_shred_stats.shred_select, 4);
         assert_eq!(slot_0_stats.broadcast_shred_stats.num_shreds, 5);
+        assert_eq!(slot_0_stats.broadcast_shred_stats.total_packets, 6);
+        assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets, 7);
 
         // If another batch is given, then total number of batches == num_expected_batches == 2,
         // so the batch should be purged from the HashMap
@@ -221,11 +266,14 @@ mod test {
                 send_mmsg_elapsed: 1,
                 shred_select: 1,
                 num_shreds: 1,
+                total_packets: 1,
+                dropped_packets: 1,
             },
             &Some(BroadcastShredBatchInfo {
                 slot: 0,
                 num_expected_batches: None,
                 slot_start_ts: start,
+                was_interrupted: false,
             }),
         );
 
@@ -250,6 +298,7 @@ mod test {
                         slot,
                         num_expected_batches: None,
                         slot_start_ts: start,
+                        was_interrupted: false,
                     };
                     if i == round % num_threads {
                         broadcast_batch_info.num_expected_batches = Some(num_threads);

@@ -1,35 +1,36 @@
-use crate::{StoredExtendedRewards, StoredTransactionStatusMeta};
-use solana_account_decoder::parse_token::{real_number_string_trimmed, UiTokenAmount};
-use solana_sdk::{
-    hash::Hash,
-    instruction::CompiledInstruction,
-    instruction::InstructionError,
-    message::{Message, MessageHeader},
-    pubkey::Pubkey,
-    signature::Signature,
-    transaction::Transaction,
-    transaction::TransactionError,
-};
-use solana_transaction_status::{
-    ConfirmedBlock, InnerInstructions, Reward, RewardType, TransactionByAddrInfo,
-    TransactionStatusMeta, TransactionTokenBalance, TransactionWithStatusMeta,
-};
-use std::{
-    convert::{TryFrom, TryInto},
-    str::FromStr,
+use {
+    crate::{StoredExtendedRewards, StoredTransactionStatusMeta},
+    solana_account_decoder::parse_token::{real_number_string_trimmed, UiTokenAmount},
+    solana_sdk::{
+        hash::Hash,
+        instruction::{CompiledInstruction, InstructionError},
+        message::{Message, MessageHeader},
+        pubkey::Pubkey,
+        signature::Signature,
+        transaction::{Transaction, TransactionError},
+    },
+    solana_transaction_status::{
+        ConfirmedBlock, ConfirmedBlockWithOptionalMetadata, InnerInstructions, Reward, RewardType,
+        TransactionByAddrInfo, TransactionStatusMeta, TransactionTokenBalance,
+        TransactionWithMetadata, TransactionWithOptionalMetadata,
+    },
+    std::{
+        convert::{TryFrom, TryInto},
+        str::FromStr,
+    },
 };
 
 pub mod generated {
     include!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        concat!("/proto/solana.storage.confirmed_block.rs")
+        env!("OUT_DIR"),
+        "/solana.storage.confirmed_block.rs"
     ));
 }
 
 pub mod tx_by_addr {
     include!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        concat!("/proto/solana.storage.transaction_by_addr.rs")
+        env!("OUT_DIR"),
+        "/solana.storage.transaction_by_addr.rs"
     ));
 }
 
@@ -94,6 +95,7 @@ impl From<Reward> for generated::Reward {
                 Some(RewardType::Staking) => generated::RewardType::Staking,
                 Some(RewardType::Voting) => generated::RewardType::Voting,
             } as i32,
+            commission: reward.commission.map(|c| c.to_string()).unwrap_or_default(),
         }
     }
 }
@@ -112,6 +114,7 @@ impl From<generated::Reward> for Reward {
                 4 => Some(RewardType::Voting),
                 _ => None,
             },
+            commission: reward.commission.parse::<u8>().ok(),
         }
     }
 }
@@ -140,7 +143,7 @@ impl From<ConfirmedBlock> for generated::ConfirmedBlock {
     }
 }
 
-impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlock {
+impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlockWithOptionalMetadata {
     type Error = bincode::Error;
     fn try_from(
         confirmed_block: generated::ConfirmedBlock,
@@ -162,7 +165,8 @@ impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlock {
             transactions: transactions
                 .into_iter()
                 .map(|tx| tx.try_into())
-                .collect::<std::result::Result<Vec<TransactionWithStatusMeta>, Self::Error>>()?,
+                .collect::<std::result::Result<Vec<TransactionWithOptionalMetadata>, Self::Error>>(
+                )?,
             rewards: rewards.into_iter().map(|r| r.into()).collect(),
             block_time: block_time.map(|generated::UnixTimestamp { timestamp }| timestamp),
             block_height: block_height.map(|generated::BlockHeight { block_height }| block_height),
@@ -170,17 +174,16 @@ impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlock {
     }
 }
 
-impl From<TransactionWithStatusMeta> for generated::ConfirmedTransaction {
-    fn from(value: TransactionWithStatusMeta) -> Self {
-        let meta = value.meta.map(|meta| meta.into());
+impl From<TransactionWithMetadata> for generated::ConfirmedTransaction {
+    fn from(value: TransactionWithMetadata) -> Self {
         Self {
             transaction: Some(value.transaction.into()),
-            meta,
+            meta: Some(value.meta.into()),
         }
     }
 }
 
-impl TryFrom<generated::ConfirmedTransaction> for TransactionWithStatusMeta {
+impl TryFrom<generated::ConfirmedTransaction> for TransactionWithOptionalMetadata {
     type Error = bincode::Error;
     fn try_from(value: generated::ConfirmedTransaction) -> std::result::Result<Self, Self::Error> {
         let meta = value.meta.map(|meta| meta.try_into()).transpose()?;
@@ -286,11 +289,13 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
                 err: bincode::serialize(&err).expect("transaction error to serialize to bytes"),
             }),
         };
+        let inner_instructions_none = inner_instructions.is_none();
         let inner_instructions = inner_instructions
             .unwrap_or_default()
             .into_iter()
             .map(|ii| ii.into())
             .collect();
+        let log_messages_none = log_messages.is_none();
         let log_messages = log_messages.unwrap_or_default();
         let pre_token_balances = pre_token_balances
             .unwrap_or_default()
@@ -314,7 +319,9 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
             pre_balances,
             post_balances,
             inner_instructions,
+            inner_instructions_none,
             log_messages,
+            log_messages_none,
             pre_token_balances,
             post_token_balances,
             rewards,
@@ -339,7 +346,9 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             pre_balances,
             post_balances,
             inner_instructions,
+            inner_instructions_none,
             log_messages,
+            log_messages_none,
             pre_token_balances,
             post_token_balances,
             rewards,
@@ -348,13 +357,21 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             None => Ok(()),
             Some(tx_error) => Err(bincode::deserialize(&tx_error.err)?),
         };
-        let inner_instructions = Some(
-            inner_instructions
-                .into_iter()
-                .map(|inner| inner.into())
-                .collect(),
-        );
-        let log_messages = Some(log_messages);
+        let inner_instructions = if inner_instructions_none {
+            None
+        } else {
+            Some(
+                inner_instructions
+                    .into_iter()
+                    .map(|inner| inner.into())
+                    .collect(),
+            )
+        };
+        let log_messages = if log_messages_none {
+            None
+        } else {
+            Some(log_messages)
+        };
         let pre_token_balances = Some(
             pre_token_balances
                 .into_iter()
@@ -411,6 +428,7 @@ impl From<TransactionTokenBalance> for generated::TokenBalance {
                 amount: value.ui_token_amount.amount,
                 ui_amount_string: value.ui_token_amount.ui_amount_string,
             }),
+            owner: value.owner,
         }
     }
 }
@@ -438,6 +456,7 @@ impl From<generated::TokenBalance> for TransactionTokenBalance {
                     )
                 },
             },
+            owner: value.owner,
         }
     }
 }
@@ -524,6 +543,9 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
                     46 => InstructionError::InvalidAccountOwner,
                     47 => InstructionError::ArithmeticOverflow,
                     48 => InstructionError::UnsupportedSysvar,
+                    49 => InstructionError::IllegalOwner,
+                    50 => InstructionError::MaxAccountsDataSizeExceeded,
+                    51 => InstructionError::ActiveVoteAccountClose,
                     _ => return Err("Invalid InstructionError"),
                 };
 
@@ -551,6 +573,18 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
             14 => TransactionError::SanitizeFailure,
             15 => TransactionError::ClusterMaintenance,
             16 => TransactionError::AccountBorrowOutstanding,
+            17 => TransactionError::WouldExceedMaxBlockCostLimit,
+            18 => TransactionError::UnsupportedVersion,
+            19 => TransactionError::InvalidWritableAccount,
+            20 => TransactionError::WouldExceedMaxAccountCostLimit,
+            21 => TransactionError::WouldExceedMaxAccountDataCostLimit,
+            22 => TransactionError::TooManyAccountLocks,
+            23 => TransactionError::AddressLookupTableNotFound,
+            24 => TransactionError::InvalidAddressLookupTableOwner,
+            25 => TransactionError::InvalidAddressLookupTableData,
+            26 => TransactionError::InvalidAddressLookupTableIndex,
+            27 => TransactionError::InvalidRentPayingAccount,
+            28 => TransactionError::WouldExceedMaxVoteCostLimit,
             _ => return Err("Invalid TransactionError"),
         })
     }
@@ -608,6 +642,42 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 }
                 TransactionError::AccountBorrowOutstanding => {
                     tx_by_addr::TransactionErrorType::AccountBorrowOutstandingTx
+                }
+                TransactionError::WouldExceedMaxBlockCostLimit => {
+                    tx_by_addr::TransactionErrorType::WouldExceedMaxBlockCostLimit
+                }
+                TransactionError::UnsupportedVersion => {
+                    tx_by_addr::TransactionErrorType::UnsupportedVersion
+                }
+                TransactionError::InvalidWritableAccount => {
+                    tx_by_addr::TransactionErrorType::InvalidWritableAccount
+                }
+                TransactionError::WouldExceedMaxAccountCostLimit => {
+                    tx_by_addr::TransactionErrorType::WouldExceedMaxAccountCostLimit
+                }
+                TransactionError::WouldExceedMaxAccountDataCostLimit => {
+                    tx_by_addr::TransactionErrorType::WouldExceedMaxAccountDataCostLimit
+                }
+                TransactionError::TooManyAccountLocks => {
+                    tx_by_addr::TransactionErrorType::TooManyAccountLocks
+                }
+                TransactionError::AddressLookupTableNotFound => {
+                    tx_by_addr::TransactionErrorType::AddressLookupTableNotFound
+                }
+                TransactionError::InvalidAddressLookupTableOwner => {
+                    tx_by_addr::TransactionErrorType::InvalidAddressLookupTableOwner
+                }
+                TransactionError::InvalidAddressLookupTableData => {
+                    tx_by_addr::TransactionErrorType::InvalidAddressLookupTableData
+                }
+                TransactionError::InvalidAddressLookupTableIndex => {
+                    tx_by_addr::TransactionErrorType::InvalidAddressLookupTableIndex
+                }
+                TransactionError::InvalidRentPayingAccount => {
+                    tx_by_addr::TransactionErrorType::InvalidRentPayingAccount
+                }
+                TransactionError::WouldExceedMaxVoteCostLimit => {
+                    tx_by_addr::TransactionErrorType::WouldExceedMaxVoteCostLimit
                 }
             } as i32,
             instruction_error: match transaction_error {
@@ -762,6 +832,12 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                             }
                             InstructionError::IllegalOwner => {
                                 tx_by_addr::InstructionErrorType::IllegalOwner
+                            }
+                            InstructionError::MaxAccountsDataSizeExceeded => {
+                                tx_by_addr::InstructionErrorType::MaxAccountsDataSizeExceeded
+                            }
+                            InstructionError::ActiveVoteAccountClose => {
+                                tx_by_addr::InstructionErrorType::ActiveVoteAccountClose
                             }
                         } as i32,
                         custom: match instruction_error {
@@ -1125,9 +1201,9 @@ impl From<evm_state::ExitReason> for generated_evm::ExitReason {
                     other: String::new(),
                     variant: ExitVariant::DesignatedInvalid.into(),
                 },
-                ExitError::InvalidCode => generated_evm::ExitReason {
+                ExitError::InvalidCode(opcode) => generated_evm::ExitReason {
                     fatal: false,
-                    other: String::new(),
+                    other: opcode.as_u8().to_string(),
                     variant: ExitVariant::InvalidCode.into(),
                 },
                 ExitError::InvalidJump => generated_evm::ExitReason {
@@ -1227,7 +1303,7 @@ impl TryFrom<generated_evm::ExitReason> for evm_state::ExitReason {
     fn try_from(
         header: generated_evm::ExitReason,
     ) -> Result<Self, <Self as TryFrom<generated_evm::ExitReason>>::Error> {
-        use evm_state::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed};
+        use evm_state::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Opcode};
         use generated_evm::exit_reason::ExitVariant;
         let error_or_fatal = match ExitVariant::from_i32(header.variant)
             .ok_or("Enum error variant out of bounds")?
@@ -1249,7 +1325,9 @@ impl TryFrom<generated_evm::ExitReason> for evm_state::ExitReason {
             ExitVariant::CreateContractLimit => ExitError::CreateContractLimit,
             ExitVariant::CreateEmpty => ExitError::CreateEmpty,
             ExitVariant::DesignatedInvalid => ExitError::DesignatedInvalid,
-            ExitVariant::InvalidCode => ExitError::InvalidCode,
+            ExitVariant::InvalidCode => ExitError::InvalidCode(Opcode(
+                u8::from_str(&header.other).map_err(|_| "Failed to decode opcode")?,
+            )),
             ExitVariant::InvalidJump => ExitError::InvalidJump,
             ExitVariant::InvalidRange => ExitError::InvalidRange,
             ExitVariant::StackOverflow => ExitError::StackOverflow,
@@ -1321,7 +1399,7 @@ impl TryFrom<generated_evm::EvmFullBlock> for evm_state::Block {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {super::*, enum_iterator::IntoEnumIterator};
 
     #[test]
     fn test_reward_type_encode() {
@@ -1330,6 +1408,7 @@ mod test {
             lamports: 123,
             post_balance: 321,
             reward_type: None,
+            commission: None,
         };
         let gen_reward: generated::Reward = reward.clone().into();
         assert_eq!(reward, gen_reward.into());
@@ -1367,6 +1446,14 @@ mod test {
 
     #[test]
     fn test_transaction_error_encode() {
+        let transaction_error = TransactionError::AccountBorrowOutstanding;
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
         let transaction_error = TransactionError::AccountInUse;
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
@@ -1391,6 +1478,14 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
+        let transaction_error = TransactionError::AlreadyProcessed;
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
         let transaction_error = TransactionError::BlockhashNotFound;
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
@@ -1408,14 +1503,6 @@ mod test {
         );
 
         let transaction_error = TransactionError::ClusterMaintenance;
-        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
-            transaction_error.clone().into();
-        assert_eq!(
-            transaction_error,
-            tx_by_addr_transaction_error.try_into().unwrap()
-        );
-
-        let transaction_error = TransactionError::AlreadyProcessed;
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1480,6 +1567,38 @@ mod test {
         );
 
         let transaction_error = TransactionError::SignatureFailure;
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
+        let transaction_error = TransactionError::WouldExceedMaxBlockCostLimit;
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
+        let transaction_error = TransactionError::WouldExceedMaxVoteCostLimit;
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
+        let transaction_error = TransactionError::WouldExceedMaxAccountCostLimit;
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
+        let transaction_error = TransactionError::UnsupportedVersion;
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -2088,5 +2207,55 @@ mod test {
 
         let block_serialized: generated_evm::EvmFullBlock = block.clone().into();
         assert_eq!(block, block_serialized.try_into().unwrap());
+    }
+    #[test]
+    fn test_error_enums() {
+        let ix_index = 1;
+        let custom_error = 42;
+        for error in tx_by_addr::TransactionErrorType::into_enum_iter() {
+            if error != tx_by_addr::TransactionErrorType::InstructionError {
+                let tx_by_addr_error = tx_by_addr::TransactionError {
+                    transaction_error: error as i32,
+                    instruction_error: None,
+                };
+                let transaction_error: TransactionError = tx_by_addr_error
+                    .clone()
+                    .try_into()
+                    .unwrap_or_else(|_| panic!("{:?} conversion implemented?", error));
+                assert_eq!(tx_by_addr_error, transaction_error.into());
+            } else {
+                for ix_error in tx_by_addr::InstructionErrorType::into_enum_iter() {
+                    if ix_error != tx_by_addr::InstructionErrorType::Custom {
+                        let tx_by_addr_error = tx_by_addr::TransactionError {
+                            transaction_error: error as i32,
+                            instruction_error: Some(tx_by_addr::InstructionError {
+                                index: ix_index,
+                                error: ix_error as i32,
+                                custom: None,
+                            }),
+                        };
+                        let transaction_error: TransactionError = tx_by_addr_error
+                            .clone()
+                            .try_into()
+                            .unwrap_or_else(|_| panic!("{:?} conversion implemented?", ix_error));
+                        assert_eq!(tx_by_addr_error, transaction_error.into());
+                    } else {
+                        let tx_by_addr_error = tx_by_addr::TransactionError {
+                            transaction_error: error as i32,
+                            instruction_error: Some(tx_by_addr::InstructionError {
+                                index: ix_index,
+                                error: ix_error as i32,
+                                custom: Some(tx_by_addr::CustomError {
+                                    custom: custom_error,
+                                }),
+                            }),
+                        };
+                        let transaction_error: TransactionError =
+                            tx_by_addr_error.clone().try_into().unwrap();
+                        assert_eq!(tx_by_addr_error, transaction_error.into());
+                    }
+                }
+            }
+        }
     }
 }

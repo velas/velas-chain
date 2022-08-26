@@ -8,11 +8,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 
 [dependencies]
-borsh = "0.8.1"
-borsh-derive = "0.8.1"
+borsh = "0.9.1"
+borsh-derive = "0.9.1"
 serde = { version = "1.0.125", features = ["derive"] }
 
-solana-sdk = { path = "../../sdk", version = "1.5.14" }
+solana-sdk = { path = "../../sdk", version = "1.9.13" }
 
 [dev-dependencies]
 base64 = "0.13.0"

@@ -1,14 +1,15 @@
-use crate::{parse_account_data::ParseAccountError, UiFeeCalculator};
-use solana_sdk::{
-    instruction::InstructionError,
-    nonce::{state::Versions, State},
+use {
+    crate::{parse_account_data::ParseAccountError, UiFeeCalculator},
+    solana_sdk::{
+        instruction::InstructionError,
+        nonce::{state::Versions, State},
+    },
 };
 
 pub fn parse_nonce(data: &[u8]) -> Result<UiNonceState, ParseAccountError> {
-    let nonce_state: Versions = bincode::deserialize(data)
+    let nonce_versions: Versions = bincode::deserialize(data)
         .map_err(|_| ParseAccountError::from(InstructionError::InvalidAccountData))?;
-    let nonce_state = nonce_state.convert_to_current();
-    match nonce_state {
+    match nonce_versions.state() {
         // This prevents parsing an allocated System-owned account with empty data of any non-zero
         // length as `uninitialized` nonce. An empty account of the wrong length can never be
         // initialized as a nonce account, and an empty account of the correct length may not be an
@@ -18,7 +19,7 @@ pub fn parse_nonce(data: &[u8]) -> Result<UiNonceState, ParseAccountError> {
         )),
         State::Initialized(data) => Ok(UiNonceState::Initialized(UiNonceData {
             authority: data.authority.to_string(),
-            blockhash: data.blockhash.to_string(),
+            blockhash: data.blockhash().to_string(),
             fee_calculator: data.fee_calculator.into(),
         })),
     }
@@ -42,19 +43,24 @@ pub struct UiNonceData {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use solana_sdk::{
-        hash::Hash,
-        nonce::{
-            state::{Data, Versions},
-            State,
+    use {
+        super::*,
+        solana_sdk::{
+            hash::Hash,
+            nonce::{
+                state::{Data, Versions},
+                State,
+            },
+            pubkey::Pubkey,
         },
-        pubkey::Pubkey,
     };
 
     #[test]
     fn test_parse_nonce() {
-        let nonce_data = Versions::new_current(State::Initialized(Data::default()));
+        let nonce_data = Versions::new(
+            State::Initialized(Data::default()),
+            true, // separate_domains
+        );
         let nonce_account_data = bincode::serialize(&nonce_data).unwrap();
         assert_eq!(
             parse_nonce(&nonce_account_data).unwrap(),

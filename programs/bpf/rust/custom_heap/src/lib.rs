@@ -1,4 +1,4 @@
-//! @brief Example Rust-based BPF that tests out using a custom heap
+//! Example Rust-based BPF that tests out using a custom heap
 
 use solana_program::{
     account_info::AccountInfo,
@@ -26,8 +26,8 @@ unsafe impl std::alloc::GlobalAlloc for BumpAllocator {
             0x42 as *mut u8
         } else {
             const POS_PTR: *mut usize = HEAP_START_ADDRESS as *mut usize;
-            const TOP_ADDRESS: usize = HEAP_START_ADDRESS + HEAP_LENGTH;
-            const BOTTOM_ADDRESS: usize = HEAP_START_ADDRESS + size_of::<*mut u8>();
+            const TOP_ADDRESS: usize = HEAP_START_ADDRESS as usize + HEAP_LENGTH;
+            const BOTTOM_ADDRESS: usize = HEAP_START_ADDRESS as usize + size_of::<*mut u8>();
 
             let mut pos = *POS_PTR;
             if pos == 0 {

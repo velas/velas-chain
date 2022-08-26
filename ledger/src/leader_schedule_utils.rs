@@ -1,13 +1,14 @@
-use std::collections::HashMap;
-
-use crate::leader_schedule::LeaderSchedule;
-use solana_runtime::bank::Bank;
-use solana_sdk::{
-    clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
-    pubkey::Pubkey,
+use {
+    crate::leader_schedule::LeaderSchedule,
+    solana_runtime::bank::Bank,
+    solana_sdk::{
+        clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+        pubkey::Pubkey,
+    },
+    std::collections::HashMap,
 };
 
-pub use solana_stake_program::stake_state::{
+pub use solana_vote_program::{
     MIN_STAKERS_TO_BE_MAJORITY, NUM_MAJOR_STAKERS_FOR_FILTERING,
 };
 
@@ -16,7 +17,7 @@ pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
     bank.epoch_staked_nodes(epoch).map(|stakes| {
         let mut seed = [0u8; 32];
         seed[0..8].copy_from_slice(&epoch.to_le_bytes());
-        let stakes = retain_sort_stakers(stakes);
+        let stakes = retain_sort_stakers(&stakes);
         LeaderSchedule::new(
             &stakes,
             seed,
@@ -26,8 +27,8 @@ pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
     })
 }
 
-fn retain_sort_stakers(stakes: HashMap<Pubkey, u64>) -> Vec<(Pubkey, u64)> {
-    let mut stakes: Vec<_> = stakes.into_iter().collect();
+fn retain_sort_stakers(stakes: &HashMap<Pubkey, u64>) -> Vec<(Pubkey, u64)> {
+    let mut stakes: Vec<_> = stakes.iter().map(|(k, v)| (*k, *v)).collect();
     sort_stakes(&mut stakes);
     if num_major_stakers(&stakes) >= NUM_MAJOR_STAKERS_FOR_FILTERING {
         retain_major_stakers(&mut stakes)
@@ -98,9 +99,11 @@ fn retain_major_stakers(stakes: &mut Vec<(Pubkey, u64)>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use solana_runtime::genesis_utils::{
-        bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
+    use {
+        super::*,
+        solana_runtime::genesis_utils::{
+            bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
+        },
     };
 
     #[test]
@@ -109,9 +112,13 @@ mod tests {
         let genesis_config =
             create_genesis_config_with_leader(0, &pubkey, bootstrap_validator_stake_lamports())
                 .genesis_config;
-        let bank = Bank::new(&genesis_config);
+        let bank = Bank::new_for_tests(&genesis_config);
 
-        let pubkeys_and_stakes: Vec<_> = bank.staked_nodes().into_iter().collect();
+        let pubkeys_and_stakes: Vec<_> = bank
+            .staked_nodes()
+            .iter()
+            .map(|(pubkey, stake)| (*pubkey, *stake))
+            .collect();
         let seed = [0u8; 32];
         let leader_schedule = LeaderSchedule::new(
             &pubkeys_and_stakes,
@@ -131,7 +138,7 @@ mod tests {
         let genesis_config =
             create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports())
                 .genesis_config;
-        let bank = Bank::new(&genesis_config);
+        let bank = Bank::new_for_tests(&genesis_config);
         assert_eq!(slot_leader_at(bank.slot(), &bank).unwrap(), pubkey);
     }
 
@@ -169,20 +176,20 @@ mod tests {
         for _ in 0..30 {
             stakes.insert(Pubkey::new_unique(), 1);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), 30);
 
         for _ in 0..30 {
             stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY - 1);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), 60);
 
         // Test case for majoirty < NUM_MAJOR_STAKERS_FOR_FILTERING
         for _ in 0..(NUM_MAJOR_STAKERS_FOR_FILTERING - 1) {
             stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(
             num_stakers.len(),
             60 + (NUM_MAJOR_STAKERS_FOR_FILTERING - 1)
@@ -192,14 +199,14 @@ mod tests {
         // Should remove all nodes without majoirty stake.
 
         stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY);
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), NUM_MAJOR_STAKERS_FOR_FILTERING);
 
         // Test case where more than NUM_MAJOR_STAKERS_FOR_FILTERING, should keep all majority in stakers.
         for n in 0..30 {
             stakes.insert(Pubkey::new_unique(), MIN_STAKERS_TO_BE_MAJORITY + n * 100);
         }
-        let num_stakers = retain_sort_stakers(stakes.clone());
+        let num_stakers = retain_sort_stakers(&stakes);
         assert_eq!(num_stakers.len(), NUM_MAJOR_STAKERS_FOR_FILTERING + 30);
         assert_eq!(stakes.len(), NUM_MAJOR_STAKERS_FOR_FILTERING + 30 + 60)
     }

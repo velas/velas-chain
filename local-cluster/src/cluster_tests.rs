@@ -1,39 +1,46 @@
-use log::*;
 /// Cluster independent integration tests
 ///
 /// All tests must start from an entry point and a funding keypair and
 /// discover the rest of the network.
-use rand::{thread_rng, Rng};
-use rayon::prelude::*;
-use solana_client::thin_client::create_client;
-use solana_core::validator::ValidatorExit;
-use solana_core::{
-    cluster_info::VALIDATOR_PORT_RANGE, consensus::VOTE_THRESHOLD_DEPTH, contact_info::ContactInfo,
-    gossip_service::discover_cluster,
-};
-use solana_ledger::{
-    blockstore::Blockstore,
-    entry::{Entry, EntrySlice},
-};
-use solana_sdk::{
-    client::SyncClient,
-    clock::{self, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
-    commitment_config::CommitmentConfig,
-    epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
-    hash::Hash,
-    poh_config::PohConfig,
-    pubkey::Pubkey,
-    signature::{Keypair, Signature, Signer},
-    system_transaction,
-    timing::duration_as_ms,
-    transport::TransportError,
-};
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-    sync::{Arc, RwLock},
-    thread::sleep,
-    time::{Duration, Instant},
+use log::*;
+use {
+    rand::{thread_rng, Rng},
+    rayon::prelude::*,
+    solana_client::thin_client::create_client,
+    solana_core::consensus::VOTE_THRESHOLD_DEPTH,
+    solana_entry::entry::{Entry, EntrySlice},
+    solana_gossip::{
+        cluster_info::{self, VALIDATOR_PORT_RANGE},
+        contact_info::ContactInfo,
+        crds_value::{self, CrdsData, CrdsValue},
+        gossip_error::GossipError,
+        gossip_service::discover_cluster,
+    },
+    solana_ledger::blockstore::Blockstore,
+    solana_sdk::{
+        client::SyncClient,
+        clock::{self, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+        commitment_config::CommitmentConfig,
+        epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
+        exit::Exit,
+        hash::Hash,
+        poh_config::PohConfig,
+        pubkey::Pubkey,
+        signature::{Keypair, Signature, Signer},
+        system_transaction,
+        timing::{duration_as_ms, timestamp},
+        transport::TransportError,
+    },
+    solana_streamer::socket::SocketAddrSpace,
+    solana_vote_program::vote_transaction,
+    std::{
+        collections::{HashMap, HashSet},
+        net::SocketAddr,
+        path::Path,
+        sync::{Arc, RwLock},
+        thread::sleep,
+        time::{Duration, Instant},
+    },
 };
 
 /// Spend and verify from every node in the network
@@ -42,8 +49,10 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
     funding_keypair: &Keypair,
     nodes: usize,
     ignore_nodes: HashSet<Pubkey, S>,
+    socket_addr_space: SocketAddrSpace,
 ) {
-    let cluster_nodes = discover_cluster(&entry_point_info.gossip, nodes).unwrap();
+    let cluster_nodes =
+        discover_cluster(&entry_point_info.gossip, nodes, socket_addr_space).unwrap();
     assert!(cluster_nodes.len() >= nodes);
     let ignore_nodes = Arc::new(ignore_nodes);
     cluster_nodes.par_iter().for_each(|ingress_node| {
@@ -59,8 +68,8 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
             )
             .expect("balance in source");
         assert!(bal > 0);
-        let (blockhash, _fee_calculator, _last_valid_slot) = client
-            .get_recent_blockhash_with_commitment(CommitmentConfig::confirmed())
+        let (blockhash, _) = client
+            .get_latest_blockhash_with_commitment(CommitmentConfig::confirmed())
             .unwrap();
         let mut transaction =
             system_transaction::transfer(funding_keypair, &random_keypair.pubkey(), 1, blockhash);
@@ -108,8 +117,8 @@ pub fn send_many_transactions(
             )
             .expect("balance in source");
         assert!(bal > 0);
-        let (blockhash, _fee_calculator, _last_valid_slot) = client
-            .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+        let (blockhash, _) = client
+            .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
             .unwrap();
         let transfer_amount = thread_rng().gen_range(1, max_tokens_per_transfer);
 
@@ -178,13 +187,15 @@ pub fn sleep_n_epochs(
 
 pub fn kill_entry_and_spend_and_verify_rest(
     entry_point_info: &ContactInfo,
-    entry_point_validator_exit: &Arc<RwLock<ValidatorExit>>,
+    entry_point_validator_exit: &Arc<RwLock<Exit>>,
     funding_keypair: &Keypair,
     nodes: usize,
     slot_millis: u64,
+    socket_addr_space: SocketAddrSpace,
 ) {
     info!("kill_entry_and_spend_and_verify_rest...");
-    let cluster_nodes = discover_cluster(&entry_point_info.gossip, nodes).unwrap();
+    let cluster_nodes =
+        discover_cluster(&entry_point_info.gossip, nodes, socket_addr_space).unwrap();
     assert!(cluster_nodes.len() >= nodes);
     let client = create_client(entry_point_info.client_facing_addr(), VALIDATOR_PORT_RANGE);
     // sleep long enough to make sure we are in epoch 3
@@ -232,8 +243,8 @@ pub fn kill_entry_and_spend_and_verify_rest(
             }
 
             let random_keypair = Keypair::new();
-            let (blockhash, _fee_calculator, _last_valid_slot) = client
-                .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+            let (blockhash, _) = client
+                .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
                 .unwrap();
             let mut transaction = system_transaction::transfer(
                 funding_keypair,
@@ -279,17 +290,25 @@ pub fn check_for_new_roots(num_new_roots: usize, contact_infos: &[ContactInfo], 
     let mut done = false;
     let mut last_print = Instant::now();
     let loop_start = Instant::now();
-    let loop_timeout = Duration::from_secs(60);
+    let loop_timeout = Duration::from_secs(300);
+    let mut num_roots_map = HashMap::new();
     while !done {
         assert!(loop_start.elapsed() < loop_timeout);
+
         for (i, ingress_node) in contact_infos.iter().enumerate() {
             let client = create_client(ingress_node.client_facing_addr(), VALIDATOR_PORT_RANGE);
-            let slot = client.get_slot().unwrap_or(0);
-            roots[i].insert(slot);
-            let min_node = roots.iter().map(|r| r.len()).min().unwrap_or(0);
-            done = min_node >= num_new_roots;
+            let root_slot = client
+                .get_slot_with_commitment(CommitmentConfig::finalized())
+                .unwrap_or(0);
+            roots[i].insert(root_slot);
+            num_roots_map.insert(ingress_node.id, roots[i].len());
+            let num_roots = roots.iter().map(|r| r.len()).min().unwrap();
+            done = num_roots >= num_new_roots;
             if done || last_print.elapsed().as_secs() > 3 {
-                info!("{} min observed roots {}/16", test_name, min_node);
+                info!(
+                    "{} waiting for {} new roots.. observed: {:?}",
+                    test_name, num_new_roots, num_roots_map
+                );
                 last_print = Instant::now();
             }
         }
@@ -345,6 +364,7 @@ pub fn check_no_new_roots(
         if reached_end_slot {
             break;
         }
+        sleep(Duration::from_millis(clock::DEFAULT_MS_PER_SLOT / 2));
     }
 
     for (i, ingress_node) in contact_infos.iter().enumerate() {
@@ -375,14 +395,13 @@ fn poll_all_nodes_for_signature(
     Ok(())
 }
 
-#[allow(clippy::bool_assert_comparison)]
 fn get_and_verify_slot_entries(
     blockstore: &Blockstore,
     slot: Slot,
     last_entry: &Hash,
 ) -> Vec<Entry> {
     let entries = blockstore.get_slot_entries(slot, 0).unwrap();
-    assert_eq!(entries.verify(last_entry), true);
+    assert!(entries.verify(last_entry));
     entries
 }
 
@@ -398,4 +417,37 @@ fn verify_slot_ticks(
         assert_eq!(num_ticks, expected_num_ticks);
     }
     entries.last().unwrap().hash
+}
+
+pub fn submit_vote_to_cluster_gossip(
+    node_keypair: &Keypair,
+    vote_keypair: &Keypair,
+    vote_slot: Slot,
+    vote_hash: Hash,
+    blockhash: Hash,
+    gossip_addr: SocketAddr,
+    socket_addr_space: &SocketAddrSpace,
+) -> Result<(), GossipError> {
+    let vote_tx = vote_transaction::new_vote_transaction(
+        vec![vote_slot],
+        vote_hash,
+        blockhash,
+        node_keypair,
+        vote_keypair,
+        vote_keypair,
+        None,
+    );
+
+    cluster_info::push_messages_to_peer(
+        vec![CrdsValue::new_signed(
+            CrdsData::Vote(
+                0,
+                crds_value::Vote::new(node_keypair.pubkey(), vote_tx, timestamp()).unwrap(),
+            ),
+            node_keypair,
+        )],
+        node_keypair.pubkey(),
+        gossip_addr,
+        socket_addr_space,
+    )
 }

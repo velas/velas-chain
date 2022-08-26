@@ -1,18 +1,20 @@
-use solana_sdk::{
+use {
+    solana_sdk::{
     account::{Account, AccountSharedData},
-    feature::{self, Feature},
-    feature_set::FeatureSet,
-    fee_calculator::FeeRateGovernor,
-    genesis_config::{ClusterType, GenesisConfig},
-    pubkey::Pubkey,
-    rent::Rent,
-    signature::{Keypair, Signer},
-    system_program,
+        feature::{self, Feature},
+        feature_set::FeatureSet,
+        fee_calculator::FeeRateGovernor,
+        genesis_config::{ClusterType, GenesisConfig},
+        pubkey::Pubkey,
+        rent::Rent,
+        signature::{Keypair, Signer},
+        stake::state::StakeState,
+        system_program,
+    },
+    solana_stake_program::stake_state,
+    solana_vote_program::vote_state,
+    std::borrow::Borrow,
 };
-use solana_stake_program::stake_state;
-use solana_stake_program::stake_state::StakeState;
-use solana_vote_program::vote_state;
-use std::borrow::Borrow;
 
 // Default amount received by the validator
 const VALIDATOR_LAMPORTS: u64 = 42;
@@ -20,7 +22,6 @@ const VALIDATOR_LAMPORTS: u64 = 42;
 // fun fact: rustc is very close to make this const fn.
 pub fn bootstrap_validator_stake_lamports() -> u64 {
     StakeState::get_rent_exempt_reserve(&Rent::default())
-        + solana_stake_program::stake_state::MIN_DELEGATE_STAKE_AMOUNT
 }
 
 pub struct ValidatorVoteKeypairs {
@@ -51,6 +52,7 @@ pub struct GenesisConfigInfo {
     pub genesis_config: GenesisConfig,
     pub mint_keypair: Keypair,
     pub voting_keypair: Keypair,
+    pub validator_pubkey: Pubkey,
 }
 
 pub fn create_genesis_config(mint_lamports: u64) -> GenesisConfigInfo {
@@ -83,10 +85,11 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     let voting_keypair =
         Keypair::from_bytes(&voting_keypairs[0].borrow().vote_keypair.to_bytes()).unwrap();
 
+    let validator_pubkey = voting_keypairs[0].borrow().node_keypair.pubkey();
     let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
-        &voting_keypairs[0].borrow().node_keypair.pubkey(),
+        &validator_pubkey,
         &voting_keypairs[0].borrow().vote_keypair.pubkey(),
         &voting_keypairs[0].borrow().stake_keypair.pubkey(),
         stakes[0],
@@ -101,6 +104,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         genesis_config,
         mint_keypair,
         voting_keypair,
+        validator_pubkey,
     };
 
     for (validator_voting_keypairs, stake) in voting_keypairs[1..].iter().zip(&stakes[1..]) {
@@ -111,19 +115,20 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
         let vote_account = vote_state::create_account(&vote_pubkey, &node_pubkey, 0, *stake);
-        let stake_account = stake_state::create_account(
+        let stake_account = Account::from(stake_state::create_account(
             &stake_pubkey,
             &vote_pubkey,
             &vote_account,
             &genesis_config_info.genesis_config.rent,
             *stake,
-        );
+        ));
 
+        let vote_account = Account::from(vote_account);
         // Put newly created accounts into genesis
         genesis_config_info.genesis_config.accounts.extend(vec![
             (node_pubkey, node_account),
-            (vote_pubkey, Account::from(vote_account)),
-            (stake_pubkey, Account::from(stake_account)),
+            (vote_pubkey, vote_account),
+            (stake_pubkey, stake_account),
         ]);
     }
 
@@ -156,6 +161,7 @@ pub fn create_genesis_config_with_leader(
         genesis_config,
         mint_keypair,
         voting_keypair,
+        validator_pubkey: *validator_pubkey,
     }
 }
 
@@ -228,13 +234,12 @@ pub fn create_genesis_config_with_leader_ex(
     initial_accounts.push((*validator_vote_account_pubkey, validator_vote_account));
     initial_accounts.push((*validator_stake_account_pubkey, validator_stake_account));
 
-    let accounts = initial_accounts
-        .into_iter()
-        .map(|(key, account)| (key, Account::from(account)))
-        .collect();
-
     let mut genesis_config = GenesisConfig {
-        accounts,
+        accounts: initial_accounts
+            .iter()
+            .cloned()
+            .map(|(key, account)| (key, Account::from(account)))
+            .collect(),
         fee_rate_governor,
         rent,
         cluster_type,
