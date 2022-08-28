@@ -39,7 +39,7 @@ impl Middleware<Arc<EvmBridge>> for ProxyMiddleware {
                 )))))
             }
         };
-        Either::Left(Box::pin(next(call.clone(), meta).then(
+        Either::Left(Box::pin(next(call, meta).then(
             move |res| async move {
                 let res = match res {
                     Some(Output::Failure(Failure { jsonrpc, error, id }))
