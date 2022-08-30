@@ -376,9 +376,9 @@ dependencies = [
 
 [[package]]
 name = "bindgen"
-version = "0.59.2"
+version = "0.60.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bd2a9a458e8f4304c52c43ebb0cfbd520289f8379a52e329a38afda99bf8eb8"
+checksum = "062dddbc1ba4aca46de6338e2bf87771414c335f7b2f2036e8f3e9befebf88e6"
 dependencies = [
  "bitflags",
  "cexpr",
@@ -3226,13 +3226,15 @@ checksum = "292a948cd991e376cf75541fe5b97a1081d713c618b4f1b9500f8844e49eb565"
 
 [[package]]
 name = "librocksdb-sys"
-version = "6.20.3"
-source = "git+https://github.com/velas/rust-rocksdb?branch=transaction#bbd2d97e9e8b8d5cfb5118e4fc7998b21d860779"
+version = "0.8.0+7.4.4"
+source = "git+https://github.com/gBaGu/rust-rocksdb?branch=feature-merge-0.19#5362a18acf92983686ada95f83696d22e59bf896"
 dependencies = [
  "bindgen",
+ "bzip2-sys",
  "cc",
  "glob",
  "libc",
+ "libz-sys",
 ]
 
 [[package]]
@@ -3281,6 +3283,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67abfe149395e3aa1c48a2beb32b068e2334402df8181f818d3aee2b304c4f5d"
 dependencies = [
  "libsecp256k1-core",
+]
+
+[[package]]
+name = "libz-sys"
+version = "1.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9702761c3935f8cc2f101793272e202c72b99da8f4224a19ddcf1279a6450bbf"
+dependencies = [
+ "cc",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
@@ -5042,8 +5055,8 @@ dependencies = [
 
 [[package]]
 name = "rocksdb"
-version = "0.17.0"
-source = "git+https://github.com/velas/rust-rocksdb?branch=transaction#bbd2d97e9e8b8d5cfb5118e4fc7998b21d860779"
+version = "0.19.0"
+source = "git+https://github.com/gBaGu/rust-rocksdb?branch=feature-merge-0.19#5362a18acf92983686ada95f83696d22e59bf896"
 dependencies = [
  "libc",
  "librocksdb-sys",
@@ -8847,7 +8860,7 @@ checksum = "0de5f738ceab88e2491a94ddc33c3feeadfa95fedc60363ef110845df12f3878"
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/velas/triedb?tag=bump-primitive-types#fede82fdb832a02a213ce2db30f6fe3f529d989b"
+source = "git+https://github.com/gBaGu/triedb?branch=bump-rocksdb#2a98627be43c07e7c6828f8c316baa05336d01e5"
 dependencies = [
  "anyhow",
  "dashmap 4.0.2",
