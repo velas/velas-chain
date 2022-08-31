@@ -103,6 +103,5 @@ resolver = "2"
 split-debuginfo = "unpacked"
 
 [patch.crates-io]
-# TODO: change to velas/parity-common:borsh-support
-primitive-types = { git = "https://github.com/gBaGu/parity-common", branch = "feature-add-borsh-support" }
-uint = { git = "https://github.com/gBaGu/parity-common", branch = "feature-add-borsh-support" }
+primitive-types = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.11-with-borsh-support" }
+uint = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.11-with-borsh-support" }

@@ -16,6 +16,7 @@ pub use compatibility::extend_precompile_map;
 pub use errors::PrecompileErrors;
 
 use crate::account_structure::AccountStructure;
+use solana_sdk::keyed_account::KeyedAccount;
 
 pub type Result<T, Err = PrecompileErrors> = std::result::Result<T, Err>;
 type CallResult = Result<(PrecompileOutput, u64)>;
@@ -62,6 +63,16 @@ pub static PRECOMPILES_MAP: Lazy<HashMap<H160, BuiltinEval>> = Lazy::new(|| {
     extend_precompile_map(&mut precompiles);
     precompiles
 });
+
+// Simulation does not have access to real account structure, so only process immutable entrypoints
+pub fn simulation_entrypoint<'a>(
+    activate_precompile: bool,
+    evm_account: &'a KeyedAccount,
+    users_accounts: &'a [KeyedAccount],
+) -> OwnedPrecompile<'a> {
+    let accounts = AccountStructure::new(evm_account, users_accounts);
+    entrypoint(accounts, activate_precompile)
+}
 
 pub fn entrypoint(accounts: AccountStructure, activate_precompile: bool) -> OwnedPrecompile {
     let mut map = BTreeMap::new();

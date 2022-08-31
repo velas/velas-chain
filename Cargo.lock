@@ -1825,7 +1825,7 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "0.35.0"
-source = "git+https://github.com/gBaGu/evm?branch=merge-upstream-master#d4e31f4d90fd90f7a6f69da12b4c88b60965df66"
+source = "git+https://github.com/velas/evm?tag=v0.35-with-traces#90a980bb9d7ccbb21b2897e71b889847f7beeade"
 dependencies = [
  "auto_impl",
  "environmental",
@@ -1923,7 +1923,7 @@ dependencies = [
 [[package]]
 name = "evm-core"
 version = "0.35.0"
-source = "git+https://github.com/gBaGu/evm?branch=merge-upstream-master#d4e31f4d90fd90f7a6f69da12b4c88b60965df66"
+source = "git+https://github.com/velas/evm?tag=v0.35-with-traces#90a980bb9d7ccbb21b2897e71b889847f7beeade"
 dependencies = [
  "parity-scale-codec",
  "primitive-types",
@@ -1934,7 +1934,7 @@ dependencies = [
 [[package]]
 name = "evm-gasometer"
 version = "0.35.0"
-source = "git+https://github.com/gBaGu/evm?branch=merge-upstream-master#d4e31f4d90fd90f7a6f69da12b4c88b60965df66"
+source = "git+https://github.com/velas/evm?tag=v0.35-with-traces#90a980bb9d7ccbb21b2897e71b889847f7beeade"
 dependencies = [
  "environmental",
  "evm-core",
@@ -1970,7 +1970,7 @@ dependencies = [
 [[package]]
 name = "evm-runtime"
 version = "0.35.0"
-source = "git+https://github.com/gBaGu/evm?branch=merge-upstream-master#d4e31f4d90fd90f7a6f69da12b4c88b60965df66"
+source = "git+https://github.com/velas/evm?tag=v0.35-with-traces#90a980bb9d7ccbb21b2897e71b889847f7beeade"
 dependencies = [
  "auto_impl",
  "environmental",
@@ -2125,7 +2125,7 @@ dependencies = [
 [[package]]
 name = "fixed-hash"
 version = "0.7.0"
-source = "git+https://github.com/gBaGu/parity-common?branch=feature-add-borsh-support#02d080eafacb4b08dd2c9eccc11e427b9357ee6f"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
 dependencies = [
  "byteorder",
  "rand 0.8.5",
@@ -2822,7 +2822,7 @@ checksum = "9007da9cacbd3e6343da136e98b0d2df013f553d35bdec8b518f07bea768e19c"
 [[package]]
 name = "impl-borsh"
 version = "0.1.0"
-source = "git+https://github.com/gBaGu/parity-common?branch=feature-add-borsh-support#02d080eafacb4b08dd2c9eccc11e427b9357ee6f"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
 dependencies = [
  "borsh",
 ]
@@ -2839,7 +2839,7 @@ dependencies = [
 [[package]]
 name = "impl-codec"
 version = "0.6.0"
-source = "git+https://github.com/gBaGu/parity-common?branch=feature-add-borsh-support#02d080eafacb4b08dd2c9eccc11e427b9357ee6f"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
 dependencies = [
  "parity-scale-codec",
 ]
@@ -2856,7 +2856,7 @@ dependencies = [
 [[package]]
 name = "impl-rlp"
 version = "0.3.0"
-source = "git+https://github.com/gBaGu/parity-common?branch=feature-add-borsh-support#02d080eafacb4b08dd2c9eccc11e427b9357ee6f"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
 dependencies = [
  "rlp",
 ]
@@ -2873,7 +2873,7 @@ dependencies = [
 [[package]]
 name = "impl-serde"
 version = "0.3.2"
-source = "git+https://github.com/gBaGu/parity-common?branch=feature-add-borsh-support#02d080eafacb4b08dd2c9eccc11e427b9357ee6f"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
 dependencies = [
  "serde",
 ]
@@ -4260,13 +4260,13 @@ dependencies = [
 [[package]]
 name = "primitive-types"
 version = "0.11.1"
-source = "git+https://github.com/gBaGu/parity-common?branch=feature-add-borsh-support#02d080eafacb4b08dd2c9eccc11e427b9357ee6f"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
 dependencies = [
- "fixed-hash 0.7.0 (git+https://github.com/gBaGu/parity-common?branch=feature-add-borsh-support)",
+ "fixed-hash 0.7.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support)",
  "impl-borsh",
- "impl-codec 0.6.0 (git+https://github.com/gBaGu/parity-common?branch=feature-add-borsh-support)",
- "impl-rlp 0.3.0 (git+https://github.com/gBaGu/parity-common?branch=feature-add-borsh-support)",
- "impl-serde 0.3.2 (git+https://github.com/gBaGu/parity-common?branch=feature-add-borsh-support)",
+ "impl-codec 0.6.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support)",
+ "impl-rlp 0.3.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support)",
+ "impl-serde 0.3.2 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support)",
  "scale-info",
  "uint",
 ]
@@ -8856,7 +8856,7 @@ checksum = "0de5f738ceab88e2491a94ddc33c3feeadfa95fedc60363ef110845df12f3878"
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/gBaGu/triedb?branch=bump-primitive-types#7d5528ef6551891feb16e4765d50834c475d92d1"
+source = "git+https://github.com/velas/triedb?tag=bump-primitive-types#fede82fdb832a02a213ce2db30f6fe3f529d989b"
 dependencies = [
  "anyhow",
  "dashmap 4.0.2",
@@ -8932,7 +8932,7 @@ checksum = "dcf81ac59edc17cc8697ff311e8f5ef2d99fcbd9817b34cec66f90b6c3dfd987"
 [[package]]
 name = "uint"
 version = "0.9.3"
-source = "git+https://github.com/gBaGu/parity-common?branch=feature-add-borsh-support#02d080eafacb4b08dd2c9eccc11e427b9357ee6f"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
 dependencies = [
  "byteorder",
  "crunchy",

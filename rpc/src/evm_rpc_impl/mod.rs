@@ -31,7 +31,6 @@ use crate::rpc_health::RpcHealthStatus;
 const GAS_PRICE: u64 = 3;
 
 use tracing_attributes::instrument;
-use solana_evm_loader_program::AccountStructure;
 
 #[derive(Debug)]
 pub struct StateRootWithBank {
@@ -854,9 +853,10 @@ impl TraceERPC for TraceErpcImpl {
                     Some(tx_chain_id),
                     tx_hash,
                     true,
-                    solana_evm_loader_program::precompiles::entrypoint(
-                        AccountStructure::new(&evm_keyed_account, &user_accounts),
+                    simulation_entrypoint(
                         executor.support_precompile(),
+                        &evm_keyed_account,
+                        &user_accounts,
                     ),
                 )
                 .with_context(|_err| EvmStateError)?;
@@ -1161,8 +1161,6 @@ fn call_inner(
         false,
         &evm_account,
     );
-    let accounts =
-        solana_evm_loader_program::AccountStructure::new(&evm_keyed_account, &user_accounts);
 
     let evm_state::executor::ExecutionResult {
         exit_reason,
@@ -1182,9 +1180,10 @@ fn call_inner(
             Some(tx_chain_id),
             tx_hash,
             true,
-            solana_evm_loader_program::precompiles::entrypoint(
-                accounts,
+            simulation_entrypoint(
                 executor.support_precompile(),
+                &evm_keyed_account,
+                &user_accounts,
             ),
         )
         .with_context(|_| EvmStateError)?;
