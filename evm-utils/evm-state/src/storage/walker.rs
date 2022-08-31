@@ -77,12 +77,12 @@ where
     fn process_node(&self, mut nibble: NibbleVec, node: &MerkleNode) -> Result<()> {
         match node {
             MerkleNode::Leaf(nibbles, data) => {
-                nibble.extend_from_slice(&*nibbles);
+                nibble.extend_from_slice(nibbles);
                 let key = triedb::merkle::nibble::into_key(&nibble);
                 self.data_inspector.inspect_data_raw(key, data)
             }
             MerkleNode::Extension(nibbles, value) => {
-                nibble.extend_from_slice(&*nibbles);
+                nibble.extend_from_slice(nibbles);
                 self.process_value(nibble, value)
             }
             MerkleNode::Branch(values, mb_data) => {

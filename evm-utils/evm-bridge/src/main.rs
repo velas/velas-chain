@@ -270,7 +270,7 @@ impl EvmBridge {
                 .rpc_client
                 .get_evm_block_number()
                 .await
-                .map_err(|err| from_client_error(err))?,
+                .map_err(from_client_error)?,
             _ => return Err(Error::BlockNotFound { block }),
         };
         Ok(block_num)
@@ -295,8 +295,7 @@ impl EvmBridge {
                     .await
                     .ok()
                     .flatten()
-                    .map(|result| result.ok())
-                    .flatten()
+                    .and_then(|result| result.ok())
                     .map(|()| true),
                 None => None,
             }
@@ -653,7 +652,7 @@ impl ChainERPC for ChainErpcProxy {
                     .get_evm_block_by_hash(block_hash, full)
                     .await
                     .map(|o: Option<_>| o.map(compatibility::patch_block))
-                    .map_err(|err| from_client_error(err))
+                    .map_err(from_client_error)
             })
         }
     }
@@ -673,7 +672,7 @@ impl ChainERPC for ChainErpcProxy {
                     .get_evm_block_by_number(block, full)
                     .await
                     .map(|o: Option<_>| o.map(compatibility::patch_block))
-                    .map_err(|err| from_client_error(err))
+                    .map_err(from_client_error)
             })
         }
     }
@@ -696,7 +695,7 @@ impl ChainERPC for ChainErpcProxy {
                 .get_evm_transaction_by_hash(tx_hash)
                 .await
                 .map(|o: Option<_>| o.map(compatibility::patch_tx))
-                .map_err(|err| from_client_error(err))
+                .map_err(from_client_error)
         })
     }
 
@@ -794,7 +793,7 @@ impl ChainERPC for ChainErpcProxy {
                         .rpc_client
                         .get_evm_logs(&cloned_filter)
                         .await
-                        .map_err(|err| from_client_error(err));
+                        .map_err(from_client_error);
                     info!("logs = {:?}", result);
 
                     result

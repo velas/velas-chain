@@ -67,8 +67,7 @@ pub fn create_evm_instruction_with_bincode(
     data: &v0::EvmInstruction,
     accounts: Vec<AccountMeta>,
 ) -> solana::Instruction {
-    let res = Instruction::new_with_bincode(program_id, data, accounts);
-    res
+    Instruction::new_with_bincode(program_id, data, accounts)
 }
 
 pub fn send_raw_tx(
@@ -306,7 +305,7 @@ pub fn send_raw_tx_old(
 
     create_evm_instruction_with_bincode(
         crate::ID,
-        &v0::EvmInstruction::EvmTransaction { evm_tx: evm_tx },
+        &v0::EvmInstruction::EvmTransaction { evm_tx },
         account_metas,
     )
 }
