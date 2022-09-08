@@ -1332,7 +1332,7 @@ impl Database {
         let cf = self.cf_handle::<C>();
         let iter = self.backend.iterator_cf::<C>(cf, iterator_mode);
         Ok(iter.map(|item| {
-            let (key, value) = item.unwrap();
+            let (key, value) = item.expect("Invalid blockstore iterator");
             (C::index(&key), value)
         }))
     }
@@ -1419,7 +1419,7 @@ where
         let cf = self.handle();
         let iter = self.backend.iterator_cf::<C>(cf, iterator_mode);
         Ok(iter.map(|item| {
-            let (key, value) = item.unwrap();
+            let (key, value) = item.expect("Invalid blockstore iterator");
             (C::index(&key), value)
         }))
     }
