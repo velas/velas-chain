@@ -216,11 +216,11 @@ pub struct RPCTransaction {
     pub block_hash: Option<Hex<H256>>,
     pub block_number: Option<Hex<U256>>,
     pub transaction_index: Option<Hex<usize>>,
-    #[serde(rename = "V")]
+    #[serde(alias = "V")]
     pub v: Option<Hex<u64>>,
-    #[serde(rename = "R")]
+    #[serde(alias = "R")]
     pub r: Option<Hex<U256>>,
-    #[serde(rename = "S")]
+    #[serde(alias = "S")]
     pub s: Option<Hex<U256>>,
 }
 
