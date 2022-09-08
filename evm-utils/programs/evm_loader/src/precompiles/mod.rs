@@ -83,13 +83,12 @@ pub fn entrypoint(accounts: AccountStructure, activate_precompile: bool) -> Owne
                 Box::new(
                     move |function_abi_input: &[u8], gas_left, call_scheme, cx: &Context, _is_static| {
                         let cx = PrecompileContext::new(accounts, gas_left, cx, call_scheme);
-                        let result = method(function_abi_input, cx).map_err(|err| {
+                        method(function_abi_input, cx).map_err(|err| {
                             let exit_err: ExitError = Into::into(err);
                             PrecompileFailure::Error {
                                 exit_status: exit_err,
                             }
-                        });
-                        result
+                        })
                     },
                 )
                     as Box<
@@ -105,19 +104,17 @@ pub fn entrypoint(accounts: AccountStructure, activate_precompile: bool) -> Owne
         }));
     }
     map.extend(NATIVE_CONTRACTS.iter().map(|(k, method)| {
-        let accounts = accounts.clone();
         (
             *k,
             Box::new(
                 move |function_abi_input: &[u8], gas_left, call_scheme, cx: &Context, _is_static| {
                     let cx = PrecompileContext::new(accounts, gas_left, cx, call_scheme);
-                    let result = method(function_abi_input, cx).map_err(|err| {
+                    method(function_abi_input, cx).map_err(|err| {
                         let exit_err: ExitError = Into::into(err);
                         PrecompileFailure::Error {
                             exit_status: exit_err,
                         }
-                    });
-                    result
+                    })
                 },
             )
                 as Box<dyn for<'a, 'b> Fn(&[u8], Option<u64>, Option<CallScheme>, &Context, bool) -> Result<(PrecompileOutput, u64), PrecompileFailure>>,
