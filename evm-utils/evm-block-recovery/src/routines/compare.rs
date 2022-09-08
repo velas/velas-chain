@@ -9,7 +9,10 @@ pub async fn compare_native(
     credible_ledger: LedgerStorage,
     dubious_ledger: LedgerStorage,
 ) -> Result<()> {
-    log::info!("Getting credible blocks set: start_slot={start_slot}, limit={limit}");
+    crate::log(
+        log::Level::Info,
+        format!("Getting credible blocks set: start_slot={start_slot}, limit={limit}"),
+    );
 
     let credible_blocks = credible_ledger
         .get_confirmed_blocks(start_slot, limit)
@@ -22,12 +25,14 @@ pub async fn compare_native(
     if credible_blocks.len() < 2 {
         bail!("Not enough blocks to calculate difference")
     }
-
-    log::info!(
-        "Credible blocks start: {}, end: {}, len: {}",
-        credible_blocks.first().unwrap(),
-        credible_blocks.last().unwrap(),
-        credible_blocks.len()
+    crate::log(
+        log::Level::Info,
+        format!(
+            "Credible blocks start: {}, end: {}, len: {}",
+            credible_blocks.first().unwrap(),
+            credible_blocks.last().unwrap(),
+            credible_blocks.len()
+        ),
     );
 
     let dubious_blocks = dubious_ledger
@@ -42,11 +47,14 @@ pub async fn compare_native(
         bail!("Not enough blocks to calculate difference")
     }
 
-    log::info!(
-        "Dubious blocks start: {}, end: {}, len: {}",
-        dubious_blocks.first().unwrap(),
-        dubious_blocks.last().unwrap(),
-        dubious_blocks.len()
+    crate::log(
+        log::Level::Info,
+        format!(
+            "Dubious blocks start: {}, end: {}, len: {}",
+            dubious_blocks.first().unwrap(),
+            dubious_blocks.last().unwrap(),
+            dubious_blocks.len()
+        ),
     );
 
     let credible_blocks: HashSet<_> = credible_blocks.into_iter().collect();
@@ -54,7 +62,7 @@ pub async fn compare_native(
 
     let diff = credible_blocks.difference(&dubious_blocks);
 
-    log::info!("Diff: {:?}", diff);
+    crate::log(log::Level::Info, format!("Diff: {:?}", diff));
 
     Ok(())
 }

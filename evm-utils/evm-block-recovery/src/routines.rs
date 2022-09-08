@@ -21,10 +21,13 @@ async fn write_blocks_collection(
     blocks: Vec<evm_state::Block>,
 ) -> Result<()> {
     for block in blocks {
-        log::info!(
-            "Writing block {} with hash {} to the Ledger...",
-            block.header.block_number,
-            block.header.hash()
+        crate::log(
+            log::Level::Info,
+            format!(
+                "Writing block {} with hash {} to the Ledger...",
+                block.header.block_number,
+                block.header.hash()
+            ),
         );
 
         let block_num = block.header.block_number;
@@ -49,7 +52,6 @@ fn find_uncommitted_ranges(blocks: Vec<u64>) -> Vec<BlockRange> {
             let first = previous + 1;
             let last = current - 1;
             let missing_range = BlockRange::new(first, last);
-            // log::info!("Found missing {missing_range}");
             result.push(missing_range);
         }
     }

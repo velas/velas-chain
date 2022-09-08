@@ -6,6 +6,18 @@ pub mod timestamp;
 
 use clap::Parser;
 use cli::{Cli, Commands};
+use log::Level;
+
+lazy_static::lazy_static! {
+    pub static ref IS_EMBEDDED: bool = std::env::args().any(|arg| arg == "--embed");
+}
+
+pub fn log(level: Level, message: String) {
+    match *crate::IS_EMBEDDED {
+        true => println!("{message}"),
+        false => log::log!(level, "{message}"),
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -14,21 +26,27 @@ async fn main() -> anyhow::Result<()> {
     match std::env::var("RUST_LOG") {
         Ok(value) => {
             env_logger::init();
-            log::info!(r#"RUST_LOG is set to "{value}""#);
+            log(Level::Info, format!(r#"RUST_LOG is set to "{value}""#));
         }
         Err(_err) => {
             std::env::set_var("RUST_LOG", "evm_block_recovery");
             env_logger::init();
-            log::warn!(r#"Environment variable "RUST_LOG" not found."#);
+            log(
+                Level::Warn,
+                format!(r#"Environment variable "RUST_LOG" not found."#),
+            );
         }
     }
 
     match dotenv {
         Ok(path) => {
-            log::info!(r#""{}" successfully loaded"#, path.display())
+            log(
+                Level::Info,
+                format!(r#""{}" successfully loaded"#, path.display()),
+            );
         }
         Err(e) => {
-            log::warn!(r#"".env" file not found: {e:?}""#)
+            log(Level::Warn, format!(r#"".env" file not found: {e:?}""#));
         }
     }
 

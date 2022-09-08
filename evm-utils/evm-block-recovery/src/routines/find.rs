@@ -7,7 +7,7 @@ use crate::routines::BlockRange;
 use super::find_uncommitted_ranges;
 
 pub async fn find_evm(ledger: LedgerStorage, start_block: BlockNum, limit: usize) -> Result<()> {
-    log::info!("Looking for missing EVM Blocks");
+    crate::log(log::Level::Info, format!("Looking for missing EVM Blocks"));
 
     let blocks = ledger
         .get_evm_confirmed_full_blocks_nums(start_block, limit)
@@ -20,7 +20,7 @@ pub async fn find_evm(ledger: LedgerStorage, start_block: BlockNum, limit: usize
     let missing_blocks = find_uncommitted_ranges(blocks);
 
     if missing_blocks.is_empty() {
-        log::info!("Missing EVM Blocks starting from block {start_block} with a limit of {limit} are not found");
+        crate::log(log::Level::Info, format!("Missing EVM Blocks starting from block {start_block} with a limit of {limit} are not found"));
     }
 
     Ok(())
@@ -34,8 +34,11 @@ pub async fn find_native(ledger: LedgerStorage, start_slot: u64, end_slot: u64) 
 
     let mut slots = vec![];
 
-    log::info!(
-        "Looking for missing Native Blocks, start slot: {start_slot}, end slot: {end_slot}."
+    crate::log(
+        log::Level::Info,
+        format!(
+            "Looking for missing Native Blocks, start slot: {start_slot}, end slot: {end_slot}."
+        ),
     );
 
     loop {
@@ -55,18 +58,18 @@ pub async fn find_native(ledger: LedgerStorage, start_slot: u64, end_slot: u64) 
             start_slot = last_in_chunk + 1;
             limit = (end_slot - start_slot) as usize;
             slots.extend(chunk.iter());
-            log::info!("Slot #{last_in_chunk} loaded...");
+            crate::log(log::Level::Info, format!("Slot #{last_in_chunk} loaded..."));
         } else {
             chunk.retain(|slot| *slot <= end_slot);
             slots.extend(chunk.iter());
-            log::info!("All slots loaded.");
+            crate::log(log::Level::Info, format!("All slots loaded."));
             break;
         }
     }
 
     if slots.len() < 2 {
         let err = "Vector of ID's is too short, try to increase a limit";
-        log::warn!("{err}");
+        crate::log(log::Level::Warn, format!("{err}"));
         bail!(err)
     }
 
@@ -79,12 +82,18 @@ pub async fn find_native(ledger: LedgerStorage, start_slot: u64, end_slot: u64) 
 
     if slots[0] > start_slot {
         let missing_ahead = BlockRange::new(start_slot, slots[0] - 1);
-        log::warn!("Found possibly missing {missing_ahead}, manual check required");
+        crate::log(
+            log::Level::Warn,
+            format!("Found possibly missing {missing_ahead}, manual check required"),
+        );
     }
 
     let missing_ranges = find_uncommitted_ranges(slots);
 
-    log::info!("Found {} possibly missing ranges", missing_ranges.len());
+    crate::log(
+        log::Level::Info,
+        format!("Found {} possibly missing ranges", missing_ranges.len()),
+    );
 
     for range in missing_ranges.into_iter() {
         let slot_prev = range.first() - 1;
@@ -102,13 +111,16 @@ pub async fn find_native(ledger: LedgerStorage, start_slot: u64, end_slot: u64) 
 
         if block_prev.blockhash == block_curr.previous_blockhash {
             let checked_range = BlockRange::new(slot_prev, slot_curr);
-            log::trace!("{checked_range} passed hash check");
+            crate::log(
+                log::Level::Trace,
+                format!("{checked_range} passed hash check"),
+            );
         } else {
-            log::warn!("Found missing {}", range);
+            crate::log(log::Level::Warn, format!("Found missing {}", range));
         }
     }
 
-    log::info!("Search complete");
+    crate::log(log::Level::Info, format!("Search complete"));
 
     Ok(())
 }

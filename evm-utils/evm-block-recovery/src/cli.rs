@@ -15,6 +15,10 @@ pub struct Cli {
     /// Bigtable Instance
     #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
     pub instance: String,
+
+    /// Print logs in machine readable format if set
+    #[clap(long)]
+    pub embed: bool,
 }
 
 #[derive(clap::Subcommand)]
