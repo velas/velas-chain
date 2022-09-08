@@ -1,8 +1,8 @@
 pub use evm::{
     backend::{Apply, ApplyBackend, Backend, Log, MemoryAccount, MemoryVicinity},
-    executor::StackExecutor,
+    executor::stack::StackExecutor,
     CallScheme, Config, Context, CreateScheme, ExitError, ExitFatal, ExitReason, ExitRevert,
-    ExitSucceed, Handler, Transfer,
+    ExitSucceed, Handler, Opcode, Transfer,
 };
 
 pub use primitive_types::{H256, U256};

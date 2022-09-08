@@ -764,28 +764,28 @@ impl TraceERPC for TraceErpcImpl {
         ) -> Result<ExecutionResult, Error> {
             use solana_evm_loader_program::precompiles::*;
             let caller = tx.from.map(|a| a.0).unwrap_or_default();
-        
+
             let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
             let input = tx.input.map(|a| a.0).unwrap_or_else(Vec::new);
             let gas_limit = tx.gas.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
             let gas_price = tx.gas_price.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
-        
+
             let nonce = tx
                 .nonce
                 .map(|a| a.0)
                 .unwrap_or_else(|| executor.nonce(caller));
             let tx_chain_id = executor.chain_id();
             let tx_hash = tx.hash.map(|a| a.0).unwrap_or_else(H256::random);
-        
+
             let evm_state_balance = u64::MAX - 1;
-        
+
             let (user_accounts, action) = if let Some(address) = tx.to {
                 let address = address.0;
                 debug!(
                     "Trying to execute tx = {:?}",
                     (caller, address, value, &input, gas_limit)
                 );
-        
+
                 let mut meta_keys: Vec<_> = meta_keys
                     .into_iter()
                     .map(|pk| {
@@ -797,14 +797,14 @@ impl TraceERPC for TraceErpcImpl {
                         (user_account, pk)
                     })
                     .collect();
-        
+
                 // Shortcut for swap tokens to native, will add solana account to transaction.
                 if address == *ETH_TO_VLX_ADDR {
                     debug!("Found transferToNative transaction");
                     match ETH_TO_VLX_CODE.parse_abi(&input) {
                         Ok(pk) => {
                             info!("Adding account to meta = {}", pk);
-        
+
                             let user_account = RefCell::new(AccountSharedData::new(
                                 u64::MAX,
                                 0,
@@ -817,12 +817,12 @@ impl TraceERPC for TraceErpcImpl {
                         }
                     }
                 }
-        
+
                 (meta_keys, TransactionAction::Call(address))
             } else {
                 (vec![], TransactionAction::Create)
             };
-        
+
             // system transfers always set s = 0x1
             let mut is_native_swap = false;
             if Some(Hex(U256::from(0x1))) == tx.s {
@@ -833,12 +833,14 @@ impl TraceERPC for TraceErpcImpl {
                     executor.deposit(caller, amount)
                 }
             }
-        
+
             let user_accounts: Vec<_> = user_accounts
                 .iter()
                 .map(|(user_account, pk)| KeyedAccount::new(pk, false, user_account))
                 .collect();
-        
+            let evm_account = RefCell::new(solana_evm_loader_program::create_state_account(evm_state_balance));
+            let evm_keyed_account = KeyedAccount::new(&solana_sdk::evm_state::ID, false, &evm_account);
+
             let mut result = executor
                 .transaction_execute_raw(
                     caller,
@@ -851,14 +853,14 @@ impl TraceERPC for TraceErpcImpl {
                     Some(tx_chain_id),
                     tx_hash,
                     true,
-                    solana_evm_loader_program::precompiles::simulation_entrypoint(
+                    simulation_entrypoint(
                         executor.support_precompile(),
-                        evm_state_balance,
+                        &evm_keyed_account,
                         &user_accounts,
                     ),
                 )
                 .with_context(|_err| EvmStateError)?;
-        
+
             let mut bytes: [u8; 32] = [0; 32];
             tx.r.ok_or(Error::InvalidParams {})?
                 .0
@@ -881,10 +883,10 @@ impl TraceERPC for TraceErpcImpl {
                 },
                 input,
             };
-        
+
             let tx_hashes = executor.evm_backend.get_executed_transactions();
             assert!(!tx_hashes.contains(&tx_hash));
-        
+
             let transaction = if is_native_swap {
                 result.used_gas = 0;
                 TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller {
@@ -907,7 +909,7 @@ impl TraceERPC for TraceErpcImpl {
             executor
                 .evm_backend
                 .push_transaction_receipt(tx_hash, receipt);
-        
+
             Ok(result)
         }
 
@@ -922,13 +924,13 @@ impl TraceERPC for TraceErpcImpl {
             evm_state.state.block_number = block_header.block_number;
             evm_state.state.timestamp = block_header.timestamp;
             evm_state.state.last_block_hash = block_header.parent_hash;
-    
+
             let evm_config = evm_state::EvmConfig {
                 chain_id: meta.bank(None).evm_chain_id,
                 estimate: false,
                 ..Default::default()
             };
-    
+
             let last_hashes = last_hashes
                 .try_into()
                 .map_err(|_| Error::InvalidParams {})?;
@@ -938,7 +940,7 @@ impl TraceERPC for TraceErpcImpl {
                 evm_config,
                 evm_state::executor::FeatureSet::default()
             );
-    
+
             let mut warn = vec![];
             debug!("running evm executor = {:?}", executor);
             for (tx, meta_keys) in txs {
@@ -956,7 +958,7 @@ impl TraceERPC for TraceErpcImpl {
                     },
                 };
             }
-    
+
             let Committed { block: header, committed_transactions: transactions } = executor
                 .evm_backend
                 .commit_block(
@@ -964,7 +966,7 @@ impl TraceERPC for TraceErpcImpl {
                     block_header.native_chain_hash,
                 )
                 .state;
-    
+
             Ok((Block { header, transactions }, warn))
         })
     }
@@ -1150,6 +1152,16 @@ fn call_inner(
         .map(|(user_account, pk)| KeyedAccount::new(pk, false, user_account))
         .collect();
 
+    // Simulation does not have access to real account structure, so only process immutable entrypoints
+    let evm_account = RefCell::new(solana_evm_loader_program::create_state_account(
+        evm_state_balance,
+    ));
+    let evm_keyed_account = KeyedAccount::new(
+        &solana_sdk::evm_state::ID,
+        false,
+        &evm_account,
+    );
+
     let evm_state::executor::ExecutionResult {
         exit_reason,
         exit_data,
@@ -1168,9 +1180,9 @@ fn call_inner(
             Some(tx_chain_id),
             tx_hash,
             true,
-            solana_evm_loader_program::precompiles::simulation_entrypoint(
+            simulation_entrypoint(
                 executor.support_precompile(),
-                evm_state_balance,
+                &evm_keyed_account,
                 &user_accounts,
             ),
         )

@@ -1201,6 +1201,11 @@ impl From<evm_state::ExitReason> for generated_evm::ExitReason {
                     other: String::new(),
                     variant: ExitVariant::DesignatedInvalid.into(),
                 },
+                ExitError::InvalidCode(opcode) => generated_evm::ExitReason {
+                    fatal: false,
+                    other: opcode.as_u8().to_string(),
+                    variant: ExitVariant::InvalidCode.into(),
+                },
                 ExitError::InvalidJump => generated_evm::ExitReason {
                     fatal: false,
                     other: String::new(),
@@ -1298,7 +1303,7 @@ impl TryFrom<generated_evm::ExitReason> for evm_state::ExitReason {
     fn try_from(
         header: generated_evm::ExitReason,
     ) -> Result<Self, <Self as TryFrom<generated_evm::ExitReason>>::Error> {
-        use evm_state::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed};
+        use evm_state::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Opcode};
         use generated_evm::exit_reason::ExitVariant;
         let error_or_fatal = match ExitVariant::from_i32(header.variant)
             .ok_or("Enum error variant out of bounds")?
@@ -1320,6 +1325,9 @@ impl TryFrom<generated_evm::ExitReason> for evm_state::ExitReason {
             ExitVariant::CreateContractLimit => ExitError::CreateContractLimit,
             ExitVariant::CreateEmpty => ExitError::CreateEmpty,
             ExitVariant::DesignatedInvalid => ExitError::DesignatedInvalid,
+            ExitVariant::InvalidCode => ExitError::InvalidCode(Opcode(
+                u8::from_str(&header.other).map_err(|_| "Failed to decode opcode")?,
+            )),
             ExitVariant::InvalidJump => ExitError::InvalidJump,
             ExitVariant::InvalidRange => ExitError::InvalidRange,
             ExitVariant::StackOverflow => ExitError::StackOverflow,
