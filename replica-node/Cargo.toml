@@ -9,6 +9,10 @@ license = "Apache-2.0"
 homepage = "https://solana.com/"
 documentation = "https://docs.rs/solana-validator"
 
+[[bin]]
+name = "triedb_repl"
+path = "src/bin/main.rs"
+
 [dependencies]
 clap = "2.33.1"
 crossbeam-channel = "0.5"
@@ -29,6 +33,8 @@ solana-send-transaction-service = { path = "../send-transaction-service", versio
 solana-streamer = { path = "../streamer", version = "=1.9.29" }
 solana-version = { path = "../version", version = "=0.6.0" }
 velas-validator = { path = "../validator", version = "=1.9.29" }
+# To run triedb_repl_client
+tokio = { version = "1.14.1", features = ["full"] }
 
 [dev-dependencies]
 serial_test = "0.5.1"

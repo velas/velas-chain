@@ -1981,7 +1981,7 @@ dependencies = [
  "snafu",
  "tempfile",
  "thiserror",
- "triedb",
+ "triedb 0.5.0 (git+https://github.com/velas/triedb?branch=feat/gc-simple)",
 ]
 
 [[package]]
@@ -6661,7 +6661,7 @@ dependencies = [
  "solana-vote-program",
  "tikv-jemallocator",
  "tokio",
- "triedb",
+ "triedb 0.5.0 (git+https://github.com/velas/triedb?branch=feat/gc-simple)",
 ]
 
 [[package]]
@@ -7042,15 +7042,23 @@ name = "solana-replica-lib"
 version = "1.9.29"
 dependencies = [
  "crossbeam-channel",
+ "derive_more",
+ "evm-rpc",
+ "evm-state",
  "futures-util",
  "log 0.4.17",
+ "primitive-types",
  "prost 0.10.4",
+ "rocksdb",
+ "serde_json",
+ "solana-client",
  "solana-rpc",
  "solana-runtime",
  "solana-sdk",
  "tokio",
  "tonic 0.7.2",
  "tonic-build 0.7.2",
+ "triedb 0.5.0 (git+https://github.com/raventid/triedb?branch=state-diff)",
 ]
 
 [[package]]
@@ -7079,6 +7087,7 @@ dependencies = [
  "solana-streamer",
  "solana-version",
  "tempfile",
+ "tokio",
  "tonic-build 0.7.2",
  "velas-validator",
 ]
@@ -8771,6 +8780,25 @@ dependencies = [
  "rocksdb",
  "sha3 0.9.1",
  "thiserror",
+]
+
+[[package]]
+name = "triedb"
+version = "0.5.0"
+source = "git+https://github.com/raventid/triedb?branch=state-diff#6c8ac75d030c4079aae171c22f9ba844697a6b80"
+dependencies = [
+ "anyhow",
+ "dashmap",
+ "derivative",
+ "log 0.4.17",
+ "primitive-types",
+ "rayon",
+ "rlp",
+ "rocksdb",
+ "sha3 0.9.1",
+ "thiserror",
+ "tracing",
+ "tracing-attributes",
 ]
 
 [[package]]

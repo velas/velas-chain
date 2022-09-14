@@ -17,8 +17,21 @@ prost = "0.10.0"
 solana-rpc = { path = "../rpc", version = "=1.9.29" }
 solana-runtime = { path = "../runtime", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
+solana-client = { path = "../client", version = "=1.9.29" }
 tokio = { version = "1.14.1", features = ["full"] }
 tonic = { version = "0.7.1", features = ["tls", "transport"] }
+
+# Additional deps for triedb_repl_server
+derive_more = "0.99.11"
+evm-state = { path = "../evm-utils/evm-state" }
+evm-rpc = { path = "../evm-utils/evm-rpc" }
+primitive-types = "0.8.0"
+rocksdb = { git = "https://github.com/velas/rust-rocksdb", branch = "transaction", version = "0.17.0", default-features = false }
+triedb = { git = "https://github.com/raventid/triedb", branch = "state-diff", features = ["rocksdb"] }
+
+# Additional deps for triedb_repl_client
+serde_json = "1.0.82"
+
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

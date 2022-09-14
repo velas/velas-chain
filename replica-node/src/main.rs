@@ -3,6 +3,8 @@
 
 #![allow(clippy::integer_arithmetic)]
 
+use solana_replica_node::triedb_repl_service::start_triedb_repl;
+
 use {
     clap::{crate_description, crate_name, value_t, values_t, App, AppSettings, Arg},
     log::*,
@@ -71,7 +73,7 @@ pub fn main() {
                 .long("peer-address")
                 .value_name("IP")
                 .takes_value(true)
-                .required(true)
+                // .required(true)
                 .help("The the address for the peer validator/replica to download from"),
         )
         .arg(
@@ -79,7 +81,7 @@ pub fn main() {
                 .long("peer-rpc-port")
                 .value_name("PORT")
                 .takes_value(true)
-                .required(true)
+                // .required(true)
                 .help("The the PORT for the peer validator/replica from which to download the snapshots"),
         )
         .arg(
@@ -87,7 +89,7 @@ pub fn main() {
                 .long("peer-accountsdb-repl-port")
                 .value_name("PORT")
                 .takes_value(true)
-                .required(true)
+                // .required(true)
                 .help("The the PORT for the peer validator/replica serving the AccountsDb replication"),
         )
         .arg(
@@ -95,7 +97,7 @@ pub fn main() {
                 .long("peer-pubkey")
                 .validator(is_pubkey)
                 .value_name("The peer validator/replica IDENTITY")
-                .required(true)
+                // .required(true)
                 .takes_value(true)
                 .help("The pubkey for the target validator."),
         )
@@ -187,7 +189,41 @@ pub fn main() {
                 .help("Allow contacting private ip addresses")
                 .hidden(true),
         )
+        .arg(Arg::with_name("state_rpc_mode").long("state-rpc-mode").takes_value(false).help("Switches mode between evm-state replication and account replication"))
         .get_matches();
+
+
+    // error: The following required arguments were not provided:
+    // --peer-accountsdb-repl-port <PORT>
+    // --peer-address <IP>
+    // --peer-pubkey <The peer validator/replica IDENTITY>
+    // --peer-rpc-port <PORT>
+
+    //     ./target/release/solana-replica-node
+    //     --ledger tmp-ledger-path
+    //     --dynamic-port-range 8001-8015
+    //     --entrypoint bootstrap.testnet.velas.com:8001
+    //     --limit-ledger-size
+    //     --no-voting
+    //     --log - --no-port-check
+    //     --enable-rpc-transaction-history
+    //     --enable-rpc-bigtable-ledger-storage
+    //     --rpc-port 8899
+    //     --enable-cpi-and-log-storage --snapshot-interval-slots 200 --expected-shred-version 64301 |& tee validator.log
+    //
+
+    // if let val = matches.value_of("").unwrap() {
+        let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
+        let evm_state_path = ledger_path.join("evm-state");
+
+        println!("{:?}", evm_state_path);
+        start_triedb_repl();
+    // } else {
+
+        // println!("No state-rpc-mode activated");
+    // }
+
+    return;
 
     let bind_address = solana_net_utils::parse_host(matches.value_of("bind_address").unwrap())
         .expect("invalid bind_address");
