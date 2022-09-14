@@ -139,7 +139,7 @@ pub fn process_evm_state_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             }
         }
         ("list-roots", Some(_)) => {
-            storage.list_roots();
+            storage.list_roots()?;
         }
         ("copy", Some(matches)) => {
             let root = value_t_or_exit!(matches, ROOT_ARG.name, H256);
