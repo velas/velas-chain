@@ -41,7 +41,7 @@ use {
 };
 
 pub fn start_triedb_repl() {
-    let config = triedb_repl_server::StateRpcServiceConfig::from_str_addr_and_thread_number("127.0.0.1:8888".to_string(), 2);
+    let config = triedb_repl_server::StateRpcServiceConfig::from_str_addr_and_thread_number("0.0.0.0:8888".to_string(), 2);
     let backend_server = triedb_repl_server::TriedbReplServer::new_backend_server();
     println!("starting the thread");
     triedb_repl_server::TriedbReplService::new(config, backend_server.into()).join();
