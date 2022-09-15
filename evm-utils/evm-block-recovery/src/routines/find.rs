@@ -6,31 +6,33 @@ use crate::routines::BlockRange;
 
 use super::find_uncommitted_ranges;
 
-pub async fn find_evm(ledger: LedgerStorage, start_block: BlockNum, limit: usize) -> Result<()> {
+pub async fn find_evm(ledger: LedgerStorage, start_block: BlockNum, end_block: u64) -> Result<()> {
     log::info!("Looking for missing EVM Blocks");
+    
+    let limit = (end_block - start_block) as usize;
 
-    let blocks = ledger
+    let mut blocks = ledger
         .get_evm_confirmed_full_blocks_nums(start_block, limit)
         .await
         .context(format!(
             "Unable to get EVM Confirmed Block IDs starting with block {} limit by {}",
-            start_block, limit
+            start_block, end_block
         ))?;
+
+    blocks.retain_mut(|block| *block <= end_block);
 
     let missing_blocks = find_uncommitted_ranges(blocks);
 
     if missing_blocks.is_empty() {
-        log::info!("Missing EVM Blocks starting from block {start_block} with a limit of {limit} are not found");
+        log::info!("Missing EVM Blocks in range: start_block:={}, end_block= {} are not found", start_block, end_block);
     }
 
     Ok(())
 }
 
-pub async fn find_native(ledger: LedgerStorage, start_slot: u64, end_slot: u64) -> Result<()> {
-    const LOAD_CHUNK_SIZE: usize = 500_000;
-
+pub async fn find_native(ledger: LedgerStorage, start_slot: u64, end_slot: u64, max_limit: usize) -> Result<()> {
     let mut start_slot = start_slot;
-    let mut limit = (end_slot - start_slot) as usize;
+    let mut total_limit = (end_slot - start_slot) as usize;
 
     let mut slots = vec![];
 
@@ -39,21 +41,21 @@ pub async fn find_native(ledger: LedgerStorage, start_slot: u64, end_slot: u64) 
     );
 
     loop {
-        let size = usize::min(limit, LOAD_CHUNK_SIZE);
+        let limit = usize::min(total_limit, max_limit);
 
         let mut chunk = ledger
-            .get_confirmed_blocks(start_slot, size)
+            .get_confirmed_blocks(start_slot, limit)
             .await
             .context(format!(
                 "Unable to get Native Confirmed Block IDs starting with slot {} limit by {}",
-                start_slot, limit
+                start_slot, total_limit
             ))?;
 
         let last_in_chunk = *chunk.last().unwrap();
 
         if last_in_chunk < end_slot {
             start_slot = last_in_chunk + 1;
-            limit = (end_slot - start_slot) as usize;
+            total_limit = (end_slot - start_slot) as usize;
             slots.extend(chunk.iter());
             log::info!("Slot #{last_in_chunk} loaded...");
         } else {

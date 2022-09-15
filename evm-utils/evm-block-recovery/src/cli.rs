@@ -1,4 +1,5 @@
 const DEFAULT_INSTANCE: &str = "solana-ledger";
+const DEFAULT_BIGTABLE_LIMIT: &str = "150000";
 
 #[derive(clap::Parser)]
 #[clap(author, version, long_about = None)]
@@ -27,18 +28,21 @@ pub enum Commands {
 
         /// Limit of EVM Blocks to search
         #[clap(long, value_name = "NUM")]
-        limit: usize,
+        end_block: u64,
     },
 
     /// Finds missing ranges of Native Blocks
     FindNative {
         /// Starting Native Block number
         #[clap(long, value_name = "NUM")]
-        start_slot: u64,
+        start_block: u64,
 
         /// Last Native Block to search
         #[clap(long, value_name = "NUM")]
-        end_slot: u64,
+        end_block: u64,
+
+        #[clap(long, value_name = "NUM", default_value = DEFAULT_BIGTABLE_LIMIT)]
+        bigtable_limit: usize
     },
 
     /// Restores EVM subchain
