@@ -1871,11 +1871,11 @@ dependencies = [
  "evm-rpc",
  "evm-state",
  "hex",
- "jsonrpc-core",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "jsonrpc-http-server",
- "jsonrpc-pubsub",
+ "jsonrpc-pubsub 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpc-ws-server",
  "log 0.4.17",
  "once_cell",
@@ -1945,11 +1945,11 @@ dependencies = [
  "ethbloom 0.11.1",
  "evm-state",
  "hex",
- "jsonrpc-core",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "jsonrpc-http-server",
- "jsonrpc-pubsub",
+ "jsonrpc-pubsub 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "primitive-types",
  "rlp",
  "rustc-hex",
@@ -3001,20 +3001,18 @@ dependencies = [
 [[package]]
 name = "jsonrpc-client-transports"
 version = "18.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2b99d4207e2a04fb4581746903c2bb7eb376f88de9c699d0f3e10feeac0cd3a"
+source = "git+https://github.com/paritytech/jsonrpc?rev=e724d087defc0af35bc1c844049d1611588d8466#e724d087defc0af35bc1c844049d1611588d8466"
 dependencies = [
  "derive_more",
  "futures 0.3.23",
- "jsonrpc-core",
- "jsonrpc-pubsub",
- "jsonrpc-server-utils",
+ "jsonrpc-core 18.0.0 (git+https://github.com/paritytech/jsonrpc?rev=e724d087defc0af35bc1c844049d1611588d8466)",
+ "jsonrpc-pubsub 18.0.0 (git+https://github.com/paritytech/jsonrpc?rev=e724d087defc0af35bc1c844049d1611588d8466)",
+ "jsonrpc-server-utils 18.0.0 (git+https://github.com/paritytech/jsonrpc?rev=e724d087defc0af35bc1c844049d1611588d8466)",
  "log 0.4.17",
  "parity-tokio-ipc",
  "serde",
  "serde_json",
  "tokio",
- "url 1.7.2",
  "websocket",
 ]
 
@@ -3034,10 +3032,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonrpc-core"
+version = "18.0.0"
+source = "git+https://github.com/paritytech/jsonrpc?rev=e724d087defc0af35bc1c844049d1611588d8466#e724d087defc0af35bc1c844049d1611588d8466"
+dependencies = [
+ "futures 0.3.23",
+ "futures-executor",
+ "futures-util",
+ "log 0.4.17",
+ "serde",
+ "serde_derive",
+ "serde_json",
+]
+
+[[package]]
 name = "jsonrpc-core-client"
 version = "18.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b51da17abecbdab3e3d4f26b01c5ec075e88d3abe3ab3b05dc9aa69392764ec0"
+source = "git+https://github.com/paritytech/jsonrpc?rev=e724d087defc0af35bc1c844049d1611588d8466#e724d087defc0af35bc1c844049d1611588d8466"
 dependencies = [
  "futures 0.3.23",
  "jsonrpc-client-transports",
@@ -3063,8 +3074,8 @@ checksum = "e1dea6e07251d9ce6a552abfb5d7ad6bc290a4596c8dcc3d795fae2bbdc1f3ff"
 dependencies = [
  "futures 0.3.23",
  "hyper 0.14.20",
- "jsonrpc-core",
- "jsonrpc-server-utils",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "jsonrpc-server-utils 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.17",
  "net2",
  "parking_lot 0.11.2",
@@ -3078,8 +3089,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "382bb0206323ca7cda3dcd7e245cea86d37d02457a02a975e3378fb149a48845"
 dependencies = [
  "futures 0.3.23",
- "jsonrpc-core",
- "jsonrpc-server-utils",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "jsonrpc-server-utils 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.17",
  "parity-tokio-ipc",
  "parking_lot 0.11.2",
@@ -3093,7 +3104,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "240f87695e6c6f62fb37f05c02c04953cf68d6408b8c1c89de85c7a0125b1011"
 dependencies = [
  "futures 0.3.23",
- "jsonrpc-core",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lazy_static 1.4.0",
+ "log 0.4.17",
+ "parking_lot 0.11.2",
+ "rand 0.7.3",
+ "serde",
+]
+
+[[package]]
+name = "jsonrpc-pubsub"
+version = "18.0.0"
+source = "git+https://github.com/paritytech/jsonrpc?rev=e724d087defc0af35bc1c844049d1611588d8466#e724d087defc0af35bc1c844049d1611588d8466"
+dependencies = [
+ "futures 0.3.23",
+ "jsonrpc-core 18.0.0 (git+https://github.com/paritytech/jsonrpc?rev=e724d087defc0af35bc1c844049d1611588d8466)",
  "lazy_static 1.4.0",
  "log 0.4.17",
  "parking_lot 0.11.2",
@@ -3110,7 +3135,24 @@ dependencies = [
  "bytes 1.2.1",
  "futures 0.3.23",
  "globset",
- "jsonrpc-core",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lazy_static 1.4.0",
+ "log 0.4.17",
+ "tokio",
+ "tokio-stream",
+ "tokio-util 0.6.10",
+ "unicase 2.6.0",
+]
+
+[[package]]
+name = "jsonrpc-server-utils"
+version = "18.0.0"
+source = "git+https://github.com/paritytech/jsonrpc?rev=e724d087defc0af35bc1c844049d1611588d8466#e724d087defc0af35bc1c844049d1611588d8466"
+dependencies = [
+ "bytes 1.2.1",
+ "futures 0.3.23",
+ "globset",
+ "jsonrpc-core 18.0.0 (git+https://github.com/paritytech/jsonrpc?rev=e724d087defc0af35bc1c844049d1611588d8466)",
  "lazy_static 1.4.0",
  "log 0.4.17",
  "tokio",
@@ -3126,8 +3168,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f892c7d766369475ab7b0669f417906302d7c0fb521285c0a0c92e52e7c8e946"
 dependencies = [
  "futures 0.3.23",
- "jsonrpc-core",
- "jsonrpc-server-utils",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "jsonrpc-server-utils 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.17",
  "parity-ws",
  "parking_lot 0.11.2",
@@ -6198,7 +6240,7 @@ dependencies = [
  "evm-rpc",
  "evm-state",
  "indicatif 0.16.2",
- "jsonrpc-core",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpc-http-server",
  "log 0.4.17",
  "rayon",
@@ -6287,10 +6329,10 @@ dependencies = [
  "hex",
  "histogram",
  "itertools",
- "jsonrpc-core",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpc-core-client",
  "jsonrpc-derive",
- "jsonrpc-pubsub",
+ "jsonrpc-pubsub 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.17",
  "lru",
  "matches",
@@ -7180,11 +7222,11 @@ dependencies = [
  "evm-rpc",
  "evm-state",
  "itertools",
- "jsonrpc-core",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "jsonrpc-http-server",
- "jsonrpc-pubsub",
+ "jsonrpc-pubsub 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpc-ws-server",
  "libc",
  "log 0.4.17",
@@ -7245,7 +7287,7 @@ dependencies = [
  "evm-rpc",
  "evm-state",
  "hex",
- "jsonrpc-core",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpc-core-client",
  "log 0.4.17",
  "primitive-types",
@@ -9162,11 +9204,11 @@ dependencies = [
  "evm-state",
  "fd-lock",
  "indicatif 0.16.2",
- "jsonrpc-core",
+ "jsonrpc-core 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "jsonrpc-ipc-server",
- "jsonrpc-server-utils",
+ "jsonrpc-server-utils 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc",
  "log 0.4.17",
  "num_cpus",
@@ -9375,9 +9417,9 @@ dependencies = [
 
 [[package]]
 name = "websocket"
-version = "0.24.0"
+version = "0.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413b37840b9e27b340ce91b319ede10731de8c72f5bc4cb0206ec1ca4ce581d0"
+checksum = "92aacab060eea423e4036820ddd28f3f9003b2c4d8048cbda985e5a14e18038d"
 dependencies = [
  "bytes 0.4.12",
  "futures 0.1.31",
@@ -9396,9 +9438,9 @@ dependencies = [
 
 [[package]]
 name = "websocket-base"
-version = "0.24.0"
+version = "0.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e3810f0d00c4dccb54c30a4eee815e703232819dec7b007db115791c42aa374"
+checksum = "49aec794b07318993d1db16156d5a9c750120597a5ee40c6b928d416186cb138"
 dependencies = [
  "base64 0.10.1",
  "bitflags",
@@ -9407,7 +9449,7 @@ dependencies = [
  "futures 0.1.31",
  "native-tls",
  "rand 0.6.1",
- "sha1",
+ "sha-1 0.8.2",
  "tokio-codec",
  "tokio-io",
  "tokio-tcp",
