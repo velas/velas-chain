@@ -49,7 +49,6 @@ base64 = "0.13"
 semver = "1.0"
 
 tracing = "0.1.29"
-tracing-fmt = { version="0.1.1" }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "smallvec",
     "fmt",

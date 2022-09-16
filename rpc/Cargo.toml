@@ -62,7 +62,6 @@ sha3 = "0.10"
 velas-account-program = { path = "../programs/velas-account-program" }
 velas-relying-party-program = { path = "../programs/velas-relying-party-program" }
 tracing = "0.1.29"
-tracing-fmt = { version="0.1.1" }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "smallvec",
     "fmt",

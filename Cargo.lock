@@ -64,15 +64,6 @@ dependencies = [
 
 [[package]]
 name = "ansi_term"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee49baf6cb617b853aa8d93bf420db2383fab46d314482ca2803b40d5fde979b"
-dependencies = [
- "winapi 0.3.9",
-]
-
-[[package]]
-name = "ansi_term"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d52a9bb7ec0cf484c551830a7ce27bd20d67eac647e1befb56b0be4ee39a55d2"
@@ -787,7 +778,7 @@ version = "2.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0610544180c38b88101fecf2dd634b174a62eef6946f84dfc6a7127512b381c"
 dependencies = [
- "ansi_term 0.12.1",
+ "ansi_term",
  "atty",
  "bitflags",
  "strsim 0.8.0",
@@ -1787,7 +1778,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-attributes",
- "tracing-fmt",
  "tracing-opentelemetry 0.16.0",
  "tracing-subscriber 0.3.15",
  "txpool",
@@ -3246,15 +3236,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "matchers"
-version = "0.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f099785f7595cc4b4553a174ce30dd7589ef93391ff414dbb67f62392b9e0ce1"
-dependencies = [
- "regex-automata",
-]
-
-[[package]]
 name = "matches"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3749,15 +3730,6 @@ dependencies = [
  "proc-macro2 1.0.43",
  "quote 1.0.21",
  "syn 1.0.99",
-]
-
-[[package]]
-name = "owning_ref"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ff55baddef9e4ad00f88b6c743a2a8062d4c6ade126c2a528644b8e444d52ce"
-dependencies = [
- "stable_deref_trait",
 ]
 
 [[package]]
@@ -4806,9 +4778,6 @@ name = "regex-automata"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c230d73fb8d8c1b9c0b3135c5142a8acee3a0558fb8db5cf1cb65f8d7862132"
-dependencies = [
- "regex-syntax",
-]
 
 [[package]]
 name = "regex-syntax"
@@ -7073,7 +7042,6 @@ dependencies = [
  "tokio-util 0.6.10",
  "tracing",
  "tracing-attributes",
- "tracing-fmt",
  "tracing-opentelemetry 0.16.0",
  "tracing-subscriber 0.3.15",
  "velas-account-program",
@@ -8586,15 +8554,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-fmt"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "880547feb88739526e322a366be2411c41c797f0dabcddfe99a3216e5a664f71"
-dependencies = [
- "tracing-subscriber 0.1.6",
-]
-
-[[package]]
 name = "tracing-futures"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8642,23 +8601,6 @@ dependencies = [
 
 [[package]]
 name = "tracing-subscriber"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "192ca16595cdd0661ce319e8eede9c975f227cdaabc4faaefdc256f43d852e45"
-dependencies = [
- "ansi_term 0.11.0",
- "chrono",
- "lazy_static",
- "matchers",
- "owning_ref",
- "regex",
- "smallvec 0.6.14",
- "tracing-core",
- "tracing-log",
-]
-
-[[package]]
-name = "tracing-subscriber"
 version = "0.2.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e0d2eaa99c3c2e41547cfa109e910a68ea03823cccad4a0525dcbc9b01e8c71"
@@ -8674,7 +8616,7 @@ version = "0.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60db860322da191b40952ad9affe65ea23e7dd6a5c442c2c42865810c6ab8e6b"
 dependencies = [
- "ansi_term 0.12.1",
+ "ansi_term",
  "sharded-slab",
  "smallvec 1.9.0",
  "thread_local",
