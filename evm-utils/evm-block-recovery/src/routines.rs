@@ -57,7 +57,7 @@ fn find_uncommitted_ranges(blocks: Vec<u64>) -> Vec<BlockRange> {
     result
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, serde::Serialize)]
 pub enum BlockRange {
     SingleBlock(u64),
     InclusiveRange(u64, u64),

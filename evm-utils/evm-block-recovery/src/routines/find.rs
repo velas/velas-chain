@@ -1,44 +1,84 @@
 use anyhow::*;
 use evm_state::BlockNum;
+use serde_json::json;
 use solana_storage_bigtable::LedgerStorage;
 
 use crate::routines::BlockRange;
 
 use super::find_uncommitted_ranges;
 
-pub async fn find_evm(ledger: LedgerStorage, start_block: BlockNum, end_block: u64) -> Result<()> {
+pub async fn find_evm(
+    ledger: LedgerStorage,
+    start_block: BlockNum,
+    end_block: BlockNum,
+    max_limit: usize,
+) -> Result<()> {
     log::info!("Looking for missing EVM Blocks");
-    
-    let limit = (end_block - start_block) as usize;
+    log::info!("start_block={start_block}, end_block={end_block}, bigtable_limit={max_limit}");
 
-    let mut blocks = ledger
-        .get_evm_confirmed_full_blocks_nums(start_block, limit)
-        .await
-        .context(format!(
-            "Unable to get EVM Confirmed Block IDs starting with block {} limit by {}",
-            start_block, end_block
-        ))?;
+    let mut start_block = start_block;
+    let mut total_limit = (end_block - start_block) as usize;
+    let mut blocks = vec![];
+
+    loop {
+        let limit = usize::max(total_limit, max_limit);
+
+        let mut chunk = ledger
+            .get_evm_confirmed_full_blocks_nums(start_block, limit)
+            .await
+            .context(format!(
+                "Unable to get EVM Confirmed Block IDs starting with block {} limit by {}",
+                start_block, limit
+            ))
+            .map_err(err_to_output)?;
+
+        let last_in_chunk = *chunk.last().unwrap();
+
+        if last_in_chunk < end_block {
+            start_block = last_in_chunk + 1;
+            total_limit = (end_block - start_block) as usize;
+            blocks.extend(chunk.iter());
+            log::info!("Block #{last_in_chunk} loaded...");
+        } else {
+            chunk.retain(|block| *block <= end_block);
+            blocks.extend(chunk.iter());
+            log::info!("All blocks loaded.");
+            break;
+        }
+    }
 
     blocks.retain_mut(|block| *block <= end_block);
 
     let missing_blocks = find_uncommitted_ranges(blocks);
 
     if missing_blocks.is_empty() {
-        log::info!("Missing EVM Blocks in range: start_block:={}, end_block= {} are not found", start_block, end_block);
+        log::info!(
+            "Missing EVM Blocks in range: start_block:={}, end_block= {} are not found",
+            start_block,
+            end_block
+        );
+        print_task_ok()
+    } else {
+        log::warn!("Found missing EVM blocks: {:?}", missing_blocks);
+        print_task_alert()
     }
 
     Ok(())
 }
 
-pub async fn find_native(ledger: LedgerStorage, start_slot: u64, end_slot: u64, max_limit: usize) -> Result<()> {
+pub async fn find_native(
+    ledger: LedgerStorage,
+    start_slot: u64,
+    end_slot: u64,
+    max_limit: usize,
+) -> Result<()> {
+    log::info!("Looking for missing Native Blocks");
+    log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={max_limit}");
+
     let mut start_slot = start_slot;
     let mut total_limit = (end_slot - start_slot) as usize;
 
     let mut slots = vec![];
-
-    log::info!(
-        "Looking for missing Native Blocks, start slot: {start_slot}, end slot: {end_slot}."
-    );
 
     loop {
         let limit = usize::min(total_limit, max_limit);
@@ -49,7 +89,8 @@ pub async fn find_native(ledger: LedgerStorage, start_slot: u64, end_slot: u64, 
             .context(format!(
                 "Unable to get Native Confirmed Block IDs starting with slot {} limit by {}",
                 start_slot, total_limit
-            ))?;
+            ))
+            .map_err(err_to_output)?;
 
         let last_in_chunk = *chunk.last().unwrap();
 
@@ -69,6 +110,7 @@ pub async fn find_native(ledger: LedgerStorage, start_slot: u64, end_slot: u64, 
     if slots.len() < 2 {
         let err = "Vector of ID's is too short, try to increase a limit";
         log::warn!("{err}");
+        print_task_error(err);
         bail!(err)
     }
 
@@ -84,33 +126,59 @@ pub async fn find_native(ledger: LedgerStorage, start_slot: u64, end_slot: u64, 
         log::warn!("Found possibly missing {missing_ahead}, manual check required");
     }
 
-    let missing_ranges = find_uncommitted_ranges(slots);
+    let uncommitted_ranges = find_uncommitted_ranges(slots);
+    let mut missing_ranges = vec![];
 
-    log::info!("Found {} possibly missing ranges", missing_ranges.len());
+    log::info!("Found {} possibly missing ranges", uncommitted_ranges.len());
 
-    for range in missing_ranges.into_iter() {
+    for range in uncommitted_ranges.into_iter() {
         let slot_prev = range.first() - 1;
         let slot_curr = range.last() + 1;
 
         let block_prev = ledger
             .get_confirmed_block(slot_prev)
             .await
-            .context(format!("Unable to get native block {slot_prev}"))?;
+            .context(format!("Unable to get native block {slot_prev}"))
+            .map_err(err_to_output)?;
 
         let block_curr = ledger
             .get_confirmed_block(slot_curr)
             .await
-            .context(format!("Unable to get native block {slot_curr}"))?;
+            .context(format!("Unable to get native block {slot_curr}"))
+            .map_err(err_to_output)?;
 
         if block_prev.blockhash == block_curr.previous_blockhash {
             let checked_range = BlockRange::new(slot_prev, slot_curr);
             log::trace!("{checked_range} passed hash check");
         } else {
             log::warn!("Found missing {}", range);
+            missing_ranges.push(range.clone())
         }
     }
 
     log::info!("Search complete");
 
+    match missing_ranges.is_empty() {
+        true => print_task_ok(),
+        false => print_task_alert(),
+    }
+
     Ok(())
+}
+
+fn err_to_output(error: Error) -> anyhow::Error {
+    print_task_error(&format!("{error:?}"));
+    error
+}
+
+fn print_task_ok() {
+    println!("{}", json!({"status": "ok"}))
+}
+
+fn print_task_alert() {
+    println!("{}", json!({"status": "alert"}))
+}
+
+fn print_task_error(error_kind: &str) {
+    println!("{}", json!({"status": "error", "kind": error_kind}))
 }

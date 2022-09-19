@@ -29,6 +29,10 @@ pub enum Commands {
         /// Limit of EVM Blocks to search
         #[clap(long, value_name = "NUM")]
         end_block: u64,
+
+        /// Bigtable limit TODO: implement bitgable limit for evm part
+        #[clap(long, value_name = "NUM", default_value = DEFAULT_BIGTABLE_LIMIT)]
+        bigtable_limit: usize,
     },
 
     /// Finds missing ranges of Native Blocks
@@ -41,8 +45,9 @@ pub enum Commands {
         #[clap(long, value_name = "NUM")]
         end_block: u64,
 
+        /// Bigtable limit
         #[clap(long, value_name = "NUM", default_value = DEFAULT_BIGTABLE_LIMIT)]
-        bigtable_limit: usize
+        bigtable_limit: usize,
     },
 
     /// Restores EVM subchain

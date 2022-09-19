@@ -34,24 +34,29 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::FindEvm { start_block, end_block } => {
+        Commands::FindEvm {
+            start_block,
+            end_block,
+            bigtable_limit,
+        } => {
             routines::find_evm(
                 ledger::with_params(cli.creds, cli.instance).await?,
                 start_block,
                 end_block,
+                bigtable_limit,
             )
             .await
         }
         Commands::FindNative {
             start_block,
             end_block,
-            bigtable_limit
+            bigtable_limit,
         } => {
             routines::find_native(
                 ledger::with_params(cli.creds, cli.instance).await?,
                 start_block,
                 end_block,
-                bigtable_limit
+                bigtable_limit,
             )
             .await
         }
