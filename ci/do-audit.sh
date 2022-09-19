@@ -52,5 +52,15 @@ cargo_audit_ignores=(
   # https://github.com/chronotope/chrono/issues/499
   --ignore RUSTSEC-2020-0159
 
+  # ansi_term is Unmaintained
+  #
+  # Blocked until release of tracing-subscriber 0.3.16
+  --ignore RUSTSEC-2021-0139
+
+  # traitobject is Unmaintained
+  #
+  # Blocked on jsonrpc removing dependency on unmaintained `websocket`
+  # https://github.com/paritytech/jsonrpc/issues/605
+  --ignore RUSTSEC-2021-0144
 )
 scripts/cargo-for-all-lock-files.sh stable audit "${cargo_audit_ignores[@]}"
