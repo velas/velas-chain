@@ -53,7 +53,7 @@ pub async fn find_evm(
 
     if missing_blocks.is_empty() {
         log::info!(
-            "Missing EVM Blocks in range: start_block:={}, end_block= {} are not found",
+            "Missing EVM Blocks in range: start_block={}, end_block={} are not found",
             start_block,
             end_block
         );
