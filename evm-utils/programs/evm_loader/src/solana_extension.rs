@@ -1,7 +1,7 @@
-use solana_program_runtime::{ic_logger_msg, log_collector::{LogCollector}};
+use solana_program_runtime::{ic_logger_msg, log_collector::LogCollector};
+use std::cell::RefCell;
 use std::fmt::Write;
 use std::rc::Rc;
-use std::cell::RefCell;
 pub struct MultilineLogger {
     logger: Option<Rc<RefCell<LogCollector>>>,
     line: String,

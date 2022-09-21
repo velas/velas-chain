@@ -6743,6 +6743,7 @@ dependencies = [
  "solana-cli-output",
  "solana-core",
  "solana-entry",
+ "solana-evm-loader-program",
  "solana-ledger",
  "solana-logger 1.9.29",
  "solana-measure",

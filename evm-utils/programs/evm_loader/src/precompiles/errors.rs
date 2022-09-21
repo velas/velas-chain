@@ -55,6 +55,9 @@ pub enum PrecompileErrors {
 
     #[snafu(display("Invalid call scheme, or code address schema = {:?}", scheme))]
     InvalidCallScheme { scheme: Option<CallScheme> },
+
+    #[snafu(display("Failed to serialize log = {:?}", error))]
+    LogSerializeError { error: bincode::Error },
 }
 
 impl From<PrecompileErrors> for ExitError {

@@ -1,4 +1,8 @@
-use solana_sdk::{account::{ AccountSharedData, WritableAccount, ReadableAccount}, keyed_account::KeyedAccount, pubkey::Pubkey};
+use solana_sdk::{
+    account::{AccountSharedData, ReadableAccount, WritableAccount},
+    keyed_account::KeyedAccount,
+    pubkey::Pubkey,
+};
 
 use crate::error::EvmError;
 use std::cell::RefMut;
@@ -48,7 +52,6 @@ impl<'a> AccountStructure<'a> {
             .try_account_ref_mut()
             .map_err(|_| EvmError::BorrowingFailed)?;
 
-        
         let user_acc_lamports = user_acc
             .lamports()
             .checked_add(fee)
@@ -89,13 +92,16 @@ impl<'a> AccountStructure<'a> {
 
         let keys: Vec<_> = std::iter::repeat_with(|| {
             let user_key = Pubkey::new_unique();
-            let user_account = RefCell::new(Account {
-                lamports: 1000,
-                data: vec![],
-                owner: crate::ID,
-                executable: false,
-                rent_epoch: 0,
-            }.into());
+            let user_account = RefCell::new(
+                Account {
+                    lamports: 1000,
+                    data: vec![],
+                    owner: crate::ID,
+                    executable: false,
+                    rent_epoch: 0,
+                }
+                .into(),
+            );
             (user_key, user_account)
         })
         .take(num_keys + 1)
