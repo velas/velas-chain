@@ -9,7 +9,7 @@ use cli::{Cli, Commands};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let dotenv = dotenv::dotenv();
+    let dotenv = dotenvy::dotenv();
 
     match std::env::var("RUST_LOG") {
         Ok(value) => {

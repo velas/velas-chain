@@ -106,3 +106,6 @@ split-debuginfo = "unpacked"
 primitive-types = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.11-with-borsh-support" }
 uint = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.11-with-borsh-support" }
 spl-memo = { git = "https://github.com/velas/spl-memo", branch = "solana-1.9.29" }
+# TODO: remove once jsonrpc-core-client 18.0.1 is released
+jsonrpc-core = { git = "https://github.com/paritytech/jsonrpc", rev = "e724d087defc0af35bc1c844049d1611588d8466", version = "18.0.0" }
+jsonrpc-core-client = { git = "https://github.com/paritytech/jsonrpc", rev = "e724d087defc0af35bc1c844049d1611588d8466", version = "18.0.0" }

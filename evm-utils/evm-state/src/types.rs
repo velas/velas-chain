@@ -614,10 +614,75 @@ pub fn empty_ommers_hash() -> H256 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethabi::ethereum_types;
     use std::str::FromStr;
 
+    use crate::{Address, Gas};
     use quickcheck::{Arbitrary, Gen};
     use quickcheck_macros::quickcheck;
+
+    // Ethereum header type for tests
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Header {
+        pub parent_hash: H256,
+        pub ommers_hash: H256,
+        pub beneficiary: Address,
+        pub state_root: H256,
+        pub transactions_root: H256,
+        pub receipts_root: H256,
+        pub logs_bloom: ethereum_types::Bloom,
+        pub difficulty: U256,
+        pub number: U256,
+        pub gas_limit: Gas,
+        pub gas_used: Gas,
+        pub timestamp: u64,
+        pub extra_data: Vec<u8>,
+        pub mix_hash: H256,
+        pub nonce: H64,
+    }
+
+    impl Encodable for Header {
+        fn rlp_append(&self, s: &mut RlpStream) {
+            s.begin_list(15);
+            s.append(&self.parent_hash);
+            s.append(&self.ommers_hash);
+            s.append(&self.beneficiary);
+            s.append(&self.state_root);
+            s.append(&self.transactions_root);
+            s.append(&self.receipts_root);
+            s.append(&self.logs_bloom);
+            s.append(&self.difficulty);
+            s.append(&self.number);
+            s.append(&self.gas_limit);
+            s.append(&self.gas_used);
+            s.append(&self.timestamp);
+            s.append(&self.extra_data);
+            s.append(&self.mix_hash);
+            s.append(&self.nonce);
+        }
+    }
+
+    impl Decodable for Header {
+        fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+            Ok(Self {
+                parent_hash: rlp.val_at(0)?,
+                ommers_hash: rlp.val_at(1)?,
+                beneficiary: rlp.val_at(2)?,
+                state_root: rlp.val_at(3)?,
+                transactions_root: rlp.val_at(4)?,
+                receipts_root: rlp.val_at(5)?,
+                logs_bloom: rlp.val_at(6)?,
+                difficulty: rlp.val_at(7)?,
+                number: rlp.val_at(8)?,
+                gas_limit: rlp.val_at(9)?,
+                gas_used: rlp.val_at(10)?,
+                timestamp: rlp.val_at(11)?,
+                extra_data: rlp.val_at(12)?,
+                mix_hash: rlp.val_at(13)?,
+                nonce: rlp.val_at(14)?,
+            })
+        }
+    }
 
     impl Arbitrary for Account {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
@@ -867,12 +932,14 @@ mod tests {
             BlockVersion::VersionConsistentHashes,
         );
 
-        use etc_block::HeaderHash;
         let block_bytes = block.rlp_bytes();
         println!("debug {:x}", block_bytes);
-        let rlp = etc_rlp::Rlp::new(&block_bytes);
-        let etc_header: etc_block::Header = rlp.as_val();
-        assert_eq!(etc_header.header_hash().as_ref(), block.hash().as_bytes());
+        let rlp = Rlp::new(&block_bytes);
+        let header: Header = rlp.as_val().unwrap();
+        assert_eq!(
+            Keccak256::digest(&rlp::encode(&header).to_vec()).as_slice(),
+            block.hash().as_bytes()
+        );
 
         assert_eq!(
             block.hash(),
@@ -936,12 +1003,15 @@ mod tests {
             BlockVersion::VersionConsistentHashes,
         );
 
-        use etc_block::HeaderHash;
         let block_bytes = block.rlp_bytes();
         println!("debug {:x}", block_bytes);
-        let rlp = etc_rlp::Rlp::new(&block_bytes);
-        let etc_header: etc_block::Header = rlp.as_val();
-        assert_eq!(etc_header.header_hash().as_ref(), block.hash().as_bytes());
+
+        let rlp = Rlp::new(&block_bytes);
+        let header: Header = rlp.as_val().unwrap();
+        assert_eq!(
+            Keccak256::digest(&rlp::encode(&header).to_vec()).as_slice(),
+            block.hash().as_bytes()
+        );
 
         assert_eq!(
             block.hash(),
