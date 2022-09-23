@@ -1388,15 +1388,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dir-diff"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2860407d7d7e2e004bb2128510ad9e8d669e76fa005ccf567977b5d71b8b4a0b"
-dependencies = [
- "walkdir",
-]
-
-[[package]]
 name = "dirs"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7120,7 +7111,6 @@ dependencies = [
  "bzip2",
  "crossbeam-channel",
  "dashmap 4.0.2",
- "dir-diff",
  "ed25519-dalek",
  "evm-rpc",
  "evm-state",
@@ -7165,6 +7155,7 @@ dependencies = [
  "thiserror",
  "velas-account-program",
  "velas-relying-party-program",
+ "walkdir",
  "zstd",
 ]
 

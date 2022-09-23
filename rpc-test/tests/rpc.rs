@@ -702,6 +702,7 @@ fn test_rpc_slot_updates() {
 }
 
 #[test]
+#[ignore]
 fn test_rpc_subscriptions() {
     solana_logger::setup();
     use solana_sdk::signature::Signature;
