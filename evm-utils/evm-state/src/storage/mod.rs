@@ -27,13 +27,12 @@ use crate::{
 };
 use triedb::{
     empty_trie_hash,
+    walker,
+    walker::inspector,
     gc::{DatabaseTrieMut, DbCounter, TrieCollection},
     rocksdb::{RocksDatabaseHandle, RocksHandle},
-    FixedSecureTrieMut,
+    FixedSecureTrieMut, Database,
 };
-
-pub mod inspectors;
-pub mod walker;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub use rocksdb; // avoid mess with dependencies for another crates
@@ -492,7 +491,7 @@ impl Storage {
     }
     pub fn list_roots(&self) {
         if !self.gc_enabled {
-            println!("Gc is not enabled");
+            eprintln!("Gc is not enabled");
             return;
         }
         let slots_cf = self.cf::<SlotsRoots>();
@@ -501,7 +500,7 @@ impl Storage {
             slot_arr.copy_from_slice(&k[0..8]);
             let slot = u64::from_be_bytes(slot_arr);
 
-            println!("Found root for slot: {} => {:?}", slot, hex::encode(&v))
+            eprintln!("Found root for slot: {} => {:?}", slot, hex::encode(&v))
         }
     }
 }
@@ -681,7 +680,7 @@ pub fn default_db_opts() -> Result<Options> {
 pub mod cleaner {
     use crate::storage::ReferenceCounter;
 
-    use super::inspectors::memorizer;
+    use super::inspector::memorizer;
     use std::borrow::Borrow;
 
     use primitive_types::H256;

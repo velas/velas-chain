@@ -1981,7 +1981,7 @@ dependencies = [
  "snafu",
  "tempfile",
  "thiserror",
- "triedb 0.5.0 (git+https://github.com/velas/triedb?branch=feat/gc-simple)",
+ "triedb 0.5.0",
 ]
 
 [[package]]
@@ -3775,8 +3775,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f357ef82d1b4db66fbed0b8d542cbd3c22d0bf5b393b3c257b9ba4568e70c9c3"
 dependencies = [
  "aliasable",
- "ouroboros_macro",
+ "ouroboros_macro 0.13.0",
  "stable_deref_trait",
+]
+
+[[package]]
+name = "ouroboros"
+version = "0.15.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f56a2b0aa5fc88687aaf63e85a7974422790ce3419a2e1a15870f8a55227822"
+dependencies = [
+ "aliasable",
+ "ouroboros_macro 0.15.4",
 ]
 
 [[package]]
@@ -3784,6 +3794,19 @@ name = "ouroboros_macro"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44a0b52c2cbaef7dffa5fec1a43274afe8bd2a644fa9fc50a9ef4ff0269b1257"
+dependencies = [
+ "Inflector",
+ "proc-macro-error",
+ "proc-macro2 1.0.43",
+ "quote 1.0.21",
+ "syn 1.0.99",
+]
+
+[[package]]
+name = "ouroboros_macro"
+version = "0.15.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c40641e27d0eb38cae3dee081d920104d2db47a8e853c1a592ef68d33f5ebf4"
 dependencies = [
  "Inflector",
  "proc-macro-error",
@@ -7058,7 +7081,7 @@ dependencies = [
  "tokio",
  "tonic 0.7.2",
  "tonic-build 0.7.2",
- "triedb 0.5.0 (git+https://github.com/raventid/triedb?branch=state-diff)",
+ "triedb 0.5.0",
 ]
 
 [[package]]
@@ -7218,7 +7241,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "num_cpus",
- "ouroboros",
+ "ouroboros 0.13.0",
  "rand 0.7.3",
  "rand_chacha 0.2.2",
  "rayon",
@@ -8769,6 +8792,25 @@ checksum = "0de5f738ceab88e2491a94ddc33c3feeadfa95fedc60363ef110845df12f3878"
 [[package]]
 name = "triedb"
 version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "dashmap",
+ "derivative",
+ "log 0.4.17",
+ "ouroboros 0.15.4",
+ "primitive-types",
+ "rayon",
+ "rlp",
+ "rocksdb",
+ "sha3 0.9.1",
+ "thiserror",
+ "tracing",
+ "tracing-attributes",
+]
+
+[[package]]
+name = "triedb"
+version = "0.5.0"
 source = "git+https://github.com/velas/triedb?branch=feat/gc-simple#9675443fe9b593b9dcf3e677c08ac0ce0d2f13c3"
 dependencies = [
  "anyhow",
@@ -8780,25 +8822,6 @@ dependencies = [
  "rocksdb",
  "sha3 0.9.1",
  "thiserror",
-]
-
-[[package]]
-name = "triedb"
-version = "0.5.0"
-source = "git+https://github.com/raventid/triedb?branch=state-diff#6c8ac75d030c4079aae171c22f9ba844697a6b80"
-dependencies = [
- "anyhow",
- "dashmap",
- "derivative",
- "log 0.4.17",
- "primitive-types",
- "rayon",
- "rlp",
- "rocksdb",
- "sha3 0.9.1",
- "thiserror",
- "tracing",
- "tracing-attributes",
 ]
 
 [[package]]
