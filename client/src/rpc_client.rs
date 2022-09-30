@@ -514,7 +514,7 @@ impl RpcClient {
 
     #[allow(deprecated)]
     fn maybe_map_request(&self, mut request: RpcRequest) -> Result<RpcRequest, RpcError> {
-        if self.get_node_version()? < semver::Version::new(1, 7, 0) {
+        if self.get_node_version()? < semver::Version::new(0, 6, 0) {
             request = match request {
                 RpcRequest::GetBlock => RpcRequest::GetConfirmedBlock,
                 RpcRequest::GetBlocks => RpcRequest::GetConfirmedBlocks,
@@ -3478,7 +3478,7 @@ impl RpcClient {
     /// # };
     /// # use solana_sdk::signature::{Keypair, Signer};
     /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
-    /// let expected_version = semver::Version::new(1, 7, 0);
+    /// let expected_version = semver::Version::new(0, 6, 0);
     /// let version = rpc_client.get_version()?;
     /// let version = semver::Version::parse(&version.solana_core)?;
     /// assert!(version >= expected_version);

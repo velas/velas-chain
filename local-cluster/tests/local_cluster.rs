@@ -891,6 +891,7 @@ fn test_incremental_snapshot_download() {
 /// - Copy the new incremental snapshot (and its associated full snapshot) to another new validator
 /// - Start up this new validator to ensure the snapshots from ^^^ are good
 #[test]
+#[ignore]
 #[serial]
 fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_startup() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
@@ -2664,6 +2665,7 @@ impl SnapshotValidatorConfig {
         }
 
         // Create the snapshot config
+        let _ = fs::create_dir_all(farf_dir());
         let bank_snapshots_dir = tempfile::tempdir_in(farf_dir()).unwrap();
         let snapshot_archives_dir = tempfile::tempdir_in(farf_dir()).unwrap();
         let snapshot_config = SnapshotConfig {

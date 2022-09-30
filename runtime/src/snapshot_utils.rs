@@ -1613,6 +1613,66 @@ fn get_io_error(error: &str) -> SnapshotError {
     SnapshotError::Io(IoError::new(ErrorKind::Other, error))
 }
 
+mod cmp_dir {
+    use std::io::Read;
+    use std::path::Path;
+    use walkdir::{DirEntry, WalkDir};
+
+    pub fn is_different<A: AsRef<Path>, B: AsRef<Path>>(
+        a_base: A,
+        b_base: B,
+        ignore_evm: bool,
+    ) -> Option<bool> {
+        let filter = |e: &DirEntry| {
+            if ignore_evm {
+                e.file_name().to_str() != Some("evm-state")
+            } else {
+                true
+            }
+        };
+        let mut a_walker = walk_dir(a_base).unwrap().filter_entry(filter);
+        let mut b_walker = walk_dir(b_base).unwrap().filter_entry(filter);
+
+        for (a, b) in (&mut a_walker).zip(&mut b_walker) {
+            let a = a.unwrap();
+            let b = b.unwrap();
+
+            if a.depth() != b.depth()
+                || a.file_type() != b.file_type()
+                || a.file_name() != b.file_name()
+                || (a.file_type().is_file()
+                    && read_to_vec(a.path()).unwrap() != read_to_vec(b.path()).unwrap())
+            {
+                return Some(true);
+            }
+        }
+
+        Some(a_walker.next().is_some() || b_walker.next().is_some())
+    }
+
+    fn walk_dir<P: AsRef<Path>>(path: P) -> Result<walkdir::IntoIter, walkdir::Error> {
+        let mut walkdir = WalkDir::new(path).sort_by(compare_by_file_name).into_iter();
+        if let Some(Err(e)) = walkdir.next() {
+            Err(e)
+        } else {
+            Ok(walkdir)
+        }
+    }
+
+    fn compare_by_file_name(a: &DirEntry, b: &DirEntry) -> std::cmp::Ordering {
+        a.file_name().cmp(b.file_name())
+    }
+
+    fn read_to_vec<P: AsRef<Path>>(file: P) -> Result<Vec<u8>, std::io::Error> {
+        let mut data = Vec::new();
+        let mut file = std::fs::File::open(file.as_ref())?;
+
+        file.read_to_end(&mut data)?;
+
+        Ok(data)
+    }
+}
+
 pub fn verify_snapshot_archive<P, Q, R>(
     snapshot_archive: P,
     snapshots_to_verify: Q,
@@ -1640,11 +1700,11 @@ pub fn verify_snapshot_archive<P, Q, R>(
     // TODO: Make evm-state snapshot more consistent, currently rocksdb incremental backup is
     // not consistent (because it support more than one backup at a time)
     // TODO(velas): uncomment this check
-    assert!(!dir_diff::is_different(&snapshots_to_verify, unpacked_snapshots).unwrap());
+    assert!(!cmp_dir::is_different(&snapshots_to_verify, unpacked_snapshots, true).unwrap());
 
     // Check the account entries are the same
     let unpacked_accounts = unpack_dir.join(&TAR_ACCOUNTS_DIR);
-    assert!(!dir_diff::is_different(&storages_to_verify, unpacked_accounts).unwrap());
+    assert!(!cmp_dir::is_different(&storages_to_verify, unpacked_accounts, false).unwrap());
 }
 
 /// Remove outdated bank snapshots
