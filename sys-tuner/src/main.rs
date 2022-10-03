@@ -38,7 +38,7 @@ fn tune_poh_service_priority(uid: u32) {
 
     use std::{process::Command, str::from_utf8};
 
-    if let Some(pid) = find_pid("velas-validato", "/proc", uid, |dir| {
+    if let Some(pid) = find_pid("velas-validator", "/proc", uid, |dir| {
         let mut path = dir.path();
         path.push("task");
         find_pid("solana-poh-serv", path, uid, |dir1| {
