@@ -166,7 +166,7 @@ pub async fn find_native(
     Ok(())
 }
 
-fn err_to_output(error: Error) -> anyhow::Error {
+pub fn err_to_output(error: Error) -> anyhow::Error {
     print_task_error(&format!("{error:?}"));
     error
 }
