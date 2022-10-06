@@ -572,8 +572,8 @@ impl ChainERPC for ChainErpcImpl {
                     .unwrap_or_default(),
                 topics: log_filter
                     .topics
+                    .unwrap_or_else(|| vec![None])
                     .into_iter()
-                    .flatten()
                     .map(RPCTopicFilter::into_topics)
                     .collect(),
                 from_block: from,
