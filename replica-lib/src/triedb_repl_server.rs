@@ -280,17 +280,9 @@ impl Backend for TriedbReplServer {
         let dir = Path::new("./tmp-ledger-path/evm-state");
         let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
 
-
-        let first_tree = db_handle.typed_for(start_state_root);
-        let second_tree = db_handle.typed_for(end_state_root);
-
-
-        // let cached = Arc::new(triedb::cache::CachedHandle::new(db_handle.db()));
-
         // TODO: Need to change db_handle type to pass a threadsafe version
-        let diff_finder = DiffFinder::new(first_tree.to_trie(), start_state_root, end_state_root, |child| { vec![] });
+        let diff_finder = DiffFinder::new(db_handle.db(), start_state_root, end_state_root, |child| { vec![] });
         let changeset = diff_finder.get_changeset(start_state_root, end_state_root).expect("get some changeset");
-
 
         // TODO: After changing type above remove this `changeset`
         let t_changeset = vec![triedb::state_diff::Change::Insert(start_state_root, vec![1,2,3,4,5])];
