@@ -1981,7 +1981,7 @@ dependencies = [
  "snafu",
  "tempfile",
  "thiserror",
- "triedb 0.5.0",
+ "triedb 0.5.0 (git+https://github.com/raventid/triedb.git?branch=state-diff)",
 ]
 
 [[package]]
@@ -8765,24 +8765,6 @@ name = "trees"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0de5f738ceab88e2491a94ddc33c3feeadfa95fedc60363ef110845df12f3878"
-
-[[package]]
-name = "triedb"
-version = "0.5.0"
-dependencies = [
- "anyhow",
- "dashmap",
- "derivative",
- "log 0.4.17",
- "primitive-types",
- "rayon",
- "rlp",
- "rocksdb",
- "sha3 0.9.1",
- "thiserror",
- "tracing",
- "tracing-attributes",
-]
 
 [[package]]
 name = "triedb"
