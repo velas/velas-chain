@@ -597,7 +597,15 @@ pub fn main() {
                 .value_name("DIR")
                 .takes_value(true)
                 .help("Use DIR as evm-state archive location"),
-        ) 
+        )
+        .arg(
+            Arg::with_name("evm_state_path")
+                .long("evm-state")
+                .value_name("DIR")
+                .takes_value(true)
+                .default_value("evm-state")
+                .help("Use DIR as evm-state location"),
+        )
         .arg(
             Arg::with_name("jaeger_collector_url")
                 .long("jaeger-collector")
@@ -2047,6 +2055,7 @@ pub fn main() {
 
     solana_core::validator::report_target_features();
 
+    let evm_state_path = PathBuf::from(matches.value_of("evm_state_path").unwrap());
     let evm_state_archive = matches.value_of("evm_state_archive_path").map(|path| {
         info!("Opening evm archive storage");
         evm_state::Storage::open_persistent(
@@ -2782,6 +2791,7 @@ pub fn main() {
         node,
         identity_keypair,
         &ledger_path,
+        &evm_state_path,
         &vote_account,
         authorized_voter_keypairs,
         cluster_entrypoints,

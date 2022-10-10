@@ -89,8 +89,7 @@ impl EvmStateSubCommand for App<'_, '_> {
     }
 }
 
-pub fn process_evm_state_command(ledger_path: &Path, matches: &ArgMatches<'_>) -> Result<()> {
-    let evm_state_path = ledger_path.join("evm-state");
+pub fn process_evm_state_command(evm_state_path: &Path, matches: &ArgMatches<'_>) -> Result<()> {
     let storage = Storage::open_persistent(
         evm_state_path,
         true, // enable gc

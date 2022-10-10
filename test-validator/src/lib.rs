@@ -673,6 +673,7 @@ impl TestValidator {
             node,
             Arc::new(validator_identity),
             &ledger_path,
+            &ledger_path.clone().join("evm-state"),
             &vote_account_address,
             config.authorized_voter_keypairs.clone(),
             vec![],

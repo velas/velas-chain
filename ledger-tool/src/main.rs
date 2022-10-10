@@ -702,6 +702,7 @@ fn load_bank_forks(
     blockstore: &Blockstore,
     process_options: ProcessOptions,
     snapshot_archive_path: Option<PathBuf>,
+    evm_state_path: &Path,
     verify_evm_state: bool,
 ) -> bank_forks_utils::LoadResult {
     let bank_snapshots_dir = blockstore
@@ -744,7 +745,6 @@ fn load_bank_forks(
     };
 
     let (accounts_package_sender, _) = channel();
-    let evm_state_path = blockstore.ledger_path().join("evm-state");
     let evm_genesis_path = blockstore
         .ledger_path()
         .join(solana_sdk::genesis_config::EVM_GENESIS);
@@ -1024,6 +1024,15 @@ fn main() {
                 .global(true)
                 .default_value("ledger")
                 .help("Use DIR as ledger location"),
+        )
+        .arg(
+            Arg::with_name("evm_state_path")
+                .long("evm-state")
+                .value_name("DIR")
+                .takes_value(true)
+                .global(true)
+                .default_value("evm-state")
+                .help("Use DIR as evm-state location"),
         )
         .arg(
             Arg::with_name("wal_recovery_mode")
@@ -1642,6 +1651,7 @@ fn main() {
     info!("{} {}", crate_name!(), solana_version::version!());
 
     let ledger_path = parse_ledger_path(&matches, "ledger_path");
+    let evm_state_path = PathBuf::from(matches.value_of("evm_state_path").unwrap());
 
     let snapshot_archive_path = value_t!(matches, "snapshot_archive_path", String)
         .ok()
@@ -1662,7 +1672,7 @@ fn main() {
             evm_blockstore_process_command(&ledger_path, arg_matches)
         }
         ("evm_state", Some(arg_matches)) => {
-            process_evm_state_command(&ledger_path, arg_matches)
+            process_evm_state_command(&evm_state_path, arg_matches)
                 .unwrap_or_else(|err| panic!("EVM state subcommand error: {:?}", err));
         }
             ("print", Some(arg_matches)) => {
@@ -1763,6 +1773,7 @@ fn main() {
                     &blockstore,
                     process_options,
                     snapshot_archive_path,
+                    &evm_state_path,
                     false,
                 ) {
                     Ok((bank_forks, ..)) => {
@@ -1841,6 +1852,7 @@ fn main() {
                     &blockstore,
                     process_options,
                     snapshot_archive_path,
+                    &evm_state_path,
                     false,
                 ) {
                     Ok((bank_forks, ..)) => {
@@ -2082,6 +2094,7 @@ fn main() {
                     &blockstore,
                     process_options,
                     snapshot_archive_path,
+                    &evm_state_path,
                 true,
                 )
                 .unwrap_or_else(|err| {
@@ -2117,6 +2130,7 @@ fn main() {
                     &blockstore,
                     process_options,
                     snapshot_archive_path,
+                    &evm_state_path,
                     false,
                 ) {
                     Ok((bank_forks, ..)) => {
@@ -2236,6 +2250,7 @@ fn main() {
                         ..ProcessOptions::default()
                     },
                     snapshot_archive_path,
+                    &evm_state_path,
                     true,
                 ) {
                     Ok((bank_forks, .., starting_snapshot_hashes)) => {
@@ -2542,6 +2557,7 @@ fn main() {
                     &blockstore,
                     process_options,
                     snapshot_archive_path,
+                    &evm_state_path,
                     false,
                 )
                 .unwrap_or_else(|err| {
@@ -2615,6 +2631,7 @@ fn main() {
                     &blockstore,
                     process_options,
                     snapshot_archive_path,
+                    &evm_state_path,
                     false,
                 ) {
                     Ok((bank_forks, ..)) => {

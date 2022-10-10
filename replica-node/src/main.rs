@@ -60,6 +60,15 @@ pub fn main() {
                 .help("Use DIR as ledger location"),
         )
         .arg(
+            Arg::with_name("evm_state_path")
+                .long("evm-state")
+                .value_name("DIR")
+                .takes_value(true)
+                .required(true)
+                .default_value("evm-state")
+                .help("Use DIR as evm-state location"),
+        )
+        .arg(
             Arg::with_name("snapshots")
                 .long("snapshots")
                 .value_name("DIR")
@@ -383,7 +392,7 @@ pub fn main() {
         "Using RPC service from node {}: {:?}, snapshot_info: {:?}",
         rpc_contact_info.id, rpc_contact_info.rpc, snapshot_info
     );
-    let evm_state_path = ledger_path.join("evm-state");
+    let evm_state_path = PathBuf::from(matches.value_of("evm_state_path").unwrap());
 
     let config = ReplicaNodeConfig {
         rpc_peer_addr,

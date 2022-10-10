@@ -334,6 +334,7 @@ impl Validator {
         mut node: Node,
         identity_keypair: Arc<Keypair>,
         ledger_path: &Path,
+        evm_state_path: &Path,
         vote_account: &Pubkey,
         authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
         cluster_entrypoints: Vec<ContactInfo>,
@@ -486,6 +487,7 @@ impl Validator {
             vote_account,
             config,
             ledger_path,
+            evm_state_path,
             config.poh_verify,
             &exit,
             config.enforce_ulimit_nofile,
@@ -1243,6 +1245,7 @@ fn new_banks_from_ledger(
     vote_account: &Pubkey,
     config: &ValidatorConfig,
     ledger_path: &Path,
+    evm_state_path: &Path,
     poh_verify: bool,
     exit: &Arc<AtomicBool>,
     enforce_ulimit_nofile: bool,
@@ -1361,8 +1364,6 @@ fn new_banks_from_ledger(
             TransactionHistoryServices::default()
         };
 
-    // TODO: Add evm-state to config.
-    let evm_state_path = ledger_path.join("evm-state");
     let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
 
     let (
@@ -1877,6 +1878,7 @@ mod tests {
             create_genesis_config_with_leader(10_000, &leader_keypair.pubkey(), 1000)
                 .genesis_config;
         let (validator_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
+        let evm_state_path = validator_ledger_path.clone().join("evm-state");
 
         let voting_keypair = Arc::new(Keypair::new());
         let config = ValidatorConfig {
@@ -1888,6 +1890,7 @@ mod tests {
             validator_node,
             Arc::new(validator_keypair),
             &validator_ledger_path,
+            &evm_state_path,
             &voting_keypair.pubkey(),
             Arc::new(RwLock::new(vec![voting_keypair.clone()])),
             vec![leader_node.info],
@@ -1973,6 +1976,7 @@ mod tests {
                     create_genesis_config_with_leader(10_000, &leader_keypair.pubkey(), 1000)
                         .genesis_config;
                 let (validator_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
+                let evm_state_path = validator_ledger_path.clone().join("evm-state");
                 ledger_paths.push(validator_ledger_path.clone());
                 let vote_account_keypair = Keypair::new();
                 let config = ValidatorConfig {
@@ -1983,6 +1987,7 @@ mod tests {
                     validator_node,
                     Arc::new(validator_keypair),
                     &validator_ledger_path,
+                    &evm_state_path,
                     &vote_account_keypair.pubkey(),
                     Arc::new(RwLock::new(vec![Arc::new(vote_account_keypair)])),
                     vec![leader_node.info.clone()],

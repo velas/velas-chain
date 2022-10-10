@@ -211,6 +211,7 @@ impl LocalCluster {
         );
 
         let (leader_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
+        let evm_state_path = leader_ledger_path.clone().join("evm-state");
         let leader_contact_info = leader_node.info.clone();
         let mut leader_config = safe_clone_config(&config.validator_configs[0]);
         leader_config.rpc_addrs = Some((leader_node.info.rpc, leader_node.info.rpc_pubsub));
@@ -224,6 +225,7 @@ impl LocalCluster {
             leader_node,
             leader_keypair.clone(),
             &leader_ledger_path,
+            &evm_state_path,
             &leader_vote_keypair.pubkey(),
             Arc::new(RwLock::new(vec![leader_vote_keypair.clone()])),
             vec![],
@@ -386,6 +388,7 @@ impl LocalCluster {
         let validator_node = Node::new_localhost_with_pubkey(&validator_keypair.pubkey());
         let contact_info = validator_node.info.clone();
         let (ledger_path, _blockhash) = create_new_tmp_ledger!(&self.genesis_config);
+        let evm_state_path = ledger_path.clone().join("evm-state");
 
         // Give the validator some lamports to setup vote accounts
         if is_listener {
@@ -420,6 +423,7 @@ impl LocalCluster {
             validator_node,
             validator_keypair.clone(),
             &ledger_path,
+            &evm_state_path,
             &voting_keypair.pubkey(),
             Arc::new(RwLock::new(vec![voting_keypair.clone()])),
             vec![self.entry_point_info.clone()],
@@ -759,6 +763,7 @@ impl Cluster for LocalCluster {
             node,
             validator_info.keypair.clone(),
             &validator_info.ledger_path,
+            &validator_info.ledger_path.clone().join("evm-state"),
             &validator_info.voting_keypair.pubkey(),
             Arc::new(RwLock::new(vec![validator_info.voting_keypair.clone()])),
             entry_point_info
