@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::default;
 use std::path::Path;
 
 use std::net::SocketAddr;
@@ -279,9 +280,12 @@ impl Backend for TriedbReplServer {
 
         let dir = Path::new("./tmp-ledger-path/evm-state");
         let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
+        let async_cached_handle = triedb::gc::testing::AsyncCachedDatabaseHandle::new(db_handle.db());
+
+        let ach = triedb::gc::testing::AsyncCachedHandle::new(async_cached_handle);
 
         // TODO: Need to change db_handle type to pass a threadsafe version
-        let diff_finder = DiffFinder::new(db_handle.db(), start_state_root, end_state_root, |child| { vec![] });
+        let diff_finder = DiffFinder::new(ach, start_state_root, end_state_root, |child| { vec![] });
         let changeset = diff_finder.get_changeset(start_state_root, end_state_root).expect("get some changeset");
 
         // TODO: After changing type above remove this `changeset`

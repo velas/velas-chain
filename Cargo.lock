@@ -3775,18 +3775,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f357ef82d1b4db66fbed0b8d542cbd3c22d0bf5b393b3c257b9ba4568e70c9c3"
 dependencies = [
  "aliasable",
- "ouroboros_macro 0.13.0",
+ "ouroboros_macro",
  "stable_deref_trait",
-]
-
-[[package]]
-name = "ouroboros"
-version = "0.15.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f56a2b0aa5fc88687aaf63e85a7974422790ce3419a2e1a15870f8a55227822"
-dependencies = [
- "aliasable",
- "ouroboros_macro 0.15.4",
 ]
 
 [[package]]
@@ -3794,19 +3784,6 @@ name = "ouroboros_macro"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44a0b52c2cbaef7dffa5fec1a43274afe8bd2a644fa9fc50a9ef4ff0269b1257"
-dependencies = [
- "Inflector",
- "proc-macro-error",
- "proc-macro2 1.0.43",
- "quote 1.0.21",
- "syn 1.0.99",
-]
-
-[[package]]
-name = "ouroboros_macro"
-version = "0.15.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c40641e27d0eb38cae3dee081d920104d2db47a8e853c1a592ef68d33f5ebf4"
 dependencies = [
  "Inflector",
  "proc-macro-error",
@@ -7081,7 +7058,7 @@ dependencies = [
  "tokio",
  "tonic 0.7.2",
  "tonic-build 0.7.2",
- "triedb 0.5.0",
+ "triedb 0.5.0 (git+https://github.com/raventid/triedb.git?branch=state-diff)",
 ]
 
 [[package]]
@@ -7241,7 +7218,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "num_cpus",
- "ouroboros 0.13.0",
+ "ouroboros",
  "rand 0.7.3",
  "rand_chacha 0.2.2",
  "rayon",
@@ -8797,7 +8774,6 @@ dependencies = [
  "dashmap",
  "derivative",
  "log 0.4.17",
- "ouroboros 0.15.4",
  "primitive-types",
  "rayon",
  "rlp",
@@ -8822,6 +8798,25 @@ dependencies = [
  "rocksdb",
  "sha3 0.9.1",
  "thiserror",
+]
+
+[[package]]
+name = "triedb"
+version = "0.5.0"
+source = "git+https://github.com/raventid/triedb.git?branch=state-diff#18d48aa9eebe8102a74a8d1930affe178e2e9271"
+dependencies = [
+ "anyhow",
+ "dashmap",
+ "derivative",
+ "log 0.4.17",
+ "primitive-types",
+ "rayon",
+ "rlp",
+ "rocksdb",
+ "sha3 0.9.1",
+ "thiserror",
+ "tracing",
+ "tracing-attributes",
 ]
 
 [[package]]
