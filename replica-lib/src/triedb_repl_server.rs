@@ -284,32 +284,29 @@ impl Backend for TriedbReplServer {
 
         let ach = triedb::gc::testing::AsyncCachedHandle::new(async_cached_handle);
 
-        // TODO: Need to change db_handle type to pass a threadsafe version
         let diff_finder = DiffFinder::new(ach, start_state_root, end_state_root, |child| { vec![] });
         let changeset = diff_finder.get_changeset(start_state_root, end_state_root).expect("get some changeset");
 
-        // TODO: After changing type above remove this `changeset`
-        let t_changeset = vec![triedb::state_diff::Change::Insert(start_state_root, vec![1,2,3,4,5])];
-        let mut changeset = vec![];
+        let mut reply_changeset = vec![];
 
-        for change in t_changeset {
+        for change in changeset {
             match change {
                 triedb::state_diff::Change::Insert(hash, data) => {
                     let raw_insert = app_grpc::Insert { hash: hash.to_string(), data: data };
                     let insert = app_grpc::change::Change::Insert(raw_insert);
                     let change = app_grpc::Change { change: Some(insert) };
-                    changeset.push(change);
+                    reply_changeset.push(change);
                 },
                 triedb::state_diff::Change::Removal(hash, data) => {
                     let removal = app_grpc::Removal { hash: hash.to_string(), data: data };
                     let removal = app_grpc::change::Change::Removal(removal);
                     let change = app_grpc::Change { change: Some(removal) };
-                    changeset.push(change);
+                    reply_changeset.push(change);
                 },
             }
         }
 
-        let reply = app_grpc::GetStateDiffReply { changeset };
+        let reply = app_grpc::GetStateDiffReply { changeset: reply_changeset };
 
         Ok(Response::new(reply))
     }
