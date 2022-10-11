@@ -211,7 +211,7 @@ impl LocalCluster {
         );
 
         let (leader_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
-        let evm_state_path = leader_ledger_path.clone().join("evm-state");
+        let evm_state_path = leader_ledger_path.join("evm-state");
         let leader_contact_info = leader_node.info.clone();
         let mut leader_config = safe_clone_config(&config.validator_configs[0]);
         leader_config.rpc_addrs = Some((leader_node.info.rpc, leader_node.info.rpc_pubsub));
@@ -388,7 +388,7 @@ impl LocalCluster {
         let validator_node = Node::new_localhost_with_pubkey(&validator_keypair.pubkey());
         let contact_info = validator_node.info.clone();
         let (ledger_path, _blockhash) = create_new_tmp_ledger!(&self.genesis_config);
-        let evm_state_path = ledger_path.clone().join("evm-state");
+        let evm_state_path = ledger_path.join("evm-state");
 
         // Give the validator some lamports to setup vote accounts
         if is_listener {
