@@ -118,6 +118,8 @@ pub enum Error {
     GasPriceTooLow { need: U256 },
     #[snafu(display("Transaction was removed from mempool"))]
     TransactionRemoved {},
+    #[snafu(display("Failed to import transaction into mempool: {}", details))]
+    MempoolImport { details: String },
     #[snafu(display("Invalid rpc params"))]
     InvalidParams {},
     // InvalidParams {},
@@ -188,6 +190,7 @@ const FATAL_EVM_ERROR: i64 = 2004;
 const GAS_PRICE_TOO_LOW: i64 = 2005;
 const TRANSACTION_REPLACED: i64 = 2006;
 const ARCHIVE_NOT_SUPPORTED_ERROR: i64 = 2007;
+const MEMPOOL_IMPORT: i64 = 2008;
 
 const EVM_EXECUTION_ERROR: i64 = 3; // from geth docs
 const ERROR_EVM_BASE_SUBCODE: i64 = 100; //reserved place for evm errors range: 100 - 200
@@ -285,6 +288,7 @@ impl From<Error> for JRpcError {
             Error::RuntimeError { .. } => internal_error(SERVER_ERROR, &err),
             Error::GasPriceTooLow { .. } => internal_error(GAS_PRICE_TOO_LOW, &err),
             Error::TransactionRemoved {} => internal_error(TRANSACTION_REPLACED, &err),
+            Error::MempoolImport { .. } => internal_error(MEMPOOL_IMPORT, &err),
         }
     }
 }

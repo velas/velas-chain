@@ -248,10 +248,9 @@ impl EvmBridge {
             Err(txpool::Error::AlreadyImported(h)) => return Ok(Hex(h)),
             Ok(tx) => tx,
             Err(source) => {
-                warn!("Could not import tx to the pool");
-                return Err(evm_rpc::Error::RuntimeError {
-                    details: format!("Mempool error: {:?}", source),
-                });
+                let details = format!("{source}");
+                warn!("{}", &details);
+                return Err(evm_rpc::Error::MempoolImport { details });
             }
         };
 
