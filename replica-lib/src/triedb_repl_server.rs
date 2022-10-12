@@ -213,7 +213,7 @@ impl Backend for TriedbReplServer {
 
         let stringified_key = request.into_inner().hash;
 
-        let dir = Path::new("./tmp-ledger-path/evm-state");
+        let dir = Path::new("./tmp-ledger-path/archive");
 
         let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
 
@@ -241,7 +241,7 @@ impl Backend for TriedbReplServer {
 
         let stringified_keys = request.into_inner().hashes;
         let mut response = HashMap::new();
-        let dir = Path::new("./tmp-ledger-path/evm-state");
+        let dir = Path::new("./tmp-ledger-path/archive");
 
         stringified_keys.into_iter().for_each(|stringified_key| {
             let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
@@ -278,7 +278,7 @@ impl Backend for TriedbReplServer {
         let end_state_root = H256::from_hex(&second_root).expect("get hash from second_root");
         info!("Second root is: {:?}", end_state_root);
 
-        let dir = Path::new("./tmp-ledger-path/evm-state");
+        let dir = Path::new("./tmp-ledger-path/archive");
         let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
         let async_cached_handle = triedb::gc::testing::AsyncCachedDatabaseHandle::new(db_handle.db());
 
