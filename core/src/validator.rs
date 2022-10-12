@@ -1384,6 +1384,9 @@ fn new_banks_from_ledger(
             .transaction_status_sender
             .as_ref(),
         transaction_history_services
+            .evm_block_recorder_sender
+            .as_ref(),
+        transaction_history_services
             .evm_state_recorder_sender
             .as_ref(),
         transaction_history_services

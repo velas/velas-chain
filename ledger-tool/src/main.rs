@@ -39,7 +39,7 @@ use {
         snapshot_config::SnapshotConfig,
         snapshot_utils::{
             self, ArchiveFormat, SnapshotVersion, DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN, EVM_STATE_DIR
+            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN, EVM_STATE_DIR,
         },
     },
     solana_sdk::{
@@ -758,6 +758,7 @@ fn load_bank_forks(
         None,
         snapshot_config.as_ref(),
         process_options,
+        None,
         None,
         None,
         None,
@@ -1675,7 +1676,7 @@ fn main() {
                 evm_blockstore_process_command(&ledger_path, arg_matches)
             }
             ("evm_state", Some(arg_matches)) => {
-                process_evm_state_command(&evm_state_path, arg_matches)
+                process_evm_state_command(&ledger_path, arg_matches)
                     .unwrap_or_else(|err| panic!("EVM state subcommand error: {:?}", err));
             }
             ("print", Some(arg_matches)) => {
