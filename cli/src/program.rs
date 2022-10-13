@@ -2226,7 +2226,7 @@ fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic) {
         divider
     );
     eprintln!(
-        "`solana-keygen recover` and the following {}-word seed phrase:",
+        "`velas-keygen recover` and the following {}-word seed phrase:",
         words
     );
     eprintln!("{}\n{}\n{}", divider, phrase, divider);
