@@ -20,7 +20,7 @@ pub async fn find_evm(
     let mut blocks = vec![];
 
     loop {
-        let total_limit = (end_block - start_block) as usize;
+        let total_limit = (end_block - start_block + 1) as usize;
         let limit = usize::max(total_limit, max_limit);
         let end_block_to_query = start_block + limit as u64;
         let mut chunk = ledger
@@ -48,7 +48,7 @@ pub async fn find_evm(
 
         blocks.extend(chunk.iter());
         start_block = last_in_chunk + 1;
-        log::info!("Block #{last_in_chunk} loaded...");
+        log::trace!("Block #{last_in_chunk} loaded...");
 
         // If we reach the end
         // 1. we go outside of requested range
@@ -57,9 +57,6 @@ pub async fn find_evm(
             break;
         }
     }
-
-    // retain already exist in loop, do we need to repeat it?
-    // blocks.retain_mut(|block| *block <= end_block);
 
     let missing_blocks = find_uncommitted_ranges(blocks, start_block, end_block);
 
@@ -88,11 +85,11 @@ pub async fn find_native(
     log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={max_limit}");
 
     let mut start_slot = start_slot;
-    let mut total_limit = (end_slot - start_slot) as usize;
 
     let mut slots = vec![];
 
     loop {
+        let total_limit = (end_slot - start_slot + 1) as usize;
         let limit = usize::min(total_limit, max_limit);
 
         let mut chunk = ledger
@@ -108,9 +105,8 @@ pub async fn find_native(
 
         if last_in_chunk < end_slot {
             start_slot = last_in_chunk + 1;
-            total_limit = (end_slot - start_slot) as usize;
             slots.extend(chunk.iter());
-            log::info!("Slot #{last_in_chunk} loaded...");
+            log::trace!("Slot #{last_in_chunk} loaded...");
         } else {
             chunk.retain(|slot| *slot <= end_slot);
             slots.extend(chunk.iter());
