@@ -39,11 +39,21 @@ async fn write_blocks_collection(
     Ok(())
 }
 
-fn find_uncommitted_ranges(blocks: Vec<u64>) -> Vec<BlockRange> {
+fn find_uncommitted_ranges(blocks: Vec<u64>, start_block: u64, end_block: u64) -> Vec<BlockRange> {
     let mut result = Vec::new();
-    for i in 0..blocks.len() - 1 {
-        let previous = blocks[i];
-        let current = blocks[i + 1];
+    let first_block = if let Some(b) = blocks.first() {
+        *b
+    } else {
+        return vec![BlockRange::new(start_block, end_block)];
+    };
+    let last_block = *blocks.last().unwrap();
+    if start_block < first_block {
+        let missing_range = BlockRange::new(start_block, first_block);
+        result.push(missing_range);
+    }
+    for blocks in blocks.windows(2) {
+        let previous = blocks[0];
+        let current = blocks[1];
 
         if current - previous != 1 {
             let first = previous + 1;
@@ -52,6 +62,10 @@ fn find_uncommitted_ranges(blocks: Vec<u64>) -> Vec<BlockRange> {
             // log::info!("Found missing {missing_range}");
             result.push(missing_range);
         }
+    }
+    if end_block > last_block {
+        let missing_range = BlockRange::new(last_block, end_block);
+        result.push(missing_range);
     }
 
     result
@@ -106,7 +120,7 @@ mod tests {
     fn test_find_missing_blocks() {
         let confirmed_blocks = vec![1, 2, 3, 8, 9, 10];
         assert_eq!(
-            find_uncommitted_ranges(confirmed_blocks),
+            find_uncommitted_ranges(confirmed_blocks, 1, 10),
             vec![BlockRange::InclusiveRange(4, 7)]
         )
     }
@@ -115,7 +129,7 @@ mod tests {
     fn test_find_missing_blocks_multirange() {
         let confirmed_blocks = vec![1, 2, 5, 6, 10, 11, 13];
         assert_eq!(
-            find_uncommitted_ranges(confirmed_blocks),
+            find_uncommitted_ranges(confirmed_blocks, 1, 13),
             vec![
                 BlockRange::InclusiveRange(3, 4),
                 BlockRange::InclusiveRange(7, 9),

@@ -17,12 +17,12 @@ pub async fn find_evm(
     log::info!("start_block={start_block}, end_block={end_block}, bigtable_limit={max_limit}");
 
     let mut start_block = start_block;
-    let mut total_limit = (end_block - start_block) as usize;
     let mut blocks = vec![];
 
     loop {
+        let total_limit = (end_block - start_block) as usize;
         let limit = usize::max(total_limit, max_limit);
-
+        let end_block_to_query = start_block + limit as u64;
         let mut chunk = ledger
             .get_evm_confirmed_full_blocks_nums(start_block, limit)
             .await
@@ -32,24 +32,36 @@ pub async fn find_evm(
             ))
             .map_err(err_to_output)?;
 
-        let last_in_chunk = *chunk.last().unwrap();
-
-        if last_in_chunk < end_block {
-            start_block = last_in_chunk + 1;
-            total_limit = (end_block - start_block) as usize;
-            blocks.extend(chunk.iter());
-            log::info!("Block #{last_in_chunk} loaded...");
+        let last_in_chunk = if let Some(block) = chunk.last() {
+            *block
         } else {
+            // we reach the end just after last successfull query
+            log::debug!(
+                "Bigtable didn't return anything for range #{start_block}..#{end_block_to_query}"
+            );
+            break;
+        };
+
+        if last_in_chunk > end_block {
             chunk.retain(|block| *block <= end_block);
-            blocks.extend(chunk.iter());
-            log::info!("All blocks loaded.");
+        }
+
+        blocks.extend(chunk.iter());
+        start_block = last_in_chunk + 1;
+        log::info!("Block #{last_in_chunk} loaded...");
+
+        // If we reach the end
+        // 1. we go outside of requested range
+        // 2. we didn't got all blocks that we requested
+        if last_in_chunk >= end_block || end_block_to_query >= last_in_chunk {
             break;
         }
     }
 
-    blocks.retain_mut(|block| *block <= end_block);
+    // retain already exist in loop, do we need to repeat it?
+    // blocks.retain_mut(|block| *block <= end_block);
 
-    let missing_blocks = find_uncommitted_ranges(blocks);
+    let missing_blocks = find_uncommitted_ranges(blocks, start_block, end_block);
 
     if missing_blocks.is_empty() {
         log::info!(
@@ -126,7 +138,7 @@ pub async fn find_native(
         log::warn!("Found possibly missing {missing_ahead}, manual check required");
     }
 
-    let uncommitted_ranges = find_uncommitted_ranges(slots);
+    let uncommitted_ranges = find_uncommitted_ranges(slots, start_slot, end_slot);
     let mut missing_ranges = vec![];
 
     log::info!("Found {} possibly missing ranges", uncommitted_ranges.len());
