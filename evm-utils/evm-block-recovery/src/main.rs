@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod exit_code;
 pub mod extensions;
 pub mod ledger;
 pub mod routines;
@@ -39,28 +40,31 @@ async fn main() -> anyhow::Result<()> {
             end_block,
             bigtable_limit,
         } => {
-            routines::find_evm(
+            let result = routines::find_evm(
                 cli.creds,
                 cli.instance,
                 start_block,
                 end_block,
                 bigtable_limit,
             )
-            .await
+            .await;
+
+            exit_with_code(result)
         }
         Commands::FindNative {
             start_block,
             end_block,
             bigtable_limit,
         } => {
-            routines::find_native(
+            let result = routines::find_native(
                 cli.creds,
                 cli.instance,
                 start_block,
                 end_block,
                 bigtable_limit,
             )
-            .await
+            .await;
+            exit_with_code(result)
         }
         Commands::RestoreChain {
             first_block,
@@ -148,5 +152,12 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
         }
+    }
+}
+
+fn exit_with_code(result: std::result::Result<(), i32>) -> ! {
+    match result {
+        Ok(_) => std::process::exit(0),
+        Err(code) => std::process::exit(code),
     }
 }

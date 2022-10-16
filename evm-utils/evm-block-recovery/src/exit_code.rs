@@ -1,0 +1,1 @@
+pub const UNSPECIFIED_ERROR: i32 = 42;

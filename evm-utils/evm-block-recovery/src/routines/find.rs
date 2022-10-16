@@ -1,8 +1,8 @@
-use anyhow::*;
+use anyhow::Context;
 use evm_state::BlockNum;
 use serde_json::json;
 
-use crate::{ledger, routines::BlockRange};
+use crate::{exit_code, ledger, routines::BlockRange};
 
 use super::find_uncommitted_ranges;
 
@@ -12,13 +12,13 @@ pub async fn find_evm(
     start_block: BlockNum,
     end_block: BlockNum,
     max_limit: usize,
-) -> Result<()> {
+) -> Result<(), i32> {
     log::info!("Looking for missing EVM Blocks");
     log::info!("start_block={start_block}, end_block={end_block}, bigtable_limit={max_limit}");
 
     let ledger = ledger::with_params(creds, instance)
         .await
-        .map_err(err_to_output)?;
+        .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
 
     let mut start_block = start_block;
     let mut blocks = vec![];
@@ -34,7 +34,7 @@ pub async fn find_evm(
                 "Unable to get EVM Confirmed Block IDs starting with block {} limit by {}",
                 start_block, limit
             ))
-            .map_err(err_to_output)?;
+            .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
 
         let last_in_chunk = if let Some(block) = chunk.last() {
             *block
@@ -85,13 +85,13 @@ pub async fn find_native(
     start_slot: u64,
     end_slot: u64,
     max_limit: usize,
-) -> Result<()> {
+) -> Result<(), i32> {
     log::info!("Looking for missing Native Blocks");
     log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={max_limit}");
 
     let ledger = ledger::with_params(creds, instance)
         .await
-        .map_err(err_to_output)?;
+        .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
 
     let mut start_slot = start_slot;
 
@@ -108,7 +108,7 @@ pub async fn find_native(
                 "Unable to get Native Confirmed Block IDs starting with slot {} limit by {}",
                 start_slot, total_limit
             ))
-            .map_err(err_to_output)?;
+            .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
 
         let last_in_chunk = *chunk.last().unwrap();
 
@@ -128,7 +128,7 @@ pub async fn find_native(
         let err = "Vector of ID's is too short, try to increase a limit";
         log::warn!("{err}");
         print_task_error(err);
-        bail!(err)
+        return Err(exit_code::UNSPECIFIED_ERROR);
     }
 
     log::info!(
@@ -156,13 +156,13 @@ pub async fn find_native(
             .get_confirmed_block(slot_prev)
             .await
             .context(format!("Unable to get native block {slot_prev}"))
-            .map_err(err_to_output)?;
+            .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
 
         let block_curr = ledger
             .get_confirmed_block(slot_curr)
             .await
             .context(format!("Unable to get native block {slot_curr}"))
-            .map_err(err_to_output)?;
+            .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
 
         if block_prev.blockhash == block_curr.previous_blockhash {
             let checked_range = BlockRange::new(slot_prev, slot_curr);
@@ -183,9 +183,9 @@ pub async fn find_native(
     Ok(())
 }
 
-fn err_to_output(error: Error) -> anyhow::Error {
+fn err_to_output(error: anyhow::Error, return_code: i32) -> i32 {
     print_task_error(&format!("{error:?}"));
-    error
+    return_code
 }
 
 fn print_task_ok() {
