@@ -1,20 +1,24 @@
 use anyhow::*;
 use evm_state::BlockNum;
 use serde_json::json;
-use solana_storage_bigtable::LedgerStorage;
 
-use crate::routines::BlockRange;
+use crate::{ledger, routines::BlockRange};
 
 use super::find_uncommitted_ranges;
 
 pub async fn find_evm(
-    ledger: LedgerStorage,
+    creds: Option<String>,
+    instance: String,
     start_block: BlockNum,
     end_block: BlockNum,
     max_limit: usize,
 ) -> Result<()> {
     log::info!("Looking for missing EVM Blocks");
     log::info!("start_block={start_block}, end_block={end_block}, bigtable_limit={max_limit}");
+
+    let ledger = ledger::with_params(creds, instance)
+        .await
+        .map_err(err_to_output)?;
 
     let mut start_block = start_block;
     let mut blocks = vec![];
@@ -76,13 +80,18 @@ pub async fn find_evm(
 }
 
 pub async fn find_native(
-    ledger: LedgerStorage,
+    creds: Option<String>,
+    instance: String,
     start_slot: u64,
     end_slot: u64,
     max_limit: usize,
 ) -> Result<()> {
     log::info!("Looking for missing Native Blocks");
     log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={max_limit}");
+
+    let ledger = ledger::with_params(creds, instance)
+        .await
+        .map_err(err_to_output)?;
 
     let mut start_slot = start_slot;
 
@@ -174,7 +183,7 @@ pub async fn find_native(
     Ok(())
 }
 
-pub fn err_to_output(error: Error) -> anyhow::Error {
+fn err_to_output(error: Error) -> anyhow::Error {
     print_task_error(&format!("{error:?}"));
     error
 }

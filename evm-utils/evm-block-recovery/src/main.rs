@@ -40,9 +40,8 @@ async fn main() -> anyhow::Result<()> {
             bigtable_limit,
         } => {
             routines::find_evm(
-                ledger::with_params(cli.creds, cli.instance)
-                    .await
-                    .map_err(routines::find::err_to_output)?,
+                cli.creds,
+                cli.instance,
                 start_block,
                 end_block,
                 bigtable_limit,
@@ -55,9 +54,8 @@ async fn main() -> anyhow::Result<()> {
             bigtable_limit,
         } => {
             routines::find_native(
-                ledger::with_params(cli.creds, cli.instance)
-                    .await
-                    .map_err(routines::find::err_to_output)?,
+                cli.creds,
+                cli.instance,
                 start_block,
                 end_block,
                 bigtable_limit,
