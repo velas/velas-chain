@@ -16,6 +16,10 @@ pub struct Cli {
     /// Bigtable Instance
     #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
     pub instance: String,
+
+    /// Enables additional structured output to stdout for use in embedded environment
+    #[clap(long, value_name = "BOOL", default_value = "false")]
+    pub embed: bool,
 }
 
 #[derive(clap::Subcommand)]

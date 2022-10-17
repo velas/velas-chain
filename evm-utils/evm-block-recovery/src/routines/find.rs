@@ -9,6 +9,7 @@ use super::find_uncommitted_ranges;
 pub async fn find_evm(
     creds: Option<String>,
     instance: String,
+    is_embed: bool,
     start_block: BlockNum,
     end_block: BlockNum,
     max_limit: usize,
@@ -18,7 +19,7 @@ pub async fn find_evm(
 
     let ledger = ledger::with_params(creds, instance)
         .await
-        .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
+        .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
 
     let mut start_block = start_block;
     let mut blocks = vec![];
@@ -34,7 +35,7 @@ pub async fn find_evm(
                 "Unable to get EVM Confirmed Block IDs starting with block {} limit by {}",
                 start_block, limit
             ))
-            .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
+            .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
 
         let last_in_chunk = if let Some(block) = chunk.last() {
             *block
@@ -70,10 +71,10 @@ pub async fn find_evm(
             start_block,
             end_block
         );
-        print_task_ok()
+        print_task_ok(is_embed)
     } else {
         log::warn!("Found missing EVM blocks: {:?}", missing_blocks);
-        print_task_alert()
+        print_task_alert(is_embed)
     }
 
     Ok(())
@@ -82,6 +83,7 @@ pub async fn find_evm(
 pub async fn find_native(
     creds: Option<String>,
     instance: String,
+    is_embed: bool,
     start_slot: u64,
     end_slot: u64,
     max_limit: usize,
@@ -91,7 +93,7 @@ pub async fn find_native(
 
     let ledger = ledger::with_params(creds, instance)
         .await
-        .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
+        .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
 
     let mut start_slot = start_slot;
 
@@ -108,7 +110,7 @@ pub async fn find_native(
                 "Unable to get Native Confirmed Block IDs starting with slot {} limit by {}",
                 start_slot, total_limit
             ))
-            .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
+            .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
 
         let last_in_chunk = *chunk.last().unwrap();
 
@@ -127,7 +129,7 @@ pub async fn find_native(
     if slots.len() < 2 {
         let err = "Vector of ID's is too short, try to increase a limit";
         log::warn!("{err}");
-        print_task_error(err);
+        print_task_error(is_embed, err);
         return Err(exit_code::UNSPECIFIED_ERROR);
     }
 
@@ -156,13 +158,13 @@ pub async fn find_native(
             .get_confirmed_block(slot_prev)
             .await
             .context(format!("Unable to get native block {slot_prev}"))
-            .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
+            .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
 
         let block_curr = ledger
             .get_confirmed_block(slot_curr)
             .await
             .context(format!("Unable to get native block {slot_curr}"))
-            .map_err(|e| err_to_output(e, exit_code::UNSPECIFIED_ERROR))?;
+            .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
 
         if block_prev.blockhash == block_curr.previous_blockhash {
             let checked_range = BlockRange::new(slot_prev, slot_curr);
@@ -176,26 +178,34 @@ pub async fn find_native(
     log::info!("Search complete");
 
     match missing_ranges.is_empty() {
-        true => print_task_ok(),
-        false => print_task_alert(),
+        true => print_task_ok(is_embed),
+        false => print_task_alert(is_embed),
     }
 
     Ok(())
 }
 
-fn err_to_output(error: anyhow::Error, return_code: i32) -> i32 {
-    print_task_error(&format!("{error:?}"));
+fn err_to_output(is_embed: bool, error: anyhow::Error, return_code: i32) -> i32 {
+    if is_embed {
+        print_task_error(is_embed, &format!("{error:?}"));
+    }
     return_code
 }
 
-fn print_task_ok() {
-    println!("{}", json!({"status": "ok"}))
+fn print_task_ok(is_embed: bool) {
+    if is_embed {
+        println!("{}", json!({"status": "ok"}))
+    }
 }
 
-fn print_task_alert() {
-    println!("{}", json!({"status": "alert"}))
+fn print_task_alert(is_embed: bool) {
+    if is_embed {
+        println!("{}", json!({"status": "alert"}))
+    }
 }
 
-fn print_task_error(error_kind: &str) {
-    println!("{}", json!({"status": "error", "kind": error_kind}))
+fn print_task_error(is_embed: bool, error_kind: &str) {
+    if is_embed {
+        println!("{}", json!({"status": "error", "kind": error_kind}))
+    }
 }
