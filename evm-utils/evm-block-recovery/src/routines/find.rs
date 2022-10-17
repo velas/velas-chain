@@ -1,4 +1,3 @@
-use anyhow::Context;
 use evm_state::BlockNum;
 use serde_json::json;
 
@@ -19,7 +18,7 @@ pub async fn find_evm(
 
     let ledger = ledger::with_params(creds, instance)
         .await
-        .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
+        .map_err(|_e| err_to_output(is_embed, exit_code::UNABLE_TO_CREATE_LEDGER))?;
 
     let mut start_block = start_block;
     let mut blocks = vec![];
@@ -31,11 +30,14 @@ pub async fn find_evm(
         let mut chunk = ledger
             .get_evm_confirmed_full_blocks_nums(start_block, limit)
             .await
-            .context(format!(
-                "Unable to get EVM Confirmed Block IDs starting with block {} limit by {}",
-                start_block, limit
-            ))
-            .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
+            .map_err(|_e| {
+                log::error!(
+                    "Unable to get EVM Confirmed Block IDs starting with block {} limit by {}",
+                    start_block,
+                    limit
+                );
+                err_to_output(is_embed, exit_code::UNABLE_TO_QUERY_BIGTABLE)
+            })?;
 
         let last_in_chunk = if let Some(block) = chunk.last() {
             *block
@@ -93,7 +95,7 @@ pub async fn find_native(
 
     let ledger = ledger::with_params(creds, instance)
         .await
-        .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
+        .map_err(|_e| err_to_output(is_embed, exit_code::UNABLE_TO_CREATE_LEDGER))?;
 
     let mut start_slot = start_slot;
 
@@ -106,11 +108,14 @@ pub async fn find_native(
         let mut chunk = ledger
             .get_confirmed_blocks(start_slot, limit)
             .await
-            .context(format!(
-                "Unable to get Native Confirmed Block IDs starting with slot {} limit by {}",
-                start_slot, total_limit
-            ))
-            .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
+            .map_err(|_e| {
+                log::error!(
+                    "Unable to get Native Confirmed Block IDs starting with slot {} limit by {}",
+                    start_slot,
+                    total_limit
+                );
+                err_to_output(is_embed, exit_code::UNABLE_TO_QUERY_BIGTABLE)
+            })?;
 
         let last_in_chunk = *chunk.last().unwrap();
 
@@ -130,7 +135,7 @@ pub async fn find_native(
         let err = "Vector of ID's is too short, try to increase a limit";
         log::warn!("{err}");
         print_task_error(is_embed, err);
-        return Err(exit_code::UNSPECIFIED_ERROR);
+        return Err(exit_code::REQUESTED_RANGE_IS_TOO_SHORT);
     }
 
     log::info!(
@@ -154,17 +159,15 @@ pub async fn find_native(
         let slot_prev = range.first() - 1;
         let slot_curr = range.last() + 1;
 
-        let block_prev = ledger
-            .get_confirmed_block(slot_prev)
-            .await
-            .context(format!("Unable to get native block {slot_prev}"))
-            .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
+        let block_prev = ledger.get_confirmed_block(slot_prev).await.map_err(|_e| {
+            log::error!("Unable to get native block {slot_prev}");
+            err_to_output(is_embed, exit_code::UNABLE_TO_QUERY_BIGTABLE)
+        })?;
 
-        let block_curr = ledger
-            .get_confirmed_block(slot_curr)
-            .await
-            .context(format!("Unable to get native block {slot_curr}"))
-            .map_err(|e| err_to_output(is_embed, e, exit_code::UNSPECIFIED_ERROR))?;
+        let block_curr = ledger.get_confirmed_block(slot_curr).await.map_err(|_e| {
+            log::error!("Unable to get native block {slot_curr}");
+            err_to_output(is_embed, exit_code::UNABLE_TO_QUERY_BIGTABLE)
+        })?;
 
         if block_prev.blockhash == block_curr.previous_blockhash {
             let checked_range = BlockRange::new(slot_prev, slot_curr);
@@ -185,10 +188,8 @@ pub async fn find_native(
     Ok(())
 }
 
-fn err_to_output(is_embed: bool, error: anyhow::Error, return_code: i32) -> i32 {
-    if is_embed {
-        print_task_error(is_embed, &format!("{error:?}"));
-    }
+fn err_to_output(is_embed: bool, return_code: i32) -> i32 {
+    print_task_error(is_embed, &format!("{return_code:?}"));
     return_code
 }
 
