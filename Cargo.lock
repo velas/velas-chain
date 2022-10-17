@@ -5964,7 +5964,6 @@ dependencies = [
  "agsol-borsh-schema",
  "anyhow",
  "bincode",
- "borsh",
  "bs58",
  "clap 2.34.0",
  "console 0.15.1",

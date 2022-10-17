@@ -82,9 +82,8 @@ impl EvmSubCommands for App<'_, '_> {
                                 .help("Parse Rust files from DIR for a borsh schema"),
                         )
                         .arg(
-                            Arg::with_name("output_path")
-                                .short("o")
-                                .long("output")
+                            Arg::with_name("schema_path")
+                                .long("schema-dir")
                                 .value_name("DIR")
                                 .takes_value(true)
                                 .default_value("schema")
@@ -177,7 +176,7 @@ pub enum EvmCliCommand {
 
     GenerateBorshSchema {
         input_path: PathBuf,
-        output_path: PathBuf,
+        schema_path: PathBuf,
     },
 
     // Hidden commands
@@ -220,8 +219,8 @@ impl EvmCliCommand {
             Self::TransferToEvm { address, amount } => {
                 transfer(rpc_client, config, *address, *amount)?;
             }
-            Self::GenerateBorshSchema { input_path, output_path } => {
-                generate_borsh_schema(input_path, output_path)?;
+            Self::GenerateBorshSchema { input_path, schema_path } => {
+                generate_borsh_schema(input_path, schema_path)?;
             }
             // Hidden commands
             Self::SendRawTx { raw_tx } => {
@@ -307,10 +306,10 @@ fn transfer(
     Ok(())
 }
 
-fn generate_borsh_schema<P: AsRef<Path>>(input_path: P, output_path: P) -> anyhow::Result<()> {
-    fs::create_dir_all(&output_path)?;
+fn generate_borsh_schema<P: AsRef<Path>>(input_path: P, schema_path: P) -> anyhow::Result<()> {
+    fs::create_dir_all(&schema_path)?;
     let layouts = agsol_borsh_schema::generate_layouts(input_path)?;
-    agsol_borsh_schema::generate_output(&layouts, output_path)
+    agsol_borsh_schema::generate_output(&layouts, schema_path)
 }
 
 fn find_block_header(
@@ -470,8 +469,8 @@ pub fn parse_evm_subcommand(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, 
         }
         ("generate-borsh-schema", Some(matches)) => {
             let input_path = value_t_or_exit!(matches, "input_path", PathBuf);
-            let output_path = value_t_or_exit!(matches, "output_path", PathBuf);
-            EvmCliCommand::GenerateBorshSchema { input_path, output_path }
+            let schema_path = value_t_or_exit!(matches, "schema_path", PathBuf);
+            EvmCliCommand::GenerateBorshSchema { input_path, schema_path }
         }
         ("send-raw-tx", Some(matches)) => {
             let raw_tx = value_t_or_exit!(matches, "raw_tx", PathBuf);
