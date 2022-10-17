@@ -201,7 +201,7 @@ impl GeneralERPC for GeneralErpcImpl {
 
     fn network_id(&self, meta: Self::Metadata) -> Result<String, Error> {
         let bank = meta.bank(None);
-        Ok(format!("{:#x}", bank.evm_chain_id))
+        Ok(format!("{}", bank.evm_chain_id))
     }
 
     // TODO: Add network info
