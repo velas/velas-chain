@@ -8,6 +8,10 @@ pub mod timestamp;
 use clap::Parser;
 use cli::{Cli, Commands};
 
+lazy_static::lazy_static! {
+    pub static ref IS_EMBED: bool = std::env::args().any(|arg| &arg == "--embed");
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let dotenv = dotenvy::dotenv();
@@ -43,7 +47,6 @@ async fn main() -> anyhow::Result<()> {
             let result = routines::find_evm(
                 cli.creds,
                 cli.instance,
-                cli.embed,
                 start_block,
                 end_block,
                 bigtable_limit,
@@ -60,7 +63,6 @@ async fn main() -> anyhow::Result<()> {
             let result = routines::find_native(
                 cli.creds,
                 cli.instance,
-                cli.embed,
                 start_block,
                 end_block,
                 bigtable_limit,

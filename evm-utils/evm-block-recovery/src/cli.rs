@@ -18,7 +18,7 @@ pub struct Cli {
     pub instance: String,
 
     /// Enables additional structured output to stdout for use in embedded environment
-    #[clap(long, value_name = "BOOL", default_value = "false")]
+    #[clap(long, value_name = "BOOL")]
     pub embed: bool,
 }
 

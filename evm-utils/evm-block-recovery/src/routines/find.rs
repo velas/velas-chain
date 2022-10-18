@@ -8,7 +8,6 @@ use super::find_uncommitted_ranges;
 pub async fn find_evm(
     creds: Option<String>,
     instance: String,
-    is_embed: bool,
     start_block: BlockNum,
     end_block: BlockNum,
     max_limit: usize,
@@ -16,9 +15,10 @@ pub async fn find_evm(
     log::info!("Looking for missing EVM Blocks");
     log::info!("start_block={start_block}, end_block={end_block}, bigtable_limit={max_limit}");
 
-    let ledger = ledger::with_params(creds, instance)
-        .await
-        .map_err(|_e| err_to_output(is_embed, exit_code::UNABLE_TO_CREATE_LEDGER))?;
+    let ledger = ledger::with_params(creds, instance).await.map_err(|_e| {
+        log::error!("Unable to initialize `LedgerStorage` with provided credentials");
+        err_to_output(exit_code::UNABLE_TO_CREATE_LEDGER)
+    })?;
 
     let mut start_block = start_block;
     let mut blocks = vec![];
@@ -36,7 +36,7 @@ pub async fn find_evm(
                     start_block,
                     limit
                 );
-                err_to_output(is_embed, exit_code::UNABLE_TO_QUERY_BIGTABLE)
+                err_to_output(exit_code::UNABLE_TO_QUERY_BIGTABLE)
             })?;
 
         let last_in_chunk = if let Some(block) = chunk.last() {
@@ -73,10 +73,10 @@ pub async fn find_evm(
             start_block,
             end_block
         );
-        print_task_ok(is_embed)
+        print_task_ok()
     } else {
         log::warn!("Found missing EVM blocks: {:?}", missing_blocks);
-        print_task_alert(is_embed)
+        print_task_alert()
     }
 
     Ok(())
@@ -85,7 +85,6 @@ pub async fn find_evm(
 pub async fn find_native(
     creds: Option<String>,
     instance: String,
-    is_embed: bool,
     start_slot: u64,
     end_slot: u64,
     max_limit: usize,
@@ -93,9 +92,10 @@ pub async fn find_native(
     log::info!("Looking for missing Native Blocks");
     log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={max_limit}");
 
-    let ledger = ledger::with_params(creds, instance)
-        .await
-        .map_err(|_e| err_to_output(is_embed, exit_code::UNABLE_TO_CREATE_LEDGER))?;
+    let ledger = ledger::with_params(creds, instance).await.map_err(|_e| {
+        log::error!("Unable to initialize `LedgerStorage` with provided credentials");
+        err_to_output(exit_code::UNABLE_TO_CREATE_LEDGER)
+    })?;
 
     let mut start_slot = start_slot;
 
@@ -114,7 +114,7 @@ pub async fn find_native(
                     start_slot,
                     total_limit
                 );
-                err_to_output(is_embed, exit_code::UNABLE_TO_QUERY_BIGTABLE)
+                err_to_output(exit_code::UNABLE_TO_QUERY_BIGTABLE)
             })?;
 
         let last_in_chunk = *chunk.last().unwrap();
@@ -134,7 +134,7 @@ pub async fn find_native(
     if slots.len() < 2 {
         let err = "Vector of ID's is too short, try to increase a limit";
         log::warn!("{err}");
-        print_task_error(is_embed, err);
+        print_task_error(err);
         return Err(exit_code::REQUESTED_RANGE_IS_TOO_SHORT);
     }
 
@@ -161,12 +161,12 @@ pub async fn find_native(
 
         let block_prev = ledger.get_confirmed_block(slot_prev).await.map_err(|_e| {
             log::error!("Unable to get native block {slot_prev}");
-            err_to_output(is_embed, exit_code::UNABLE_TO_QUERY_BIGTABLE)
+            err_to_output(exit_code::UNABLE_TO_QUERY_BIGTABLE)
         })?;
 
         let block_curr = ledger.get_confirmed_block(slot_curr).await.map_err(|_e| {
             log::error!("Unable to get native block {slot_curr}");
-            err_to_output(is_embed, exit_code::UNABLE_TO_QUERY_BIGTABLE)
+            err_to_output(exit_code::UNABLE_TO_QUERY_BIGTABLE)
         })?;
 
         if block_prev.blockhash == block_curr.previous_blockhash {
@@ -181,32 +181,32 @@ pub async fn find_native(
     log::info!("Search complete");
 
     match missing_ranges.is_empty() {
-        true => print_task_ok(is_embed),
-        false => print_task_alert(is_embed),
+        true => print_task_ok(),
+        false => print_task_alert(),
     }
 
     Ok(())
 }
 
-fn err_to_output(is_embed: bool, return_code: i32) -> i32 {
-    print_task_error(is_embed, &format!("{return_code:?}"));
+fn err_to_output(return_code: i32) -> i32 {
+    print_task_error(&format!("{return_code:?}"));
     return_code
 }
 
-fn print_task_ok(is_embed: bool) {
-    if is_embed {
+fn print_task_ok() {
+    if *crate::IS_EMBED {
         println!("{}", json!({"status": "ok"}))
     }
 }
 
-fn print_task_alert(is_embed: bool) {
-    if is_embed {
+fn print_task_alert() {
+    if *crate::IS_EMBED {
         println!("{}", json!({"status": "alert"}))
     }
 }
 
-fn print_task_error(is_embed: bool, error_kind: &str) {
-    if is_embed {
+fn print_task_error(error_kind: &str) {
+    if *crate::IS_EMBED {
         println!("{}", json!({"status": "error", "kind": error_kind}))
     }
 }
