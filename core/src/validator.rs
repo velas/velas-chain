@@ -1862,6 +1862,7 @@ mod tests {
         super::*,
         crossbeam_channel::RecvTimeoutError,
         solana_ledger::{create_new_tmp_ledger, genesis_utils::create_genesis_config_with_leader},
+        solana_runtime::snapshot_utils::EVM_STATE_DIR,
         solana_sdk::{genesis_config::create_genesis_config, poh_config::PohConfig},
         std::{fs::remove_dir_all, thread},
     };
@@ -1878,7 +1879,7 @@ mod tests {
             create_genesis_config_with_leader(10_000, &leader_keypair.pubkey(), 1000)
                 .genesis_config;
         let (validator_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
-        let evm_state_path = validator_ledger_path.clone().join("evm-state");
+        let evm_state_path = validator_ledger_path.clone().join(EVM_STATE_DIR);
 
         let voting_keypair = Arc::new(Keypair::new());
         let config = ValidatorConfig {
@@ -1976,7 +1977,7 @@ mod tests {
                     create_genesis_config_with_leader(10_000, &leader_keypair.pubkey(), 1000)
                         .genesis_config;
                 let (validator_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
-                let evm_state_path = validator_ledger_path.clone().join("evm-state");
+                let evm_state_path = validator_ledger_path.clone().join(EVM_STATE_DIR);
                 ledger_paths.push(validator_ledger_path.clone());
                 let vote_account_keypair = Keypair::new();
                 let config = ValidatorConfig {

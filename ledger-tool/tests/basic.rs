@@ -1,6 +1,7 @@
 use {
     assert_cmd::prelude::*,
     solana_ledger::{create_new_tmp_ledger, genesis_utils::create_genesis_config},
+    solana_runtime::snapshot_utils::EVM_STATE_DIR,
     std::process::{Command, Output},
 };
 
@@ -34,7 +35,7 @@ fn nominal() {
     let meta_lines = 2;
 
     let (ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
-    let evm_state_path = ledger_path.clone().join("evm-state");
+    let evm_state_path = ledger_path.clone().join(EVM_STATE_DIR);
     let ticks = ticks_per_slot as usize;
 
     let ledger_path = ledger_path.to_str().unwrap();

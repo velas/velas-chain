@@ -21,7 +21,7 @@ use {
         replica_util,
     },
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
-    solana_runtime::accounts_index::AccountSecondaryIndexes,
+    solana_runtime::{accounts_index::AccountSecondaryIndexes, snapshot_utils::EVM_STATE_DIR},
     solana_sdk::{exit::Exit, pubkey::Pubkey, signature::Signer},
     solana_streamer::socket::SocketAddrSpace,
     velas_validator::port_range_validator,
@@ -65,7 +65,6 @@ pub fn main() {
                 .value_name("DIR")
                 .takes_value(true)
                 .required(true)
-                .default_value("evm-state")
                 .help("Use DIR as evm-state location"),
         )
         .arg(
@@ -392,7 +391,11 @@ pub fn main() {
         "Using RPC service from node {}: {:?}, snapshot_info: {:?}",
         rpc_contact_info.id, rpc_contact_info.rpc, snapshot_info
     );
-    let evm_state_path = PathBuf::from(matches.value_of("evm_state_path").unwrap());
+    let evm_state_path = if let Ok(evm_state_path) = value_t!(matches, "evm_state_path", String) {
+        PathBuf::from(evm_state_path)
+    } else {
+        ledger_path.join(EVM_STATE_DIR)
+    };
 
     let config = ReplicaNodeConfig {
         rpc_peer_addr,

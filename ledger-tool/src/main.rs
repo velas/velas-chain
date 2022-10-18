@@ -39,7 +39,7 @@ use {
         snapshot_config::SnapshotConfig,
         snapshot_utils::{
             self, ArchiveFormat, SnapshotVersion, DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN, EVM_STATE_DIR
         },
     },
     solana_sdk::{
@@ -1031,7 +1031,6 @@ fn main() {
                 .value_name("DIR")
                 .takes_value(true)
                 .global(true)
-                .default_value("evm-state")
                 .help("Use DIR as evm-state location"),
         )
         .arg(
@@ -1651,7 +1650,11 @@ fn main() {
     info!("{} {}", crate_name!(), solana_version::version!());
 
     let ledger_path = parse_ledger_path(&matches, "ledger_path");
-    let evm_state_path = PathBuf::from(matches.value_of("evm_state_path").unwrap());
+    let evm_state_path = if let Ok(evm_state_path) = value_t!(matches, "evm_state_path", String) {
+        PathBuf::from(evm_state_path)
+    } else {
+        ledger_path.join(EVM_STATE_DIR)
+    };
 
     let snapshot_archive_path = value_t!(matches, "snapshot_archive_path", String)
         .ok()
