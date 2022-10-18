@@ -42,8 +42,14 @@ async fn main() -> anyhow::Result<()> {
         Commands::FindEvm {
             start_block,
             end_block,
+            limit,
             bigtable_limit,
         } => {
+            if end_block.is_none() && limit.is_none() {
+                log::error!("Not enough arguments to calculate `end_slot`");
+                exit_with_code(Err(exit_code::INVALID_ARGUMENTS))
+            }
+            let end_block = calculate_end_block(start_block, end_block, limit);
             let result = routines::find_evm(
                 cli.creds,
                 cli.instance,
@@ -58,8 +64,14 @@ async fn main() -> anyhow::Result<()> {
         Commands::FindNative {
             start_block,
             end_block,
+            limit,
             bigtable_limit,
         } => {
+            if end_block.is_none() && limit.is_none() {
+                log::error!("Not enough arguments to calculate `end_slot`");
+                exit_with_code(Err(exit_code::INVALID_ARGUMENTS))
+            }
+            let end_block = calculate_end_block(start_block, end_block, limit);
             let result = routines::find_native(
                 cli.creds,
                 cli.instance,
@@ -157,6 +169,18 @@ async fn main() -> anyhow::Result<()> {
             .await
         }
     }
+}
+
+fn calculate_end_block(start_block: u64, end_block: Option<u64>, limit: Option<u64>) -> u64 {
+    if end_block.is_some() {
+        return end_block.unwrap();
+    }
+
+    if limit.is_some() {
+        return start_block + limit.unwrap() - 1;
+    }
+
+    unreachable!()
 }
 
 fn exit_with_code(result: std::result::Result<(), i32>) -> ! {

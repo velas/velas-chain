@@ -135,7 +135,7 @@ pub async fn find_native(
         let err = "Vector of ID's is too short, try to increase a limit";
         log::warn!("{err}");
         print_task_error(err);
-        return Err(exit_code::REQUESTED_RANGE_IS_TOO_SHORT);
+        return Err(exit_code::INVALID_ARGUMENTS);
     }
 
     log::info!(
