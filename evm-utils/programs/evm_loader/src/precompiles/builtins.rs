@@ -263,7 +263,7 @@ pub static ETH_TO_VLX_CODE: Lazy<NativeContract<EthToVlxImp, Pubkey>> = Lazy::ne
             vec![
                 // Vec::new(), // Only support empty topics for now
                 EthToVlxResult {
-                    pubkey: pubkey,
+                    pubkey,
                     amount: lamports,
                 },
             ],

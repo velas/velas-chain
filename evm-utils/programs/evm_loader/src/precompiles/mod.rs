@@ -275,7 +275,7 @@ mod test {
                 ))
             ));
             let logs = log_entry_to_logs(addr, precompile_output.unwrap().2);
-            assert!(logs.is_empty());
+            assert!(!logs.is_empty());
         })
     }
     #[test]
