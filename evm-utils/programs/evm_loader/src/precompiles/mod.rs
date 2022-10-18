@@ -198,6 +198,7 @@ pub fn filter_native_logs(accounts: AccountStructure<'_>, logs: &mut Vec<Log>) -
 mod test {
     use hex_literal::hex;
     use primitive_types::U256;
+    use solana_sdk::account::{ReadableAccount, WritableAccount};
 
     use crate::scope::evm::lamports_to_gwei;
 
@@ -245,6 +246,38 @@ mod test {
         }
         logs
     }
+
+    #[test]
+    fn call_transfer_to_native_failed_incorrect_addr_errors_on_handle() {
+        let addr = H160::from_str("56454c41532d434841494e000000000053574150").unwrap();
+        let input =
+            hex::decode("b1d6927a1111111111111111111111111111111111111111111111111111111111111111") // func_hash + 0x111..111 in bytes32
+                .unwrap();
+        let cx = Context {
+            address: H160::from_str("56454c41532d434841494e000000000053574150").unwrap(),
+            caller: H160::from_str("56454c41532d434841494e000000000053574150").unwrap(),
+            apparent_value: U256::from(1),
+        };
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, false, false);
+            let precompile_output = dbg!(precompiles.precompiles.get(&addr).unwrap()(
+                &input, None, None, &cx, false
+            ));
+            assert!(matches!(
+                precompile_output,
+                Ok((
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        ..
+                    },
+                    0,
+                    _
+                ))
+            ));
+            let logs = log_entry_to_logs(addr, precompile_output.unwrap().2);
+            assert!(logs.is_empty());
+        })
+    }
     #[test]
     fn call_transfer_to_native_real() {
         let addr = H160::from_str("56454c41532d434841494e000000000053574150").unwrap();
@@ -279,11 +312,75 @@ mod test {
             ));
             let mut logs = log_entry_to_logs(addr, precompile_output.unwrap().2);
             assert!(!logs.is_empty());
+
+            let lamports_after_promise = user.lamports().unwrap();
+            assert_eq!(lamports_before, lamports_after_promise);
             filter_native_logs(accounts, &mut logs).unwrap();
             assert!(logs.is_empty());
 
             let lamports_after = user.lamports().unwrap();
             assert_eq!(lamports_before + 1, lamports_after)
+        })
+    }
+
+    #[test]
+    fn call_transfer_to_native_emulate_fails() {
+        let addr = H160::from_str("56454c41532d434841494e000000000053574150").unwrap();
+
+        let cx = Context {
+            address: H160::from_str("56454c41532d434841494e000000000053574150").unwrap(),
+            caller: H160::from_str("56454c41532d434841494e000000000053574150").unwrap(),
+            apparent_value: lamports_to_gwei(1),
+        };
+        AccountStructure::testing(0, |accounts: AccountStructure| {
+            let precompiles = entrypoint(accounts, false, false);
+            let user = accounts.first().unwrap();
+            let input = hex::decode(format!(
+                "b1d6927a{}",
+                hex::encode(user.unsigned_key().to_bytes())
+            ))
+            .unwrap();
+            let lamports_before = user.lamports().unwrap();
+            let precompile_output = dbg!(precompiles.precompiles.get(&addr).unwrap()(
+                &input, None, None, &cx, false
+            ));
+            assert!(matches!(
+                precompile_output,
+                Ok((
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        ..
+                    },
+                    0,
+                    _
+                ))
+            ));
+
+            let logs = log_entry_to_logs(addr, precompile_output.unwrap().2);
+            assert!(!logs.is_empty());
+
+            let lamports_after_promise = user.lamports().unwrap();
+            assert_eq!(lamports_before, lamports_after_promise);
+            {
+                // no user found
+                let mut logs = logs.clone();
+                let mut accounts_changed = accounts.clone();
+                accounts_changed.users = &[];
+                filter_native_logs(accounts_changed, &mut logs).unwrap_err();
+            }
+            {
+                // no enough token on evm.
+                let mut logs = logs.clone();
+                let accounts_changed = accounts.clone();
+                let mut evm = accounts_changed.evm_mut().unwrap();
+                let lamports = evm.lamports();
+                evm.set_lamports(0);
+                drop(evm);
+                filter_native_logs(accounts_changed, &mut logs).unwrap_err();
+
+                let mut evm = accounts_changed.evm_mut().unwrap();
+                evm.set_lamports(lamports);
+            }
         })
     }
 
