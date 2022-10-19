@@ -30,7 +30,11 @@ solana-config-program = { path = "../programs/config", version = "=1.9.29" }
 solana-logger = { path = "../logger", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-version = { path = "../version", version = "=0.6.0" }
-tar = "0.4.37"
+# Temporary solution until this is fixed:
+# https://github.com/alexcrichton/tar-rs/issues/295
+#
+#tar = "0.4.37"
+tar = { package = "binstall-tar", version = "0.4.39" }
 tempfile = "3.1.0"
 url = "2.1.1"
 
