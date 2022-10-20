@@ -58,6 +58,18 @@ pub enum PrecompileErrors {
 
     #[snafu(display("Failed to serialize log = {:?}", error))]
     LogSerializeError { error: bincode::Error },
+
+    #[snafu(display("Cannot parse point: {}", message))]
+    ParsePointError { message: String },
+
+    #[snafu(display("Cannot parse coordinate: {}", message))]
+    ParseCoordinateError { message: String },
+
+    #[snafu(display("Bad input length: {}", length))]
+    BadInputLength { length: usize },
+
+    #[snafu(display("Incorrect final block indicator flag"))]
+    IncorrectBlockIndicator,
 }
 
 impl From<PrecompileErrors> for ExitError {

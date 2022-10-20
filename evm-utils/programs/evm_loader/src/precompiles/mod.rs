@@ -212,7 +212,7 @@ mod test {
     }
     #[test]
     fn check_num_precompiles() {
-        assert_eq!(PRECOMPILES_MAP.len(), 4);
+        assert_eq!(PRECOMPILES_MAP.len(), 9);
     }
 
     #[test]
@@ -486,6 +486,8 @@ mod test {
                     vec![]
                 )
             );
+
+            assert_eq!(result.1, 60);
         })
     }
 
@@ -517,6 +519,7 @@ mod test {
                     vec![]
                 )
             );
+            assert_eq!(result.1, 108)
         });
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, true, false);
@@ -527,17 +530,534 @@ mod test {
                     .unwrap();
             println!("{}", hex::encode(&result.0.output));
             assert_eq!(
+                result.0,
+                PrecompileOutput {
+                    exit_status: ExitSucceed::Returned,
+                    output: hex!(
+                        "000000000000000000000000c08b5542d177ac6686946920409741463a15dddb"
+                    ).to_vec()
+                }
+            );
+            assert_eq!(result.1, 108)
+        });
+    }
+
+    #[test]
+    fn call_modexp() {
+        let addr = H160::from_str("0000000000000000000000000000000000000005").unwrap();
+
+        let cx = Context {
+            address: H160::from_str("0000000000000000000000000000000000000005").unwrap(),
+            caller: H160::from_str("0000000000000000000000000000000000000005").unwrap(),
+            apparent_value: lamports_to_gwei(1),
+        };
+
+        // // test for potential exp len overflow
+        // // this test is slow
+        // AccountStructure::testing(0, |accounts| {
+        //     let precompiles = entrypoint(accounts, true);
+        //     let input = hex!(
+        //         "
+        //         00000000000000000000000000000000000000000000000000000000000000ff
+        //         2a1e530000000000000000000000000000000000000000000000000000000000
+        //         0000000000000000000000000000000000000000000000000000000000000000
+        //         "
+        //     );
+
+        //     let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+        //     assert_eq!(
+        //         result.0,
+        //         PrecompileOutput {
+        //             exit_status: ExitSucceed::Returned,
+        //             output: hex!("0000000000000000000000000000000000000000000000000000000000000000").to_vec()
+        //         }
+        //     );
+        // });
+
+        // fermat's little theorem example.
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                0000000000000000000000000000000000000000000000000000000000000001
+                0000000000000000000000000000000000000000000000000000000000000020
+                0000000000000000000000000000000000000000000000000000000000000020
+                03
+                fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2e
+                fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(
+                result,
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!("0000000000000000000000000000000000000000000000000000000000000001").to_vec()
+                    },
+                    13_056
+                )
+            );
+        });
+
+        // second example from EIP: zero base.
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000020
+                0000000000000000000000000000000000000000000000000000000000000020
+                fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2e
+                fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f"
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(
+                result,
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!("0000000000000000000000000000000000000000000000000000000000000000").to_vec()
+                    },
+                    13_056
+                )
+            );
+        });
+
+        // another example from EIP: zero-padding
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                0000000000000000000000000000000000000000000000000000000000000001
+                0000000000000000000000000000000000000000000000000000000000000002
+                0000000000000000000000000000000000000000000000000000000000000020
+                03
+                ffff
+                80"
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(
+                result,
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!("3b01b01ac41f2d6e917c6d6a221ce793802469026d9ab7578fa2e79e4da6aaab").to_vec()
+                    },
+                    768
+                )
+            );
+        });
+
+        // zero-length modulus.
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                0000000000000000000000000000000000000000000000000000000000000001
+                0000000000000000000000000000000000000000000000000000000000000002
+                0000000000000000000000000000000000000000000000000000000000000000
+                03
+                ffff"
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(result.0.output.len(), 0); // shouldn't have written any output.
+            assert_eq!(result.1, 0);
+        });
+    }
+
+    // This test is slow
+    #[ignore]
+    #[test]
+    fn modexp_price_overflows() {
+        let addr = H160::from_str("0000000000000000000000000000000000000005").unwrap();
+
+        let cx = Context {
+            address: H160::from_str("0000000000000000000000000000000000000005").unwrap(),
+            caller: H160::from_str("0000000000000000000000000000000000000005").unwrap(),
+            apparent_value: lamports_to_gwei(1),
+        };
+
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                0000000000000000000000000000000000000000000000000000000000000001
+                000000000000000000000000000000000000000000000000000000003b27bafd
+                00000000000000000000000000000000000000000000000000000000503c8ac3
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(result.1, u64::max_value());
+        });
+
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                00000000000000000000000000000000000000000000000000000000000000ff
+                2a1e530000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(result.1, u64::max_value());
+        });
+    }
+
+    #[test]
+    fn call_bn_128_add() {
+        let addr = H160::from_str("0000000000000000000000000000000000000006").unwrap();
+
+        let cx = Context {
+            address: H160::from_str("0000000000000000000000000000000000000006").unwrap(),
+            caller: H160::from_str("0000000000000000000000000000000000000006").unwrap(),
+            apparent_value: U256::from(1),
+        };
+
+        // zero-points additions
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(
                 result,
                 (
                     PrecompileOutput {
                         exit_status: ExitSucceed::Returned,
                         output: hex!(
-                            "000000000000000000000000c08b5542d177ac6686946920409741463a15dddb"
-                        )
-                        .to_vec(),
+                            "
+                            0000000000000000000000000000000000000000000000000000000000000000
+                            0000000000000000000000000000000000000000000000000000000000000000
+                            "
+                        ).to_vec()
                     },
-                    108,
-                    vec![]
+                    150
+                )
+            );
+        });
+
+        // no input, should not fail
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = [0u8; 0];
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(
+                result.0,
+                PrecompileOutput {
+                    exit_status: ExitSucceed::Returned,
+                    output: hex!(
+                        "
+                        0000000000000000000000000000000000000000000000000000000000000000
+                        0000000000000000000000000000000000000000000000000000000000000000
+                        "
+                    ).to_vec()
+                }
+            );
+        });
+
+        // should fail - point not on curve
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                1111111111111111111111111111111111111111111111111111111111111111
+                1111111111111111111111111111111111111111111111111111111111111111
+                1111111111111111111111111111111111111111111111111111111111111111
+                1111111111111111111111111111111111111111111111111111111111111111
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn call_bn_128_mul() {
+        let addr = H160::from_str("0000000000000000000000000000000000000007").unwrap();
+
+        let cx = Context {
+            address: H160::from_str("0000000000000000000000000000000000000007").unwrap(),
+            caller: H160::from_str("0000000000000000000000000000000000000007").unwrap(),
+            apparent_value: U256::from(1),
+        };
+
+        // zero-point multiplication
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                0200000000000000000000000000000000000000000000000000000000000000
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(
+                result,
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!(
+                            "
+                            0000000000000000000000000000000000000000000000000000000000000000
+                            0000000000000000000000000000000000000000000000000000000000000000
+                            "
+                        ).to_vec()
+                    },
+                    6000
+                )
+            );
+        });
+
+        // should fail - point not on curve
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                1111111111111111111111111111111111111111111111111111111111111111
+                1111111111111111111111111111111111111111111111111111111111111111
+                0f00000000000000000000000000000000000000000000000000000000000000
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn call_bn_128_pairing() {
+        let addr = H160::from_str("0000000000000000000000000000000000000008").unwrap();
+
+        let cx = Context {
+            address: H160::from_str("0000000000000000000000000000000000000008").unwrap(),
+            caller: H160::from_str("0000000000000000000000000000000000000008").unwrap(),
+            apparent_value: U256::from(1),
+        };
+
+        // should not fail, because empty input is a valid input of 0 elements
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = [0u8; 0];
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(
+                result,
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!("0000000000000000000000000000000000000000000000000000000000000001").to_vec()
+                    },
+                    45_000
+                )
+            );
+        });
+
+        // should fail - point not on curve
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                1111111111111111111111111111111111111111111111111111111111111111
+                1111111111111111111111111111111111111111111111111111111111111111
+                1111111111111111111111111111111111111111111111111111111111111111
+                1111111111111111111111111111111111111111111111111111111111111111
+                1111111111111111111111111111111111111111111111111111111111111111
+                1111111111111111111111111111111111111111111111111111111111111111
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            assert!(result.is_err());
+        });
+
+        // should fail - input length is invalid
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                1111111111111111111111111111111111111111111111111111111111111111
+                1111111111111111111111111111111111111111111111111111111111111111
+                111111111111111111111111111111
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn call_blake2f() {
+        let addr = H160::from_str("0000000000000000000000000000000000000009").unwrap();
+
+        let cx = Context {
+            address: H160::from_str("0000000000000000000000000000000000000009").unwrap(),
+            caller: H160::from_str("0000000000000000000000000000000000000009").unwrap(),
+            apparent_value: U256::from(1),
+        };
+
+        // Test vector 4 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-4
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                0000000048c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
+                3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e13
+                19cde05b61626300000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                000000000300000000000000000000000000000001
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(
+                result,
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!(
+                            "
+                            08c9bcf367e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5
+                            d282e6ad7f520e511f6c3e2b8c68059b9442be0454267ce079217e1319cde05b
+                            "
+                        ).to_vec()
+                    },
+                    0
+                )
+            );
+        });
+
+        // Test vector 5 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-5
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                0000000c48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
+                3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e13
+                19cde05b61626300000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                000000000300000000000000000000000000000001
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(
+                result,
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!(
+                            "
+                            ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d1
+                            7d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923
+                            "
+                        ).to_vec()
+                    },
+                    12
+                )
+            );
+        });
+
+        // Test vector 6 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-6
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                0000000c48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
+                3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e13
+                19cde05b61626300000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                000000000300000000000000000000000000000000
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(
+                result,
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!(
+                            "
+                            75ab69d3190a562c51aef8d88f1c2775876944407270c42c9844252c26d28752
+                            98743e7f6d5ea2f2d3e8d226039cd31b4e426ac4f2d3d666a610c2116fde4735
+                            "
+                        ).to_vec()
+                    },
+                    12
+                )
+            );
+        });
+
+        // Test vector 7 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-7
+        AccountStructure::testing(0, |accounts| {
+            let precompiles = entrypoint(accounts, true);
+            let input = hex!(
+                "
+                0000000148c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
+                3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e13
+                19cde05b61626300000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                0000000000000000000000000000000000000000000000000000000000000000
+                000000000300000000000000000000000000000001
+                "
+            );
+
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+
+            assert_eq!(
+                result,
+                (
+                    PrecompileOutput {
+                        exit_status: ExitSucceed::Returned,
+                        output: hex!(
+                            "
+                            b63a380cb2897d521994a85234ee2c181b5f844d2c624c002677e9703449d2fb
+                            a551b3a8333bcdf5f2f7e08993d53923de3d64fcc68c034e717b9293fed7a421
+                            "
+                        ).to_vec()
+                    },
+                    1
                 )
             );
         });
