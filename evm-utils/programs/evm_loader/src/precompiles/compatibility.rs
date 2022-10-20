@@ -63,10 +63,15 @@ impl Precompile for EcRecover {
             .expect("Serialization of static data should be determenistic and never fail.")
     }
 
+    #[cfg(not(feature = "pricefix"))]
     fn price(source: &[u8]) -> u64 {
-        // FIXME: price == 3000
-        // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.21 (204)
         60 + 12 * words(source, 32)
+    }
+
+    #[cfg(feature = "pricefix")]
+    fn price(_source: &[u8]) -> u64 {
+        // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.21 (204)
+        3000
     }
 
     fn implementation(source: &[u8], _cx: PrecompileContext) -> Result<Vec<u8>> {
@@ -138,12 +143,17 @@ impl Precompile for Ripemd160 {
             .expect("Serialization of static data should be determenistic and never fail.")
     }
 
+    #[cfg(not(feature = "pricefix"))]
     fn price(source: &[u8]) -> u64 {
-        // FIXME: price == 600 + 120 * words(source, 32)
-        // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.22 (219)
         60 + 12 * words(source, 32)
     }
 
+    #[cfg(feature = "pricefix")]
+    fn price(source: &[u8]) -> u64 {
+        // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.22 (219)
+        600 + 120 * words(source, 32)
+    }
+ 
     fn implementation(source: &[u8], _cx: PrecompileContext) -> Result<Vec<u8>> {
         use ripemd160::{Digest, Ripemd160};
         let mut hasher = Ripemd160::new();

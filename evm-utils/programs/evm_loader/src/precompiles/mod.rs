@@ -487,7 +487,11 @@ mod test {
                 )
             );
 
+            #[cfg(not(feature = "pricefix"))]
             assert_eq!(result.1, 60);
+
+            #[cfg(feature = "pricefix")]
+            assert_eq!(result.1, 600);
         })
     }
 
@@ -508,6 +512,7 @@ mod test {
                 precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
                     .unwrap();
             println!("{}", hex::encode(&result.0.output));
+
             assert_eq!(
                 result,
                 (
@@ -519,7 +524,12 @@ mod test {
                     vec![]
                 )
             );
-            assert_eq!(result.1, 108)
+
+            #[cfg(not(feature = "pricefix"))]
+            assert_eq!(result.1, 108);
+
+            #[cfg(feature = "pricefix")]
+            assert_eq!(result.1, 3000);
         });
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, true, false);
@@ -538,7 +548,12 @@ mod test {
                     ).to_vec()
                 }
             );
-            assert_eq!(result.1, 108)
+
+            #[cfg(not(feature = "pricefix"))]
+            assert_eq!(result.1, 108);
+
+            #[cfg(feature = "pricefix")]
+            assert_eq!(result.1, 3000);
         });
     }
 
