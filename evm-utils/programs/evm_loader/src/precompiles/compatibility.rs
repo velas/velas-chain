@@ -153,7 +153,7 @@ impl Precompile for Ripemd160 {
         // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.22 (219)
         600 + 120 * words(source, 32)
     }
- 
+
     fn implementation(source: &[u8], _cx: PrecompileContext) -> Result<Vec<u8>> {
         use ripemd160::{Digest, Ripemd160};
         let mut hasher = Ripemd160::new();

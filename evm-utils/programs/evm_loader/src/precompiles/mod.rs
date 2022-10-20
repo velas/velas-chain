@@ -473,25 +473,17 @@ mod test {
                     .unwrap();
             println!("{}", hex::encode(&result.0.output));
             assert_eq!(
-                result,
-                (
-                    PrecompileOutput {
-                        exit_status: ExitSucceed::Returned,
-                        output: hex!(
-                            "0000000000000000000000009c1185a5c5e9fc54612808977ee8f548b2258d31"
-                        )
-                        .to_vec(),
-                    },
-                    60,
-                    vec![]
-                )
+                result.0,
+                PrecompileOutput {
+                    exit_status: ExitSucceed::Returned,
+                    output: hex!(
+                        "0000000000000000000000009c1185a5c5e9fc54612808977ee8f548b2258d31"
+                    )
+                    .to_vec(),
+                }
             );
 
-            #[cfg(not(feature = "pricefix"))]
             assert_eq!(result.1, 60);
-
-            #[cfg(feature = "pricefix")]
-            assert_eq!(result.1, 600);
         })
     }
 
@@ -525,11 +517,7 @@ mod test {
                 )
             );
 
-            #[cfg(not(feature = "pricefix"))]
             assert_eq!(result.1, 108);
-
-            #[cfg(feature = "pricefix")]
-            assert_eq!(result.1, 3000);
         });
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, true, false);
@@ -545,7 +533,8 @@ mod test {
                     exit_status: ExitSucceed::Returned,
                     output: hex!(
                         "000000000000000000000000c08b5542d177ac6686946920409741463a15dddb"
-                    ).to_vec()
+                    )
+                    .to_vec()
                 }
             );
 
@@ -611,7 +600,10 @@ mod test {
                 (
                     PrecompileOutput {
                         exit_status: ExitSucceed::Returned,
-                        output: hex!("0000000000000000000000000000000000000000000000000000000000000001").to_vec()
+                        output: hex!(
+                            "0000000000000000000000000000000000000000000000000000000000000001"
+                        )
+                        .to_vec()
                     },
                     13_056
                 )
@@ -637,7 +629,10 @@ mod test {
                 (
                     PrecompileOutput {
                         exit_status: ExitSucceed::Returned,
-                        output: hex!("0000000000000000000000000000000000000000000000000000000000000000").to_vec()
+                        output: hex!(
+                            "0000000000000000000000000000000000000000000000000000000000000000"
+                        )
+                        .to_vec()
                     },
                     13_056
                 )
@@ -664,7 +659,10 @@ mod test {
                 (
                     PrecompileOutput {
                         exit_status: ExitSucceed::Returned,
-                        output: hex!("3b01b01ac41f2d6e917c6d6a221ce793802469026d9ab7578fa2e79e4da6aaab").to_vec()
+                        output: hex!(
+                            "3b01b01ac41f2d6e917c6d6a221ce793802469026d9ab7578fa2e79e4da6aaab"
+                        )
+                        .to_vec()
                     },
                     768
                 )
@@ -767,7 +765,8 @@ mod test {
                             0000000000000000000000000000000000000000000000000000000000000000
                             0000000000000000000000000000000000000000000000000000000000000000
                             "
-                        ).to_vec()
+                        )
+                        .to_vec()
                     },
                     150
                 )
@@ -790,7 +789,8 @@ mod test {
                         0000000000000000000000000000000000000000000000000000000000000000
                         0000000000000000000000000000000000000000000000000000000000000000
                         "
-                    ).to_vec()
+                    )
+                    .to_vec()
                 }
             );
         });
@@ -845,7 +845,8 @@ mod test {
                             0000000000000000000000000000000000000000000000000000000000000000
                             0000000000000000000000000000000000000000000000000000000000000000
                             "
-                        ).to_vec()
+                        )
+                        .to_vec()
                     },
                     6000
                 )
@@ -890,7 +891,10 @@ mod test {
                 (
                     PrecompileOutput {
                         exit_status: ExitSucceed::Returned,
-                        output: hex!("0000000000000000000000000000000000000000000000000000000000000001").to_vec()
+                        output: hex!(
+                            "0000000000000000000000000000000000000000000000000000000000000001"
+                        )
+                        .to_vec()
                     },
                     45_000
                 )
@@ -968,7 +972,8 @@ mod test {
                             08c9bcf367e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5
                             d282e6ad7f520e511f6c3e2b8c68059b9442be0454267ce079217e1319cde05b
                             "
-                        ).to_vec()
+                        )
+                        .to_vec()
                     },
                     0
                 )
@@ -1002,7 +1007,8 @@ mod test {
                             ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d1
                             7d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923
                             "
-                        ).to_vec()
+                        )
+                        .to_vec()
                     },
                     12
                 )
@@ -1036,7 +1042,8 @@ mod test {
                             75ab69d3190a562c51aef8d88f1c2775876944407270c42c9844252c26d28752
                             98743e7f6d5ea2f2d3e8d226039cd31b4e426ac4f2d3d666a610c2116fde4735
                             "
-                        ).to_vec()
+                        )
+                        .to_vec()
                     },
                     12
                 )
@@ -1070,7 +1077,8 @@ mod test {
                             b63a380cb2897d521994a85234ee2c181b5f844d2c624c002677e9703449d2fb
                             a551b3a8333bcdf5f2f7e08993d53923de3d64fcc68c034e717b9293fed7a421
                             "
-                        ).to_vec()
+                        )
+                        .to_vec()
                     },
                     1
                 )
