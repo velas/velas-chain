@@ -516,8 +516,6 @@ mod test {
                     vec![]
                 )
             );
-
-            assert_eq!(result.1, 108);
         });
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, true, false);
@@ -538,11 +536,7 @@ mod test {
                 }
             );
 
-            #[cfg(not(feature = "pricefix"))]
             assert_eq!(result.1, 108);
-
-            #[cfg(feature = "pricefix")]
-            assert_eq!(result.1, 3000);
         });
     }
 
@@ -581,7 +575,7 @@ mod test {
 
         // fermat's little theorem example.
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000001
@@ -593,7 +587,9 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(
                 result,
@@ -605,14 +601,15 @@ mod test {
                         )
                         .to_vec()
                     },
-                    13_056
+                    13_056,
+                    vec![]
                 )
             );
         });
 
         // second example from EIP: zero base.
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000000
@@ -622,7 +619,9 @@ mod test {
                 fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f"
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(
                 result,
@@ -634,14 +633,15 @@ mod test {
                         )
                         .to_vec()
                     },
-                    13_056
+                    13_056,
+                    vec![]
                 )
             );
         });
 
         // another example from EIP: zero-padding
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000001
@@ -652,7 +652,9 @@ mod test {
                 80"
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(
                 result,
@@ -664,14 +666,15 @@ mod test {
                         )
                         .to_vec()
                     },
-                    768
+                    768,
+                    vec![]
                 )
             );
         });
 
         // zero-length modulus.
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000001
@@ -681,7 +684,9 @@ mod test {
                 ffff"
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(result.0.output.len(), 0); // shouldn't have written any output.
             assert_eq!(result.1, 0);
@@ -701,7 +706,7 @@ mod test {
         };
 
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000001
@@ -710,13 +715,15 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(result.1, u64::max_value());
         });
 
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 00000000000000000000000000000000000000000000000000000000000000ff
@@ -725,7 +732,9 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(result.1, u64::max_value());
         });
@@ -743,7 +752,7 @@ mod test {
 
         // zero-points additions
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000000
@@ -753,7 +762,9 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(
                 result,
@@ -768,17 +779,20 @@ mod test {
                         )
                         .to_vec()
                     },
-                    150
+                    150,
+                    vec![]
                 )
             );
         });
 
         // no input, should not fail
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = [0u8; 0];
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(
                 result.0,
@@ -797,7 +811,7 @@ mod test {
 
         // should fail - point not on curve
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 1111111111111111111111111111111111111111111111111111111111111111
@@ -807,7 +821,8 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
             assert!(result.is_err());
         });
     }
@@ -824,7 +839,7 @@ mod test {
 
         // zero-point multiplication
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000000
@@ -833,7 +848,9 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(
                 result,
@@ -848,14 +865,15 @@ mod test {
                         )
                         .to_vec()
                     },
-                    6000
+                    6000,
+                    vec![]
                 )
             );
         });
 
         // should fail - point not on curve
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 1111111111111111111111111111111111111111111111111111111111111111
@@ -864,7 +882,8 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
             assert!(result.is_err());
         });
     }
@@ -881,10 +900,12 @@ mod test {
 
         // should not fail, because empty input is a valid input of 0 elements
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = [0u8; 0];
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(
                 result,
@@ -896,14 +917,15 @@ mod test {
                         )
                         .to_vec()
                     },
-                    45_000
+                    45_000,
+                    vec![]
                 )
             );
         });
 
         // should fail - point not on curve
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 1111111111111111111111111111111111111111111111111111111111111111
@@ -915,13 +937,14 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
             assert!(result.is_err());
         });
 
         // should fail - input length is invalid
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 1111111111111111111111111111111111111111111111111111111111111111
@@ -930,7 +953,8 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
             assert!(result.is_err());
         });
     }
@@ -947,7 +971,7 @@ mod test {
 
         // Test vector 4 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-4
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 0000000048c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
@@ -960,7 +984,9 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(
                 result,
@@ -975,14 +1001,15 @@ mod test {
                         )
                         .to_vec()
                     },
-                    0
+                    0,
+                    vec![]
                 )
             );
         });
 
         // Test vector 5 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-5
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 0000000c48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
@@ -995,7 +1022,9 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(
                 result,
@@ -1010,14 +1039,15 @@ mod test {
                         )
                         .to_vec()
                     },
-                    12
+                    12,
+                    vec![]
                 )
             );
         });
 
         // Test vector 6 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-6
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 0000000c48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
@@ -1030,7 +1060,9 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(
                 result,
@@ -1045,14 +1077,15 @@ mod test {
                         )
                         .to_vec()
                     },
-                    12
+                    12,
+                    vec![]
                 )
             );
         });
 
         // Test vector 7 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-7
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true);
+            let precompiles = entrypoint(accounts, true, false);
             let input = hex!(
                 "
                 0000000148c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
@@ -1065,7 +1098,9 @@ mod test {
                 "
             );
 
-            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
+            let result =
+                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
+                    .unwrap();
 
             assert_eq!(
                 result,
@@ -1080,7 +1115,8 @@ mod test {
                         )
                         .to_vec()
                     },
-                    1
+                    1,
+                    vec![]
                 )
             );
         });
