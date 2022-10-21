@@ -201,7 +201,7 @@ impl GeneralERPC for GeneralErpcImpl {
 
     fn network_id(&self, meta: Self::Metadata) -> Result<String, Error> {
         let bank = meta.bank(None);
-        Ok(format!("{:#x}", bank.evm_chain_id))
+        Ok(format!("{}", bank.evm_chain_id))
     }
 
     // TODO: Add network info
@@ -572,8 +572,8 @@ impl ChainERPC for ChainErpcImpl {
                     .unwrap_or_default(),
                 topics: log_filter
                     .topics
+                    .unwrap_or_else(|| vec![None])
                     .into_iter()
-                    .flatten()
                     .map(RPCTopicFilter::into_topics)
                     .collect(),
                 from_block: from,

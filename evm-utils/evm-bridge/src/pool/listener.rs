@@ -6,7 +6,6 @@ use txpool::Listener;
 
 use super::PooledTransaction;
 
-
 #[derive(Debug)]
 pub struct PoolListener;
 impl PoolListener {
@@ -16,14 +15,14 @@ impl PoolListener {
             handle.spawn(async move {
                 if let Err(e) = tx.send(Err(evm_rpc::Error::TransactionRemoved {})).await {
                     warn!(
-                        "PoolListener failed to notify tx sender about transaction, error:{:?}",
+                        "PoolListener failed to async notify tx sender about transaction, error:{:?}",
                         e
                     )
                 }
             });
         } else if let Err(e) = tx.blocking_send(Err(evm_rpc::Error::TransactionRemoved {})) {
             warn!(
-                "PoolListener failed to notify tx sender about transaction, error:{:?}",
+                "PoolListener failed to sync notify tx sender about transaction, error:{:?}",
                 e
             )
         }

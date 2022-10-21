@@ -681,8 +681,7 @@ async fn deploy_big_tx(
             .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
         tx_bytes
     } else {
-        bincode::serialize(&tx)
-        .map_err(|e| into_native_error(e, bridge.verbose_errors))?
+        bincode::serialize(&tx).map_err(|e| into_native_error(e, bridge.verbose_errors))?
     };
 
     debug!(

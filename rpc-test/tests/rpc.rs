@@ -41,11 +41,14 @@ use solana_client::pubsub_client::PubsubClient;
 
 use primitive_types::{H256, U256};
 
-use evm_rpc::{Hex, RPCTransaction};
+use evm_rpc::{BlockId, Hex, RPCLogFilter, RPCTransaction};
 use evm_rpc::trace::TraceMeta;
 use evm_state::TransactionInReceipt;
 use solana_client::rpc_config::RpcSendTransactionConfig;
-use solana_evm_loader_program::instructions::FeePayerType;
+use solana_evm_loader_program::{
+    instructions::FeePayerType,
+    send_raw_tx, transfer_native_to_evm_ixs
+};
 
 macro_rules! json_req {
     ($method: expr, $params: expr) => {{
@@ -178,7 +181,6 @@ fn test_rpc_send_tx() {
 
 #[test]
 fn test_rpc_replay_transaction() {
-    use solana_evm_loader_program::{send_raw_tx, transfer_native_to_evm_ixs};
     // let filter = "warn,solana_runtime::message_processor=debug,evm=debug";
     solana_logger::setup_with_default("warn");
 
@@ -254,7 +256,6 @@ fn test_rpc_replay_transaction() {
 
 #[test]
 fn test_rpc_block_transaction() {
-    use solana_evm_loader_program::{send_raw_tx, transfer_native_to_evm_ixs};
     solana_logger::setup_with_default("warn");
 
     let evm_secret_key = evm_state::SecretKey::from_slice(&[1; 32]).unwrap();
@@ -339,8 +340,6 @@ fn test_rpc_block_transaction() {
 
 #[test]
 fn test_rpc_replay_transaction_timestamp() {
-    use solana_evm_loader_program::{send_raw_tx, transfer_native_to_evm_ixs};
-    // let filter = "warn,evm=debug,evm_state::context=info";
     solana_logger::setup_with_default("warn");
 
     let evm_secret_key = evm_state::SecretKey::from_slice(&[1; 32]).unwrap();
@@ -429,7 +428,6 @@ fn test_rpc_replay_transaction_timestamp() {
 
 #[test]
 fn test_rpc_replay_transaction_gas_used() {
-    use solana_evm_loader_program::{send_raw_tx, transfer_native_to_evm_ixs};
     solana_logger::setup_with_default("warn");
 
     let evm_secret_key = evm_state::SecretKey::from_slice(&[1; 32]).unwrap();
@@ -543,10 +541,6 @@ fn test_rpc_replay_transaction_gas_used() {
             .sign(&evm_secret_key, Some(chain_id)),
     ];
     let tx_call_hashes: Vec<_> = tx_calls.iter().map(|tx| tx.tx_id_hash()).collect();
-    let rpc_txs: Vec<_> = tx_calls
-        .iter()
-        .map(|tx| RPCTransaction::from_transaction(TransactionInReceipt::Signed(tx.clone())).unwrap())
-        .collect();
 
     let recent_blockhash = get_blockhash(&rpc_url);
     let ixs: Vec<_> = tx_calls
@@ -606,6 +600,96 @@ fn test_rpc_replay_transaction_gas_used() {
     let json = post_rpc(request.clone(), &rpc_url);
     warn!("trace_call: {}", json["result"]);
     assert_eq!(json["result"]["trace"].as_array().unwrap()[0]["error"].as_str().unwrap(), "Out of gas");
+}
+
+#[test]
+fn test_rpc_get_logs() {
+    solana_logger::setup();
+
+    let evm_secret_key = evm_state::SecretKey::from_slice(&[1; 32]).unwrap();
+    let evm_address = evm_state::addr_from_public_key(&evm_state::PublicKey::from_secret_key(
+        evm_state::SECP256K1,
+        &evm_secret_key,
+    ));
+
+    let alice = Keypair::new();
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .enable_evm_state_archive()
+        .rpc_config(JsonRpcConfig {
+            enable_rpc_transaction_history: true,
+            ..JsonRpcConfig::default_for_test()
+        })
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
+    let rpc_url = test_validator.rpc_url();
+
+    let req = json_req!("eth_chainId", json!([]));
+    let json = post_rpc(req, &rpc_url);
+    let chain_id = Hex::from_hex(json["result"].as_str().unwrap()).unwrap().0;
+
+    let blockhash = dbg!(get_blockhash(&rpc_url));
+    let ixs = transfer_native_to_evm_ixs(alice.pubkey(), 1000000, evm_address);
+    let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
+    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+
+    let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
+    let json: Value = post_rpc(req, &rpc_url);
+    wait_finalization(&rpc_url, &[&json["result"]]);
+
+    // Contract with method that will emit 3 events
+    const TEST_CONTRACT: &str = "608060405234801561001057600080fd5b506101e4806100206000396000f3fe608060405234801561001057600080fd5b506004361061002b5760003560e01c8063e2a2d66a14610030575b600080fd5b61004a6004803603810190610045919061010b565b61004c565b005b7f47e2689743f14e97f7dcfa5eec10ba1dff02f83b3d1d4b9c07b206cbbda664508360405161007b919061016d565b60405180910390a17fa48a6b249a5084126c3da369fbc9b16827ead8cb5cdc094b717d3f1dcd995e29826040516100b2919061016d565b60405180910390a17fe96585649d926cc4f5031a6113d7494d766198c0ac68b04eb93207460f9d7fd2816040516100e9919061016d565b60405180910390a1505050565b60008135905061010581610197565b92915050565b60008060006060848603121561012457610123610192565b5b6000610132868287016100f6565b9350506020610143868287016100f6565b9250506040610154868287016100f6565b9150509250925092565b61016781610188565b82525050565b6000602082019050610182600083018461015e565b92915050565b6000819050919050565b600080fd5b6101a081610188565b81146101ab57600080fd5b5056fea2646970667358221220b182526d07bd62a4f4b9a9cf112a230cdcb940fc6fc1c3d0d41ee81ef2c26c9d64736f6c63430008070033";
+    let tx_create = evm_state::UnsignedTransaction {
+        nonce: 0.into(),
+        gas_price: 2000000000.into(),
+        gas_limit: 300000.into(),
+        action: evm_state::TransactionAction::Create,
+        value: 0.into(),
+        input: hex::decode(TEST_CONTRACT).unwrap(),
+    }
+        .sign(&evm_secret_key, Some(chain_id));
+    let contract_address = tx_create.address().unwrap();
+    let tx_call = evm_state::UnsignedTransaction {
+        nonce: 1.into(),
+        gas_price: 2000000000.into(),
+        gas_limit: 300000.into(),
+        action: evm_state::TransactionAction::Call(contract_address),
+        value: 0.into(),
+        input: hex::decode("e2a2d66a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003").unwrap(),
+    }
+        .sign(&evm_secret_key, Some(chain_id));
+
+    let blockhash = dbg!(get_blockhash(&rpc_url));
+    let ixs = vec![send_raw_tx(alice.pubkey(), tx_create, None, FeePayerType::Evm)];
+    let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
+    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+    let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
+    let json = dbg!(post_rpc(req, &rpc_url));
+    wait_finalization(&rpc_url, &[&json["result"]]);
+
+    let recent_blockhash = get_blockhash(&rpc_url);
+    let ixs = vec![send_raw_tx(alice.pubkey(), tx_call, None, FeePayerType::Evm)];
+    let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], recent_blockhash);
+    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+    let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
+    let json = dbg!(post_rpc(req, &rpc_url));
+    wait_finalization(&rpc_url, &[&json["result"]]);
+
+    let log_filter = RPCLogFilter {
+        from_block: Some(BlockId::BlockHash { block_hash: Hex(recent_blockhash.to_bytes().into()) }),
+        to_block: None,
+        address: None,
+        topics: None,
+    };
+    let req = json_req!("eth_getLogs", json!([log_filter]));
+    let json = post_rpc(req, &rpc_url);
+    // eth_getLogs returns all logs when topics is set to None
+    assert_eq!(json["result"].as_array().unwrap().len(), 3);
 }
 
 #[test]

@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::AtomicU64,
+};
 
 use anyhow::{ensure, Result};
 use clap::{value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand};
@@ -73,6 +76,18 @@ impl EvmStateSubCommand for App<'_, '_> {
                 .subcommand(
                     SubCommand::with_name("verify")
                         .about("Verify hashes of data reachable from state root")
+                        .setting(AppSettings::ArgRequiredElseHelp)
+                        .arg(
+                            Arg::with_name(ROOT_ARG.name)
+                                .long(ROOT_ARG.long)
+                                .required(true)
+                                .takes_value(true)
+                                .help(ROOT_ARG.help),
+                        ),
+                )
+                .subcommand(
+                    SubCommand::with_name("balance-lamports")
+                        .about("Get balance of evm state accounts")
                         .setting(AppSettings::ArgRequiredElseHelp)
                         .arg(
                             Arg::with_name(ROOT_ARG.name)
@@ -177,7 +192,43 @@ pub fn process_evm_state_command(evm_state_path: &Path, matches: &ArgMatches<'_>
                     Walker::new_raw(db, HashVerifier, NoopInspector).traverse(storage_root)
                 })?
         }
+        ("balance-lamports", Some(matches)) => {
+            let root = value_t_or_exit!(matches, ROOT_ARG.name, H256);
+
+            assert!(storage.check_root_exist(root));
+            let db = storage.db();
+
+            let accounts_verifier = BalanceCounter::new();
+            let walker = Walker::new_sec_encoding(db, HashVerifier, accounts_verifier);
+            walker.traverse(root)?;
+
+            println!("Total balance = {:?}", walker.data_inspector.inner.balance)
+        }
         unhandled => panic!("Unhandled {:?}", unhandled),
     }
     Ok(())
+}
+
+use evm_state::Account;
+
+pub struct BalanceCounter {
+    balance: AtomicU64,
+}
+
+impl BalanceCounter {
+    pub fn new() -> Self {
+        Self {
+            balance: AtomicU64::default(),
+        }
+    }
+}
+use evm_state::storage::inspectors::DataInspector;
+impl DataInspector<H256, Account> for BalanceCounter {
+    fn inspect_data(&self, _key: H256, account: Account) -> Result<()> {
+        let (lamports, _) =
+            solana_evm_loader_program::scope::evm::gweis_to_lamports(account.balance);
+        self.balance
+            .fetch_add(lamports, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
 }

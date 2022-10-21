@@ -187,6 +187,7 @@ impl EvmProcessor {
         borsh_used: bool,
     ) -> Result<(), EvmError> {
         let is_big = tx.is_big();
+        let keep_old_errors = true;
         // TODO: Add logic for fee collector
         let (sender, _fee_collector) = if is_big {
             (accounts.users.get(1), accounts.users.get(2))
@@ -220,7 +221,11 @@ impl EvmProcessor {
                 executor.transaction_execute(
                     tx,
                     withdraw_fee_from_evm,
-                    precompiles::entrypoint(accounts, executor.support_precompile()),
+                    precompiles::entrypoint(
+                        accounts,
+                        executor.support_precompile(),
+                        keep_old_errors,
+                    ),
                 )
             }
             ExecuteTransaction::ProgramAuthorized { tx, from } => {
@@ -254,7 +259,11 @@ impl EvmProcessor {
                     from,
                     tx,
                     withdraw_fee_from_evm,
-                    precompiles::entrypoint(accounts, executor.support_precompile()),
+                    precompiles::entrypoint(
+                        accounts,
+                        executor.support_precompile(),
+                        keep_old_errors,
+                    ),
                 )
             }
         };
@@ -583,10 +592,32 @@ impl EvmProcessor {
         result: Result<evm_state::ExecutionResult, evm_state::error::Error>,
         withdraw_fee_from_evm: bool,
     ) -> Result<(), EvmError> {
-        let result = result.map_err(|e| {
+        let remove_native_logs_after_swap = true;
+        let mut result = result.map_err(|e| {
             ic_msg!(invoke_context, "Transaction execution error: {}", e);
             EvmError::InternalExecutorError
         })?;
+
+        if remove_native_logs_after_swap {
+            executor.modify_tx_logs(result.tx_id, |logs| {
+                if let Some(logs) = logs {
+                    precompiles::filter_native_logs(accounts, logs).map_err(|e| {
+                        ic_msg!(invoke_context, "Filter native logs error: {}", e);
+                        EvmError::PrecompileError
+                    })?;
+                } else {
+                    ic_msg!(invoke_context, "Unable to find tx by txid");
+                    return Err(EvmError::PrecompileError);
+                }
+                Ok(())
+            })?;
+        } else {
+            // same logic, but don't save result to block
+            precompiles::filter_native_logs(accounts, &mut result.tx_logs).map_err(|e| {
+                ic_msg!(invoke_context, "Filter native logs error: {}", e);
+                EvmError::PrecompileError
+            })?;
+        }
 
         write!(
             crate::solana_extension::MultilineLogger::new(invoke_context.get_log_collector()),
