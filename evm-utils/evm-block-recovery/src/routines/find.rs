@@ -117,7 +117,15 @@ pub async fn find_native(
                 err_to_output(exit_code::UNABLE_TO_QUERY_BIGTABLE)
             })?;
 
-        let last_in_chunk = *chunk.last().unwrap();
+        let last_in_chunk = if let Some(block) = chunk.last() {
+            *block
+        } else {
+            // we reach the end just after last successfull query
+            log::debug!(
+                "Bigtable didn't return anything for range #{start_slot}..#{end_slot}"
+            );
+            break;
+        };
 
         if last_in_chunk < end_slot {
             start_slot = last_in_chunk + 1;
