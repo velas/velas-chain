@@ -425,7 +425,7 @@ pub mod velas {
     }
 
     pub mod evm_new_precompiles {
-        solana_sdk::declare_id!("X9AHGkHztTz1DBDaQrc2FfX8zWv6mFg7ywUhspu72nQ");
+        solana_sdk::declare_id!("4NLsdp3QnxQaERdfVqSMDczFQLeLokqGXBWpp1EJVLme");
     }
 }
 lazy_static! {
