@@ -567,7 +567,7 @@ mod test {
         // // test for potential exp len overflow
         // // this test is slow
         // AccountStructure::testing(0, |accounts| {
-        //     let precompiles = entrypoint(accounts, ActivatePrecompile::VelasClassic);
+        //     let precompiles = entrypoint(accounts, ActivatePrecompile::VelasNext);
         //     let input = hex!(
         //         "
         //         00000000000000000000000000000000000000000000000000000000000000ff
