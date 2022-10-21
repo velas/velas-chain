@@ -212,7 +212,7 @@ mod test {
     }
     #[test]
     fn check_num_precompiles() {
-        assert_eq!(PRECOMPILES_MAP.len(), 9);
+        assert_eq!(PRECOMPILES_MAP.len(), 4);
     }
 
     #[test]

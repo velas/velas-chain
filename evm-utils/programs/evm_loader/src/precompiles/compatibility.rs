@@ -63,16 +63,15 @@ impl Precompile for EcRecover {
             .expect("Serialization of static data should be determenistic and never fail.")
     }
 
-    #[cfg(not(feature = "pricefix"))]
     fn price(source: &[u8]) -> u64 {
         60 + 12 * words(source, 32)
     }
 
-    #[cfg(feature = "pricefix")]
-    fn price(_source: &[u8]) -> u64 {
-        // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.21 (204)
-        3000
-    }
+    // TODO: implement as a feature
+    // fn price(_source: &[u8]) -> u64 {
+    //     // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.21 (204)
+    //     3000
+    // }
 
     fn implementation(source: &[u8], _cx: PrecompileContext) -> Result<Vec<u8>> {
         use evm_state::secp256k1::{Message, SECP256K1};
@@ -143,16 +142,15 @@ impl Precompile for Ripemd160 {
             .expect("Serialization of static data should be determenistic and never fail.")
     }
 
-    #[cfg(not(feature = "pricefix"))]
     fn price(source: &[u8]) -> u64 {
         60 + 12 * words(source, 32)
     }
 
-    #[cfg(feature = "pricefix")]
-    fn price(source: &[u8]) -> u64 {
-        // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.22 (219)
-        600 + 120 * words(source, 32)
-    }
+    // TODO: implement as a feature
+    // fn price(source: &[u8]) -> u64 {
+    //     // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.22 (219)
+    //     600 + 120 * words(source, 32)
+    // }
 
     fn implementation(source: &[u8], _cx: PrecompileContext) -> Result<Vec<u8>> {
         use ripemd160::{Digest, Ripemd160};
@@ -696,11 +694,12 @@ pub fn extend_precompile_map(map: &mut HashMap<H160, BuiltinEval>) {
     Sha256::insert_to_map(map);
     Ripemd160::insert_to_map(map);
     EcRecover::insert_to_map(map);
-    Modexp::insert_to_map(map);
-    Bn128Add::insert_to_map(map);
-    Bn128Mul::insert_to_map(map);
-    Bn128Pairing::insert_to_map(map);
-    Blake2F::insert_to_map(map);
+    // TODO: implement as a new feature
+    // Modexp::insert_to_map(map);
+    // Bn128Add::insert_to_map(map);
+    // Bn128Mul::insert_to_map(map);
+    // Bn128Pairing::insert_to_map(map);
+    // Blake2F::insert_to_map(map);
 }
 
 fn execute_precompile<T: Precompile>(source: &[u8], cx: PrecompileContext) -> CallResult {

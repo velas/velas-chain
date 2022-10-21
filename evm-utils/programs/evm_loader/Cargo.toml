@@ -6,10 +6,6 @@ authors = ["Vladimir Motylenko <vld@stegos.com>"]
 license = "Apache-2.0"
 edition = "2021"
 
-[features]
-default = []
-pricefix = []
-
 [dependencies]
 log = "0.4.8"
 solana-logger = { path = "../../../logger", version = "1.9.13" }
