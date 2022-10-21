@@ -52,7 +52,7 @@ use {
             self, ArchiveFormat, SnapshotVersion, DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
             DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
             DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN, EVM_STATE_DIR,
         },
     },
     solana_sdk::{
@@ -64,10 +64,6 @@ use {
     },
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::socket::SocketAddrSpace,
-    velas_validator::{
-        admin_rpc_service, bootstrap, dashboard::Dashboard, ledger_lockfile, lock_ledger,
-        new_spinner_progress_bar, println_name_value, redirect_stderr_to_file,
-    },
     std::{
         collections::{HashSet, VecDeque},
         env,
@@ -78,6 +74,10 @@ use {
         str::FromStr,
         sync::{Arc, RwLock},
         time::{Duration, SystemTime},
+    },
+    velas_validator::{
+        admin_rpc_service, bootstrap, dashboard::Dashboard, ledger_lockfile, lock_ledger,
+        new_spinner_progress_bar, println_name_value, redirect_stderr_to_file,
     },
 };
 
@@ -597,7 +597,14 @@ pub fn main() {
                 .value_name("DIR")
                 .takes_value(true)
                 .help("Use DIR as evm-state archive location"),
-        ) 
+        )
+        .arg(
+            Arg::with_name("evm_state_path")
+                .long("evm-state")
+                .value_name("DIR")
+                .takes_value(true)
+                .help("Use DIR as evm-state location"),
+        )
         .arg(
             Arg::with_name("jaeger_collector_url")
                 .long("jaeger-collector")
@@ -2047,6 +2054,11 @@ pub fn main() {
 
     solana_core::validator::report_target_features();
 
+    let evm_state_path = if let Ok(evm_state_path) = value_t!(matches, "evm_state_path", String) {
+        PathBuf::from(evm_state_path)
+    } else {
+        ledger_path.join(EVM_STATE_DIR)
+    };
     let evm_state_archive = matches.value_of("evm_state_archive_path").map(|path| {
         info!("Opening evm archive storage");
         evm_state::Storage::open_persistent(
@@ -2057,11 +2069,7 @@ pub fn main() {
 
     let authorized_voter_keypairs = keypairs_of(&matches, "authorized_voter_keypairs")
         .map(|keypairs| keypairs.into_iter().map(Arc::new).collect())
-        .unwrap_or_else(|| {
-            vec![
-                identity_keypair.clone(),
-            ]
-        });
+        .unwrap_or_else(|| vec![identity_keypair.clone()]);
     let authorized_voter_keypairs = Arc::new(RwLock::new(authorized_voter_keypairs));
 
     let init_complete_file = matches.value_of("init_complete_file");
@@ -2782,6 +2790,7 @@ pub fn main() {
         node,
         identity_keypair,
         &ledger_path,
+        &evm_state_path,
         &vote_account,
         authorized_voter_keypairs,
         cluster_entrypoints,

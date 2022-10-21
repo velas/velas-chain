@@ -51,7 +51,7 @@ pub const TAR_ACCOUNTS_DIR: &str = "accounts";
 pub const TAR_VERSION_FILE: &str = "version";
 pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 25_000;
 pub const DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 100;
-const EVM_STATE_DIR: &str = "evm-state";
+pub const EVM_STATE_DIR: &str = "evm-state";
 const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 const VERSION_STRING_V1_4_0: &str = "1.4.0";
@@ -1617,6 +1617,7 @@ mod cmp_dir {
     use std::io::Read;
     use std::path::Path;
     use walkdir::{DirEntry, WalkDir};
+    use crate::snapshot_utils::EVM_STATE_DIR;
 
     pub fn is_different<A: AsRef<Path>, B: AsRef<Path>>(
         a_base: A,
@@ -1625,7 +1626,7 @@ mod cmp_dir {
     ) -> Option<bool> {
         let filter = |e: &DirEntry| {
             if ignore_evm {
-                e.file_name().to_str() != Some("evm-state")
+                e.file_name().to_str() != Some(EVM_STATE_DIR)
             } else {
                 true
             }

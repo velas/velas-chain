@@ -18,6 +18,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, snapshot_config::SnapshotConfig,
+        snapshot_utils::EVM_STATE_DIR,
     },
     solana_sdk::{
         account::{Account, AccountSharedData},
@@ -673,6 +674,7 @@ impl TestValidator {
             node,
             Arc::new(validator_identity),
             &ledger_path,
+            &ledger_path.clone().join(EVM_STATE_DIR),
             &vote_account_address,
             config.authorized_voter_keypairs.clone(),
             vec![],
