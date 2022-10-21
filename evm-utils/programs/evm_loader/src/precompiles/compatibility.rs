@@ -11,6 +11,91 @@ use std::str::FromStr;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use num::{BigUint, One, Zero};
 
+mod deprecated {
+    use super::*;
+
+    #[derive(Debug)]
+    pub struct Ripemd160;
+
+    #[derive(Debug)]
+    pub struct EcRecover;
+
+    impl Precompile for EcRecover {
+        fn address() -> H160 {
+            H160::from_str("0000000000000000000000000000000000000001")
+                .expect("Serialization of static data should be determenistic and never fail.")
+        }
+
+        fn price(source: &[u8]) -> u64 {
+            60 + 12 * words(source, 32)
+        }
+
+        fn implementation(source: &[u8], _cx: PrecompileContext) -> Result<Vec<u8>> {
+            use evm_state::secp256k1::{Message, SECP256K1};
+            use evm_state::transactions::addr_from_public_key;
+            let len = std::cmp::min(source.len(), 128);
+            let mut input = [0; 128];
+            input[..len].copy_from_slice(&source[..len]);
+
+            let hash = &input[0..32];
+            let v = H256::from_slice(&input[32..64]);
+            let r = H256::from_slice(&input[64..96]);
+            let s = H256::from_slice(&input[96..128]);
+            if v.0[..31] != [0; 31] {
+                return Ok(vec![]);
+            }
+            let v = v[31];
+
+            let signature = TransactionSignature { v: v as u64, r, s };
+
+            if !signature.is_valid() {
+                return Ok(vec![]);
+            }
+            let signature = if let Ok(s) = signature.to_recoverable_signature() {
+                s
+            } else {
+                return Ok(vec![]);
+            };
+
+            let public_key =
+                if let Ok(p) = SECP256K1.recover(&Message::from_slice(hash).unwrap(), &signature) {
+                    p
+                } else {
+                    return Ok(vec![]);
+                };
+            let addr = addr_from_public_key(&public_key);
+            let mut result = vec![0; 32];
+            result[12..].copy_from_slice(addr.as_bytes());
+            Ok(result)
+        }
+    }
+
+    impl Precompile for Ripemd160 {
+        fn address() -> H160 {
+            H160::from_str("0000000000000000000000000000000000000003")
+                .expect("Serialization of static data should be determenistic and never fail.")
+        }
+
+        fn price(source: &[u8]) -> u64 {
+            60 + 12 * words(source, 32)
+        }
+
+        fn implementation(source: &[u8], _cx: PrecompileContext) -> Result<Vec<u8>> {
+            use ripemd160::{Digest, Ripemd160};
+            let mut hasher = Ripemd160::new();
+
+            // write input message
+            hasher.update(source);
+
+            // read hash digest and consume hasher
+            let array = hasher.finalize();
+            let mut result = vec![0; 32];
+            result[12..].copy_from_slice(array.as_slice());
+            Ok(result)
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Identity;
 
@@ -63,15 +148,9 @@ impl Precompile for EcRecover {
             .expect("Serialization of static data should be determenistic and never fail.")
     }
 
-    fn price(source: &[u8]) -> u64 {
-        60 + 12 * words(source, 32)
+    fn price(_source: &[u8]) -> u64 {
+        3000
     }
-
-    // TODO: implement as a feature
-    // fn price(_source: &[u8]) -> u64 {
-    //     // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.21 (204)
-    //     3000
-    // }
 
     fn implementation(source: &[u8], _cx: PrecompileContext) -> Result<Vec<u8>> {
         use evm_state::secp256k1::{Message, SECP256K1};
@@ -143,14 +222,8 @@ impl Precompile for Ripemd160 {
     }
 
     fn price(source: &[u8]) -> u64 {
-        60 + 12 * words(source, 32)
+        600 + 120 * words(source, 32)
     }
-
-    // TODO: implement as a feature
-    // fn price(source: &[u8]) -> u64 {
-    //     // Ref.: https://ethereum.github.io/yellowpaper/paper.pdf p.22 (219)
-    //     600 + 120 * words(source, 32)
-    // }
 
     fn implementation(source: &[u8], _cx: PrecompileContext) -> Result<Vec<u8>> {
         use ripemd160::{Digest, Ripemd160};
@@ -689,17 +762,26 @@ fn read_point(
     })
 }
 
-pub fn extend_precompile_map(map: &mut HashMap<H160, BuiltinEval>) {
-    Identity::insert_to_map(map);
-    Sha256::insert_to_map(map);
-    Ripemd160::insert_to_map(map);
-    EcRecover::insert_to_map(map);
-    // TODO: implement as a new feature
-    // Modexp::insert_to_map(map);
-    // Bn128Add::insert_to_map(map);
-    // Bn128Mul::insert_to_map(map);
-    // Bn128Pairing::insert_to_map(map);
-    // Blake2F::insert_to_map(map);
+pub fn build_precompile_map(new_precompiles: bool) -> HashMap<H160, BuiltinEval> {
+    let mut map: HashMap<H160, BuiltinEval> = HashMap::new();
+
+    Identity::insert_to_map(&mut map);
+    Sha256::insert_to_map(&mut map);
+
+    if new_precompiles {
+        Ripemd160::insert_to_map(&mut map);
+        EcRecover::insert_to_map(&mut map);
+        Modexp::insert_to_map(&mut map);
+        Bn128Add::insert_to_map(&mut map);
+        Bn128Mul::insert_to_map(&mut map);
+        Bn128Pairing::insert_to_map(&mut map);
+        Blake2F::insert_to_map(&mut map);
+    } else {
+        deprecated::Ripemd160::insert_to_map(&mut map);
+        deprecated::EcRecover::insert_to_map(&mut map);
+    }
+
+    map
 }
 
 fn execute_precompile<T: Precompile>(source: &[u8], cx: PrecompileContext) -> CallResult {

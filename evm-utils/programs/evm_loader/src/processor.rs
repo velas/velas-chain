@@ -2,6 +2,8 @@ use std::cell::RefMut;
 use std::fmt::Write;
 use std::ops::DerefMut;
 
+use crate::precompiles::{build_precompile_map, PRECOMPILES_MAP};
+
 use super::account_structure::AccountStructure;
 use super::instructions::{
     EvmBigTransaction, EvmInstruction, ExecuteTransaction, FeePayerType,
@@ -65,7 +67,16 @@ impl EvmProcessor {
         let borsh_serialization_enabled = invoke_context
             .feature_set
             .is_active(&solana_sdk::feature_set::velas::evm_instruction_borsh_serialization::id());
+        let evm_new_precompiles = invoke_context
+            .feature_set
+            .is_active(&solana_sdk::feature_set::velas::evm_new_precompiles::id());
+
         let cross_execution = invoke_context.get_stack_height() != 1;
+
+        PRECOMPILES_MAP
+            .set(build_precompile_map(evm_new_precompiles))
+            .ok()
+            .unwrap();
 
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
