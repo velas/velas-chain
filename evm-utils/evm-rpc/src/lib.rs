@@ -12,7 +12,8 @@ use snafu::ResultExt;
 mod serialize;
 use self::error::EvmStateError;
 use evm_state::{
-    Address, Block, BlockHeader, ExitSucceed, Gas, LogFilterTopicEntry, LogWithLocation, TransactionInReceipt,
+    Address, Block, BlockHeader, ExitSucceed, Gas, LogFilterTopicEntry, LogWithLocation,
+    TransactionInReceipt,
 };
 
 pub mod error;

@@ -6567,6 +6567,7 @@ dependencies = [
  "solana-cli-output",
  "solana-core",
  "solana-entry",
+ "solana-evm-loader-program",
  "solana-ledger",
  "solana-logger 1.9.29",
  "solana-measure",
@@ -7520,7 +7521,7 @@ dependencies = [
 
 [[package]]
 name = "solana-version"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "log 0.4.17",
  "rustc_version 0.4.0",

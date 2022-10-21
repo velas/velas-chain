@@ -185,6 +185,7 @@ fn execute_precompile<T: Precompile>(source: &[u8], cx: PrecompileContext) -> Ca
             output: bytes,
         },
         gas_used,
+        vec![],
     ))
 }
 

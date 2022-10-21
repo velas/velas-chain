@@ -39,51 +39,49 @@ impl Middleware<Arc<EvmBridge>> for ProxyMiddleware {
                 )))))
             }
         };
-        Either::Left(Box::pin(next(call, meta).then(
-            move |res| async move {
-                let res = match res {
-                    Some(Output::Failure(Failure { jsonrpc, error, id }))
-                        if error.code == ErrorCode::MethodNotFound =>
-                    {
-                        debug!("Method not found! Redirecting to node...");
-                        let response = match meta_cloned.rpc_client._send_request(call_json).await {
-                            Ok(response) => response,
-                            Err(err) => {
-                                let mut error = Error::internal_error();
-                                error.message = err.to_string();
-                                return Some(Output::Failure(Failure { jsonrpc, error, id }));
-                            }
-                        };
-                        let json: Value = match response.json().await {
-                            Ok(json) => json,
-                            Err(err) => {
-                                error!("Node rpc call error: {}", err.to_string());
-                                let mut error = Error::internal_error();
-                                error.message = err.to_string();
-                                return Some(Output::Failure(Failure { jsonrpc, error, id }));
-                            }
-                        };
-                        debug!("Node response: {}", json);
-                        let output = if json["error"].is_null() {
-                            Output::Success(Success {
-                                jsonrpc,
-                                result: json["result"].clone(),
-                                id,
-                            })
-                        } else {
-                            Output::Failure(Failure {
-                                jsonrpc,
-                                error: serde_json::from_value(json["error"].clone()).ok()?,
-                                id,
-                            })
-                        };
-                        Some(output)
-                    }
-                    _ => res,
-                };
-                debug!("Processing took: {:?}", start.elapsed());
-                res
-            },
-        )))
+        Either::Left(Box::pin(next(call, meta).then(move |res| async move {
+            let res = match res {
+                Some(Output::Failure(Failure { jsonrpc, error, id }))
+                    if error.code == ErrorCode::MethodNotFound =>
+                {
+                    debug!("Method not found! Redirecting to node...");
+                    let response = match meta_cloned.rpc_client._send_request(call_json).await {
+                        Ok(response) => response,
+                        Err(err) => {
+                            let mut error = Error::internal_error();
+                            error.message = err.to_string();
+                            return Some(Output::Failure(Failure { jsonrpc, error, id }));
+                        }
+                    };
+                    let json: Value = match response.json().await {
+                        Ok(json) => json,
+                        Err(err) => {
+                            error!("Node rpc call error: {}", err.to_string());
+                            let mut error = Error::internal_error();
+                            error.message = err.to_string();
+                            return Some(Output::Failure(Failure { jsonrpc, error, id }));
+                        }
+                    };
+                    debug!("Node response: {}", json);
+                    let output = if json["error"].is_null() {
+                        Output::Success(Success {
+                            jsonrpc,
+                            result: json["result"].clone(),
+                            id,
+                        })
+                    } else {
+                        Output::Failure(Failure {
+                            jsonrpc,
+                            error: serde_json::from_value(json["error"].clone()).ok()?,
+                            id,
+                        })
+                    };
+                    Some(output)
+                }
+                _ => res,
+            };
+            debug!("Processing took: {:?}", start.elapsed());
+            res
+        })))
     }
 }

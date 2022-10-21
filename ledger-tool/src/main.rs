@@ -761,7 +761,7 @@ fn load_bank_forks(
         None,
         None,
         None,
-	    verify_evm_state,
+        verify_evm_state,
         None,
         accounts_package_sender,
         None,
@@ -1658,13 +1658,13 @@ fn main() {
         let ledger_path = canonicalize_ledger_path(&ledger_path);
 
         match matches.subcommand() {
-        ("evm_blockstore", Some(arg_matches)) => {
-            evm_blockstore_process_command(&ledger_path, arg_matches)
-        }
-        ("evm_state", Some(arg_matches)) => {
-            process_evm_state_command(&ledger_path, arg_matches)
-                .unwrap_or_else(|err| panic!("EVM state subcommand error: {:?}", err));
-        }
+            ("evm_blockstore", Some(arg_matches)) => {
+                evm_blockstore_process_command(&ledger_path, arg_matches)
+            }
+            ("evm_state", Some(arg_matches)) => {
+                process_evm_state_command(&ledger_path, arg_matches)
+                    .unwrap_or_else(|err| panic!("EVM state subcommand error: {:?}", err));
+            }
             ("print", Some(arg_matches)) => {
                 let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
                 let ending_slot = value_t!(arg_matches, "ending_slot", Slot).unwrap_or(Slot::MAX);
@@ -1732,7 +1732,7 @@ fn main() {
 
                 create_new_ledger(
                     &output_directory,
-                None,
+                    None,
                     &genesis_config,
                     solana_runtime::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
                     AccessType::PrimaryOnly,
@@ -1902,17 +1902,17 @@ fn main() {
                     println!("{}", slot);
                 }
             }
-        ("duplicate-slots", Some(arg_matches)) => {
-            let blockstore = open_blockstore(
-                &ledger_path,
-                AccessType::TryPrimaryThenSecondary,
-                wal_recovery_mode,
-            );
-            let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
-            for slot in blockstore.duplicate_slots_iterator(starting_slot).unwrap() {
-                println!("{}", slot);
+            ("duplicate-slots", Some(arg_matches)) => {
+                let blockstore = open_blockstore(
+                    &ledger_path,
+                    AccessType::TryPrimaryThenSecondary,
+                    wal_recovery_mode,
+                );
+                let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
+                for slot in blockstore.duplicate_slots_iterator(starting_slot).unwrap() {
+                    println!("{}", slot);
+                }
             }
-        }
             ("set-dead-slot", Some(arg_matches)) => {
                 let slots = values_t_or_exit!(arg_matches, "slots", Slot);
                 let blockstore =
@@ -1988,7 +1988,9 @@ fn main() {
                         if ancestors.contains(&slot) && !map.contains_key(&slot) {
                             map.insert(slot, line);
                         }
-                        if slot == ending_slot && frozen.contains_key(&slot) && full.contains_key(&slot)
+                        if slot == ending_slot
+                            && frozen.contains_key(&slot)
+                            && full.contains_key(&slot)
                         {
                             break;
                         }
@@ -2082,7 +2084,7 @@ fn main() {
                     &blockstore,
                     process_options,
                     snapshot_archive_path,
-                true,
+                    true,
                 )
                 .unwrap_or_else(|err| {
                     eprintln!("Ledger verification failed: {:?}", err);
@@ -2154,14 +2156,14 @@ fn main() {
                 let remove_stake_accounts = arg_matches.is_present("remove_stake_accounts");
                 let new_hard_forks = hardforks_of(arg_matches, "hard_forks");
 
-            let faucet_pubkey = pubkey_of(arg_matches, "faucet_pubkey");
+                let faucet_pubkey = pubkey_of(arg_matches, "faucet_pubkey");
                 let faucet_lamports = value_t!(arg_matches, "faucet_lamports", u64).unwrap_or(0);
 
                 let rent_burn_percentage = value_t!(arg_matches, "rent_burn_percentage", u8);
                 let hashes_per_tick = arg_matches.value_of("hashes_per_tick");
 
                 let bootstrap_stake_authorized_pubkey =
-                pubkey_of(arg_matches, "bootstrap_stake_authorized_pubkey");
+                    pubkey_of(arg_matches, "bootstrap_stake_authorized_pubkey");
                 let bootstrap_validator_lamports =
                     value_t_or_exit!(arg_matches, "bootstrap_validator_lamports", u64);
                 let bootstrap_validator_stake_lamports =
@@ -2175,9 +2177,9 @@ fn main() {
                     );
                     exit(1);
                 }
-            let bootstrap_validator_pubkeys = pubkeys_of(arg_matches, "bootstrap_validator");
+                let bootstrap_validator_pubkeys = pubkeys_of(arg_matches, "bootstrap_validator");
                 let accounts_to_remove =
-                pubkeys_of(arg_matches, "accounts_to_remove").unwrap_or_default();
+                    pubkeys_of(arg_matches, "accounts_to_remove").unwrap_or_default();
                 let vote_accounts_to_destake: HashSet<_> =
                     pubkeys_of(arg_matches, "vote_accounts_to_destake")
                         .unwrap_or_default()
@@ -2378,9 +2380,9 @@ fn main() {
                                 );
 
                                 let vote_account = vote_state::create_account_with_authorized(
-                                identity_pubkey,
-                                identity_pubkey,
-                                identity_pubkey,
+                                    identity_pubkey,
+                                    identity_pubkey,
+                                    identity_pubkey,
                                     100,
                                     VoteState::get_rent_exempt_reserve(&rent).max(1),
                                 );
@@ -2390,8 +2392,8 @@ fn main() {
                                     &stake_state::create_account(
                                         bootstrap_stake_authorized_pubkey
                                             .as_ref()
-                                        .unwrap_or(identity_pubkey),
-                                    vote_pubkey,
+                                            .unwrap_or(identity_pubkey),
+                                        vote_pubkey,
                                         &vote_account,
                                         &rent,
                                         bootstrap_validator_stake_lamports,
@@ -2834,7 +2836,7 @@ fn main() {
                                         pubkey,
                                         account,
                                         base_bank
-                                        .get_account(pubkey)
+                                            .get_account(pubkey)
                                             .map(|a| a.lamports())
                                             .unwrap_or_default(),
                                     )
@@ -3212,58 +3214,58 @@ fn main() {
                         }
                     });
             }
-        ("repair-roots", Some(arg_matches)) => {
-            let blockstore = open_blockstore(
-                &ledger_path,
-                AccessType::TryPrimaryThenSecondary,
-                wal_recovery_mode,
-            );
-            let start_root = if let Some(root) = arg_matches.value_of("start_root") {
-                Slot::from_str(root).expect("Before root must be a number")
-            } else {
-                blockstore.max_root()
-            };
-            let max_slots = value_t_or_exit!(arg_matches, "max_slots", u64);
-            let end_root = if let Some(root) = arg_matches.value_of("end_root") {
-                Slot::from_str(root).expect("Until root must be a number")
-            } else {
-                start_root.saturating_sub(max_slots)
-            };
-            assert!(start_root > end_root);
-            assert!(blockstore.is_root(start_root));
-            let num_slots = start_root - end_root - 1; // Adjust by one since start_root need not be checked
-            if arg_matches.is_present("end_root") && num_slots > max_slots {
-                eprintln!(
-                    "Requested range {} too large, max {}. \
+            ("repair-roots", Some(arg_matches)) => {
+                let blockstore = open_blockstore(
+                    &ledger_path,
+                    AccessType::TryPrimaryThenSecondary,
+                    wal_recovery_mode,
+                );
+                let start_root = if let Some(root) = arg_matches.value_of("start_root") {
+                    Slot::from_str(root).expect("Before root must be a number")
+                } else {
+                    blockstore.max_root()
+                };
+                let max_slots = value_t_or_exit!(arg_matches, "max_slots", u64);
+                let end_root = if let Some(root) = arg_matches.value_of("end_root") {
+                    Slot::from_str(root).expect("Until root must be a number")
+                } else {
+                    start_root.saturating_sub(max_slots)
+                };
+                assert!(start_root > end_root);
+                assert!(blockstore.is_root(start_root));
+                let num_slots = start_root - end_root - 1; // Adjust by one since start_root need not be checked
+                if arg_matches.is_present("end_root") && num_slots > max_slots {
+                    eprintln!(
+                        "Requested range {} too large, max {}. \
                     Either adjust `--until` value, or pass a larger `--repair-limit` \
                     to override the limit",
-                    num_slots, max_slots,
-                );
-                exit(1);
-            }
+                        num_slots, max_slots,
+                    );
+                    exit(1);
+                }
                 let ancestor_iterator = AncestorIterator::new(start_root, &blockstore)
                     .take_while(|&slot| slot >= end_root);
-            let roots_to_fix: Vec<_> = ancestor_iterator
-                .filter(|slot| !blockstore.is_root(*slot))
-                .collect();
-            if !roots_to_fix.is_empty() {
-                eprintln!("{} slots to be rooted", roots_to_fix.len());
-                for chunk in roots_to_fix.chunks(100) {
-                    eprintln!("{:?}", chunk);
+                let roots_to_fix: Vec<_> = ancestor_iterator
+                    .filter(|slot| !blockstore.is_root(*slot))
+                    .collect();
+                if !roots_to_fix.is_empty() {
+                    eprintln!("{} slots to be rooted", roots_to_fix.len());
+                    for chunk in roots_to_fix.chunks(100) {
+                        eprintln!("{:?}", chunk);
                         blockstore
                             .set_roots(roots_to_fix.iter())
                             .unwrap_or_else(|err| {
-                        eprintln!("Unable to set roots {:?}: {}", roots_to_fix, err);
-                        exit(1);
-                    });
+                                eprintln!("Unable to set roots {:?}: {}", roots_to_fix, err);
+                                exit(1);
+                            });
+                    }
+                } else {
+                    println!(
+                        "No missing roots found in range {} to {}",
+                        end_root, start_root
+                    );
                 }
-            } else {
-                println!(
-                    "No missing roots found in range {} to {}",
-                    end_root, start_root
-                );
             }
-        }
             ("bounds", Some(arg_matches)) => {
                 let blockstore = open_blockstore(
                     &ledger_path,
