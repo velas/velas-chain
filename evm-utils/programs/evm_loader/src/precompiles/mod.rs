@@ -95,6 +95,8 @@ pub static PRECOMPILES_MAP_DEPRECATED: Lazy<HashMap<H160, BuiltinEval>> =
 pub static PRECOMPILES_MAP: Lazy<HashMap<H160, BuiltinEval>> =
     Lazy::new(|| build_precompile_map(true));
 
+pub static NO_PRECOMPILES: Lazy<HashMap<H160, BuiltinEval>> = Lazy::new(|| HashMap::new());
+
 // Simulation does not have access to real account structure, so only process immutable entrypoints
 pub fn simulation_entrypoint<'a>(
     activate_precompile: PrecompileSet,
@@ -118,45 +120,46 @@ pub fn entrypoint(
     keep_old_errors: bool,
 ) -> OwnedPrecompile {
     let mut map = BTreeMap::new();
-    if activate_precompile != PrecompileSet::No {
-        let precompiles = match activate_precompile {
-            PrecompileSet::VelasClassic => &PRECOMPILES_MAP_DEPRECATED,
-            PrecompileSet::VelasNext => &PRECOMPILES_MAP,
-            _ => unreachable!(),
-        };
-        map.extend(precompiles.iter().map(|(k, method)| {
-            (
-                *k,
-                Box::new(
-                    move |function_abi_input: &[u8],
-                          gas_left,
-                          call_scheme,
-                          cx: &Context,
-                          _is_static| {
-                        let cx = PrecompileContext::new(gas_left, cx, call_scheme);
-                        method(function_abi_input, cx).map_err(|err| {
-                            let exit_err: ExitError = Into::into(err);
-                            PrecompileFailure::Error {
-                                exit_status: exit_err,
-                            }
-                        })
-                    },
-                )
-                    as Box<
-                        dyn for<'a, 'b> Fn(
-                            &'a [u8],
-                            Option<u64>,
-                            Option<CallScheme>,
-                            &'b Context,
-                            bool,
-                        ) -> Result<
-                            (PrecompileOutput, u64, LogEntry),
-                            PrecompileFailure,
-                        >,
-                    >,
+
+    let precompiles = match activate_precompile {
+        PrecompileSet::VelasClassic => &PRECOMPILES_MAP_DEPRECATED,
+        PrecompileSet::VelasNext => &PRECOMPILES_MAP,
+        PrecompileSet::No => &NO_PRECOMPILES,
+    };
+
+    map.extend(precompiles.iter().map(|(k, method)| {
+        (
+            *k,
+            Box::new(
+                move |function_abi_input: &[u8],
+                      gas_left,
+                      call_scheme,
+                      cx: &Context,
+                      _is_static| {
+                    let cx = PrecompileContext::new(gas_left, cx, call_scheme);
+                    method(function_abi_input, cx).map_err(|err| {
+                        let exit_err: ExitError = Into::into(err);
+                        PrecompileFailure::Error {
+                            exit_status: exit_err,
+                        }
+                    })
+                },
             )
-        }));
-    }
+                as Box<
+                    dyn for<'a, 'b> Fn(
+                        &'a [u8],
+                        Option<u64>,
+                        Option<CallScheme>,
+                        &'b Context,
+                        bool,
+                    ) -> Result<
+                        (PrecompileOutput, u64, LogEntry),
+                        PrecompileFailure,
+                    >,
+                >,
+        )
+    }));
+
     map.extend(NATIVE_CONTRACTS.iter().map(|(k, (method, _))| {
         (
             *k,
