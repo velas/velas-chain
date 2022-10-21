@@ -11,6 +11,7 @@ use std::str::FromStr;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use num::{BigUint, One, Zero};
 
+// Deprecated precompiles differ in price calculations
 mod deprecated {
     use super::*;
 

@@ -2,8 +2,6 @@ use std::cell::RefMut;
 use std::fmt::Write;
 use std::ops::DerefMut;
 
-use crate::precompiles::{build_precompile_map, PRECOMPILES_MAP};
-
 use super::account_structure::AccountStructure;
 use super::instructions::{
     EvmBigTransaction, EvmInstruction, ExecuteTransaction, FeePayerType,
@@ -67,16 +65,8 @@ impl EvmProcessor {
         let borsh_serialization_enabled = invoke_context
             .feature_set
             .is_active(&solana_sdk::feature_set::velas::evm_instruction_borsh_serialization::id());
-        let evm_new_precompiles = invoke_context
-            .feature_set
-            .is_active(&solana_sdk::feature_set::velas::evm_new_precompiles::id());
 
         let cross_execution = invoke_context.get_stack_height() != 1;
-
-        PRECOMPILES_MAP
-            .set(build_precompile_map(evm_new_precompiles))
-            .ok()
-            .unwrap();
 
         if cross_execution && !cross_execution_enabled {
             ic_msg!(invoke_context, "Cross-Program evm execution not enabled.");
@@ -212,6 +202,17 @@ impl EvmProcessor {
             return Err(EvmError::MissingRequiredSignature);
         }
 
+        fn precompile_set(
+            support_precompile: bool,
+            evm_new_precompiles: bool,
+        ) -> precompiles::PrecompileSet {
+            match (support_precompile, evm_new_precompiles) {
+                (false, _) => precompiles::PrecompileSet::No,
+                (true, false) => precompiles::PrecompileSet::VelasClassic,
+                (true, true) => precompiles::PrecompileSet::VelasNext,
+            }
+        }
+
         let withdraw_fee_from_evm = fee_type.is_evm();
         let tx_gas_price;
         let result = match tx {
@@ -229,14 +230,16 @@ impl EvmProcessor {
                     tx.action
                 );
                 tx_gas_price = tx.gas_price;
+                let activate_precompile = precompile_set(
+                    executor.support_precompile(),
+                    invoke_context
+                        .feature_set
+                        .is_active(&solana_sdk::feature_set::velas::evm_new_precompiles::id()),
+                );
                 executor.transaction_execute(
                     tx,
                     withdraw_fee_from_evm,
-                    precompiles::entrypoint(
-                        accounts,
-                        executor.support_precompile(),
-                        keep_old_errors,
-                    ),
+                    precompiles::entrypoint(accounts, activate_precompile, keep_old_errors),
                 )
             }
             ExecuteTransaction::ProgramAuthorized { tx, from } => {
@@ -266,15 +269,17 @@ impl EvmProcessor {
                     tx.action
                 );
                 tx_gas_price = tx.gas_price;
+                let activate_precompile = precompile_set(
+                    executor.support_precompile(),
+                    invoke_context
+                        .feature_set
+                        .is_active(&solana_sdk::feature_set::velas::evm_new_precompiles::id()),
+                );
                 executor.transaction_execute_unsinged(
                     from,
                     tx,
                     withdraw_fee_from_evm,
-                    precompiles::entrypoint(
-                        accounts,
-                        executor.support_precompile(),
-                        keep_old_errors,
-                    ),
+                    precompiles::entrypoint(accounts, activate_precompile, keep_old_errors),
                 )
             }
         };

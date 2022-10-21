@@ -2,7 +2,7 @@ use evm_state::{
     executor::{LogEntry, OwnedPrecompile, PrecompileFailure, PrecompileOutput},
     CallScheme, Context, ExitError, Log, H256,
 };
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::Lazy;
 use primitive_types::H160;
 use std::collections::{BTreeMap, HashMap};
 
@@ -89,11 +89,15 @@ pub static NATIVE_CONTRACTS: Lazy<HashMap<H160, (NativeBuiltinEval, NativePromis
         native_contracts
     });
 
-pub static PRECOMPILES_MAP: OnceCell<HashMap<H160, BuiltinEval>> = OnceCell::new();
+pub static PRECOMPILES_MAP_DEPRECATED: Lazy<HashMap<H160, BuiltinEval>> =
+    Lazy::new(|| build_precompile_map(false));
+
+pub static PRECOMPILES_MAP: Lazy<HashMap<H160, BuiltinEval>> =
+    Lazy::new(|| build_precompile_map(true));
 
 // Simulation does not have access to real account structure, so only process immutable entrypoints
 pub fn simulation_entrypoint<'a>(
-    activate_precompile: bool,
+    activate_precompile: PrecompileSet,
     evm_account: &'a KeyedAccount,
     users_accounts: &'a [KeyedAccount],
 ) -> OwnedPrecompile<'a> {
@@ -101,14 +105,26 @@ pub fn simulation_entrypoint<'a>(
     entrypoint(accounts, activate_precompile, true)
 }
 
+#[derive(Debug, PartialEq)]
+pub enum PrecompileSet {
+    No,
+    VelasClassic,
+    VelasNext,
+}
+
 pub fn entrypoint(
     accounts: AccountStructure,
-    activate_precompile: bool,
+    activate_precompile: PrecompileSet,
     keep_old_errors: bool,
 ) -> OwnedPrecompile {
     let mut map = BTreeMap::new();
-    if activate_precompile {
-        map.extend(PRECOMPILES_MAP.get().unwrap().iter().map(|(k, method)| {
+    if activate_precompile != PrecompileSet::No {
+        let precompiles = match activate_precompile {
+            PrecompileSet::VelasClassic => &PRECOMPILES_MAP_DEPRECATED,
+            PrecompileSet::VelasNext => &PRECOMPILES_MAP,
+            _ => unreachable!(),
+        };
+        map.extend(precompiles.iter().map(|(k, method)| {
             (
                 *k,
                 Box::new(
@@ -225,7 +241,7 @@ mod test {
             apparent_value: U256::from(1),
         };
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, false, true);
+            let precompiles = entrypoint(accounts, PrecompileSet::No, true);
             assert_eq!(
                 dbg!(precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap_err()),
                 PrecompileFailure::Error { exit_status: ExitError::Other("Failed to find account, account_pk = 29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2".into()) } // equal to 0x111..111 in base58
@@ -257,7 +273,7 @@ mod test {
             apparent_value: U256::from(1),
         };
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, false, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::No, false);
             let precompile_output = dbg!(precompiles.precompiles.get(&addr).unwrap()(
                 &input, None, None, &cx, false
             ));
@@ -286,7 +302,7 @@ mod test {
             apparent_value: lamports_to_gwei(1),
         };
         AccountStructure::testing(0, |accounts: AccountStructure| {
-            let precompiles = entrypoint(accounts, false, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::No, false);
             let user = accounts.first().unwrap();
             let input = hex::decode(format!(
                 "b1d6927a{}",
@@ -331,7 +347,7 @@ mod test {
             apparent_value: lamports_to_gwei(1),
         };
         AccountStructure::testing(0, |accounts: AccountStructure| {
-            let precompiles = entrypoint(accounts, false, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::No, false);
             let user = accounts.first().unwrap();
             let input = hex::decode(format!(
                 "b1d6927a{}",
@@ -392,7 +408,7 @@ mod test {
             apparent_value: lamports_to_gwei(1),
         };
         AccountStructure::testing(0, |accounts: AccountStructure| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasClassic, false);
             let input = [0u8; 0];
             let result =
                 precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
@@ -425,7 +441,7 @@ mod test {
             apparent_value: lamports_to_gwei(1),
         };
         AccountStructure::testing(0, |accounts: AccountStructure| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasClassic, false);
             let input = [1, 2, 3, 4];
             let result =
                 precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
@@ -449,7 +465,7 @@ mod test {
     fn call_to_identity_disabled() {
         let addr = H160::from_str("0000000000000000000000000000000000000004").unwrap();
         AccountStructure::testing(0, |accounts: AccountStructure| {
-            let precompiles = entrypoint(accounts, false, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::No, false);
             assert!(precompiles.precompiles.get(&addr).is_none());
         })
     }
@@ -464,7 +480,7 @@ mod test {
             apparent_value: lamports_to_gwei(1),
         };
         AccountStructure::testing(0, |accounts: AccountStructure| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasClassic, false);
             let input = [0u8; 0];
             let result =
                 precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
@@ -495,7 +511,7 @@ mod test {
             apparent_value: lamports_to_gwei(1),
         };
         AccountStructure::testing(0, |accounts: AccountStructure| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasClassic, false);
             let input = hex!("47173285a8d7341e5e972fc677286384f802f8ef42a5ec5f03bbfa254cb01fad000000000000000000000000000000000000000000000000000000000000001a650acf9d3f5f0a2c799776a1254355d5f4061762a237396a99a0e0e3fc2bcd6729514a0dacb2e623ac4abd157cb18163ff942280db4d5caad66ddf941ba12e03");
 
             let result =
@@ -516,7 +532,7 @@ mod test {
             );
         });
         AccountStructure::testing(0, |accounts: AccountStructure| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasClassic, false);
             let input = hex!("47173285a8d7341e5e972fc677286384f802f8ef42a5ec5f03bbfa254cb01fad000000000000000000000000000000000000000000000000000000000000001b650acf9d3f5f0a2c799776a1254355d5f4061762a237396a99a0e0e3fc2bcd6729514a0dacb2e623ac4abd157cb18163ff942280db4d5caad66ddf941ba12e03");
 
             let result =
@@ -551,7 +567,7 @@ mod test {
         // // test for potential exp len overflow
         // // this test is slow
         // AccountStructure::testing(0, |accounts| {
-        //     let precompiles = entrypoint(accounts, true);
+        //     let precompiles = entrypoint(accounts, ActivatePrecompile::VelasClassic);
         //     let input = hex!(
         //         "
         //         00000000000000000000000000000000000000000000000000000000000000ff
@@ -573,7 +589,7 @@ mod test {
 
         // fermat's little theorem example.
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000001
@@ -607,7 +623,7 @@ mod test {
 
         // second example from EIP: zero base.
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000000
@@ -639,7 +655,7 @@ mod test {
 
         // another example from EIP: zero-padding
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000001
@@ -672,7 +688,7 @@ mod test {
 
         // zero-length modulus.
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000001
@@ -704,7 +720,7 @@ mod test {
         };
 
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000001
@@ -721,7 +737,7 @@ mod test {
         });
 
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 00000000000000000000000000000000000000000000000000000000000000ff
@@ -750,7 +766,7 @@ mod test {
 
         // zero-points additions
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000000
@@ -785,7 +801,7 @@ mod test {
 
         // no input, should not fail
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = [0u8; 0];
 
             let result =
@@ -809,7 +825,7 @@ mod test {
 
         // should fail - point not on curve
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 1111111111111111111111111111111111111111111111111111111111111111
@@ -837,7 +853,7 @@ mod test {
 
         // zero-point multiplication
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 0000000000000000000000000000000000000000000000000000000000000000
@@ -871,7 +887,7 @@ mod test {
 
         // should fail - point not on curve
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 1111111111111111111111111111111111111111111111111111111111111111
@@ -898,7 +914,7 @@ mod test {
 
         // should not fail, because empty input is a valid input of 0 elements
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = [0u8; 0];
 
             let result =
@@ -923,7 +939,7 @@ mod test {
 
         // should fail - point not on curve
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 1111111111111111111111111111111111111111111111111111111111111111
@@ -942,7 +958,7 @@ mod test {
 
         // should fail - input length is invalid
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 1111111111111111111111111111111111111111111111111111111111111111
@@ -969,7 +985,7 @@ mod test {
 
         // Test vector 4 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-4
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 0000000048c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
@@ -1007,7 +1023,7 @@ mod test {
 
         // Test vector 5 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-5
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 0000000c48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
@@ -1045,7 +1061,7 @@ mod test {
 
         // Test vector 6 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-6
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 0000000c48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
@@ -1083,7 +1099,7 @@ mod test {
 
         // Test vector 7 and expected output from https://github.com/ethereum/EIPs/blob/master/EIPS/eip-152.md#test-vector-7
         AccountStructure::testing(0, |accounts| {
-            let precompiles = entrypoint(accounts, true, false);
+            let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = hex!(
                 "
                 0000000148c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f
