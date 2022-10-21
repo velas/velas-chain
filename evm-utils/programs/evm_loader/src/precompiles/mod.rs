@@ -243,7 +243,7 @@ mod test {
         AccountStructure::testing(0, |accounts| {
             let precompiles = entrypoint(accounts, PrecompileSet::No, true);
             assert_eq!(
-                dbg!(precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap_err()),
+                dbg!(precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap_err()),
                 PrecompileFailure::Error { exit_status: ExitError::Other("Failed to find account, account_pk = 29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2".into()) } // equal to 0x111..111 in base58
             );
         })
@@ -274,7 +274,7 @@ mod test {
         };
         AccountStructure::testing(0, |accounts| {
             let precompiles = entrypoint(accounts, PrecompileSet::No, false);
-            let precompile_output = dbg!(precompiles.precompiles.get(&addr).unwrap()(
+            let precompile_output = dbg!(precompiles.get(&addr).unwrap()(
                 &input, None, None, &cx, false
             ));
             assert!(matches!(
@@ -310,7 +310,7 @@ mod test {
             ))
             .unwrap();
             let lamports_before = user.lamports().unwrap();
-            let precompile_output = dbg!(precompiles.precompiles.get(&addr).unwrap()(
+            let precompile_output = dbg!(precompiles.get(&addr).unwrap()(
                 &input, None, None, &cx, false
             ));
             assert!(matches!(
@@ -355,7 +355,7 @@ mod test {
             ))
             .unwrap();
             let lamports_before = user.lamports().unwrap();
-            let precompile_output = dbg!(precompiles.precompiles.get(&addr).unwrap()(
+            let precompile_output = dbg!(precompiles.get(&addr).unwrap()(
                 &input, None, None, &cx, false
             ));
             assert!(matches!(
@@ -410,9 +410,7 @@ mod test {
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, PrecompileSet::VelasClassic, false);
             let input = [0u8; 0];
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
             println!("{}", hex::encode(&result.0.output));
             assert_eq!(
                 result,
@@ -443,9 +441,7 @@ mod test {
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, PrecompileSet::VelasClassic, false);
             let input = [1, 2, 3, 4];
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
             println!("{}", hex::encode(&result.0.output));
             assert_eq!(
                 result,
@@ -466,7 +462,7 @@ mod test {
         let addr = H160::from_str("0000000000000000000000000000000000000004").unwrap();
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, PrecompileSet::No, false);
-            assert!(precompiles.precompiles.get(&addr).is_none());
+            assert!(precompiles.get(&addr).is_none());
         })
     }
 
@@ -482,9 +478,7 @@ mod test {
         AccountStructure::testing(0, |accounts: AccountStructure| {
             let precompiles = entrypoint(accounts, PrecompileSet::VelasClassic, false);
             let input = [0u8; 0];
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
             println!("{}", hex::encode(&result.0.output));
             assert_eq!(
                 result.0,
@@ -514,9 +508,7 @@ mod test {
             let precompiles = entrypoint(accounts, PrecompileSet::VelasClassic, false);
             let input = hex!("47173285a8d7341e5e972fc677286384f802f8ef42a5ec5f03bbfa254cb01fad000000000000000000000000000000000000000000000000000000000000001a650acf9d3f5f0a2c799776a1254355d5f4061762a237396a99a0e0e3fc2bcd6729514a0dacb2e623ac4abd157cb18163ff942280db4d5caad66ddf941ba12e03");
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
             println!("{}", hex::encode(&result.0.output));
 
             assert_eq!(
@@ -535,9 +527,7 @@ mod test {
             let precompiles = entrypoint(accounts, PrecompileSet::VelasClassic, false);
             let input = hex!("47173285a8d7341e5e972fc677286384f802f8ef42a5ec5f03bbfa254cb01fad000000000000000000000000000000000000000000000000000000000000001b650acf9d3f5f0a2c799776a1254355d5f4061762a237396a99a0e0e3fc2bcd6729514a0dacb2e623ac4abd157cb18163ff942280db4d5caad66ddf941ba12e03");
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
             println!("{}", hex::encode(&result.0.output));
             assert_eq!(
                 result.0,
@@ -601,9 +591,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(
                 result,
@@ -633,9 +621,7 @@ mod test {
                 fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f"
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(
                 result,
@@ -666,9 +652,7 @@ mod test {
                 80"
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(
                 result,
@@ -698,9 +682,7 @@ mod test {
                 ffff"
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(result.0.output.len(), 0); // shouldn't have written any output.
             assert_eq!(result.1, 0);
@@ -729,9 +711,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(result.1, u64::max_value());
         });
@@ -746,9 +726,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(result.1, u64::max_value());
         });
@@ -776,9 +754,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(
                 result,
@@ -804,9 +780,7 @@ mod test {
             let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = [0u8; 0];
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(
                 result.0,
@@ -835,8 +809,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
             assert!(result.is_err());
         });
     }
@@ -862,9 +835,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(
                 result,
@@ -896,8 +867,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
             assert!(result.is_err());
         });
     }
@@ -917,9 +887,7 @@ mod test {
             let precompiles = entrypoint(accounts, PrecompileSet::VelasNext, false);
             let input = [0u8; 0];
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(
                 result,
@@ -951,8 +919,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
             assert!(result.is_err());
         });
 
@@ -967,8 +934,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false);
             assert!(result.is_err());
         });
     }
@@ -998,9 +964,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(
                 result,
@@ -1036,9 +1000,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(
                 result,
@@ -1074,9 +1036,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(
                 result,
@@ -1112,9 +1072,7 @@ mod test {
                 "
             );
 
-            let result =
-                precompiles.precompiles.get(&addr).unwrap()(&input, None, None, &cx, false)
-                    .unwrap();
+            let result = precompiles.get(&addr).unwrap()(&input, None, None, &cx, false).unwrap();
 
             assert_eq!(
                 result,

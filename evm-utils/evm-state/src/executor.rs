@@ -84,6 +84,26 @@ impl<'precompile> PrecompileSet for OwnedPrecompile<'precompile> {
     }
 }
 
+impl<'precompile> std::ops::Deref for OwnedPrecompile<'precompile> {
+    type Target = BTreeMap<
+    H160,
+    Box<
+        dyn Fn(
+                &[u8],
+                Option<u64>,
+                Option<CallScheme>,
+                &Context,
+                bool,
+            ) -> Result<(PrecompileOutput, u64, LogEntry), PrecompileFailure>
+            + 'precompile,
+    >,
+>;
+    
+    fn deref(&self) -> &Self::Target {
+        &self.precompiles
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ExecutionResult {
     pub exit_reason: evm::ExitReason,
