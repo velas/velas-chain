@@ -60,7 +60,7 @@ impl<'precompile> PrecompileSet for OwnedPrecompile<'precompile> {
     fn execute(&self, handle: &mut impl PrecompileHandle) -> Option<PrecompileResult> {
         let address = handle.code_address();
 
-        self.precompiles.get(&address).map(|precompile| {
+        self.get(&address).map(|precompile| {
             let input = handle.input();
             let gas_limit = handle.gas_limit();
             let call_scheme = handle.call_scheme();
@@ -80,7 +80,27 @@ impl<'precompile> PrecompileSet for OwnedPrecompile<'precompile> {
         })
     }
     fn is_precompile(&self, address: H160) -> bool {
-        self.precompiles.contains_key(&address)
+        self.contains_key(&address)
+    }
+}
+
+impl<'precompile> std::ops::Deref for OwnedPrecompile<'precompile> {
+    type Target = BTreeMap<
+    H160,
+    Box<
+        dyn Fn(
+                &[u8],
+                Option<u64>,
+                Option<CallScheme>,
+                &Context,
+                bool,
+            ) -> Result<(PrecompileOutput, u64, LogEntry), PrecompileFailure>
+            + 'precompile,
+    >,
+>;
+    
+    fn deref(&self) -> &Self::Target {
+        &self.precompiles
     }
 }
 

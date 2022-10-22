@@ -423,6 +423,10 @@ pub mod velas {
     pub mod evm_instruction_borsh_serialization {
         solana_sdk::declare_id!("9NUVkN3PYJXz6z8cUgtGHYWd1CmcYF7ci3a552rASPQw");
     }
+
+    pub mod evm_new_precompiles {
+        solana_sdk::declare_id!("4NLsdp3QnxQaERdfVqSMDczFQLeLokqGXBWpp1EJVLme");
+    }
 }
 lazy_static! {
     /// Map of feature identifiers to user-visible description
