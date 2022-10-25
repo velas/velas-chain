@@ -233,7 +233,7 @@ impl Executor {
         &mut self,
         caller: H160,
         nonce: U256,
-        gas_price: U256,
+        mut gas_price: U256,
         gas_limit: U256,
         action: TransactionAction,
         input: Vec<u8>,
@@ -276,6 +276,9 @@ impl Executor {
             GasPriceOutOfBounds { gas_price }
         );
 
+        if !withdraw_fee && gas_price.is_zero() {
+            gas_price = self.config.burn_gas_price;
+        }
         ensure!(
             gas_price >= self.config.burn_gas_price,
             GasPriceOutOfBounds { gas_price }

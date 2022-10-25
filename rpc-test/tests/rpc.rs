@@ -1,53 +1,48 @@
 use {
     bincode::serialize,
+    evm_rpc::{BlockId, Hex, RPCLogFilter, RPCTransaction},
+    evm_state::TransactionInReceipt,
     log::*,
+    primitive_types::{H256, U256},
     reqwest::{self, header::CONTENT_TYPE},
     serde_json::{json, Value},
     solana_account_decoder::UiAccount,
     solana_client::{
         client_error::{ClientErrorKind, Result as ClientResult},
+        pubsub_client::PubsubClient,
         rpc_client::RpcClient,
-        rpc_config::{RpcAccountInfoConfig, RpcSignatureSubscribeConfig},
+        rpc_config::{RpcAccountInfoConfig, RpcSendTransactionConfig, RpcSignatureSubscribeConfig},
         rpc_request::RpcError,
         rpc_response::{Response as RpcResponse, RpcSignatureResult, SlotUpdate},
         tpu_client::{TpuClient, TpuClientConfig},
     },
+    solana_evm_loader_program::{
+        free_ownership, instructions::FeePayerType, send_raw_tx, transfer_native_to_evm_ixs,
+    },
+    solana_rpc::rpc::JsonRpcConfig,
     solana_sdk::{
-    commitment_config::{CommitmentConfig, CommitmentLevel},
-    fee_calculator::FeeRateGovernor,
+        commitment_config::{CommitmentConfig, CommitmentLevel},
+        fee_calculator::FeeRateGovernor,
         hash::Hash,
         pubkey::Pubkey,
         rent::Rent,
         signature::{Keypair, Signer},
+        system_instruction::assign,
         system_transaction,
         transaction::Transaction,
     },
     solana_streamer::socket::SocketAddrSpace,
-    solana_test_validator::TestValidator,
+    solana_test_validator::{TestValidator, TestValidatorGenesis},
     solana_transaction_status::TransactionStatus,
     std::{
         collections::HashSet,
         net::UdpSocket,
+        str::FromStr,
         sync::{mpsc::channel, Arc},
         thread::sleep,
         time::{Duration, Instant},
     },
     tokio::runtime::Runtime,
-};
-use std::str::FromStr;
-use solana_test_validator::TestValidatorGenesis;
-use solana_rpc::rpc::JsonRpcConfig;
-use solana_client::pubsub_client::PubsubClient;
-
-use primitive_types::{H256, U256};
-
-use evm_rpc::{BlockId, Hex, RPCLogFilter, RPCTransaction};
-use evm_rpc::trace::TraceMeta;
-use evm_state::TransactionInReceipt;
-use solana_client::rpc_config::RpcSendTransactionConfig;
-use solana_evm_loader_program::{
-    instructions::FeePayerType,
-    send_raw_tx, transfer_native_to_evm_ixs
 };
 
 macro_rules! json_req {
@@ -92,13 +87,13 @@ fn wait_finalization(rpc_url: &str, signatures: &[&Value]) -> bool {
 
     for _ in 0..solana_sdk::clock::DEFAULT_TICKS_PER_SLOT {
         let json = post_rpc(request.clone(), &rpc_url);
-        let values = dbg!(&json["result"])["value"].as_array().unwrap();
+        let values = json["result"]["value"].as_array().unwrap();
         if values.iter().all(|v| !v.is_null()) {
             if values.iter().all(|v| {
                 assert_eq!(v["err"], Value::Null);
                 v["confirmationStatus"].as_str().unwrap() == "finalized"
             }) {
-                info!("All signatures confirmed: {:?}", values);
+                warn!("All signatures confirmed: {:?}", dbg!(values));
                 return true;
             }
         }
@@ -177,6 +172,101 @@ fn test_rpc_send_tx() {
     );
     let json: Value = post_rpc(req, &rpc_url);
     info!("{:?}", json["result"]["value"]);
+}
+
+#[test]
+fn test_rpc_send_transaction_with_native_fee_and_zero_gas_price() {
+    solana_logger::setup_with_default("warn");
+
+    let evm_secret_key = evm_state::SecretKey::from_slice(&[1; 32]).unwrap();
+    let evm_address = evm_state::addr_from_public_key(&evm_state::PublicKey::from_secret_key(
+        evm_state::SECP256K1,
+        &evm_secret_key,
+    ));
+
+    let alice = Keypair::new();
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .enable_evm_state_archive()
+        .rpc_config(JsonRpcConfig {
+            enable_rpc_transaction_history: true,
+            ..JsonRpcConfig::default_for_test()
+        })
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
+    let rpc_url = test_validator.rpc_url();
+
+    let req = json_req!("eth_chainId", json!([]));
+    let json = post_rpc(req, &rpc_url);
+    let chain_id = Hex::from_hex(json["result"].as_str().unwrap()).unwrap().0;
+
+    let blockhash = dbg!(get_blockhash(&rpc_url));
+    let ixs = transfer_native_to_evm_ixs(alice.pubkey(), 1000000, evm_address);
+    let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
+    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+
+    let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
+    let json: Value = post_rpc(req, &rpc_url);
+    wait_finalization(&rpc_url, &[&json["result"]]);
+
+    let evm_tx = evm_state::UnsignedTransaction {
+        nonce: 0.into(),
+        gas_price: 0.into(),
+        gas_limit: 300000.into(),
+        action: evm_state::TransactionAction::Call(evm_address),
+        value: 0.into(),
+        input: vec![],
+    }
+        .sign(&evm_secret_key, Some(chain_id));
+    let tx_hash = evm_tx.tx_id_hash();
+
+    let blockhash = get_blockhash(&rpc_url);
+    let ixs = vec![
+        assign(&alice.pubkey(), &solana_sdk::evm_loader::ID),
+        send_raw_tx(alice.pubkey(), evm_tx, None, FeePayerType::Native),
+        free_ownership(alice.pubkey()),
+    ];
+    let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
+    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+    let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
+    let json = dbg!(post_rpc(req, &rpc_url));
+    wait_finalization(&rpc_url, &[&json["result"]]);
+
+    let request = json_req!("trace_replayTransaction", json!([tx_hash, ["trace"]]));
+    let json = post_rpc(request.clone(), &rpc_url);
+    warn!("trace_replayTransaction: {}", dbg!(json.clone()));
+    assert!(!json["result"].is_null());
+
+    let evm_tx = evm_state::UnsignedTransaction {
+        nonce: 1.into(),
+        gas_price: 0.into(),
+        gas_limit: 300000.into(),
+        action: evm_state::TransactionAction::Call(evm_address),
+        value: 0.into(),
+        input: vec![],
+    }
+        .sign(&evm_secret_key, Some(chain_id));
+    let blockhash = get_blockhash(&rpc_url);
+    let ixs = vec![
+        assign(&alice.pubkey(), &solana_sdk::evm_loader::ID),
+        send_raw_tx(alice.pubkey(), evm_tx, None, FeePayerType::Evm),
+        free_ownership(alice.pubkey()),
+    ];
+    let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
+    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+    let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
+    let json = dbg!(post_rpc(req, &rpc_url));
+    // Transaction with zero gas price and Evm fee will fail
+    assert!(!json["error"].is_null());
+    assert_eq!(
+        json["error"]["message"].as_str().unwrap(),
+        "Transaction simulation failed: Error processing Instruction 1: custom program error: 0x3"
+    );
 }
 
 #[test]
