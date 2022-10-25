@@ -1,4 +1,5 @@
 const DEFAULT_INSTANCE: &str = "solana-ledger";
+const DEFAULT_BIGTABLE_LIMIT: &str = "150000";
 
 #[derive(clap::Parser)]
 #[clap(author, version, long_about = None)]
@@ -15,6 +16,10 @@ pub struct Cli {
     /// Bigtable Instance
     #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
     pub instance: String,
+
+    /// Enables additional structured output to stdout for use in embedded environment
+    #[clap(long, value_name = "BOOL")]
+    pub embed: bool,
 }
 
 #[derive(clap::Subcommand)]
@@ -27,18 +32,34 @@ pub enum Commands {
 
         /// Limit of EVM Blocks to search
         #[clap(long, value_name = "NUM")]
-        limit: usize,
+        end_block: Option<u64>,
+
+        #[clap(long, value_name = "NUM")]
+        /// Alternative to `end_block` if it's not set
+        limit: Option<u64>,
+
+        /// Bigtable limit TODO: implement bitgable limit for evm part
+        #[clap(long, value_name = "NUM", default_value = DEFAULT_BIGTABLE_LIMIT)]
+        bigtable_limit: usize, // TODO: max_chunk_size
     },
 
     /// Finds missing ranges of Native Blocks
     FindNative {
         /// Starting Native Block number
         #[clap(long, value_name = "NUM")]
-        start_slot: u64,
+        start_block: u64,
 
         /// Last Native Block to search
         #[clap(long, value_name = "NUM")]
-        end_slot: u64,
+        end_block: Option<u64>,
+
+        #[clap(long, value_name = "NUM")]
+        /// Alternative to `end_block` if it's not set
+        limit: Option<u64>,
+
+        /// Bigtable limit
+        #[clap(long, value_name = "NUM", default_value = DEFAULT_BIGTABLE_LIMIT)]
+        bigtable_limit: usize, // TODO: max_chunk_size
     },
 
     /// Restores EVM subchain
