@@ -18,7 +18,7 @@ primitive-types = "0.11.0"
 evm-state = { path = "../evm-state" }
 hex = "0.4.2"
 rustc-hex = "2.1"
-rlp = "0.5.0"
+rlp = "0.5.2"
 secp256k1 = { version = "0.19.0", features = ["recovery", "global-context"] }
 snafu = "0.7"
 uint = "0.9"
