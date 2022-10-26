@@ -288,7 +288,12 @@ impl EvmProcessor {
             let storage = Self::get_big_transaction_storage(invoke_context, &accounts)?;
             self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
         }
-        if fee_type.is_native() && tx_gas_price.is_zero() {
+        if executor
+            .feature_set
+            .is_accept_zero_gas_price_with_native_fee_enabled()
+            && fee_type.is_native()
+            && tx_gas_price.is_zero()
+        {
             tx_gas_price = executor.config().burn_gas_price;
         }
         self.handle_transaction_result(

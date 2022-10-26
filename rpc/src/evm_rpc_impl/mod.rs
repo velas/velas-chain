@@ -1058,6 +1058,9 @@ fn call_many(
             bank.feature_set.is_active(
                 &solana_sdk::feature_set::velas::clear_logs_on_error::id(),
             ),
+            bank.feature_set.is_active(
+                &solana_sdk::feature_set::velas::accept_zero_gas_price_with_native_fee::id(),
+            ),
         ),
     );
 

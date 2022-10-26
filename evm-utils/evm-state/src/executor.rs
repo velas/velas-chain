@@ -152,13 +152,19 @@ impl fmt::Display for ExecutionResult {
 pub struct FeatureSet {
     unsigned_tx_fix: bool,
     clear_logs_on_error: bool,
+    accept_zero_gas_price_with_native_fee: bool,
 }
 
 impl FeatureSet {
-    pub fn new(unsigned_tx_fix: bool, clear_logs_on_error: bool) -> Self {
+    pub fn new(
+        unsigned_tx_fix: bool,
+        clear_logs_on_error: bool,
+        accept_zero_gas_price_with_native_fee: bool,
+    ) -> Self {
         FeatureSet {
             unsigned_tx_fix,
             clear_logs_on_error,
+            accept_zero_gas_price_with_native_fee,
         }
     }
 
@@ -166,6 +172,7 @@ impl FeatureSet {
         FeatureSet {
             unsigned_tx_fix: true,
             clear_logs_on_error: true,
+            accept_zero_gas_price_with_native_fee: true,
         }
     }
 
@@ -175,6 +182,10 @@ impl FeatureSet {
 
     pub fn is_clear_logs_on_error_enabled(&self) -> bool {
         self.clear_logs_on_error
+    }
+
+    pub fn is_accept_zero_gas_price_with_native_fee_enabled(&self) -> bool {
+        self.accept_zero_gas_price_with_native_fee
     }
 }
 
@@ -276,13 +287,19 @@ impl Executor {
             GasPriceOutOfBounds { gas_price }
         );
 
-        if !withdraw_fee && gas_price.is_zero() {
+        if self
+            .feature_set
+            .is_accept_zero_gas_price_with_native_fee_enabled()
+            && !withdraw_fee
+            && gas_price.is_zero()
+        {
             gas_price = self.config.burn_gas_price;
+        } else {
+            ensure!(
+                gas_price >= self.config.burn_gas_price,
+                GasPriceOutOfBounds { gas_price }
+            );
         }
-        ensure!(
-            gas_price >= self.config.burn_gas_price,
-            GasPriceOutOfBounds { gas_price }
-        );
 
         ensure!(
             gas_limit <= U256::from(u64::MAX),
