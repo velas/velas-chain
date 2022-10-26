@@ -861,6 +861,8 @@ mod test {
                         .is_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id()),
                     self.feature_set
                         .is_active(&solana_sdk::feature_set::velas::clear_logs_on_error::id()),
+                    self.feature_set
+                        .is_active(&solana_sdk::feature_set::velas::accept_zero_gas_price_with_native_fee::id()),
                 ),
             );
 

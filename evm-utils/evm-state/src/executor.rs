@@ -858,7 +858,7 @@ mod tests {
             EvmBackend::default(),
             Default::default(),
             evm_config,
-            FeatureSet::new(false, true),
+            FeatureSet::new(false, true, false),
         );
 
         let code = hex::decode(METACOIN_CODE).unwrap();
@@ -1470,7 +1470,7 @@ mod tests {
             EvmBackend::default(),
             Default::default(),
             Default::default(),
-            FeatureSet::new(false, true),
+            FeatureSet::new(false, true, false),
         );
 
         let exit_reason = match executor.with_executor(OwnedPrecompile::default(), |e| {
