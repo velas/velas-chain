@@ -6,9 +6,9 @@ here="$(dirname "$0")"
 readlink_cmd="readlink"
 echo "OSTYPE IS: $OSTYPE"
 if [[ $OSTYPE == darwin* ]]; then
-  # Mac OS X's version of `readlink` does not support the -f option,
-  # But `greadlink` does, which you can get with `brew install coreutils`
-  readlink_cmd="greadlink"
+    # Mac OS X's version of `readlink` does not support the -f option,
+    # But `greadlink` does, which you can get with `brew install coreutils`
+    readlink_cmd="greadlink"
 fi
 cargo="$("${readlink_cmd}" -f "${here}/../cargo")"
 
@@ -31,26 +31,31 @@ installDir=
 buildVariant=release
 maybeReleaseFlag=--release
 validatorOnly=
+noSPL=
+
 
 while [[ -n $1 ]]; do
-  if [[ ${1:0:1} = - ]]; then
-    if [[ $1 = --debug ]]; then
-      maybeReleaseFlag=
-      buildVariant=debug
-      shift
-    elif [[ $1 = --validator-only ]]; then
-      validatorOnly=true
-      shift
+    if [[ ${1:0:1} = - ]]; then
+        if [[ $1 = --debug ]]; then
+            maybeReleaseFlag=
+            buildVariant=debug
+            shift
+            elif [[ $1 = --validator-only ]]; then
+            validatorOnly=true
+            shift
+            elif [[ $1 = --no-spl ]]; then
+            noSPL=true
+            shift
+        else
+            usage "Unknown option: $1"
+        fi
+        elif [[ ${1:0:1} = \+ ]]; then
+        maybeRustVersion=$1
+        shift
     else
-      usage "Unknown option: $1"
+        installDir=$1
+        shift
     fi
-  elif [[ ${1:0:1} = \+ ]]; then
-    maybeRustVersion=$1
-    shift
-  else
-    installDir=$1
-    shift
-  fi
 done
 
 
@@ -83,7 +88,7 @@ else
     ./fetch-perf-libs.sh
     # shellcheck disable=SC2086 # Don't want to double quote $rust_version
     
-
+    
     BINS=(
         velas
         velas-faucet
@@ -96,18 +101,17 @@ else
         solana-ledger-tool
         evm-bridge
         rbpf-cli
-  )
-
-  # Speed up net.sh deploys by excluding unused binaries
-  if [[ -z "$validatorOnly" ]]; then
-    BINS+=(
-      cargo-build-bpf
-      cargo-test-bpf
-      solana-dos
-      velas-install-init
-      solana-stake-accounts
     )
-  fi
+    
+    # Speed up net.sh deploys by excluding unused binaries
+    if [[ -z "$validatorOnly" ]]; then
+        BINS+=(
+            cargo-build-bpf
+            cargo-test-bpf
+            solana-dos
+            solana-stake-accounts
+        )
+    fi
     
     #XXX: Ensure `solana-genesis` is built LAST!
     # See https://github.com/solana-labs/solana/issues/5826
@@ -122,15 +126,15 @@ done
 mkdir -p "$installDir/bin"
 
 (
-  set -x
-  # shellcheck disable=SC2086 # Don't want to double quote $rust_version
-  "$cargo" $maybeRustVersion build $maybeReleaseFlag "${binArgs[@]}"
-
-  # Exclude `spl-token` binary for net.sh builds
-  if [[ -z "$validatorOnly" ]]; then
+    set -x
     # shellcheck disable=SC2086 # Don't want to double quote $rust_version
-    "$cargo" $maybeRustVersion install --locked spl-token-cli --root "$installDir"
-  fi
+    "$cargo" $maybeRustVersion build $maybeReleaseFlag "${binArgs[@]}"
+    
+    # Exclude `spl-token` binary for net.sh builds
+    if [[ -z "$validatorOnly" && -z "$noSPL" ]]; then
+        # shellcheck disable=SC2086 # Don't want to double quote $rust_version
+        "$cargo" $maybeRustVersion install --locked spl-token-cli --root "$installDir"
+    fi
 )
 
 for bin in "${BINS[@]}"; do
@@ -142,10 +146,10 @@ if [[ -d target/perf-libs ]]; then
 fi
 
 if [[ -z "$validatorOnly" ]]; then
-  # shellcheck disable=SC2086 # Don't want to double quote $rust_version
-  "$cargo" $maybeRustVersion build --manifest-path programs/bpf_loader/gen-syscall-list/Cargo.toml
-  mkdir -p "$installDir"/bin/sdk/bpf
-  cp -a sdk/bpf/* "$installDir"/bin/sdk/bpf
+    # shellcheck disable=SC2086 # Don't want to double quote $rust_version
+    "$cargo" $maybeRustVersion build --manifest-path programs/bpf_loader/gen-syscall-list/Cargo.toml
+    mkdir -p "$installDir"/bin/sdk/bpf
+    cp -a sdk/bpf/* "$installDir"/bin/sdk/bpf
 fi
 
 (
