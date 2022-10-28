@@ -2,8 +2,7 @@ FROM ubuntu:20.04 as builder
 RUN apt-get -y update
 ENV TZ=Europe/Stockholm
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-RUN apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang cmake
-RUN apt-get -y install openssh-client
+RUN apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang cmake openssh-client
 RUN mkdir -p -m 0700 ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
 RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
