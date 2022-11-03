@@ -1,5 +1,5 @@
-use std::num::ParseIntError;
 use ethabi::StateMutability;
+use std::num::ParseIntError;
 
 use crate::BlockId;
 use evm_state::{ExitError, ExitFatal, ExitRevert, U256};

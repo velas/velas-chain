@@ -2,8 +2,8 @@ use {
     crate::{
         blockstore::Blockstore,
         blockstore_processor::{
-        self, BlockstoreProcessorError, BlockstoreProcessorResult, CacheBlockMetaSender,
-        ProcessOptions, TransactionStatusSender,
+            self, BlockstoreProcessorError, BlockstoreProcessorResult, CacheBlockMetaSender,
+            ProcessOptions, TransactionStatusSender,
         },
         leader_schedule_cache::LeaderScheduleCache,
     },
@@ -19,7 +19,11 @@ use {
         snapshot_utils,
     },
     solana_sdk::{clock::Slot, genesis_config::GenesisConfig},
-    std::{fs, path::{PathBuf, Path}, process, result},
+    std::{
+        fs,
+        path::{Path, PathBuf},
+        process, result,
+    },
 };
 
 pub type LoadResult = result::Result<
@@ -35,6 +39,7 @@ pub type LoadResult = result::Result<
 use evm_state::{ChangedState, H256};
 
 pub type EvmStateRecorderSender = crossbeam_channel::Sender<(H256, ChangedState)>;
+pub type EvmRecorderSender = crossbeam_channel::Sender<evm_state::Block>;
 
 fn to_loadresult(
     bpr: BlockstoreProcessorResult,
@@ -67,6 +72,7 @@ pub fn load(
     snapshot_config: Option<&SnapshotConfig>,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
+    evm_block_recorder_sender: Option<&EvmRecorderSender>,
     evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     verify_evm_state: bool,
@@ -99,6 +105,7 @@ pub fn load(
                 snapshot_config,
                 process_options,
                 transaction_status_sender,
+                evm_block_recorder_sender,
                 evm_state_recorder_sender,
                 cache_block_meta_sender,
                 accounts_package_sender,
@@ -180,6 +187,7 @@ fn load_from_snapshot(
     snapshot_config: &SnapshotConfig,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
+    evm_block_recorder_sender: Option<&EvmRecorderSender>,
     evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     accounts_package_sender: AccountsPackageSender,
@@ -246,6 +254,7 @@ fn load_from_snapshot(
             &process_options,
             &VerifyRecyclers::default(),
             transaction_status_sender,
+            evm_block_recorder_sender,
             evm_state_recorder_sender,
             cache_block_meta_sender,
             Some(snapshot_config),

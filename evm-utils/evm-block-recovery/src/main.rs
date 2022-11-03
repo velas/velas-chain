@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod exit_code;
 pub mod extensions;
 pub mod ledger;
 pub mod routines;
@@ -6,6 +7,10 @@ pub mod timestamp;
 
 use clap::Parser;
 use cli::{Cli, Commands};
+
+lazy_static::lazy_static! {
+    pub static ref IS_EMBED: bool = std::env::args().any(|arg| &arg == "--embed");
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -34,24 +39,48 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::FindEvm { start_block, limit } => {
-            routines::find_evm(
-                ledger::with_params(cli.creds, cli.instance).await?,
+        Commands::FindEvm {
+            start_block,
+            end_block,
+            limit,
+            bigtable_limit,
+        } => {
+            if end_block.is_none() && limit.is_none() {
+                log::error!("Not enough arguments to calculate `end_slot`");
+                exit_with_code(Err(exit_code::INVALID_ARGUMENTS))
+            }
+            let end_block = calculate_end_block(start_block, end_block, limit);
+            let result = routines::find_evm(
+                cli.creds,
+                cli.instance,
                 start_block,
-                limit,
+                end_block,
+                bigtable_limit,
             )
-            .await
+            .await;
+
+            exit_with_code(result)
         }
         Commands::FindNative {
-            start_slot,
-            end_slot,
+            start_block,
+            end_block,
+            limit,
+            bigtable_limit,
         } => {
-            routines::find_native(
-                ledger::with_params(cli.creds, cli.instance).await?,
-                start_slot,
-                end_slot,
+            if end_block.is_none() && limit.is_none() {
+                log::error!("Not enough arguments to calculate `end_slot`");
+                exit_with_code(Err(exit_code::INVALID_ARGUMENTS))
+            }
+            let end_block = calculate_end_block(start_block, end_block, limit);
+            let result = routines::find_native(
+                cli.creds,
+                cli.instance,
+                start_block,
+                end_block,
+                bigtable_limit,
             )
-            .await
+            .await;
+            exit_with_code(result)
         }
         Commands::RestoreChain {
             first_block,
@@ -139,5 +168,24 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
         }
+    }
+}
+
+fn calculate_end_block(start_block: u64, end_block: Option<u64>, limit: Option<u64>) -> u64 {
+    if let Some(end_block) = end_block {
+        return end_block;
+    }
+
+    if let Some(limit) = limit {
+        return start_block + limit - 1;
+    }
+
+    unreachable!()
+}
+
+fn exit_with_code(result: std::result::Result<(), i32>) -> ! {
+    match result {
+        Ok(_) => std::process::exit(0),
+        Err(code) => std::process::exit(code),
     }
 }

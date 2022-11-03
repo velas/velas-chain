@@ -63,6 +63,9 @@ pub enum EvmError {
 
     #[snafu(display("Native account has not enough tokens."))]
     NativeAccountInsufficientFunds, // TODO: can we merge this with SwapInsufficient?
+
+    #[snafu(display("Precompile error"))]
+    PrecompileError,
 }
 
 impl<E> DecodeError<E> for EvmError {

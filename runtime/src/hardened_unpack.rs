@@ -1,3 +1,4 @@
+use crate::snapshot_utils::EVM_STATE_DIR;
 use {
     bzip2::bufread::BzDecoder,
     log::*,
@@ -388,8 +389,10 @@ fn is_valid_snapshot_archive_entry(parts: &[&str], kind: tar::EntryType) -> bool
         (["snapshots", dir, file], GNUSparse) if all_digits(dir) && all_digits(file) => true,
         (["snapshots", dir, file], Regular) if all_digits(dir) && all_digits(file) => true,
         (["snapshots", dir], Directory) if all_digits(dir) => true,
-        (["snapshots", dir, "evm-state"], Directory) if all_digits(dir) => true,
-        (["snapshots", dir, "evm-state", ..], _) if all_digits(dir) => true,
+        (["snapshots", dir, evm_state_dir], Directory)
+            if *evm_state_dir == EVM_STATE_DIR && all_digits(dir) => true,
+        (["snapshots", dir, evm_state_dir, ..], _)
+            if *evm_state_dir == EVM_STATE_DIR && all_digits(dir) => true,
         _ => false,
     }
 }

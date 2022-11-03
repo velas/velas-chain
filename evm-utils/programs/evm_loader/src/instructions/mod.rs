@@ -88,7 +88,11 @@ pub enum ExecuteTransaction {
 
 impl ExecuteTransaction {
     pub fn is_big(&self) -> bool {
-        matches!(self, ExecuteTransaction::Signed { tx: None } | ExecuteTransaction::ProgramAuthorized { tx: None, .. })
+        matches!(
+            self,
+            ExecuteTransaction::Signed { tx: None }
+                | ExecuteTransaction::ProgramAuthorized { tx: None, .. }
+        )
     }
 }
 
@@ -197,8 +201,12 @@ impl EvmInstruction {
 impl From<EvmBigTransaction> for v0::EvmBigTransaction {
     fn from(tx: EvmBigTransaction) -> Self {
         match tx {
-            EvmBigTransaction::EvmTransactionAllocate { size } => v0::EvmBigTransaction::EvmTransactionAllocate { size },
-            EvmBigTransaction::EvmTransactionWrite { offset, data } => v0::EvmBigTransaction::EvmTransactionWrite { offset, data },
+            EvmBigTransaction::EvmTransactionAllocate { size } => {
+                v0::EvmBigTransaction::EvmTransactionAllocate { size }
+            }
+            EvmBigTransaction::EvmTransactionWrite { offset, data } => {
+                v0::EvmBigTransaction::EvmTransactionWrite { offset, data }
+            }
         }
     }
 }
@@ -248,7 +256,9 @@ impl From<EvmInstruction> for v0::EvmInstruction {
                 evm_address,
             },
             EvmInstruction::FreeOwnership {} => v0::EvmInstruction::FreeOwnership {},
-            EvmInstruction::EvmBigTransaction(big_tx) => v0::EvmInstruction::EvmBigTransaction(big_tx.into()),
+            EvmInstruction::EvmBigTransaction(big_tx) => {
+                v0::EvmInstruction::EvmBigTransaction(big_tx.into())
+            }
             EvmInstruction::ExecuteTransaction { tx, .. } => match tx {
                 ExecuteTransaction::Signed { tx: None } => v0::EvmInstruction::EvmBigTransaction(
                     v0::EvmBigTransaction::EvmTransactionExecute {},

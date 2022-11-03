@@ -65,6 +65,7 @@ impl EvmProcessor {
         let borsh_serialization_enabled = invoke_context
             .feature_set
             .is_active(&solana_sdk::feature_set::velas::evm_instruction_borsh_serialization::id());
+
         let cross_execution = invoke_context.get_stack_height() != 1;
 
         if cross_execution && !cross_execution_enabled {
@@ -187,6 +188,7 @@ impl EvmProcessor {
         borsh_used: bool,
     ) -> Result<(), EvmError> {
         let is_big = tx.is_big();
+        let keep_old_errors = true;
         // TODO: Add logic for fee collector
         let (sender, _fee_collector) = if is_big {
             (accounts.users.get(1), accounts.users.get(2))
@@ -198,6 +200,17 @@ impl EvmProcessor {
         if fee_type.is_native() && sender.is_none() {
             ic_msg!(invoke_context, "Fee payer is native but no sender providen",);
             return Err(EvmError::MissingRequiredSignature);
+        }
+
+        fn precompile_set(
+            support_precompile: bool,
+            evm_new_precompiles: bool,
+        ) -> precompiles::PrecompileSet {
+            match (support_precompile, evm_new_precompiles) {
+                (false, _) => precompiles::PrecompileSet::No,
+                (true, false) => precompiles::PrecompileSet::VelasClassic,
+                (true, true) => precompiles::PrecompileSet::VelasNext,
+            }
         }
 
         let withdraw_fee_from_evm = fee_type.is_evm();
@@ -217,10 +230,16 @@ impl EvmProcessor {
                     tx.action
                 );
                 tx_gas_price = tx.gas_price;
+                let activate_precompile = precompile_set(
+                    executor.support_precompile(),
+                    invoke_context
+                        .feature_set
+                        .is_active(&solana_sdk::feature_set::velas::evm_new_precompiles::id()),
+                );
                 executor.transaction_execute(
                     tx,
                     withdraw_fee_from_evm,
-                    precompiles::entrypoint(accounts, executor.support_precompile()),
+                    precompiles::entrypoint(accounts, activate_precompile, keep_old_errors),
                 )
             }
             ExecuteTransaction::ProgramAuthorized { tx, from } => {
@@ -250,11 +269,17 @@ impl EvmProcessor {
                     tx.action
                 );
                 tx_gas_price = tx.gas_price;
+                let activate_precompile = precompile_set(
+                    executor.support_precompile(),
+                    invoke_context
+                        .feature_set
+                        .is_active(&solana_sdk::feature_set::velas::evm_new_precompiles::id()),
+                );
                 executor.transaction_execute_unsinged(
                     from,
                     tx,
                     withdraw_fee_from_evm,
-                    precompiles::entrypoint(accounts, executor.support_precompile()),
+                    precompiles::entrypoint(accounts, activate_precompile, keep_old_errors),
                 )
             }
         };
@@ -583,10 +608,32 @@ impl EvmProcessor {
         result: Result<evm_state::ExecutionResult, evm_state::error::Error>,
         withdraw_fee_from_evm: bool,
     ) -> Result<(), EvmError> {
-        let result = result.map_err(|e| {
+        let remove_native_logs_after_swap = true;
+        let mut result = result.map_err(|e| {
             ic_msg!(invoke_context, "Transaction execution error: {}", e);
             EvmError::InternalExecutorError
         })?;
+
+        if remove_native_logs_after_swap {
+            executor.modify_tx_logs(result.tx_id, |logs| {
+                if let Some(logs) = logs {
+                    precompiles::filter_native_logs(accounts, logs).map_err(|e| {
+                        ic_msg!(invoke_context, "Filter native logs error: {}", e);
+                        EvmError::PrecompileError
+                    })?;
+                } else {
+                    ic_msg!(invoke_context, "Unable to find tx by txid");
+                    return Err(EvmError::PrecompileError);
+                }
+                Ok(())
+            })?;
+        } else {
+            // same logic, but don't save result to block
+            precompiles::filter_native_logs(accounts, &mut result.tx_logs).map_err(|e| {
+                ic_msg!(invoke_context, "Filter native logs error: {}", e);
+                EvmError::PrecompileError
+            })?;
+        }
 
         write!(
             crate::solana_extension::MultilineLogger::new(invoke_context.get_log_collector()),

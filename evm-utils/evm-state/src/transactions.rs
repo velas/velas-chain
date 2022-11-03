@@ -1,4 +1,4 @@
-use borsh::{BorshSerialize, BorshDeserialize, BorshSchema};
+use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
 use evm::backend::Log;
 use primitive_types::{H160, H256, U256};
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
@@ -21,8 +21,19 @@ pub type Gas = U256;
 const UNSIGNED_TX_MARKER: u8 = 0x1;
 
 /// Etherium transaction.
-#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    BorshSchema,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+)]
 pub struct Transaction {
     pub nonce: U256,
     pub gas_price: Gas,
@@ -103,8 +114,19 @@ impl Transaction {
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    BorshSchema,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+)]
 pub struct UnsignedTransaction {
     pub nonce: U256,
     pub gas_price: U256,
@@ -169,8 +191,20 @@ impl UnsignedTransaction {
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    BorshSchema,
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+)]
 pub enum TransactionAction {
     Call(Address),
     Create,
@@ -193,8 +227,20 @@ impl TransactionAction {
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, BorshSchema)]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    BorshSchema,
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+)]
 pub struct TransactionSignature {
     pub v: u64,
     pub r: H256,
@@ -518,22 +564,27 @@ impl TransactionReceipt {
         logs: Vec<Log>,
         result: (evm::ExitReason, Vec<u8>),
     ) -> TransactionReceipt {
+        let mut tx = TransactionReceipt {
+            status: result.0,
+            transaction,
+            used_gas,
+            block_number,
+            logs_bloom: ethbloom::Bloom::default(),
+            index,
+            logs,
+        };
+        tx.recalculate_bloom();
+        tx
+    }
+    pub(crate) fn recalculate_bloom(&mut self) {
         let mut logs_bloom = ethbloom::Bloom::default();
-        for log in &logs {
+        for log in &self.logs {
             logs_bloom.accrue(ethbloom::Input::Raw(log.address.as_bytes()));
             log.topics
                 .iter()
                 .for_each(|topic| logs_bloom.accrue(ethbloom::Input::Hash(topic.as_fixed_bytes())));
         }
-        TransactionReceipt {
-            status: result.0,
-            transaction,
-            used_gas,
-            block_number,
-            logs_bloom,
-            index,
-            logs,
-        }
+        self.logs_bloom = logs_bloom;
     }
     // Returns transaction sender.
     // If transaction signed, this method involve signature verification.
@@ -756,7 +807,7 @@ mod test {
                 value: U256::from(1),
                 input: b"Hello!".to_vec(),
             }
-                .sign(&key, Some(69));
+            .sign(&key, Some(69));
             BorshSerialize::serialize(&tx, &mut buf).unwrap();
             assert_eq!(buf.len(), 211);
             let tx_deserialized = BorshDeserialize::deserialize(&mut &buf[..]).unwrap();

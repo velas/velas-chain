@@ -6,7 +6,6 @@ use txpool::Listener;
 
 use super::PooledTransaction;
 
-
 #[derive(Debug)]
 pub struct PoolListener;
 impl PoolListener {
