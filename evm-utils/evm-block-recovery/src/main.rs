@@ -172,12 +172,12 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn calculate_end_block(start_block: u64, end_block: Option<u64>, limit: Option<u64>) -> u64 {
-    if end_block.is_some() {
-        return end_block.unwrap();
+    if let Some(end_block) = end_block {
+        return end_block;
     }
 
-    if limit.is_some() {
-        return start_block + limit.unwrap() - 1;
+    if let Some(limit) = limit {
+        return start_block + limit - 1;
     }
 
     unreachable!()
