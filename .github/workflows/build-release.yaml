@@ -1,0 +1,114 @@
+name: Release
+on: 
+  push:
+    tags:
+      - v**
+    # Can be replaced by cron job
+    branches:
+       - develop
+
+jobs:
+  build:
+    runs-on: ${{ matrix.target }}
+    defaults:
+      run:
+        shell: bash -eo pipefail "{0}"
+
+    strategy:
+      matrix:
+        build: [linux]
+
+        include:
+          - build: linux
+            os: linux
+            target: x86_64-unknown-linux-gnu
+            # target: x86_64-pc-windows-msvc
+            cargo_folder: ~/.cargo
+            exe_ext: ""
+
+            
+
+    steps:
+
+      - uses: actions/checkout@v3
+
+      - name: Set up version
+        run: echo "VERSION=${GITHUB_REF##*/}" >> $GITHUB_ENV
+
+      - name: Emulate travis env (set CI_BRANCH)
+        run: | 
+          echo "CI_BRANCH=release" >> $GITHUB_ENV
+          echo "CI_TAG=$VERSION" >> $GITHUB_ENV
+          echo "CI_OS_NAME=${{ matrix.os }}" >> $GITHUB_ENV
+
+      # Compile with optimisation for skylake CPU to avoid AVX512 simd, that is not exist at any cpu.
+      - name: Set up rust flag
+        run: echo RUSTFLAGS="-C target-cpu=skylake" >> $GITHUB_ENV 
+
+      - name: Install deps
+        run: |
+          ./ci/install_deps.sh
+          echo "PATH="${{matrix.cargo_folder}}/bin:$PATH"" >> $GITHUB_ENV
+
+      # on current infrastructure without cache build take 3:39 ,
+      # with cache and no dif, build take ~1min + ~3:30 for unpacking and ~3:30 for packing cache which makes it absolutely impractical
+      # - name: Cache cargo registry
+      #   uses: actions/cache@v1
+      #   with:
+      #     path: ${{matrix.cargo_folder}}/registry
+      #     key: ${{ matrix.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      #     restore-keys: |
+      #           ${{ matrix.os }}-cargo-registry-
+      # - name: Cache cargo index
+      #   uses: actions/cache@v1
+      #   with:
+      #     path: ${{matrix.cargo_folder}}/git
+      #     key: ${{ matrix.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      #     restore-keys: |
+      #           ${{ matrix.os }}-cargo-index-
+                
+      # - name: Cache cargo build
+      #   uses: actions/cache@v1
+      #   with:
+      #     path: target
+      #     key: ${{ matrix.os }}-cargo-release-target-${{ hashFiles('**/Cargo.lock') }}
+      #     restore-keys: |
+      #           ${{ matrix.os }}-cargo-release-target-
+
+      - name: release
+        run: ./ci/publish-tarball.sh --no-spl
+
+      - name: Nightly release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: nightly
+          TARGET: ${{ matrix.target }}
+          EXE_EXT: ${{ matrix.exe_ext }}
+        run: ./ci/github-check-nightly-release.sh
+        if: github.event.action != 'published'
+
+
+      - name: Upload
+        uses: softprops/action-gh-release@v1
+#        if: github.event.action == 'published'
+        if: startsWith(github.ref, 'refs/tags/') # Only for tagged release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with: 
+          draft: true
+          files: |
+            velas-release-${{ matrix.target }}.tar.bz2
+            velas-release-${{ matrix.target }}.yml
+            velas-install-init-${{ matrix.target }}${{matrix.exe_ext}}
+          
+      - name: Upload bpf
+        uses: softprops/action-gh-release@v1
+        # Only for tagged release and linux
+        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'linux' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with: 
+          draft: true
+          files: bpf-sdk.tar.bz2 
+          
+
