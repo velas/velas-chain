@@ -82,6 +82,7 @@ members = [
     "cli",
     "rayon-threadlimit",
     "watchtower",
+    "repair-check",
     "replica-node",
     "replica-lib",
     "test-validator",
