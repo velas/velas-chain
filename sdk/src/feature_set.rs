@@ -427,6 +427,10 @@ pub mod velas {
     pub mod evm_new_precompiles {
         solana_sdk::declare_id!("4NLsdp3QnxQaERdfVqSMDczFQLeLokqGXBWpp1EJVLme");
     }
+
+    pub mod accept_zero_gas_price_with_native_fee {
+        solana_sdk::declare_id!("H4xTVSJMFSzWSoi6JuunAJSn8EJxHtJHWYDb3yDpuvU3");
+    }
 }
 lazy_static! {
     /// Map of feature identifiers to user-visible description
@@ -538,6 +542,7 @@ lazy_static! {
             (velas::clear_logs_on_error::id(), "Clear logs from receipt if transaction is failed or reverted."),
             (velas::disable_durable_nonce::id(), "Disable durable nonce."),
             (velas::evm_instruction_borsh_serialization::id(), "Support for Borsh serialization for EVM instructions."),
+            (velas::accept_zero_gas_price_with_native_fee::id(), "Accept evm transactions with native fee and zero gas price."),
             /*************** ADD NEW FEATURES HERE ***************/
         ]
     ).collect();

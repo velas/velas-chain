@@ -214,7 +214,7 @@ impl EvmProcessor {
         }
 
         let withdraw_fee_from_evm = fee_type.is_evm();
-        let tx_gas_price;
+        let mut tx_gas_price;
         let result = match tx {
             ExecuteTransaction::Signed { tx } => {
                 let tx = match tx {
@@ -287,6 +287,14 @@ impl EvmProcessor {
         if executor.feature_set.is_unsigned_tx_fix_enabled() && is_big {
             let storage = Self::get_big_transaction_storage(invoke_context, &accounts)?;
             self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
+        }
+        if executor
+            .feature_set
+            .is_accept_zero_gas_price_with_native_fee_enabled()
+            && fee_type.is_native()
+            && tx_gas_price.is_zero()
+        {
+            tx_gas_price = executor.config().burn_gas_price;
         }
         self.handle_transaction_result(
             executor,
@@ -853,6 +861,8 @@ mod test {
                         .is_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id()),
                     self.feature_set
                         .is_active(&solana_sdk::feature_set::velas::clear_logs_on_error::id()),
+                    self.feature_set
+                        .is_active(&solana_sdk::feature_set::velas::accept_zero_gas_price_with_native_fee::id()),
                 ),
             );
 
@@ -2302,7 +2312,6 @@ mod test {
 
         let user_id = Pubkey::new_unique();
         let gas_price: U256 = evm::BURN_GAS_PRICE.into();
-        let user_evm_address = crate::evm_address_for_program(user_id);
         evm_context
             .native_account(user_id)
             .borrow_mut()
@@ -2329,7 +2338,7 @@ mod test {
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
@@ -2347,11 +2356,11 @@ mod test {
         let burn_fee =
             gweis_to_lamports(U256::from(tx.used_gas) * U256::from(evm_state::BURN_GAS_PRICE));
 
-        // EVM balance hasn't decreased
+        // EVM balance is still zero
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
@@ -2381,7 +2390,6 @@ mod test {
         let dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
-        let user_evm_address = crate::evm_address_for_program(user_id);
         evm_context
             .native_account(user_id)
             .borrow_mut()
@@ -2403,7 +2411,7 @@ mod test {
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
@@ -2424,10 +2432,9 @@ mod test {
 
         let mut rand = evm_state::rand::thread_rng();
         let dummy_key = evm::SecretKey::new(&mut rand);
-        let _dummy_address = dummy_key.to_address();
+        let dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
-        let user_evm_address = crate::evm_address_for_program(user_id);
         evm_context
             .native_account(user_id)
             .borrow_mut()
@@ -2449,7 +2456,7 @@ mod test {
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
@@ -2462,7 +2469,7 @@ mod test {
 
         evm_context.process_instruction(ix).unwrap_err();
 
-        // Native balance refunded
+        // Native balance is unchanged
         assert_eq!(
             user_balance_before,
             evm_context
@@ -2487,8 +2494,6 @@ mod test {
         let dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
-        let user_evm_address = crate::evm_address_for_program(user_id);
-        // evm_context.native_account(user_id).borrow_mut().set_lamports(30000000000u64);
         let unsigned_tx = evm::UnsignedTransaction {
             nonce: 0.into(),
             gas_price: 100000.into(),
@@ -2506,17 +2511,20 @@ mod test {
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
 
-        let user_balance_before = evm_context
-            .native_account(user_id)
-            .try_borrow()
-            .unwrap()
-            .lamports();
-        // Ix should fail because no sender found
+        assert_eq!(
+            0,
+            evm_context
+                .native_account(user_id)
+                .try_borrow()
+                .unwrap()
+                .lamports()
+        );
+        // Ix should fail because user has insufficient funds
         evm_context.process_instruction(ix).unwrap_err();
 
         let executor = &evm_context.evm_state;
@@ -2524,12 +2532,12 @@ mod test {
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
         assert_eq!(
-            user_balance_before,
+            0,
             evm_context
                 .native_account(user_id)
                 .try_borrow()
