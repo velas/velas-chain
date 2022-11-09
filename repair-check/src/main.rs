@@ -6,7 +6,7 @@ use {
     solana_gossip::{contact_info::ContactInfo, gossip_service::discover},
     solana_streamer::socket::SocketAddrSpace,
     std::{
-        collections::HashMap,
+        collections::hash_map::{Entry, HashMap},
         fmt::{Display, Formatter, Result},
         net::{SocketAddr, UdpSocket},
         process::exit,
@@ -16,19 +16,42 @@ use {
 
 pub const SLEEP_MS: u64 = 100;
 
-
 #[derive(Debug, Default)]
 struct RepairStats {
+    pinned: Option<SocketAddr>,
     serve_repair_last_response_time: HashMap<SocketAddr, Instant>,
+}
+
+impl RepairStats {
+    fn pin_addr(&mut self, addr: SocketAddr) {
+        self.pinned = Some(addr);
+    }
+
+    fn update_last_response(&mut self, addr: SocketAddr) {
+        self.serve_repair_last_response_time
+            .insert(addr, Instant::now());
+    }
 }
 
 impl Display for RepairStats {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        for (k, v) in &self.serve_repair_last_response_time {
-            write!(
+        let mut timing_data = self.serve_repair_last_response_time.clone();
+        if let Some(addr) = self.pinned {
+            if let Entry::Occupied(entry) = timing_data.entry(addr) {
+                writeln!(
+                    f,
+                    "Pinned address: {}, last successfully served repair: {} s ago",
+                    addr,
+                    entry.get().elapsed().as_secs()
+                )?;
+                entry.remove();
+            }
+        }
+        for (k, v) in timing_data {
+            writeln!(
                 f,
-                "Address: {}, last successfully served repair: {} s ago\n",
-                *k,
+                "Address: {}, last successfully served repair: {} s ago",
+                k,
                 v.elapsed().as_secs()
             )?;
         }
@@ -80,18 +103,30 @@ fn check_serve_repair(socket: &UdpSocket, target: SocketAddr, contact_info: Cont
     true
 }
 
-fn run_check(entrypoint_addr: SocketAddr, allow_private_addr: bool) {
+fn run_check(
+    entrypoint_addr: SocketAddr,
+    allow_private_addr: bool,
+    watch_addr: Option<SocketAddr>,
+) {
     let mut last_log = Instant::now();
     let mut last_nodes_updated = Instant::now();
 
     let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
     let mut stats = RepairStats::default();
+    if let Some(addr) = watch_addr {
+        stats.pin_addr(addr);
+    }
     let mut gossip_nodes = discover_nodes(entrypoint_addr, allow_private_addr);
-    // warn!("Discovered: {:?}", gossip_nodes);
 
     loop {
+        if let Some(addr) = watch_addr {
+            if check_serve_repair(&socket, addr, get_repair_contact(&gossip_nodes)) {
+                stats.update_last_response(addr);
+            }
+        }
         for node in &gossip_nodes {
-            if node.gossip == "0.0.0.0:0".parse().unwrap() {
+            if node.gossip == "0.0.0.0:0".parse().unwrap() || watch_addr == Some(node.serve_repair)
+            {
                 continue;
             }
             if check_serve_repair(
@@ -99,9 +134,7 @@ fn run_check(entrypoint_addr: SocketAddr, allow_private_addr: bool) {
                 node.serve_repair,
                 get_repair_contact(&gossip_nodes),
             ) {
-                stats
-                    .serve_repair_last_response_time
-                    .insert(node.serve_repair, Instant::now());
+                stats.update_last_response(node.serve_repair);
             }
         }
 
@@ -129,6 +162,15 @@ fn main() {
                 .help("Gossip entrypoint address. Usually <ip>:8001"),
         )
         .arg(
+            Arg::with_name("watch_addr")
+                .long("watch-addr")
+                .takes_value(true)
+                .value_name("HOST:PORT")
+                .help(
+                    "Watch some specific address even if it wasn't discovered. Usually <ip>:8009",
+                ),
+        )
+        .arg(
             Arg::with_name("allow_private_addr")
                 .long("allow-private-addr")
                 .takes_value(false)
@@ -144,6 +186,15 @@ fn main() {
             exit(1)
         });
     }
+    let watch_addr = matches
+        .value_of("watch_addr")
+        .map(|value| value.parse::<SocketAddr>())
+        .transpose()
+        .unwrap();
 
-    run_check(entrypoint_addr, matches.is_present("allow_private_addr"));
+    run_check(
+        entrypoint_addr,
+        matches.is_present("allow_private_addr"),
+        watch_addr,
+    );
 }
