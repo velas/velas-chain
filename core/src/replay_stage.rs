@@ -2107,7 +2107,7 @@ impl ReplayStage {
         for bank_slot in &active_banks {
             // If the fork was marked as dead, don't replay it
             if progress.get(bank_slot).map(|p| p.is_dead).unwrap_or(false) {
-                debug!("bank_slot {:?} is marked dead", *bank_slot);
+                info!("bank_slot {:?} is marked dead", *bank_slot);
                 continue;
             }
 
@@ -2270,7 +2270,7 @@ impl ReplayStage {
                     )
                 }
             } else {
-                trace!(
+                info!(
                     "bank {} not completed tick_height: {}, max_tick_height: {}",
                     bank.slot(),
                     bank.tick_height(),
@@ -2926,6 +2926,7 @@ impl ReplayStage {
         });
         let mut generate_new_bank_forks_loop = Measure::start("generate_new_bank_forks_loop");
         let mut new_banks = HashMap::new();
+        let mut active_or_frozen_slots = Vec::new();
         for (parent_slot, children) in next_slots {
             let parent_bank = frozen_banks
                 .get(&parent_slot)
@@ -2934,6 +2935,7 @@ impl ReplayStage {
             for child_slot in children {
                 if forks.get(child_slot).is_some() || new_banks.get(&child_slot).is_some() {
                     trace!("child already active or frozen {}", child_slot);
+                    active_or_frozen_slots.push(child_slot);
                     continue;
                 }
                 let leader = leader_schedule_cache
@@ -2964,6 +2966,7 @@ impl ReplayStage {
                 new_banks.insert(child_slot, child_bank);
             }
         }
+        info!("active or frozen slots: {:?}", active_or_frozen_slots);
         drop(forks);
         generate_new_bank_forks_loop.stop();
 

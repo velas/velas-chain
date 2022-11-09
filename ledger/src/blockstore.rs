@@ -4019,6 +4019,8 @@ fn chain_new_slot_to_prev_slot(
 ) {
     prev_slot_meta.next_slots.push(current_slot);
     current_slot_meta.is_connected = prev_slot_meta.is_connected && prev_slot_meta.is_full();
+    info!("Chained new slot {} to parent slot {} (is_connected={})",
+        current_slot, prev_slot_meta.slot, current_slot_meta.is_connected);
 }
 
 fn is_newly_completed_slot(slot_meta: &SlotMeta, backup_slot_meta: &Option<SlotMeta>) -> bool {
