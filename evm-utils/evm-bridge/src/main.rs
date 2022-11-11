@@ -1,3 +1,4 @@
+mod tx_filter;
 mod middleware;
 mod pool;
 mod rpc_client;
@@ -7,10 +8,9 @@ use std::future::ready;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
-};
+use std::{collections::{HashMap, HashSet}, net::SocketAddr};
+use std::fs::File;
+use std::path::PathBuf;
 
 use evm_rpc::bridge::BridgeERPC;
 use evm_rpc::chain::ChainERPC;
@@ -52,6 +52,7 @@ use ::tokio;
 use ::tokio::sync::mpsc;
 use ::tokio::time::sleep;
 
+use tx_filter::TxFilter;
 use middleware::ProxyMiddleware;
 use pool::{
     worker_cleaner, worker_deploy, worker_signature_checker, EthPool, PooledTransaction,
@@ -178,6 +179,7 @@ pub struct EvmBridge {
     max_logs_blocks: u64,
     pool: EthPool<SystemClock>,
     min_gas_price: U256,
+    whitelist: Vec<TxFilter>,
 }
 
 impl EvmBridge {
@@ -191,6 +193,7 @@ impl EvmBridge {
         simulate: bool,
         max_logs_blocks: u64,
         min_gas_price: U256,
+        whitelist: Vec<TxFilter>,
     ) -> Self {
         info!("EVM chain id {}", evm_chain_id);
 
@@ -224,6 +227,7 @@ impl EvmBridge {
             max_logs_blocks,
             pool,
             min_gas_price,
+            whitelist,
         }
     }
 
@@ -304,6 +308,10 @@ impl EvmBridge {
             Some(b) => Some(b),
             None => is_signature_exists(self, hash).await,
         }
+    }
+
+    fn should_pay_for_gas(&self, tx: &Transaction) -> bool {
+        !self.whitelist.is_empty() && self.whitelist.iter().any(|f| f.filter(&tx))
     }
 }
 
@@ -920,6 +928,9 @@ struct Args {
 
     #[structopt(long = "jaeger-collector-url", short = "j")]
     jaeger_collector_url: Option<String>,
+
+    #[structopt(long = "whitelist-path")]
+    whitelist_path: Option<String>,
 }
 
 impl Args {
@@ -995,6 +1006,13 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         registry.try_init().unwrap();
     }
 
+    let mut whitelist = vec![];
+    if let Some(path) = args.whitelist_path.map(PathBuf::from) {
+        let file = File::open(path).unwrap();
+        whitelist = serde_json::from_reader(file).unwrap();
+        info!("Got whitelist: {:?}", whitelist);
+    }
+
     let meta = EvmBridge::new(
         args.evm_chain_id,
         &keyfile_path,
@@ -1005,6 +1023,7 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         !args.no_simulate, // invert argument
         args.max_logs_blocks,
         min_gas_price,
+        whitelist,
     );
     let meta = Arc::new(meta);
 

@@ -596,12 +596,19 @@ async fn process_tx(
         }
     }
 
+    let mut native_fee_used = false;
     let mut ix = if bridge.borsh_encoding {
+        let mut fee_type = FeePayerType::Evm;
+        if bridge.should_pay_for_gas(&tx) {
+            fee_type = FeePayerType::Native;
+            native_fee_used = true;
+            info!("Using Native fee for tx: {}", tx.tx_id_hash());
+        }
         solana_evm_loader_program::send_raw_tx(
             bridge.key.pubkey(),
             tx.clone(),
             Some(bridge.key.pubkey()),
-            FeePayerType::Evm,
+            fee_type,
         )
     } else {
         solana_evm_loader_program::send_raw_tx_old(
@@ -616,7 +623,16 @@ async fn process_tx(
         ix.accounts.push(AccountMeta::new(account, false))
     }
 
-    let message = Message::new(&[ix], Some(&bridge.key.pubkey()));
+    let instructions = if native_fee_used {
+        vec![
+            system_instruction::assign(&bridge.key.pubkey(), &solana_sdk::evm_loader::ID),
+            ix,
+            solana_evm_loader_program::free_ownership(bridge.key.pubkey()),
+        ]
+    } else {
+        vec![ix]
+    };
+    let message = Message::new(&instructions, Some(&bridge.key.pubkey()));
     let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
 
     debug!("Getting block hash");
@@ -809,17 +825,33 @@ async fn deploy_big_tx(
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
         .value;
 
+    let mut native_fee_used = false;
     let ix = if bridge.borsh_encoding {
-        solana_evm_loader_program::big_tx_execute(
-            storage_pubkey,
-            Some(&payer_pubkey),
-            FeePayerType::Evm,
-        )
+        let mut fee_type = FeePayerType::Evm;
+        if bridge.should_pay_for_gas(&tx) {
+            fee_type = FeePayerType::Native;
+            native_fee_used = true;
+            info!("Using Native fee for tx: {}", tx.tx_id_hash());
+        }
+        solana_evm_loader_program::big_tx_execute(storage_pubkey, Some(&payer_pubkey), fee_type)
     } else {
         solana_evm_loader_program::big_tx_execute_old(storage_pubkey, Some(&payer_pubkey))
     };
-    let execute_tx =
-        solana::Transaction::new_signed_with_payer(&[ix], Some(&payer_pubkey), &signers, blockhash);
+    let instructions = if native_fee_used {
+        vec![
+            system_instruction::assign(&bridge.key.pubkey(), &solana_sdk::evm_loader::ID),
+            ix,
+            solana_evm_loader_program::free_ownership(bridge.key.pubkey()),
+        ]
+    } else {
+        vec![ix]
+    };
+    let execute_tx = solana::Transaction::new_signed_with_payer(
+        &instructions,
+        Some(&payer_pubkey),
+        &signers,
+        blockhash,
+    );
 
     debug!("Execute EVM transaction at storage {} ...", storage_pubkey);
 
