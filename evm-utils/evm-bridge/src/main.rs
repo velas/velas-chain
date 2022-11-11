@@ -1,16 +1,19 @@
-mod tx_filter;
 mod middleware;
 mod pool;
 mod rpc_client;
+mod tx_filter;
 
 use log::*;
+use std::fs::File;
 use std::future::ready;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{collections::{HashMap, HashSet}, net::SocketAddr};
-use std::fs::File;
-use std::path::PathBuf;
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+};
 
 use evm_rpc::bridge::BridgeERPC;
 use evm_rpc::chain::ChainERPC;
@@ -27,10 +30,17 @@ use jsonrpc_http_server::*;
 use snafu::ResultExt;
 
 use derivative::*;
+use solana_evm_loader_program::instructions::FeePayerType;
 use solana_evm_loader_program::scope::*;
 use solana_sdk::{
-    clock::MS_PER_TICK, fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE, pubkey::Pubkey,
-    signers::Signers, transaction::TransactionError,
+    clock::MS_PER_TICK,
+    fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE,
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+    signer::Signer,
+    signers::Signers,
+    system_instruction,
+    transaction::TransactionError,
 };
 
 use solana_client::{
@@ -52,13 +62,13 @@ use ::tokio;
 use ::tokio::sync::mpsc;
 use ::tokio::time::sleep;
 
-use tx_filter::TxFilter;
 use middleware::ProxyMiddleware;
 use pool::{
     worker_cleaner, worker_deploy, worker_signature_checker, EthPool, PooledTransaction,
     SystemClock,
 };
 use rpc_client::AsyncRpcClient;
+use tx_filter::TxFilter;
 
 use rlp::Encodable;
 use secp256k1::Message;
@@ -310,6 +320,78 @@ impl EvmBridge {
         match is_receipt_exists(self, hash).await {
             Some(b) => Some(b),
             None => is_signature_exists(self, hash).await,
+        }
+    }
+
+    fn make_send_tx_instructions(
+        &self,
+        tx: &Transaction,
+        meta_keys: &HashSet<Pubkey>,
+    ) -> Vec<Instruction> {
+        let mut native_fee_used = false;
+        let mut ix = if self.borsh_encoding {
+            let mut fee_type = FeePayerType::Evm;
+            if self.should_pay_for_gas(tx) {
+                fee_type = FeePayerType::Native;
+                native_fee_used = true;
+                info!("Using Native fee for tx: {}", tx.tx_id_hash());
+            }
+            solana_evm_loader_program::send_raw_tx(
+                self.key.pubkey(),
+                tx.clone(),
+                Some(self.key.pubkey()),
+                fee_type,
+            )
+        } else {
+            solana_evm_loader_program::send_raw_tx_old(
+                self.key.pubkey(),
+                tx.clone(),
+                Some(self.key.pubkey()),
+            )
+        };
+
+        // Add meta accounts as additional arguments
+        for account in meta_keys {
+            ix.accounts.push(AccountMeta::new(*account, false))
+        }
+
+        if native_fee_used {
+            vec![
+                system_instruction::assign(&self.key.pubkey(), &solana_sdk::evm_loader::ID),
+                ix,
+                solana_evm_loader_program::free_ownership(self.key.pubkey()),
+            ]
+        } else {
+            vec![ix]
+        }
+    }
+
+    fn make_send_big_tx_instructions(
+        &self,
+        tx: &Transaction,
+        storage_pubkey: Pubkey,
+        payer_pubkey: Pubkey,
+    ) -> Vec<Instruction> {
+        let mut native_fee_used = false;
+        let ix = if self.borsh_encoding {
+            let mut fee_type = FeePayerType::Evm;
+            if self.should_pay_for_gas(tx) {
+                fee_type = FeePayerType::Native;
+                native_fee_used = true;
+                info!("Using Native fee for tx: {}", tx.tx_id_hash());
+            }
+            solana_evm_loader_program::big_tx_execute(storage_pubkey, Some(&payer_pubkey), fee_type)
+        } else {
+            solana_evm_loader_program::big_tx_execute_old(storage_pubkey, Some(&payer_pubkey))
+        };
+        if native_fee_used {
+            vec![
+                system_instruction::assign(&self.key.pubkey(), &solana_sdk::evm_loader::ID),
+                ix,
+                solana_evm_loader_program::free_ownership(self.key.pubkey()),
+            ]
+        } else {
+            vec![ix]
         }
     }
 

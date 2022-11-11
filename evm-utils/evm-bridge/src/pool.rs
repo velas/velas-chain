@@ -17,13 +17,11 @@ use once_cell::sync::Lazy;
 use serde_json::json;
 use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
 use solana_evm_loader_program::{
-    instructions::FeePayerType,
     scope::{evm, solana},
     tx_chunks::TxChunks,
 };
 use solana_sdk::{
     commitment_config::{CommitmentConfig, CommitmentLevel},
-    instruction::AccountMeta,
     message::Message,
     pubkey::Pubkey,
     signature::Signature,
@@ -596,42 +594,7 @@ async fn process_tx(
         }
     }
 
-    let mut native_fee_used = false;
-    let mut ix = if bridge.borsh_encoding {
-        let mut fee_type = FeePayerType::Evm;
-        if bridge.should_pay_for_gas(&tx) {
-            fee_type = FeePayerType::Native;
-            native_fee_used = true;
-            info!("Using Native fee for tx: {}", tx.tx_id_hash());
-        }
-        solana_evm_loader_program::send_raw_tx(
-            bridge.key.pubkey(),
-            tx.clone(),
-            Some(bridge.key.pubkey()),
-            fee_type,
-        )
-    } else {
-        solana_evm_loader_program::send_raw_tx_old(
-            bridge.key.pubkey(),
-            tx.clone(),
-            Some(bridge.key.pubkey()),
-        )
-    };
-
-    // Add meta accounts as additional arguments
-    for account in meta_keys.clone() {
-        ix.accounts.push(AccountMeta::new(account, false))
-    }
-
-    let instructions = if native_fee_used {
-        vec![
-            system_instruction::assign(&bridge.key.pubkey(), &solana_sdk::evm_loader::ID),
-            ix,
-            solana_evm_loader_program::free_ownership(bridge.key.pubkey()),
-        ]
-    } else {
-        vec![ix]
-    };
+    let instructions = bridge.make_send_tx_instructions(&tx, &meta_keys);
     let message = Message::new(&instructions, Some(&bridge.key.pubkey()));
     let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
 
@@ -825,27 +788,7 @@ async fn deploy_big_tx(
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
         .value;
 
-    let mut native_fee_used = false;
-    let ix = if bridge.borsh_encoding {
-        let mut fee_type = FeePayerType::Evm;
-        if bridge.should_pay_for_gas(tx) {
-            fee_type = FeePayerType::Native;
-            native_fee_used = true;
-            info!("Using Native fee for tx: {}", tx.tx_id_hash());
-        }
-        solana_evm_loader_program::big_tx_execute(storage_pubkey, Some(&payer_pubkey), fee_type)
-    } else {
-        solana_evm_loader_program::big_tx_execute_old(storage_pubkey, Some(&payer_pubkey))
-    };
-    let instructions = if native_fee_used {
-        vec![
-            system_instruction::assign(&bridge.key.pubkey(), &solana_sdk::evm_loader::ID),
-            ix,
-            solana_evm_loader_program::free_ownership(bridge.key.pubkey()),
-        ]
-    } else {
-        vec![ix]
-    };
+    let instructions = bridge.make_send_big_tx_instructions(tx, storage_pubkey, payer_pubkey);
     let execute_tx = solana::Transaction::new_signed_with_payer(
         &instructions,
         Some(&payer_pubkey),
