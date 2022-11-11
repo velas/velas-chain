@@ -1282,6 +1282,7 @@ mod tests {
             max_logs_blocks: 0u64,
             pool: EthPool::new(SystemClock),
             min_gas_price: 0.into(),
+            whitelist: vec![],
         });
 
         let rpc = BridgeErpcImpl {};
