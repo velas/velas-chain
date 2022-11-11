@@ -828,7 +828,7 @@ async fn deploy_big_tx(
     let mut native_fee_used = false;
     let ix = if bridge.borsh_encoding {
         let mut fee_type = FeePayerType::Evm;
-        if bridge.should_pay_for_gas(&tx) {
+        if bridge.should_pay_for_gas(tx) {
             fee_type = FeePayerType::Native;
             native_fee_used = true;
             info!("Using Native fee for tx: {}", tx.tx_id_hash());

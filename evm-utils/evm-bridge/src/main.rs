@@ -193,7 +193,6 @@ impl EvmBridge {
         simulate: bool,
         max_logs_blocks: u64,
         min_gas_price: U256,
-        whitelist: Vec<TxFilter>,
     ) -> Self {
         info!("EVM chain id {}", evm_chain_id);
 
@@ -227,8 +226,12 @@ impl EvmBridge {
             max_logs_blocks,
             pool,
             min_gas_price,
-            whitelist,
+            whitelist: vec![],
         }
+    }
+
+    fn set_whitelist(&mut self, whitelist: Vec<TxFilter>) {
+        self.whitelist = whitelist;
     }
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
@@ -311,7 +314,7 @@ impl EvmBridge {
     }
 
     fn should_pay_for_gas(&self, tx: &Transaction) -> bool {
-        !self.whitelist.is_empty() && self.whitelist.iter().any(|f| f.filter(&tx))
+        !self.whitelist.is_empty() && self.whitelist.iter().any(|f| f.filter(tx))
     }
 }
 
@@ -1013,7 +1016,7 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         info!("Got whitelist: {:?}", whitelist);
     }
 
-    let meta = EvmBridge::new(
+    let mut meta = EvmBridge::new(
         args.evm_chain_id,
         &keyfile_path,
         vec![evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap()],
@@ -1023,8 +1026,8 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         !args.no_simulate, // invert argument
         args.max_logs_blocks,
         min_gas_price,
-        whitelist,
     );
+    meta.set_whitelist(whitelist);
     let meta = Arc::new(meta);
 
     let mut io = MetaIoHandler::with_middleware(ProxyMiddleware {});
