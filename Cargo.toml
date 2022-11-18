@@ -48,6 +48,7 @@ members = [
     "evm-utils/evm-block-recovery",
     "evm-utils/evm-bridge",
     "evm-utils/programs/evm_loader",
+    "evm-utils/programs/gas_station",
     "evm-utils/evm-state",
     "evm-utils/evm-rpc",
     "poh",
