@@ -396,7 +396,7 @@ impl EvmBridge {
     }
 
     fn should_pay_for_gas(&self, tx: &Transaction) -> bool {
-        !self.whitelist.is_empty() && self.whitelist.iter().any(|f| f.filter(tx))
+        !self.whitelist.is_empty() && self.whitelist.iter().any(|f| f.is_match(tx))
     }
 }
 
