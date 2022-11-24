@@ -17,7 +17,6 @@ use solana_sdk::{
 };
 
 use error::GasStationError;
-use evm_rpc::Either;
 use instruction::{GasStationInstruction, TxFilter};
 use state::{Payer, MAX_FILTERS};
 
@@ -110,13 +109,11 @@ fn process_execute_with_payer(
     let evm_state = next_account_info(account_info_iter)?;
     let system_program = next_account_info(account_info_iter)?;
 
-    let (unpacked_tx, big_tx_storage_info) = match tx.as_ref() {
-        None => {
-            let big_tx_storage_info = next_account_info(account_info_iter)?;
-            (get_big_tx_from_storage(big_tx_storage_info)?, Some(big_tx_storage_info))
-        }
-        Some(tx) => (tx.clone(), None),
-    };
+    let big_tx_storage_info = next_account_info(account_info_iter);
+    let tx_passed_directly = tx.is_some();
+    if !tx_passed_directly && big_tx_storage_info.is_err() {
+        return Err(GasStationError::BigTxStorageMissing.into());
+    }
 
     if !cmp_pubkeys(program_id, payer_storage_info.owner) {
         return Err(ProgramError::IncorrectProgramId);
@@ -133,6 +130,14 @@ fn process_execute_with_payer(
     if payer.payer != *payer_info.key {
         return Err(GasStationError::PayerAccountMismatch.into());
     }
+
+    let unpacked_tx = match tx {
+        None => {
+            let big_tx_storage_info = big_tx_storage_info.clone().unwrap();
+            get_big_tx_from_storage(big_tx_storage_info)?
+        }
+        Some(tx) => tx,
+    };
     if !payer.do_filter_match(&unpacked_tx) {
         return Err(GasStationError::PayerFilterMismatch.into());
     }
@@ -144,10 +149,15 @@ fn process_execute_with_payer(
         // pass sender acc to evm loader, execute tx restore ownership
         payer_info.assign(&solana_sdk::evm_loader::ID);
 
-        let ix = make_evm_loader_execute_ix(*evm_loader.key, *evm_state.key, *payer_info.key, tx.map_or_else(|| Either::Right(*big_tx_storage_info.unwrap().key), |tx| Either::Left(tx)));
-        let account_infos = match big_tx_storage_info {
-            Some(big_tx_storage_info) => vec![evm_loader.clone(), big_tx_storage_info.clone(), evm_state.clone(), payer_info.clone()],
-            None => vec![evm_loader.clone(), evm_state.clone(), payer_info.clone()],
+        let (ix, account_infos) = if tx_passed_directly {
+            make_evm_loader_tx_execute_ix(evm_loader, evm_state, payer_info, unpacked_tx)
+        } else {
+            make_evm_loader_big_tx_execute_ix(
+                evm_loader,
+                evm_state,
+                payer_info,
+                big_tx_storage_info.unwrap(),
+            )
         };
         invoke_signed(&ix, &account_infos, signers_seeds)?;
 
@@ -175,31 +185,55 @@ fn get_big_tx_from_storage(storage_acc: &AccountInfo) -> Result<evm::Transaction
         .map_err(|_e| GasStationError::InvalidBigTransactionData.into())
 }
 
-fn make_evm_loader_execute_ix(
-    evm_loader: Pubkey,
-    evm_state: Pubkey,
-    sender: Pubkey,
-    tx: Either<evm::Transaction, Pubkey>,
-) -> Instruction {
+fn make_evm_loader_tx_execute_ix<'a>(
+    evm_loader: &AccountInfo<'a>,
+    evm_state: &AccountInfo<'a>,
+    sender: &AccountInfo<'a>,
+    tx: evm::Transaction,
+) -> (Instruction, Vec<AccountInfo<'a>>) {
     use solana_evm_loader_program::instructions::*;
-    let (tx, accounts) = match tx {
-        Either::Left(tx) => (Some(tx), vec![
-            AccountMeta::new(evm_state, false),
-            AccountMeta::new(sender, true),
-        ]),
-        Either::Right(big_tx_storage_key) => (None, vec![
-            AccountMeta::new(evm_state, false),
-            AccountMeta::new(big_tx_storage_key, true),
-            AccountMeta::new(sender, true),
-        ]),
-    };
-    solana_evm_loader_program::create_evm_instruction_with_borsh(
-        evm_loader,
-        &EvmInstruction::ExecuteTransaction {
-            tx: ExecuteTransaction::Signed { tx },
-            fee_type: FeePayerType::Native,
-        },
-        accounts,
+    (
+        solana_evm_loader_program::create_evm_instruction_with_borsh(
+            *evm_loader.key,
+            &EvmInstruction::ExecuteTransaction {
+                tx: ExecuteTransaction::Signed { tx: Some(tx) },
+                fee_type: FeePayerType::Native,
+            },
+            vec![
+                AccountMeta::new(*evm_state.key, false),
+                AccountMeta::new(*sender.key, true),
+            ],
+        ),
+        vec![evm_loader.clone(), evm_state.clone(), sender.clone()],
+    )
+}
+
+fn make_evm_loader_big_tx_execute_ix<'a>(
+    evm_loader: &AccountInfo<'a>,
+    evm_state: &AccountInfo<'a>,
+    sender: &AccountInfo<'a>,
+    big_tx_storage: &AccountInfo<'a>,
+) -> (Instruction, Vec<AccountInfo<'a>>) {
+    use solana_evm_loader_program::instructions::*;
+    (
+        solana_evm_loader_program::create_evm_instruction_with_borsh(
+            *evm_loader.key,
+            &EvmInstruction::ExecuteTransaction {
+                tx: ExecuteTransaction::Signed { tx: None },
+                fee_type: FeePayerType::Native,
+            },
+            vec![
+                AccountMeta::new(*evm_state.key, false),
+                AccountMeta::new(*big_tx_storage.key, true),
+                AccountMeta::new(*sender.key, true),
+            ],
+        ),
+        vec![
+            evm_loader.clone(),
+            big_tx_storage.clone(),
+            evm_state.clone(),
+            sender.clone(),
+        ],
     )
 }
 
@@ -409,11 +443,27 @@ mod test {
             AccountMeta::new_readonly(system_program::id(), false),
             AccountMeta::new(big_tx_storage.pubkey(), true),
         ];
+        let ix_no_big_tx_storage = Instruction::new_with_borsh(
+            program_id,
+            &GasStationInstruction::ExecuteWithPayer { tx: None },
+            account_metas.split_last().unwrap().1.into(),
+        );
         let ix = Instruction::new_with_borsh(
             program_id,
             &GasStationInstruction::ExecuteWithPayer { tx: None },
             account_metas,
         );
+        // this will fail because neither evm tx nor big tx storage provided
+        let mut transaction =
+            Transaction::new_with_payer(&[ix_no_big_tx_storage], Some(&user.pubkey()));
+        transaction.sign(&[&user], recent_blockhash);
+        assert!(matches!(
+            banks_client
+                .process_transaction(transaction)
+                .await
+                .unwrap_err(),
+            TransactionError(InstructionError(0, Custom(2)))
+        ));
         let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
         transaction.sign(&[&user, &big_tx_storage], recent_blockhash);
         banks_client.process_transaction(transaction).await.unwrap();
@@ -579,7 +629,7 @@ mod test {
                     .process_transaction(transaction)
                     .await
                     .unwrap_err(),
-                TransactionError(InstructionError(0, Custom(2)))
+                TransactionError(InstructionError(0, Custom(3)))
             ));
         }
     }
@@ -707,7 +757,7 @@ mod test {
                 .process_transaction(transaction)
                 .await
                 .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(6)))
+            TransactionError(InstructionError(0, Custom(7)))
         ));
     }
 
@@ -780,7 +830,7 @@ mod test {
                 .process_transaction(transaction)
                 .await
                 .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(7)))
+            TransactionError(InstructionError(0, Custom(8)))
         ));
     }
 

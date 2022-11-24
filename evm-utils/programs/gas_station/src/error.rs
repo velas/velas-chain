@@ -9,6 +9,8 @@ pub enum GasStationError {
     AccountInUse,
     #[error("Account storage isn't uninitialized")]
     AccountNotInitialized,
+    #[error("Account info for big transaction storage is missing")]
+    BigTxStorageMissing,
     #[error("Unable to deserialize borsh encoded account data")]
     InvalidAccountBorshData,
     #[error("Unable to deserialize big transaction account data")]
