@@ -6,7 +6,7 @@ use solana_sdk::{
 };
 use crate::instruction::TxFilter;
 
-pub const MAX_FILTERS: usize = 5;
+pub const MAX_FILTERS: usize = 10;
 
 #[repr(C)]
 #[derive(BorshDeserialize, BorshSerialize, Debug)]
