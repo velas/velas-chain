@@ -40,9 +40,15 @@ use {
     },
 };
 
+// TODO: Entry point to start state-rpc service
+// Needs to accept ENV variable and do not panic!
+// This file is just an example how to run the service
 pub fn start_triedb_repl() {
-    let config = triedb_repl_server::StateRpcServiceConfig::from_str_addr_and_thread_number("0.0.0.0:8888".to_string(), 2);
-    let backend_server = triedb_repl_server::TriedbReplServer::new_backend_server();
+    use std::path::PathBuf;
+    let archive_path = PathBuf::from("./tmp-ledger-path/archive");
+
+    let config = triedb_repl_server::StateRpcServiceConfig::from_str_addr_and_thread_number("0.0.0.0:8888".to_string(), 2, archive_path);
+    let backend_server = triedb_repl_server::TriedbReplServer::new_backend_server(&config);
     println!("starting the thread");
     triedb_repl_server::TriedbReplService::new(config, backend_server.into()).join();
 }

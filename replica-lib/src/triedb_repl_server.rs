@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::default;
 use std::path::Path;
+use std::path::PathBuf;
+
 
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
@@ -31,16 +33,18 @@ pub mod app_grpc {
 pub struct StateRpcServiceConfig {
     server_addr: SocketAddr,
     worker_threads: usize,
+    archive_path: PathBuf
 }
 
 impl StateRpcServiceConfig {
-    pub fn from_addr_and_thread_pool_size(addr: String, worker_threads: usize) -> Result<Self, String> {
+    pub fn from_addr_and_thread_pool_size(addr: String, worker_threads: usize, archive_path: PathBuf) -> Result<Self, String> {
         let server_addr: SocketAddr = addr.parse()
             .map_err(|_| String::from("Unable to parse socket address"))?;
 
         Ok(StateRpcServiceConfig {
             server_addr,
-            worker_threads
+            worker_threads,
+            archive_path
         })
     }
 }
@@ -92,16 +96,21 @@ impl TriedbReplService {
     async fn run_triedb_repl_server(
         config: StateRpcServiceConfig,
         exit_signal: Receiver<()>,
-    ) -> Result<(), tonic::transport::Error> {
+    ) -> Result<(), evm_state::storage::Error> {
         info!(
             "Running TriedbReplServer at the endpoint: {:?}",
             config.server_addr
         );
 
+        let service = TriedbReplServer::new_backend_server(&config)?;
+
         transport::Server::builder()
-            .add_service(TriedbReplServer::new_backend_server())
+            .add_service(service)
             .serve_with_shutdown(config.server_addr, exit_signal.map(drop))
             .await
+            // TODO: Either use anyhow, or make error struct, I think it should be anyhow.
+            // this is PLACEHOLDER for error, we should propagate the real one
+            .map_err(|_| evm_state::storage::Error::RootNotFound(H256::random()))
     }
 
     // Start TriedbReplServer in a Tokio runtime
@@ -143,14 +152,14 @@ pub struct TriedbReplServer {
 }
 
 impl TriedbReplServer {
-    pub fn new_backend_server() -> BackendServer<Self> {
-        let path = Path::new("./tmp-ledger-path/archive");
-        let storage = Storage::open_persistent(path, true).expect("could not open database");
+    pub fn new_backend_server(config: &StateRpcServiceConfig) -> Result<BackendServer<Self>, evm_state::storage::Error> {
+        let gc_enabled = true;
+        let storage = Storage::open_persistent(config.archive_path.clone(), gc_enabled)?;
         let storage = Arc::new(RwLock::new(storage));
 
-        BackendServer::new(TriedbReplServer {
+        Ok(BackendServer::new(TriedbReplServer {
             storage
-        })
+        }))
     }
 }
 
