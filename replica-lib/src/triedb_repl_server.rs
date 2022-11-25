@@ -28,57 +28,20 @@ pub mod app_grpc {
     tonic::include_proto!("triedb_repl");
 }
 
-mod finder {
-    use primitive_types::H256;
-    use std::borrow::Borrow;
-    use std::sync::RwLock;
-
-    use rocksdb::OptimisticTransactionDB;
-
-    pub struct Finder<DB> {
-        pub db: DB,
-        found: RwLock<Option<Vec<u8>>>,
-    }
-
-    impl<DB: Borrow<OptimisticTransactionDB> + Sync + Send> Finder<DB> {
-        pub fn new(db: DB) -> Self {
-            Finder {
-                db,
-                found: RwLock::new(None),
-            }
-        }
-
-        pub fn find(&self, hash: H256) -> Result<Option<Vec<u8>>, String> {
-            let db = self.db.borrow();
-            let bytes = db.get(hash)?;
-            Ok(bytes)
-        }
-    }
-}
-
-// struct DbWrapper(rocksdb::DBCommon<rocksdb::SingleThreaded, rocksdb_lib::transactions::optimistic_transaction_db::OptimisticTransactionDBInner>);
-
-// impl triedb::Database for DbWrapper {
-//     fn get(&self, key: H256) -> &[u8] {
-//         self.get(key)?.unwrap()
-//     }
-// }
-
 pub struct StateRpcServiceConfig {
     server_addr: SocketAddr,
     worker_threads: usize,
 }
 
 impl StateRpcServiceConfig {
-    pub fn from_str_addr_and_thread_number(addr: String, worker_threads: usize) -> Self {
-        let server_addr: SocketAddr = addr
-            .parse()
-            .expect("Unable to parse socket address");
+    pub fn from_addr_and_thread_pool_size(addr: String, worker_threads: usize) -> Result<Self, String> {
+        let server_addr: SocketAddr = addr.parse()
+            .map_err(|_| String::from("Unable to parse socket address"))?;
 
-        StateRpcServiceConfig {
+        Ok(StateRpcServiceConfig {
             server_addr,
             worker_threads
-        }
+        })
     }
 }
 
@@ -94,17 +57,15 @@ impl TriedbReplService {
     pub fn new(
         config: StateRpcServiceConfig,
         triedb_repl_server: BackendServer<TriedbReplServer>,
-    ) -> Self {
+    ) -> Result<TriedbReplService, ()> {
         let worker_threads = config.worker_threads;
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(worker_threads)
                 .thread_name("velas-state-rpc-worker")
                 .enable_all()
-                .build()
-                .expect("Runtime for state rpc server should've been started"),
+                .build().map_err(|_| ())?
         );
-
         // let server_cloned = state_rpc_server.clone();
         let (exit_signal_sender, exit_signal_receiver) = oneshot::channel::<()>();
 
@@ -120,11 +81,11 @@ impl TriedbReplService {
             })
             .unwrap();
 
-        Self {
+        Ok(Self {
             triedb_repl_server,
             thread,
             exit_signal_sender,
-        }
+        })
     }
 
     // Runs server implementation with a provided configuration
@@ -156,8 +117,6 @@ impl TriedbReplService {
         ));
         println!("blocking on runtime: received the result {:?}", result);
 
-        sleep(std::time::Duration::new(10_000, 10));
-
         match result {
             Ok(_) => {
                 info!("TriedbReplServer finished");
@@ -179,11 +138,19 @@ impl TriedbReplService {
     }
 }
 
-pub struct TriedbReplServer {}
+pub struct TriedbReplServer {
+    storage: Arc<RwLock<Storage>>
+}
 
 impl TriedbReplServer {
     pub fn new_backend_server() -> BackendServer<Self> {
-      BackendServer::new(TriedbReplServer {})
+        let path = Path::new("./tmp-ledger-path/archive");
+        let storage = Storage::open_persistent(path, true).expect("could not open database");
+        let storage = Arc::new(RwLock::new(storage));
+
+        BackendServer::new(TriedbReplServer {
+            storage
+        })
     }
 }
 
@@ -205,22 +172,18 @@ impl Backend for TriedbReplServer {
         Ok(Response::new(reply))
     }
 
-    async fn get_raw_block(
+    async fn get_raw_bytes(
         &self,
-        request: Request<app_grpc::GetRawBlockRequest>,
-    ) -> Result<Response<app_grpc::GetRawBlockReply>, Status> {
+        request: Request<app_grpc::GetRawBytesRequest>,
+    ) -> Result<Response<app_grpc::GetRawBytesReply>, Status> {
         info!("Got a request: {:?}", request);
 
         let stringified_key = request.into_inner().hash;
 
-        let dir = Path::new("./tmp-ledger-path/archive");
+        let db_handle = self.storage.read().map_err(|_| Status::internal("Database connection failure"))?;
 
-        let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
-
-        let key = H256::from_hex(&stringified_key).expect("get hash from &str");
-
-        let finder = finder::Finder::new(db_handle);
-        let maybe_bytes = finder.find(key);
+        let key = H256::from_hex(&stringified_key).map_err(|_| Status::internal("Couldn't parse requested hash key"))?;
+        let maybe_bytes = db_handle.db().get(key);
 
         let response = if let Ok(Some(bytes)) = maybe_bytes {
             HashMap::from([(stringified_key, bytes)])
@@ -228,35 +191,31 @@ impl Backend for TriedbReplServer {
             HashMap::new()
         };
 
-        let reply = app_grpc::GetRawBlockReply { blocks_data: response };
+        let reply = app_grpc::GetRawBytesReply { blocks_data: response };
 
         Ok(Response::new(reply))
     }
 
-    async fn get_multiple_raw_blocks(
+    async fn get_multiple_raw_bytes(
         &self,
-        request: Request<app_grpc::GetMultipleRawBlocksRequest>,
-    ) -> Result<Response<app_grpc::GetMultipleRawBlocksReply>, Status> {
+        request: Request<app_grpc::GetMultipleRawBytesRequest>,
+    ) -> Result<Response<app_grpc::GetMultipleRawBytesReply>, Status> {
         info!("Got a request: {:?}", request);
 
         let stringified_keys = request.into_inner().hashes;
         let mut response = HashMap::new();
-        let dir = Path::new("./tmp-ledger-path/archive");
+        let db_handle = self.storage.read().map_err(|_| Status::internal("Database connection failure"))?;
 
-        stringified_keys.into_iter().for_each(|stringified_key| {
-            let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
-
-            let key = H256::from_hex(&stringified_key).expect("get hash from &str");
-
-            let finder = finder::Finder::new(db_handle);
-            let maybe_bytes = finder.find(key);
+        for stringified_key in stringified_keys {
+            let key = H256::from_hex(&stringified_key).map_err(|_| Status::internal("Couldn't parse requested hash key"))?;
+            let maybe_bytes = db_handle.db().get(key);
 
             if let Ok(Some(bytes)) = maybe_bytes {
                 response.insert(stringified_key, bytes);
             }
-        });
+        }
 
-        let reply = app_grpc::GetMultipleRawBlocksReply { blocks_data: response };
+        let reply = app_grpc::GetMultipleRawBytesReply { blocks_data: response };
 
         Ok(Response::new(reply))
     }
@@ -272,20 +231,19 @@ impl Backend for TriedbReplServer {
         let first_root = inner.first_root;
         let second_root = inner.second_root;
 
-        let start_state_root = H256::from_hex(&first_root).expect("get hash from first_root");
+        let start_state_root = H256::from_hex(&first_root).map_err(|_| Status::internal("Couldn't parse requested hash key1"))?;
         info!("First root is: {:?}", start_state_root);
 
-        let end_state_root = H256::from_hex(&second_root).expect("get hash from second_root");
+        let end_state_root = H256::from_hex(&second_root).map_err(|_| Status::internal("Couldn't parse requested hash key2"))?;
         info!("Second root is: {:?}", end_state_root);
 
-        let dir = Path::new("./tmp-ledger-path/archive");
-        let db_handle = Storage::open_persistent(dir, true).expect("could not open database");
+        let db_handle = self.storage.read().map_err(|_| Status::internal("Database connection failure"))?;
         let async_cached_handle = triedb::gc::testing::AsyncCachedDatabaseHandle::new(db_handle.db());
 
         let ach = triedb::gc::testing::AsyncCachedHandle::new(async_cached_handle);
 
         let diff_finder = DiffFinder::new(ach, start_state_root, end_state_root, |child| { vec![] });
-        let changeset = diff_finder.get_changeset(start_state_root, end_state_root).expect("get some changeset");
+        let changeset = diff_finder.get_changeset(start_state_root, end_state_root).map_err(|_| Status::internal("Cannot calculate diff between states"))?;
 
         let mut reply_changeset = vec![];
 

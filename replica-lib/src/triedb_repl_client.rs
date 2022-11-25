@@ -1,6 +1,5 @@
 use app_grpc::backend_client::BackendClient;
 use evm_rpc::RPCBlock;
-// use solana_sdk::example_mocks::solana_client;
 use solana_client::rpc_client::RpcClient;
 
 use std::net::SocketAddr;
@@ -51,14 +50,3 @@ async fn ping() -> Result<(), Box<dyn std::error::Error>> {
     println!("PING | RESPONSE={:?}", response);
     Ok(())
 }
-
-// async fn get_block() -> Result<(), Box<dyn std::error::Error>> {
-//     let mut client = BackendClient::connect("http://127.0.0.1:8000").await?;
-//     let hash_of_root : String = std::fs::read_to_string("./.tmp/state_root.txt")?.parse()?;
-//     let request = tonic::Request::new(app_grpc::GetBlockRequest {
-//         hash: hash_of_root
-//     });
-//     let response = client.get_block(request).await?;
-//     println!("GET BLOCK | RESPONSE={:?}", response);
-//     Ok(())
-// }
