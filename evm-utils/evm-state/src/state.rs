@@ -6,9 +6,9 @@ use std::{
     sync::Arc,
 };
 
-use evm::ExitReason;
 use log::*;
 
+use evm::ExitReason;
 use primitive_types::H256;
 use triedb::empty_trie_hash;
 

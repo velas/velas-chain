@@ -4248,7 +4248,6 @@ impl Bank {
         let evm_new_error_handling = self
             .feature_set
             .is_active(&solana_sdk::feature_set::velas::evm_new_error_handling::id());
-        let clear_logs = self.feature_set.is_active(&solana_sdk::feature_set::velas::clear_logs_on_native_error::id());
 
         if let Some(evm_executor) = evm_executor {
             let executor = Rc::try_unwrap(evm_executor)
@@ -4260,6 +4259,9 @@ impl Bank {
             if matches!(process_result, Err(TransactionError::InstructionError(..)))
                 && evm_new_error_handling
             {
+                let clear_logs = self
+                    .feature_set
+                    .is_active(&solana_sdk::feature_set::velas::clear_logs_on_native_error::id());
                 evm_patch
                     .as_mut()
                     .expect("Evm patch should exist, on transaction execution.")
