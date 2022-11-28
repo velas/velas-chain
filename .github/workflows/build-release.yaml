@@ -91,7 +91,7 @@ jobs:
           TARGET: ${{ matrix.target }}
           EXE_EXT: ${{ matrix.exe_ext }}
         run: ./ci/github-check-nightly-release.sh
-        if: github.event.action != 'published'
+        if:  ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 
       - name: Upload

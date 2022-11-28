@@ -47,12 +47,12 @@ jobs:
         - .travis/affects.sh docs/ .travis || travis_terminate 0
         - cd docs/
         - source .travis/before_install.sh
-    #  Linux release artifacts are still built by ci/buildkite-secondary.yml
-    - <<: *release-artifacts
-      name: "Linux release artifacts"
-      os: linux
-      env:
-        - RUSTFLAGS="-C target-cpu=skylake" # Compile with optimisation for skylake CPU to avoid AVX512 simd, that is not exist at any cpu.
-      before_install:
-        - sudo apt-get install libssl-dev libudev-dev
+    #  Linux release artifacts are built by .github/workflow/build-releaase.yml
+    # - <<: *release-artifacts
+    #   name: "Linux release artifacts"
+    #   os: linux
+    #   env:
+    #     - RUSTFLAGS="-C target-cpu=skylake" # Compile with optimisation for skylake CPU to avoid AVX512 simd, that is not exist at any cpu.
+    #   before_install:
+    #     - sudo apt-get install libssl-dev libudev-dev
 
