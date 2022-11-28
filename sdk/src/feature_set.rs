@@ -536,6 +536,7 @@ lazy_static! {
             (velas::clear_logs_on_error::id(), "Clear logs from receipt if transaction is failed or reverted."),
             (velas::disable_durable_nonce::id(), "Disable durable nonce."),
             (velas::evm_instruction_borsh_serialization::id(), "Support for Borsh serialization for EVM instructions."),
+            (velas::clear_logs_on_native_error::id(), "Clear evm logs from receipt if native transaction is failed."),
             /*************** ADD NEW FEATURES HERE ***************/
         ]
     ).collect();
