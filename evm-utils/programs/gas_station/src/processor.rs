@@ -238,8 +238,17 @@ fn make_evm_loader_big_tx_execute_ix<'a>(
 }
 
 fn refund_native_fee(caller: &AccountInfo, payer: &AccountInfo, amount: u64) -> ProgramResult {
-    **payer.try_borrow_mut_lamports()? -= amount;
-    **caller.try_borrow_mut_lamports()? += amount;
+    **payer.try_borrow_mut_lamports()? =
+        payer
+            .lamports()
+            .checked_sub(amount)
+            .ok_or(ProgramError::from(
+                GasStationError::InsufficientPayerBalance,
+            ))?;
+    **caller.try_borrow_mut_lamports()? = caller
+        .lamports()
+        .checked_add(amount)
+        .ok_or(ProgramError::from(GasStationError::RefundOverflow))?;
     Ok(())
 }
 
@@ -256,7 +265,8 @@ mod test {
         transport::TransportError::TransactionError,
     };
 
-    const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
+    const SECRET_KEY_DUMMY_ONES: [u8; 32] = [1; 32];
+    const SECRET_KEY_DUMMY_TWOS: [u8; 32] = [2; 32];
     const TEST_CHAIN_ID: u64 = 0xdead;
 
     pub fn dummy_eth_tx(contract: evm::H160, input: Vec<u8>) -> evm::Transaction {
@@ -269,7 +279,7 @@ mod test {
             input,
         }
         .sign(
-            &evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap(),
+            &evm::SecretKey::from_slice(&SECRET_KEY_DUMMY_ONES).unwrap(),
             Some(TEST_CHAIN_ID),
         )
     }
@@ -629,7 +639,7 @@ mod test {
                     .process_transaction(transaction)
                     .await
                     .unwrap_err(),
-                TransactionError(InstructionError(0, Custom(3)))
+                TransactionError(InstructionError(0, Custom(4)))
             ));
         }
     }
@@ -757,7 +767,7 @@ mod test {
                 .process_transaction(transaction)
                 .await
                 .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(7)))
+            TransactionError(InstructionError(0, Custom(8)))
         ));
     }
 
@@ -830,9 +840,129 @@ mod test {
                 .process_transaction(transaction)
                 .await
                 .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(8)))
+            TransactionError(InstructionError(0, Custom(9)))
         ));
     }
 
-    // TODO: add test for insufficient_funds during refund
+    #[tokio::test]
+    async fn test_insufficient_payer_funds() {
+        let program_id = Pubkey::new_unique();
+        let mut program_test =
+            ProgramTest::new("gas-station", program_id, processor!(process_instruction));
+
+        let user = Keypair::new();
+        let owner1 = Keypair::new();
+        let owner2 = Keypair::new();
+        let storage1 = Keypair::new();
+        let storage2 = Keypair::new();
+        let (payer1, _) = Pubkey::find_program_address(&[owner1.pubkey().as_ref()], &program_id);
+        let (payer2, _) = Pubkey::find_program_address(&[owner2.pubkey().as_ref()], &program_id);
+        program_test.add_account(
+            user.pubkey(),
+            Account::new(1000000, 0, &system_program::id()),
+        );
+        // Total lamports needed for successful execution: 42000 (evm call) + 10000 (native call refund)
+        program_test.add_account(payer1, Account::new(51999, 0, &program_id));
+        program_test.add_account(payer2, Account::new(41999, 0, &program_id));
+        program_test.add_account(
+            solana_sdk::evm_state::ID,
+            solana_evm_loader_program::create_state_account(1000000).into(),
+        );
+        let mut payer_data = Payer {
+            owner: owner1.pubkey(),
+            payer: payer1,
+            filters: vec![TxFilter::InputStartsWith {
+                contract: evm::Address::zero(),
+                input_prefix: vec![],
+            }],
+        };
+        let mut payer_bytes = vec![];
+        BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
+        program_test.add_account(
+            storage1.pubkey(),
+            Account {
+                lamports: 10000000,
+                owner: program_id,
+                data: payer_bytes,
+                ..Account::default()
+            },
+        );
+        payer_data.owner = owner2.pubkey();
+        payer_data.payer = payer2;
+        let mut payer_bytes = vec![];
+        BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
+        program_test.add_account(
+            storage2.pubkey(),
+            Account {
+                lamports: 10000000,
+                owner: program_id,
+                data: payer_bytes,
+                ..Account::default()
+            },
+        );
+
+        let (mut banks_client, _, recent_blockhash) = program_test.start().await;
+
+        let account_metas = vec![
+            AccountMeta::new(user.pubkey(), true),
+            AccountMeta::new(storage1.pubkey(), false),
+            AccountMeta::new(payer1, false),
+            AccountMeta::new_readonly(solana_sdk::evm_loader::ID, false),
+            AccountMeta::new(solana_sdk::evm_state::ID, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ];
+        let ix = Instruction::new_with_borsh(
+            program_id,
+            &GasStationInstruction::ExecuteWithPayer {
+                tx: Some(dummy_eth_tx(evm::H160::zero(), vec![])),
+            },
+            account_metas,
+        );
+        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        transaction.sign(&[&user], recent_blockhash);
+        // This tx has funds for evm call but will fail on refund attempt
+        assert!(matches!(
+            banks_client
+                .process_transaction(transaction)
+                .await
+                .unwrap_err(),
+            TransactionError(InstructionError(0, Custom(3))) // GasStationError::InsufficientPayerBalance
+        ));
+
+        let account_metas = vec![
+            AccountMeta::new(user.pubkey(), true),
+            AccountMeta::new(storage2.pubkey(), false),
+            AccountMeta::new(payer2, false),
+            AccountMeta::new_readonly(solana_sdk::evm_loader::ID, false),
+            AccountMeta::new(solana_sdk::evm_state::ID, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ];
+        let tx = evm::UnsignedTransaction {
+            nonce: evm::U256::zero(),
+            gas_price: evm::U256::zero(),
+            gas_limit: evm::U256::zero(),
+            action: evm::TransactionAction::Call(evm::H160::zero()),
+            value: evm::U256::zero(),
+            input: vec![],
+        }
+        .sign(
+            &evm::SecretKey::from_slice(&SECRET_KEY_DUMMY_TWOS).unwrap(),
+            Some(TEST_CHAIN_ID),
+        );
+        let ix = Instruction::new_with_borsh(
+            program_id,
+            &GasStationInstruction::ExecuteWithPayer { tx: Some(tx) },
+            account_metas,
+        );
+        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        transaction.sign(&[&user], recent_blockhash);
+        // This tx will fail on evm side due to insufficient funds for evm transaction
+        assert!(matches!(
+            banks_client
+                .process_transaction(transaction)
+                .await
+                .unwrap_err(),
+            TransactionError(InstructionError(0, Custom(18))) // NativeAccountInsufficientFunds from evm_loader
+        ));
+    }
 }

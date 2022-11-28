@@ -11,6 +11,8 @@ pub enum GasStationError {
     AccountNotInitialized,
     #[error("Account info for big transaction storage is missing")]
     BigTxStorageMissing,
+    #[error("Payer is unable to pay for transaction")]
+    InsufficientPayerBalance,
     #[error("Unable to deserialize borsh encoded account data")]
     InvalidAccountBorshData,
     #[error("Unable to deserialize big transaction account data")]
@@ -25,6 +27,8 @@ pub enum GasStationError {
     PayerFilterMismatch,
     #[error("PDA account info doesn't match DPA derived by this program id")]
     PdaAccountMismatch,
+    #[error("Overflow occurred during transaction call refund")]
+    RefundOverflow,
 }
 
 impl From<GasStationError> for ProgramError {
