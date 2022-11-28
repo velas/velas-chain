@@ -258,7 +258,7 @@ mod test {
     use solana_program::instruction::InstructionError::{Custom, IncorrectProgramId};
     use solana_program_test::{processor, ProgramTest};
     use solana_sdk::{
-        account::Account,
+        account::{Account, ReadableAccount},
         signature::{Keypair, Signer},
         system_program,
         transaction::{Transaction, TransactionError::InstructionError},
@@ -284,7 +284,6 @@ mod test {
         )
     }
 
-    #[ignore]
     #[tokio::test]
     async fn test_register_payer() {
         let program_id = Pubkey::new_unique();
@@ -293,6 +292,7 @@ mod test {
             ProgramTest::new("gas-station", program_id, processor!(process_instruction));
 
         let creator = Keypair::new();
+        let storage = Keypair::new();
         program_test.add_account(
             creator.pubkey(),
             Account {
@@ -300,24 +300,27 @@ mod test {
                 ..Account::default()
             },
         );
+        program_test.add_account(
+            storage.pubkey(),
+            Account::new(10000000, 93, &program_id),
+        );
 
         let (mut banks_client, _, recent_blockhash) = program_test.start().await;
 
-        let (storage, _) =
-            Pubkey::find_program_address(&[creator.pubkey().as_ref(), &[0]], &program_id);
-        let (payer, _) =
-            Pubkey::find_program_address(&[creator.pubkey().as_ref(), &[1]], &program_id);
+        let (payer_key, _) =
+            Pubkey::find_program_address(&[creator.pubkey().as_ref()], &program_id);
         let account_metas = vec![
             AccountMeta::new(creator.pubkey(), true),
-            AccountMeta::new(storage, false),
-            AccountMeta::new(payer, false),
+            AccountMeta::new(storage.pubkey(), false),
+            AccountMeta::new(payer_key, false),
             AccountMeta::new_readonly(solana_sdk::system_program::id(), false),
         ];
+        let transfer_amount = 1000000;
         let ix = Instruction::new_with_borsh(
             program_id,
             &GasStationInstruction::RegisterPayer {
                 owner: creator.pubkey(),
-                transfer_amount: 0,
+                transfer_amount,
                 whitelist: vec![TxFilter::InputStartsWith {
                     contract: evm::Address::zero(),
                     input_prefix: vec![],
@@ -328,6 +331,25 @@ mod test {
         let mut transaction = Transaction::new_with_payer(&[ix], Some(&creator.pubkey()));
         transaction.sign(&[&creator], recent_blockhash);
         banks_client.process_transaction(transaction).await.unwrap();
+
+        let account = banks_client.get_account(storage.pubkey()).await.unwrap().unwrap();
+        assert_eq!(account.owner, program_id);
+        assert_eq!(account.lamports, 10000000);
+        assert_eq!(account.data.len(), 93);
+        let mut data_slice: &[u8] = account.data();
+        let payer: Payer = BorshDeserialize::deserialize(&mut data_slice).unwrap();
+        assert_eq!(payer.payer, payer_key);
+        assert_eq!(payer.owner, creator.pubkey());
+        assert_eq!(payer.filters.len(), 1);
+        assert_eq!(payer.filters[0], TxFilter::InputStartsWith {
+            contract: evm::Address::zero(),
+            input_prefix: vec![],
+        });
+
+        let rent = banks_client.get_rent().await.unwrap();
+        let pda_account = banks_client.get_account(payer_key).await.unwrap().unwrap();
+        assert_eq!(pda_account.owner, program_id);
+        assert_eq!(pda_account.lamports, rent.minimum_balance(0) + transfer_amount);
     }
 
     #[tokio::test]

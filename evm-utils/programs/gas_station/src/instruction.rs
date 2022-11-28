@@ -2,7 +2,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use solana_evm_loader_program::scope::evm;
 use solana_sdk::pubkey::Pubkey;
 
-#[derive(Debug, BorshDeserialize, BorshSerialize)]
+#[derive(Debug, BorshDeserialize, BorshSerialize, PartialEq)]
 pub enum TxFilter {
     InputStartsWith {
         contract: evm::Address,
