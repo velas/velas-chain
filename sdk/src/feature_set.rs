@@ -96,7 +96,7 @@ pub mod secp256k1_recover_syscall_enabled {
 pub mod require_stake_for_gossip {
     solana_sdk::declare_id!("EV8cfTBZfhjNH23qg7xz4TL95f4vKLGoNuG5gJJG85WY");
 }
-  
+
 pub mod blake3_syscall_enabled {
     solana_sdk::declare_id!("EPghBhwDZ22GxtS8VGGUvjt782HR9ZG4aFWoBNMxEyxj");
 }
@@ -299,7 +299,6 @@ pub mod fixed_memcpy_nonoverlapping_check {
     solana_sdk::declare_id!("D5YEM15Fgox3JFqCGFRgnwqAcJ2QtB6MiJMAm7B38sQ3");
 }
 
-
 pub mod drop_redundant_turbine_path {
     solana_sdk::declare_id!("9e9RFVCfsBA19iJ6w7v7w5gvoEP8C2SVMxCgRZNKEVaX");
 }
@@ -331,7 +330,6 @@ pub mod nonce_must_be_authorized {
 pub mod nonce_must_be_advanceable {
     solana_sdk::declare_id!("4ViDUMd1axFfJxWViMkZ2nwdbYGxHer1MhoT3igGasPj");
 }
-
 
 pub mod cpi_data_cost {
     solana_sdk::declare_id!("CuYeffE36Bed4qExko1XwUDHB2b6TJ9pwphXw52Nm9UB");
@@ -430,6 +428,10 @@ pub mod velas {
 
     pub mod accept_zero_gas_price_with_native_fee {
         solana_sdk::declare_id!("H4xTVSJMFSzWSoi6JuunAJSn8EJxHtJHWYDb3yDpuvU3");
+    }
+
+    pub mod clear_logs_on_native_error {
+        solana_sdk::declare_id!("BVF8r9JP1is4YworaZsiEk6fCSTiDxvD59Eo9kFyc85F");
     }
 }
 lazy_static! {
@@ -541,6 +543,7 @@ lazy_static! {
             (velas::burn_fee::id(), "Burn fee during transaction execution."),
             (velas::clear_logs_on_error::id(), "Clear logs from receipt if transaction is failed or reverted."),
             (velas::disable_durable_nonce::id(), "Disable durable nonce."),
+            (velas::evm_new_precompiles::id(), "Evm new precomplies pack."),
             (velas::evm_instruction_borsh_serialization::id(), "Support for Borsh serialization for EVM instructions."),
             (velas::accept_zero_gas_price_with_native_fee::id(), "Accept evm transactions with native fee and zero gas price."),
             /*************** ADD NEW FEATURES HERE ***************/

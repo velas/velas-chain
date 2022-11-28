@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use evm::{ExitReason, ExitRevert};
+use evm::ExitReason;
 use log::*;
 
 use primitive_types::H256;
@@ -234,7 +234,7 @@ impl EvmBackend<Incomming> {
             .collect()
     }
 
-    pub fn apply_failed_update(&mut self, failed: &Self) {
+    pub fn apply_failed_update(&mut self, failed: &Self, clear_logs: bool) {
         let txs_len = self.state.executed_transactions.len();
         debug_assert_eq!(
             self.state.executed_transactions[..txs_len],
@@ -250,9 +250,7 @@ impl EvmBackend<Incomming> {
                 if matches!(tx.status, ExitReason::Succeed(_)) {
                     debug!("Setting exit status to reverted, for tx={:?}", h);
 
-                    tx.status = ExitReason::Revert(ExitRevert::Reverted);
-                    tx.logs.clear();
-                    tx.logs_bloom = Default::default();
+                    tx.to_failed(clear_logs);
                 }
 
                 if let Some(caller) = tx.caller() {
