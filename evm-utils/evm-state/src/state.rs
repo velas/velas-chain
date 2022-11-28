@@ -251,6 +251,8 @@ impl EvmBackend<Incomming> {
                     debug!("Setting exit status to reverted, for tx={:?}", h);
 
                     tx.status = ExitReason::Revert(ExitRevert::Reverted);
+                    tx.logs.clear();
+                    tx.logs_bloom = Default::default();
                 }
 
                 if let Some(caller) = tx.caller() {
