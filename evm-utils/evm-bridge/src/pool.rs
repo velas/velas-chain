@@ -17,13 +17,11 @@ use once_cell::sync::Lazy;
 use serde_json::json;
 use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
 use solana_evm_loader_program::{
-    instructions::FeePayerType,
     scope::{evm, solana},
     tx_chunks::TxChunks,
 };
 use solana_sdk::{
     commitment_config::{CommitmentConfig, CommitmentLevel},
-    instruction::AccountMeta,
     message::Message,
     pubkey::Pubkey,
     signature::Signature,
@@ -596,27 +594,8 @@ async fn process_tx(
         }
     }
 
-    let mut ix = if bridge.borsh_encoding {
-        solana_evm_loader_program::send_raw_tx(
-            bridge.key.pubkey(),
-            tx.clone(),
-            Some(bridge.key.pubkey()),
-            FeePayerType::Evm,
-        )
-    } else {
-        solana_evm_loader_program::send_raw_tx_old(
-            bridge.key.pubkey(),
-            tx.clone(),
-            Some(bridge.key.pubkey()),
-        )
-    };
-
-    // Add meta accounts as additional arguments
-    for account in meta_keys.clone() {
-        ix.accounts.push(AccountMeta::new(account, false))
-    }
-
-    let message = Message::new(&[ix], Some(&bridge.key.pubkey()));
+    let instructions = bridge.make_send_tx_instructions(&tx, &meta_keys);
+    let message = Message::new(&instructions, Some(&bridge.key.pubkey()));
     let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
 
     debug!("Getting block hash");
@@ -809,17 +788,13 @@ async fn deploy_big_tx(
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
         .value;
 
-    let ix = if bridge.borsh_encoding {
-        solana_evm_loader_program::big_tx_execute(
-            storage_pubkey,
-            Some(&payer_pubkey),
-            FeePayerType::Evm,
-        )
-    } else {
-        solana_evm_loader_program::big_tx_execute_old(storage_pubkey, Some(&payer_pubkey))
-    };
-    let execute_tx =
-        solana::Transaction::new_signed_with_payer(&[ix], Some(&payer_pubkey), &signers, blockhash);
+    let instructions = bridge.make_send_big_tx_instructions(tx, storage_pubkey, payer_pubkey);
+    let execute_tx = solana::Transaction::new_signed_with_payer(
+        &instructions,
+        Some(&payer_pubkey),
+        &signers,
+        blockhash,
+    );
 
     debug!("Execute EVM transaction at storage {} ...", storage_pubkey);
 
