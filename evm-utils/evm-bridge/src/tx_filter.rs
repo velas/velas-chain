@@ -4,10 +4,13 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub enum TxFilter {
-    InputStartsWith{
+    InputStartsWith {
         contract: Address,
         input_prefix: Bytes
     },
+    ByReceiver {
+        contract: Address,
+    }
 }
 
 impl TxFilter {
@@ -16,6 +19,9 @@ impl TxFilter {
             Self::InputStartsWith { contract, input_prefix } => {
                 matches!(tx.action, TransactionAction::Call(addr) if addr == *contract)
                     && tx.input.starts_with(&input_prefix.0)
+            }
+            Self::ByReceiver { contract } => {
+                matches!(tx.action, TransactionAction::Call(addr) if addr == *contract)
             }
         }
     }

@@ -594,7 +594,21 @@ async fn process_tx(
         }
     }
 
-    let instructions = bridge.make_send_tx_instructions(&tx, &meta_keys);
+    let instructions = if let Some(val) = bridge
+        .redirect_to_proxy_filters
+        .iter()
+        .find(|val| matches!(tx.action, TransactionAction::Call(addr) if addr == val.contract))
+    {
+        vec![evm_gas_station::execute_tx_with_payer(
+            tx.clone(),
+            bridge.gas_station_program_id.unwrap(),
+            bridge.key.pubkey(),
+            val.storage_acc,
+            val.payer,
+        )]
+    } else {
+        bridge.make_send_tx_instructions(&tx, &meta_keys)
+    };
     let message = Message::new(&instructions, Some(&bridge.key.pubkey()));
     let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
 
@@ -788,7 +802,21 @@ async fn deploy_big_tx(
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
         .value;
 
-    let instructions = bridge.make_send_big_tx_instructions(tx, storage_pubkey, payer_pubkey);
+    let instructions = if let Some(val) = bridge
+        .redirect_to_proxy_filters
+        .iter()
+        .find(|val| matches!(tx.action, TransactionAction::Call(addr) if addr == val.contract))
+    {
+        vec![evm_gas_station::execute_big_tx_with_payer(
+            bridge.gas_station_program_id.unwrap(),
+            bridge.key.pubkey(),
+            val.storage_acc,
+            val.payer,
+            storage_pubkey,
+        )]
+    } else {
+        bridge.make_send_big_tx_instructions(tx, storage_pubkey, payer_pubkey)
+    };
     let execute_tx = solana::Transaction::new_signed_with_payer(
         &instructions,
         Some(&payer_pubkey),

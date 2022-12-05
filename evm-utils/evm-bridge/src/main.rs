@@ -190,6 +190,8 @@ pub struct EvmBridge {
     pool: EthPool<SystemClock>,
     min_gas_price: U256,
     whitelist: Vec<TxFilter>,
+    gas_station_program_id: Option<Pubkey>,
+    redirect_to_proxy_filters: Vec<EvmContractToPayerKeys>,
 }
 
 impl EvmBridge {
@@ -237,11 +239,22 @@ impl EvmBridge {
             pool,
             min_gas_price,
             whitelist: vec![],
+            gas_station_program_id: None,
+            redirect_to_proxy_filters: vec![],
         }
     }
 
     fn set_whitelist(&mut self, whitelist: Vec<TxFilter>) {
         self.whitelist = whitelist;
+    }
+
+    fn set_redirect_to_proxy_filters(
+        &mut self,
+        gas_station_program_id: Pubkey,
+        redirect_to_proxy_filters: Vec<EvmContractToPayerKeys>,
+    ) {
+        self.gas_station_program_id = Some(gas_station_program_id);
+        self.redirect_to_proxy_filters = redirect_to_proxy_filters;
     }
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
@@ -990,6 +1003,43 @@ pub(crate) fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
     }
 }
 
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum ParseEvmContractToPayerKeysError {
+    #[error("Evm contract string is invalid")]
+    InvalidEvmContract,
+    #[error("Input format is invalid, provide string of the next format: \"<evm contract address>:<payer pubkey>\"")]
+    InvalidFormat,
+    #[error("Invalid pubkey")]
+    InvalidPubkey,
+}
+
+#[derive(Debug)]
+struct EvmContractToPayerKeys {
+    contract: Address,
+    payer: Pubkey,
+    storage_acc: Pubkey,
+}
+
+impl FromStr for EvmContractToPayerKeys {
+    type Err = ParseEvmContractToPayerKeysError;
+
+    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
+        let (addr, keys) = s
+            .split_once(':')
+            .ok_or(ParseEvmContractToPayerKeysError::InvalidFormat)?;
+        let (key1, key2) = keys
+            .split_once(':')
+            .ok_or(ParseEvmContractToPayerKeysError::InvalidFormat)?;
+        let contract = Address::from_str(addr)
+            .map_err(|_| ParseEvmContractToPayerKeysError::InvalidEvmContract)?;
+        let payer = Pubkey::from_str(key1)
+            .map_err(|_| ParseEvmContractToPayerKeysError::InvalidPubkey)?;
+        let storage_acc = Pubkey::from_str(key2)
+            .map_err(|_| ParseEvmContractToPayerKeysError::InvalidPubkey)?;
+        Ok(Self { contract, payer, storage_acc })
+    }
+}
+
 #[derive(Debug, structopt::StructOpt)]
 struct Args {
     keyfile: Option<String>,
@@ -1016,6 +1066,11 @@ struct Args {
 
     #[structopt(long = "whitelist-path")]
     whitelist_path: Option<String>,
+
+    #[structopt(long = "gas-station")]
+    gas_station_program_id: Option<Pubkey>,
+    #[structopt(long = "redirect-to-proxy")]
+    redirect_contracts_to_proxy: Option<Vec<EvmContractToPayerKeys>>,
 }
 
 impl Args {
@@ -1110,6 +1165,10 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         min_gas_price,
     );
     meta.set_whitelist(whitelist);
+    if let Some(redirect_list) = args.redirect_contracts_to_proxy {
+        let gas_station_program_id = args.gas_station_program_id.expect("gas-station program id is missing");
+        meta.set_redirect_to_proxy_filters(gas_station_program_id, redirect_list);
+    }
     let meta = Arc::new(meta);
 
     let mut io = MetaIoHandler::with_middleware(ProxyMiddleware {});
@@ -1283,6 +1342,8 @@ mod tests {
             pool: EthPool::new(SystemClock),
             min_gas_price: 0.into(),
             whitelist: vec![],
+            gas_station_program_id: None,
+            redirect_to_proxy_filters: vec![],
         });
 
         let rpc = BridgeErpcImpl {};
