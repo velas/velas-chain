@@ -1,10 +1,11 @@
 mod error;
+mod evm_loader_instructions;
+pub mod evm_types;
 mod instruction;
 mod processor;
 mod state;
 
 use processor::process_instruction;
-use solana_evm_loader_program::scope::evm;
 use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::pubkey::Pubkey;
 use solana_program::{entrypoint, system_program};
@@ -13,7 +14,7 @@ use solana_program::{entrypoint, system_program};
 entrypoint!(process_instruction);
 
 pub fn execute_tx_with_payer(
-    tx: evm::Transaction,
+    tx: evm_types::Transaction,
     program_id: Pubkey,
     signer: Pubkey,
     storage: Pubkey,

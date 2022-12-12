@@ -8,15 +8,15 @@ edition = "2021"
 [dependencies]
 arrayref = "0.3.6"
 borsh = "0.9.3"
-evm-rpc = { path = "../../evm-rpc" }
 num-derive = "0.3.3"
 num-traits = "0.2.15"
-solana-evm-loader-program = { path = "../evm_loader" }
+primitive-types = { version = "0.11.0", default-features = false, features = ["borsh_no_std"] }
 solana-program = { path = "../../../sdk/program", version = "=1.9.29" }
-solana-sdk = { path = "../../../sdk", version = "=1.9.29" }
+solana-sdk = { path = "../../../sdk", version = "=1.9.29", default-features = false }
 thiserror = "1.0.37"
 
 [dev-dependencies]
+solana-evm-loader-program = { path = "../evm_loader" }
 solana-program-test = { path = "../../../program-test", version = "=1.9.29" }
 tokio = { version = "~1.14.1", features = ["full"] }
 

@@ -1,6 +1,5 @@
 use super::*;
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_evm_loader_program::scope::evm;
 use solana_program::{program_memory::sol_memcmp, pubkey::PUBKEY_BYTES};
 use solana_sdk::{
     account_info::{next_account_info, AccountInfo},
@@ -21,6 +20,17 @@ use instruction::{GasStationInstruction, TxFilter};
 use state::{Payer, MAX_FILTERS};
 
 const EXECUTE_CALL_REFUND_AMOUNT: u64 = 10000;
+
+
+pub fn create_evm_instruction_with_borsh(
+    program_id: Pubkey,
+    data: &evm_loader_instructions::EvmInstruction,
+    accounts: Vec<AccountMeta>,
+) -> Instruction {
+    let mut res = Instruction::new_with_borsh(program_id, data, accounts);
+    res.data.insert(0, evm_loader_instructions::EVM_INSTRUCTION_BORSH_PREFIX);
+    res
+}
 
 pub fn process_instruction(
     program_id: &Pubkey,
@@ -99,7 +109,7 @@ fn process_register_payer(
 fn process_execute_with_payer(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    tx: Option<evm::Transaction>,
+    tx: Option<evm_types::Transaction>,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let sender = next_account_info(account_info_iter)?;
@@ -161,7 +171,7 @@ fn process_execute_with_payer(
         };
         invoke_signed(&ix, &account_infos, signers_seeds)?;
 
-        let ix = solana_evm_loader_program::free_ownership(*payer_info.key);
+        let ix = make_free_ownership_ix(*payer_info.key);
         let account_infos = vec![evm_loader.clone(), evm_state.clone(), payer_info.clone()];
         invoke_signed(&ix, &account_infos, signers_seeds)?;
 
@@ -178,7 +188,7 @@ pub fn cmp_pubkeys(a: &Pubkey, b: &Pubkey) -> bool {
     sol_memcmp(a.as_ref(), b.as_ref(), PUBKEY_BYTES) == 0
 }
 
-fn get_big_tx_from_storage(storage_acc: &AccountInfo) -> Result<evm::Transaction, ProgramError> {
+fn get_big_tx_from_storage(storage_acc: &AccountInfo) -> Result<evm_types::Transaction, ProgramError> {
     let mut bytes: &[u8] = &storage_acc.try_borrow_data().unwrap();
     msg!("Trying to deserialize tx chunks byte = {:?}", bytes);
     BorshDeserialize::deserialize(&mut bytes)
@@ -189,11 +199,11 @@ fn make_evm_loader_tx_execute_ix<'a>(
     evm_loader: &AccountInfo<'a>,
     evm_state: &AccountInfo<'a>,
     sender: &AccountInfo<'a>,
-    tx: evm::Transaction,
+    tx: evm_types::Transaction,
 ) -> (Instruction, Vec<AccountInfo<'a>>) {
-    use solana_evm_loader_program::instructions::*;
+    use evm_loader_instructions::*;
     (
-        solana_evm_loader_program::create_evm_instruction_with_borsh(
+        create_evm_instruction_with_borsh(
             *evm_loader.key,
             &EvmInstruction::ExecuteTransaction {
                 tx: ExecuteTransaction::Signed { tx: Some(tx) },
@@ -214,9 +224,9 @@ fn make_evm_loader_big_tx_execute_ix<'a>(
     sender: &AccountInfo<'a>,
     big_tx_storage: &AccountInfo<'a>,
 ) -> (Instruction, Vec<AccountInfo<'a>>) {
-    use solana_evm_loader_program::instructions::*;
+    use evm_loader_instructions::*;
     (
-        solana_evm_loader_program::create_evm_instruction_with_borsh(
+        create_evm_instruction_with_borsh(
             *evm_loader.key,
             &EvmInstruction::ExecuteTransaction {
                 tx: ExecuteTransaction::Signed { tx: None },
@@ -233,6 +243,18 @@ fn make_evm_loader_big_tx_execute_ix<'a>(
             big_tx_storage.clone(),
             evm_state.clone(),
             sender.clone(),
+        ],
+    )
+}
+
+fn make_free_ownership_ix(owner: Pubkey) -> Instruction {
+    use evm_loader_instructions::*;
+    create_evm_instruction_with_borsh(
+        solana_sdk::evm_loader::ID,
+        &EvmInstruction::FreeOwnership {},
+        vec![
+            AccountMeta::new(solana_sdk::evm_state::ID, false),
+            AccountMeta::new(owner, true),
         ],
     )
 }
@@ -255,6 +277,7 @@ fn refund_native_fee(caller: &AccountInfo, payer: &AccountInfo, amount: u64) -> 
 #[cfg(test)]
 mod test {
     use super::*;
+    use solana_evm_loader_program::scope::evm;
     use solana_program::instruction::InstructionError::{Custom, IncorrectProgramId};
     use solana_program_test::{processor, ProgramTest};
     use solana_sdk::{
@@ -269,8 +292,8 @@ mod test {
     const SECRET_KEY_DUMMY_TWOS: [u8; 32] = [2; 32];
     const TEST_CHAIN_ID: u64 = 0xdead;
 
-    pub fn dummy_eth_tx(contract: evm::H160, input: Vec<u8>) -> evm::Transaction {
-        evm::UnsignedTransaction {
+    pub fn dummy_eth_tx(contract: evm::H160, input: Vec<u8>) -> evm_types::Transaction {
+        let tx = evm::UnsignedTransaction {
             nonce: evm::U256::zero(),
             gas_price: evm::U256::zero(),
             gas_limit: evm::U256::zero(),
@@ -281,7 +304,20 @@ mod test {
         .sign(
             &evm::SecretKey::from_slice(&SECRET_KEY_DUMMY_ONES).unwrap(),
             Some(TEST_CHAIN_ID),
-        )
+        );
+        evm_types::Transaction {
+            nonce: tx.nonce,
+            gas_price: tx.gas_price,
+            gas_limit: tx.gas_limit,
+            action: evm_types::TransactionAction::Call(contract),
+            value: tx.value,
+            signature: evm_types::TransactionSignature {
+                v: tx.signature.v,
+                r: tx.signature.r,
+                s: tx.signature.s
+            },
+            input: tx.input,
+        }
     }
 
     #[tokio::test]
@@ -459,7 +495,7 @@ mod test {
             big_tx_storage.pubkey(),
             Account {
                 lamports: 10000000,
-                owner: solana_evm_loader_program::ID,
+                owner: solana_sdk::evm_loader::ID,
                 data: big_tx_bytes,
                 ..Account::default()
             },
@@ -971,6 +1007,19 @@ mod test {
             &evm::SecretKey::from_slice(&SECRET_KEY_DUMMY_TWOS).unwrap(),
             Some(TEST_CHAIN_ID),
         );
+        let tx = evm_types::Transaction {
+            nonce: tx.nonce,
+            gas_price: tx.gas_price,
+            gas_limit: tx.gas_limit,
+            action: evm_types::TransactionAction::Call(evm::H160::zero()),
+            value: tx.value,
+            signature: evm_types::TransactionSignature {
+                v: tx.signature.v,
+                r: tx.signature.r,
+                s: tx.signature.s
+            },
+            input: tx.input,
+        };
         let ix = Instruction::new_with_borsh(
             program_id,
             &GasStationInstruction::ExecuteWithPayer { tx: Some(tx) },

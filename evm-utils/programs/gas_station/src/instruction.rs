@@ -1,20 +1,20 @@
+use super::*;
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_evm_loader_program::scope::evm;
 use solana_sdk::pubkey::Pubkey;
 
 #[derive(Debug, BorshDeserialize, BorshSerialize, PartialEq)]
 pub enum TxFilter {
     InputStartsWith {
-        contract: evm::Address,
+        contract: evm_types::Address,
         input_prefix: Vec<u8>,
     },
 }
 
 impl TxFilter {
-    pub fn is_match(&self, tx: &evm::Transaction) -> bool {
+    pub fn is_match(&self, tx: &evm_types::Transaction) -> bool {
         match self {
             Self::InputStartsWith{ contract, input_prefix } => {
-                matches!(tx.action, evm::TransactionAction::Call(addr) if addr == *contract)
+                matches!(tx.action, evm_types::TransactionAction::Call(addr) if addr == *contract)
                     && tx.input.starts_with(&input_prefix)
             }
         }
@@ -32,6 +32,6 @@ pub enum GasStationInstruction {
 
     /// Execute evm transaction
     ExecuteWithPayer {
-        tx: Option<evm::Transaction>,
+        tx: Option<evm_types::Transaction>,
     }
 }

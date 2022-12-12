@@ -1,5 +1,5 @@
+use super::*;
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_evm_loader_program::scope::evm;
 use solana_sdk::{
     program_pack::IsInitialized,
     pubkey::Pubkey,
@@ -20,7 +20,7 @@ pub struct Payer {
 }
 
 impl Payer {
-    pub fn do_filter_match(&self, tx: &evm::Transaction) -> bool {
+    pub fn do_filter_match(&self, tx: &evm_types::Transaction) -> bool {
         self.filters.iter().any(|f| { f.is_match(tx) })
     }
 }

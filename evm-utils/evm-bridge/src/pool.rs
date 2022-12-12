@@ -599,6 +599,24 @@ async fn process_tx(
         .iter()
         .find(|val| matches!(tx.action, TransactionAction::Call(addr) if addr == val.contract))
     {
+        let tx = evm_gas_station::evm_types::Transaction {
+            nonce: tx.nonce,
+            gas_price: tx.gas_price,
+            gas_limit: tx.gas_limit,
+            action: match tx.action {
+                TransactionAction::Create => evm_gas_station::evm_types::TransactionAction::Create,
+                TransactionAction::Call(addr) => {
+                    evm_gas_station::evm_types::TransactionAction::Call(addr)
+                }
+            },
+            value: tx.value,
+            signature: evm_gas_station::evm_types::TransactionSignature {
+                v: tx.signature.v,
+                r: tx.signature.r,
+                s: tx.signature.s,
+            },
+            input: tx.input.clone(),
+        };
         vec![evm_gas_station::execute_tx_with_payer(
             tx.clone(),
             bridge.gas_station_program_id.unwrap(),
