@@ -17,6 +17,10 @@ pub enum GasStationError {
     InvalidAccountBorshData,
     #[error("Unable to deserialize big transaction account data")]
     InvalidBigTransactionData,
+    #[error("Invalid evm loader account")]
+    InvalidEvmLoader,
+    #[error("Invalid evm state account")]
+    InvalidEvmState,
     #[error("Invalid filter amount")]
     InvalidFilterAmount,
     #[error("Lamport balance below rent-exempt threshold")]

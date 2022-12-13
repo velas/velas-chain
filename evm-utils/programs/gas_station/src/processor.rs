@@ -77,7 +77,7 @@ fn process_register_payer(
     let rent = Rent::get()?;
     let payer_data_len = storage_acc_info.data_len();
     if !rent.is_exempt(storage_acc_info.lamports(), payer_data_len) {
-        return Err(ProgramError::AccountNotRentExempt);
+        return Err(GasStationError::NotRentExempt.into());
     }
 
     let (payer_acc, bump_seed) = Pubkey::find_program_address(&[owner.as_ref()], program_id);
@@ -127,6 +127,12 @@ fn process_execute_with_payer(
 
     if !cmp_pubkeys(program_id, payer_storage_info.owner) {
         return Err(ProgramError::IncorrectProgramId);
+    }
+    if !cmp_pubkeys(evm_loader.key, &solana_sdk::evm_loader::ID) {
+        return Err(GasStationError::InvalidEvmLoader.into());
+    }
+    if !cmp_pubkeys(evm_state.key, &solana_sdk::evm_state::ID) {
+        return Err(GasStationError::InvalidEvmState.into());
     }
     let mut payer_data_buf: &[u8] = &**payer_storage_info.data.borrow();
     let payer: Payer = BorshDeserialize::deserialize(&mut payer_data_buf)
@@ -181,7 +187,14 @@ fn process_execute_with_payer(
     }
 
     let refund_amount = EXECUTE_CALL_REFUND_AMOUNT;
-    refund_native_fee(sender, payer_info, refund_amount)
+    refund_native_fee(sender, payer_info, refund_amount)?;
+
+
+    let rent = Rent::get()?;
+    if !rent.is_exempt(payer_info.lamports(), payer_info.data_len()) {
+        return Err(GasStationError::NotRentExempt.into());
+    }
+    Ok(())
 }
 
 pub fn cmp_pubkeys(a: &Pubkey, b: &Pubkey) -> bool {
@@ -825,7 +838,7 @@ mod test {
                 .process_transaction(transaction)
                 .await
                 .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(8)))
+            TransactionError(InstructionError(0, Custom(10)))
         ));
     }
 
@@ -898,7 +911,7 @@ mod test {
                 .process_transaction(transaction)
                 .await
                 .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(9)))
+            TransactionError(InstructionError(0, Custom(11)))
         ));
     }
 
@@ -1034,6 +1047,168 @@ mod test {
                 .await
                 .unwrap_err(),
             TransactionError(InstructionError(0, Custom(18))) // NativeAccountInsufficientFunds from evm_loader
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_evm_accounts() {
+        let program_id = Pubkey::new_unique();
+        let mut program_test =
+            ProgramTest::new("gas-station", program_id, processor!(process_instruction));
+
+        let user = Keypair::new();
+        let owner = Keypair::new();
+        let storage = Keypair::new();
+        let (payer, _) = Pubkey::find_program_address(&[owner.pubkey().as_ref()], &program_id);
+        program_test.add_account(
+            user.pubkey(),
+            Account::new(1000000, 0, &system_program::id()),
+        );
+        program_test.add_account(payer, Account::new(1000000, 0, &program_id));
+        program_test.add_account(
+            solana_sdk::evm_state::ID,
+            solana_evm_loader_program::create_state_account(1000000).into(),
+        );
+        let payer_data = Payer {
+            owner: owner.pubkey(),
+            payer,
+            filters: vec![TxFilter::InputStartsWith {
+                contract: evm::Address::zero(),
+                input_prefix: vec![],
+            }],
+        };
+        let mut payer_bytes = vec![];
+        BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
+        program_test.add_account(
+            storage.pubkey(),
+            Account {
+                lamports: 10000000,
+                owner: program_id,
+                data: payer_bytes,
+                ..Account::default()
+            },
+        );
+
+        let (mut banks_client, _, recent_blockhash) = program_test.start().await;
+
+        let third_party_keypair = Keypair::new();
+        let account_metas_invalid_evm_loader = vec![
+            AccountMeta::new(user.pubkey(), true),
+            AccountMeta::new(storage.pubkey(), false),
+            AccountMeta::new(payer, false),
+            AccountMeta::new_readonly(third_party_keypair.pubkey(), false),
+            AccountMeta::new(solana_sdk::evm_state::ID, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ];
+        let ix = Instruction::new_with_borsh(
+            program_id,
+            &GasStationInstruction::ExecuteWithPayer {
+                tx: Some(dummy_eth_tx(evm::H160::zero(), vec![])),
+            },
+            account_metas_invalid_evm_loader,
+        );
+        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        transaction.sign(&[&user], recent_blockhash);
+        assert!(matches!(
+            banks_client
+                .process_transaction(transaction)
+                .await
+                .unwrap_err(),
+            TransactionError(InstructionError(0, Custom(6))) // InvalidEvmLoader
+        ));
+
+        let account_metas_invalid_evm_state = vec![
+            AccountMeta::new(user.pubkey(), true),
+            AccountMeta::new(storage.pubkey(), false),
+            AccountMeta::new(payer, false),
+            AccountMeta::new_readonly(solana_sdk::evm_loader::ID, false),
+            AccountMeta::new(third_party_keypair.pubkey(), false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ];
+        let ix = Instruction::new_with_borsh(
+            program_id,
+            &GasStationInstruction::ExecuteWithPayer {
+                tx: Some(dummy_eth_tx(evm::H160::zero(), vec![])),
+            },
+            account_metas_invalid_evm_state,
+        );
+        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        transaction.sign(&[&user], recent_blockhash);
+        assert!(matches!(
+            banks_client
+                .process_transaction(transaction)
+                .await
+                .unwrap_err(),
+            TransactionError(InstructionError(0, Custom(7))) // InvalidEvmLoader
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_rent_exemption() {
+        let program_id = Pubkey::new_unique();
+        let mut program_test =
+            ProgramTest::new("gas-station", program_id, processor!(process_instruction));
+
+        let user = Keypair::new();
+        let owner = Keypair::new();
+        let storage = Keypair::new();
+        let (payer, _) = Pubkey::find_program_address(&[owner.pubkey().as_ref()], &program_id);
+        program_test.add_account(
+            user.pubkey(),
+            Account::new(1000000, 0, &system_program::id()),
+        );
+        // 890880 for rent exemption + 42000 for evm execution + 10000 refund = 942880 needed
+        let payer_lamports = 942879;
+        program_test.add_account(payer, Account::new(payer_lamports, 0, &program_id));
+        program_test.add_account(
+            solana_sdk::evm_state::ID,
+            solana_evm_loader_program::create_state_account(1000000).into(),
+        );
+        let payer_data = Payer {
+            owner: owner.pubkey(),
+            payer,
+            filters: vec![TxFilter::InputStartsWith {
+                contract: evm::Address::zero(),
+                input_prefix: vec![],
+            }],
+        };
+        let mut payer_bytes = vec![];
+        BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
+        program_test.add_account(
+            storage.pubkey(),
+            Account {
+                lamports: 10000000,
+                owner: program_id,
+                data: payer_bytes,
+                ..Account::default()
+            },
+        );
+
+        let (mut banks_client, _, recent_blockhash) = program_test.start().await;
+
+        let account_metas = vec![
+            AccountMeta::new(user.pubkey(), true),
+            AccountMeta::new(storage.pubkey(), false),
+            AccountMeta::new(payer, false),
+            AccountMeta::new_readonly(solana_sdk::evm_loader::ID, false),
+            AccountMeta::new(solana_sdk::evm_state::ID, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ];
+        let ix = Instruction::new_with_borsh(
+            program_id,
+            &GasStationInstruction::ExecuteWithPayer {
+                tx: Some(dummy_eth_tx(evm::H160::zero(), vec![])),
+            },
+            account_metas,
+        );
+        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        transaction.sign(&[&user], recent_blockhash);
+        assert!(matches!(
+            banks_client
+                .process_transaction(transaction)
+                .await
+                .unwrap_err(),
+            TransactionError(InstructionError(0, Custom(9))) // NotRentExempt
         ));
     }
 }
