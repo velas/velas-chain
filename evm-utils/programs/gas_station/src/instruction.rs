@@ -15,7 +15,7 @@ impl TxFilter {
         match self {
             Self::InputStartsWith{ contract, input_prefix } => {
                 matches!(tx.action, evm_types::TransactionAction::Call(addr) if addr == *contract)
-                    && tx.input.starts_with(&input_prefix)
+                    && tx.input.starts_with(input_prefix)
             }
         }
     }

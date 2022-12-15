@@ -618,7 +618,7 @@ async fn process_tx(
             input: tx.input.clone(),
         };
         vec![evm_gas_station::execute_tx_with_payer(
-            tx.clone(),
+            tx,
             bridge.gas_station_program_id.unwrap(),
             bridge.key.pubkey(),
             val.storage_acc,

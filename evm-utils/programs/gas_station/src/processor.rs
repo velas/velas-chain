@@ -21,14 +21,14 @@ use state::{Payer, MAX_FILTERS};
 
 const EXECUTE_CALL_REFUND_AMOUNT: u64 = 10000;
 
-
 pub fn create_evm_instruction_with_borsh(
     program_id: Pubkey,
     data: &evm_loader_instructions::EvmInstruction,
     accounts: Vec<AccountMeta>,
 ) -> Instruction {
     let mut res = Instruction::new_with_borsh(program_id, data, accounts);
-    res.data.insert(0, evm_loader_instructions::EVM_INSTRUCTION_BORSH_PREFIX);
+    res.data
+        .insert(0, evm_loader_instructions::EVM_INSTRUCTION_BORSH_PREFIX);
     res
 }
 
@@ -124,7 +124,8 @@ fn process_execute_with_payer(
     if !tx_passed_directly && big_tx_storage_info.is_err() {
         return Err(GasStationError::BigTxStorageMissing.into());
     }
-    if !tx_passed_directly { // Big tx not supported at the moment
+    if !tx_passed_directly {
+        // Big tx not supported at the moment
         return Err(GasStationError::NotSupported.into());
     }
 
@@ -184,14 +185,13 @@ fn process_execute_with_payer(
         let account_infos = vec![evm_loader.clone(), evm_state.clone(), payer_info.clone()];
         invoke_signed(&ix, &account_infos, signers_seeds)?;
 
-        let ix = system_instruction::assign(payer_info.key, &program_id);
+        let ix = system_instruction::assign(payer_info.key, program_id);
         let account_infos = vec![system_program.clone(), payer_info.clone()];
         invoke_signed(&ix, &account_infos, signers_seeds)?;
     }
 
     let refund_amount = EXECUTE_CALL_REFUND_AMOUNT;
     refund_native_fee(sender, payer_info, refund_amount)?;
-
 
     let rent = Rent::get()?;
     if !rent.is_exempt(payer_info.lamports(), payer_info.data_len()) {
@@ -204,7 +204,9 @@ pub fn cmp_pubkeys(a: &Pubkey, b: &Pubkey) -> bool {
     sol_memcmp(a.as_ref(), b.as_ref(), PUBKEY_BYTES) == 0
 }
 
-fn get_big_tx_from_storage(storage_acc: &AccountInfo) -> Result<evm_types::Transaction, ProgramError> {
+fn get_big_tx_from_storage(
+    storage_acc: &AccountInfo,
+) -> Result<evm_types::Transaction, ProgramError> {
     let mut bytes: &[u8] = &storage_acc.try_borrow_data().unwrap();
     msg!("Trying to deserialize tx chunks byte = {:?}", bytes);
     BorshDeserialize::deserialize(&mut bytes)
@@ -276,17 +278,14 @@ fn make_free_ownership_ix(owner: Pubkey) -> Instruction {
 }
 
 fn refund_native_fee(caller: &AccountInfo, payer: &AccountInfo, amount: u64) -> ProgramResult {
-    **payer.try_borrow_mut_lamports()? =
-        payer
-            .lamports()
-            .checked_sub(amount)
-            .ok_or(ProgramError::from(
-                GasStationError::InsufficientPayerBalance,
-            ))?;
+    **payer.try_borrow_mut_lamports()? = payer
+        .lamports()
+        .checked_sub(amount)
+        .ok_or_else(|| ProgramError::from(GasStationError::InsufficientPayerBalance))?;
     **caller.try_borrow_mut_lamports()? = caller
         .lamports()
         .checked_add(amount)
-        .ok_or(ProgramError::from(GasStationError::RefundOverflow))?;
+        .ok_or_else(|| ProgramError::from(GasStationError::RefundOverflow))?;
     Ok(())
 }
 
@@ -330,7 +329,7 @@ mod test {
             signature: evm_types::TransactionSignature {
                 v: tx.signature.v,
                 r: tx.signature.r,
-                s: tx.signature.s
+                s: tx.signature.s,
             },
             input: tx.input,
         }
@@ -352,9 +351,15 @@ mod test {
                 ..Account::default()
             },
         );
+        let mut bytes = vec![];
+        let filters = vec![TxFilter::InputStartsWith {
+            contract: evm::Address::zero(),
+            input_prefix: vec![],
+        }];
+        BorshSerialize::serialize(&filters, &mut bytes).unwrap();
         program_test.add_account(
             storage.pubkey(),
-            Account::new(10000000, 93, &program_id),
+            Account::new(10000000, bytes.len() + 64, &program_id),
         );
 
         let (mut banks_client, _, recent_blockhash) = program_test.start().await;
@@ -384,7 +389,11 @@ mod test {
         transaction.sign(&[&creator], recent_blockhash);
         banks_client.process_transaction(transaction).await.unwrap();
 
-        let account = banks_client.get_account(storage.pubkey()).await.unwrap().unwrap();
+        let account = banks_client
+            .get_account(storage.pubkey())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(account.owner, program_id);
         assert_eq!(account.lamports, 10000000);
         assert_eq!(account.data.len(), 93);
@@ -393,15 +402,21 @@ mod test {
         assert_eq!(payer.payer, payer_key);
         assert_eq!(payer.owner, creator.pubkey());
         assert_eq!(payer.filters.len(), 1);
-        assert_eq!(payer.filters[0], TxFilter::InputStartsWith {
-            contract: evm::Address::zero(),
-            input_prefix: vec![],
-        });
+        assert_eq!(
+            payer.filters[0],
+            TxFilter::InputStartsWith {
+                contract: evm::Address::zero(),
+                input_prefix: vec![],
+            }
+        );
 
         let rent = banks_client.get_rent().await.unwrap();
         let pda_account = banks_client.get_account(payer_key).await.unwrap().unwrap();
         assert_eq!(pda_account.owner, program_id);
-        assert_eq!(pda_account.lamports, rent.minimum_balance(0) + transfer_amount);
+        assert_eq!(
+            pda_account.lamports,
+            rent.minimum_balance(0) + transfer_amount
+        );
     }
 
     #[tokio::test]
@@ -1038,7 +1053,7 @@ mod test {
             signature: evm_types::TransactionSignature {
                 v: tx.signature.v,
                 r: tx.signature.r,
-                s: tx.signature.s
+                s: tx.signature.s,
             },
             input: tx.input,
         };

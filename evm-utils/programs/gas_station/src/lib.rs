@@ -5,6 +5,7 @@ pub mod instruction;
 mod processor;
 mod state;
 
+use borsh::BorshSerialize;
 use processor::process_instruction;
 use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::pubkey::Pubkey;
@@ -12,6 +13,24 @@ use solana_program::{entrypoint, system_program};
 
 // Declare and export the program's entrypoint
 entrypoint!(process_instruction);
+
+pub fn create_storage_account(
+    from_pubkey: &Pubkey,
+    to_pubkey: &Pubkey,
+    lamports: u64,
+    filters: &Vec<instruction::TxFilter>,
+    owner: &Pubkey,
+) -> Instruction {
+    let mut bytes = vec![];
+    BorshSerialize::serialize(filters, &mut bytes).unwrap();
+    solana_sdk::system_instruction::create_account(
+        from_pubkey,
+        to_pubkey,
+        lamports,
+        bytes.len() as u64 + 64,
+        owner,
+    )
+}
 
 pub fn execute_tx_with_payer(
     tx: evm_types::Transaction,

@@ -9,15 +9,6 @@ pub enum FeePayerType {
     Native,
 }
 
-impl FeePayerType {
-    pub fn is_evm(&self) -> bool {
-        *self == FeePayerType::Evm
-    }
-    pub fn is_native(&self) -> bool {
-        *self == FeePayerType::Native
-    }
-}
-
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, PartialEq, Eq)]
 pub enum EvmBigTransaction {
     /// Allocate data in storage, pay fee should be taken from EVM.
@@ -89,38 +80,4 @@ pub enum EvmInstruction {
         tx: ExecuteTransaction,
         fee_type: FeePayerType,
     },
-}
-
-impl EvmInstruction {
-    pub fn new_execute_tx(tx: Transaction, fee_type: FeePayerType) -> Self {
-        Self::ExecuteTransaction {
-            tx: ExecuteTransaction::Signed { tx: Some(tx) },
-            fee_type,
-        }
-    }
-
-    pub fn new_execute_authorized_tx(
-        tx: UnsignedTransaction,
-        from: Address,
-        fee_type: FeePayerType,
-    ) -> Self {
-        Self::ExecuteTransaction {
-            tx: ExecuteTransaction::ProgramAuthorized { tx: Some(tx), from },
-            fee_type,
-        }
-    }
-
-    pub fn new_execute_big_tx(fee_type: FeePayerType) -> Self {
-        Self::ExecuteTransaction {
-            tx: ExecuteTransaction::Signed { tx: None },
-            fee_type,
-        }
-    }
-
-    pub fn new_execute_big_authorized_tx(from: Address, fee_type: FeePayerType) -> Self {
-        Self::ExecuteTransaction {
-            tx: ExecuteTransaction::ProgramAuthorized { tx: None, from },
-            fee_type,
-        }
-    }
 }
