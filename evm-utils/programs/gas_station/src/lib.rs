@@ -1,7 +1,7 @@
 mod error;
 mod evm_loader_instructions;
 pub mod evm_types;
-mod instruction;
+pub mod instruction;
 mod processor;
 mod state;
 

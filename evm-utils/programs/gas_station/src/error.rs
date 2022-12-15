@@ -33,6 +33,8 @@ pub enum GasStationError {
     PdaAccountMismatch,
     #[error("Overflow occurred during transaction call refund")]
     RefundOverflow,
+    #[error("Functionality is not supported")]
+    NotSupported,
 }
 
 impl From<GasStationError> for ProgramError {

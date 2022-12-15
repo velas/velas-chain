@@ -124,6 +124,9 @@ fn process_execute_with_payer(
     if !tx_passed_directly && big_tx_storage_info.is_err() {
         return Err(GasStationError::BigTxStorageMissing.into());
     }
+    if !tx_passed_directly { // Big tx not supported at the moment
+        return Err(GasStationError::NotSupported.into());
+    }
 
     if !cmp_pubkeys(program_id, payer_storage_info.owner) {
         return Err(ProgramError::IncorrectProgramId);
@@ -547,7 +550,13 @@ mod test {
         ));
         let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
         transaction.sign(&[&user, &big_tx_storage], recent_blockhash);
-        banks_client.process_transaction(transaction).await.unwrap();
+        assert!(matches!(
+            banks_client
+                .process_transaction(transaction)
+                .await
+                .unwrap_err(),
+            TransactionError(InstructionError(0, Custom(14))) // NotSupported
+        ));
     }
 
     #[tokio::test]

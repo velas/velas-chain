@@ -820,21 +820,7 @@ async fn deploy_big_tx(
         .map_err(|e| into_native_error(e, bridge.verbose_errors))?
         .value;
 
-    let instructions = if let Some(val) = bridge
-        .redirect_to_proxy_filters
-        .iter()
-        .find(|val| matches!(tx.action, TransactionAction::Call(addr) if addr == val.contract))
-    {
-        vec![evm_gas_station::execute_big_tx_with_payer(
-            bridge.gas_station_program_id.unwrap(),
-            bridge.key.pubkey(),
-            val.storage_acc,
-            val.payer,
-            storage_pubkey,
-        )]
-    } else {
-        bridge.make_send_big_tx_instructions(tx, storage_pubkey, payer_pubkey)
-    };
+    let instructions = bridge.make_send_big_tx_instructions(tx, storage_pubkey, payer_pubkey);
     let execute_tx = solana::Transaction::new_signed_with_payer(
         &instructions,
         Some(&payer_pubkey),
