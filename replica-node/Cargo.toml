@@ -10,14 +10,21 @@ homepage = "https://solana.com/"
 documentation = "https://docs.rs/solana-validator"
 
 [[bin]]
-name = "triedb_repl"
-path = "src/bin/main.rs"
+name = "triedb_replica"
+path = "src/bin/triedb.rs"
+
+[[bin]]
+name = "triedb_replica_client"
+path = "src/bin/tmp_triedb_client.rs"
 
 [dependencies]
 clap = "2.33.1"
+regex = "1"
 crossbeam-channel = "0.5"
 log = "0.4.14"
 rand = "0.7.0"
+etcommon-hexutil = "0.2.4"
+evm-state = { path = "../evm-utils/evm-state" }
 solana-clap-utils = { path = "../clap-utils", version = "=1.9.29" }
 solana-download-utils = { path = "../download-utils", version = "=1.9.29" }
 solana-genesis-utils = { path = "../genesis-utils", version = "=1.9.29" }
@@ -35,6 +42,7 @@ solana-version = { path = "../version", version = "=0.6.1" }
 velas-validator = { path = "../validator", version = "=1.9.29" }
 # To run triedb_repl_client
 tokio = { version = "1.14.1", features = ["full"] }
+env_logger = "0.9"
 
 [dev-dependencies]
 serial_test = "0.5.1"

@@ -6,7 +6,6 @@ import "google/protobuf/empty.proto";
 service Backend {
   rpc ping (google.protobuf.Empty) returns (PingReply);
   rpc getRawBytes (GetRawBytesRequest) returns (GetRawBytesReply);
-  rpc getMultipleRawBytes (GetMultipleRawBytesRequest) returns (GetMultipleRawBytesReply);
   rpc getStateDiff (GetStateDiffRequest) returns (GetStateDiffReply);
 }
 
@@ -14,44 +13,28 @@ message PingReply {
   string message = 1;
 }
 
+message Hash {
+  string value = 1;
+}
+
 message GetRawBytesRequest {
-  string hash = 1;
+  Hash hash = 1;
 }
 
 message GetRawBytesReply {
-  map<string, bytes> blocks_data = 1;
-}
-
-message GetMultipleRawBytesRequest {
-  repeated string hashes = 1;
-}
-
-message GetMultipleRawBytesReply {
-  map<string, bytes> blocks_data = 1;
+  bytes node = 1;
 }
 
 message GetStateDiffRequest {
-  string first_root = 1;
-  string second_root = 2;
+  Hash first_root = 1;
+  Hash second_root = 2;
 }
 
 message Insert {
-  string hash = 1;
+  Hash hash = 1;
   bytes data = 2;
-}
-
-message Removal {
-  string hash = 1;
-  bytes data = 2;
-}
-
-message Change {
-  oneof change {
-    Insert insert = 3;
-    Removal removal = 4;
-  }
 }
 
 message GetStateDiffReply {
-  repeated Change changeset = 1;
+  repeated Insert changeset = 1;
 }

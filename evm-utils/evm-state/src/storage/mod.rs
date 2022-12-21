@@ -511,7 +511,7 @@ impl Storage {
     }
 }
 
-fn account_extractor(data: &[u8]) -> Vec<H256> {
+pub fn account_extractor(data: &[u8]) -> Vec<H256> {
     if let Ok(account) = rlp::decode::<Account>(data) {
         vec![account.storage_root]
     } else {
