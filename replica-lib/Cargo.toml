@@ -27,8 +27,8 @@ evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
 primitive-types = "0.8.0"
 rocksdb = { git = "https://github.com/velas/rust-rocksdb", branch = "transaction", version = "0.17.0", default-features = false }
-triedb = { git = "https://github.com/raventid/triedb.git", branch = "state-diff", features = ["rocksdb"] }
-# triedb = { path = "../../forks/triedb"}
+
+triedb = { git = "https://github.com/velas/triedb.git", branch = "master", features = ["rocksdb"] }
 
 # Additional deps for triedb_repl_client
 serde_json = "1.0.82"
