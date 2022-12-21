@@ -56,7 +56,7 @@ solana-frozen-abi-macro = { path = "../frozen-abi/macro", version = "=1.9.29" }
 solana-send-transaction-service = { path = "../send-transaction-service", version = "=1.9.29" }
 solana-streamer = { path = "../streamer", version = "=1.9.29" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.9.29" }
-solana-version = { path = "../version", version = "=0.6.0" }
+solana-version = { path = "../version", version = "=0.6.1" }
 solana-vote-program = { path = "../programs/vote", version = "=1.9.29" }
 tempfile = "3.2.0"
 thiserror = "1.0"
@@ -67,7 +67,7 @@ tokio = { version = "~1.14.1", features = ["full"] }
 hex = "0.4.2"
 rlp = "0.5"
 sha3 = "0.9.1"
-primitive-types = "0.8.0"
+primitive-types = "0.11.0"
 secp256k1 = { version = "0.19.0", features = ["recovery", "global-context"] }
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
@@ -90,7 +90,7 @@ serde_json = "1.0.72"
 serial_test = "0.5.1"
 solana-program-runtime = { path = "../program-runtime", version = "=1.9.29" }
 solana-stake-program = { path = "../programs/stake", version = "=1.9.29" }
-solana-version = { path = "../version", version = "=0.6.0" }
+solana-version = { path = "../version", version = "=0.6.1" }
 static_assertions = "1.1.0"
 systemstat = "0.1.10"
 

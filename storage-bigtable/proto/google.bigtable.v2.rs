@@ -261,7 +261,7 @@ pub mod row_filter {
         /// If multiple cells are produced with the same column and timestamp,
         /// they will all appear in the output row in an unspecified mutual order.
         /// Consider the following example, with three filters:
-        ///
+        ///```text
         ///                                  input row
         ///                                      |
         ///            -----------------------------------------------------
@@ -279,7 +279,7 @@ pub mod row_filter {
         ///     4:                      far,bar,7,a
         ///     5:                      far,blah,5,x   // identical to #6
         ///     6:                      far,blah,5,x   // identical to #5
-        ///
+        ///```
         /// All interleaved filters are executed atomically.
         #[prost(message, repeated, tag="1")]
         pub filters: ::prost::alloc::vec::Vec<super::RowFilter>,
@@ -327,7 +327,7 @@ pub mod row_filter {
         /// Hook for introspection into the RowFilter. Outputs all cells directly to
         /// the output of the read rather than to any parent filter. Consider the
         /// following example:
-        ///
+        ///```text
         ///     Chain(
         ///       FamilyRegex("A"),
         ///       Interleave(
@@ -369,7 +369,7 @@ pub mod row_filter {
         ///                         A,A,1,w,labels:\[foo\]
         ///                         A,B,2,x,labels:\[foo\]  // could be switched
         ///                         A,B,2,x               // could be switched
-        ///
+        ///```
         /// Despite being excluded by the qualifier filter, a copy of every cell
         /// that reaches the sink is present in the final result.
         ///
@@ -947,13 +947,13 @@ pub mod bigtable_client {
         /// error.
         #[must_use]
         pub fn send_gzip(mut self) -> Self {
-            self.inner = self.inner.send_gzip();
+            self.inner = self.inner.send_compressed(CompressionEncoding::Gzip);
             self
         }
         /// Enable decompressing responses with `gzip`.
         #[must_use]
         pub fn accept_gzip(mut self) -> Self {
-            self.inner = self.inner.accept_gzip();
+            self.inner = self.inner.accept_compressed(CompressionEncoding::Gzip);
             self
         }
         /// Streams back the contents of all requested rows in key order, optionally

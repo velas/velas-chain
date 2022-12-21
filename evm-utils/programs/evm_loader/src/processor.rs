@@ -65,6 +65,7 @@ impl EvmProcessor {
         let borsh_serialization_enabled = invoke_context
             .feature_set
             .is_active(&solana_sdk::feature_set::velas::evm_instruction_borsh_serialization::id());
+
         let cross_execution = invoke_context.get_stack_height() != 1;
 
         if cross_execution && !cross_execution_enabled {
@@ -187,6 +188,7 @@ impl EvmProcessor {
         borsh_used: bool,
     ) -> Result<(), EvmError> {
         let is_big = tx.is_big();
+        let keep_old_errors = true;
         // TODO: Add logic for fee collector
         let (sender, _fee_collector) = if is_big {
             (accounts.users.get(1), accounts.users.get(2))
@@ -200,8 +202,19 @@ impl EvmProcessor {
             return Err(EvmError::MissingRequiredSignature);
         }
 
+        fn precompile_set(
+            support_precompile: bool,
+            evm_new_precompiles: bool,
+        ) -> precompiles::PrecompileSet {
+            match (support_precompile, evm_new_precompiles) {
+                (false, _) => precompiles::PrecompileSet::No,
+                (true, false) => precompiles::PrecompileSet::VelasClassic,
+                (true, true) => precompiles::PrecompileSet::VelasNext,
+            }
+        }
+
         let withdraw_fee_from_evm = fee_type.is_evm();
-        let tx_gas_price;
+        let mut tx_gas_price;
         let result = match tx {
             ExecuteTransaction::Signed { tx } => {
                 let tx = match tx {
@@ -217,10 +230,16 @@ impl EvmProcessor {
                     tx.action
                 );
                 tx_gas_price = tx.gas_price;
+                let activate_precompile = precompile_set(
+                    executor.support_precompile(),
+                    invoke_context
+                        .feature_set
+                        .is_active(&solana_sdk::feature_set::velas::evm_new_precompiles::id()),
+                );
                 executor.transaction_execute(
                     tx,
                     withdraw_fee_from_evm,
-                    precompiles::entrypoint(accounts, executor.support_precompile()),
+                    precompiles::entrypoint(accounts, activate_precompile, keep_old_errors),
                 )
             }
             ExecuteTransaction::ProgramAuthorized { tx, from } => {
@@ -250,11 +269,17 @@ impl EvmProcessor {
                     tx.action
                 );
                 tx_gas_price = tx.gas_price;
+                let activate_precompile = precompile_set(
+                    executor.support_precompile(),
+                    invoke_context
+                        .feature_set
+                        .is_active(&solana_sdk::feature_set::velas::evm_new_precompiles::id()),
+                );
                 executor.transaction_execute_unsinged(
                     from,
                     tx,
                     withdraw_fee_from_evm,
-                    precompiles::entrypoint(accounts, executor.support_precompile()),
+                    precompiles::entrypoint(accounts, activate_precompile, keep_old_errors),
                 )
             }
         };
@@ -262,6 +287,14 @@ impl EvmProcessor {
         if executor.feature_set.is_unsigned_tx_fix_enabled() && is_big {
             let storage = Self::get_big_transaction_storage(invoke_context, &accounts)?;
             self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
+        }
+        if executor
+            .feature_set
+            .is_accept_zero_gas_price_with_native_fee_enabled()
+            && fee_type.is_native()
+            && tx_gas_price.is_zero()
+        {
+            tx_gas_price = executor.config().burn_gas_price;
         }
         self.handle_transaction_result(
             executor,
@@ -583,10 +616,32 @@ impl EvmProcessor {
         result: Result<evm_state::ExecutionResult, evm_state::error::Error>,
         withdraw_fee_from_evm: bool,
     ) -> Result<(), EvmError> {
-        let result = result.map_err(|e| {
+        let remove_native_logs_after_swap = true;
+        let mut result = result.map_err(|e| {
             ic_msg!(invoke_context, "Transaction execution error: {}", e);
             EvmError::InternalExecutorError
         })?;
+
+        if remove_native_logs_after_swap {
+            executor.modify_tx_logs(result.tx_id, |logs| {
+                if let Some(logs) = logs {
+                    precompiles::filter_native_logs(accounts, logs).map_err(|e| {
+                        ic_msg!(invoke_context, "Filter native logs error: {}", e);
+                        EvmError::PrecompileError
+                    })?;
+                } else {
+                    ic_msg!(invoke_context, "Unable to find tx by txid");
+                    return Err(EvmError::PrecompileError);
+                }
+                Ok(())
+            })?;
+        } else {
+            // same logic, but don't save result to block
+            precompiles::filter_native_logs(accounts, &mut result.tx_logs).map_err(|e| {
+                ic_msg!(invoke_context, "Filter native logs error: {}", e);
+                EvmError::PrecompileError
+            })?;
+        }
 
         write!(
             crate::solana_extension::MultilineLogger::new(invoke_context.get_log_collector()),
@@ -806,6 +861,8 @@ mod test {
                         .is_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id()),
                     self.feature_set
                         .is_active(&solana_sdk::feature_set::velas::clear_logs_on_error::id()),
+                    self.feature_set
+                        .is_active(&solana_sdk::feature_set::velas::accept_zero_gas_price_with_native_fee::id()),
                 ),
             );
 
@@ -2255,7 +2312,6 @@ mod test {
 
         let user_id = Pubkey::new_unique();
         let gas_price: U256 = evm::BURN_GAS_PRICE.into();
-        let user_evm_address = crate::evm_address_for_program(user_id);
         evm_context
             .native_account(user_id)
             .borrow_mut()
@@ -2282,7 +2338,7 @@ mod test {
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
@@ -2300,11 +2356,11 @@ mod test {
         let burn_fee =
             gweis_to_lamports(U256::from(tx.used_gas) * U256::from(evm_state::BURN_GAS_PRICE));
 
-        // EVM balance hasn't decreased
+        // EVM balance is still zero
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
@@ -2334,7 +2390,6 @@ mod test {
         let dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
-        let user_evm_address = crate::evm_address_for_program(user_id);
         evm_context
             .native_account(user_id)
             .borrow_mut()
@@ -2356,7 +2411,7 @@ mod test {
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
@@ -2377,10 +2432,9 @@ mod test {
 
         let mut rand = evm_state::rand::thread_rng();
         let dummy_key = evm::SecretKey::new(&mut rand);
-        let _dummy_address = dummy_key.to_address();
+        let dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
-        let user_evm_address = crate::evm_address_for_program(user_id);
         evm_context
             .native_account(user_id)
             .borrow_mut()
@@ -2402,7 +2456,7 @@ mod test {
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
@@ -2415,7 +2469,7 @@ mod test {
 
         evm_context.process_instruction(ix).unwrap_err();
 
-        // Native balance refunded
+        // Native balance is unchanged
         assert_eq!(
             user_balance_before,
             evm_context
@@ -2440,8 +2494,6 @@ mod test {
         let dummy_address = dummy_key.to_address();
 
         let user_id = Pubkey::new_unique();
-        let user_evm_address = crate::evm_address_for_program(user_id);
-        // evm_context.native_account(user_id).borrow_mut().set_lamports(30000000000u64);
         let unsigned_tx = evm::UnsignedTransaction {
             nonce: 0.into(),
             gas_price: 100000.into(),
@@ -2459,17 +2511,20 @@ mod test {
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
 
-        let user_balance_before = evm_context
-            .native_account(user_id)
-            .try_borrow()
-            .unwrap()
-            .lamports();
-        // Ix should fail because no sender found
+        assert_eq!(
+            0,
+            evm_context
+                .native_account(user_id)
+                .try_borrow()
+                .unwrap()
+                .lamports()
+        );
+        // Ix should fail because user has insufficient funds
         evm_context.process_instruction(ix).unwrap_err();
 
         let executor = &evm_context.evm_state;
@@ -2477,12 +2532,12 @@ mod test {
         assert_eq!(
             U256::from(0),
             executor
-                .get_account_state(user_evm_address)
+                .get_account_state(dummy_address)
                 .unwrap_or_default()
                 .balance
         );
         assert_eq!(
-            user_balance_before,
+            0,
             evm_context
                 .native_account(user_id)
                 .try_borrow()

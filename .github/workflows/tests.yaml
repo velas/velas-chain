@@ -17,7 +17,7 @@ jobs:
       - name: install dependencies
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive  apt-get -q -y install curl git libssl-dev libudev-dev make cmake pkg-config zlib1g-dev llvm clang
+          DEBIAN_FRONTEND=noninteractive  apt-get -q -y install curl git libssl-dev libudev-dev make cmake pkg-config zlib1g-dev llvm clang protobuf-compiler
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -37,7 +37,7 @@ jobs:
       - name: install dependencies
         run: |
           sudo apt-get update
-          DEBIAN_FRONTEND=noninteractive sudo apt-get -q -y install curl git libssl-dev libudev-dev make cmake pkg-config zlib1g-dev llvm clang
+          DEBIAN_FRONTEND=noninteractive sudo apt-get -q -y install curl git libssl-dev libudev-dev make cmake pkg-config zlib1g-dev llvm clang protobuf-compiler
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -51,5 +51,20 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: -j 16 --no-fail-fast
+          args: --workspace --exclude solana-local-cluster -j 16 --no-fail-fast
+      - name: Run Local cluster tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: -p solana-local-cluster --test local_cluster -j 16 --no-fail-fast
+      - name: Run Local cluster flakey tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: -p solana-local-cluster --test local_cluster_flakey -j 16 --no-fail-fast
+      - name: Run Local cluster slow tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: -p solana-local-cluster --test local_cluster_slow -j 16 --no-fail-fast
 

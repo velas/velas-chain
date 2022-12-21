@@ -18,7 +18,7 @@ ctrlc = { version = "3.1.5", features = ["termination"] }
 dirs-next = "2.0.0"
 indexmap = "1.5.1"
 indicatif = "0.15.0"
-pickledb = "0.4.1"
+pickledb = { version = "0.5.1", features = ["yaml"] }
 serde = { version = "1.0", features = ["derive"] }
 solana-account-decoder = { path = "../account-decoder", version = "=1.9.29" }
 solana-clap-utils = { path = "../clap-utils", version = "=1.9.29" }
@@ -29,7 +29,7 @@ solana-runtime = { path = "../runtime", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-stake-program = { path = "../programs/stake", version = "=1.9.29" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.9.29" }
-solana-version = { path = "../version", version = "=0.6.0" }
+solana-version = { path = "../version", version = "=0.6.1" }
 spl-associated-token-account-v1-0 = { package = "spl-associated-token-account", version = "=1.0.3" }
 spl-token-v2-0 = { package = "spl-token", version = "=3.2.0", features = ["no-entrypoint"] }
 tempfile = "3.1.0"

@@ -31,7 +31,7 @@ solana-runtime = { path = "../runtime", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-send-transaction-service = { path = "../send-transaction-service", version = "=1.9.29" }
 solana-streamer = { path = "../streamer", version = "=1.9.29" }
-solana-version = { path = "../version", version = "=0.6.0" }
+solana-version = { path = "../version", version = "=0.6.1" }
 velas-validator = { path = "../validator", version = "=1.9.29" }
 # To run triedb_repl_client
 tokio = { version = "1.14.1", features = ["full"] }
@@ -47,4 +47,4 @@ tempfile = "3.2.0"
 targets = ["x86_64-unknown-linux-gnu"]
 
 [build-dependencies]
-tonic-build = "0.7.0"
+tonic-build = "0.8.0"

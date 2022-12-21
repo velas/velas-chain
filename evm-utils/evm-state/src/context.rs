@@ -284,6 +284,10 @@ where
         self.config.gas_limit.into()
     }
 
+    fn block_base_fee_per_gas(&self) -> U256 {
+        U256::zero()
+    }
+
     fn chain_id(&self) -> U256 {
         self.config.chain_id.into()
     }

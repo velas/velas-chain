@@ -323,16 +323,18 @@ impl Storage {
             "Cannot merge from db with rc counters"
         );
         info!("Iterating over storage");
-        for (k, v) in other_db.db.full_iterator(rocksdb::IteratorMode::Start) {
+        for item in other_db.db.full_iterator(rocksdb::IteratorMode::Start) {
+            let (k, v) = item?;
             self.db.put(&k, &v)?
         }
         info!("Iterating over codes");
         // copy all codes
         let cf = self.cf::<Codes>();
-        for (k, v) in other_db
+        for item in other_db
             .db
             .full_iterator_cf(cf, rocksdb::IteratorMode::Start)
         {
+            let (k, v) = item?;
             self.db.put_cf(cf, &k, &v)?
         }
         // TODO: make it possible to merge reference counters?
@@ -462,7 +464,8 @@ impl Storage {
         let slots_cf = self.cf::<SlotsRoots>();
         let mut collect_slots = vec![];
         let mut cleanup_roots = vec![];
-        for (k, _v) in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
+        for item in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
+            let (k, _v) = item?;
             let mut slot_arr = [0; 8];
             slot_arr.copy_from_slice(&k[0..8]);
             let slot = u64::from_be_bytes(slot_arr);
@@ -490,19 +493,21 @@ impl Storage {
             .rocksdb_trie_handle()
             .gc_cleanup_layer(removes, account_extractor))
     }
-    pub fn list_roots(&self) {
+    pub fn list_roots(&self) -> Result<()> {
         if !self.gc_enabled {
             println!("Gc is not enabled");
-            return;
+            return Ok(());
         }
         let slots_cf = self.cf::<SlotsRoots>();
-        for (k, v) in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
+        for item in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
+            let (k, v) = item?;
             let mut slot_arr = [0; 8];
             slot_arr.copy_from_slice(&k[0..8]);
             let slot = u64::from_be_bytes(slot_arr);
 
             println!("Found root for slot: {} => {:?}", slot, hex::encode(&v))
         }
+        Ok(())
     }
 }
 
@@ -724,7 +729,8 @@ pub mod cleaner {
             {
                 let mut batch = rocksdb::WriteBatchWithTransaction::<true>::default();
 
-                for (key, _data) in db.iterator(rocksdb::IteratorMode::Start) {
+                for item in db.iterator(rocksdb::IteratorMode::Start) {
+                    let (key, _data) = item?;
                     let key =
                         <H256 as super::inspectors::encoding::TryFromSlice>::try_from_slice(&key)?;
                     if trie_nodes.trie_keys.contains(&key) {
@@ -747,7 +753,8 @@ pub mod cleaner {
                     .ok_or_else(|| anyhow!("Codes Column Family '{}' not found", column_name))?;
                 let mut batch = rocksdb::WriteBatchWithTransaction::<true>::default();
 
-                for (key, _data) in db.iterator_cf(codes_cf, rocksdb::IteratorMode::Start) {
+                for item in db.iterator_cf(codes_cf, rocksdb::IteratorMode::Start) {
+                    let (key, _data) = item?;
                     let code_hash = rlp::decode(&key)?; // NOTE: keep in sync with ::storage mod
                     if self.accounts.code_hashes.contains(&code_hash) {
                         continue; // skip this key
@@ -766,7 +773,8 @@ pub mod cleaner {
                 if let Some(counters_cf) = db.cf_handle(column_name) {
                     let mut batch = rocksdb::WriteBatchWithTransaction::<true>::default();
 
-                    for (key, _data) in db.iterator_cf(counters_cf, rocksdb::IteratorMode::Start) {
+                    for item in db.iterator_cf(counters_cf, rocksdb::IteratorMode::Start) {
+                        let (key, _data) = item?;
                         let key =
                             <H256 as super::inspectors::encoding::TryFromSlice>::try_from_slice(
                                 &key,

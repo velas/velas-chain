@@ -1,9 +1,12 @@
 mod middleware;
 mod pool;
 mod rpc_client;
+mod tx_filter;
 
 use log::*;
+use std::fs::File;
 use std::future::ready;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,10 +30,17 @@ use jsonrpc_http_server::*;
 use snafu::ResultExt;
 
 use derivative::*;
+use solana_evm_loader_program::instructions::FeePayerType;
 use solana_evm_loader_program::scope::*;
 use solana_sdk::{
-    clock::MS_PER_TICK, fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE, pubkey::Pubkey,
-    signers::Signers, transaction::TransactionError,
+    clock::MS_PER_TICK,
+    fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE,
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+    signer::Signer,
+    signers::Signers,
+    system_instruction,
+    transaction::TransactionError,
 };
 
 use solana_client::{
@@ -58,6 +68,7 @@ use pool::{
     SystemClock,
 };
 use rpc_client::AsyncRpcClient;
+use tx_filter::TxFilter;
 
 use rlp::Encodable;
 use secp256k1::Message;
@@ -178,6 +189,7 @@ pub struct EvmBridge {
     max_logs_blocks: u64,
     pool: EthPool<SystemClock>,
     min_gas_price: U256,
+    whitelist: Vec<TxFilter>,
 }
 
 impl EvmBridge {
@@ -224,7 +236,12 @@ impl EvmBridge {
             max_logs_blocks,
             pool,
             min_gas_price,
+            whitelist: vec![],
         }
+    }
+
+    fn set_whitelist(&mut self, whitelist: Vec<TxFilter>) {
+        self.whitelist = whitelist;
     }
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
@@ -248,10 +265,9 @@ impl EvmBridge {
             Err(txpool::Error::AlreadyImported(h)) => return Ok(Hex(h)),
             Ok(tx) => tx,
             Err(source) => {
-                warn!("Could not import tx to the pool");
-                return Err(evm_rpc::Error::RuntimeError {
-                    details: format!("Mempool error: {:?}", source),
-                });
+                let details = format!("{source}");
+                warn!("{}", &details);
+                return Err(evm_rpc::Error::MempoolImport { details });
             }
         };
 
@@ -305,6 +321,82 @@ impl EvmBridge {
             Some(b) => Some(b),
             None => is_signature_exists(self, hash).await,
         }
+    }
+
+    fn make_send_tx_instructions(
+        &self,
+        tx: &Transaction,
+        meta_keys: &HashSet<Pubkey>,
+    ) -> Vec<Instruction> {
+        let mut native_fee_used = false;
+        let mut ix = if self.borsh_encoding {
+            let mut fee_type = FeePayerType::Evm;
+            if self.should_pay_for_gas(tx) {
+                fee_type = FeePayerType::Native;
+                native_fee_used = true;
+                info!("Using Native fee for tx: {}", tx.tx_id_hash());
+            }
+            solana_evm_loader_program::send_raw_tx(
+                self.key.pubkey(),
+                tx.clone(),
+                Some(self.key.pubkey()),
+                fee_type,
+            )
+        } else {
+            solana_evm_loader_program::send_raw_tx_old(
+                self.key.pubkey(),
+                tx.clone(),
+                Some(self.key.pubkey()),
+            )
+        };
+
+        // Add meta accounts as additional arguments
+        for account in meta_keys {
+            ix.accounts.push(AccountMeta::new(*account, false))
+        }
+
+        if native_fee_used {
+            vec![
+                system_instruction::assign(&self.key.pubkey(), &solana_sdk::evm_loader::ID),
+                ix,
+                solana_evm_loader_program::free_ownership(self.key.pubkey()),
+            ]
+        } else {
+            vec![ix]
+        }
+    }
+
+    fn make_send_big_tx_instructions(
+        &self,
+        tx: &Transaction,
+        storage_pubkey: Pubkey,
+        payer_pubkey: Pubkey,
+    ) -> Vec<Instruction> {
+        let mut native_fee_used = false;
+        let ix = if self.borsh_encoding {
+            let mut fee_type = FeePayerType::Evm;
+            if self.should_pay_for_gas(tx) {
+                fee_type = FeePayerType::Native;
+                native_fee_used = true;
+                info!("Using Native fee for tx: {}", tx.tx_id_hash());
+            }
+            solana_evm_loader_program::big_tx_execute(storage_pubkey, Some(&payer_pubkey), fee_type)
+        } else {
+            solana_evm_loader_program::big_tx_execute_old(storage_pubkey, Some(&payer_pubkey))
+        };
+        if native_fee_used {
+            vec![
+                system_instruction::assign(&self.key.pubkey(), &solana_sdk::evm_loader::ID),
+                ix,
+                solana_evm_loader_program::free_ownership(self.key.pubkey()),
+            ]
+        } else {
+            vec![ix]
+        }
+    }
+
+    fn should_pay_for_gas(&self, tx: &Transaction) -> bool {
+        !self.whitelist.is_empty() && self.whitelist.iter().any(|f| f.is_match(tx))
     }
 }
 
@@ -921,6 +1013,9 @@ struct Args {
 
     #[structopt(long = "jaeger-collector-url", short = "j")]
     jaeger_collector_url: Option<String>,
+
+    #[structopt(long = "whitelist-path")]
+    whitelist_path: Option<String>,
 }
 
 impl Args {
@@ -996,7 +1091,14 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         registry.try_init().unwrap();
     }
 
-    let meta = EvmBridge::new(
+    let mut whitelist = vec![];
+    if let Some(path) = args.whitelist_path.map(PathBuf::from) {
+        let file = File::open(path).unwrap();
+        whitelist = serde_json::from_reader(file).unwrap();
+        info!("Got whitelist: {:?}", whitelist);
+    }
+
+    let mut meta = EvmBridge::new(
         args.evm_chain_id,
         &keyfile_path,
         vec![evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap()],
@@ -1007,6 +1109,7 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         args.max_logs_blocks,
         min_gas_price,
     );
+    meta.set_whitelist(whitelist);
     let meta = Arc::new(meta);
 
     let mut io = MetaIoHandler::with_middleware(ProxyMiddleware {});
@@ -1179,6 +1282,7 @@ mod tests {
             max_logs_blocks: 0u64,
             pool: EthPool::new(SystemClock),
             min_gas_price: 0.into(),
+            whitelist: vec![],
         });
 
         let rpc = BridgeErpcImpl {};

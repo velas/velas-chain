@@ -22,7 +22,6 @@ use evm_rpc::FormatHex;
 use evm_state::rand::Rng;
 use evm_state::*;
 
-use triedb::state_diff::DiffFinder;
 
 use app_grpc::backend_server::{Backend, BackendServer};
 use app_grpc::PingReply;
@@ -247,28 +246,31 @@ impl Backend for TriedbReplServer {
         info!("Second root is: {:?}", end_state_root);
 
         let db_handle = self.storage.read().map_err(|_| Status::internal("Database connection failure"))?;
-        let async_cached_handle = triedb::gc::testing::AsyncCachedDatabaseHandle::new(db_handle.db());
+        let async_cached_handle = triedb::rocksdb::AsyncRocksDatabaseHandle::new(db_handle.db());
 
-        let ach = triedb::gc::testing::AsyncCachedHandle::new(async_cached_handle);
+        let ach = triedb::rocksdb::AsyncRocksHandle::new(async_cached_handle);
 
-        let diff_finder = DiffFinder::new(ach, start_state_root, end_state_root, |child| { vec![] });
-        let changeset = diff_finder.get_changeset(start_state_root, end_state_root).map_err(|_| Status::internal("Cannot calculate diff between states"))?;
+        let changeset = triedb::diff(
+            &ach,
+            |child| { vec![] },
+            start_state_root,
+            end_state_root,
+        )
+        .map_err(|_| Status::internal("Cannot calculate diff between states"))?;
 
         let mut reply_changeset = vec![];
 
         for change in changeset {
             match change {
-                triedb::state_diff::Change::Insert(hash, data) => {
+                triedb::DiffChange::Insert(hash, data) => {
                     let raw_insert = app_grpc::Insert { hash: hash.to_string(), data: data };
                     let insert = app_grpc::change::Change::Insert(raw_insert);
                     let change = app_grpc::Change { change: Some(insert) };
                     reply_changeset.push(change);
                 },
-                triedb::state_diff::Change::Removal(hash, data) => {
-                    let removal = app_grpc::Removal { hash: hash.to_string(), data: data };
-                    let removal = app_grpc::change::Change::Removal(removal);
-                    let change = app_grpc::Change { change: Some(removal) };
-                    reply_changeset.push(change);
+                triedb::DiffChange::Removal(hash, data) => {
+                    // skip
+                    // no need to transfer it over the wire
                 },
             }
         }

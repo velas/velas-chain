@@ -177,7 +177,7 @@ impl DefaultSigner {
                     std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!(
-                        "No default signer found, run \"solana-keygen new -o {}\" to create a new one",
+                        "No default signer found, run \"velas-keygen new -o {}\" to create a new one",
                         self.path
                     ),
                     )
@@ -899,7 +899,7 @@ pub fn resolve_signer_from_path(
                 std::io::ErrorKind::Other,
                 format!(
                     "could not read keypair file \"{}\". \
-                    Run \"solana-keygen new\" to create a keypair file: {}",
+                    Run \"velas-keygen new\" to create a keypair file: {}",
                     path, e
                 ),
             )
@@ -1022,7 +1022,7 @@ pub fn keypair_from_path(
                 std::io::ErrorKind::Other,
                 format!(
                     "could not read keypair file \"{}\". \
-                    Run \"solana-keygen new\" to create a keypair file: {}",
+                    Run \"velas-keygen new\" to create a keypair file: {}",
                     path, e
                 ),
             )

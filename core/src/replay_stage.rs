@@ -14,8 +14,8 @@ use {
         consensus::{
             ComputedBankState, Stake, SwitchForkDecision, Tower, VotedStakes, SWITCH_FORK_THRESHOLD,
         },
-	evm_services::{EvmRecorderSender, EvmStateRecorderSender},
         cost_update_service::CostUpdate,
+        evm_services::{EvmRecorderSender, EvmStateRecorderSender},
         fork_choice::{ForkChoice, SelectVoteAndResetForkResult},
         heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
         latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
@@ -2255,8 +2255,8 @@ impl ReplayStage {
                 Self::record_evm_block(
                     &bank,
                     rpc_subscriptions,
-                    evm_block_recorder_sender,
-                    evm_state_recorder_sender,
+                    evm_block_recorder_sender.as_ref(),
+                    evm_state_recorder_sender.as_ref(),
                 );
                 Self::record_rewards(&bank, rewards_recorder_sender);
                 if let Some(ref block_metadata_notifier) = block_metadata_notifier {
@@ -3018,27 +3018,15 @@ impl ReplayStage {
     fn record_evm_block(
         bank: &Bank,
         subscriptions: &Arc<RpcSubscriptions>,
-        evm_block_recorder_sender: &Option<EvmRecorderSender>,
-        evm_state_recorder_sender: &Option<EvmStateRecorderSender>,
+        evm_block_recorder_sender: Option<&EvmRecorderSender>,
+        evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
     ) {
-        if let Some(evm_block_recorder_sender) = evm_block_recorder_sender {
-            let block = bank.evm_block();
-            if let Some(block) = block {
-                subscriptions.notify_evm_block(block.clone());
-                evm_block_recorder_sender
-                    .send(block)
-                    .unwrap_or_else(|err| warn!("evm_block_recorder_sender failed: {:?}", err));
-            }
-        }
-
-        if let Some(evm_state_recorder_sender) = evm_state_recorder_sender {
-            let state = bank.evm_state_change();
-            if let Some(state) = state {
-                evm_state_recorder_sender
-                    .send(state)
-                    .unwrap_or_else(|err| warn!("evm_state_recorder_sender failed: {:?}", err));
-            }
-        }
+        solana_ledger::blockstore_processor::record_evm_block(
+            bank,
+            evm_block_recorder_sender,
+            evm_state_recorder_sender,
+            |block| subscriptions.notify_evm_block(block.clone()),
+        );
     }
 
     pub fn get_unlock_switch_vote_slot(cluster_type: ClusterType) -> Slot {

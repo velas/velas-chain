@@ -47,8 +47,8 @@ pub fn start_triedb_repl() {
     use std::path::PathBuf;
     let archive_path = PathBuf::from("./tmp-ledger-path/archive");
 
-    let config = triedb_repl_server::StateRpcServiceConfig::from_str_addr_and_thread_number("0.0.0.0:8888".to_string(), 2, archive_path);
-    let backend_server = triedb_repl_server::TriedbReplServer::new_backend_server(&config);
+    let config = triedb_repl_server::StateRpcServiceConfig::from_addr_and_thread_pool_size("0.0.0.0:8888".to_string(), 2, archive_path).unwrap();
+    let backend_server = triedb_repl_server::TriedbReplServer::new_backend_server(&config).unwrap();
     println!("starting the thread");
-    triedb_repl_server::TriedbReplService::new(config, backend_server.into()).join();
+    triedb_repl_server::TriedbReplService::new(config, backend_server.into()).unwrap().join();
 }

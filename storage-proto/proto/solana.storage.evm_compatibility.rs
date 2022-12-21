@@ -139,5 +139,6 @@ pub mod exit_reason {
         PcUnderflow = 18,
         CreateEmpty = 19,
         Other = 20,
+        InvalidCode = 21,
     }
 }

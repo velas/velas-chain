@@ -7,7 +7,7 @@
 //!   information on the additional steps to follow can be found at:
 //!   <https://spl.solana.com/feature-proposal#feature-proposal-life-cycle>
 //!
-//! 1. Generate a new keypair with `solana-keygen new --outfile feature.json --no-passphrase`
+//! 1. Generate a new keypair with `velas-keygen new --outfile feature.json --no-passphrase`
 //!    - Keypairs should be held by core contributors only. If you're a non-core contirbutor going
 //!      through these steps, the PR process will facilitate a keypair holder being picked. That
 //!      person will generate the keypair, provide pubkey for PR, and ultimately enable the feature.
@@ -423,6 +423,14 @@ pub mod velas {
     pub mod evm_instruction_borsh_serialization {
         solana_sdk::declare_id!("9NUVkN3PYJXz6z8cUgtGHYWd1CmcYF7ci3a552rASPQw");
     }
+
+    pub mod evm_new_precompiles {
+        solana_sdk::declare_id!("4NLsdp3QnxQaERdfVqSMDczFQLeLokqGXBWpp1EJVLme");
+    }
+
+    pub mod accept_zero_gas_price_with_native_fee {
+        solana_sdk::declare_id!("H4xTVSJMFSzWSoi6JuunAJSn8EJxHtJHWYDb3yDpuvU3");
+    }
 }
 lazy_static! {
     /// Map of feature identifiers to user-visible description
@@ -534,6 +542,7 @@ lazy_static! {
             (velas::clear_logs_on_error::id(), "Clear logs from receipt if transaction is failed or reverted."),
             (velas::disable_durable_nonce::id(), "Disable durable nonce."),
             (velas::evm_instruction_borsh_serialization::id(), "Support for Borsh serialization for EVM instructions."),
+            (velas::accept_zero_gas_price_with_native_fee::id(), "Accept evm transactions with native fee and zero gas price."),
             /*************** ADD NEW FEATURES HERE ***************/
         ]
     ).collect();

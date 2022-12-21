@@ -13,20 +13,20 @@ documentation = "https://docs.rs/solana-validator"
 crossbeam-channel = "0.5"
 futures-util = "0.3"
 log = "0.4.11"
-prost = "0.10.0"
+prost = "0.11.0"
 solana-rpc = { path = "../rpc", version = "=1.9.29" }
 solana-runtime = { path = "../runtime", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-client = { path = "../client", version = "=1.9.29" }
 tokio = { version = "1.14.1", features = ["full"] }
-tonic = { version = "0.7.1", features = ["tls", "transport"] }
+tonic = { version = "0.8.1", features = ["tls", "transport", "gzip"] }
 
 # Additional deps for triedb_repl_server
 derive_more = "0.99.11"
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
 primitive-types = "0.8.0"
-rocksdb = { git = "https://github.com/velas/rust-rocksdb", branch = "transaction", version = "0.17.0", default-features = false }
+rocksdb = { git = "https://github.com/velas/rust-rocksdb", version = "0.19.0", default-features = false }
 
 triedb = { git = "https://github.com/velas/triedb.git", branch = "master", features = ["rocksdb"] }
 
@@ -38,4 +38,4 @@ serde_json = "1.0.82"
 targets = ["x86_64-unknown-linux-gnu"]
 
 [build-dependencies]
-tonic-build = "0.7.0"
+tonic-build = "0.8.0"

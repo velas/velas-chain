@@ -11,7 +11,7 @@ here="$(dirname "$0")"
 # shellcheck source=ci/semver_bash/semver.sh
 source "$here"/semver_bash/semver.sh
 
-remote=https://github.com/solana-labs/solana.git
+remote=https://github.com/velas/velas-chain.git
 
 # Fetch all vX.Y.Z tags
 #
@@ -19,67 +19,67 @@ remote=https://github.com/solana-labs/solana.git
 #
 # shellcheck disable=SC2207
 tags=( \
-  $(git ls-remote --tags $remote \
-    | cut -c52- \
-    | grep '^v[[:digit:]][[:digit:]]*\.[[:digit:]][[:digit:]]*.[[:digit:]][[:digit:]]*$' \
-    | cut -c2- \
-  ) \
+    $(git ls-remote --tags $remote \
+        | cut -c52- \
+        | grep '^v[[:digit:]][[:digit:]]*\.[[:digit:]][[:digit:]]*.[[:digit:]][[:digit:]]*$' \
+        | cut -c2- \
+    ) \
 )
 
 # Fetch all the vX.Y branches
 #
 # shellcheck disable=SC2207
 heads=( \
-  $(git ls-remote --heads $remote \
-    | cut -c53- \
-    | grep '^v[[:digit:]][[:digit:]]*\.[[:digit:]][[:digit:]]*$' \
-    | cut -c2- \
-  ) \
+    $(git ls-remote --heads $remote \
+        | cut -c53- \
+        | grep '^v[[:digit:]][[:digit:]]*\.[[:digit:]][[:digit:]]*$' \
+        | cut -c2- \
+    ) \
 )
 
 # Figure the beta channel by looking for the largest vX.Y branch
 beta=
 for head in "${heads[@]}"; do
-  if [[ -n $beta ]]; then
-    if semverLT "$head.0" "$beta.0"; then
-      continue
+    if [[ -n $beta ]]; then
+        if semverLT "$head.0" "$beta.0"; then
+            continue
+        fi
     fi
-  fi
-  beta=$head
+    beta=$head
 done
 
 # Figure the stable channel by looking for the second largest vX.Y branch
 stable=
 for head in "${heads[@]}"; do
-  if [[ $head = "$beta" ]]; then
-    continue
-  fi
-  if [[ -n $stable ]]; then
-    if semverLT "$head.0" "$stable.0"; then
-      continue
+    if [[ $head = "$beta" ]]; then
+        continue
     fi
-  fi
-  stable=$head
+    if [[ -n $stable ]]; then
+        if semverLT "$head.0" "$stable.0"; then
+            continue
+        fi
+    fi
+    stable=$head
 done
 
 for tag in "${tags[@]}"; do
-  if [[ -n $beta && $tag = $beta* ]]; then
-    if [[ -n $beta_tag ]]; then
-      if semverLT "$tag" "$beta_tag"; then
-        continue
-      fi
+    if [[ -n $beta && $tag = $beta* ]]; then
+        if [[ -n $beta_tag ]]; then
+            if semverLT "$tag" "$beta_tag"; then
+                continue
+            fi
+        fi
+        beta_tag=$tag
     fi
-    beta_tag=$tag
-  fi
-
-  if [[ -n $stable && $tag = $stable* ]]; then
-    if [[ -n $stable_tag ]]; then
-      if semverLT "$tag" "$stable_tag"; then
-        continue
-      fi
+    
+    if [[ -n $stable && $tag = $stable* ]]; then
+        if [[ -n $stable_tag ]]; then
+            if semverLT "$tag" "$stable_tag"; then
+                continue
+            fi
+        fi
+        stable_tag=$tag
     fi
-    stable_tag=$tag
-  fi
 done
 
 EDGE_CHANNEL=master
@@ -90,25 +90,25 @@ STABLE_CHANNEL_LATEST_TAG=${stable_tag:+v$stable_tag}
 
 
 if [[ -n $CI_BASE_BRANCH ]]; then
-  BRANCH="$CI_BASE_BRANCH"
-elif [[ -n $CI_BRANCH ]]; then
-  BRANCH="$CI_BRANCH"
+    BRANCH="$CI_BASE_BRANCH"
+    elif [[ -n $CI_BRANCH ]]; then
+    BRANCH="$CI_BRANCH"
 fi
 
 if [[ -z "$CHANNEL" ]]; then
-  if [[ $BRANCH = "$STABLE_CHANNEL" ]]; then
-    CHANNEL=stable
-  elif [[ $BRANCH = "$EDGE_CHANNEL" ]]; then
-    CHANNEL=edge
-  elif [[ $BRANCH = "$BETA_CHANNEL" ]]; then
-    CHANNEL=beta
-  fi
+    if [[ $BRANCH = "$STABLE_CHANNEL" ]]; then
+        CHANNEL=stable
+        elif [[ $BRANCH = "$EDGE_CHANNEL" ]]; then
+        CHANNEL=edge
+        elif [[ $BRANCH = "$BETA_CHANNEL" ]]; then
+        CHANNEL=beta
+    fi
 fi
 
 if [[ $CHANNEL = beta ]]; then
-  CHANNEL_LATEST_TAG="$BETA_CHANNEL_LATEST_TAG"
-elif [[ $CHANNEL = stable ]]; then
-  CHANNEL_LATEST_TAG="$STABLE_CHANNEL_LATEST_TAG"
+    CHANNEL_LATEST_TAG="$BETA_CHANNEL_LATEST_TAG"
+    elif [[ $CHANNEL = stable ]]; then
+    CHANNEL_LATEST_TAG="$STABLE_CHANNEL_LATEST_TAG"
 fi
 
 echo EDGE_CHANNEL="$EDGE_CHANNEL"

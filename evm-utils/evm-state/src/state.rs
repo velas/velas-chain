@@ -983,7 +983,10 @@ mod tests {
     #[test]
     fn reads_the_same_after_consequent_dumps() {
         use std::ops::Bound::Included;
-        let _ = simple_logger::SimpleLogger::new().with_utc_timestamps().env().init();
+        let _ = simple_logger::SimpleLogger::new()
+            .with_utc_timestamps()
+            .env()
+            .init();
 
         const N_VERSIONS: usize = 10;
         const ACCOUNTS_PER_VERSION: usize = 10;
@@ -1028,7 +1031,9 @@ mod tests {
 
     #[test]
     fn lookups_thru_forks() {
-        let _ = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
+        let _ = simple_logger::SimpleLogger::new()
+            .with_utc_timestamps()
+            .init();
 
         let mut state = EvmBackend::default();
 
@@ -1051,7 +1056,9 @@ mod tests {
 
     #[test]
     fn it_handles_accounts_state_get_set_expectations() {
-        let _ = simple_logger::SimpleLogger::new().with_utc_timestamps().init();
+        let _ = simple_logger::SimpleLogger::new()
+            .with_utc_timestamps()
+            .init();
 
         let mut state = EvmBackend::default();
 
