@@ -4,6 +4,7 @@ use {
     crate::{
         cluster_tpu_info::ClusterTpuInfo,
         max_slots::MaxSlots,
+        middleware::BatchLimiter,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         rpc::{
             rpc_accounts::*, rpc_bank::*, rpc_deprecated_v1_7::*, rpc_deprecated_v1_9::*,
@@ -479,7 +480,7 @@ impl JsonRpcService {
             .spawn(move || {
                 renice_this_thread(rpc_niceness_adj).unwrap();
 
-                let mut io = MetaIoHandler::default();
+                let mut io = MetaIoHandler::with_middleware(BatchLimiter {});
 
                 io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
                 if full_api {

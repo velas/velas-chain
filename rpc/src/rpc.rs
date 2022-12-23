@@ -6,7 +6,7 @@ use {
         parsed_token_accounts::*, rpc_health::*,
     },
     bincode::{config::Options, serialize},
-    jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Metadata, Result},
+    jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Id, Metadata, Result},
     jsonrpc_derive::rpc,
     serde::{Deserialize, Serialize},
     solana_account_decoder::{
@@ -88,7 +88,10 @@ use {
     std::{
         any::type_name,
         cmp::{max, min},
-        collections::{HashMap, HashSet},
+        collections::{
+            hash_map::{Entry, HashMap},
+            HashSet
+        },
         convert::TryFrom,
         net::SocketAddr,
         str::FromStr,
@@ -156,6 +159,7 @@ pub struct JsonRpcConfig {
     pub full_api: bool,
     pub obsolete_v1_7_api: bool,
     pub rpc_scan_and_fix_roots: bool,
+    pub max_batch_duration: Option<Duration>,
 }
 
 impl JsonRpcConfig {
@@ -165,6 +169,11 @@ impl JsonRpcConfig {
             ..Self::default()
         }
     }
+}
+
+#[derive(Debug)]
+pub struct BatchState {
+    pub duration: Duration,
 }
 
 #[derive(Clone)]
@@ -187,6 +196,7 @@ pub struct JsonRpcRequestProcessor {
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     evm_state_archive: Option<evm_state::Storage>,
+    batch_state_map: Arc<RwLock<HashMap<Id, Arc<RwLock<BatchState>>>>>,
 }
 
 impl Metadata for JsonRpcRequestProcessor {}
@@ -299,6 +309,7 @@ impl JsonRpcRequestProcessor {
                 leader_schedule_cache,
                 max_complete_transaction_status_slot,
                 evm_state_archive,
+                batch_state_map: Default::default(),
             },
             receiver,
         )
@@ -353,7 +364,51 @@ impl JsonRpcRequestProcessor {
             leader_schedule_cache: Arc::new(LeaderScheduleCache::new_from_bank(bank)),
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
             evm_state_archive: None,
+            batch_state_map: Default::default(),
         }
+    }
+
+    pub fn add_batch(&self, ids: &Vec<Id>) {
+        // TODO: check if batch is present
+        let batch_state = Arc::new(RwLock::new(BatchState {
+            duration: Duration::default(),
+        }));
+        let mut batch_state_map = self.batch_state_map.write().unwrap();
+        for id in ids {
+            batch_state_map.insert(id.clone(), batch_state.clone());
+        }
+    }
+
+    pub fn remove_batch(&self, ids: &Vec<Id>) {
+        let mut batch_state_map = self.batch_state_map.write().unwrap();
+        for id in ids {
+            batch_state_map.remove(id);
+        }
+    }
+
+    pub fn get_duration(&self, id: Id) -> Duration {
+        let batch_state_map = self.batch_state_map.read().unwrap();
+        batch_state_map
+            .get(&id)
+            .map(|state| state.read().unwrap().duration)
+            .unwrap_or_else(|| Default::default())
+    }
+
+    pub fn update_duration(&self, id: Id, d: Duration) -> Duration {
+        let mut batch_state_map = self.batch_state_map.write().unwrap();
+        match batch_state_map.entry(id) {
+            Entry::Vacant(_) => Duration::default(),
+            Entry::Occupied(o) => {
+                let v = o.into_mut();
+                let mut batch_state = v.write().unwrap();
+                batch_state.duration = batch_state.duration + d;
+                batch_state.duration
+            }
+        }
+    }
+
+    pub fn get_max_batch_duration(&self) -> Option<Duration> {
+        self.config.max_batch_duration
     }
 
     pub fn get_health(&self) -> RpcHealthStatus {
@@ -4942,6 +4997,7 @@ pub mod tests {
             rpc_accounts::*, rpc_bank::*, rpc_deprecated_v1_9::*, rpc_full::*, rpc_minimal::*, *,
         },
         crate::{
+            middleware::BatchLimiter,
             optimistically_confirmed_bank_tracker::{
                 BankNotification, OptimisticallyConfirmedBankTracker,
             },
@@ -4997,7 +5053,7 @@ pub mod tests {
     const TEST_SLOTS_PER_EPOCH: u64 = DELINQUENT_VALIDATOR_SLOT_DISTANCE + 1;
 
     struct RpcHandler {
-        io: MetaIoHandler<JsonRpcRequestProcessor>,
+        io: MetaIoHandler<JsonRpcRequestProcessor, BatchLimiter>,
         meta: JsonRpcRequestProcessor,
         bank: Arc<Bank>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -5187,7 +5243,7 @@ pub mod tests {
             &socketaddr!("127.0.0.1:1234"),
         ));
 
-        let mut io = MetaIoHandler::default();
+        let mut io = MetaIoHandler::with_middleware(BatchLimiter {});
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
         io.extend_with(rpc_bank::BankDataImpl.to_delegate());
         io.extend_with(rpc_accounts::AccountsDataImpl.to_delegate());
