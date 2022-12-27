@@ -470,8 +470,6 @@ fn is_valid_genesis_archive_entry<'a>(
     match (parts, kind) {
         ([DEFAULT_GENESIS_FILE], GNUSparse) => UnpackPath::Valid(unpack_dir),
         ([DEFAULT_GENESIS_FILE], Regular) => UnpackPath::Valid(unpack_dir),
-        ([MACOS_DEFAULT_GENESIS_FILE_META], GNUSparse) => UnpackPath::Ignore,
-        ([MACOS_DEFAULT_GENESIS_FILE_META], Regular) => UnpackPath::Ignore,
         (["rocksdb"], Directory) => UnpackPath::Ignore,
         (["rocksdb"], _) => UnpackPath::Ignore,
         (["rocksdb", _], GNUSparse) => UnpackPath::Ignore,

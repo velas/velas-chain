@@ -1,6 +1,6 @@
 use jsonrpc_core::{
     futures_util::future::{Either, FutureExt},
-    Call, Error, ErrorCode, Failure, FutureOutput, FutureResponse, Middleware, Output, Request,
+    Call, Error, Failure, FutureOutput, FutureResponse, Middleware, Output, Request,
     Response, Version,
 };
 use log::*;

@@ -41,8 +41,6 @@ pub const DEFAULT_GENESIS_FILE: &str = "genesis.bin";
 pub const DEFAULT_GENESIS_ARCHIVE: &str = "genesis.tar.bz2";
 pub const DEFAULT_GENESIS_DOWNLOAD_PATH: &str = "/genesis.tar.bz2";
 
-pub const MACOS_DEFAULT_GENESIS_FILE_META: &str = "._genesis.bin";
-
 // deprecated default that is no longer used
 pub const UNUSED_DEFAULT: u64 = 1024;
 pub const EVM_GENESIS: &str = "evm-state-genesis";
