@@ -40,7 +40,7 @@ impl Middleware<JsonRpcRequestProcessor> for BatchLimiter {
                 },
             )))
         } else {
-            Either::Right(next(request.clone(), meta))
+            Either::Right(next(request, meta))
         }
     }
 

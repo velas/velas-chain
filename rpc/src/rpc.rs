@@ -391,7 +391,7 @@ impl JsonRpcRequestProcessor {
         batch_state_map
             .get(&id)
             .map(|state| state.read().unwrap().duration)
-            .unwrap_or_else(|| Default::default())
+            .unwrap_or_else(Default::default)
     }
 
     pub fn update_duration(&self, id: Id, d: Duration) -> Duration {
@@ -401,7 +401,7 @@ impl JsonRpcRequestProcessor {
             Entry::Occupied(o) => {
                 let v = o.into_mut();
                 let mut batch_state = v.write().unwrap();
-                batch_state.duration = batch_state.duration + d;
+                batch_state.duration += d;
                 batch_state.duration
             }
         }
