@@ -66,11 +66,14 @@ impl Middleware<JsonRpcRequestProcessor> for BatchLimiter {
             if let Some(ref id) = id {
                 let current = meta.get_duration(id.clone());
                 debug!("Current batch ({:?}) duration {:?}", id.clone(), current);
-                if matches!(meta.get_max_batch_duration(), Some(max_duration) if current > max_duration ) {
+                if matches!(meta.get_max_batch_duration(), Some(max_duration) if current > max_duration )
+                {
+                    let mut error = Error::internal_error();
+                    error.message = "Batch is taking too long".to_string();
                     return Some(Output::Failure(Failure {
-                        id: id.clone(),
                         jsonrpc: Some(Version::V2),
-                        error: Error::new(ErrorCode::ServerError(322)),
+                        error,
+                        id: id.clone(),
                     }));
                 }
             }
