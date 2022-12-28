@@ -4104,7 +4104,6 @@ pub fn create_new_ledger(
         "rocksdb",
         "evm-state-genesis",
     ];
-    warn!("args: {:?}", args);
 
     let output = std::process::Command::new("tar")
         .args(&args)

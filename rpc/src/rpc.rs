@@ -369,7 +369,6 @@ impl JsonRpcRequestProcessor {
     }
 
     pub fn add_batch(&self, ids: &Vec<Id>) {
-        // TODO: check if batch is present
         let batch_state = Arc::new(RwLock::new(BatchState {
             duration: Duration::default(),
         }));
