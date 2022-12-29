@@ -53,6 +53,7 @@ tokio-stream = "0.1"
 trees = "0.4.2"
 reed-solomon-erasure = { version = "5.0.1", features = ["simd-accel"] }
 evm-state = { path = "../evm-utils/evm-state" }
+parking_lot = "0.12.1"
 
 [dependencies.rocksdb]
 # Avoid the vendored bzip2 within rocksdb-sys that can cause linker conflicts
