@@ -38,9 +38,15 @@ pub async fn restore_chain(
             first_block - 1
         ))?;
 
+    let start_slot = header_template.native_chain_slot;
+    let end_slot = tail.native_chain_slot;
+    let limit = (end_slot - start_slot + 1) as usize;
+    let mut slot_ids = ledger.get_confirmed_blocks(start_slot, limit).await?;
+    slot_ids.retain(|slot| *slot > start_slot && *slot < end_slot);
+    
     let mut native_blocks = vec![];
-
-    for slot in header_template.native_chain_slot + 1..tail.native_chain_slot {
+    
+    for slot in slot_ids {
         let native_block = ledger
             .get_confirmed_block(slot)
             .await
