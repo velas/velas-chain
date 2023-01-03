@@ -9,7 +9,7 @@ tag=$TAG
 title="Velas nightly build"
 commit_body="Commit: "
 pipeline_build="Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-pattern=s/.*${commit_body}\(\[a-f0-9\]+\)\(\\s\|$\).*/\\1/p
+pattern="s/.*${commit_body}([a-f0-9\]+)(\\s|$).*/\\1/p"
 
 our_commit=$(git rev-parse HEAD)
 
