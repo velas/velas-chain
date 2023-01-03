@@ -1803,6 +1803,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "borsh",
  "chrono",
  "clap 4.0.15",
  "dotenvy",

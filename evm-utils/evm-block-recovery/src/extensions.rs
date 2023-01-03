@@ -1,4 +1,5 @@
-use solana_evm_loader_program::instructions::v0;
+use borsh::BorshDeserialize;
+use solana_evm_loader_program::instructions::{v0, EvmInstruction, EVM_INSTRUCTION_BORSH_PREFIX};
 use solana_sdk::{evm_loader::ID as STATIC_PROGRAM_ID, instruction::CompiledInstruction};
 use solana_transaction_status::{
     ConfirmedBlockWithOptionalMetadata, TransactionWithOptionalMetadata,
@@ -65,7 +66,13 @@ impl NativeBlockExt for ConfirmedBlockWithOptionalMetadata {
             {
                 if transaction.message.account_keys[*program_id_index as usize] == STATIC_PROGRAM_ID
                 {
-                    let instruction: v0::EvmInstruction = bincode::deserialize(data).unwrap();
+                    let instruction: v0::EvmInstruction = if data[0] == EVM_INSTRUCTION_BORSH_PREFIX
+                    {
+                        EvmInstruction::try_from_slice(&data[1..]).unwrap().into()
+                    } else {
+                        bincode::deserialize::<v0::EvmInstruction>(data).unwrap()
+                    };
+
                     match &instruction {
                         v0::EvmInstruction::EvmTransaction { .. } => (),
                         _ => only_trivial_instructions = false,
