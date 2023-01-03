@@ -5,7 +5,7 @@
 
 use std::net::SocketAddr;
 
-use solana_replica_node::triedb_replica_service;
+use solana_replica_node::triedb_replica::service;
 
 use {
     clap::{crate_description, crate_name, App, AppSettings, Arg},
@@ -49,10 +49,10 @@ pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     let socket_addr = matches.value_of("bind_address").unwrap();
 
     let state_rpc_bind_address: SocketAddr = socket_addr.parse()?;
-    // let gc_enabled = true;
-    let gc_enabled = false;
+    // let gc_enabled = false;
+    let gc_enabled = true;
 
     let storage = Storage::open_persistent(evm_state, gc_enabled)?;
-    triedb_replica_service::start_and_join(state_rpc_bind_address, storage)?;
+    service::start_and_join(state_rpc_bind_address, storage)?;
     Ok(())
 }

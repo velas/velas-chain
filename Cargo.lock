@@ -3807,9 +3807,9 @@ checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "object"
-version = "0.30.0"
+version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "239da7f290cfa979f43f85a8efeee9a8a76d0827c356d37f9d3d7254d6b537fb"
+checksum = "8d864c91689fdc196779b98dba0aceac6118594c2df6ee5d943eb6a8df4d107a"
 dependencies = [
  "memchr",
 ]
@@ -7238,6 +7238,7 @@ dependencies = [
 name = "solana-replica-lib"
 version = "1.9.29"
 dependencies = [
+ "anyhow",
  "crossbeam-channel",
  "derive_more",
  "evm-rpc",
@@ -8973,7 +8974,7 @@ checksum = "0de5f738ceab88e2491a94ddc33c3feeadfa95fedc60363ef110845df12f3878"
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/velas/triedb.git?branch=master#4f09b934721066284033f5c6803020740ecdacd6"
+source = "git+https://github.com/velas/triedb.git?branch=master#d9322fe6bc96bc1973ff1e4b73ff72d6a2681c22"
 dependencies = [
  "anyhow",
  "bincode",

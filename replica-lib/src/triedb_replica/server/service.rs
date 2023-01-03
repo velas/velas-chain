@@ -3,24 +3,24 @@ use std::thread::{Builder, JoinHandle};
 use futures_util::FutureExt;
 use tokio::runtime::Runtime;
 use tokio::sync::oneshot::{self, Receiver, Sender};
-use server::app_grpc::backend_server::BackendServer;
 
 use tonic::{self, transport};
 
 use log::{error, info};
 
-use super::server;
+use super::tonic_server;
+use tonic_server::app_grpc::backend_server::BackendServer;
 use super::{Dependecies, ServiceConfig};
 /// The service wraps the Rpc to make it runnable in the tokio runtime
 /// and handles start and stop of the service.
 pub struct Service {
-    server: BackendServer<server::Server>,
+    server: BackendServer<tonic_server::Server>,
     config: ServiceConfig,
 }
 
 pub struct RunningService {
     thread: JoinHandle<()>,
-    server_handle: BackendServer<server::Server>,
+    server_handle: BackendServer<tonic_server::Server>,
     _exit_signal_sender: Sender<()>,
 }
 
@@ -31,7 +31,7 @@ impl Service {
         deps: Dependecies,
     ) -> Service {
         Self {
-            server: server::Server::new(deps.storage),
+            server: tonic_server::Server::new(deps.storage),
             config: deps.service,
         }
     }
@@ -73,7 +73,7 @@ impl Service {
             }
         }
     }
-    // Runs server implementation with a provided configuration
+    // Runs tonic_server implementation with a provided configuration
     async fn run(
         self,
         exit_signal: Receiver<()>,

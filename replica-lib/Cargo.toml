@@ -10,6 +10,7 @@ homepage = "https://solana.com/"
 documentation = "https://docs.rs/solana-validator"
 
 [dependencies]
+anyhow = "1.0.68"
 crossbeam-channel = "0.5"
 futures-util = "0.3"
 log = "0.4.11"

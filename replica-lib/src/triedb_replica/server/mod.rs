@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-mod server;
+mod tonic_server;
 mod service;
 
 use evm_state::Storage;

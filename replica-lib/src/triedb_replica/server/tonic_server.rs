@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use log::info;
 
 use evm_rpc::FormatHex;
@@ -11,6 +13,9 @@ pub mod app_grpc {
     tonic::include_proto!("triedb_repl");
 }
 
+use crate::triedb_replica::{lock_root, debug_elapsed};
+
+
 pub struct Server {
     storage: Storage,
 }
@@ -18,6 +23,28 @@ pub struct Server {
 impl Server {
     pub fn new(storage: Storage) -> BackendServer<Self> {
         BackendServer::new(Server { storage })
+    }
+
+    fn parse_state_roots(
+        request: Request<app_grpc::GetStateDiffRequest>,
+    ) -> Result<(H256, H256), Status> {
+        let inner = request.into_inner();
+
+        let first_root = inner
+            .first_root
+            .ok_or_else(|| Status::invalid_argument("empty arg"))?;
+        let second_root = inner
+            .second_root
+            .ok_or_else(|| Status::invalid_argument("empty arg"))?;
+
+        let first_root = H256::from_hex(&first_root.value).map_err(|_| {
+            Status::invalid_argument("Couldn't parse requested hash key1")
+        })?;
+
+        let second_root = H256::from_hex(&second_root.value).map_err(|_| {
+            Status::invalid_argument("Couldn't parse requested hash key2")
+        })?;
+        Ok((first_root, second_root))
     }
 }
 
@@ -65,42 +92,41 @@ impl Backend for Server {
         Ok(Response::new(reply))
     }
 
+
     async fn get_state_diff(
         &self,
         request: Request<app_grpc::GetStateDiffRequest>,
     ) -> Result<Response<app_grpc::GetStateDiffReply>, Status> {
+        let start = Instant::now();
         info!("Got a request: {:?}", request);
 
-        let inner = request.into_inner();
+        let (from, to) = Self::parse_state_roots(request)?;
 
-        let first_root = inner
-            .first_root
-            .ok_or_else(|| Status::invalid_argument("empty arg"))?;
-        let second_root = inner
-            .second_root
-            .ok_or_else(|| Status::invalid_argument("empty arg"))?;
+        debug_elapsed("parsed request", &start);
+        let db_handle = self.storage.rocksdb_trie_handle();
+        let _from_guard = lock_root(&db_handle, from, evm_state::storage::account_extractor).map_err(
+            |err| Status::not_found(format!("failure to lock root {}", err))
+        )?;
+        let _to_guard = lock_root(&db_handle, to, evm_state::storage::account_extractor).map_err(
+            |err| Status::not_found(format!("failure to lock root {}", err))
+        )?;
+        debug_elapsed("locked roots", &start);
 
-        let first_root = H256::from_hex(&first_root.value).map_err(|_| {
-            Status::invalid_argument("Couldn't parse requested hash key1")
+        let ach = triedb::rocksdb::SyncRocksHandle::new(
+            triedb::rocksdb::RocksSyncDatabaseHandle::new(self.storage.db()),
+        );
+
+        let changeset = triedb::diff(
+            &ach,
+            evm_state::storage::account_extractor,
+            from,
+            to,
+        )
+        .map_err(|err| {
+            log::error!("triedb::diff {:?}", err);
+            Status::internal("Cannot calculate diff between states")
         })?;
-
-        let second_root = H256::from_hex(&second_root.value).map_err(|_| {
-            Status::invalid_argument("Couldn't parse requested hash key2")
-        })?;
-
-        // TODO: add root guards (requires counter cf) to prevent compared subtrees deletion
-        let async_cached_handle =
-            triedb::rocksdb::AsyncRocksDatabaseHandle::new(self.storage.db());
-
-        let ach = triedb::rocksdb::AsyncRocksHandle::new(async_cached_handle);
-
-
-        let changeset =
-            triedb::diff(&ach, evm_state::storage::account_extractor, first_root, second_root)
-                .map_err(|err| {
-                    log::error!("triedb::diff {:?}", err);
-                    Status::internal("Cannot calculate diff between states")
-                })?;
+        debug_elapsed("retrieved changeset", &start);
 
         let mut reply_changeset = vec![];
 
