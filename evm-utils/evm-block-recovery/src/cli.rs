@@ -96,8 +96,11 @@ pub enum Commands {
     /// Checks content of Native Block
     CheckNative {
         /// Native Block number
-        #[clap(short, long, value_name = "NUM")]
-        slot: u64,
+        #[clap(long, value_name = "NUM")]
+        first_block: u64,
+
+        #[clap(long, value_name = "NUM")]
+        last_block: u64,
     },
 
     /// Checks content of Evm Block

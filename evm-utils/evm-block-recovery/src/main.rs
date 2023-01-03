@@ -103,8 +103,16 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
         }
-        Commands::CheckNative { slot } => {
-            routines::check_native(ledger::with_params(cli.creds, cli.instance).await?, slot).await
+        Commands::CheckNative {
+            first_block,
+            last_block,
+        } => {
+            routines::check_native(
+                ledger::with_params(cli.creds, cli.instance).await?,
+                first_block,
+                last_block,
+            )
+            .await
         }
         Commands::CheckEvm { block_number } => {
             routines::check_evm(

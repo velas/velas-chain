@@ -18,7 +18,11 @@ pub async fn check_evm(ledger: LedgerStorage, block: BlockNum) -> Result<()> {
     let evm_header = ledger.get_evm_confirmed_block_header(block).await;
 
     match evm_header {
-        Ok(evm_header) => log::info!("EVM Header {block}, timestamp {}", evm_header.timestamp),
+        Ok(evm_header) => log::info!(
+            "EVM Header {block}, timestamp {}, native_chain_slot {}",
+            evm_header.timestamp,
+            evm_header.native_chain_slot
+        ),
         Err(err) => log::warn!(r#"EVM Header {block} at "evm-blocks" not found: {err:?}"#),
     }
 

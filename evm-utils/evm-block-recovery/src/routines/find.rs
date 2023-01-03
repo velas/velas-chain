@@ -122,7 +122,7 @@ pub async fn find_native(
         } else {
             // we reach the end just after last successfull query
             log::debug!(
-                "Bigtable didn't return anything for range #{start_slot}..#{end_slot}"
+                "Bigtable request did not return any data for range #{start_slot}..#{end_slot}"
             );
             break;
         };
