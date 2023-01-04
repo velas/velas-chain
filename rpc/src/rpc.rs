@@ -6,7 +6,7 @@ use {
         parsed_token_accounts::*, rpc_health::*,
     },
     bincode::{config::Options, serialize},
-    jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Id, Metadata, Result},
+    jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Metadata, Result},
     jsonrpc_derive::rpc,
     serde::{Deserialize, Serialize},
     solana_account_decoder::{
@@ -196,7 +196,7 @@ pub struct JsonRpcRequestProcessor {
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     evm_state_archive: Option<evm_state::Storage>,
-    batch_state_map: Arc<RwLock<HashMap<Id, Arc<RwLock<BatchState>>>>>,
+    batch_state_map: Arc<RwLock<HashMap<u64, Arc<RwLock<BatchState>>>>>,
 }
 
 impl Metadata for JsonRpcRequestProcessor {}
@@ -368,32 +368,32 @@ impl JsonRpcRequestProcessor {
         }
     }
 
-    pub fn add_batch(&self, ids: &Vec<Id>) {
+    pub fn add_batch(&self, id: u64) -> bool {
+        let mut batch_state_map = self.batch_state_map.write().unwrap();
+        if batch_state_map.contains_key(&id) {
+            return false;
+        }
         let batch_state = Arc::new(RwLock::new(BatchState {
             duration: Duration::default(),
         }));
-        let mut batch_state_map = self.batch_state_map.write().unwrap();
-        for id in ids {
-            batch_state_map.insert(id.clone(), batch_state.clone());
-        }
+        batch_state_map.insert(id, batch_state.clone());
+        true
     }
 
-    pub fn remove_batch(&self, ids: &Vec<Id>) {
+    pub fn remove_batch(&self, id: &u64) {
         let mut batch_state_map = self.batch_state_map.write().unwrap();
-        for id in ids {
-            batch_state_map.remove(id);
-        }
+        batch_state_map.remove(id);
     }
 
-    pub fn get_duration(&self, id: Id) -> Duration {
+    pub fn get_duration(&self, id: &u64) -> Duration {
         let batch_state_map = self.batch_state_map.read().unwrap();
         batch_state_map
-            .get(&id)
+            .get(id)
             .map(|state| state.read().unwrap().duration)
             .unwrap_or_else(Default::default)
     }
 
-    pub fn update_duration(&self, id: Id, d: Duration) -> Duration {
+    pub fn update_duration(&self, id: u64, d: Duration) -> Duration {
         let mut batch_state_map = self.batch_state_map.write().unwrap();
         match batch_state_map.entry(id) {
             Entry::Vacant(_) => Duration::default(),
@@ -404,6 +404,18 @@ impl JsonRpcRequestProcessor {
                 batch_state.duration
             }
         }
+    }
+
+    pub fn check_batch_timeout(&self, id: u64) -> Result<()> {
+        let current = self.get_duration(&id);
+        debug!("Current batch ({}) duration {:?}", id, current);
+        if matches!(self.get_max_batch_duration(), Some(max_duration) if current > max_duration )
+        {
+            let mut error = Error::internal_error();
+            error.message = "Batch is taking too long".to_string();
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn get_max_batch_duration(&self) -> Option<Duration> {

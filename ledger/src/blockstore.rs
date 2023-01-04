@@ -4083,7 +4083,6 @@ pub fn create_new_ledger(
     drop(blockstore);
 
     let archive_path = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);
-    #[cfg(not(target_os = "macos"))]
     let args = vec![
         "jcfhS",
         archive_path.to_str().unwrap(),
@@ -4093,19 +4092,9 @@ pub fn create_new_ledger(
         "rocksdb",
         "evm-state-genesis",
     ];
-    #[cfg(target_os = "macos")]
-        let args = vec![
-        "jcfhS",
-        archive_path.to_str().unwrap(),
-        "--no-mac-metadata",
-        "-C",
-        ledger_path.to_str().unwrap(),
-        DEFAULT_GENESIS_FILE,
-        "rocksdb",
-        "evm-state-genesis",
-    ];
 
     let output = std::process::Command::new("tar")
+        .env("COPYFILE_DISABLE", "1")
         .args(&args)
         .output()
         .unwrap();
