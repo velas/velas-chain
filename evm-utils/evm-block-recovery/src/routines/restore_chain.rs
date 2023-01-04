@@ -41,23 +41,45 @@ pub async fn restore_chain(
     let start_slot = header_template.native_chain_slot;
     let end_slot = tail.native_chain_slot;
     let limit = (end_slot - start_slot + 1) as usize;
-    let mut slot_ids = ledger.get_confirmed_blocks(start_slot, limit).await?;
+    let mut slot_ids = ledger
+        .get_confirmed_blocks(start_slot, limit)
+        .await
+        .context(format!(
+            "Unable to get native blocks ids, start_slot={}, limit={}",
+            start_slot, limit
+        ))?;
     slot_ids.retain(|slot| *slot > start_slot && *slot < end_slot);
-    
+
     let mut native_blocks = vec![];
-    
-    for slot in slot_ids {
+
+    for slot in slot_ids.iter() {
         let native_block = ledger
-            .get_confirmed_block(slot)
+            .get_confirmed_block(*slot)
             .await
             .context(format!("Unable to get Native Block {}", slot))?;
         native_blocks.push(native_block);
     }
 
+    let mut native_dict = slot_ids
+        .into_iter()
+        .zip(native_blocks.into_iter())
+        .collect::<std::collections::HashMap<_, _>>();
+    native_dict.retain(|_id, nb| nb.parse_instructions().instr_evm_transaction() > 0);
+
+    let evm_blocks_to_recover_amount = (last_block - first_block + 1) as usize;
+    let native_blocks_amount = native_dict.len();
+
+    if native_blocks_amount != evm_blocks_to_recover_amount {
+        bail!(format!(
+            "The number of Native and EVM does not match. Native: {}, evm: {}",
+            native_blocks_amount, evm_blocks_to_recover_amount
+        ))
+    }
+
     let timestamps = crate::timestamp::load_timestamps(timestamps).unwrap();
     let mut restored_blocks = vec![];
 
-    for nb in native_blocks.into_iter() {
+    for (id, nb) in native_dict.into_iter() {
         let parsed_instructions = nb.parse_instructions();
         if !parsed_instructions.only_trivial_instructions {
             return Err(anyhow!(
@@ -66,7 +88,7 @@ pub async fn restore_chain(
             ));
         }
         header_template.parent_hash = header_template.hash();
-        header_template.native_chain_slot += 1;
+        header_template.native_chain_slot = id;
         header_template.native_chain_hash =
             H256(Pubkey::from_str(&nb.blockhash).unwrap().to_bytes());
         header_template.block_number += 1;

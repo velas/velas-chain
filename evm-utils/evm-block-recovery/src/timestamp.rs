@@ -13,7 +13,8 @@ struct BlockDto {
 }
 
 /// FIXME: Source timestamp file exported with Time Zone error
-const FIVE_HRS: u64 = 18000;
+// const FIVE_HRS: u64 = 18000;
+const FIVE_HRS: u64 = 14400;
 
 pub fn load_timestamps(path: impl AsRef<Path>) -> Result<HashMap<BlockNum, u64>> {
     let timestamps = std::fs::read_to_string(path).unwrap();
