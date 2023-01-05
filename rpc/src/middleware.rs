@@ -11,16 +11,16 @@ use crate::rpc::JsonRpcRequestProcessor;
 fn decode_batch_id(id: &Id) -> Option<(u64, Id)> {
     if let Id::Str(id_str) = id {
         let (&prefix, s) = id_str.as_bytes().split_first()?;
-        if prefix == 'b' as u8 {
-            let mut split = s.split(|&b| b == ':' as u8);
+        if prefix == b'b' {
+            let mut split = s.split(|&b| b == b':');
             let batch_id = std::str::from_utf8(split.next()?).ok()?;
             let batch_id: u64 = batch_id.parse().ok()?;
             let rest = split.next()?;
             let (&t, id_str) = rest.split_first()?;
             let id_str = std::str::from_utf8(id_str).ok()?;
-            return if t == 'n' as u8 {
+            return if t == b'n' {
                 id_str.parse().ok().map(|num: u64| (batch_id, Id::Num(num)))
-            } else if t == 's' as u8 {
+            } else if t == b's' {
                 Some((batch_id, Id::Str(id_str.to_string())))
             } else {
                 None
@@ -30,7 +30,7 @@ fn decode_batch_id(id: &Id) -> Option<(u64, Id)> {
     None
 }
 
-fn patch_calls(calls: &Vec<Call>, id: u64) -> Vec<Call> {
+fn patch_calls(calls: &[Call], id: u64) -> Vec<Call> {
     let id_str = id.to_string();
     calls
         .iter()

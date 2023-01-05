@@ -376,7 +376,7 @@ impl JsonRpcRequestProcessor {
         let batch_state = Arc::new(RwLock::new(BatchState {
             duration: Duration::default(),
         }));
-        batch_state_map.insert(id, batch_state.clone());
+        batch_state_map.insert(id, batch_state);
         true
     }
 
