@@ -68,6 +68,28 @@ impl EvmSubCommands for App<'_, '_> {
                              .long("lamports")
                              .help("Amount in lamports")))
 
+                .subcommand(
+                    SubCommand::with_name("generate-borsh-schema")
+                        .about("Generate Borsh schema for EVM instructions")
+                        .display_order(3)
+                        .arg(
+                            Arg::with_name("input_path")
+                                .short("i")
+                                .long("input")
+                                .value_name("DIR")
+                                .takes_value(true)
+                                .required(true)
+                                .help("Parse Rust files from DIR for a borsh schema"),
+                        )
+                        .arg(
+                            Arg::with_name("schema_path")
+                                .long("schema-dir")
+                                .value_name("DIR")
+                                .takes_value(true)
+                                .default_value("schema")
+                                .help("Use DIR as generated schema location"),
+                        ))
+
 
             // Hidden commands
 
@@ -152,6 +174,11 @@ pub enum EvmCliCommand {
         amount: u64,
     },
 
+    GenerateBorshSchema {
+        input_path: PathBuf,
+        schema_path: PathBuf,
+    },
+
     // Hidden commands
     SendRawTx {
         raw_tx: PathBuf,
@@ -191,6 +218,9 @@ impl EvmCliCommand {
             }
             Self::TransferToEvm { address, amount } => {
                 transfer(rpc_client, config, *address, *amount)?;
+            }
+            Self::GenerateBorshSchema { input_path, schema_path } => {
+                generate_borsh_schema(input_path, schema_path)?;
             }
             // Hidden commands
             Self::SendRawTx { raw_tx } => {
@@ -262,8 +292,8 @@ fn transfer(
     let message = Message::new(&ixs, Some(&from.pubkey()));
     let mut create_account_tx = Transaction::new_unsigned(message);
 
-    let (blockhash, _last_height) = rpc_client
-        .get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
+    let (blockhash, _last_height) =
+        rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
 
     create_account_tx.sign(&config.signers, blockhash);
 
@@ -274,6 +304,12 @@ fn transfer(
     )?;
     println!("Transaction signature = {}", signature);
     Ok(())
+}
+
+fn generate_borsh_schema<P: AsRef<Path>>(input_path: P, schema_path: P) -> anyhow::Result<()> {
+    fs::create_dir_all(&schema_path)?;
+    let layouts = agsol_borsh_schema::generate_layouts(input_path)?;
+    agsol_borsh_schema::generate_output(&layouts, schema_path)
 }
 
 fn find_block_header(
@@ -332,8 +368,8 @@ fn send_raw_tx<P: AsRef<Path>>(
     let msg = Message::new(&[ix], Some(&signer.pubkey()));
     let mut tx = Transaction::new_unsigned(msg);
 
-    let (blockhash, _last_height) = rpc_client
-        .get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
+    let (blockhash, _last_height) =
+        rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
     tx.sign(&config.signers, blockhash);
 
     debug!("sending tx: {:?}", tx);
@@ -430,6 +466,11 @@ pub fn parse_evm_subcommand(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, 
             }
 
             EvmCliCommand::TransferToEvm { address, amount }
+        }
+        ("generate-borsh-schema", Some(matches)) => {
+            let input_path = value_t_or_exit!(matches, "input_path", PathBuf);
+            let schema_path = value_t_or_exit!(matches, "schema_path", PathBuf);
+            EvmCliCommand::GenerateBorshSchema { input_path, schema_path }
         }
         ("send-raw-tx", Some(matches)) => {
             let raw_tx = value_t_or_exit!(matches, "raw_tx", PathBuf);

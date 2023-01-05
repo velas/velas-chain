@@ -1,5 +1,6 @@
+#![allow(dead_code)]
 use super::scope::*;
-use borsh::{BorshDeserialize, BorshSerialize};
+use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
 use evm_state::{Address, Transaction, UnsignedTransaction};
 use serde::{Deserialize, Serialize};
 
@@ -10,8 +11,7 @@ pub const EVM_INSTRUCTION_BORSH_PREFIX: u8 = 255u8;
 #[derive(
     BorshSerialize,
     BorshDeserialize,
-    // TODO: add schema generation custom command
-    // BorshSchema,
+    BorshSchema,
     Clone,
     Debug,
     PartialEq,
@@ -37,12 +37,10 @@ impl FeePayerType {
 
 /// Solana blockchain limit amount of data that transaction can have.
 /// To get around this limitation, we use design that is similar to LoaderInstruction in sdk.
-
 #[derive(
     BorshSerialize,
     BorshDeserialize,
-    // TODO: add schema generation custom command
-    // BorshSchema,
+    BorshSchema,
     Clone,
     Debug,
     PartialEq,
@@ -52,8 +50,6 @@ impl FeePayerType {
     Serialize,
     Deserialize,
 )]
-
-// #[allow(clippy::dead_code)]
 pub enum EvmBigTransaction {
     /// Allocate data in storage, pay fee should be taken from EVM.
     EvmTransactionAllocate { size: u64 },
@@ -65,8 +61,7 @@ pub enum EvmBigTransaction {
 #[derive(
     BorshSerialize,
     BorshDeserialize,
-    // TODO: add schema generation custom command
-    // BorshSchema,
+    BorshSchema,
     Clone,
     Debug,
     PartialEq,
@@ -100,8 +95,7 @@ impl ExecuteTransaction {
 #[derive(
     BorshSerialize,
     BorshDeserialize,
-    // TODO: add schema generation custom command
-    // BorshSchema,
+    BorshSchema,
     Clone,
     Debug,
     PartialEq,
