@@ -909,7 +909,10 @@ mod test {
                     let executor = invoke_context
                         .deconstruct_evm()
                         .expect("Evm executor should exist");
-                    self.evm_state.apply_failed_update(&executor.evm_backend);
+                    self.evm_state.apply_failed_update(
+                        &executor.evm_backend,
+                        true, // clear logs
+                    );
                     return Err(e);
                 }
             }

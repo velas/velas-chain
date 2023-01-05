@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
-use evm::backend::Log;
+use evm::{backend::Log, ExitReason, ExitRevert};
 use primitive_types::{H160, H256, U256};
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use serde::{Deserialize, Serialize};
@@ -576,6 +576,15 @@ impl TransactionReceipt {
         tx.recalculate_bloom();
         tx
     }
+
+    pub fn to_failed(&mut self, clear_logs: bool) {
+        self.status = ExitReason::Revert(ExitRevert::Reverted);
+        if clear_logs {
+            self.logs.clear();
+            self.logs_bloom = ethbloom::Bloom::default();
+        }
+    }
+
     pub(crate) fn recalculate_bloom(&mut self) {
         let mut logs_bloom = ethbloom::Bloom::default();
         for log in &self.logs {

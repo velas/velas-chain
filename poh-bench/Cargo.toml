@@ -18,7 +18,7 @@ solana-logger = { path = "../logger", version = "=1.9.29" }
 solana-entry = { path = "../entry", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-measure = { path = "../measure", version = "=1.9.29" }
-solana-version = { path = "../version", version = "=0.6.1" }
+solana-version = { path = "../version", version = "=0.6.2" }
 solana-perf = { path = "../perf", version = "=1.9.29" }
 
 [package.metadata.docs.rs]
