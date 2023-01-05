@@ -168,7 +168,7 @@ pub struct Blockstore {
     insert_shreds_lock: Arc<Mutex<()>>,
     pub new_shreds_signals: Vec<SyncSender<bool>>,
     pub completed_slots_senders: Vec<CompletedSlotsSender>,
-    pub lowest_cleanup_slot: Arc<RwLock<Slot>>,
+    pub lowest_cleanup_slot: Arc<parking_lot::RwLock<Slot>>,
     no_compaction: bool,
 
     slots_stats: Arc<Mutex<SlotsStats>>,
@@ -472,7 +472,7 @@ impl Blockstore {
             completed_slots_senders: vec![],
             insert_shreds_lock: Arc::new(Mutex::new(())),
             last_root,
-            lowest_cleanup_slot: Arc::new(RwLock::new(0)),
+            lowest_cleanup_slot: Arc::new(parking_lot::RwLock::new(0)),
             no_compaction: false,
             slots_stats: Arc::new(Mutex::new(SlotsStats::default())),
             evm_blocks_cf,
@@ -2310,9 +2310,9 @@ impl Blockstore {
         self.transaction_memos_cf.put(*signature, &memos)
     }
 
-    fn check_lowest_cleanup_slot(&self, slot: Slot) -> Result<std::sync::RwLockReadGuard<Slot>> {
+    fn check_lowest_cleanup_slot(&self, slot: Slot) -> Result<parking_lot::RwLockReadGuard<Slot>> {
         // lowest_cleanup_slot is the last slot that was not cleaned up by LedgerCleanupService
-        let lowest_cleanup_slot = self.lowest_cleanup_slot.read().unwrap();
+        let lowest_cleanup_slot = self.lowest_cleanup_slot.read_recursive();
         if *lowest_cleanup_slot > 0 && *lowest_cleanup_slot >= slot {
             return Err(BlockstoreError::SlotCleanedUp);
         }
@@ -2321,11 +2321,11 @@ impl Blockstore {
         Ok(lowest_cleanup_slot)
     }
 
-    fn ensure_lowest_cleanup_slot(&self) -> (std::sync::RwLockReadGuard<Slot>, Slot) {
+    fn ensure_lowest_cleanup_slot(&self) -> (parking_lot::RwLockReadGuard<Slot>, Slot) {
         // Ensures consistent result by using lowest_cleanup_slot as the lower bound
         // for reading columns that do not employ strong read consistency with slot-based
         // delete_range
-        let lowest_cleanup_slot = self.lowest_cleanup_slot.read().unwrap();
+        let lowest_cleanup_slot = self.lowest_cleanup_slot.read_recursive();
         let lowest_available_slot = (*lowest_cleanup_slot)
             .checked_add(1)
             .expect("overflow from trusted value");
@@ -3568,7 +3568,7 @@ impl Blockstore {
     }
 
     pub fn lowest_cleanup_slot(&self) -> Slot {
-        *self.lowest_cleanup_slot.read().unwrap()
+        *self.lowest_cleanup_slot.read_recursive()
     }
 
     pub fn storage_size(&self) -> Result<u64> {
@@ -4726,7 +4726,7 @@ pub mod tests {
         blockstore
             .run_purge(0, max_purge_slot, PurgeType::PrimaryIndex)
             .unwrap();
-        *blockstore.lowest_cleanup_slot.write().unwrap() = max_purge_slot;
+        *blockstore.lowest_cleanup_slot.write() = max_purge_slot;
 
         let mut buf = [0; 4096];
         assert!(blockstore.get_data_shreds(slot, 0, 1, &mut buf).is_err());
@@ -7347,7 +7347,7 @@ pub mod tests {
         }
 
         if simulate_ledger_cleanup_service {
-            *blockstore.lowest_cleanup_slot.write().unwrap() = lowest_cleanup_slot;
+            *blockstore.lowest_cleanup_slot.write() = lowest_cleanup_slot;
         }
 
         let are_missing = check_for_missing();
@@ -7477,7 +7477,7 @@ pub mod tests {
         }
 
         blockstore.run_purge(0, 2, PurgeType::PrimaryIndex).unwrap();
-        *blockstore.lowest_cleanup_slot.write().unwrap() = slot;
+        *blockstore.lowest_cleanup_slot.write() = slot;
         for TransactionWithMetadata { transaction, .. } in expected_transactions {
             let signature = transaction.signatures[0];
             assert_eq!(blockstore.get_rooted_transaction(signature).unwrap(), None,);
@@ -7576,7 +7576,7 @@ pub mod tests {
         }
 
         blockstore.run_purge(0, 2, PurgeType::PrimaryIndex).unwrap();
-        *blockstore.lowest_cleanup_slot.write().unwrap() = slot;
+        *blockstore.lowest_cleanup_slot.write() = slot;
         for TransactionWithMetadata { transaction, .. } in expected_transactions {
             let signature = transaction.signatures[0];
             assert_eq!(
@@ -9301,7 +9301,7 @@ pub mod tests {
                             // Grab this lock to block `get_slot_entries` before it fetches completed datasets
                             // and then mark the slot as dead, but full, by inserting carefully crafted shreds.
                             let _lowest_cleanup_slot =
-                                blockstore.lowest_cleanup_slot.write().unwrap();
+                                blockstore.lowest_cleanup_slot.write();
                             blockstore.insert_shreds(shreds, None, false).unwrap();
                             assert!(blockstore.get_duplicate_slot(slot).is_some());
                             assert!(blockstore.is_dead(slot));

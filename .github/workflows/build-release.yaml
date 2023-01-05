@@ -6,6 +6,7 @@ on:
     # Can be replaced by cron job
     branches:
        - develop
+       - "test-release"
 
 jobs:
   build:
@@ -16,18 +17,21 @@ jobs:
 
     strategy:
       matrix:
-        build: [linux]
+        build: ["linux", "darwin-macos"]
 
         include:
           - build: linux
             os: linux
             target: x86_64-unknown-linux-gnu
-            # target: x86_64-pc-windows-msvc
+            cargo_folder: ~/.cargo
+            exe_ext: ""
+          - build: darwin-macos
+            os: osx
+            target: x86_64-apple-darwin
             cargo_folder: ~/.cargo
             exe_ext: ""
 
             
-
     steps:
 
       - uses: actions/checkout@v3
@@ -40,10 +44,12 @@ jobs:
           echo "CI_BRANCH=release" >> $GITHUB_ENV
           echo "CI_TAG=$VERSION" >> $GITHUB_ENV
           echo "CI_OS_NAME=${{ matrix.os }}" >> $GITHUB_ENV
+          echo "OSTYPE=${{ matrix.build }}" >> $GITHUB_ENV
 
       # Compile with optimisation for skylake CPU to avoid AVX512 simd, that is not exist at any cpu.
       - name: Set up rust flag
-        run: echo RUSTFLAGS="-C target-cpu=skylake" >> $GITHUB_ENV 
+        run: echo RUSTFLAGS="-C target-cpu=skylake" >> $GITHUB_ENV
+        if: matrix.os == 'linux'
 
       - name: Install deps
         run: |
@@ -75,7 +81,7 @@ jobs:
       #     restore-keys: |
       #           ${{ matrix.os }}-cargo-release-target-
 
-      - name: release
+      - name: Build release
         run: ./ci/publish-tarball.sh --no-spl
 
       - name: Nightly release
@@ -85,7 +91,7 @@ jobs:
           TARGET: ${{ matrix.target }}
           EXE_EXT: ${{ matrix.exe_ext }}
         run: ./ci/github-check-nightly-release.sh
-        if: github.event.action != 'published'
+        if:  ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 
       - name: Upload
