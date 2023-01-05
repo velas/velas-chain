@@ -6596,6 +6596,7 @@ dependencies = [
  "matches",
  "num_cpus",
  "num_enum",
+ "parking_lot 0.12.1",
  "prost 0.11.0",
  "rand 0.7.3",
  "rand_chacha 0.2.2",
