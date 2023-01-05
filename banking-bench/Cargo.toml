@@ -24,7 +24,7 @@ solana-poh = { path = "../poh", version = "=1.9.29" }
 solana-runtime = { path = "../runtime", version = "=1.9.29" }
 solana-streamer = { path = "../streamer", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
-solana-version = { path = "../version", version = "=0.6.2" }
+solana-version = { path = "../version", version = "=0.6.3" }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
