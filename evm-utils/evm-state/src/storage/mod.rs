@@ -17,6 +17,7 @@ use rlp::{Decodable, Encodable};
 use rocksdb::{
     backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
     ColumnFamily, ColumnFamilyDescriptor, Env, IteratorMode, OptimisticTransactionDB, Options,
+    DBWithThreadMode, DBAccess
 };
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
@@ -96,42 +97,25 @@ pub struct Storage {
     location: Location,
     gc_enabled: bool,
 }
+struct Descriptors {
+    all: Vec<ColumnFamilyDescriptor>,
+    cleanup_cfs: Vec<&'static str>,
+}
 
-impl Storage {
-    pub fn open_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
-        Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
+impl Descriptors {
+    pub fn reference_counter_opts() -> Options {
+        let mut opts = Options::default();
+        opts.set_merge_operator_associative("inc_counter", triedb::rocksdb::merge_counter);
+        opts
     }
-
-    pub fn create_temporary() -> Result<Self> {
-        Self::open(Location::Temporary(Arc::new(TempDir::new()?)), false)
-    }
-    pub fn create_temporary_gc() -> Result<Self> {
-        Self::open(Location::Temporary(Arc::new(TempDir::new()?)), true)
-    }
-
-    pub fn gc_enabled(&self) -> bool {
-        self.gc_enabled
-    }
-
-    // List of cfs, that was deprecated.
-    fn deprecated_cfs() -> &'static [&'static str] {
-        &[
-            Receipts::COLUMN_NAME,
-            TransactionHashesPerBlock::COLUMN_NAME,
-            Transactions::COLUMN_NAME,
-        ]
-    }
-
-    fn open(location: Location, gc_enabled: bool) -> Result<Self> {
-        let db_opts = default_db_opts()?;
-
-        let mut descriptors = if gc_enabled {
+    fn descriptors(db_opts: Options, gc_enabled: bool) -> Vec<ColumnFamilyDescriptor> {
+        if gc_enabled {
             vec![
                 ColumnFamilyDescriptor::new(Codes::COLUMN_NAME, db_opts.clone()),
-                ColumnFamilyDescriptor::new(SlotsRoots::COLUMN_NAME, db_opts.clone()),
+                ColumnFamilyDescriptor::new(SlotsRoots::COLUMN_NAME, db_opts),
                 ColumnFamilyDescriptor::new(
                     ReferenceCounter::COLUMN_NAME,
-                    reference_counter_opts(),
+                    Self::reference_counter_opts(),
                 ),
                 // Make sure to reflect new columns in `merge_from_db`
             ]
@@ -143,28 +127,114 @@ impl Storage {
             .iter()
             .map(|column| ColumnFamilyDescriptor::new(*column, db_opts.clone()))
             .collect()
-        };
+        }
+    }
+    // List of cfs, that was deprecated.
+    fn startup_deprecated_cfs() -> &'static [&'static str] {
+        &[
+            Receipts::COLUMN_NAME,
+            TransactionHashesPerBlock::COLUMN_NAME,
+            Transactions::COLUMN_NAME,
+        ]
+    }
+    fn compute(exist_cfs: BTreeSet<String>, db_opts: &Options, gc_enabled: bool) -> Self {
+        let mut descriptors = Self::descriptors(db_opts.clone(), gc_enabled);
 
         // find deprecated cfs and remove them at first startup
-        let exist_cfs: BTreeSet<_> = DB::list_cf(&db_opts, &location)
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-
         let mut cleanup_cfs = Vec::new();
-        for d in Self::deprecated_cfs() {
+        for d in Self::startup_deprecated_cfs() {
             if exist_cfs.contains(*d) {
                 cleanup_cfs.push(*d);
                 descriptors.push(ColumnFamilyDescriptor::new(*d, db_opts.clone()))
             }
         }
-
-        let mut db = DB::open_cf_descriptors(&db_opts, &location, descriptors)?;
-
-        for removed_cf in cleanup_cfs {
-            info!("Perform cleanup of deprecated cf: {}", removed_cf);
-            db.drop_cf(removed_cf)?
+        Self {
+            all: descriptors,
+            cleanup_cfs,
         }
+    }
+}
+
+#[derive(Debug)]
+pub enum AccessType {
+    Primary,
+
+    Secondary,
+}
+
+impl Storage {
+    pub fn open_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
+        Self::open(
+            Location::Persisent(path.as_ref().to_owned()),
+            gc_enabled,
+            AccessType::Primary,
+        )
+    }
+
+    pub fn create_temporary() -> Result<Self> {
+        Self::open(
+            Location::Temporary(Arc::new(TempDir::new()?)),
+            false,
+            AccessType::Primary,
+        )
+    }
+    pub fn create_temporary_gc() -> Result<Self> {
+        Self::open(
+            Location::Temporary(Arc::new(TempDir::new()?)),
+            true,
+            AccessType::Primary,
+        )
+    }
+
+    pub fn gc_enabled(&self) -> bool {
+        self.gc_enabled
+    }
+
+    fn open(location: Location, gc_enabled: bool, access_type: AccessType) -> Result<Self> {
+        let access_type = AccessType::Primary;
+        log::info!("location is {:?}", location);
+        let db_opts = default_db_opts()?;
+
+        let exist_cfs: BTreeSet<_> = DB::list_cf(&db_opts, &location)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+
+        let descriptors = Descriptors::compute(exist_cfs, &db_opts, gc_enabled);
+        warn!("Trying as {:?} at : {:?}", access_type, location);
+        let db = match access_type {
+            AccessType::Primary => {
+                warn!("Trying as primary at : {:?}", &location);
+                let mut db = DB::open_cf_descriptors(&db_opts, &location, descriptors.all)?;
+
+                for removed_cf in descriptors.cleanup_cfs {
+                    info!("Perform cleanup of deprecated cf: {}", removed_cf);
+                    db.drop_cf(removed_cf)?
+                }
+                db
+            }
+            AccessType::Secondary => {
+
+                let path = match location {
+                    Location::Temporary(..) => {
+                        unimplemented!("not implementing a not yet practical case")
+                    }
+                    Location::Persisent(path) => path,
+                };
+
+                let secondary_path = path.join(SECONDARY_MODE_PATH_SUFFIX);
+                warn!("This active secondary db use may temporarily cause the performance of another db use (like by validator) to degrade");
+                // let cf_names: Vec<&str> = descriptors.all.iter().map(|c| &c.name).collect();
+
+                unimplemented!("secondary path unfinished");
+                // DB::open_cf_as_secondary(
+                //     &db_opts,
+                //     path,
+                //     &secondary_path,
+                //     cf_names.clone(),
+                // )?
+            }
+        };
 
         Ok(Self {
             db: Arc::new(DbWithClose(db)),
@@ -511,6 +581,8 @@ impl Storage {
     }
 }
 
+static SECONDARY_MODE_PATH_SUFFIX: &'static str = "velas-secondary";
+
 fn account_extractor(data: &[u8]) -> Vec<H256> {
     if let Ok(account) = rlp::decode::<Account>(data) {
         vec![account.storage_root]
@@ -818,10 +890,4 @@ pub fn copy_and_purge(
         trie.db.decrease_atomic(root)?;
     }
     Ok(())
-}
-
-pub fn reference_counter_opts() -> Options {
-    let mut opts = Options::default();
-    opts.set_merge_operator_associative("inc_counter", triedb::rocksdb::merge_counter);
-    opts
 }
