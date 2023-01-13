@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use jsonrpc_core::{
     futures_util::future::{Either, FutureExt},
     Call, Failure, FutureOutput, FutureResponse, Id, MethodCall, Middleware, Output, Request,
@@ -6,6 +5,7 @@ use jsonrpc_core::{
 };
 use log::*;
 use rand::{thread_rng, Rng};
+use std::sync::Arc;
 
 use crate::rpc::{BatchId, JsonRpcRequestProcessor};
 
@@ -85,16 +85,17 @@ impl Middleware<Arc<JsonRpcRequestProcessor>> for BatchLimiter {
         if let Request::Batch(calls) = request {
             let mut rng = thread_rng();
             let mut batch_id = rng.gen::<BatchId>();
-            while !meta.batch_state_map.add_batch(batch_id) {
+            while !meta.add_batch(batch_id) {
                 batch_id = rng.gen();
             }
             debug!("Create batch {}", batch_id);
             let patched_request = Request::Batch(patch_calls(calls, batch_id));
-            let batch_state_map = meta.batch_state_map.clone();
-            Either::Left(Box::pin(next(patched_request, meta).map(move |res| {
-                batch_state_map.remove_batch(&batch_id);
-                res
-            })))
+            Either::Left(Box::pin(next(patched_request, meta.clone()).map(
+                move |res| {
+                    meta.remove_batch(&batch_id);
+                    res
+                },
+            )))
         } else {
             Either::Right(next(request, meta))
         }
@@ -114,11 +115,9 @@ impl Middleware<Arc<JsonRpcRequestProcessor>> for BatchLimiter {
             Ok((original_call, batch_id)) => (original_call, batch_id),
             Err(call) => return Either::Right(next(call, meta)),
         };
-        let batch_state_map = meta.batch_state_map.clone();
-        let max_batch_duration = meta.get_max_batch_duration();
-        let next_future = next(Call::MethodCall(original_call.clone()), meta);
+        let next_future = next(Call::MethodCall(original_call.clone()), meta.clone());
         Either::Left(Box::pin(async move {
-            if let Err(error) = batch_state_map.check_batch_timeout(batch_id, max_batch_duration) {
+            if let Err(error) = meta.check_batch_timeout(batch_id) {
                 return Some(Output::Failure(Failure {
                     jsonrpc: Some(Version::V2),
                     error,
@@ -128,7 +127,7 @@ impl Middleware<Arc<JsonRpcRequestProcessor>> for BatchLimiter {
             let start = std::time::Instant::now();
             next_future
                 .map(move |res| {
-                    let total_duration = batch_state_map.update_duration(batch_id, start.elapsed());
+                    let total_duration = meta.update_duration(batch_id, start.elapsed());
                     debug!("Batch total duration: {:?}", total_duration);
                     res
                 })

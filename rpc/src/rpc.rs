@@ -179,53 +179,6 @@ pub struct BatchState {
     pub duration: Duration,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct BatchStateMap(Arc<DashMap<BatchId, BatchState>>);
-
-impl BatchStateMap {
-    pub fn add_batch(&self, id: BatchId) -> bool {
-        if self.0.contains_key(&id) {
-            return false;
-        }
-        self.0.insert(id, BatchState::default());
-        true
-    }
-
-    pub fn remove_batch(&self, id: &BatchId) {
-        self.0.remove(id);
-    }
-
-    pub fn get_duration(&self, id: &BatchId) -> Duration {
-        self.0
-            .get(id)
-            .map(|state| state.duration)
-            .unwrap_or_else(Default::default)
-    }
-
-    pub fn update_duration(&self, id: BatchId, d: Duration) -> Duration {
-        match self.0.entry(id) {
-            Entry::Vacant(_) => Duration::default(),
-            Entry::Occupied(o) => {
-                let mut batch_state = o.into_ref();
-                batch_state.duration += d;
-                batch_state.duration
-            }
-        }
-    }
-
-    pub fn check_batch_timeout(&self, id: BatchId, max_batch_duration: Option<Duration>) -> Result<()> {
-        let current = self.get_duration(&id);
-        debug!("Current batch ({}) duration {:?}", id, current);
-        if matches!(max_batch_duration, Some(max_duration) if current > max_duration )
-        {
-            let mut error = Error::internal_error();
-            error.message = "Batch is taking too long".to_string();
-            return Err(error);
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone)]
 pub struct JsonRpcRequestProcessor {
     bank_forks: Arc<RwLock<BankForks>>,
@@ -246,7 +199,7 @@ pub struct JsonRpcRequestProcessor {
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     evm_state_archive: Option<evm_state::Storage>,
-    pub batch_state_map: BatchStateMap,
+    batch_state_map: Arc<DashMap<BatchId, BatchState>>,
 }
 
 impl JsonRpcRequestProcessor {
@@ -414,6 +367,47 @@ impl JsonRpcRequestProcessor {
             evm_state_archive: None,
             batch_state_map: Default::default(),
         }
+    }
+    pub fn add_batch(&self, id: BatchId) -> bool {
+        if self.batch_state_map.contains_key(&id) {
+            return false;
+        }
+        self.batch_state_map.insert(id, BatchState::default());
+        true
+    }
+
+    pub fn remove_batch(&self, id: &BatchId) {
+        self.batch_state_map.remove(id);
+    }
+
+    pub fn get_duration(&self, id: &BatchId) -> Duration {
+        self.batch_state_map
+            .get(id)
+            .map(|state| state.duration)
+            .unwrap_or_else(Default::default)
+    }
+
+    pub fn update_duration(&self, id: BatchId, d: Duration) -> Duration {
+        match self.batch_state_map.entry(id) {
+            Entry::Vacant(_) => Duration::default(),
+            Entry::Occupied(o) => {
+                let mut batch_state = o.into_ref();
+                batch_state.duration += d;
+                batch_state.duration
+            }
+        }
+    }
+
+    pub fn check_batch_timeout(&self, id: BatchId) -> Result<()> {
+        let current = self.get_duration(&id);
+        debug!("Current batch ({}) duration {:?}", id, current);
+        if matches!(self.get_max_batch_duration(), Some(max_duration) if current > max_duration )
+        {
+            let mut error = Error::internal_error();
+            error.message = "Batch is taking too long".to_string();
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn get_max_batch_duration(&self) -> Option<Duration> {
