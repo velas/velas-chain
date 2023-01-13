@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use jsonrpc_core::{
     futures_util::future::{Either, FutureExt},
     Call, Failure, FutureOutput, FutureResponse, Id, MethodCall, Middleware, Output, Request,
@@ -67,18 +68,18 @@ fn restore_original_call(call: Call) -> Result<(MethodCall, BatchId), Call> {
 
 #[derive(Clone, Default)]
 pub struct BatchLimiter;
-impl Middleware<JsonRpcRequestProcessor> for BatchLimiter {
+impl Middleware<Arc<JsonRpcRequestProcessor>> for BatchLimiter {
     type Future = FutureResponse;
     type CallFuture = FutureOutput;
 
     fn on_request<F, X>(
         &self,
         request: Request,
-        meta: JsonRpcRequestProcessor,
+        meta: Arc<JsonRpcRequestProcessor>,
         next: F,
     ) -> Either<Self::Future, X>
     where
-        F: Fn(Request, JsonRpcRequestProcessor) -> X + Send + Sync,
+        F: Fn(Request, Arc<JsonRpcRequestProcessor>) -> X + Send + Sync,
         X: std::future::Future<Output = Option<Response>> + Send + 'static,
     {
         if let Request::Batch(calls) = request {
@@ -102,11 +103,11 @@ impl Middleware<JsonRpcRequestProcessor> for BatchLimiter {
     fn on_call<F, X>(
         &self,
         call: Call,
-        meta: JsonRpcRequestProcessor,
+        meta: Arc<JsonRpcRequestProcessor>,
         next: F,
     ) -> Either<Self::CallFuture, X>
     where
-        F: FnOnce(Call, JsonRpcRequestProcessor) -> X + Send,
+        F: FnOnce(Call, Arc<JsonRpcRequestProcessor>) -> X + Send,
         X: std::future::Future<Output = Option<Output>> + Send + 'static,
     {
         let (original_call, batch_id) = match restore_original_call(call) {

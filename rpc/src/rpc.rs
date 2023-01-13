@@ -7,7 +7,7 @@ use {
     },
     bincode::{config::Options, serialize},
     dashmap::{mapref::entry::Entry, DashMap},
-    jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Metadata, Result},
+    jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Result},
     jsonrpc_derive::rpc,
     serde::{Deserialize, Serialize},
     solana_account_decoder::{
@@ -248,8 +248,6 @@ pub struct JsonRpcRequestProcessor {
     evm_state_archive: Option<evm_state::Storage>,
     pub batch_state_map: BatchStateMap,
 }
-
-impl Metadata for JsonRpcRequestProcessor {}
 
 impl JsonRpcRequestProcessor {
     #[allow(deprecated)]
@@ -2828,7 +2826,7 @@ fn get_token_program_id_and_mint(
 }
 
 fn _send_transaction(
-    meta: JsonRpcRequestProcessor,
+    meta: Arc<JsonRpcRequestProcessor>,
     signature: Signature,
     wire_transaction: Vec<u8>,
     last_valid_block_height: u64,
@@ -2931,7 +2929,7 @@ pub mod rpc_minimal {
 
     pub struct MinimalImpl;
     impl Minimal for MinimalImpl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Arc<JsonRpcRequestProcessor>;
 
         fn get_balance(
             &self,
@@ -3023,7 +3021,8 @@ pub mod rpc_minimal {
 
             let snapshot_archives_dir = meta
                 .snapshot_config
-                .map(|snapshot_config| snapshot_config.snapshot_archives_dir)
+                .as_ref()
+                .map(|snapshot_config| snapshot_config.snapshot_archives_dir.clone())
                 .unwrap();
 
             let full_snapshot_slot =
@@ -3160,7 +3159,7 @@ pub mod rpc_bank {
 
     pub struct BankDataImpl;
     impl BankData for BankDataImpl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Arc<JsonRpcRequestProcessor>;
 
         fn get_minimum_balance_for_rent_exemption(
             &self,
@@ -3466,7 +3465,7 @@ pub mod rpc_accounts {
 
     pub struct AccountsDataImpl;
     impl AccountsData for AccountsDataImpl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Arc<JsonRpcRequestProcessor>;
 
         fn get_account_info(
             &self,
@@ -3918,7 +3917,7 @@ pub mod rpc_full {
 
     pub struct FullImpl;
     impl Full for FullImpl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Arc<JsonRpcRequestProcessor>;
 
         fn get_recent_performance_samples(
             &self,
@@ -4490,7 +4489,7 @@ pub mod rpc_deprecated_v1_9 {
 
     pub struct DeprecatedV1_9Impl;
     impl DeprecatedV1_9 for DeprecatedV1_9Impl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Arc<JsonRpcRequestProcessor>;
 
         fn get_recent_blockhash(
             &self,
@@ -4534,6 +4533,7 @@ pub mod rpc_deprecated_v1_9 {
             debug!("get_snapshot_slot rpc request received");
 
             meta.snapshot_config
+                .as_ref()
                 .and_then(|snapshot_config| {
                     snapshot_utils::get_highest_full_snapshot_archive_slot(
                         &snapshot_config.snapshot_archives_dir,
@@ -4602,7 +4602,7 @@ pub mod rpc_deprecated_v1_7 {
 
     pub struct DeprecatedV1_7Impl;
     impl DeprecatedV1_7 for DeprecatedV1_7Impl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Arc<JsonRpcRequestProcessor>;
 
         fn get_confirmed_block(
             &self,
@@ -4754,7 +4754,7 @@ pub mod rpc_obsolete_v1_7 {
 
     pub struct ObsoleteV1_7Impl;
     impl ObsoleteV1_7 for ObsoleteV1_7Impl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Arc<JsonRpcRequestProcessor>;
 
         fn confirm_transaction(
             &self,
@@ -5064,8 +5064,8 @@ pub mod tests {
     const TEST_SLOTS_PER_EPOCH: u64 = DELINQUENT_VALIDATOR_SLOT_DISTANCE + 1;
 
     struct RpcHandler {
-        io: MetaIoHandler<JsonRpcRequestProcessor, BatchLimiter>,
-        meta: JsonRpcRequestProcessor,
+        io: MetaIoHandler<Arc<JsonRpcRequestProcessor>, BatchLimiter>,
+        meta: Arc<JsonRpcRequestProcessor>,
         bank: Arc<Bank>,
         bank_forks: Arc<RwLock<BankForks>>,
         blockhash: Hash,
@@ -5240,6 +5240,7 @@ pub mod tests {
             max_complete_transaction_status_slot,
             None,
         );
+        let meta = Arc::new(meta);
         SendTransactionService::new::<NullTpuInfo>(
             tpu_address,
             &bank_forks,
@@ -5292,6 +5293,7 @@ pub mod tests {
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
         let meta = JsonRpcRequestProcessor::new_from_bank(&bank, SocketAddrSpace::Unspecified);
+        let meta = Arc::new(meta);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -5320,6 +5322,7 @@ pub mod tests {
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
         let meta = JsonRpcRequestProcessor::new_from_bank(&bank, SocketAddrSpace::Unspecified);
+        let meta = Arc::new(meta);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -5464,6 +5467,7 @@ pub mod tests {
             .unwrap();
 
         let meta = JsonRpcRequestProcessor::new_from_bank(&bank, SocketAddrSpace::Unspecified);
+        let meta = Arc::new(meta);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -6631,7 +6635,9 @@ pub mod tests {
         assert_eq!(expected_res, result.as_ref().unwrap().status);
 
         // disable rpc-tx-history, but attempt historical query
-        meta.config.enable_rpc_transaction_history = false;
+        let mut rpc_processor = (*meta).clone();
+        rpc_processor.config.enable_rpc_transaction_history = false;
+        meta = Arc::new(rpc_processor);
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"getSignatureStatuses","params":[["{}"], {{"searchTransactionHistory": true}}]}}"#,
             confirmed_block_signatures[1]
@@ -6814,6 +6820,7 @@ pub mod tests {
         let genesis = create_genesis_config(100);
         let bank = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
         let meta = JsonRpcRequestProcessor::new_from_bank(&bank, SocketAddrSpace::Unspecified);
+        let meta = Arc::new(meta);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_full::FullImpl.to_delegate());
@@ -6864,6 +6871,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             None,
         );
+        let meta = Arc::new(meta);
         SendTransactionService::new::<NullTpuInfo>(
             tpu_address,
             &bank_forks,
@@ -7341,7 +7349,9 @@ pub mod tests {
         }
 
         // disable rpc-tx-history
-        meta.config.enable_rpc_transaction_history = false;
+        let mut rpc_processor = (*meta).clone();
+        rpc_processor.config.enable_rpc_transaction_history = false;
+        meta = Arc::new(rpc_processor);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"getBlock","params":[0]}"#;
         let res = io.handle_request_sync(req, meta);
         assert_eq!(
@@ -8642,6 +8652,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             None,
         );
+        let meta = Arc::new(meta);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());

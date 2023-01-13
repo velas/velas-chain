@@ -504,9 +504,10 @@ impl JsonRpcService {
                     bank_forks.clone(),
                     health.clone(),
                 );
+                let meta = Arc::new(request_processor);
                 let server = ServerBuilder::with_meta_extractor(
                     io,
-                    move |_req: &hyper::Request<hyper::Body>| request_processor.clone(),
+                    move |_req: &hyper::Request<hyper::Body>| meta.clone(),
                 )
                 .event_loop_executor(runtime.handle().clone())
                 .threads(1)
