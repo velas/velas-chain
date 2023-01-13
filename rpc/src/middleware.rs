@@ -85,14 +85,14 @@ impl Middleware<Arc<JsonRpcRequestProcessor>> for BatchLimiter {
         if let Request::Batch(calls) = request {
             let mut rng = thread_rng();
             let mut batch_id = rng.gen::<BatchId>();
-            while !meta.add_batch(batch_id) {
+            while !meta.batch_state_map.add_batch(batch_id) {
                 batch_id = rng.gen();
             }
             debug!("Create batch {}", batch_id);
             let patched_request = Request::Batch(patch_calls(calls, batch_id));
             Either::Left(Box::pin(next(patched_request, meta.clone()).map(
                 move |res| {
-                    meta.remove_batch(&batch_id);
+                    meta.batch_state_map.remove_batch(&batch_id);
                     res
                 },
             )))
@@ -127,7 +127,9 @@ impl Middleware<Arc<JsonRpcRequestProcessor>> for BatchLimiter {
             let start = std::time::Instant::now();
             next_future
                 .map(move |res| {
-                    let total_duration = meta.update_duration(batch_id, start.elapsed());
+                    let total_duration = meta
+                        .batch_state_map
+                        .update_duration(batch_id, start.elapsed());
                     debug!("Batch total duration: {:?}", total_duration);
                     res
                 })
