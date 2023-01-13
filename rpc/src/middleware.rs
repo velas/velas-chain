@@ -6,15 +6,17 @@ use jsonrpc_core::{
 use log::*;
 use rand::{thread_rng, Rng};
 
-use crate::rpc::JsonRpcRequestProcessor;
+use crate::rpc::{BatchId, JsonRpcRequestProcessor};
 
-fn decode_batch_id(id: &Id) -> Option<(u64, Id)> {
+// Expected batch id format 'b<generated batch id>:<original id type><original id>
+// original id type can be either n (for numeric id) or s (for string id)
+fn decode_batch_id(id: &Id) -> Option<(BatchId, Id)> {
     if let Id::Str(id_str) = id {
         let (&prefix, s) = id_str.as_bytes().split_first()?;
         if prefix == b'b' {
             let mut split = s.split(|&b| b == b':');
             let batch_id = std::str::from_utf8(split.next()?).ok()?;
-            let batch_id: u64 = batch_id.parse().ok()?;
+            let batch_id: BatchId = batch_id.parse().ok()?;
             let rest = split.next()?;
             let (&t, id_str) = rest.split_first()?;
             let id_str = std::str::from_utf8(id_str).ok()?;
@@ -30,35 +32,37 @@ fn decode_batch_id(id: &Id) -> Option<(u64, Id)> {
     None
 }
 
-fn patch_calls(calls: &[Call], id: u64) -> Vec<Call> {
+fn patch_calls(calls: impl IntoIterator<Item = Call>, id: BatchId) -> Vec<Call> {
     let id_str = id.to_string();
     calls
-        .iter()
+        .into_iter()
         .map(|call| {
-            if let Call::MethodCall(method_call) = call {
-                let mut patched_call = method_call.clone();
+            if let Call::MethodCall(mut method_call) = call {
                 let new_id = match method_call.id.clone() {
                     Id::Num(num) => Id::Str(format!("b{}:n{}", id_str, num)),
                     Id::Str(s) => Id::Str(format!("b{}:s{}", id_str, s)),
                     Id::Null => Id::Null,
                 };
-                patched_call.id = new_id;
-                Call::MethodCall(patched_call)
+                method_call.id = new_id;
+                Call::MethodCall(method_call)
             } else {
-                call.clone()
+                call
             }
         })
         .collect()
 }
 
-fn restore_original_call(call: Call) -> Option<(MethodCall, u64)> {
-    if let Call::MethodCall(mut method_call) = call {
-        if let Some((batch_id, ref id)) = decode_batch_id(&method_call.id) {
-            method_call.id = id.clone();
-            return Some((method_call, batch_id));
-        }
+fn restore_original_call(call: Call) -> Result<(MethodCall, BatchId), Call> {
+    match call {
+        Call::MethodCall(mut method_call) => match decode_batch_id(&method_call.id) {
+            Some((batch_id, id)) => {
+                method_call.id = id;
+                Ok((method_call, batch_id))
+            }
+            None => Err(Call::MethodCall(method_call)),
+        },
+        _ => Err(call),
     }
-    None
 }
 
 #[derive(Clone, Default)]
@@ -77,20 +81,19 @@ impl Middleware<JsonRpcRequestProcessor> for BatchLimiter {
         F: Fn(Request, JsonRpcRequestProcessor) -> X + Send + Sync,
         X: std::future::Future<Output = Option<Response>> + Send + 'static,
     {
-        if let Request::Batch(ref calls) = request {
+        if let Request::Batch(calls) = request {
             let mut rng = thread_rng();
-            let mut batch_id = rng.gen::<u64>();
-            while !meta.add_batch(batch_id) {
-                batch_id = rng.gen::<u64>();
+            let mut batch_id = rng.gen::<BatchId>();
+            while !meta.batch_state_map.add_batch(batch_id) {
+                batch_id = rng.gen();
             }
             debug!("Create batch {}", batch_id);
             let patched_request = Request::Batch(patch_calls(calls, batch_id));
-            Either::Left(Box::pin(next(patched_request, meta.clone()).map(
-                move |res| {
-                    meta.remove_batch(&batch_id);
-                    res
-                },
-            )))
+            let batch_state_map = meta.batch_state_map.clone();
+            Either::Left(Box::pin(next(patched_request, meta).map(move |res| {
+                batch_state_map.remove_batch(&batch_id);
+                res
+            })))
         } else {
             Either::Right(next(request, meta))
         }
@@ -106,13 +109,15 @@ impl Middleware<JsonRpcRequestProcessor> for BatchLimiter {
         F: FnOnce(Call, JsonRpcRequestProcessor) -> X + Send,
         X: std::future::Future<Output = Option<Output>> + Send + 'static,
     {
-        let (original_call, batch_id) = match restore_original_call(call.clone()) {
-            Some((original_call, batch_id)) => (original_call, batch_id),
-            None => return Either::Right(next(call, meta)),
+        let (original_call, batch_id) = match restore_original_call(call) {
+            Ok((original_call, batch_id)) => (original_call, batch_id),
+            Err(call) => return Either::Right(next(call, meta)),
         };
-        let next_future = next(Call::MethodCall(original_call.clone()), meta.clone());
+        let batch_state_map = meta.batch_state_map.clone();
+        let max_batch_duration = meta.get_max_batch_duration();
+        let next_future = next(Call::MethodCall(original_call.clone()), meta);
         Either::Left(Box::pin(async move {
-            if let Err(error) = meta.check_batch_timeout(batch_id) {
+            if let Err(error) = batch_state_map.check_batch_timeout(batch_id, max_batch_duration) {
                 return Some(Output::Failure(Failure {
                     jsonrpc: Some(Version::V2),
                     error,
@@ -122,7 +127,7 @@ impl Middleware<JsonRpcRequestProcessor> for BatchLimiter {
             let start = std::time::Instant::now();
             next_future
                 .map(move |res| {
-                    let total_duration = meta.update_duration(batch_id, start.elapsed());
+                    let total_duration = batch_state_map.update_duration(batch_id, start.elapsed());
                     debug!("Batch total duration: {:?}", total_duration);
                     res
                 })
