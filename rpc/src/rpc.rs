@@ -174,13 +174,13 @@ impl JsonRpcConfig {
 
 pub type BatchId = u64;
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct BatchState {
     pub duration: Duration,
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct BatchStateMap(Arc<DashMap<BatchId, BatchState>>);
+pub struct BatchStateMap(DashMap<BatchId, BatchState>);
 
 impl BatchStateMap {
     pub fn add_batch(&self, id: BatchId) -> bool {
