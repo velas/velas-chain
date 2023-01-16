@@ -15,6 +15,11 @@ pub async fn find_evm(
     log::info!("Looking for missing EVM Blocks");
     log::info!("start_block={start_block}, end_block={end_block}, bigtable_limit={max_limit}");
 
+    if start_block > end_block {
+        log::error!("start_block={start_block}, end_block={end_block}");
+        return Err(err_to_output(exit_code::INVALID_ARGUMENTS))
+    }
+
     let ledger = ledger::with_params(creds, instance).await.map_err(|_e| {
         log::error!("Unable to initialize `LedgerStorage` with provided credentials");
         err_to_output(exit_code::UNABLE_TO_CREATE_LEDGER)
@@ -46,6 +51,7 @@ pub async fn find_evm(
             log::debug!(
                 "Bigtable didn't return anything for range #{start_block}..#{end_block_to_query}"
             );
+            
             break;
         };
 
@@ -91,6 +97,11 @@ pub async fn find_native(
 ) -> Result<(), i32> {
     log::info!("Looking for missing Native Blocks");
     log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={max_limit}");
+
+    if start_slot > end_slot {
+        log::error!("start_slot={start_slot}, end_slot={end_slot}");
+        return Err(err_to_output(exit_code::INVALID_ARGUMENTS))
+    }
 
     let ledger = ledger::with_params(creds, instance).await.map_err(|_e| {
         log::error!("Unable to initialize `LedgerStorage` with provided credentials");
