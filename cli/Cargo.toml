@@ -46,6 +46,7 @@ spl-memo = { version = "=3.0.1", features = ["no-entrypoint"] }
 thiserror = "1.0.30"
 tiny-bip39 = "0.8.2"
 
+evm-gas-station = { path = "../evm-utils/programs/gas_station" }
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
 solana-evm-loader-program = { path = "../evm-utils/programs/evm_loader" }

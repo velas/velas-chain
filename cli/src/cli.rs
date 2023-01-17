@@ -895,7 +895,7 @@ pub fn parse_command(
         }
         ("transfer", Some(matches)) => parse_transfer(matches, default_signer, wallet_manager),
         //
-        ("evm", Some(matches)) => parse_evm_subcommand(matches),
+        ("evm", Some(matches)) => parse_evm_subcommand(matches, default_signer, wallet_manager),
         //
         ("", None) => {
             eprintln!("{}", matches.usage());

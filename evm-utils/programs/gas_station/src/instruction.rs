@@ -1,8 +1,9 @@
 use super::*;
 use borsh::{BorshDeserialize, BorshSerialize};
+use serde::Deserialize;
 use solana_sdk::pubkey::Pubkey;
 
-#[derive(Debug, BorshDeserialize, BorshSerialize, PartialEq)]
+#[derive(Debug, Deserialize, BorshDeserialize, BorshSerialize, PartialEq)]
 pub enum TxFilter {
     InputStartsWith {
         contract: evm_types::Address,

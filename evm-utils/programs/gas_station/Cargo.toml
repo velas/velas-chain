@@ -10,7 +10,8 @@ arrayref = "0.3.6"
 borsh = "0.9.3"
 num-derive = "0.3.3"
 num-traits = "0.2.15"
-primitive-types = { version = "0.11.0", default-features = false, features = ["borsh_no_std"] }
+primitive-types = { version = "0.11.0", default-features = false, features = ["borsh_no_std", "serde_no_std"] }
+serde = "1.0.122"
 solana-program = { path = "../../../sdk/program", version = "=1.9.29" }
 solana-sdk = { path = "../../../sdk", version = "=1.9.29", default-features = false }
 thiserror = "1.0.37"

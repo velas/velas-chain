@@ -8,6 +8,12 @@ use crate::instruction::TxFilter;
 
 pub const MAX_FILTERS: usize = 10;
 
+pub fn get_state_size(filters: &Vec<TxFilter>) -> usize {
+    let mut bytes = vec![];
+    BorshSerialize::serialize(filters, &mut bytes).unwrap();
+    bytes.len() + 64
+}
+
 #[repr(C)]
 #[derive(BorshDeserialize, BorshSerialize, Debug)]
 pub struct Payer {

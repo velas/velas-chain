@@ -5,7 +5,8 @@ pub mod instruction;
 mod processor;
 mod state;
 
-use borsh::BorshSerialize;
+pub use state::get_state_size;
+
 use processor::process_instruction;
 use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::pubkey::Pubkey;
@@ -21,14 +22,38 @@ pub fn create_storage_account(
     filters: &Vec<instruction::TxFilter>,
     owner: &Pubkey,
 ) -> Instruction {
-    let mut bytes = vec![];
-    BorshSerialize::serialize(filters, &mut bytes).unwrap();
     solana_sdk::system_instruction::create_account(
         from_pubkey,
         to_pubkey,
         lamports,
-        bytes.len() as u64 + 64,
+        get_state_size(filters) as u64,
         owner,
+    )
+}
+
+pub fn register_payer(
+    program_id: Pubkey,
+    signer: Pubkey,
+    storage: Pubkey,
+    owner: Pubkey,
+    transfer_amount: u64,
+    filters: Vec<instruction::TxFilter>,
+) -> Instruction {
+    let (payer_key, _) = Pubkey::find_program_address(&[owner.as_ref()], &program_id);
+    let account_metas = vec![
+        AccountMeta::new(signer, true),
+        AccountMeta::new(storage, false),
+        AccountMeta::new(payer_key, false),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+    Instruction::new_with_borsh(
+        program_id,
+        &instruction::GasStationInstruction::RegisterPayer {
+            owner,
+            transfer_amount,
+            whitelist: filters,
+        },
+        account_metas,
     )
 }
 

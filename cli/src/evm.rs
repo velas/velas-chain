@@ -1,8 +1,11 @@
 use std::{
     convert::Infallible,
-    fs, io,
+    fs,
+    fs::File,
+    io,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
 use anyhow::anyhow;
@@ -13,14 +16,22 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     message::Message,
     native_token::{lamports_to_sol, LAMPORTS_PER_VLX},
+    pubkey::Pubkey,
+    system_instruction, system_program,
     transaction::Transaction,
 };
 
 use crate::cli::{CliCommand, CliCommandInfo, CliConfig, CliError};
 
+use crate::checks::check_unique_pubkeys;
+use evm_gas_station::instruction::TxFilter;
 use evm_rpc::Hex;
 use evm_state::{self as evm, FromKey};
+use solana_clap_utils::input_parsers::signer_of;
+use solana_clap_utils::input_validators::is_valid_signer;
+use solana_clap_utils::keypair::{DefaultSigner, SignerIndex};
 use solana_evm_loader_program::{instructions::FeePayerType, scope::evm::gweis_to_lamports};
+use solana_remote_wallet::remote_wallet::RemoteWalletManager;
 
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
@@ -67,6 +78,47 @@ impl EvmSubCommands for App<'_, '_> {
                         .arg(Arg::with_name("lamports")
                              .long("lamports")
                              .help("Amount in lamports")))
+
+                .subcommand(
+                    SubCommand::with_name("create-gas-station-payer")
+                        .about("Create payer account for gas station program")
+                        .display_order(3)
+                        .arg(
+                            Arg::with_name("payer_account")
+                                .index(1)
+                                .value_name("ACCOUNT_KEYPAIR")
+                                .takes_value(true)
+                                .required(true)
+                                .validator(is_valid_signer)
+                                .help("Keypair of the payer storage account"),
+                        ).arg(
+                        Arg::with_name("payer_owner")
+                            .index(2)
+                            .value_name("ACCOUNT_KEYPAIR")
+                            .takes_value(true)
+                            .required(true)
+                            .validator(is_valid_signer)
+                            .help("Keypair of the owner account"),
+                        )
+                        .arg(Arg::with_name("gas-station-key")
+                            .index(3)
+                            .takes_value(true)
+                            .required(true)
+                            .value_name("PROGRAM ID")
+                            .help("Public key of gas station program"))
+                        .arg(Arg::with_name("lamports")
+                            .index(4)
+                            .takes_value(true)
+                            .required(true)
+                            .value_name("AMOUNT")
+                            .help("Amount in lamports to transfer to created account"))
+                        .arg(Arg::with_name("filters_path")
+                            .index(5)
+                            .takes_value(true)
+                            .required(true)
+                            .value_name("PATH")
+                            .help("Path to json file with filter to store in payer storage"))
+                )
 
 
             // Hidden commands
@@ -152,6 +204,14 @@ pub enum EvmCliCommand {
         amount: u64,
     },
 
+    CreateGasStationPayer {
+        payer_signer_index: SignerIndex,
+        payer_owner_signer_index: SignerIndex,
+        gas_station_key: Pubkey,
+        lamports: u64,
+        filters: PathBuf,
+    },
+
     // Hidden commands
     SendRawTx {
         raw_tx: PathBuf,
@@ -191,6 +251,27 @@ impl EvmCliCommand {
             }
             Self::TransferToEvm { address, amount } => {
                 transfer(rpc_client, config, *address, *amount)?;
+            }
+            Self::CreateGasStationPayer {
+                payer_signer_index,
+                payer_owner_signer_index,
+                gas_station_key,
+                lamports,
+                filters,
+            } => {
+                println!(
+                    "CreateGasStationPayer: {}, {}, {:?}",
+                    gas_station_key, lamports, filters
+                );
+                create_gas_station_payer(
+                    rpc_client,
+                    config,
+                    *payer_signer_index,
+                    *payer_owner_signer_index,
+                    *gas_station_key,
+                    *lamports,
+                    filters,
+                )?;
             }
             // Hidden commands
             Self::SendRawTx { raw_tx } => {
@@ -262,8 +343,8 @@ fn transfer(
     let message = Message::new(&ixs, Some(&from.pubkey()));
     let mut create_account_tx = Transaction::new_unsigned(message);
 
-    let (blockhash, _last_height) = rpc_client
-        .get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
+    let (blockhash, _last_height) =
+        rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
 
     create_account_tx.sign(&config.signers, blockhash);
 
@@ -272,6 +353,65 @@ fn transfer(
         CommitmentConfig::default(),
         Default::default(),
     )?;
+    println!("Transaction signature = {}", signature);
+    Ok(())
+}
+
+fn create_gas_station_payer<P: AsRef<Path>>(
+    rpc_client: &RpcClient,
+    config: &CliConfig,
+    payer_signer_index: SignerIndex,
+    payer_owner_signer_index: SignerIndex,
+    gas_station_key: Pubkey,
+    transfer_amount: u64,
+    filters: P,
+) -> anyhow::Result<()> {
+    let cli_pubkey = config.signers[0].pubkey();
+    let payer_storage_pubkey = config.signers[payer_signer_index].pubkey();
+    let payer_owner_pubkey = config.signers[payer_owner_signer_index].pubkey();
+    check_unique_pubkeys(
+        (&payer_storage_pubkey, "payer_storage_pubkey".to_string()),
+        (&payer_owner_pubkey, "payer_owner_pubkey".to_string()),
+    )?;
+
+    let file = File::open(filters)
+        .map_err(|e| custom_error(format!("Unable to open filters file: {:?}", e)))?;
+    let filters: Vec<TxFilter> = serde_json::from_reader(file)
+        .map_err(|e| custom_error(format!("Unable to decode json: {:?}", e)))?;
+
+    let create_owner_ix = system_instruction::create_account(
+        &cli_pubkey,
+        &payer_owner_pubkey,
+        rpc_client.get_minimum_balance_for_rent_exemption(0)?,
+        0,
+        &system_program::id(),
+    );
+    let state_size = evm_gas_station::get_state_size(&filters);
+    let minimum_balance = rpc_client.get_minimum_balance_for_rent_exemption(state_size)?;
+    let create_storage_ix = evm_gas_station::create_storage_account(
+        &cli_pubkey,
+        &payer_storage_pubkey,
+        minimum_balance,
+        &filters,
+        &gas_station_key,
+    );
+    let register_payer_ix = evm_gas_station::register_payer(
+        gas_station_key,
+        cli_pubkey,
+        payer_storage_pubkey,
+        payer_owner_pubkey,
+        transfer_amount,
+        filters,
+    );
+    let message = Message::new(
+        &[create_owner_ix, create_storage_ix, register_payer_ix],
+        Some(&cli_pubkey),
+    );
+    let latest_blockhash = rpc_client.get_latest_blockhash()?;
+
+    let mut tx = Transaction::new_unsigned(message);
+    tx.try_sign(&config.signers, latest_blockhash)?;
+    let signature = rpc_client.send_and_confirm_transaction_with_spinner(&tx)?;
     println!("Transaction signature = {}", signature);
     Ok(())
 }
@@ -332,8 +472,8 @@ fn send_raw_tx<P: AsRef<Path>>(
     let msg = Message::new(&[ix], Some(&signer.pubkey()));
     let mut tx = Transaction::new_unsigned(msg);
 
-    let (blockhash, _last_height) = rpc_client
-        .get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
+    let (blockhash, _last_height) =
+        rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
     tx.sign(&config.signers, blockhash);
 
     debug!("sending tx: {:?}", tx);
@@ -397,7 +537,12 @@ fn call_dummy(
     Ok(())
 }
 
-pub fn parse_evm_subcommand(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+pub fn parse_evm_subcommand(
+    matches: &ArgMatches<'_>,
+    default_signer: &DefaultSigner,
+    wallet_manager: &mut Option<Arc<RemoteWalletManager>>,
+) -> Result<CliCommandInfo, CliError> {
+    let mut signers = vec![];
     let subcommand = match matches.subcommand() {
         ("get-evm-balance", Some(matches)) => {
             assert!(matches.is_present("key_source"));
@@ -430,6 +575,35 @@ pub fn parse_evm_subcommand(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, 
             }
 
             EvmCliCommand::TransferToEvm { address, amount }
+        }
+        ("create-gas-station-payer", Some(matches)) => {
+            signers = vec![default_signer.signer_from_path(matches, wallet_manager)?];
+            let (payer_signer, _address) = signer_of(matches, "payer_account", wallet_manager)?;
+            let (payer_owner_signer, _address) = signer_of(matches, "payer_owner", wallet_manager)?;
+            let payer_signer_index = payer_signer
+                .map(|signer| {
+                    signers.push(signer);
+                    1
+                })
+                .unwrap();
+            let payer_owner_signer_index = payer_owner_signer
+                .map(|signer| {
+                    signers.push(signer);
+                    2
+                })
+                .unwrap();
+
+            let gas_station_key = value_t_or_exit!(matches, "gas-station-key", Pubkey);
+            let lamports = value_t_or_exit!(matches, "lamports", u64);
+            let filters = value_t_or_exit!(matches, "filters_path", PathBuf);
+
+            EvmCliCommand::CreateGasStationPayer {
+                payer_signer_index,
+                payer_owner_signer_index,
+                gas_station_key,
+                lamports,
+                filters,
+            }
         }
         ("send-raw-tx", Some(matches)) => {
             let raw_tx = value_t_or_exit!(matches, "raw_tx", PathBuf);
@@ -464,7 +638,6 @@ pub fn parse_evm_subcommand(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, 
     };
 
     let command = CliCommand::Evm(subcommand);
-    let signers = vec![];
     Ok(CliCommandInfo { command, signers })
 }
 
