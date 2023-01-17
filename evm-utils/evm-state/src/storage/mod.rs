@@ -16,8 +16,9 @@ use log::*;
 use rlp::{Decodable, Encodable};
 use rocksdb::{
     backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
-    ColumnFamily, ColumnFamilyDescriptor, Env, IteratorMode, OptimisticTransactionDB, Options,
-    DBWithThreadMode, DBAccess
+    db::{DBInner, DBWithThreadModeInner},
+    ColumnFamily, ColumnFamilyDescriptor, Env, IteratorMode, OptimisticTransactionDB,
+    OptimisticTransactionDBInner, Options, ReadOptions,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
@@ -90,13 +91,34 @@ impl AsRef<Path> for Location {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Storage {
-    pub(crate) db: Arc<DbWithClose>,
+pub struct Storage<D = OptimisticTransactionDBInner>
+where
+    D: DBInner,
+{
+    pub(crate) db: Arc<DbWithClose<D>>,
     // Location should be second field, because of drop order in Rust.
     location: Location,
     gc_enabled: bool,
 }
+impl<D: DBInner> Clone for Storage<D> {
+    fn clone(&self) -> Self {
+        Self {
+            db: Arc::clone(&self.db),
+            location: self.location.clone(),
+            gc_enabled: self.gc_enabled,
+        }
+    }
+}
+
+impl<D: DBInner> std::fmt::Debug for Storage<D> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Storage<D>")
+            .field("db", &self.db)
+            .field("location", &self.location)
+            .finish()
+    }
+}
+
 struct Descriptors {
     all: Vec<ColumnFamilyDescriptor>,
     cleanup_cfs: Vec<&'static str>,
@@ -153,6 +175,21 @@ impl Descriptors {
             cleanup_cfs,
         }
     }
+    fn secondary_descriptors(gc_enabled: bool) -> Vec<&'static str> {
+        if gc_enabled {
+            vec![
+                Codes::COLUMN_NAME,
+                SlotsRoots::COLUMN_NAME,
+                ReferenceCounter::COLUMN_NAME,
+                // Make sure to reflect new columns in `merge_from_db`
+            ]
+        } else {
+            vec![
+                Codes::COLUMN_NAME,
+                // Make sure to reflect new columns in `merge_from_db`
+            ]
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -162,35 +199,119 @@ pub enum AccessType {
     Secondary,
 }
 
-impl Storage {
-    pub fn open_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
-        Self::open(
-            Location::Persisent(path.as_ref().to_owned()),
-            gc_enabled,
-            AccessType::Primary,
-        )
-    }
-
-    pub fn create_temporary() -> Result<Self> {
-        Self::open(
-            Location::Temporary(Arc::new(TempDir::new()?)),
-            false,
-            AccessType::Primary,
-        )
-    }
-    pub fn create_temporary_gc() -> Result<Self> {
-        Self::open(
-            Location::Temporary(Arc::new(TempDir::new()?)),
-            true,
-            AccessType::Primary,
-        )
-    }
-
+impl<D> Storage<D>
+where
+    D: DBInner,
+{
     pub fn gc_enabled(&self) -> bool {
         self.gc_enabled
     }
 
-    fn open(location: Location, gc_enabled: bool, access_type: AccessType) -> Result<Self> {
+    pub fn db(&self) -> &rocksdb::DBCommon<rocksdb::SingleThreaded, D> {
+        (*self.db).borrow()
+    }
+
+    pub fn list_roots(&self) -> Result<()> {
+        if !self.gc_enabled {
+            println!("Gc is not enabled");
+            return Ok(());
+        }
+        let slots_cf = self.cf::<SlotsRoots>();
+        for item in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
+            let (k, v) = item?;
+            let mut slot_arr = [0; 8];
+            slot_arr.copy_from_slice(&k[0..8]);
+            let slot = u64::from_be_bytes(slot_arr);
+
+            println!("Found root for slot: {} => {:?}", slot, hex::encode(&v))
+        }
+        Ok(())
+    }
+
+    /// Temporary solution to check if anything was purged from bd.
+    pub fn check_root_exist(&self, root: H256) -> bool {
+        if root == empty_trie_hash() {
+            true // empty root should exist always
+        } else {
+            // only return true if root is retrivable
+            matches!(
+                self.db.get_opt(root.as_ref(), &ReadOptions::default()),
+                Ok(Some(_))
+            )
+        }
+    }
+
+    // Returns evm state subdirectory that can be used temporary used by extern users.
+    pub fn get_inner_location(&self) -> Result<PathBuf> {
+        let location = self.location.as_ref().join(CUSTOM_LOCATION);
+        std::fs::create_dir_all(&location)?;
+        Ok(location)
+    }
+
+    pub fn counters_cf(&self) -> Option<&ColumnFamily> {
+        if !self.gc_enabled {
+            return None;
+        }
+        Some(self.cf::<ReferenceCounter>())
+    }
+}
+
+type AnotherDB = rocksdb::DBWithThreadMode<rocksdb::SingleThreaded>;
+
+pub type StorageSecondary = Storage<DBWithThreadModeInner>;
+
+impl Storage<DBWithThreadModeInner> {
+
+    pub fn open_secondary_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
+        Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
+    }
+
+    fn open(location: Location, gc_enabled: bool) -> Result<Self> {
+        let db_opts = default_db_opts()?;
+
+        let descriptors = Descriptors::secondary_descriptors(gc_enabled);
+        let db = {
+            warn!("Trying as secondary at : {:?}", &location);
+            let path = match location.clone() {
+                Location::Temporary(..) => {
+                    unimplemented!("not implementing a not yet practical case")
+                }
+                Location::Persisent(path) => path,
+            };
+            let secondary_path = path.join(SECONDARY_MODE_PATH_SUFFIX);
+            warn!(
+                "This active secondary db use may 
+                temporarily cause the performance of 
+                another db use (like by validator) to degrade"
+            );
+            AnotherDB::open_cf_as_secondary(
+                &db_opts,
+                path.as_ref(),
+                secondary_path.as_path(),
+                descriptors,
+            )?
+        };
+
+        Ok(Self {
+            db: Arc::new(DbWithClose(db)),
+            location,
+            gc_enabled,
+        })
+    }
+}
+
+impl Storage<OptimisticTransactionDBInner> {
+    pub fn open_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
+        Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
+    }
+
+    pub fn create_temporary() -> Result<Self> {
+        Self::open(Location::Temporary(Arc::new(TempDir::new()?)), false)
+    }
+    pub fn create_temporary_gc() -> Result<Self> {
+        Self::open(Location::Temporary(Arc::new(TempDir::new()?)), true)
+    }
+    fn open(location: Location, gc_enabled: bool) -> Result<Self> {
         log::info!("location is {:?}", location);
         let db_opts = default_db_opts()?;
 
@@ -200,39 +321,15 @@ impl Storage {
             .collect();
 
         let descriptors = Descriptors::compute(exist_cfs, &db_opts, gc_enabled);
-        warn!("Trying as {:?} at : {:?}", access_type, location);
-        let db = match access_type {
-            AccessType::Primary => {
-                warn!("Trying as primary at : {:?}", &location);
-                let mut db = DB::open_cf_descriptors(&db_opts, &location, descriptors.all)?;
+        let db = {
+            warn!("Trying as primary at : {:?}", &location);
+            let mut db = DB::open_cf_descriptors(&db_opts, &location, descriptors.all)?;
 
-                for removed_cf in descriptors.cleanup_cfs {
-                    info!("Perform cleanup of deprecated cf: {}", removed_cf);
-                    db.drop_cf(removed_cf)?
-                }
-                db
+            for removed_cf in descriptors.cleanup_cfs {
+                info!("Perform cleanup of deprecated cf: {}", removed_cf);
+                db.drop_cf(removed_cf)?
             }
-            AccessType::Secondary => {
-
-                let path = match location {
-                    Location::Temporary(..) => {
-                        unimplemented!("not implementing a not yet practical case")
-                    }
-                    Location::Persisent(path) => path,
-                };
-
-                let secondary_path = path.join(SECONDARY_MODE_PATH_SUFFIX);
-                warn!("This active secondary db use may temporarily cause the performance of another db use (like by validator) to degrade");
-                // let cf_names: Vec<&str> = descriptors.all.iter().map(|c| &c.name).collect();
-
-                unimplemented!("secondary path unfinished");
-                // DB::open_cf_as_secondary(
-                //     &db_opts,
-                //     path,
-                //     &secondary_path,
-                //     cf_names.clone(),
-                // )?
-            }
+            db
         };
 
         Ok(Self {
@@ -240,19 +337,6 @@ impl Storage {
             location,
             gc_enabled,
         })
-    }
-
-    pub fn backup(&self, backup_dir: Option<PathBuf>) -> Result<PathBuf> {
-        let backup_dir = backup_dir.unwrap_or_else(|| self.location.as_ref().join(BACKUP_SUBDIR));
-        info!("EVM Backup storage data into {}", backup_dir.display());
-
-        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), &backup_dir)?;
-        if engine.get_backup_info().len() > HARD_BACKUPS_COUNT {
-            // TODO: measure
-            engine.purge_old_backups(HARD_BACKUPS_COUNT)?;
-        }
-        engine.create_new_backup_flush(self.db.as_ref(), true)?;
-        Ok(backup_dir)
     }
 
     pub fn restore_from(path: impl AsRef<Path>, target: impl AsRef<Path>) -> Result<()> {
@@ -282,13 +366,11 @@ impl Storage {
         Ok(())
     }
 
-    /// Temporary solution to check if anything was purged from bd.
-    pub fn check_root_exist(&self, root: H256) -> bool {
-        if root == empty_trie_hash() {
-            true // empty root should exist always
+    pub fn rocksdb_trie_handle(&self) -> RocksHandle<&DB> {
+        if let Some(cf) = self.counters_cf() {
+            RocksHandle::new(RocksDatabaseHandleGC::new(self.db(), cf))
         } else {
-            // only return true if root is retrivable
-            matches!(self.db.get(root.as_ref()), Ok(Some(_)))
+            RocksHandle::new(RocksDatabaseHandleGC::without_counter(self.db()))
         }
     }
 
@@ -299,32 +381,6 @@ impl Storage {
         let handle = self.rocksdb_trie_handle();
 
         FixedSecureTrieMut::new(DatabaseTrieMut::trie_for(handle, root))
-    }
-
-    pub fn rocksdb_trie_handle(&self) -> RocksHandle<&DB> {
-        if let Some(cf) = self.counters_cf() {
-            RocksHandle::new(RocksDatabaseHandleGC::new(self.db(), cf))
-        } else {
-            RocksHandle::new(RocksDatabaseHandleGC::without_counter(self.db()))
-        }
-    }
-
-    // Returns evm state subdirectory that can be used temporary used by extern users.
-    pub fn get_inner_location(&self) -> Result<PathBuf> {
-        let location = self.location.as_ref().join(CUSTOM_LOCATION);
-        std::fs::create_dir_all(&location)?;
-        Ok(location)
-    }
-
-    pub fn db(&self) -> &DB {
-        (*self.db).borrow()
-    }
-
-    pub fn counters_cf(&self) -> Option<&ColumnFamily> {
-        if !self.gc_enabled {
-            return None;
-        }
-        Some(self.cf::<ReferenceCounter>())
     }
 
     pub fn flush_changes(&self, state_root: H256, state_updates: crate::ChangedState) -> H256 {
@@ -458,6 +514,35 @@ impl Storage {
         Ok(remove_root)
     }
 
+    pub fn cleanup_slots(&self, keep_slot: u64, root: H256) -> Result<()> {
+        if !self.check_root_exist(root) {
+            return Err(Error::RootNotFound(root));
+        }
+
+        let slots_cf = self.cf::<SlotsRoots>();
+        let mut collect_slots = vec![];
+        let mut cleanup_roots = vec![];
+        for item in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
+            let (k, _v) = item?;
+            let mut slot_arr = [0; 8];
+            slot_arr.copy_from_slice(&k[0..8]);
+            let slot = u64::from_be_bytes(slot_arr);
+            collect_slots.push(slot);
+        }
+
+        for slot in collect_slots {
+            if slot == keep_slot {
+                continue;
+            }
+            if let Some(root) = self.purge_slot(slot)? {
+                cleanup_roots.push(root)
+            }
+        }
+
+        let mut cleaner = RootCleanup::new(self, cleanup_roots);
+        cleaner.cleanup()
+    }
+
     /// Our garbage collection counts only references of child objects.
     /// Because root_hash has no parents it should be handled separately.
     ///
@@ -525,35 +610,6 @@ impl Storage {
         Ok(())
     }
 
-    pub fn cleanup_slots(&self, keep_slot: u64, root: H256) -> Result<()> {
-        if !self.check_root_exist(root) {
-            return Err(Error::RootNotFound(root));
-        }
-
-        let slots_cf = self.cf::<SlotsRoots>();
-        let mut collect_slots = vec![];
-        let mut cleanup_roots = vec![];
-        for item in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
-            let (k, _v) = item?;
-            let mut slot_arr = [0; 8];
-            slot_arr.copy_from_slice(&k[0..8]);
-            let slot = u64::from_be_bytes(slot_arr);
-            collect_slots.push(slot);
-        }
-
-        for slot in collect_slots {
-            if slot == keep_slot {
-                continue;
-            }
-            if let Some(root) = self.purge_slot(slot)? {
-                cleanup_roots.push(root)
-            }
-        }
-
-        let mut cleaner = RootCleanup::new(self, cleanup_roots);
-        cleaner.cleanup()
-    }
-
     pub fn gc_try_cleanup_account_hashes(&self, removes: &[H256]) -> Result<Vec<H256>> {
         if !self.gc_enabled {
             return Ok(vec![]);
@@ -562,25 +618,23 @@ impl Storage {
             .rocksdb_trie_handle()
             .gc_cleanup_layer(removes, account_extractor))
     }
-    pub fn list_roots(&self) -> Result<()> {
-        if !self.gc_enabled {
-            println!("Gc is not enabled");
-            return Ok(());
-        }
-        let slots_cf = self.cf::<SlotsRoots>();
-        for item in self.db().iterator_cf(slots_cf, IteratorMode::Start) {
-            let (k, v) = item?;
-            let mut slot_arr = [0; 8];
-            slot_arr.copy_from_slice(&k[0..8]);
-            let slot = u64::from_be_bytes(slot_arr);
 
-            println!("Found root for slot: {} => {:?}", slot, hex::encode(&v))
+    pub fn backup(&self, backup_dir: Option<PathBuf>) -> Result<PathBuf> {
+        let backup_dir = backup_dir.unwrap_or_else(|| self.location.as_ref().join(BACKUP_SUBDIR));
+        info!("EVM Backup storage data into {}", backup_dir.display());
+
+        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), &backup_dir)?;
+        if engine.get_backup_info().len() > HARD_BACKUPS_COUNT {
+            // TODO: measure
+            engine.purge_old_backups(HARD_BACKUPS_COUNT)?;
         }
-        Ok(())
+        engine.create_new_backup_flush(self.db.as_ref(), true)?;
+        Ok(backup_dir)
     }
 }
 
-static SECONDARY_MODE_PATH_SUFFIX: &'static str = "velas-secondary";
+#[allow(unused)]
+static SECONDARY_MODE_PATH_SUFFIX: &str = "velas-secondary";
 
 fn account_extractor(data: &[u8]) -> Vec<H256> {
     if let Ok(account) = rlp::decode::<Account>(data) {
@@ -624,17 +678,20 @@ impl<'a> RootCleanup<'a> {
     }
 }
 
-impl Borrow<DB> for Storage {
+impl Borrow<DB> for Storage<OptimisticTransactionDBInner> {
     fn borrow(&self) -> &DB {
         self.db()
     }
 }
 
-#[derive(Debug, AsRef, Deref)]
+#[derive(AsRef, Deref)]
 // Hack to close rocksdb background threads. And flush database.
-pub struct DbWithClose(DB);
+pub struct DbWithClose<D: DBInner>(rocksdb::DBCommon<rocksdb::SingleThreaded, D>);
 
-impl Drop for DbWithClose {
+impl<D> Drop for DbWithClose<D>
+where
+    D: rocksdb::db::DBInner,
+{
     fn drop(&mut self) {
         if let Err(e) = self.flush() {
             error!("Error during rocksdb flush: {:?}", e);
@@ -643,6 +700,13 @@ impl Drop for DbWithClose {
     }
 }
 
+impl<D: DBInner> std::fmt::Debug for DbWithClose<D> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DbWithClose<D>")
+            .field("0", &self.0)
+            .finish()
+    }
+}
 pub trait SubStorage {
     const COLUMN_NAME: &'static str;
     type Key: Encodable + Decodable;
@@ -690,7 +754,10 @@ impl SubStorage for TransactionHashesPerBlock {
     type Value = Vec<H256>;
 }
 
-impl Storage {
+impl<D> Storage<D>
+where
+    D: DBInner,
+{
     pub fn get<S: SubStorage>(&self, key: S::Key) -> Option<S::Value> {
         let cf = self.cf::<S>();
         let key_bytes = rlp::encode(&key);
