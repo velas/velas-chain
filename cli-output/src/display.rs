@@ -156,6 +156,7 @@ fn format_account_mode(message: &Message, index: usize) -> String {
     )
 }
 
+#[allow(deprecated)]
 pub fn write_transaction<W: io::Write>(
     w: &mut W,
     transaction: &Transaction,
