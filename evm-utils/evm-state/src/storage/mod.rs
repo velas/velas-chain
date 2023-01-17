@@ -29,7 +29,7 @@ use crate::{
 use triedb::{
     empty_trie_hash,
     gc::{DatabaseTrieMut, DbCounter, TrieCollection},
-    rocksdb::{RocksDatabaseHandle, RocksHandle},
+    rocksdb::{RocksDatabaseHandleGC, RocksHandle},
     FixedSecureTrieMut,
 };
 
@@ -191,7 +191,6 @@ impl Storage {
     }
 
     fn open(location: Location, gc_enabled: bool, access_type: AccessType) -> Result<Self> {
-        let access_type = AccessType::Primary;
         log::info!("location is {:?}", location);
         let db_opts = default_db_opts()?;
 
@@ -304,9 +303,9 @@ impl Storage {
 
     pub fn rocksdb_trie_handle(&self) -> RocksHandle<&DB> {
         if let Some(cf) = self.counters_cf() {
-            RocksHandle::new(RocksDatabaseHandle::new(self.db(), cf))
+            RocksHandle::new(RocksDatabaseHandleGC::new(self.db(), cf))
         } else {
-            RocksHandle::new(RocksDatabaseHandle::without_counter(self.db()))
+            RocksHandle::new(RocksDatabaseHandleGC::without_counter(self.db()))
         }
     }
 

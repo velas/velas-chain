@@ -1747,6 +1747,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "etcommon-hexutil"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20b4d1933bf88b806ba2d9189880b1b4ef205e42df9573b65716f2a50818024c"
+
+[[package]]
 name = "ethabi"
 version = "17.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8889,16 +8895,21 @@ checksum = "0de5f738ceab88e2491a94ddc33c3feeadfa95fedc60363ef110845df12f3878"
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/velas/triedb?tag=rocksdb-v0.19#753477ba91ae88c2b928c7edddec86548504d360"
+source = "git+https://github.com/velas/triedb.git?branch=master#e9704accad11c1701709792da0e1cf08cab96191"
 dependencies = [
  "anyhow",
+ "bincode",
  "dashmap 4.0.2",
  "derivative",
+ "etcommon-hexutil",
  "log 0.4.17",
  "primitive-types",
+ "rayon",
  "rlp",
  "rocksdb",
+ "serde",
  "sha3 0.9.1",
+ "termtree",
  "thiserror",
 ]
 
