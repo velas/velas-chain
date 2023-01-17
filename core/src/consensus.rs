@@ -385,6 +385,7 @@ impl Tower {
         Vote::new(slots, hash)
     }
 
+    #[allow(clippy::let_and_return)]
     pub fn last_voted_slot_in_bank(bank: &Bank, vote_account_pubkey: &Pubkey) -> Option<Slot> {
         let (_stake, vote_account) = bank.get_vote_account(vote_account_pubkey)?;
         let slot = vote_account.vote_state().as_ref().ok()?.last_voted_slot();

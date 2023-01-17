@@ -310,6 +310,7 @@ impl GenesisConfig {
     }
 }
 
+#[allow(deprecated)]
 impl fmt::Display for GenesisConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -646,7 +647,7 @@ pub mod evm_genesis {
     pub fn generate_evm_state_json(file: &Path) -> Result<H256, Error> {
         let json = b"{ \"state\": {\n}}";
         let mut file = std::fs::File::create(file)?;
-        file.write_all(&*json)?;
+        file.write_all(json)?;
         Ok(evm_state::empty_trie_hash())
     }
 }
