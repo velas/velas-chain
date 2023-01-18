@@ -254,7 +254,14 @@ impl EvmBridge {
         redirect_to_proxy_filters: Vec<EvmContractToPayerKeys>,
     ) {
         self.gas_station_program_id = Some(gas_station_program_id);
-        self.redirect_to_proxy_filters = redirect_to_proxy_filters;
+        self.redirect_to_proxy_filters = redirect_to_proxy_filters
+            .into_iter()
+            .map(|mut item| {
+                let (payer_key, _) = Pubkey::find_program_address(&[item.owner.as_ref()], &gas_station_program_id);
+                item.payer = payer_key;
+                item
+            })
+            .collect();
     }
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
@@ -1016,6 +1023,7 @@ pub enum ParseEvmContractToPayerKeysError {
 #[derive(Debug)]
 struct EvmContractToPayerKeys {
     contract: Address,
+    owner: Pubkey,
     payer: Pubkey,
     storage_acc: Pubkey,
 }
@@ -1032,11 +1040,11 @@ impl FromStr for EvmContractToPayerKeys {
             .ok_or(ParseEvmContractToPayerKeysError::InvalidFormat)?;
         let contract = Address::from_str(addr)
             .map_err(|_| ParseEvmContractToPayerKeysError::InvalidEvmContract)?;
-        let payer = Pubkey::from_str(key1)
+        let owner = Pubkey::from_str(key1)
             .map_err(|_| ParseEvmContractToPayerKeysError::InvalidPubkey)?;
         let storage_acc = Pubkey::from_str(key2)
             .map_err(|_| ParseEvmContractToPayerKeysError::InvalidPubkey)?;
-        Ok(Self { contract, payer, storage_acc })
+        Ok(Self { contract, owner, payer: Pubkey::default(), storage_acc })
     }
 }
 
