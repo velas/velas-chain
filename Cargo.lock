@@ -4908,6 +4908,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "repair-check"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "clap 2.34.0",
+ "log 0.4.17",
+ "rand 0.7.3",
+ "solana-core",
+ "solana-gossip",
+ "solana-logger 1.9.29",
+ "solana-net-utils",
+ "solana-sdk",
+ "solana-streamer",
+ "solana-version",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
