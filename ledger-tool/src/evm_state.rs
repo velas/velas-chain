@@ -105,10 +105,6 @@ impl EvmStateSubCommand for App<'_, '_> {
                         ),
                 )
                 .subcommand(
-                    SubCommand::with_name("hang")
-                        .about("Hang (to occupy evm_state Storage in primary/secondary mode)"),
-                )
-                .subcommand(
                     SubCommand::with_name("list-roots").about("List roots in gc counter table"),
                 ),
         )
@@ -230,10 +226,6 @@ pub fn process_evm_state_command(evm_state_path: &Path, matches: &ArgMatches<'_>
 
             println!("Total balance = {:?}", walker.data_inspector.inner.balance)
         }
-        ("hang", Some(_)) => {
-            info!("Hanging for {:?}!", DEVELOPMENT_TIME);
-            std::thread::sleep(DEVELOPMENT_TIME);
-        }
         unhandled => panic!("Unhandled {:?}", unhandled),
     }
     Ok(())
@@ -245,15 +237,10 @@ fn secondary_evm_state_command(storage: StorageSecondary, matches: &ArgMatches<'
         ("list-roots", Some(_)) => {
             storage.list_roots()?;
         }
-        ("hang", Some(_)) => {
-            info!("Hanging for {:?}!", DEVELOPMENT_TIME);
-            std::thread::sleep(DEVELOPMENT_TIME);
-        }
         unhandled => panic!("Unhandled {:?}", unhandled),
     }
     Ok(())
 }
-const DEVELOPMENT_TIME: std::time::Duration = std::time::Duration::from_secs(86400);
 
 use evm_state::Account;
 

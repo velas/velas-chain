@@ -192,12 +192,6 @@ impl Descriptors {
     }
 }
 
-#[derive(Debug)]
-pub enum AccessType {
-    Primary,
-
-    Secondary,
-}
 
 impl<D> Storage<D>
 where
@@ -256,11 +250,11 @@ where
     }
 }
 
-type AnotherDB = rocksdb::DBWithThreadMode<rocksdb::SingleThreaded>;
+type ReadOnlyDb = rocksdb::DBWithThreadMode<rocksdb::SingleThreaded>;
 
 pub type StorageSecondary = Storage<DBWithThreadModeInner>;
 
-impl Storage<DBWithThreadModeInner> {
+impl StorageSecondary {
 
     pub fn open_secondary_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
@@ -284,7 +278,7 @@ impl Storage<DBWithThreadModeInner> {
                 temporarily cause the performance of 
                 another db use (like by validator) to degrade"
             );
-            AnotherDB::open_cf_as_secondary(
+            ReadOnlyDb::open_cf_as_secondary(
                 &db_opts,
                 path.as_ref(),
                 secondary_path.as_path(),
@@ -633,7 +627,6 @@ impl Storage<OptimisticTransactionDBInner> {
     }
 }
 
-#[allow(unused)]
 static SECONDARY_MODE_PATH_SUFFIX: &str = "velas-secondary";
 
 fn account_extractor(data: &[u8]) -> Vec<H256> {
