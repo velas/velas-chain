@@ -2078,7 +2078,7 @@ dependencies = [
 [[package]]
 name = "fixed-hash"
 version = "0.7.0"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
 dependencies = [
  "byteorder",
  "rand 0.8.5",
@@ -2759,7 +2759,7 @@ checksum = "9007da9cacbd3e6343da136e98b0d2df013f553d35bdec8b518f07bea768e19c"
 [[package]]
 name = "impl-borsh"
 version = "0.1.0"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
 dependencies = [
  "borsh",
 ]
@@ -2776,7 +2776,7 @@ dependencies = [
 [[package]]
 name = "impl-codec"
 version = "0.6.0"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
 dependencies = [
  "parity-scale-codec",
 ]
@@ -2793,7 +2793,7 @@ dependencies = [
 [[package]]
 name = "impl-rlp"
 version = "0.3.0"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
 dependencies = [
  "rlp",
 ]
@@ -2810,7 +2810,7 @@ dependencies = [
 [[package]]
 name = "impl-serde"
 version = "0.3.2"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
 dependencies = [
  "serde",
 ]
@@ -4237,13 +4237,13 @@ dependencies = [
 [[package]]
 name = "primitive-types"
 version = "0.11.1"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
 dependencies = [
- "fixed-hash 0.7.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support)",
+ "fixed-hash 0.7.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd)",
  "impl-borsh",
- "impl-codec 0.6.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support)",
- "impl-rlp 0.3.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support)",
- "impl-serde 0.3.2 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support)",
+ "impl-codec 0.6.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd)",
+ "impl-rlp 0.3.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd)",
+ "impl-serde 0.3.2 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd)",
  "scale-info",
  "uint",
 ]
@@ -5001,8 +5001,7 @@ dependencies = [
 [[package]]
 name = "rlp"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "999508abb0ae792aabed2460c45b89106d97fe4adac593bdaef433c2605847b5"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
 dependencies = [
  "bytes 1.2.1",
  "rustc-hex",
@@ -8857,7 +8856,7 @@ checksum = "dcf81ac59edc17cc8697ff311e8f5ef2d99fcbd9817b34cec66f90b6c3dfd987"
 [[package]]
 name = "uint"
 version = "0.9.3"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support#974f23ebc1956239cd8150e0ae80517343d82836"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
 dependencies = [
  "byteorder",
  "crunchy",
