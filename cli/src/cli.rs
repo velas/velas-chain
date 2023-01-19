@@ -1,6 +1,6 @@
 use {
     crate::{
-        clap_app::*, cluster_query::*,  evm::*, feature::*, inflation::*, nonce::*, program::*,
+        clap_app::*, cluster_query::*, evm::*, feature::*, inflation::*, nonce::*, program::*,
         spend_utils::*, stake::*, validator_info::*, vote::*, wallet::*,
     },
     clap::{crate_description, crate_name, value_t_or_exit, ArgMatches, Shell},
@@ -16,7 +16,7 @@ use {
         client_error::{ClientError, Result as ClientResult},
         nonce_utils,
         rpc_client::RpcClient,
-    rpc_config::{
+        rpc_config::{
             RpcLargestAccountsFilter, RpcSendTransactionConfig, RpcTransactionLogsFilter,
         },
     },
@@ -1653,10 +1653,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             derived_address_seed.clone(),
             derived_address_program_id.as_ref(),
         ),
-        CliCommand::Evm(evm_subcommand) => {
-            evm_subcommand.process_with(&rpc_client, config)?;
-            Ok("Ok".to_string())
-        } 
+        CliCommand::Evm(evm_subcommand) => evm_subcommand.process_with(&rpc_client, config),
     }
 }
 pub fn request_and_confirm_airdrop(
@@ -2174,7 +2171,7 @@ mod tests {
                 unix_timestamp: 0,
                 custodian,
             },
-            amount: SpendAmount::Some( 400),
+            amount: SpendAmount::Some(400),
             sign_only: false,
             dump_transaction_message: false,
             blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
@@ -2235,7 +2232,7 @@ mod tests {
             memo: None,
             split_stake_account: 1,
             seed: None,
-            lamports:  400,
+            lamports: 400,
             fee_payer: 0,
         };
         config.signers = vec![&keypair, &split_stake_account];
