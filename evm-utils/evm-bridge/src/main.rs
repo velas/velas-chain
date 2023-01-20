@@ -73,6 +73,8 @@ use tx_filter::TxFilter;
 use rlp::Encodable;
 use secp256k1::Message;
 use std::result::Result as StdResult;
+use solana_rpc::rpc::{BatchId, BatchStateMap};
+
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
 
 const MAX_NUM_BLOCKS_IN_BATCH: u64 = 2000; // should be less or equal to const core::evm_rpc_impl::logs::MAX_NUM_BLOCKS
@@ -190,6 +192,8 @@ pub struct EvmBridge {
     pool: EthPool<SystemClock>,
     min_gas_price: U256,
     whitelist: Vec<TxFilter>,
+    pub batch_state_map: BatchStateMap,
+    max_batch_duration: Option<Duration>,
 }
 
 impl EvmBridge {
@@ -237,11 +241,33 @@ impl EvmBridge {
             pool,
             min_gas_price,
             whitelist: vec![],
+            batch_state_map: Default::default(),
+            max_batch_duration: None,
         }
+    }
+
+    pub fn check_batch_timeout(&self, id: BatchId) -> Result<()> {
+        let current = self.batch_state_map.get_duration(&id);
+        debug!("Current batch ({}) duration {:?}", id, current);
+        if matches!(self.get_max_batch_duration(), Some(max_duration) if current > max_duration )
+        {
+            let mut error = jsonrpc_core::Error::internal_error();
+            error.message = "Batch is taking too long".to_string();
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn set_whitelist(&mut self, whitelist: Vec<TxFilter>) {
         self.whitelist = whitelist;
+    }
+
+    pub fn get_max_batch_duration(&self) -> Option<Duration> {
+        self.max_batch_duration
+    }
+
+    fn set_max_batch_duration(&mut self, max_duration: Duration) {
+        self.max_batch_duration = Some(max_duration);
     }
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
@@ -1016,6 +1042,10 @@ struct Args {
 
     #[structopt(long = "whitelist-path")]
     whitelist_path: Option<String>,
+
+    /// Maximum number of seconds to process batched jsonrpc requests.
+    #[structopt(long = "rpc-max-batch-time")]
+    max_batch_duration: Option<u64>,
 }
 
 impl Args {
@@ -1110,6 +1140,9 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         min_gas_price,
     );
     meta.set_whitelist(whitelist);
+    if let Some(max_duration) = args.max_batch_duration.map(Duration::from_secs) {
+        meta.set_max_batch_duration(max_duration);
+    }
     let meta = Arc::new(meta);
 
     let mut io = MetaIoHandler::with_middleware(ProxyMiddleware {});

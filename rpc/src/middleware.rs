@@ -33,7 +33,7 @@ fn decode_batch_id(id: &Id) -> Option<(BatchId, Id)> {
     None
 }
 
-fn patch_calls(calls: impl IntoIterator<Item = Call>, id: BatchId) -> Vec<Call> {
+pub fn patch_calls(calls: impl IntoIterator<Item = Call>, id: BatchId) -> Vec<Call> {
     let id_str = id.to_string();
     calls
         .into_iter()
@@ -53,7 +53,7 @@ fn patch_calls(calls: impl IntoIterator<Item = Call>, id: BatchId) -> Vec<Call> 
         .collect()
 }
 
-fn restore_original_call(call: Call) -> Result<(MethodCall, BatchId), Call> {
+pub fn restore_original_call(call: Call) -> Result<(MethodCall, BatchId), Call> {
     match call {
         Call::MethodCall(mut method_call) => match decode_batch_id(&method_call.id) {
             Some((batch_id, id)) => {

@@ -1246,11 +1246,11 @@ pub fn main() {
         )
         .arg(
             Arg::with_name("max_batch_duration")
-                .long("max-batch-duration")
+                .long("rpc-max-batch-time")
                 .value_name("SECONDS")
                 .validator(is_parsable::<u64>)
                 .takes_value(true)
-                .help("Number of seconds for batch requests"),
+                .help("Maximum number of seconds to process batched jsonrpc requests."),
         )
         .arg(
             Arg::with_name("rpc_pubsub_worker_threads")
