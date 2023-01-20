@@ -50,7 +50,7 @@ pub struct AccountsPackage {
     pub cluster_type: ClusterType,
     pub snapshot_type: Option<SnapshotType>,
     pub evm_root: evm_state::H256,
-    pub evm_db: evm_state::storage::Storage,
+    pub evm_db: evm_state::Storage,
     // TODO: Replace root/db/bank by root-guard.
     pub bank: Arc<Bank>,
 }
@@ -70,7 +70,7 @@ impl AccountsPackage {
         hash_for_testing: Option<Hash>,
         snapshot_type: Option<SnapshotType>,
         evm_root: evm_state::H256,
-        evm_db: evm_state::storage::Storage,
+        evm_db: evm_state::Storage,
     ) -> Result<Self> {
         info!(
             "Package snapshot for bank {} has {} account storage entries (snapshot type: {:?})",
@@ -139,7 +139,7 @@ pub struct SnapshotPackage {
     pub snapshot_version: SnapshotVersion,
     pub snapshot_type: SnapshotType,
     pub evm_root: evm_state::H256,
-    pub evm_db: evm_state::storage::Storage,
+    pub evm_db: evm_state::Storage,
     pub bank: Arc<Bank>,
 }
 

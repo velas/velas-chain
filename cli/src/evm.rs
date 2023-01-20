@@ -8,6 +8,10 @@ use std::{
 use anyhow::anyhow;
 use clap::{value_t_or_exit, App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand};
 use log::*;
+use solana_clap_utils::offline::{
+    blockhash_arg, sign_only_arg, DUMP_TRANSACTION_MESSAGE, SIGN_ONLY_ARG,
+};
+use solana_client::blockhash_query::BlockhashQuery;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
@@ -16,10 +20,11 @@ use solana_sdk::{
     transaction::Transaction,
 };
 
-use crate::cli::{CliCommand, CliCommandInfo, CliConfig, CliError};
+use crate::cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult};
 
 use evm_rpc::Hex;
 use evm_state::{self as evm, FromKey};
+use solana_cli_output::{return_signers_with_config, ReturnSignersConfig};
 use solana_evm_loader_program::{instructions::FeePayerType, scope::evm::gweis_to_lamports};
 
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
@@ -67,6 +72,14 @@ impl EvmSubCommands for App<'_, '_> {
                         .arg(Arg::with_name("lamports")
                              .long("lamports")
                              .help("Amount in lamports")))
+                        .arg(
+                            Arg::with_name("no_wait")
+                                .long("no-wait")
+                                .takes_value(false)
+                                .help("Return signature immediately after submitting the transaction, instead of waiting for confirmations"),
+                        )
+                        .arg(blockhash_arg())
+                        .arg(sign_only_arg())
 
 
             // Hidden commands
@@ -150,6 +163,10 @@ pub enum EvmCliCommand {
     TransferToEvm {
         address: evm::Address,
         amount: u64,
+        sign_only: bool,
+        dump_transaction_message: bool,
+        no_wait: bool,
+        blockhash_query: BlockhashQuery,
     },
 
     // Hidden commands
@@ -183,24 +200,41 @@ pub enum EvmCliCommand {
 }
 
 impl EvmCliCommand {
-    pub fn process_with(&self, rpc_client: &RpcClient, config: &CliConfig) -> anyhow::Result<()> {
+    pub fn process_with(&self, rpc_client: &RpcClient, config: &CliConfig) -> ProcessResult {
         match self {
             Self::GetEvmBalance { identity } => {
                 let address = identity.address();
                 get_evm_balance(rpc_client, address)?;
+                Ok("Ok".to_string())
             }
-            Self::TransferToEvm { address, amount } => {
-                transfer(rpc_client, config, *address, *amount)?;
-            }
+            Self::TransferToEvm {
+                address,
+                amount,
+                sign_only,
+                no_wait,
+                dump_transaction_message,
+                ref blockhash_query,
+            } => transfer(
+                rpc_client,
+                config,
+                *address,
+                *amount,
+                *sign_only,
+                *dump_transaction_message,
+                *no_wait,
+                blockhash_query,
+            ),
             // Hidden commands
             Self::SendRawTx { raw_tx } => {
                 send_raw_tx(rpc_client, config, raw_tx)?;
+                Ok("Ok".to_string())
             }
             Self::CreateDummy {
                 tx_file,
                 contract_code,
             } => {
                 create_dummy(tx_file, contract_code.as_ref().map(Vec::as_slice))?;
+                Ok("Ok".to_string())
             }
             Self::CallDummy {
                 tx_file,
@@ -208,14 +242,18 @@ impl EvmCliCommand {
                 abi,
             } => {
                 call_dummy(tx_file, create_tx, abi.as_ref().map(Vec::as_slice))?;
+                Ok("Ok".to_string())
             }
             Self::PrintEvmAddress { secret_key } => {
-                println!("EVM Address: {:?}", secret_key.to_address());
+                Ok(format!("EVM Address: {:?}", secret_key.to_address()))
             }
             Self::ParseArray { array } => {
                 let bytes: Vec<u8> = serde_json::from_str(array)?;
-                println!("Resulting data hex = {}", hex::encode(&bytes));
-                println!("Resulting data utf8 = {}", String::from_utf8_lossy(&bytes));
+                Ok(format!(
+                    "Resulting data hex = {}\nResulting data utf8 = {}",
+                    hex::encode(&bytes),
+                    String::from_utf8_lossy(&bytes)
+                ))
             }
             Self::FindBlockHeader {
                 expected_block_hash,
@@ -223,10 +261,9 @@ impl EvmCliCommand {
                 file,
             } => {
                 find_block_header(rpc_client, *expected_block_hash, *range, file)?;
+                Ok("Ok".to_string())
             }
         }
-
-        Ok(())
     }
 }
 
@@ -249,7 +286,11 @@ fn transfer(
     config: &CliConfig,
     evm_address: evm::Address,
     amount: u64,
-) -> anyhow::Result<()> {
+    sign_only: bool,
+    dump_transaction_message: bool,
+    no_wait: bool,
+    blockhash_query: &BlockhashQuery,
+) -> ProcessResult {
     assert_eq!(config.signers.len(), 1, "Expected exact one signer");
     let from = config
         .signers
@@ -262,18 +303,34 @@ fn transfer(
     let message = Message::new(&ixs, Some(&from.pubkey()));
     let mut create_account_tx = Transaction::new_unsigned(message);
 
-    let (blockhash, _last_height) = rpc_client
-        .get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
+    let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
-    create_account_tx.sign(&config.signers, blockhash);
+    if sign_only {
+        create_account_tx.try_partial_sign(&config.signers, recent_blockhash)?;
+        return_signers_with_config(
+            &create_account_tx,
+            &config.output_format,
+            &ReturnSignersConfig {
+                dump_transaction_message,
+            },
+        )
+    } else {
+        create_account_tx.sign(&config.signers, recent_blockhash);
 
-    let signature = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &create_account_tx,
-        CommitmentConfig::default(),
-        Default::default(),
-    )?;
-    println!("Transaction signature = {}", signature);
-    Ok(())
+        let signature = if no_wait {
+            rpc_client.send_transaction(&create_account_tx)?
+        } else {
+            rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+                &create_account_tx,
+                CommitmentConfig::default(),
+                Default::default(),
+            )?
+        };
+        Ok(format!(
+            "Transaction signature = {}",
+            signature
+        ))
+    }
 }
 
 fn find_block_header(
@@ -332,8 +389,8 @@ fn send_raw_tx<P: AsRef<Path>>(
     let msg = Message::new(&[ix], Some(&signer.pubkey()));
     let mut tx = Transaction::new_unsigned(msg);
 
-    let (blockhash, _last_height) = rpc_client
-        .get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
+    let (blockhash, _last_height) =
+        rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig::default())?;
     tx.sign(&config.signers, blockhash);
 
     debug!("sending tx: {:?}", tx);
@@ -428,8 +485,19 @@ pub fn parse_evm_subcommand(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, 
             if !matches.is_present("lamports") {
                 amount *= LAMPORTS_PER_VLX;
             }
+            let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
+            let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
+            let no_wait = matches.is_present("no_wait");
+            let blockhash_query = BlockhashQuery::new_from_matches(matches);
 
-            EvmCliCommand::TransferToEvm { address, amount }
+            EvmCliCommand::TransferToEvm {
+                address,
+                amount,
+                sign_only,
+                dump_transaction_message,
+                no_wait,
+                blockhash_query,
+            }
         }
         ("send-raw-tx", Some(matches)) => {
             let raw_tx = value_t_or_exit!(matches, "raw_tx", PathBuf);

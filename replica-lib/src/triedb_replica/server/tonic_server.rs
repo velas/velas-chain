@@ -113,7 +113,7 @@ impl Backend for Server {
         debug_elapsed("locked roots", &start);
 
         let ach = triedb::rocksdb::SyncRocksHandle::new(
-            triedb::rocksdb::RocksPureDatabaseHandle::new(self.storage.db()),
+            triedb::rocksdb::RocksDatabaseHandle::new(self.storage.db()),
         );
 
         let changeset = triedb::diff(

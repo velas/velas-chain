@@ -131,6 +131,14 @@ pub fn main_init() -> Result<(), String> {
                 .validator(release_validator)
                 .help("The release version or channel to install"),
         )
+        .arg(
+            Arg::with_name("exact")
+                .value_name("exact")
+                .short("e")
+                .long("exact")
+                .takes_value(false)
+                .help("Don't search for the most recent compatible version")
+        )
         .get_matches();
 
     commands::init::command_init(&matches, init::Mode::Init)

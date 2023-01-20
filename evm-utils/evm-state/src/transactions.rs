@@ -576,7 +576,6 @@ impl TransactionReceipt {
         tx.recalculate_bloom();
         tx
     }
-
     pub fn to_failed(&mut self, clear_logs: bool) {
         self.status = ExitReason::Revert(ExitRevert::Reverted);
         if clear_logs {
@@ -584,7 +583,6 @@ impl TransactionReceipt {
             self.logs_bloom = ethbloom::Bloom::default();
         }
     }
-
     pub(crate) fn recalculate_bloom(&mut self) {
         let mut logs_bloom = ethbloom::Bloom::default();
         for log in &self.logs {
