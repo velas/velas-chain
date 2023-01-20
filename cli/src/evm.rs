@@ -326,10 +326,10 @@ fn transfer(
                 Default::default(),
             )?
         };
-        Ok(String::from(format!(
+        Ok(format!(
             "Transaction signature = {}",
             signature
-        )))
+        ))
     }
 }
 
