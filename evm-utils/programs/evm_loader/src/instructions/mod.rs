@@ -77,7 +77,7 @@ pub enum ExecuteTransaction {
     },
     ProgramAuthorized {
         tx: Option<UnsignedTransaction>,
-        from: evm::Address,
+        from: Address,
     },
 }
 
@@ -116,7 +116,7 @@ pub enum EvmInstruction {
     ///
     SwapNativeToEther {
         lamports: u64,
-        evm_address: evm::Address,
+        evm_address: Address,
     },
 
     /// Transfer user account ownership back to system program.
@@ -279,9 +279,9 @@ mod test {
     #[derive(Clone, Debug)]
     struct Generator<T>(T);
 
-    impl Arbitrary for Generator<evm::Address> {
+    impl Arbitrary for Generator<Address> {
         fn arbitrary(g: &mut Gen) -> Self {
-            Generator(evm::Address::from_low_u64_ne(u64::arbitrary(g)))
+            Generator(Address::from_low_u64_ne(u64::arbitrary(g)))
         }
     }
 
@@ -290,7 +290,7 @@ mod test {
             let action = if bool::arbitrary(g) {
                 evm::TransactionAction::Create
             } else {
-                evm::TransactionAction::Call(evm::Address::from_low_u64_ne(u64::arbitrary(g)))
+                evm::TransactionAction::Call(Address::from_low_u64_ne(u64::arbitrary(g)))
             };
             let tx = evm::UnsignedTransaction {
                 nonce: evm::U256::from(u64::arbitrary(g)),
@@ -309,7 +309,7 @@ mod test {
             let action = if bool::arbitrary(g) {
                 evm::TransactionAction::Create
             } else {
-                evm::TransactionAction::Call(evm::Address::from_low_u64_ne(u64::arbitrary(g)))
+                evm::TransactionAction::Call(Address::from_low_u64_ne(u64::arbitrary(g)))
             };
             let tx = evm::Transaction {
                 nonce: evm::U256::from(u64::arbitrary(g)),
@@ -329,8 +329,8 @@ mod test {
     }
 
     #[quickcheck]
-    fn test_serialize_swap_native_to_ether_layout(lamports: u64, addr: Generator<evm::Address>) {
-        fn custom_serialize(lamports: u64, addr: evm::Address) -> Vec<u8> {
+    fn test_serialize_swap_native_to_ether_layout(lamports: u64, addr: Generator<Address>) {
+        fn custom_serialize(lamports: u64, addr: Address) -> Vec<u8> {
             use byteorder::{LittleEndian, WriteBytesExt};
 
             let tag: [u8; 4] = [1, 0, 0, 0];
@@ -391,14 +391,14 @@ mod test {
 
     #[quickcheck]
     fn test_serialize_unsigned_transaction(
-        addr: Generator<evm::Address>,
+        addr: Generator<Address>,
         tx: Generator<evm::UnsignedTransaction>,
     ) {
         let data =
             EvmInstruction::new_execute_authorized_tx(tx.0.clone(), addr.0, FeePayerType::Evm);
 
         fn custom_serialize(
-            from: evm::Address,
+            from: Address,
             nonce: evm::U256,
             gas_price: evm::U256,
             gas_limit: evm::U256,
