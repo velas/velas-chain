@@ -1316,6 +1316,8 @@ mod tests {
             pool: EthPool::new(SystemClock),
             min_gas_price: 0.into(),
             whitelist: vec![],
+            batch_state_map: Default::default(),
+            max_batch_duration: None,
         });
 
         let rpc = BridgeErpcImpl {};

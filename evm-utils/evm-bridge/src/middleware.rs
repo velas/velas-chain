@@ -110,15 +110,14 @@ impl Middleware<Arc<EvmBridge>> for ProxyMiddleware {
             Ok((original_call, batch_id)) => (original_call, batch_id),
             Err(call) => return Either::Left(Box::pin(next(call, meta.clone())
                 .then(move |res| async move {
-                    let res = match res {
+                    match res {
                         Some(Output::Failure(Failure { jsonrpc, error, id }))
                         if error.code == ErrorCode::MethodNotFound =>
                             {
                                 redirect(meta, call_json, jsonrpc, id).await
                             }
                         _ => res,
-                    };
-                    res
+                    }
                 }))),
         };
         let next_future = next(Call::MethodCall(original_call.clone()), meta.clone());
@@ -134,15 +133,14 @@ impl Middleware<Arc<EvmBridge>> for ProxyMiddleware {
             let meta_cloned = meta.clone();
             next_future
                 .then(move |res| async move {
-                    let res = match res {
+                    match res {
                         Some(Output::Failure(Failure { jsonrpc, error, id }))
                         if error.code == ErrorCode::MethodNotFound =>
                             {
                                 redirect(meta_cloned, call_json, jsonrpc, id).await
                             }
                         _ => res,
-                    };
-                    res
+                    }
                 })
                 .map(move |res| {
                     let total_duration = meta
