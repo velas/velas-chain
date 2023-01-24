@@ -30,7 +30,7 @@ use crate::{
 use triedb::{
     empty_trie_hash,
     gc::{DatabaseTrieMut, DbCounter, TrieCollection},
-    rocksdb::{RocksDatabaseHandleGC, RocksHandle},
+    rocksdb::{RocksDatabaseHandle, RocksDatabaseHandleGC, RocksHandle, SyncRocksHandle},
     FixedSecureTrieMut,
 };
 
@@ -255,9 +255,14 @@ type ReadOnlyDb = rocksdb::DBWithThreadMode<rocksdb::SingleThreaded>;
 pub type StorageSecondary = Storage<DBWithThreadModeInner>;
 
 impl StorageSecondary {
-
     pub fn open_secondary_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
+    }
+
+    pub fn rocksdb_trie_handle(
+        &self,
+    ) -> SyncRocksHandle<ReadOnlyDb> {
+        SyncRocksHandle::new(RocksDatabaseHandle::new(self.db()))
     }
 
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {

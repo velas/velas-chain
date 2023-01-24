@@ -10,7 +10,7 @@ use log::{error, info};
 
 use super::tonic_server;
 use tonic_server::app_grpc::backend_server::BackendServer;
-use super::{Dependecies, ServiceConfig};
+use super::{Deps, ServiceConfig};
 /// The service wraps the Rpc to make it runnable in the tokio runtime
 /// and handles start and stop of the service.
 pub struct Service {
@@ -28,8 +28,9 @@ pub struct RunningService {
 impl Service {
 
     pub fn new(
-        deps: Dependecies,
+        deps: Deps,
     ) -> Service {
+        log::info!("creating new evm state rpc service {:?}", deps);
         Self {
             server: tonic_server::Server::new(deps.storage),
             config: deps.service,

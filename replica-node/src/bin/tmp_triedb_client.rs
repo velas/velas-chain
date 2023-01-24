@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use solana_replica_lib::triedb_replica::client::{db_handles, Client};
-use solana_replica_lib::triedb_replica::func_extractor;
 
 use clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches};
 use evm_state::Storage;
@@ -20,7 +19,8 @@ impl ParsedArgs {
     fn build(self) -> Result<ClientOpts, Box<(dyn std::error::Error + 'static)>> {
         log::info!("{:?}", self);
 
-        let storage = Storage::open_persistent(self.evm_state, true)?;
+        let gc_enabled = true;
+        let storage = Storage::open_persistent(self.evm_state, gc_enabled)?;
         Ok(ClientOpts::new(self.state_rpc_address, storage))
     }
 }
@@ -133,7 +133,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
                 .map_err(|err| format!("parse hex err {:?}", err))?,
         );
         let diff_response = client
-            .download_and_apply_diff(&db_handle, &collection, from, to, func_extractor)
+            .download_and_apply_diff(&db_handle, &collection, from, to)
             .await;
         log::warn!("is ok {}", diff_response.is_ok());
         match diff_response {

@@ -3,14 +3,23 @@ use std::net::SocketAddr;
 mod tonic_server;
 mod service;
 
-use evm_state::Storage;
+use evm_state::{StorageSecondary, Storage as StorageOptimistic};
 pub use service::{Service, RunningService};
 
-pub struct Dependecies {
-    service: ServiceConfig,
-    storage: Storage,
+
+#[derive(Debug)]
+pub enum UsedStorage {
+    WritableWithGC(StorageOptimistic),
+    ReadOnlyNoGC(StorageSecondary),
 }
 
+#[derive(Debug)]
+pub struct Deps {
+    service: ServiceConfig,
+    storage: UsedStorage,
+}
+
+#[derive(Debug)]
 pub struct ServiceConfig {
     server_addr: SocketAddr,
     worker_threads: usize,
@@ -25,10 +34,11 @@ impl ServiceConfig {
     }
 }
 
-impl Dependecies {
+// as there are only 2 fields, the name is shortened: Dependencies -> Deps
+impl Deps {
     pub fn new(
         service: ServiceConfig,
-        storage: Storage,
+        storage: UsedStorage,
     ) -> Self {
         Self {
             service,

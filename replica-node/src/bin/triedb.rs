@@ -5,6 +5,7 @@
 
 use std::net::SocketAddr;
 
+use solana_replica_lib::triedb_replica::server::UsedStorage;
 use solana_replica_node::triedb_replica::service;
 
 use {
@@ -15,7 +16,6 @@ use {
 use evm_state::Storage;
 
 pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
-
     let matches = App::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())
@@ -29,6 +29,20 @@ pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
                 .takes_value(true)
                 .required(true)
                 .help("Use DIR as ledger location"),
+        )
+        .arg(
+            Arg::with_name("gc_enabled")
+                .long("gc")
+                .required(false)
+                .takes_value(false)
+                .help("whether to open evm_state_db in secondary mode"),
+        )
+        .arg(
+            Arg::with_name("secondary_mode")
+                .long("secondary")
+                .required(false)
+                .takes_value(false)
+                .help("whether to open evm_state_db in secondary mode"),
         )
         .arg(
             Arg::with_name("bind_address")
@@ -47,12 +61,24 @@ pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     log::info!("{:?}", evm_state);
 
     let socket_addr = matches.value_of("bind_address").unwrap();
+    let secondary_mode = matches.is_present("secondary_mode");
 
     let state_rpc_bind_address: SocketAddr = socket_addr.parse()?;
-    // let gc_enabled = false;
-    let gc_enabled = true;
 
-    let storage = Storage::open_persistent(evm_state, gc_enabled)?;
-    service::start_and_join(state_rpc_bind_address, storage)?;
+    let gc_enabled = matches.is_present("gc_enabled");
+
+    let used_storage = if secondary_mode {
+        UsedStorage::ReadOnlyNoGC(Storage::open_secondary_persistent(
+            evm_state,
+            gc_enabled, 
+        )?)
+    } else {
+        UsedStorage::WritableWithGC(Storage::open_persistent(
+            evm_state,
+            gc_enabled, // enable gc
+        )?)
+    };
+
+    service::start_and_join(state_rpc_bind_address, used_storage)?;
     Ok(())
 }

@@ -6,8 +6,8 @@ use std::time::Instant;
 use evm_state::H256;
 use triedb::Database;
 
-pub use evm_state::storage::account_extractor as func_extractor;
 pub use triedb::gc::DbCounter;
+use rocksdb::{DBWithThreadMode, SingleThreaded};
 
 pub fn lock_root<D, F>(
     db: &D,
@@ -27,6 +27,18 @@ where
     Ok(guard)
 }
 
+pub fn check_root(
+    db: &DBWithThreadMode<SingleThreaded>,
+    checked: H256,
+) -> Result<(), anyhow::Error>
+where
+{
+    if checked != triedb::empty_trie_hash() && db.get(checked)?.is_none() {
+        return Err(anyhow::anyhow!("check root {:?} (not found)", checked));
+
+    }
+    Ok(())
+}
 pub(self) fn debug_elapsed(msg: &str, start: &Instant) {
     let duration = start.elapsed();
 
