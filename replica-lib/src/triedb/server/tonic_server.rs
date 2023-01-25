@@ -166,7 +166,7 @@ impl Backend for Server {
                         hash: Some(app_grpc::Hash {
                             value: hash.format_hex(),
                         }),
-                        data,
+                        data: data.into(),
                     };
                     reply_changeset.push(raw_insert);
                 }

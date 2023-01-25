@@ -119,7 +119,7 @@ fn parse_diff_response(
                 .hash
                 .ok_or_else(|| tonic::Status::invalid_argument("insert with empty hash"))?;
             match FormatHex::from_hex(&hash.value) {
-                Ok(hash) => Ok(triedb::DiffChange::Insert(hash, insert.data)),
+                Ok(hash) => Ok(triedb::DiffChange::Insert(hash, insert.data.into())),
                 Err(e) => Err(tonic::Status::invalid_argument(format!(
                     "could not parse hash {:?}",
                     e

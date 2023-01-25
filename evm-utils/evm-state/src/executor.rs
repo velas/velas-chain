@@ -978,8 +978,7 @@ mod tests {
                 let hash = backend.kvs().purge_slot(slot).unwrap().unwrap();
                 backend
                     .kvs()
-                    .gc_try_cleanup_account_hashes(&[hash])
-                    .unwrap(); // remove only root
+                    .gc_try_cleanup_account_hashes(&[hash]);
                                // on gc it will be removed
                 assert!(!backend.kvs().check_root_exist(first_root));
             } else {
