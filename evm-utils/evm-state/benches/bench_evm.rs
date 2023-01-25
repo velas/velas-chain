@@ -364,9 +364,20 @@ fn criterion_benchmark(c: &mut Criterion) {
                     // skip gc at first slot
                     let removed_root = block.kvs().purge_slot(slot).unwrap().unwrap();
                     assert_eq!(removed_root, root_before);
-                    let mut elems = vec![removed_root];
-                    while !elems.is_empty() {
-                        elems = block.kvs().gc_try_cleanup_account_hashes(&elems).unwrap()
+
+                    let (mut direct, mut indirect) = (
+                        vec![removed_root], vec![]
+                    );
+                    while !direct.is_empty() {
+                        let childs = block.kvs().gc_try_cleanup_account_hashes(&direct);
+
+                        direct = childs.0;
+                        indirect.extend_from_slice(&childs.1);
+                    }
+                    while !indirect.is_empty() {
+                        let childs = block.kvs().gc_try_cleanup_account_hashes(&direct);
+
+                        indirect = childs.0;
                     }
                 }
                 slot += 1;

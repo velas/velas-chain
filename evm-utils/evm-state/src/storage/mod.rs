@@ -261,6 +261,7 @@ impl StorageSecondary {
     }
 
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {
+        log::warn!("gc_enabled {}", gc_enabled);
         let db_opts = default_db_opts()?;
 
         let descriptors = Descriptors::secondary_descriptors(gc_enabled);
@@ -306,6 +307,7 @@ impl Storage<OptimisticTransactionDBInner> {
         Self::open(Location::Temporary(Arc::new(TempDir::new()?)), true)
     }
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {
+        log::warn!("gc_enabled {}", gc_enabled);
         log::info!("location is {:?}", location);
         let db_opts = default_db_opts()?;
 
@@ -604,13 +606,13 @@ impl Storage<OptimisticTransactionDBInner> {
         Ok(())
     }
 
-    pub fn gc_try_cleanup_account_hashes(&self, removes: &[H256]) -> Result<Vec<H256>> {
+    pub fn gc_try_cleanup_account_hashes(&self, removes: &[H256]) -> (Vec<H256>, Vec<H256>) {
         if !self.gc_enabled {
-            return Ok(vec![]);
+            return (vec![], vec![]);
         }
-        Ok(self
+        self
             .rocksdb_trie_handle()
-            .gc_cleanup_layer(removes, account_extractor))
+            .gc_cleanup_layer(removes, account_extractor)
     }
 
     pub fn backup(&self, backup_dir: Option<PathBuf>) -> Result<PathBuf> {
@@ -651,21 +653,46 @@ impl<'a> RootCleanup<'a> {
     }
 
     pub fn cleanup(&mut self) -> Result<()> {
-        const MAX_ELEMS: usize = 200;
+        const MAX_ELEMENTS: usize = 200;
+        let mut indirect = vec![];
+
         while !self.elems.is_empty() {
             let total_elems = self.elems.len();
-            let num_elems = usize::min(self.elems.len(), MAX_ELEMS);
 
-            let elems: Vec<_> = self.elems.drain(0..num_elems).collect();
-            let new_elems = self.storage.gc_try_cleanup_account_hashes(&elems)?;
+            let num_elems = usize::min(total_elems, MAX_ELEMENTS);
 
+            let iteration: Vec<_> = self.elems.drain(0..num_elems).collect();
             debug!(
-                "Cleaning up {} elems, total elems in queue {}, adding elems {}",
+                "About to clean up {} elements, total elements left in queue {} ...",
                 num_elems,
-                total_elems,
-                new_elems.len()
+                total_elems - num_elems,
             );
-            self.elems.extend_from_slice(&new_elems);
+            let childs = self.storage.gc_try_cleanup_account_hashes(&iteration);
+            debug!(
+                "Cleaned up, about ot add {} elements to queue!",
+                childs.0.len() + childs.1.len()
+            );
+            self.elems.extend_from_slice(&childs.0);
+            indirect.extend_from_slice(&childs.1);
+        }
+        while !indirect.is_empty() {
+            let total_elems = indirect.len();
+
+            let num_elems = usize::min(total_elems, MAX_ELEMENTS);
+
+            let iteration: Vec<_> = indirect.drain(0..num_elems).collect();
+            debug!(
+                "About to clean up {} elements, total elements left in queue {} ...",
+                num_elems,
+                total_elems - num_elems,
+            );
+            let childs = self.storage.gc_try_cleanup_account_hashes(&iteration);
+            debug!(
+                "Cleaned up, about ot add {} elements to queue!",
+                childs.0.len()
+            );
+            indirect.extend_from_slice(&childs.0);
+            debug_assert!(childs.1.is_empty());
         }
         Ok(())
     }
