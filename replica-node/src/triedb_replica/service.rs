@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use solana_replica_lib::triedb_replica::server;
+use solana_replica_lib::triedb::server;
 
 pub fn start_and_join(
     bind_address: SocketAddr,

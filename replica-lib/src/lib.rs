@@ -6,4 +6,4 @@ pub mod accountsdb_repl_server_factory;
 pub mod replica_accounts_server;
 pub mod replica_confirmed_slots_server;
 
-pub mod triedb_replica;
+pub mod triedb;

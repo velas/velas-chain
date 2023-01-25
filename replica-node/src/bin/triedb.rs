@@ -5,7 +5,7 @@
 
 use std::net::SocketAddr;
 
-use solana_replica_lib::triedb_replica::server::UsedStorage;
+use solana_replica_lib::triedb::server::UsedStorage;
 use solana_replica_node::triedb_replica::service;
 
 use {

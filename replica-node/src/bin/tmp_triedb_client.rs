@@ -3,11 +3,11 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use solana_replica_lib::triedb_replica::client::{db_handles, Client};
+use solana_replica_lib::triedb::client::{db_handles, Client};
 
 use clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches};
 use evm_state::Storage;
-use solana_replica_lib::triedb_replica::DbCounter;
+use solana_replica_lib::triedb::DbCounter;
 
 #[derive(Debug)]
 struct ParsedArgs {

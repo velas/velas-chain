@@ -15,7 +15,7 @@ pub mod app_grpc {
     tonic::include_proto!("triedb_repl");
 }
 
-use crate::triedb_replica::{check_root, debug_elapsed, lock_root};
+use crate::triedb::{check_root, debug_elapsed, lock_root};
 
 pub struct Server {
     storage: UsedStorage,
