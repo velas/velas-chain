@@ -30,6 +30,7 @@ use evm_state::{self as evm, FromKey};
 use solana_clap_utils::input_parsers::signer_of;
 use solana_clap_utils::input_validators::is_valid_signer;
 use solana_clap_utils::keypair::{DefaultSigner, SignerIndex};
+use solana_client::rpc_response::Response;
 use solana_evm_loader_program::{instructions::FeePayerType, scope::evm::gweis_to_lamports};
 use solana_remote_wallet::remote_wallet::RemoteWalletManager;
 
@@ -83,41 +84,37 @@ impl EvmSubCommands for App<'_, '_> {
                     SubCommand::with_name("create-gas-station-payer")
                         .about("Create payer account for gas station program")
                         .display_order(3)
-                        .arg(
-                            Arg::with_name("payer_account")
+                        .arg(Arg::with_name("payer_account")
                                 .index(1)
                                 .value_name("ACCOUNT_KEYPAIR")
                                 .takes_value(true)
                                 .required(true)
                                 .validator(is_valid_signer)
-                                .help("Keypair of the payer storage account"),
-                        ).arg(
-                        Arg::with_name("payer_owner")
-                            .index(2)
-                            .value_name("ACCOUNT_KEYPAIR")
-                            .takes_value(true)
-                            .required(true)
-                            .validator(is_valid_signer)
-                            .help("Keypair of the owner account"),
-                        )
+                                .help("Keypair of the payer storage account"))
                         .arg(Arg::with_name("gas-station-key")
-                            .index(3)
+                            .index(2)
                             .takes_value(true)
                             .required(true)
                             .value_name("PROGRAM ID")
                             .help("Public key of gas station program"))
                         .arg(Arg::with_name("lamports")
-                            .index(4)
+                            .index(3)
                             .takes_value(true)
                             .required(true)
                             .value_name("AMOUNT")
                             .help("Amount in lamports to transfer to created account"))
                         .arg(Arg::with_name("filters_path")
-                            .index(5)
+                            .index(4)
                             .takes_value(true)
                             .required(true)
                             .value_name("PATH")
                             .help("Path to json file with filter to store in payer storage"))
+                        .arg(Arg::with_name("payer_owner")
+                            .index(5)
+                            .value_name("ACCOUNT_KEYPAIR")
+                            .takes_value(true)
+                            .validator(is_valid_signer)
+                            .help("Keypair of the owner account"))
                 )
 
 
@@ -379,13 +376,20 @@ fn create_gas_station_payer<P: AsRef<Path>>(
     let filters: Vec<TxFilter> = serde_json::from_reader(file)
         .map_err(|e| custom_error(format!("Unable to decode json: {:?}", e)))?;
 
-    let create_owner_ix = system_instruction::create_account(
-        &cli_pubkey,
-        &payer_owner_pubkey,
-        rpc_client.get_minimum_balance_for_rent_exemption(0)?,
-        0,
-        &system_program::id(),
-    );
+    let mut instructions = vec![];
+    if let Response { value: None, .. } =
+        rpc_client.get_account_with_commitment(&payer_owner_pubkey, CommitmentConfig::default())?
+    {
+        let create_owner_ix = system_instruction::create_account(
+            &cli_pubkey,
+            &payer_owner_pubkey,
+            rpc_client.get_minimum_balance_for_rent_exemption(0)?,
+            0,
+            &system_program::id(),
+        );
+        info!("Add instruction to create owner: {}", payer_owner_pubkey);
+        instructions.push(create_owner_ix);
+    }
     let state_size = evm_gas_station::get_state_size(&filters);
     let minimum_balance = rpc_client.get_minimum_balance_for_rent_exemption(state_size)?;
     let create_storage_ix = evm_gas_station::create_storage_account(
@@ -395,6 +399,8 @@ fn create_gas_station_payer<P: AsRef<Path>>(
         &filters,
         &gas_station_key,
     );
+    info!("Add instruction to create storage: {}", payer_storage_pubkey);
+    instructions.push(create_storage_ix);
     let register_payer_ix = evm_gas_station::register_payer(
         gas_station_key,
         cli_pubkey,
@@ -403,10 +409,10 @@ fn create_gas_station_payer<P: AsRef<Path>>(
         transfer_amount,
         filters,
     );
-    let message = Message::new(
-        &[create_owner_ix, create_storage_ix, register_payer_ix],
-        Some(&cli_pubkey),
-    );
+    info!("Add instruction to register payer: gas-station={}, signer={}, storage={}, owner={}",
+        gas_station_key, cli_pubkey, payer_storage_pubkey, payer_owner_pubkey);
+    instructions.push(register_payer_ix);
+    let message = Message::new(&instructions, Some(&cli_pubkey));
     let latest_blockhash = rpc_client.get_latest_blockhash()?;
 
     let mut tx = Transaction::new_unsigned(message);
@@ -591,7 +597,7 @@ pub fn parse_evm_subcommand(
                     signers.push(signer);
                     2
                 })
-                .unwrap();
+                .unwrap_or(0);
 
             let gas_station_key = value_t_or_exit!(matches, "gas-station-key", Pubkey);
             let lamports = value_t_or_exit!(matches, "lamports", u64);

@@ -599,6 +599,8 @@ async fn process_tx(
         .iter()
         .find(|val| matches!(tx.action, TransactionAction::Call(addr) if addr == val.contract))
     {
+        info!("Bridge filters matched. Sending transaction {} to gas station {}",
+            tx.tx_id_hash(), bridge.gas_station_program_id.unwrap());
         let tx = evm_gas_station::evm_types::Transaction {
             nonce: tx.nonce,
             gas_price: tx.gas_price,
@@ -622,7 +624,7 @@ async fn process_tx(
             bridge.gas_station_program_id.unwrap(),
             bridge.key.pubkey(),
             val.storage_acc,
-            val.payer,
+            val.gas_station_payer,
         )]
     } else {
         bridge.make_send_tx_instructions(&tx, &meta_keys)

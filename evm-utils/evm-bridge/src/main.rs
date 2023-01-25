@@ -257,8 +257,9 @@ impl EvmBridge {
         self.redirect_to_proxy_filters = redirect_to_proxy_filters
             .into_iter()
             .map(|mut item| {
-                let (payer_key, _) = Pubkey::find_program_address(&[item.owner.as_ref()], &gas_station_program_id);
-                item.payer = payer_key;
+                let (payer_key, _) =
+                    Pubkey::find_program_address(&[item.owner.as_ref()], &gas_station_program_id);
+                item.gas_station_payer = payer_key;
                 item
             })
             .collect();
@@ -1012,19 +1013,19 @@ pub(crate) fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ParseEvmContractToPayerKeysError {
-    #[error("Evm contract string is invalid")]
-    InvalidEvmContract,
-    #[error("Input format is invalid, provide string of the next format: \"<evm contract address>:<payer pubkey>\"")]
-    InvalidFormat,
-    #[error("Invalid pubkey")]
-    InvalidPubkey,
+    #[error("Evm contract string is invalid: `{0}`")]
+    InvalidEvmContract(String),
+    #[error("Input format is invalid: `{0}`, provide string of the next format: \"<evm contract address>:<owner pubkey>:<storage pubkey>\"")]
+    InvalidFormat(String),
+    #[error("Invalid pubkey: `{0}`")]
+    InvalidPubkey(String),
 }
 
 #[derive(Debug)]
 struct EvmContractToPayerKeys {
     contract: Address,
     owner: Pubkey,
-    payer: Pubkey,
+    gas_station_payer: Pubkey,
     storage_acc: Pubkey,
 }
 
@@ -1032,19 +1033,30 @@ impl FromStr for EvmContractToPayerKeys {
     type Err = ParseEvmContractToPayerKeysError;
 
     fn from_str(s: &str) -> StdResult<Self, Self::Err> {
-        let (addr, keys) = s
-            .split_once(':')
-            .ok_or(ParseEvmContractToPayerKeysError::InvalidFormat)?;
-        let (key1, key2) = keys
-            .split_once(':')
-            .ok_or(ParseEvmContractToPayerKeysError::InvalidFormat)?;
-        let contract = Address::from_str(addr)
-            .map_err(|_| ParseEvmContractToPayerKeysError::InvalidEvmContract)?;
-        let owner = Pubkey::from_str(key1)
-            .map_err(|_| ParseEvmContractToPayerKeysError::InvalidPubkey)?;
-        let storage_acc = Pubkey::from_str(key2)
-            .map_err(|_| ParseEvmContractToPayerKeysError::InvalidPubkey)?;
-        Ok(Self { contract, owner, payer: Pubkey::default(), storage_acc })
+        let (contract, keys) =
+            s.split_once(':')
+                .ok_or(ParseEvmContractToPayerKeysError::InvalidFormat(
+                    s.to_string(),
+                ))?;
+        let (owner, storage_acc) =
+            keys.split_once(':')
+                .ok_or(ParseEvmContractToPayerKeysError::InvalidFormat(
+                    s.to_string(),
+                ))?;
+        let contract = Address::from_str(contract).map_err(|_| {
+            ParseEvmContractToPayerKeysError::InvalidEvmContract(contract.to_string())
+        })?;
+        let owner = Pubkey::from_str(owner)
+            .map_err(|_| ParseEvmContractToPayerKeysError::InvalidPubkey(owner.to_string()))?;
+        let storage_acc = Pubkey::from_str(storage_acc).map_err(|_| {
+            ParseEvmContractToPayerKeysError::InvalidPubkey(storage_acc.to_string())
+        })?;
+        Ok(Self {
+            contract,
+            owner,
+            gas_station_payer: Pubkey::default(),
+            storage_acc,
+        })
     }
 }
 
@@ -1078,7 +1090,7 @@ struct Args {
     #[structopt(long = "gas-station")]
     gas_station_program_id: Option<Pubkey>,
     #[structopt(long = "redirect-to-proxy")]
-    redirect_contracts_to_proxy: Option<Vec<EvmContractToPayerKeys>>,
+    redirect_contracts_to_proxy: Vec<EvmContractToPayerKeys>,
 }
 
 impl Args {
@@ -1173,9 +1185,16 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
         min_gas_price,
     );
     meta.set_whitelist(whitelist);
-    if let Some(redirect_list) = args.redirect_contracts_to_proxy {
-        let gas_station_program_id = args.gas_station_program_id.expect("gas-station program id is missing");
-        meta.set_redirect_to_proxy_filters(gas_station_program_id, redirect_list);
+    if !args.redirect_contracts_to_proxy.is_empty() {
+        let gas_station_program_id = args
+            .gas_station_program_id
+            .expect("gas-station program id is missing");
+        info!("Redirecting evm transaction to gas station: {}, filters: {:?}",
+            gas_station_program_id, args.redirect_contracts_to_proxy);
+        meta.set_redirect_to_proxy_filters(
+            gas_station_program_id,
+            args.redirect_contracts_to_proxy,
+        );
     }
     let meta = Arc::new(meta);
 

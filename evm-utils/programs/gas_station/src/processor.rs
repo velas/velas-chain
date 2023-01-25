@@ -96,7 +96,7 @@ fn process_register_payer(
             system_program.clone(),
         ],
         &[&[owner.as_ref(), &[bump_seed]]],
-    )?;
+    )?; // TODO: map into something readable
     msg!("PDA created: {}", payer_acc);
 
     payer.owner = owner;
