@@ -2,6 +2,11 @@
 
 evm_contract=0x507AAe92E8a024feDCbB521d11EC406eEfB4488F;
 
+if [[ $# -lt 3 ]] ; then
+    echo 'Usage: ./quickstart.sh path/to/signer_keypair.json <output directory> <velas-chain root>'
+    exit 0
+fi
+
 signer_keypair=$1;
 out_dir=$2;
 project_root=$3;
