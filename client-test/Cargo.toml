@@ -27,7 +27,7 @@ solana-streamer = { path = "../streamer", version = "=1.9.29" }
 solana-test-validator = { path = "../test-validator", version = "=1.9.29" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.9.29" }
 solana-version = { path = "../version", version = "=0.6.3" }
-systemstat = "0.1.10"
+systemstat = "0.2.3"
 
 [dev-dependencies]
 solana-logger = { path = "../logger", version = "=1.9.29" }
