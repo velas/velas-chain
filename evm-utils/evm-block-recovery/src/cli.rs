@@ -88,6 +88,10 @@ pub enum Commands {
         #[clap(long, value_name = "FILE_PATH", default_value = "./timestamps/blocks.json", value_hint = clap::ValueHint::FilePath)]
         timestamps: String,
 
+        /// Fetch timestamp from existent EVM block, use for test purposes
+        #[clap(long)]
+        existent_check: bool,
+
         /// Writes restored EVM Blocks as JSON file to directory if set
         #[clap(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
         output_dir: Option<String>,

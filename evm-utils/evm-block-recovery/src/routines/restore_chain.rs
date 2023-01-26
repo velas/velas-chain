@@ -21,6 +21,7 @@ pub async fn restore_chain(
     modify_ledger: bool,
     force_resume: bool,
     timestamps: String,
+    existent_check: bool,
     output_dir: Option<String>,
 ) -> Result<()> {
     let rpc_client = RpcClient::new(archive_url);
@@ -92,7 +93,15 @@ pub async fn restore_chain(
         header_template.native_chain_hash =
             H256(Pubkey::from_str(&nb.blockhash).unwrap().to_bytes());
         header_template.block_number += 1;
+
+        if existent_check {
+            let existent_block = ledger
+                .get_evm_confirmed_block_header(header_template.block_number)
+                .await?;
+            header_template.timestamp = existent_block.timestamp
+        } else {
         header_template.timestamp = *timestamps.get(&header_template.block_number).unwrap();
+        }
 
         let txs: Vec<(RPCTransaction, Vec<String>)> = parsed_instructions
             .instructions

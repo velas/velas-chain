@@ -89,6 +89,7 @@ async fn main() -> anyhow::Result<()> {
             modify_ledger,
             force_resume,
             timestamps,
+            existent_check,
             output_dir,
         } => {
             routines::restore_chain(
@@ -99,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
                 modify_ledger,
                 force_resume,
                 timestamps,
+                existent_check,
                 output_dir,
             )
             .await
