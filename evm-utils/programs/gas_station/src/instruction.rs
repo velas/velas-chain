@@ -3,7 +3,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::Deserialize;
 use solana_sdk::pubkey::Pubkey;
 
-#[derive(Debug, Deserialize, BorshDeserialize, BorshSerialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, BorshDeserialize, BorshSerialize, PartialEq)]
 pub enum TxFilter {
     InputStartsWith {
         contract: evm_types::Address,
@@ -28,6 +28,11 @@ pub enum GasStationInstruction {
     RegisterPayer {
         owner: Pubkey,
         transfer_amount: u64,
+        whitelist: Vec<TxFilter>,
+    },
+
+    /// Update filters
+    UpdateFilters {
         whitelist: Vec<TxFilter>,
     },
 

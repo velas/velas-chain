@@ -28,7 +28,7 @@ use evm_gas_station::instruction::TxFilter;
 use evm_rpc::Hex;
 use evm_state::{self as evm, FromKey};
 use solana_clap_utils::input_parsers::signer_of;
-use solana_clap_utils::input_validators::is_valid_signer;
+use solana_clap_utils::input_validators::{is_pubkey, is_valid_signer};
 use solana_clap_utils::keypair::{DefaultSigner, SignerIndex};
 use solana_client::rpc_response::Response;
 use solana_evm_loader_program::{instructions::FeePayerType, scope::evm::gweis_to_lamports};
@@ -84,7 +84,7 @@ impl EvmSubCommands for App<'_, '_> {
                     SubCommand::with_name("create-gas-station-payer")
                         .about("Create payer account for gas station program")
                         .display_order(3)
-                        .arg(Arg::with_name("payer_account")
+                        .arg(Arg::with_name("payer_storage_account")
                                 .index(1)
                                 .value_name("ACCOUNT_KEYPAIR")
                                 .takes_value(true)
@@ -115,6 +115,31 @@ impl EvmSubCommands for App<'_, '_> {
                             .takes_value(true)
                             .validator(is_valid_signer)
                             .help("Keypair of the owner account"))
+                )
+                .subcommand(
+                    SubCommand::with_name("update-gas-station-payer")
+                        .about("Update filters in payer account for gas station program")
+                        .display_order(4)
+                        .arg(
+                            Arg::with_name("payer_storage_pubkey")
+                                .index(1)
+                                .value_name("PUBKEY")
+                                .takes_value(true)
+                                .required(true)
+                                .validator(is_pubkey)
+                                .help("The pubkey of the payer storage account to update"))
+                        .arg(Arg::with_name("gas-station-key")
+                            .index(2)
+                            .takes_value(true)
+                            .required(true)
+                            .value_name("PROGRAM ID")
+                            .help("Public key of gas station program"))
+                        .arg(Arg::with_name("filters_path")
+                            .index(3)
+                            .takes_value(true)
+                            .required(true)
+                            .value_name("PATH")
+                            .help("Path to json file with filter to store in payer storage"))
                 )
 
 
@@ -202,10 +227,16 @@ pub enum EvmCliCommand {
     },
 
     CreateGasStationPayer {
-        payer_signer_index: SignerIndex,
+        payer_storage_signer_index: SignerIndex,
         payer_owner_signer_index: SignerIndex,
         gas_station_key: Pubkey,
         lamports: u64,
+        filters: PathBuf,
+    },
+
+    UpdateGasStationPayer {
+        payer_storage_pubkey: Pubkey,
+        gas_station_key: Pubkey,
         filters: PathBuf,
     },
 
@@ -250,23 +281,32 @@ impl EvmCliCommand {
                 transfer(rpc_client, config, *address, *amount)?;
             }
             Self::CreateGasStationPayer {
-                payer_signer_index,
+                payer_storage_signer_index,
                 payer_owner_signer_index,
                 gas_station_key,
                 lamports,
                 filters,
             } => {
-                println!(
-                    "CreateGasStationPayer: {}, {}, {:?}",
-                    gas_station_key, lamports, filters
-                );
                 create_gas_station_payer(
                     rpc_client,
                     config,
-                    *payer_signer_index,
+                    *payer_storage_signer_index,
                     *payer_owner_signer_index,
                     *gas_station_key,
                     *lamports,
+                    filters,
+                )?;
+            }
+            Self::UpdateGasStationPayer {
+                payer_storage_pubkey,
+                gas_station_key,
+                filters,
+            } => {
+                update_gas_station_payer(
+                    rpc_client,
+                    config,
+                    *payer_storage_pubkey,
+                    *gas_station_key,
                     filters,
                 )?;
             }
@@ -357,14 +397,14 @@ fn transfer(
 fn create_gas_station_payer<P: AsRef<Path>>(
     rpc_client: &RpcClient,
     config: &CliConfig,
-    payer_signer_index: SignerIndex,
+    payer_storage_signer_index: SignerIndex,
     payer_owner_signer_index: SignerIndex,
     gas_station_key: Pubkey,
     transfer_amount: u64,
     filters: P,
 ) -> anyhow::Result<()> {
     let cli_pubkey = config.signers[0].pubkey();
-    let payer_storage_pubkey = config.signers[payer_signer_index].pubkey();
+    let payer_storage_pubkey = config.signers[payer_storage_signer_index].pubkey();
     let payer_owner_pubkey = config.signers[payer_owner_signer_index].pubkey();
     check_unique_pubkeys(
         (&payer_storage_pubkey, "payer_storage_pubkey".to_string()),
@@ -409,10 +449,41 @@ fn create_gas_station_payer<P: AsRef<Path>>(
         transfer_amount,
         filters,
     );
-    info!("Add instruction to register payer: gas-station={}, signer={}, storage={}, owner={}",
-        gas_station_key, cli_pubkey, payer_storage_pubkey, payer_owner_pubkey);
+    info!(
+        "Add instruction to register payer: gas-station={}, signer={}, storage={}, owner={}",
+        gas_station_key, cli_pubkey, payer_storage_pubkey, payer_owner_pubkey
+    );
     instructions.push(register_payer_ix);
     let message = Message::new(&instructions, Some(&cli_pubkey));
+    let latest_blockhash = rpc_client.get_latest_blockhash()?;
+
+    let mut tx = Transaction::new_unsigned(message);
+    tx.try_sign(&config.signers, latest_blockhash)?;
+    let signature = rpc_client.send_and_confirm_transaction_with_spinner(&tx)?;
+    println!("Transaction signature = {}", signature);
+    Ok(())
+}
+
+fn update_gas_station_payer<P: AsRef<Path>>(
+    rpc_client: &RpcClient,
+    config: &CliConfig,
+    payer_storage_pubkey: Pubkey,
+    gas_station_key: Pubkey,
+    filters: P,
+) -> anyhow::Result<()> {
+    let file = File::open(filters)
+        .map_err(|e| custom_error(format!("Unable to open filters file: {:?}", e)))?;
+    let filters: Vec<TxFilter> = serde_json::from_reader(file)
+        .map_err(|e| custom_error(format!("Unable to decode json: {:?}", e)))?;
+
+    let sender_pubkey = config.signers[0].pubkey();
+    let ix = evm_gas_station::update_filters(
+        gas_station_key,
+        sender_pubkey,
+        payer_storage_pubkey,
+        filters,
+    );
+    let message = Message::new(&[ix], Some(&sender_pubkey));
     let latest_blockhash = rpc_client.get_latest_blockhash()?;
 
     let mut tx = Transaction::new_unsigned(message);
@@ -584,9 +655,10 @@ pub fn parse_evm_subcommand(
         }
         ("create-gas-station-payer", Some(matches)) => {
             signers = vec![default_signer.signer_from_path(matches, wallet_manager)?];
-            let (payer_signer, _address) = signer_of(matches, "payer_account", wallet_manager)?;
+            let (payer_storage_signer, _address) =
+                signer_of(matches, "payer_storage_account", wallet_manager)?;
             let (payer_owner_signer, _address) = signer_of(matches, "payer_owner", wallet_manager)?;
-            let payer_signer_index = payer_signer
+            let payer_storage_signer_index = payer_storage_signer
                 .map(|signer| {
                     signers.push(signer);
                     1
@@ -604,10 +676,21 @@ pub fn parse_evm_subcommand(
             let filters = value_t_or_exit!(matches, "filters_path", PathBuf);
 
             EvmCliCommand::CreateGasStationPayer {
-                payer_signer_index,
+                payer_storage_signer_index,
                 payer_owner_signer_index,
                 gas_station_key,
                 lamports,
+                filters,
+            }
+        }
+        ("update-gas-station-payer", Some(matches)) => {
+            let payer_storage_pubkey = value_t_or_exit!(matches, "payer_storage_pubkey", Pubkey);
+            let gas_station_key = value_t_or_exit!(matches, "gas-station-key", Pubkey);
+            let filters = value_t_or_exit!(matches, "filters_path", PathBuf);
+
+            EvmCliCommand::UpdateGasStationPayer {
+                payer_storage_pubkey,
+                gas_station_key,
                 filters,
             }
         }

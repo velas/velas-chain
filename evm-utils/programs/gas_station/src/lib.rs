@@ -57,6 +57,26 @@ pub fn register_payer(
     )
 }
 
+pub fn update_filters(
+    program_id: Pubkey,
+    signer: Pubkey,
+    storage: Pubkey,
+    filters: Vec<instruction::TxFilter>,
+) -> Instruction {
+    let account_metas = vec![
+        AccountMeta::new(signer, true),
+        AccountMeta::new(storage, false),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+    Instruction::new_with_borsh(
+        program_id,
+        &instruction::GasStationInstruction::UpdateFilters {
+            whitelist: filters,
+        },
+        account_metas,
+    )
+}
+
 pub fn execute_tx_with_payer(
     tx: evm_types::Transaction,
     program_id: Pubkey,

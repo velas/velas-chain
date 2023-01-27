@@ -12,7 +12,7 @@ Deploy program:
 
 ## User-Program-Bridge interaction
 
-On testnet you can use deployed gas station program: **99GZJejoz8L521qEgjDbQ4ucheCsw17SL8FWCYXmDCH7**
+On testnet you can use deployed gas station program: **6KJGNdovYX3NrzfEYDTdhbwQbTvoWHAVrz9buuEPKthy**
 
 As a test evm contract you can use this one: **0x507AAe92E8a024feDCbB521d11EC406eEfB4488F**.  
 It has one method that accepts uint256. Valid input data will be *0x6057361d* as a method selector following by encoded uint256  

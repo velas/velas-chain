@@ -6,7 +6,7 @@ use solana_sdk::{
     entrypoint::ProgramResult,
     instruction::{AccountMeta, Instruction},
     msg,
-    program::invoke_signed,
+    program::{invoke, invoke_signed},
     program_error::ProgramError,
     program_pack::IsInitialized,
     pubkey::Pubkey,
@@ -17,7 +17,7 @@ use solana_sdk::{
 
 use error::GasStationError;
 use instruction::{GasStationInstruction, TxFilter};
-use state::{Payer, MAX_FILTERS};
+use state::{Payer, MAX_FILTERS, PAYER_STATE_SIZE_WITHOUT_FILTERS};
 
 const EXECUTE_CALL_REFUND_AMOUNT: u64 = 10000;
 
@@ -30,6 +30,13 @@ pub fn create_evm_instruction_with_borsh(
     res.data
         .insert(0, evm_loader_instructions::EVM_INSTRUCTION_BORSH_PREFIX);
     res
+}
+
+fn check_whitelist(whitelist: &[TxFilter]) -> ProgramResult {
+    if whitelist.is_empty() || whitelist.len() > MAX_FILTERS {
+        return Err(GasStationError::InvalidFilterAmount.into());
+    }
+    Ok(())
 }
 
 pub fn process_instruction(
@@ -46,6 +53,9 @@ pub fn process_instruction(
             transfer_amount,
             whitelist,
         } => process_register_payer(program_id, accounts, owner, transfer_amount, whitelist),
+        GasStationInstruction::UpdateFilters { whitelist } => {
+            process_update_filters(program_id, accounts, whitelist)
+        }
         GasStationInstruction::ExecuteWithPayer { tx } => {
             process_execute_with_payer(program_id, accounts, tx)
         }
@@ -59,9 +69,8 @@ fn process_register_payer(
     transfer_amount: u64,
     whitelist: Vec<TxFilter>,
 ) -> ProgramResult {
-    if whitelist.is_empty() || whitelist.len() > MAX_FILTERS {
-        return Err(GasStationError::InvalidFilterAmount.into());
-    }
+    check_whitelist(&whitelist)?;
+
     let account_info_iter = &mut accounts.iter();
     let creator_info = next_account_info(account_info_iter)?;
     let storage_acc_info = next_account_info(account_info_iter)?;
@@ -103,6 +112,61 @@ fn process_register_payer(
     payer.payer = payer_acc;
     payer.filters = whitelist;
     BorshSerialize::serialize(&payer, &mut &mut storage_acc_info.data.borrow_mut()[..]).unwrap();
+    Ok(())
+}
+
+fn process_update_filters(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    whitelist: Vec<TxFilter>,
+) -> ProgramResult {
+    check_whitelist(&whitelist)?;
+
+    let account_info_iter = &mut accounts.iter();
+    let owner_info = next_account_info(account_info_iter)?;
+    let storage_acc_info = next_account_info(account_info_iter)?;
+    let system_program = next_account_info(account_info_iter)?;
+
+    if !owner_info.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !cmp_pubkeys(program_id, storage_acc_info.owner) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    let payer: Payer = BorshDeserialize::deserialize(&mut &**storage_acc_info.data.borrow())
+        .map_err(|_e| -> ProgramError { GasStationError::InvalidAccountBorshData.into() })?;
+    if !payer.is_initialized() {
+        return Err(GasStationError::AccountNotInitialized.into());
+    }
+    if !cmp_pubkeys(owner_info.key, &payer.owner) {
+        return Err(GasStationError::AccountNotAuthorized.into());
+    }
+    if whitelist == payer.filters {
+        return Err(GasStationError::FiltersNotChanged.into());
+    }
+
+    let mut new_filters_bytes = vec![];
+    BorshSerialize::serialize(&whitelist, &mut new_filters_bytes).unwrap();
+    let new_total_size = PAYER_STATE_SIZE_WITHOUT_FILTERS + new_filters_bytes.len();
+    let lamports_required = (Rent::get()?).minimum_balance(new_total_size);
+    if lamports_required > storage_acc_info.lamports() {
+        let diff = lamports_required - storage_acc_info.lamports();
+        invoke(
+            &system_instruction::transfer(owner_info.key, storage_acc_info.key, diff),
+            &[
+                owner_info.clone(),
+                storage_acc_info.clone(),
+                system_program.clone(),
+            ],
+        )?;
+    }
+
+    if new_total_size != storage_acc_info.data_len() {
+        storage_acc_info.realloc(new_total_size, false)?;
+    }
+    storage_acc_info.data.borrow_mut()[PAYER_STATE_SIZE_WITHOUT_FILTERS..new_total_size]
+        .copy_from_slice(&new_filters_bytes);
     Ok(())
 }
 
@@ -292,6 +356,7 @@ fn refund_native_fee(caller: &AccountInfo, payer: &AccountInfo, amount: u64) -> 
 #[cfg(test)]
 mod test {
     use super::*;
+    use solana_evm_loader_program::error::EvmError;
     use solana_evm_loader_program::scope::evm;
     use solana_program::instruction::InstructionError::{Custom, IncorrectProgramId};
     use solana_program_test::{processor, ProgramTest};
@@ -302,6 +367,7 @@ mod test {
         transaction::{Transaction, TransactionError::InstructionError},
         transport::TransportError::TransactionError,
     };
+    use std::str::FromStr;
 
     const SECRET_KEY_DUMMY_ONES: [u8; 32] = [1; 32];
     const SECRET_KEY_DUMMY_TWOS: [u8; 32] = [2; 32];
@@ -335,10 +401,16 @@ mod test {
         }
     }
 
+    pub fn dummy_filters() -> Vec<TxFilter> {
+        vec![TxFilter::InputStartsWith {
+            contract: evm::Address::zero(),
+            input_prefix: vec![],
+        }]
+    }
+
     #[tokio::test]
     async fn test_register_payer() {
         let program_id = Pubkey::new_unique();
-
         let mut program_test =
             ProgramTest::new("gas-station", program_id, processor!(process_instruction));
 
@@ -352,10 +424,7 @@ mod test {
             },
         );
         let mut bytes = vec![];
-        let filters = vec![TxFilter::InputStartsWith {
-            contract: evm::Address::zero(),
-            input_prefix: vec![],
-        }];
+        let filters = dummy_filters();
         BorshSerialize::serialize(&filters, &mut bytes).unwrap();
         program_test.add_account(
             storage.pubkey(),
@@ -378,16 +447,13 @@ mod test {
             &GasStationInstruction::RegisterPayer {
                 owner: creator.pubkey(),
                 transfer_amount,
-                whitelist: vec![TxFilter::InputStartsWith {
-                    contract: evm::Address::zero(),
-                    input_prefix: vec![],
-                }],
+                whitelist: filters,
             },
             account_metas,
         );
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&creator.pubkey()));
-        transaction.sign(&[&creator], recent_blockhash);
-        banks_client.process_transaction(transaction).await.unwrap();
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&creator.pubkey()));
+        tx.sign(&[&creator], recent_blockhash);
+        banks_client.process_transaction(tx).await.unwrap();
 
         let account = banks_client
             .get_account(storage.pubkey())
@@ -420,6 +486,151 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_update_filters() {
+        let program_id = Pubkey::new_unique();
+        let mut program_test =
+            ProgramTest::new("gas-station", program_id, processor!(process_instruction));
+
+        let user = Keypair::new();
+        let storage = Keypair::new();
+        let (payer, _) = Pubkey::find_program_address(&[user.pubkey().as_ref()], &program_id);
+        program_test.add_account(
+            user.pubkey(),
+            Account::new(1000000, 0, &system_program::id()),
+        );
+        program_test.add_account(payer, Account::new(1000000, 0, &program_id));
+        program_test.add_account(
+            solana_sdk::evm_state::ID,
+            solana_evm_loader_program::create_state_account(1000000).into(),
+        );
+        let payer_data = Payer {
+            owner: user.pubkey(),
+            payer,
+            filters: dummy_filters(),
+        };
+        let mut payer_bytes = vec![];
+        BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
+        program_test.add_account(
+            storage.pubkey(),
+            Account {
+                lamports: 10000000,
+                owner: program_id,
+                data: payer_bytes,
+                ..Account::default()
+            },
+        );
+
+        let (mut banks_client, _, recent_blockhash) = program_test.start().await;
+
+        let account_metas = vec![
+            AccountMeta::new(user.pubkey(), true),
+            AccountMeta::new(storage.pubkey(), false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ];
+        let new_filters = vec![TxFilter::InputStartsWith {
+            contract: evm::Address::from_str("0x507AAe92E8a024feDCbB521d11EC406eEfB4488F")
+                .unwrap(),
+            input_prefix: vec![96, 87, 54, 29],
+        }];
+        let ix = Instruction::new_with_borsh(
+            program_id,
+            &GasStationInstruction::UpdateFilters {
+                whitelist: new_filters.clone(),
+            },
+            account_metas,
+        );
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
+        banks_client.process_transaction(tx).await.unwrap();
+
+        let storage_account = banks_client
+            .get_account(storage.pubkey())
+            .await
+            .unwrap()
+            .unwrap();
+        let updated_payer: Payer = BorshDeserialize::deserialize(&mut &*storage_account.data).unwrap();
+        assert_eq!(new_filters, updated_payer.filters);
+    }
+
+    #[tokio::test]
+    async fn test_shrink_filters() {
+        let program_id = Pubkey::new_unique();
+        let mut program_test =
+            ProgramTest::new("gas-station", program_id, processor!(process_instruction));
+
+        let user = Keypair::new();
+        let storage = Keypair::new();
+        let (payer, _) = Pubkey::find_program_address(&[user.pubkey().as_ref()], &program_id);
+        program_test.add_account(
+            user.pubkey(),
+            Account::new(1000000, 0, &system_program::id()),
+        );
+        program_test.add_account(payer, Account::new(1000000, 0, &program_id));
+        program_test.add_account(
+            solana_sdk::evm_state::ID,
+            solana_evm_loader_program::create_state_account(1000000).into(),
+        );
+        let payer_data = Payer {
+            owner: user.pubkey(),
+            payer,
+            filters: vec![
+                TxFilter::InputStartsWith {
+                    contract: evm::Address::from_str("0x507AAe92E8a024feDCbB521d11EC406eEfB4488F")
+                        .unwrap(),
+                    input_prefix: vec![96, 87, 54, 29, 1, 1, 1, 1],
+                },
+                TxFilter::InputStartsWith {
+                    contract: evm::Address::from_str("0x8065CB50F72c28668C5bf17DfeEFa9eB2485783a")
+                        .unwrap(),
+                    input_prefix: vec![],
+                },
+            ],
+        };
+        let mut payer_bytes = vec![];
+        BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
+        program_test.add_account(
+            storage.pubkey(),
+            Account {
+                lamports: 10000000,
+                owner: program_id,
+                data: payer_bytes,
+                ..Account::default()
+            },
+        );
+
+        let (mut banks_client, _, recent_blockhash) = program_test.start().await;
+
+        let account_metas = vec![
+            AccountMeta::new(user.pubkey(), true),
+            AccountMeta::new(storage.pubkey(), false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ];
+        let new_filters = vec![TxFilter::InputStartsWith {
+            contract: evm::Address::from_str("0x507AAe92E8a024feDCbB521d11EC406eEfB4488F")
+                .unwrap(),
+            input_prefix: vec![96, 87, 54, 29],
+        }];
+        let ix = Instruction::new_with_borsh(
+            program_id,
+            &GasStationInstruction::UpdateFilters {
+                whitelist: new_filters.clone(),
+            },
+            account_metas,
+        );
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
+        banks_client.process_transaction(tx).await.unwrap();
+
+        let storage_account = banks_client
+            .get_account(storage.pubkey())
+            .await
+            .unwrap()
+            .unwrap();
+        let updated_payer: Payer = BorshDeserialize::deserialize(&mut &*storage_account.data).unwrap();
+        assert_eq!(new_filters, updated_payer.filters);
+    }
+
+    #[tokio::test]
     async fn test_execute_tx() {
         let program_id = Pubkey::new_unique();
         let mut program_test =
@@ -441,10 +652,7 @@ mod test {
         let payer_data = Payer {
             owner: owner.pubkey(),
             payer,
-            filters: vec![TxFilter::InputStartsWith {
-                contract: evm::Address::zero(),
-                input_prefix: vec![],
-            }],
+            filters: dummy_filters(),
         };
         let mut payer_bytes = vec![];
         BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
@@ -475,9 +683,9 @@ mod test {
             },
             account_metas,
         );
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-        transaction.sign(&[&user], recent_blockhash);
-        banks_client.process_transaction(transaction).await.unwrap();
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
+        banks_client.process_transaction(tx).await.unwrap();
     }
 
     #[tokio::test]
@@ -503,10 +711,7 @@ mod test {
         let payer_data = Payer {
             owner: owner.pubkey(),
             payer,
-            filters: vec![TxFilter::InputStartsWith {
-                contract: evm::Address::zero(),
-                input_prefix: vec![],
-            }],
+            filters: dummy_filters(),
         };
         let mut payer_bytes = vec![];
         BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
@@ -553,24 +758,25 @@ mod test {
             account_metas,
         );
         // this will fail because neither evm tx nor big tx storage provided
-        let mut transaction =
-            Transaction::new_with_payer(&[ix_no_big_tx_storage], Some(&user.pubkey()));
-        transaction.sign(&[&user], recent_blockhash);
-        assert!(matches!(
-            banks_client
-                .process_transaction(transaction)
-                .await
-                .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(2)))
+        let mut tx = Transaction::new_with_payer(&[ix_no_big_tx_storage], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
+        let _expected_error = TransactionError(InstructionError(
+            0,
+            Custom(GasStationError::BigTxStorageMissing as u32),
         ));
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-        transaction.sign(&[&user, &big_tx_storage], recent_blockhash);
         assert!(matches!(
-            banks_client
-                .process_transaction(transaction)
-                .await
-                .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(14))) // NotSupported
+            banks_client.process_transaction(tx).await.unwrap_err(),
+            _expected_error,
+        ));
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user, &big_tx_storage], recent_blockhash);
+        let _expected_error = TransactionError(InstructionError(
+            0,
+            Custom(GasStationError::NotSupported as u32),
+        ));
+        assert!(matches!(
+            banks_client.process_transaction(tx).await.unwrap_err(),
+            _expected_error,
         ));
     }
 
@@ -596,10 +802,7 @@ mod test {
         let payer_data = Payer {
             owner: owner.pubkey(),
             payer,
-            filters: vec![TxFilter::InputStartsWith {
-                contract: evm::Address::zero(),
-                input_prefix: vec![],
-            }],
+            filters: dummy_filters(),
         };
         let mut payer_bytes = vec![];
         BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
@@ -630,13 +833,10 @@ mod test {
             },
             account_metas,
         );
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-        transaction.sign(&[&user], recent_blockhash);
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
         assert!(matches!(
-            banks_client
-                .process_transaction(transaction)
-                .await
-                .unwrap_err(),
+            banks_client.process_transaction(tx).await.unwrap_err(),
             TransactionError(InstructionError(0, IncorrectProgramId))
         ));
     }
@@ -688,10 +888,7 @@ mod test {
         let payer_data = Payer {
             owner: owner.pubkey(),
             payer,
-            filters: vec![TxFilter::InputStartsWith {
-                contract: evm::Address::zero(),
-                input_prefix: vec![],
-            }],
+            filters: dummy_filters(),
         };
         let mut valid_payer_bytes = vec![];
         BorshSerialize::serialize(&payer_data, &mut valid_payer_bytes).unwrap();
@@ -727,14 +924,15 @@ mod test {
                 },
                 account_metas,
             );
-            let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-            transaction.sign(&[&user], recent_blockhash);
+            let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+            tx.sign(&[&user], recent_blockhash);
+            let _expected_error = TransactionError(InstructionError(
+                0,
+                Custom(GasStationError::InvalidAccountBorshData as u32),
+            ));
             assert!(matches!(
-                banks_client
-                    .process_transaction(transaction)
-                    .await
-                    .unwrap_err(),
-                TransactionError(InstructionError(0, Custom(4)))
+                banks_client.process_transaction(tx).await.unwrap_err(),
+                _expected_error,
             ));
         }
     }
@@ -786,14 +984,15 @@ mod test {
             },
             account_metas,
         );
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-        transaction.sign(&[&user], recent_blockhash);
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
+        let _expected_error = TransactionError(InstructionError(
+            0,
+            Custom(GasStationError::AccountNotInitialized as u32),
+        ));
         assert!(matches!(
-            banks_client
-                .process_transaction(transaction)
-                .await
-                .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(1)))
+            banks_client.process_transaction(tx).await.unwrap_err(),
+            _expected_error,
         ));
     }
 
@@ -821,10 +1020,7 @@ mod test {
         let payer_data = Payer {
             owner: owner1.pubkey(),
             payer: payer1,
-            filters: vec![TxFilter::InputStartsWith {
-                contract: evm::Address::zero(),
-                input_prefix: vec![],
-            }],
+            filters: dummy_filters(),
         };
         let mut payer_bytes = vec![];
         BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
@@ -855,14 +1051,15 @@ mod test {
             },
             account_metas,
         );
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-        transaction.sign(&[&user], recent_blockhash);
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
+        let _expected_error = TransactionError(InstructionError(
+            0,
+            Custom(GasStationError::PayerAccountMismatch as u32),
+        ));
         assert!(matches!(
-            banks_client
-                .process_transaction(transaction)
-                .await
-                .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(10)))
+            banks_client.process_transaction(tx).await.unwrap_err(),
+            _expected_error,
         ));
     }
 
@@ -928,14 +1125,15 @@ mod test {
             },
             account_metas,
         );
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-        transaction.sign(&[&user], recent_blockhash);
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
+        let _expected_error = TransactionError(InstructionError(
+            0,
+            Custom(GasStationError::PayerFilterMismatch as u32),
+        ));
         assert!(matches!(
-            banks_client
-                .process_transaction(transaction)
-                .await
-                .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(11)))
+            banks_client.process_transaction(tx).await.unwrap_err(),
+            _expected_error,
         ));
     }
 
@@ -966,10 +1164,7 @@ mod test {
         let mut payer_data = Payer {
             owner: owner1.pubkey(),
             payer: payer1,
-            filters: vec![TxFilter::InputStartsWith {
-                contract: evm::Address::zero(),
-                input_prefix: vec![],
-            }],
+            filters: dummy_filters(),
         };
         let mut payer_bytes = vec![];
         BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
@@ -1013,15 +1208,16 @@ mod test {
             },
             account_metas,
         );
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-        transaction.sign(&[&user], recent_blockhash);
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
         // This tx has funds for evm call but will fail on refund attempt
+        let _expected_error = TransactionError(InstructionError(
+            0,
+            Custom(GasStationError::InsufficientPayerBalance as u32),
+        ));
         assert!(matches!(
-            banks_client
-                .process_transaction(transaction)
-                .await
-                .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(3))) // GasStationError::InsufficientPayerBalance
+            banks_client.process_transaction(tx).await.unwrap_err(),
+            _expected_error,
         ));
 
         let account_metas = vec![
@@ -1062,15 +1258,16 @@ mod test {
             &GasStationInstruction::ExecuteWithPayer { tx: Some(tx) },
             account_metas,
         );
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-        transaction.sign(&[&user], recent_blockhash);
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
         // This tx will fail on evm side due to insufficient funds for evm transaction
+        let _expected_error = TransactionError(InstructionError(
+            0,
+            Custom(EvmError::NativeAccountInsufficientFunds as u32),
+        ));
         assert!(matches!(
-            banks_client
-                .process_transaction(transaction)
-                .await
-                .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(18))) // NativeAccountInsufficientFunds from evm_loader
+            banks_client.process_transaction(tx).await.unwrap_err(),
+            _expected_error,
         ));
     }
 
@@ -1096,10 +1293,7 @@ mod test {
         let payer_data = Payer {
             owner: owner.pubkey(),
             payer,
-            filters: vec![TxFilter::InputStartsWith {
-                contract: evm::Address::zero(),
-                input_prefix: vec![],
-            }],
+            filters: dummy_filters(),
         };
         let mut payer_bytes = vec![];
         BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
@@ -1131,14 +1325,15 @@ mod test {
             },
             account_metas_invalid_evm_loader,
         );
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-        transaction.sign(&[&user], recent_blockhash);
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
+        let _expected_error = TransactionError(InstructionError(
+            0,
+            Custom(GasStationError::InvalidEvmLoader as u32),
+        ));
         assert!(matches!(
-            banks_client
-                .process_transaction(transaction)
-                .await
-                .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(6))) // InvalidEvmLoader
+            banks_client.process_transaction(tx).await.unwrap_err(),
+            _expected_error,
         ));
 
         let account_metas_invalid_evm_state = vec![
@@ -1156,14 +1351,15 @@ mod test {
             },
             account_metas_invalid_evm_state,
         );
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-        transaction.sign(&[&user], recent_blockhash);
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
+        let _expected_error = TransactionError(InstructionError(
+            0,
+            Custom(GasStationError::InvalidEvmLoader as u32),
+        ));
         assert!(matches!(
-            banks_client
-                .process_transaction(transaction)
-                .await
-                .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(7))) // InvalidEvmLoader
+            banks_client.process_transaction(tx).await.unwrap_err(),
+            _expected_error,
         ));
     }
 
@@ -1191,10 +1387,7 @@ mod test {
         let payer_data = Payer {
             owner: owner.pubkey(),
             payer,
-            filters: vec![TxFilter::InputStartsWith {
-                contract: evm::Address::zero(),
-                input_prefix: vec![],
-            }],
+            filters: dummy_filters(),
         };
         let mut payer_bytes = vec![];
         BorshSerialize::serialize(&payer_data, &mut payer_bytes).unwrap();
@@ -1225,14 +1418,15 @@ mod test {
             },
             account_metas,
         );
-        let mut transaction = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
-        transaction.sign(&[&user], recent_blockhash);
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&user.pubkey()));
+        tx.sign(&[&user], recent_blockhash);
+        let _expected_error = TransactionError(InstructionError(
+            0,
+            Custom(GasStationError::NotRentExempt as u32),
+        ));
         assert!(matches!(
-            banks_client
-                .process_transaction(transaction)
-                .await
-                .unwrap_err(),
-            TransactionError(InstructionError(0, Custom(9))) // NotRentExempt
+            banks_client.process_transaction(tx).await.unwrap_err(),
+            _expected_error
         ));
     }
 }

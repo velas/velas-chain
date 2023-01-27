@@ -21,7 +21,6 @@ velas-keygen new -o "$gas_station_keypair"
 owner_key=$(velas -u t -k "$signer_keypair" address)
 storage_key=$(velas -u t -k "$payer_info_storage_keypair" address)
 gas_station_key=$(velas -u t -k "$gas_station_keypair" address)
-echo "Keys used: signer/owner: $owner_key, storage: $storage_key, gas_station: $gas_station_key"
 
 echo Building..
 "$project_root"/cargo-build-bpf -- -p evm-gas-station
@@ -32,8 +31,9 @@ echo "Registering payer.."
 gas_station_filter=$out_dir/gas_station_filter.json
 echo "[{ \"InputStartsWith\": [ \"$evm_contract\", [96, 87, 54, 29] ] }]" > "$gas_station_filter"
 velas evm create-gas-station-payer -u t -k "$signer_keypair" \
-  "$payer_info_storage_keypair" "$gas_station_key" 100000 "$gas_station_filter"
+  "$payer_info_storage_keypair" "$gas_station_key" 1000000 "$gas_station_filter"
 
+echo "Keys used: signer/owner: $owner_key, storage: $storage_key, gas_station: $gas_station_key"
 echo "Starting bridge.."
 RUST_LOG=info evm-bridge "$signer_keypair" https://api.testnet.velas.com 127.0.0.1:8545 111 \
   --gas-station "$gas_station_key" --redirect-to-proxy "$evm_contract:$owner_key:$storage_key"

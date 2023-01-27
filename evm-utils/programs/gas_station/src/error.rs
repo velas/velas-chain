@@ -7,10 +7,14 @@ pub enum GasStationError {
     /// The account cannot be initialized because it is already being used.
     #[error("Account is already in use")]
     AccountInUse,
+    #[error("Account isn't authorized for this instruction")]
+    AccountNotAuthorized,
     #[error("Account storage isn't uninitialized")]
     AccountNotInitialized,
     #[error("Account info for big transaction storage is missing")]
     BigTxStorageMissing,
+    #[error("Filters provided in instruction are the same as in storage")]
+    FiltersNotChanged,
     #[error("Payer is unable to pay for transaction")]
     InsufficientPayerBalance,
     #[error("Unable to deserialize borsh encoded account data")]

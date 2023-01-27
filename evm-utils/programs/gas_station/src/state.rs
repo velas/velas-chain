@@ -7,11 +7,12 @@ use solana_sdk::{
 use crate::instruction::TxFilter;
 
 pub const MAX_FILTERS: usize = 10;
+pub const PAYER_STATE_SIZE_WITHOUT_FILTERS: usize = 64;
 
 pub fn get_state_size(filters: &Vec<TxFilter>) -> usize {
     let mut bytes = vec![];
     BorshSerialize::serialize(filters, &mut bytes).unwrap();
-    bytes.len() + 64
+    bytes.len() + PAYER_STATE_SIZE_WITHOUT_FILTERS
 }
 
 #[repr(C)]
