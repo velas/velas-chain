@@ -483,6 +483,10 @@ pub mod evm_genesis {
         }
     }
 
+    trait StreamAccountReaderTrait {
+        fn read_account(&mut self) -> Result<Option<(H160, MemoryAccount)>, Error>;
+    }
+
     /// Streaming deserializer for key,value pair in json.
     /// input format is following:
     ///
@@ -492,11 +496,11 @@ pub mod evm_genesis {
     ///
     /// serde_json StreamDeserializer can only work with valid json Value. '"key":{object}' - is not a valid json Value.
     ///
-    pub struct StreamAccountReader<R> {
+    struct OpenEthereumAccountReader<R> {
         reader: R,
     }
 
-    impl<R: BufRead> StreamAccountReader<IoRead<R>> {
+    impl<R: BufRead> OpenEthereumAccountReader<IoRead<R>> {
         pub fn new(mut reader: R) -> Result<Self, Error> {
             let mut buffer = String::new();
 
@@ -514,7 +518,7 @@ pub mod evm_genesis {
         }
     }
 
-    impl<'a, R: serde_json::de::Read<'a>> StreamAccountReader<R> {
+    impl<'a, R: serde_json::de::Read<'a>> OpenEthereumAccountReader<R> {
         /// Return true if end brackets found.
         fn end_brackets(&mut self) -> Result<bool, Error> {
             self.skip_whitespaces()?;
@@ -586,11 +590,13 @@ pub mod evm_genesis {
                 Some(Ok(o)) => Ok(o),
             }
         }
+    }
 
+    impl<'a, R: serde_json::de::Read<'a>> StreamAccountReaderTrait for OpenEthereumAccountReader<R> {
         /// Read account, try to validate code_hash and storage_root.
         ///
         /// Result<Option<...>> instead of Option<Result<>>, to allow power of `Try` for error handling.
-        pub fn read_account(&mut self) -> Result<Option<(H160, MemoryAccount)>, Error> {
+        fn read_account(&mut self) -> Result<Option<(H160, MemoryAccount)>, Error> {
             if self.end_brackets()? {
                 return Ok(None);
             }
@@ -634,12 +640,73 @@ pub mod evm_genesis {
         }
     }
 
+    struct GethAccountReader<R> {
+        reader: R,
+    }
+
+    impl<R: BufRead> GethAccountReader<IoRead<R>> {
+        pub fn new(mut reader: R) -> Result<Self, Error> {
+            // Skip first line `{"root": "..."}`
+            reader.read_line(&mut String::new())?;
+            Ok(Self {
+                reader: IoRead::new(reader),
+            })
+        }
+    }
+
+    impl<'a, R: serde_json::de::Read<'a> + BufRead> StreamAccountReaderTrait for GethAccountReader<R> {
+        fn read_account(&mut self) -> Result<Option<(H160, MemoryAccount)>, Error> {
+            use std::str::FromStr;
+
+            let mut buf = String::new();
+            self.reader.read_line(&mut buf)?;
+
+            let account_json: serde_json::Value = serde_json::from_str(&buf).unwrap();
+
+            let address = H160::from_str(account_json["address"].as_str().unwrap()).unwrap();
+    
+            let nonce = account_json["nonce"].as_u64().unwrap().into();
+            let balance = U256::from_str_radix(account_json["balance"].as_str().unwrap(), 10).unwrap();
+            let code = account_json["code"]
+                .as_str()
+                .map(|code| hex::decode(&code[2..]).unwrap())
+                .unwrap_or_default();
+            let storage = account_json["storage"]
+                .as_object()
+                .map(|storage| {
+                    storage
+                        .into_iter()
+                        .map(|(key, value)| {
+                            let key = H256::from_str(key).unwrap();
+                            let mut buf = [0u8; 32];
+                            U256::from_str(value.as_str().unwrap())
+                                .unwrap()
+                                .to_little_endian(&mut buf);
+                            let value = H256(buf); // TODO: why `storage` value is H256?
+                            (key, value)
+                        })
+                        .collect::<BTreeMap<H256, H256>>()
+                })
+                .unwrap_or_else(BTreeMap::new);
+    
+            let memory_account = MemoryAccount {
+                nonce,
+                balance,
+                storage,
+                code,
+            };
+    
+            Ok(Some((address, memory_account)))
+            
+        }
+    }
+
     pub fn read_accounts(
         evm_state_snapshot: &Path,
     ) -> Result<impl Iterator<Item = Result<(H160, MemoryAccount), Error>>, Error> {
         let evm_file = BufReader::new(File::open(&evm_state_snapshot)?);
 
-        let mut reader = StreamAccountReader::new(evm_file)?;
+        let mut reader = OpenEthereumAccountReader::new(evm_file)?;
         Ok(iter::from_fn(move || reader.read_account().transpose()))
     }
 
