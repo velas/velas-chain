@@ -19,11 +19,16 @@ solana-rpc = { path = "../rpc", version = "=1.9.29" }
 solana-runtime = { path = "../runtime", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-client = { path = "../client", version = "=1.9.29" }
-tokio = { version = "1.14.1", features = ["full"] }
+solana-storage-bigtable = { path = "../storage-bigtable", version = "=1.9.29" }
+
+tokio = { version = "1.14.1", features = ["full", "time"] }
 tonic = { version = "0.8.1", features = ["tls", "transport", "gzip"] }
+async-trait = "0.1.64"
 
 # Additional deps for triedb_repl_server
 derive_more = "0.99.11"
+
+derivative="2.2"
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
 primitive-types = "0.8.0"
@@ -33,7 +38,7 @@ triedb = { git = "https://github.com/velas/triedb", tag = "optimal_children", fe
 
 # Additional deps for triedb_repl_client
 serde_json = "1.0.82"
-
+serde = "1.0.152"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

@@ -37,11 +37,16 @@ solana-replica-lib = { path = "../replica-lib", version = "=1.9.29" }
 solana-runtime = { path = "../runtime", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-send-transaction-service = { path = "../send-transaction-service", version = "=1.9.29" }
+solana-storage-bigtable = { path = "../storage-bigtable", version = "=1.9.29" }
 solana-streamer = { path = "../streamer", version = "=1.9.29" }
 solana-version = { path = "../version", version = "=0.6.3" }
 velas-validator = { path = "../validator", version = "=1.9.29" }
 # To run triedb_repl_client
 tokio = { version = "1.14.1", features = ["full"] }
+
+anyhow = "1.0.68"
+
+futures = "0.3.26"
 env_logger = "0.9"
 
 [dev-dependencies]

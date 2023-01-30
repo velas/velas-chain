@@ -15,35 +15,44 @@ pub mod app_grpc {
     tonic::include_proto!("triedb_repl");
 }
 
-use crate::triedb::{check_root, debug_elapsed, lock_root};
+use crate::triedb::{check_root, debug_elapsed, lock_root, range::MasterRange, LittleBig};
 
-pub struct Server {
+pub struct Server<S> {
     storage: UsedStorage,
+    range: MasterRange,
+    block_threshold: evm_state::BlockNum,
+    block_storage: S,
 }
 
-impl Server {
-    pub fn new(storage: UsedStorage) -> BackendServer<Self> {
-        BackendServer::new(Server { storage })
+impl<S> Server<S>
+where
+    S: LittleBig + Send + Sync + 'static,
+{
+    pub fn new(
+        storage: UsedStorage,
+        range: MasterRange,
+        block_threshold: evm_state::BlockNum,
+        block_storage: S,
+    ) -> BackendServer<Self> {
+        BackendServer::new(Server {
+            storage,
+            range,
+            block_threshold,
+            block_storage,
+        })
     }
 
-    fn parse_state_roots(
-        request: Request<app_grpc::GetStateDiffRequest>,
-    ) -> Result<(H256, H256), Status> {
-        let inner = request.into_inner();
-
-        let first_root = inner
-            .first_root
-            .ok_or_else(|| Status::invalid_argument("empty arg"))?;
-        let second_root = inner
-            .second_root
-            .ok_or_else(|| Status::invalid_argument("empty arg"))?;
-
-        let first_root = H256::from_hex(&first_root.value)
-            .map_err(|_| Status::invalid_argument("Couldn't parse requested hash key1"))?;
-
-        let second_root = H256::from_hex(&second_root.value)
-            .map_err(|_| Status::invalid_argument("Couldn't parse requested hash key2"))?;
-        Ok((first_root, second_root))
+    async fn fetch_state_roots(
+        &self,
+        from: evm_state::BlockNum,
+        to: evm_state::BlockNum,
+    ) -> anyhow::Result<(H256, H256)> {
+        let from = self
+            .block_storage
+            .get_evm_confirmed_state_root(from)
+            .await?;
+        let to = self.block_storage.get_evm_confirmed_state_root(to).await?;
+        Ok((from, to))
     }
 
     fn get_state_diff_gc_storage(
@@ -98,7 +107,7 @@ impl Server {
 }
 
 #[tonic::async_trait]
-impl Backend for Server {
+impl<S: LittleBig + Sync + Send + 'static> Backend for Server<S> {
     async fn ping(&self, request: Request<()>) -> Result<Response<PingReply>, Status> {
         info!("Got a request: {:?}", request);
 
@@ -147,7 +156,26 @@ impl Backend for Server {
     ) -> Result<Response<app_grpc::GetStateDiffReply>, Status> {
         info!("Got a request: {:?}", request);
 
-        let (from, to) = Self::parse_state_roots(request)?;
+        let inner = request.into_inner();
+        let height_diff = if inner.to >= inner.from {
+            inner.to - inner.from
+        } else {
+            inner.from - inner.to
+        };
+        if height_diff > self.block_threshold {
+            return Err(Status::invalid_argument(format!(
+                "blocks too far {}",
+                inner.to - inner.from
+            )));
+        }
+        let (from, to) = self
+            .fetch_state_roots(inner.from, inner.to)
+            .await
+            .map_err(|err| {
+                log::error!("fetch_state_roots encountered err {:?}", err);
+                Status::internal("failure to fetch state roots")
+            })?;
+
         let changeset = match self.storage {
             UsedStorage::WritableWithGC(ref storage) => {
                 Self::get_state_diff_gc_storage(from, to, storage)?
@@ -179,13 +207,32 @@ impl Backend for Server {
 
         let reply = app_grpc::GetStateDiffReply {
             changeset: reply_changeset,
+            first_root: Some(app_grpc::Hash {
+                value: from.format_hex(),
+            }),
+            second_root: Some(app_grpc::Hash {
+                value: to.format_hex(),
+            }),
+        };
+
+        Ok(Response::new(reply))
+    }
+
+    async fn get_block_range(
+        &self,
+        _request: tonic::Request<()>,
+    ) -> Result<tonic::Response<app_grpc::GetBlockRangeReply>, tonic::Status> {
+        let r: std::ops::Range<evm_state::BlockNum> = self.range.get();
+        let reply = app_grpc::GetBlockRangeReply {
+            start: r.start,
+            end: r.end,
         };
 
         Ok(Response::new(reply))
     }
 }
 
-impl BackendServer<Server> {
+impl<S: LittleBig + Sync + Send + 'static> BackendServer<Server<S>> {
     pub fn join(&self) -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         Ok(())
     }

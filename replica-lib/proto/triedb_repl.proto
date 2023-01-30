@@ -7,6 +7,7 @@ service Backend {
   rpc ping (google.protobuf.Empty) returns (PingReply);
   rpc getRawBytes (GetRawBytesRequest) returns (GetRawBytesReply);
   rpc getStateDiff (GetStateDiffRequest) returns (GetStateDiffReply);
+  rpc getBlockRange (google.protobuf.Empty) returns (GetBlockRangeReply);
 }
 
 message PingReply {
@@ -25,9 +26,14 @@ message GetRawBytesReply {
   bytes node = 1;
 }
 
+message GetBlockRangeReply {
+  uint64 start = 1;
+  uint64 end = 2;
+}
+
 message GetStateDiffRequest {
-  Hash first_root = 1;
-  Hash second_root = 2;
+  uint64 from = 1;
+  uint64 to = 2;
 }
 
 message Insert {
@@ -37,4 +43,6 @@ message Insert {
 
 message GetStateDiffReply {
   repeated Insert changeset = 1;
+  Hash first_root = 2;
+  Hash second_root = 3;
 }
