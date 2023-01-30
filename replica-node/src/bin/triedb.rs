@@ -5,8 +5,7 @@
 
 use std::net::SocketAddr;
 
-use solana_replica_lib::triedb::server::UsedStorage;
-use solana_replica_node::triedb_replica::service;
+use solana_replica_lib::triedb::{server::UsedStorage, start_and_join};
 
 use {
     clap::{crate_description, crate_name, App, AppSettings, Arg},
@@ -79,6 +78,6 @@ pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         )?)
     };
 
-    service::start_and_join(state_rpc_bind_address, used_storage)?;
+    start_and_join(state_rpc_bind_address, used_storage)?;
     Ok(())
 }
