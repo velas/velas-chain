@@ -104,7 +104,93 @@ where
         debug_elapsed("retrieved changeset", &start);
         Ok(changeset)
     }
+
+    fn map_changeset(changeset: Vec<DiffChange>) -> Vec<app_grpc::Insert> {
+        let mut reply_changeset = vec![];
+
+        for change in changeset {
+            match change {
+                triedb::DiffChange::Insert(hash, data) => {
+                    let raw_insert = app_grpc::Insert {
+                        hash: Some(app_grpc::Hash {
+                            value: hash.format_hex(),
+                        }),
+                        data: data.into(),
+                    };
+                    reply_changeset.push(raw_insert);
+                }
+                triedb::DiffChange::Removal(..) => {
+                    // skip
+                    // no need to transfer it over the wire
+                }
+            }
+        }
+        reply_changeset
+    }
+
+    fn get_bytes_body(&self, key: H256) -> Result<Vec<u8>, Status> {
+        let maybe_bytes = match self.storage {
+            UsedStorage::WritableWithGC(ref storage) => storage.db().get(key),
+
+            UsedStorage::ReadOnlyNoGC(ref storage) => storage.db().get(key),
+        };
+
+        let value = if let Ok(option) = maybe_bytes {
+            Ok(option)
+        } else {
+            Err(Status::internal("DB access error"))
+        };
+        let bytes = value?.ok_or_else(|| Status::not_found(format!("not found {}", key)))?;
+        Ok(bytes)
+    }
+    fn state_diff_body(
+        &self,
+        from: H256,
+        to: H256,
+    ) -> Result<Response<app_grpc::GetStateDiffReply>, Status> {
+        let changeset = match self.storage {
+            UsedStorage::WritableWithGC(ref storage) => {
+                Self::get_state_diff_gc_storage(from, to, storage)?
+            }
+            UsedStorage::ReadOnlyNoGC(ref storage) => {
+                Self::get_state_diff_secondary_storage(from, to, storage)?
+            }
+        };
+
+        let reply_changeset = Self::map_changeset(changeset);
+
+        let reply = app_grpc::GetStateDiffReply {
+            changeset: reply_changeset,
+            first_root: Some(app_grpc::Hash {
+                value: from.format_hex(),
+            }),
+            second_root: Some(app_grpc::Hash {
+                value: to.format_hex(),
+            }),
+        };
+
+        Ok(Response::new(reply))
+    }
 }
+
+trait TryConvert<S>: Sized {
+    type Error;
+
+    fn try_from(value: S) -> Result<Self, Self::Error>;
+}
+
+impl TryConvert<app_grpc::Hash> for H256 {
+    type Error = tonic::Status;
+
+    fn try_from(hash: app_grpc::Hash) -> Result<Self, Self::Error> {
+        let res = H256::from_hex(&hash.value).map_err(|_| {
+            Status::invalid_argument(format!("Couldn't parse requested hash key {}", hash.value))
+        })?;
+        Ok(res)
+    }
+}
+
+const MAX_CHUNK: usize = 100000; // contracting 256 times ; 16^(N-1)
 
 #[tonic::async_trait]
 impl<S: LittleBig + Sync + Send + 'static> Backend for Server<S> {
@@ -122,30 +208,23 @@ impl<S: LittleBig + Sync + Send + 'static> Backend for Server<S> {
         &self,
         request: Request<app_grpc::GetRawBytesRequest>,
     ) -> Result<Response<app_grpc::GetRawBytesReply>, Status> {
-        info!("Got a request: {:?}", request);
 
-        let hash = request
-            .into_inner()
-            .hash
-            .ok_or_else(|| Status::invalid_argument("empty arg"))?;
+        let request = request.into_inner();
+        info!("Got a request: {:?}", request.hashes.len());
+        if request.hashes.len() > MAX_CHUNK {
+            return Err(Status::failed_precondition(format!(
+                "chunk size {}",
+                request.hashes.len()
+            )));
+        }
+        let mut nodes = vec![];
+        for hash in request.hashes {
+            let key = <H256 as TryConvert<_>>::try_from(hash)?;
+            let bytes = self.get_bytes_body(key)?;
+            nodes.push(bytes);
+        }
 
-        let key = H256::from_hex(&hash.value).map_err(|_| {
-            Status::invalid_argument(format!("Couldn't parse requested hash key {}", hash.value))
-        })?;
-        let maybe_bytes = match self.storage {
-            UsedStorage::WritableWithGC(ref storage) => storage.db().get(key),
-
-            UsedStorage::ReadOnlyNoGC(ref storage) => storage.db().get(key),
-        };
-
-        let value = if let Ok(option) = maybe_bytes {
-            Ok(option)
-        } else {
-            Err(Status::internal("DB access error"))
-        };
-        let bytes = value?.ok_or_else(|| Status::not_found(format!("not found {}", hash.value)))?;
-
-        let reply = app_grpc::GetRawBytesReply { node: bytes };
+        let reply = app_grpc::GetRawBytesReply { nodes };
 
         Ok(Response::new(reply))
     }
@@ -175,47 +254,7 @@ impl<S: LittleBig + Sync + Send + 'static> Backend for Server<S> {
                 log::error!("fetch_state_roots encountered err {:?}", err);
                 Status::internal("failure to fetch state roots")
             })?;
-
-        let changeset = match self.storage {
-            UsedStorage::WritableWithGC(ref storage) => {
-                Self::get_state_diff_gc_storage(from, to, storage)?
-            }
-            UsedStorage::ReadOnlyNoGC(ref storage) => {
-                Self::get_state_diff_secondary_storage(from, to, storage)?
-            }
-        };
-
-        let mut reply_changeset = vec![];
-
-        for change in changeset {
-            match change {
-                triedb::DiffChange::Insert(hash, data) => {
-                    let raw_insert = app_grpc::Insert {
-                        hash: Some(app_grpc::Hash {
-                            value: hash.format_hex(),
-                        }),
-                        data: data.into(),
-                    };
-                    reply_changeset.push(raw_insert);
-                }
-                triedb::DiffChange::Removal(..) => {
-                    // skip
-                    // no need to transfer it over the wire
-                }
-            }
-        }
-
-        let reply = app_grpc::GetStateDiffReply {
-            changeset: reply_changeset,
-            first_root: Some(app_grpc::Hash {
-                value: from.format_hex(),
-            }),
-            second_root: Some(app_grpc::Hash {
-                value: to.format_hex(),
-            }),
-        };
-
-        Ok(Response::new(reply))
+        self.state_diff_body(from, to)
     }
 
     async fn get_block_range(
@@ -237,3 +276,4 @@ impl<S: LittleBig + Sync + Send + 'static> BackendServer<Server<S>> {
         Ok(())
     }
 }
+

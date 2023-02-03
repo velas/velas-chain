@@ -35,6 +35,7 @@ fn parse_diff_response(
         })
         .collect()
 }
+
 impl<S> super::Client<S> {
     pub async fn ping(&mut self) -> Result<(), tonic::Status> {
         let request = tonic::Request::new(());
@@ -57,15 +58,18 @@ impl<S> super::Client<S> {
     }
 
     pub async fn get_raw_bytes(
-        &mut self,
-        hash: H256,
+        client: &mut BackendClient<tonic::transport::Channel>,
+        hashes: Vec<H256>,
     ) -> Result<app_grpc::GetRawBytesReply, tonic::Status> {
         let request = tonic::Request::new(app_grpc::GetRawBytesRequest {
-            hash: Some(app_grpc::Hash {
-                value: hash.format_hex(),
-            }),
+            hashes: hashes
+                .into_iter()
+                .map(|h| app_grpc::Hash {
+                    value: h.format_hex(),
+                })
+                .collect(),
         });
-        let response = self.client.get_raw_bytes(request).await?;
+        let response = client.get_raw_bytes(request).await?;
         log::trace!("PING | RESPONSE={:?}", response);
         Ok(response.into_inner())
     }

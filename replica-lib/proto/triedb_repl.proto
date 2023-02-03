@@ -19,11 +19,11 @@ message Hash {
 }
 
 message GetRawBytesRequest {
-  Hash hash = 1;
+  repeated Hash hashes = 1;
 }
 
 message GetRawBytesReply {
-  bytes node = 1;
+  repeated bytes nodes = 1;
 }
 
 message GetBlockRangeReply {
