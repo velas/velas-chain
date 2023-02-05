@@ -19,7 +19,6 @@ use {
         system_program,
         timing::years_as_slots,
     },
-
     bincode::{deserialize, serialize},
     chrono::{TimeZone, Utc},
     evm_state::H256,
@@ -635,6 +634,61 @@ pub mod evm_genesis {
         }
     }
 
+    struct GethAccountReader<R> {
+        reader: R,
+    }
+
+    impl<R: BufRead> GethAccountReader<R> {
+        pub fn new(mut reader: R) -> Result<Self, Error> {
+            // Skip first line `{"root": "..."}`
+            reader.read_line(&mut String::new())?;
+            Ok(Self { reader })
+        }
+
+        pub fn read_account_hashed_h256(&mut self) -> Result<Option<(H256, MemoryAccount)>, Error> {
+            use std::str::FromStr;
+
+            let mut buf = String::new();
+            self.reader.read_line(&mut buf)?;
+
+            let account_json: serde_json::Value = serde_json::from_str(&buf).unwrap();
+
+            let address = H256::from_str(account_json["key"].as_str().unwrap()).unwrap();
+
+            let nonce = account_json["nonce"].as_u64().unwrap().into();
+            let balance =
+                U256::from_str_radix(account_json["balance"].as_str().unwrap(), 10).unwrap();
+            let code = account_json["code"]
+                .as_str()
+                .map(|code| hex::decode(&code[2..]).unwrap())
+                .unwrap_or_default();
+            let storage = account_json["storage"]
+                .as_object()
+                .map(|storage| {
+                    storage
+                        .into_iter()
+                        .map(|(key, value)| {
+                            let key = H256::from_str(key).unwrap();
+                            let value_u256 = U256::from_str(value.as_str().unwrap()).unwrap();
+                            let mut value = H256::default();
+                            value_u256.to_big_endian(value.as_bytes_mut());
+                            (key, value)
+                        })
+                        .collect::<BTreeMap<H256, H256>>()
+                })
+                .unwrap_or_else(BTreeMap::new);
+
+            let memory_account = MemoryAccount {
+                nonce,
+                balance,
+                storage,
+                code,
+            };
+
+            Ok(Some((address, memory_account)))
+        }
+    }
+
     pub fn read_accounts(
         evm_state_snapshot: &Path,
     ) -> Result<impl Iterator<Item = Result<(H160, MemoryAccount), Error>>, Error> {
@@ -642,6 +696,17 @@ pub mod evm_genesis {
 
         let mut reader = StreamAccountReader::new(evm_file)?;
         Ok(iter::from_fn(move || reader.read_account().transpose()))
+    }
+
+    pub fn read_accounts_hashed_h256(
+        evm_state_snapshot: &Path,
+    ) -> Result<impl Iterator<Item = Result<(H256, MemoryAccount), Error>>, Error> {
+        let evm_file = BufReader::new(File::open(&evm_state_snapshot)?);
+
+        let mut reader = GethAccountReader::new(evm_file)?;
+        Ok(iter::from_fn(move || {
+            reader.read_account_hashed_h256().transpose()
+        }))
     }
 
     pub fn generate_evm_state_json(file: &Path) -> Result<H256, Error> {

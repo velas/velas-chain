@@ -31,7 +31,7 @@ use triedb::{
     empty_trie_hash,
     gc::{DatabaseTrieMut, DbCounter, TrieCollection},
     rocksdb::{RocksDatabaseHandleGC, RocksHandle},
-    FixedSecureTrieMut,
+    AnySecureTrieMut, FixedSecureTrieMut,
 };
 
 pub mod inspectors;
@@ -193,7 +193,6 @@ impl Descriptors {
     }
 }
 
-
 impl<D> Storage<D>
 where
     D: DBInner,
@@ -256,7 +255,6 @@ type ReadOnlyDb = rocksdb::DBWithThreadMode<rocksdb::SingleThreaded>;
 pub type StorageSecondary = Storage<DBWithThreadModeInner>;
 
 impl StorageSecondary {
-
     pub fn open_secondary_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
     }
@@ -407,6 +405,69 @@ impl Storage<OptimisticTransactionDBInner> {
                     account.code_hash = code_hash;
                 }
 
+                let mut storage = FixedSecureTrieMut::<_, H256, U256>::new(
+                    db_trie.trie_for(account.storage_root),
+                );
+
+                for (index, value) in storages {
+                    if value != H256::default() {
+                        let value = U256::from_big_endian(&value[..]);
+                        storage.insert(&index, &value);
+                    } else {
+                        storage.delete(&index);
+                    }
+                }
+
+                let storage_patch = storage.to_trie().into_patch();
+                let storage_root = storage_patch.root;
+                storage_patches.merge(&storage_patch.change);
+                account.storage_root = storage_root;
+
+                accounts.insert(&address, &account);
+            } else {
+                accounts.delete(&address);
+            }
+        }
+
+        let mut accounts_patch = accounts.to_trie().into_patch();
+        accounts_patch.change.merge_child(&storage_patches);
+        db_trie
+            .apply_increase(accounts_patch, account_extractor)
+            .leak_root()
+    }
+
+    pub fn flush_changes_hashed_h256(
+        &self,
+        state_root: H256,
+        state_updates: crate::ChangedStateH256,
+    ) -> H256 {
+        let r = self.rocksdb_trie_handle();
+
+        let db_trie = TrieCollection::new(r);
+
+        let mut storage_patches = triedb::Change::default();
+
+        let mut accounts = AnySecureTrieMut::new(db_trie.trie_for(state_root));
+
+        for (address, (state, storages)) in state_updates {
+            if let Maybe::Just(AccountState {
+                nonce,
+                balance,
+                code,
+            }) = state
+            {
+                let mut account: Account = accounts.get(&address).unwrap_or_default();
+
+                account.nonce = nonce;
+                account.balance = balance;
+
+                if !code.is_empty() {
+                    let code_hash = code.hash();
+                    self.set::<Codes>(code_hash, code);
+                    account.code_hash = code_hash;
+                }
+
+                // TODO: which wrapper to use?
                 let mut storage = FixedSecureTrieMut::<_, H256, U256>::new(
                     db_trie.trie_for(account.storage_root),
                 );
@@ -611,8 +672,7 @@ impl Storage<OptimisticTransactionDBInner> {
         if !self.gc_enabled {
             return (vec![], vec![]);
         }
-        self
-            .rocksdb_trie_handle()
+        self.rocksdb_trie_handle()
             .gc_cleanup_layer(removes, account_extractor)
     }
 
