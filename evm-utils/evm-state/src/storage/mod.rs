@@ -31,7 +31,7 @@ use triedb::{
     empty_trie_hash,
     gc::{DatabaseTrieMut, DbCounter, TrieCollection},
     rocksdb::{RocksDatabaseHandleGC, RocksHandle},
-    AnySecureTrieMut, FixedSecureTrieMut,
+    FixedSecureTrieMut,
 };
 
 pub mod inspectors;
@@ -446,7 +446,8 @@ impl Storage<OptimisticTransactionDBInner> {
 
         let mut storage_patches = triedb::Change::default();
 
-        let mut accounts = AnySecureTrieMut::new(db_trie.trie_for(state_root));
+        use triedb::TrieMut;
+        let mut accounts = db_trie.trie_for(state_root);
 
         for (address, (state, storages)) in state_updates {
             if let Maybe::Just(AccountState {
@@ -455,7 +456,8 @@ impl Storage<OptimisticTransactionDBInner> {
                 code,
             }) = state
             {
-                let mut account: Account = accounts.get(&address).unwrap_or_default();
+                let account = accounts.get(address.as_bytes()).unwrap_or_default();
+                let mut account: Account = rlp::decode(&account).unwrap();
 
                 account.nonce = nonce;
                 account.balance = balance;
@@ -466,32 +468,29 @@ impl Storage<OptimisticTransactionDBInner> {
                     account.code_hash = code_hash;
                 }
 
-                // TODO: which wrapper to use?
-                let mut storage = FixedSecureTrieMut::<_, H256, U256>::new(
-                    db_trie.trie_for(account.storage_root),
-                );
+                let mut storage = db_trie.trie_for(account.storage_root);
 
                 for (index, value) in storages {
                     if value != H256::default() {
                         let value = U256::from_big_endian(&value[..]);
-                        storage.insert(&index, &value);
+                        storage.insert(index.as_bytes(), &rlp::encode(&value));
                     } else {
-                        storage.delete(&index);
+                        storage.delete(index.as_bytes());
                     }
                 }
 
-                let storage_patch = storage.to_trie().into_patch();
+                let storage_patch = storage.into_patch();
                 let storage_root = storage_patch.root;
                 storage_patches.merge(&storage_patch.change);
                 account.storage_root = storage_root;
 
-                accounts.insert(&address, &account);
+                accounts.insert(address.as_bytes(), &rlp::encode(&account));
             } else {
-                accounts.delete(&address);
+                accounts.delete(address.as_bytes());
             }
         }
 
-        let mut accounts_patch = accounts.to_trie().into_patch();
+        let mut accounts_patch = accounts.into_patch();
         accounts_patch.change.merge_child(&storage_patches);
         db_trie
             .apply_increase(accounts_patch, account_extractor)
