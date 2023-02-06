@@ -158,17 +158,6 @@ impl EvmBackend<Incomming> {
         state.state_root = new_root;
     }
 
-    fn flush_changes_hashed_h256(&mut self) {
-        //todo: do in one tx
-        let mut state = &mut self.state;
-        let new_root = self.kvs.flush_changes_hashed_h256(
-            state.state_root,
-            std::mem::take(&mut state.state_updates_hashed_h256),
-        );
-
-        state.state_root = new_root;
-    }
-
     fn increase_nonce(&mut self, address: H160) {
         let mut account_state = self.get_account_state(address).unwrap_or_default();
         account_state.nonce += U256::from(1);
@@ -199,19 +188,6 @@ impl EvmBackend<Incomming> {
         };
     }
 
-    pub fn set_account_state_hashed_h256(&mut self, address: H256, account_state: AccountState) {
-        use std::collections::hash_map::Entry::*;
-
-        match self.state.state_updates_hashed_h256.entry(address) {
-            Occupied(mut e) => {
-                e.get_mut().0 = Maybe::Just(account_state);
-            }
-            Vacant(e) => {
-                e.insert((Maybe::Just(account_state), HashMap::new()));
-            }
-        };
-    }
-
     pub fn remove_account(&mut self, address: H160) {
         self.state
             .state_updates
@@ -228,20 +204,6 @@ impl EvmBackend<Incomming> {
         let (_, storage) = self
             .state
             .state_updates
-            .entry(address)
-            .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()));
-
-        storage.extend(indexed_values);
-    }
-
-    pub fn ext_storage_hashed_h256(
-        &mut self,
-        address: H256,
-        indexed_values: impl IntoIterator<Item = (H256, H256)>,
-    ) {
-        let (_, storage) = self
-            .state
-            .state_updates_hashed_h256
             .entry(address)
             .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()));
 
@@ -337,6 +299,47 @@ impl EvmBackend<Incomming> {
         &mut self,
         accounts: impl IntoIterator<Item = (H256, evm::backend::MemoryAccount)>,
     ) {
+        fn flush_changes_hashed(backend: &mut EvmBackend<Incomming>) {
+            let mut state = &mut backend.state;
+            let new_root = backend.kvs.flush_changes_hashed_h256(
+                state.state_root,
+                std::mem::take(&mut state.state_updates_hashed_h256),
+            );
+
+            state.state_root = new_root;
+        }
+
+        fn set_account_state_hashed(
+            backend: &mut EvmBackend<Incomming>,
+            address: H256,
+            account_state: AccountState,
+        ) {
+            use std::collections::hash_map::Entry::*;
+
+            match backend.state.state_updates_hashed_h256.entry(address) {
+                Occupied(mut e) => {
+                    e.get_mut().0 = Maybe::Just(account_state);
+                }
+                Vacant(e) => {
+                    e.insert((Maybe::Just(account_state), HashMap::new()));
+                }
+            };
+        }
+
+        fn ext_storage_hashed(
+            backend: &mut EvmBackend<Incomming>,
+            address: H256,
+            indexed_values: impl IntoIterator<Item = (H256, H256)>,
+        ) {
+            let (_, storage) = backend
+                .state
+                .state_updates_hashed_h256
+                .entry(address)
+                .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()));
+
+            storage.extend(indexed_values);
+        }
+
         for (
             address,
             evm::backend::MemoryAccount {
@@ -353,10 +356,11 @@ impl EvmBackend<Incomming> {
                 code: code.into(),
             };
 
-            self.set_account_state_hashed_h256(address, account_state);
-            self.ext_storage_hashed_h256(address, storage);
+            set_account_state_hashed(self, address, account_state);
+            ext_storage_hashed(self, address, storage);
         }
-        self.flush_changes_hashed_h256()
+
+        flush_changes_hashed(self);
     }
 
     pub fn new_incomming_for_root(mut self, root: H256) -> Option<Self> {
