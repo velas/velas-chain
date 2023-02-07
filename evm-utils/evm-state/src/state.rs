@@ -26,7 +26,6 @@ pub const BURN_GAS_PRICE: u64 = 2_000_000_000; // 2 lamports per gas.
 pub const MAX_IN_MEMORY_EVM_ACCOUNTS: usize = 10000;
 
 pub type ChangedState = HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>;
-pub type ChangedStateH256 = HashMap<H256, (Maybe<AccountState>, HashMap<H256, H256>)>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Committed {
@@ -58,7 +57,6 @@ pub struct Incomming {
     pub last_block_hash: H256,
     /// Maybe::Nothing indicates removed account
     pub(crate) state_updates: ChangedState,
-    pub(crate) state_updates_hashed_h256: ChangedStateH256,
 
     /// Transactions that was processed but wasn't committed.
     /// Transactions should be ordered by execution order on all validators.
@@ -293,74 +291,6 @@ impl EvmBackend<Incomming> {
             self.ext_storage(address, storage);
         }
         self.flush_changes()
-    }
-
-    pub fn set_initial_hashed_h256(
-        &mut self,
-        accounts: impl IntoIterator<Item = (H256, evm::backend::MemoryAccount)>,
-    ) {
-        fn flush_changes_hashed(backend: &mut EvmBackend<Incomming>) {
-            let mut state = &mut backend.state;
-            let new_root = backend.kvs.flush_changes_hashed_h256(
-                state.state_root,
-                std::mem::take(&mut state.state_updates_hashed_h256),
-            );
-
-            state.state_root = new_root;
-        }
-
-        fn set_account_state_hashed(
-            backend: &mut EvmBackend<Incomming>,
-            address: H256,
-            account_state: AccountState,
-        ) {
-            use std::collections::hash_map::Entry::*;
-
-            match backend.state.state_updates_hashed_h256.entry(address) {
-                Occupied(mut e) => {
-                    e.get_mut().0 = Maybe::Just(account_state);
-                }
-                Vacant(e) => {
-                    e.insert((Maybe::Just(account_state), HashMap::new()));
-                }
-            };
-        }
-
-        fn ext_storage_hashed(
-            backend: &mut EvmBackend<Incomming>,
-            address: H256,
-            indexed_values: impl IntoIterator<Item = (H256, H256)>,
-        ) {
-            let (_, storage) = backend
-                .state
-                .state_updates_hashed_h256
-                .entry(address)
-                .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()));
-
-            storage.extend(indexed_values);
-        }
-
-        for (
-            address,
-            evm::backend::MemoryAccount {
-                nonce,
-                balance,
-                storage,
-                code,
-            },
-        ) in accounts
-        {
-            let account_state = AccountState {
-                nonce,
-                balance,
-                code: code.into(),
-            };
-
-            set_account_state_hashed(self, address, account_state);
-            ext_storage_hashed(self, address, storage);
-        }
-
-        flush_changes_hashed(self);
     }
 
     pub fn new_incomming_for_root(mut self, root: H256) -> Option<Self> {
@@ -779,7 +709,6 @@ impl Default for Incomming {
             state_root: empty_trie_hash(),
             last_block_hash: H256::zero(),
             state_updates: HashMap::new(),
-            state_updates_hashed_h256: HashMap::new(),
             executed_transactions: Vec::new(),
             used_gas: 0,
             timestamp: 0,

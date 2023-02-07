@@ -219,6 +219,7 @@ impl GenesisConfig {
         file.write_all(&serialized)
     }
 
+    // TODO: fix state generation entry point
     pub fn generate_evm_state(
         &self,
         ledger_path: &Path,

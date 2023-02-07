@@ -22,8 +22,8 @@ pub use types::*;
 pub use {
     context::{ChainContext, EvmConfig},
     state::{
-        AccountProvider, ChangedState, ChangedStateH256, Committed, EvmBackend, EvmPersistState,
-        EvmState, Incomming, BURN_GAS_PRICE, DEFAULT_GAS_LIMIT, MAX_IN_MEMORY_EVM_ACCOUNTS,
+        AccountProvider, ChangedState, Committed, EvmBackend, EvmPersistState, EvmState, Incomming,
+        BURN_GAS_PRICE, DEFAULT_GAS_LIMIT, MAX_IN_MEMORY_EVM_ACCOUNTS,
     },
     storage::Storage,
     storage::StorageSecondary,
