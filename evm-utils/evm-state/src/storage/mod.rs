@@ -1,7 +1,7 @@
 use std::{
     array::TryFromSliceError,
     borrow::Borrow,
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     convert::TryInto,
     fs,
     io::Error as IoError,
@@ -42,6 +42,7 @@ pub use rocksdb; // avoid mess with dependencies for another crates
 
 type DB = OptimisticTransactionDB;
 type BincodeOpts = WithOtherEndian<DefaultOptions, BigEndian>;
+type ChangedStateH256 = HashMap<H256, (Maybe<AccountState>, HashMap<H256, H256>)>;
 lazy_static! {
     static ref CODER: BincodeOpts = DefaultOptions::new().with_big_endian();
 }
@@ -301,9 +302,11 @@ impl Storage<OptimisticTransactionDBInner> {
     pub fn create_temporary() -> Result<Self> {
         Self::open(Location::Temporary(Arc::new(TempDir::new()?)), false)
     }
+
     pub fn create_temporary_gc() -> Result<Self> {
         Self::open(Location::Temporary(Arc::new(TempDir::new()?)), true)
     }
+
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {
         log::warn!("gc_enabled {}", gc_enabled);
         log::info!("location is {:?}", location);
@@ -435,11 +438,7 @@ impl Storage<OptimisticTransactionDBInner> {
             .leak_root()
     }
 
-    pub fn flush_changes_hashed_h256(
-        &self,
-        state_root: H256,
-        state_updates: crate::ChangedStateH256,
-    ) -> H256 {
+    pub fn flush_changes_hashed(&self, state_root: H256, state_updates: ChangedStateH256) -> H256 {
         let r = self.rocksdb_trie_handle();
 
         let db_trie = TrieCollection::new(r);
@@ -685,6 +684,65 @@ impl Storage<OptimisticTransactionDBInner> {
         }
         engine.create_new_backup_flush(self.db.as_ref(), true)?;
         Ok(backup_dir)
+    }
+
+    pub fn set_initial_hashed(
+        &mut self,
+        accounts: impl IntoIterator<Item = (H256, evm::backend::MemoryAccount)>,
+        state_root: H256,
+    ) -> H256 {
+        use std::collections::hash_map::Entry::*;
+
+        let mut state_updates: ChangedStateH256 = HashMap::new();
+
+        fn set_account_state(
+            state_updates: &mut ChangedStateH256,
+            address: H256,
+            account_state: AccountState,
+        ) {
+            match state_updates.entry(address) {
+                Occupied(mut e) => {
+                    e.get_mut().0 = Maybe::Just(account_state);
+                }
+                Vacant(e) => {
+                    e.insert((Maybe::Just(account_state), HashMap::new()));
+                }
+            };
+        }
+
+        fn ext_storage(
+            state_updates: &mut ChangedStateH256,
+            address: H256,
+            indexed_values: impl IntoIterator<Item = (H256, H256)>,
+        ) {
+            let (_, storage) = state_updates
+                .entry(address)
+                .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()));
+
+            storage.extend(indexed_values);
+        }
+
+        for (
+            address,
+            evm::backend::MemoryAccount {
+                nonce,
+                balance,
+                storage,
+                code,
+            },
+        ) in accounts
+        {
+            let account_state = AccountState {
+                nonce,
+                balance,
+                code: code.into(),
+            };
+
+            set_account_state(&mut state_updates, address, account_state);
+            ext_storage(&mut state_updates, address, storage);
+        }
+
+        self.flush_changes_hashed(state_root, state_updates)
     }
 }
 
