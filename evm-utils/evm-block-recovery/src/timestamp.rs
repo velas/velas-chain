@@ -13,9 +13,12 @@ struct BlockDto {
 }
 
 /// FIXME: Source timestamp file exported with Time Zone error
-const FIVE_HRS: u64 = 18000;
+pub const HR_TIMESTAMP: i64 = 60 * 60;
 
-pub fn load_timestamps(path: impl AsRef<Path>) -> Result<HashMap<BlockNum, u64>> {
+pub fn load_timestamps(
+    path: impl AsRef<Path>,
+    timestamp_offset: i64,
+) -> Result<HashMap<BlockNum, u64>> {
     let timestamps = std::fs::read_to_string(path).unwrap();
 
     let result: HashMap<BlockNum, u64> = serde_json::from_str::<Vec<BlockDto>>(&timestamps)
@@ -27,7 +30,11 @@ pub fn load_timestamps(path: impl AsRef<Path>) -> Result<HashMap<BlockNum, u64>>
             // Extract time from "unixtime" prop., or try to parse ISO 8601 "timestamp" prop.
             let time = block
                 .unixtime
-                .or_else(|| block.timestamp.map(|t| t.timestamp() as u64 - FIVE_HRS))
+                .or_else(|| {
+                    block
+                        .timestamp
+                        .map(|t| (t.timestamp() + timestamp_offset) as u64)
+                })
                 .unwrap();
 
             (block_number, time)

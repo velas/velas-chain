@@ -90,6 +90,7 @@ async fn main() -> anyhow::Result<()> {
             force_resume,
             timestamps,
             output_dir,
+            hrs_offset,
         } => {
             routines::restore_chain(
                 ledger::with_params(cli.creds, cli.instance).await?,
@@ -100,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
                 force_resume,
                 timestamps,
                 output_dir,
+                hrs_offset,
             )
             .await
         }

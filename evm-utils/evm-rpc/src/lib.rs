@@ -639,6 +639,9 @@ pub mod trace {
             last_hashes: Vec<H256>,
             block_header: BlockHeader,
             state_root: H256,
+            unsigned_tx_fix: bool,
+            clear_logs_on_error: bool,
+            burn_gas_price: u64,
         ) -> BoxFuture<Result<(Block, Vec<Hex<H256>>), Error>>;
     }
 }
