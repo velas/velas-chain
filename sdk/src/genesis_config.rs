@@ -646,7 +646,7 @@ pub mod evm_genesis {
             Ok(Self { reader })
         }
 
-        pub fn read_account_hashed_h256(&mut self) -> Result<Option<(H256, MemoryAccount)>, Error> {
+        pub fn read_account_hashed(&mut self) -> Result<Option<(H256, MemoryAccount)>, Error> {
             use std::str::FromStr;
 
             let mut buf = String::new();
@@ -699,14 +699,14 @@ pub mod evm_genesis {
         Ok(iter::from_fn(move || reader.read_account().transpose()))
     }
 
-    pub fn read_accounts_hashed_h256(
+    pub fn read_accounts_hashed(
         evm_state_snapshot: &Path,
     ) -> Result<impl Iterator<Item = Result<(H256, MemoryAccount), Error>>, Error> {
         let evm_file = BufReader::new(File::open(&evm_state_snapshot)?);
 
         let mut reader = GethAccountReader::new(evm_file)?;
         Ok(iter::from_fn(move || {
-            reader.read_account_hashed_h256().transpose()
+            reader.read_account_hashed().transpose()
         }))
     }
 
