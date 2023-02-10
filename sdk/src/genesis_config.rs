@@ -224,6 +224,7 @@ impl GenesisConfig {
         &self,
         ledger_path: &Path,
         evm_state_json: Option<&Path>,
+        verify_state_root: Option<H256>
     ) -> Result<(), std::io::Error> {
         let evm_state_path = tempfile::TempDir::new()?;
         let evm_state = evm_state::EvmState::new(evm_state_path.path())
@@ -246,8 +247,13 @@ impl GenesisConfig {
                 log::info!("Adding {} accounts to storage.", chunk.len());
                 state_root = storage.set_initial_hashed(chunk, state_root);
             }
-                log::info!("Adding {} accounts to evm state.", chunk.len());
-                evm_state.set_initial(chunk);
+
+            if let Some(verify_state_root) = verify_state_root {
+                if state_root == verify_state_root {
+                    log::info!("State root hash DOES match");
+                } else {
+                    log::info!("State root hash DOES NOT match");
+                }
             }
         } else {
             warn!("Generating genesis with empty evm state");
