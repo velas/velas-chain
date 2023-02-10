@@ -45,7 +45,7 @@ pub const UNUSED_DEFAULT: u64 = 1024;
 pub const EVM_GENESIS: &str = "evm-state-genesis";
 
 // Dont load to memory accounts, more specified count
-use evm_state::MAX_IN_MEMORY_EVM_ACCOUNTS;
+use evm_state::{MAX_IN_MEMORY_EVM_ACCOUNTS, Storage};
 // The order can't align with release lifecycle only to remain ABI-compatible...
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, AbiEnumVisitor, AbiExample)]
 pub enum ClusterType {
@@ -219,7 +219,7 @@ impl GenesisConfig {
         file.write_all(&serialized)
     }
 
-    // TODO: fix state generation entry point
+    // TODO: cleanup evm_state mentions?
     pub fn generate_evm_state(
         &self,
         ledger_path: &Path,
@@ -235,11 +235,17 @@ impl GenesisConfig {
         };
 
         if let Some(evm_state_json) = evm_state_json {
-            let accounts = evm_genesis::read_accounts(evm_state_json)?;
+            let accounts = evm_genesis::read_accounts_hashed(evm_state_json)?;
+
+            let mut storage = Storage::open_persistent(ledger_path, true).unwrap();
+            let mut state_root = self.evm_root_hash;
 
             for chunk in &accounts.chunks(MAX_IN_MEMORY_EVM_ACCOUNTS) {
                 let chunk: Result<Vec<_>, _> = chunk.collect();
                 let chunk = chunk?;
+                log::info!("Adding {} accounts to storage.", chunk.len());
+                state_root = storage.set_initial_hashed(chunk, state_root);
+            }
                 log::info!("Adding {} accounts to evm state.", chunk.len());
                 evm_state.set_initial(chunk);
             }
@@ -650,7 +656,11 @@ pub mod evm_genesis {
             use std::str::FromStr;
 
             let mut buf = String::new();
-            self.reader.read_line(&mut buf)?;
+            let len = self.reader.read_line(&mut buf)?;
+            
+            if len == 0 {
+                return Ok(None);
+            }
 
             let account_json: serde_json::Value = serde_json::from_str(&buf).unwrap();
 
