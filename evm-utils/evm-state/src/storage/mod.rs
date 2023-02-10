@@ -456,8 +456,10 @@ impl Storage<OptimisticTransactionDBInner> {
                 code,
             }) = state
             {
-                let account = accounts.get(address.as_bytes()).unwrap_or_default();
-                let mut account: Account = rlp::decode(&account).unwrap();
+                let mut account: Account = accounts
+                    .get(address.as_bytes())
+                    .and_then(|accounts| rlp::decode(&accounts).ok())
+                    .unwrap_or_default();
 
                 account.nonce = nonce;
                 account.balance = balance;
