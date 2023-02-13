@@ -27,7 +27,7 @@ solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-streamer = { path = "../streamer", version = "=1.9.29" }
 solana-test-validator = { path = "../test-validator", version = "=1.9.29" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.9.29" }
-solana-version = { path = "../version", version = "=0.6.1" }
+solana-version = { path = "../version", version = "=0.6.3" }
 spl-token = { version = "=3.2.0", features = ["no-entrypoint"] }
 
 [dev-dependencies]

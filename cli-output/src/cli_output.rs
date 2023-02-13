@@ -2286,6 +2286,7 @@ impl VerboseDisplay for CliBlock {}
 
 impl fmt::Display for CliBlock {
     #[allow(clippy::format_in_format_args)]
+    #[allow(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "Slot: {}", self.slot)?;
         writeln!(

@@ -1676,7 +1676,7 @@ fn main() {
                 evm_blockstore_process_command(&ledger_path, arg_matches)
             }
             ("evm_state", Some(arg_matches)) => {
-                process_evm_state_command(&ledger_path, arg_matches)
+                process_evm_state_command(&evm_state_path, arg_matches)
                     .unwrap_or_else(|err| panic!("EVM state subcommand error: {:?}", err));
             }
             ("print", Some(arg_matches)) => {

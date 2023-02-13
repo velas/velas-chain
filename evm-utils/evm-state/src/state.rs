@@ -6,9 +6,9 @@ use std::{
     sync::Arc,
 };
 
-use evm::{ExitReason, ExitRevert};
 use log::*;
 
+use evm::ExitReason;
 use primitive_types::H256;
 use triedb::empty_trie_hash;
 
@@ -234,7 +234,7 @@ impl EvmBackend<Incomming> {
             .collect()
     }
 
-    pub fn apply_failed_update(&mut self, failed: &Self) {
+    pub fn apply_failed_update(&mut self, failed: &Self, clear_logs: bool) {
         let txs_len = self.state.executed_transactions.len();
         debug_assert_eq!(
             self.state.executed_transactions[..txs_len],
@@ -250,7 +250,7 @@ impl EvmBackend<Incomming> {
                 if matches!(tx.status, ExitReason::Succeed(_)) {
                     debug!("Setting exit status to reverted, for tx={:?}", h);
 
-                    tx.status = ExitReason::Revert(ExitRevert::Reverted);
+                    tx.to_failed(clear_logs);
                 }
 
                 if let Some(caller) = tx.caller() {

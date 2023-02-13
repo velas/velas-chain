@@ -230,7 +230,7 @@ impl LedgerCleanupService {
                 .name("solana-ledger-purge".to_string())
                 .spawn(move || {
                     let mut slot_update_time = Measure::start("slot_update");
-                    *blockstore.lowest_cleanup_slot.write().unwrap() = lowest_cleanup_slot;
+                    *blockstore.lowest_cleanup_slot.write() = lowest_cleanup_slot;
                     slot_update_time.stop();
 
                     info!(

@@ -764,9 +764,11 @@ mod test {
     use super::*;
     use evm_state::{
         transactions::{TransactionAction, TransactionSignature},
-        FromKey,
+        AccountState, FromKey,
     };
     use evm_state::{AccountProvider, ExitReason, ExitSucceed};
+    use hex_literal::hex;
+    use num_traits::Zero;
     use primitive_types::{H160, H256, U256};
     use solana_program_runtime::{
         invoke_context::{BuiltinProgram, InvokeContext},
@@ -861,8 +863,10 @@ mod test {
                         .is_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id()),
                     self.feature_set
                         .is_active(&solana_sdk::feature_set::velas::clear_logs_on_error::id()),
-                    self.feature_set
-                        .is_active(&solana_sdk::feature_set::velas::accept_zero_gas_price_with_native_fee::id()),
+                    self.feature_set.is_active(
+                        &solana_sdk::feature_set::velas::accept_zero_gas_price_with_native_fee::id(
+                        ),
+                    ),
                 ),
             );
 
@@ -909,7 +913,11 @@ mod test {
                     let executor = invoke_context
                         .deconstruct_evm()
                         .expect("Evm executor should exist");
-                    self.evm_state.apply_failed_update(&executor.evm_backend);
+                    let clear_logs = self.feature_set.is_active(
+                        &solana_sdk::feature_set::velas::clear_logs_on_native_error::id(),
+                    );
+                    self.evm_state
+                        .apply_failed_update(&executor.evm_backend, clear_logs);
                     return Err(e);
                 }
             }
@@ -1828,7 +1836,6 @@ mod test {
     // Spend is done with native swap.
     #[test]
     fn execute_swap_with_revert() {
-        use hex_literal::hex;
         let _ = simple_logger::SimpleLogger::new()
             .with_utc_timestamps()
             .init();
@@ -1953,7 +1960,6 @@ mod test {
 
     #[test]
     fn test_revert_clears_logs() {
-        use hex_literal::hex;
         let _ = simple_logger::SimpleLogger::new()
             .with_utc_timestamps()
             .init();
@@ -2486,64 +2492,67 @@ mod test {
             .env()
             .with_utc_timestamps()
             .init();
+        let code_with_logs_and_revert = hex!("608060405234801561001057600080fd5b50600436106100365760003560e01c80636057361d1461003b578063cf280be114610057575b600080fd5b6100556004803603810190610050919061011d565b610073565b005b610071600480360381019061006c919061011d565b6100b8565b005b7f31431e8e0193815c649ffbfb9013954926640a5c67ada972108cdb5a47a0d728600054826040516100a6929190610159565b60405180910390a18060008190555050565b7f31431e8e0193815c649ffbfb9013954926640a5c67ada972108cdb5a47a0d728600054826040516100eb929190610159565b60405180910390a180600081905550600061010557600080fd5b50565b60008135905061011781610191565b92915050565b6000602082840312156101335761013261018c565b5b600061014184828501610108565b91505092915050565b61015381610182565b82525050565b600060408201905061016e600083018561014a565b61017b602083018461014a565b9392505050565b6000819050919050565b600080fd5b61019a81610182565b81146101a557600080fd5b5056fea2646970667358221220fc523ca900ab8140013266ce0ed772e285153c9d3292c12522c336791782a40b64736f6c63430008070033");
+        let calldata =
+            hex!("6057361d0000000000000000000000000000000000000000000000000000000000000001");
+
         let mut evm_context = EvmMockContext::new(1000);
         evm_context.disable_feature(&solana_sdk::feature_set::velas::burn_fee::id());
 
         let mut rand = evm_state::rand::thread_rng();
+        let contract_address = evm::SecretKey::new(&mut rand).to_address();
         let dummy_key = evm::SecretKey::new(&mut rand);
         let dummy_address = dummy_key.to_address();
+        evm_context.evm_state.set_account_state(
+            contract_address,
+            AccountState {
+                code: code_with_logs_and_revert.to_vec().into(),
+                ..AccountState::default()
+            },
+        );
+        evm_context
+            .evm_state
+            .set_account_state(dummy_address, AccountState::default());
 
         let user_id = Pubkey::new_unique();
         let unsigned_tx = evm::UnsignedTransaction {
             nonce: 0.into(),
             gas_price: 100000.into(),
             gas_limit: 300000.into(),
-            action: TransactionAction::Call(dummy_address),
+            action: TransactionAction::Call(contract_address),
             value: 0.into(),
-            input: vec![],
+            input: calldata.to_vec(),
         };
 
-        let tx_create = unsigned_tx.sign(&dummy_key, Some(CHAIN_ID));
-        let ix = crate::send_raw_tx(user_id, tx_create, None, FeePayerType::Native);
+        let tx_call = unsigned_tx.sign(&dummy_key, Some(CHAIN_ID));
+        let tx_hash = tx_call.tx_id_hash();
+        let ix = crate::send_raw_tx(user_id, tx_call, None, FeePayerType::Native);
 
         let executor = &evm_context.evm_state;
         // Signer has zero balance but fee will be taken from native account
-        assert_eq!(
-            U256::from(0),
-            executor
-                .get_account_state(dummy_address)
-                .unwrap_or_default()
-                .balance
-        );
+        let evm_signer = executor.get_account_state(dummy_address).unwrap();
+        assert!(evm_signer.balance.is_zero());
 
-        assert_eq!(
-            0,
-            evm_context
-                .native_account(user_id)
-                .try_borrow()
-                .unwrap()
-                .lamports()
-        );
+        let native_sender = evm_context.native_account(user_id);
+        assert!(native_sender.try_borrow().unwrap().lamports().is_zero());
         // Ix should fail because user has insufficient funds
-        evm_context.process_instruction(ix).unwrap_err();
+        assert!(matches!(
+            evm_context.process_instruction(ix).unwrap_err(),
+            InstructionError::Custom(18)
+        ));
 
         let executor = &evm_context.evm_state;
         // All balances remain the same
-        assert_eq!(
-            U256::from(0),
-            executor
-                .get_account_state(dummy_address)
-                .unwrap_or_default()
-                .balance
-        );
-        assert_eq!(
-            0,
-            evm_context
-                .native_account(user_id)
-                .try_borrow()
-                .unwrap()
-                .lamports()
-        );
+        let evm_signer = executor.get_account_state(dummy_address).unwrap();
+        assert!(evm_signer.balance.is_zero());
+        let native_sender = evm_context.native_account(user_id);
+        assert!(native_sender.try_borrow().unwrap().lamports().is_zero());
+
+        let executor = evm_context.evm_state;
+        let tx = executor.find_transaction_receipt(tx_hash).unwrap();
+        println!("status = {:?}", tx.status);
+        assert!(matches!(tx.status, ExitReason::Revert(_)));
+        assert!(tx.logs.is_empty());
     }
 
     #[test]

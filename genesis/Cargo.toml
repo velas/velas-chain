@@ -23,7 +23,7 @@ solana-logger = { path = "../logger", version = "=1.9.29" }
 solana-runtime = { path = "../runtime", version = "=1.9.29" }
 solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-stake-program = { path = "../programs/stake", version = "=1.9.29" }
-solana-version = { path = "../version", version = "=0.6.1" }
+solana-version = { path = "../version", version = "=0.6.3" }
 solana-vote-program = { path = "../programs/vote", version = "=1.9.29" }
 
 solana-evm-loader-program = { path = "../evm-utils/programs/evm_loader" }
