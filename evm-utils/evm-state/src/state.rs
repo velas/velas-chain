@@ -24,6 +24,8 @@ pub const DEFAULT_GAS_LIMIT: u64 = 300_000_000;
 pub const BURN_GAS_PRICE: u64 = 2_000_000_000; // 2 lamports per gas.
 /// Dont load to many account to memory, to avoid OOM.
 pub const MAX_IN_MEMORY_EVM_ACCOUNTS: usize = 10000;
+/// Approximate size, real size could be twice as much
+pub const MAX_IN_MEMORY_BYTES: usize = 100_000_000;
 
 pub type ChangedState = HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>;
 
