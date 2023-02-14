@@ -30,6 +30,7 @@ use {
         fmt,
         fs::{File, OpenOptions},
         io::Write,
+        mem,
         path::{Path, PathBuf},
         str::FromStr,
         time::{SystemTime, UNIX_EPOCH},
@@ -45,7 +46,7 @@ pub const UNUSED_DEFAULT: u64 = 1024;
 pub const EVM_GENESIS: &str = "evm-state-genesis";
 
 // Dont load to memory accounts, more specified count
-use evm_state::{MAX_IN_MEMORY_EVM_ACCOUNTS, Storage};
+use evm_state::{MAX_IN_MEMORY_BYTES, Storage};
 // The order can't align with release lifecycle only to remain ABI-compatible...
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, AbiEnumVisitor, AbiExample)]
 pub enum ClusterType {
@@ -226,26 +227,56 @@ impl GenesisConfig {
         evm_state_json: Option<&Path>,
         verify_state_root: Option<H256>
     ) -> Result<(), std::io::Error> {
-        let evm_state_path = tempfile::TempDir::new()?;
-        let evm_state = evm_state::EvmState::new(evm_state_path.path())
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
-        let mut evm_state = if let evm_state::EvmState::Incomming(evm_state) = evm_state {
-            evm_state
-        } else {
-            unreachable!("Expected new evm-state to be writable.");
+        let mut evm_state = {
+            let evm_state_path = tempfile::TempDir::new()?;
+            let evm_state = evm_state::EvmState::new(evm_state_path.path())
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
+
+            if let evm_state::EvmState::Incomming(evm_state) = evm_state {
+                evm_state
+            } else {
+                unreachable!("Expected new evm-state to be writable.");
+            }
         };
 
-        if let Some(evm_state_json) = evm_state_json {
-            let accounts = evm_genesis::read_accounts_hashed(evm_state_json)?;
+        if evm_state_json.is_none() {
+            
+        }
 
+        if let Some(evm_state_json) = evm_state_json {
+            let mut accounts = evm_genesis::read_accounts_hashed(evm_state_json)?;
             let mut storage = Storage::open_persistent(ledger_path, true).unwrap();
             let mut state_root = self.evm_root_hash;
 
-            for chunk in &accounts.chunks(MAX_IN_MEMORY_EVM_ACCOUNTS) {
-                let chunk: Result<Vec<_>, _> = chunk.collect();
-                let chunk = chunk?;
-                log::info!("Adding {} accounts to storage.", chunk.len());
-                state_root = storage.set_initial_hashed(chunk, state_root);
+            let mut chunk = vec![];
+            let mut chunk_bytes: usize = 0;
+            let mut accounts_read: usize = 0;
+            let mut no_more_accounts = false;
+            loop {
+                let account = accounts.next();
+                match account {
+                    Some(Ok(account)) => {
+                        chunk_bytes += mem::size_of_val(&account) + mem::size_of::<H256>();
+                        chunk.push(account);
+                        accounts_read += 1;
+                    },
+                    Some(Err(err)) => return Err(err),
+                    None => no_more_accounts = true,
+                }
+
+                if chunk_bytes > MAX_IN_MEMORY_BYTES || no_more_accounts {
+                    log::info!(
+                        "Adding {} accounts to storage. Account pointer: {}", 
+                        chunk.len(), 
+                        accounts_read
+                    );
+                    state_root = storage.set_initial_hashed(mem::take(&mut chunk), state_root);
+                    chunk_bytes = 0;
+                }
+
+                if no_more_accounts {
+                    break;
+                }
             }
 
             if let Some(verify_state_root) = verify_state_root {
@@ -281,7 +312,7 @@ impl GenesisConfig {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
         std::fs::create_dir_all(ledger_path)?;
 
-        // use copy instead of move, to work with cross device-links (backup makes hardlink and is immovable between devices).
+        // use copy instead of move, to work with cross device-links (backup makes hardlink and is immovable across devices).
         evm_genesis::copy_dir(tmp_backup, evm_backup).unwrap();
         Ok(())
     }
