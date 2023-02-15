@@ -45,7 +45,7 @@ pub const UNUSED_DEFAULT: u64 = 1024;
 pub const EVM_GENESIS: &str = "evm-state-genesis";
 
 // Dont load to memory accounts, more specified count
-use evm_state::{MAX_IN_MEMORY_BYTES, Storage, MemoryAccount};
+use evm_state::{MemoryAccount, Storage, MAX_IN_HEAP_EVM_ACCOUNTS_BYTES};
 // The order can't align with release lifecycle only to remain ABI-compatible...
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, AbiEnumVisitor, AbiExample)]
 pub enum ClusterType {
@@ -224,7 +224,7 @@ impl GenesisConfig {
         &self,
         ledger_path: &Path,
         evm_state_json: Option<&Path>,
-        verify_state_root: Option<H256>
+        verify_state_root: Option<H256>,
     ) -> Result<(), std::io::Error> {
         std::fs::create_dir_all(ledger_path)?;
 
@@ -234,29 +234,30 @@ impl GenesisConfig {
             let mut state_root = self.evm_root_hash;
 
             let mut chunk = vec![];
-            let mut chunk_bytes: usize = 0;
-            let mut accounts_read: usize = 0;
+            let mut chunk_heap_bytes: usize = 0;
+            let mut accounts_pointer: usize = 1;
             let mut no_more_accounts = false;
             loop {
                 let account = accounts.next();
                 match account {
                     Some(Ok(account)) => {
-                        chunk_bytes += account.1.code.capacity() + account.1.storage.len() * 16;
+                        chunk_heap_bytes +=
+                            account.1.code.capacity() + account.1.storage.len() * 16;
                         chunk.push(account);
-                        accounts_read += 1;
-                    },
+                        accounts_pointer += 1;
+                    }
                     Some(Err(err)) => return Err(err),
                     None => no_more_accounts = true,
                 }
 
-                if chunk_bytes > MAX_IN_MEMORY_BYTES || no_more_accounts {
+                if chunk_heap_bytes > MAX_IN_HEAP_EVM_ACCOUNTS_BYTES || no_more_accounts {
                     log::info!(
-                        "Adding {} accounts to storage. Account pointer: {}", 
-                        chunk.len(), 
-                        accounts_read
+                        "Adding {} accounts to storage. Account pointer: {}",
+                        chunk.len(),
+                        accounts_pointer
                     );
                     state_root = storage.set_initial_hashed(mem::take(&mut chunk), state_root);
-                    chunk_bytes = 0;
+                    chunk_heap_bytes = 0;
                 }
 
                 if no_more_accounts {
@@ -690,7 +691,7 @@ pub mod evm_genesis {
 
             let mut buf = String::new();
             let len = self.reader.read_line(&mut buf)?;
-            
+
             if len == 0 {
                 return Ok(None);
             }
