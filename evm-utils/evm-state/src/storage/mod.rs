@@ -11,6 +11,7 @@ use std::{
 
 use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
 use derive_more::{AsRef, Deref};
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::*;
 use rlp::{Decodable, Encodable};
@@ -64,6 +65,7 @@ pub enum Error {
 
 const BACKUP_SUBDIR: &str = "backup";
 const CUSTOM_LOCATION: &str = "tmp_inner_space";
+const NUM_ENTRIES_IN_STORAGES_CHUNK: usize = 10000;
 
 /// Marker-like wrapper for cleaning temporary directory.
 /// Temporary directory is only used in tests.
@@ -443,8 +445,6 @@ impl Storage<OptimisticTransactionDBInner> {
 
         let db_trie = TrieCollection::new(r);
 
-        let mut storage_patches = triedb::Change::default();
-
         use triedb::TrieMut;
         let mut accounts = db_trie.trie_for(state_root);
 
@@ -469,30 +469,30 @@ impl Storage<OptimisticTransactionDBInner> {
                     account.code_hash = code_hash;
                 }
 
-                let mut storage = db_trie.trie_for(account.storage_root);
-
-                for (index, value) in storages {
-                    if value != H256::default() {
-                        let value = U256::from_big_endian(&value[..]);
-                        storage.insert(index.as_bytes(), &rlp::encode(&value));
-                    } else {
-                        storage.delete(index.as_bytes());
+                let storage_values = storages.into_iter().chunks(NUM_ENTRIES_IN_STORAGES_CHUNK);
+                for index_changes in storage_values.into_iter() {
+                    let mut storage = db_trie.trie_for(account.storage_root);
+                    for (index, value) in index_changes {
+                        if value != H256::default() {
+                            let value = U256::from_big_endian(&value[..]);
+                            storage.insert(index.as_bytes(), &rlp::encode(&value));
+                        } else {
+                            storage.delete(index.as_bytes());
+                        }
                     }
+
+                    let storage_patch = storage.into_patch();
+                    account.storage_root = db_trie
+                        .apply_increase(storage_patch, |_| vec![])
+                        .leak_root()
                 }
-
-                let storage_patch = storage.into_patch();
-                let storage_root = storage_patch.root;
-                storage_patches.merge(&storage_patch.change);
-                account.storage_root = storage_root;
-
                 accounts.insert(address.as_bytes(), &rlp::encode(&account));
             } else {
                 accounts.delete(address.as_bytes());
             }
         }
 
-        let mut accounts_patch = accounts.into_patch();
-        accounts_patch.change.merge_child(&storage_patches);
+        let accounts_patch = accounts.into_patch();
         db_trie
             .apply_increase(accounts_patch, account_extractor)
             .leak_root()
@@ -695,8 +695,6 @@ impl Storage<OptimisticTransactionDBInner> {
     ) -> H256 {
         use std::collections::hash_map::Entry::*;
 
-        let mut state_updates: ChangedStateH256 = HashMap::new();
-
         fn set_account_state(
             state_updates: &mut ChangedStateH256,
             address: H256,
@@ -723,6 +721,8 @@ impl Storage<OptimisticTransactionDBInner> {
 
             storage.extend(indexed_values);
         }
+
+        let mut state_updates: ChangedStateH256 = HashMap::new();
 
         for (
             address,

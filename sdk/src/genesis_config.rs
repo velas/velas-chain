@@ -45,7 +45,7 @@ pub const UNUSED_DEFAULT: u64 = 1024;
 pub const EVM_GENESIS: &str = "evm-state-genesis";
 
 // Dont load to memory accounts, more specified count
-use evm_state::{MemoryAccount, Storage, MAX_IN_HEAP_EVM_ACCOUNTS_BYTES};
+use evm_state::{Storage, MAX_IN_HEAP_EVM_ACCOUNTS_BYTES};
 // The order can't align with release lifecycle only to remain ABI-compatible...
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, AbiEnumVisitor, AbiExample)]
 pub enum ClusterType {
@@ -269,7 +269,7 @@ impl GenesisConfig {
                 if state_root == verify_state_root {
                     log::info!("State root hash DOES match");
                 } else {
-                    log::info!("State root hash DOES NOT match");
+                    log::error!("State root hash DOES NOT match");
                 }
             }
         } else {
@@ -737,7 +737,7 @@ pub mod evm_genesis {
     pub fn read_accounts(
         evm_state_snapshot: &Path,
     ) -> Result<impl Iterator<Item = Result<(H160, MemoryAccount), Error>>, Error> {
-        let evm_file = BufReader::new(File::open(&evm_state_snapshot)?);
+        let evm_file = BufReader::new(File::open(evm_state_snapshot)?);
 
         let mut reader = StreamAccountReader::new(evm_file)?;
         Ok(iter::from_fn(move || reader.read_account().transpose()))
@@ -746,7 +746,7 @@ pub mod evm_genesis {
     pub fn read_accounts_hashed(
         evm_state_snapshot: &Path,
     ) -> Result<impl Iterator<Item = Result<(H256, MemoryAccount), Error>>, Error> {
-        let evm_file = BufReader::new(File::open(&evm_state_snapshot)?);
+        let evm_file = BufReader::new(File::open(evm_state_snapshot)?);
 
         let mut reader = GethAccountReader::new(evm_file)?;
         Ok(iter::from_fn(move || {
@@ -820,7 +820,7 @@ mod tests {
         let evm_state_root = evm_genesis::generate_evm_state_json(&evm_state_path).unwrap();
         config.evm_root_hash = evm_state_root;
         config
-            .generate_evm_state(path, Some(&evm_state_path))
+            .generate_evm_state(path, Some(&evm_state_path), None)
             .expect("generate_evm_state");
         config.write(path).expect("write");
         let loaded_config = GenesisConfig::load(path).expect("load");
