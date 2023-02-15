@@ -22,7 +22,6 @@ use {
     bincode::{deserialize, serialize},
     chrono::{TimeZone, Utc},
     evm_state::H256,
-    itertools::Itertools,
     log::warn,
     memmap2::Mmap,
     std::{
@@ -46,7 +45,7 @@ pub const UNUSED_DEFAULT: u64 = 1024;
 pub const EVM_GENESIS: &str = "evm-state-genesis";
 
 // Dont load to memory accounts, more specified count
-use evm_state::{MAX_IN_MEMORY_BYTES, Storage};
+use evm_state::{MAX_IN_MEMORY_BYTES, Storage, MemoryAccount};
 // The order can't align with release lifecycle only to remain ABI-compatible...
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, AbiEnumVisitor, AbiExample)]
 pub enum ClusterType {
@@ -227,21 +226,7 @@ impl GenesisConfig {
         evm_state_json: Option<&Path>,
         verify_state_root: Option<H256>
     ) -> Result<(), std::io::Error> {
-        let mut evm_state = {
-            let evm_state_path = tempfile::TempDir::new()?;
-            let evm_state = evm_state::EvmState::new(evm_state_path.path())
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
-
-            if let evm_state::EvmState::Incomming(evm_state) = evm_state {
-                evm_state
-            } else {
-                unreachable!("Expected new evm-state to be writable.");
-            }
-        };
-
-        if evm_state_json.is_none() {
-            
-        }
+        std::fs::create_dir_all(ledger_path)?;
 
         if let Some(evm_state_json) = evm_state_json {
             let mut accounts = evm_genesis::read_accounts_hashed(evm_state_json)?;
@@ -256,7 +241,7 @@ impl GenesisConfig {
                 let account = accounts.next();
                 match account {
                     Some(Ok(account)) => {
-                        chunk_bytes += mem::size_of_val(&account) + mem::size_of::<H256>();
+                        chunk_bytes += account.1.code.capacity() + account.1.storage.len() * 16;
                         chunk.push(account);
                         accounts_read += 1;
                     },
@@ -298,6 +283,19 @@ impl GenesisConfig {
                 }
             }
         };
+
+        let evm_state = {
+            // let evm_state_path = tempfile::TempDir::new()?;
+            let evm_state = evm_state::EvmState::new(ledger_path)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
+
+            if let evm_state::EvmState::Incomming(evm_state) = evm_state {
+                evm_state
+            } else {
+                unreachable!("Expected new evm-state to be writable.");
+            }
+        };
+
         // create zero block
         let committed = evm_state.commit_block(0, H256::zero());
         let genesis_evm_block = &committed.state.block;
@@ -310,11 +308,9 @@ impl GenesisConfig {
         let tmp_backup = evm_state
             .make_backup()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
-        std::fs::create_dir_all(ledger_path)?;
 
         // use copy instead of move, to work with cross device-links (backup makes hardlink and is immovable across devices).
-        evm_genesis::copy_dir(tmp_backup, evm_backup).unwrap();
-        Ok(())
+        evm_genesis::copy_dir(tmp_backup, evm_backup)
     }
 
     pub fn set_evm_root_hash(&mut self, root_hash: H256) {
