@@ -779,20 +779,16 @@ impl TraceERPC for TraceErpcImpl {
                     })
                 };
             }
-            let caller = unwrap_or_default!(tx.from); //.map(|a| a.0).unwrap_or_default();
+            let caller = unwrap_or_default!(tx.from);
 
-            let value = unwrap_or_default!(tx.value); //.map(|a| a.0).unwrap_or_default();
-            let input = unwrap_or_default!(tx.input); //.map(|a| a.0).unwrap_or_default();
-            let gas_limit = unwrap_or_default!(tx.gas); //.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
-            let gas_price = unwrap_or_default!(tx.gas_price); //.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
+            let value = unwrap_or_default!(tx.value);
+            let input = unwrap_or_default!(tx.input);
+            let gas_limit = unwrap_or_default!(tx.gas);
+            let gas_price = unwrap_or_default!(tx.gas_price);
 
             let nonce = unwrap_or_default!(tx.nonce);
-            // let nonce = tx
-            //     .nonce
-            //     .map(|a| a.0)
-            //     .unwrap_or_else(|| executor.nonce(caller));
             let tx_chain_id = executor.chain_id();
-            let tx_hash = unwrap_or_default!(tx.hash); //tx.hash.map(|a| a.0).unwrap_or_else(H256::random);
+            let tx_hash = unwrap_or_default!(tx.hash);
 
             let evm_state_balance = u64::MAX - 1;
 
@@ -841,14 +837,14 @@ impl TraceERPC for TraceErpcImpl {
             };
 
             // system transfers always set s = 0x1
-            let mut is_native_swap = false;
+            let mut is_native_tx = false;
             if Some(Hex(U256::from(0x1))) == tx.s {
                 // check if it native swap, then predeposit, amount, to pass transaction
                 if caller == *ETH_TO_VLX_ADDR {
-                    is_native_swap = true;
                     let amount = value + gas_limit * gas_price;
                     executor.deposit(caller, amount)
                 }
+                is_native_tx = true;
             }
 
             let user_accounts: Vec<_> = user_accounts
@@ -861,7 +857,7 @@ impl TraceERPC for TraceErpcImpl {
             let evm_keyed_account =
                 KeyedAccount::new(&solana_sdk::evm_state::ID, false, &evm_account);
 
-            let mut result = executor
+            let result = executor
                 .transaction_execute_raw(
                     caller,
                     nonce,
@@ -926,13 +922,12 @@ impl TraceERPC for TraceErpcImpl {
             let tx_hashes = executor.evm_backend.get_executed_transactions();
             assert!(!tx_hashes.contains(&tx_hash));
 
-            let transaction = if is_native_swap {
-                result.used_gas = 0;
+            let transaction = if is_native_tx {
                 TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller {
                     unsigned_tx: transaction.into(),
-                    caller: *ETH_TO_VLX_ADDR,
                     chain_id: tx_chain_id,
                     signed_compatible: true,
+                    caller,
                 })
             } else {
                 TransactionInReceipt::Signed(transaction)

@@ -3,7 +3,7 @@ pub mod exit_code;
 pub mod extensions;
 pub mod ledger;
 pub mod routines;
-pub mod timestamp;
+pub mod blocks_json;
 
 use clap::Parser;
 use cli::{Cli, Commands};
