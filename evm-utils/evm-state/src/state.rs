@@ -68,6 +68,13 @@ pub struct Incomming {
 }
 
 impl Incomming {
+    pub fn genesis_from_state(state_root: H256) -> Self {
+        Self {
+            state_root,
+            ..Default::default()
+        }
+    }
+
     fn new(
         block_number: BlockNum,
         state_root: H256,

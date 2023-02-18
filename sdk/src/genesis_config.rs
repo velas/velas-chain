@@ -224,14 +224,13 @@ impl GenesisConfig {
         &self,
         ledger_path: &Path,
         evm_state_json: Option<&Path>,
-        verify_state_root: Option<H256>,
     ) -> Result<(), std::io::Error> {
         std::fs::create_dir_all(ledger_path)?;
 
         if let Some(evm_state_json) = evm_state_json {
             let mut accounts = evm_genesis::read_accounts_hashed(evm_state_json)?;
             let mut storage = Storage::open_persistent(ledger_path, true).unwrap();
-            let mut state_root = self.evm_root_hash;
+            let mut state_root = evm_state::empty_trie_hash();
 
             let mut chunk = vec![];
             let mut chunk_heap_bytes: usize = 0;
@@ -261,17 +260,12 @@ impl GenesisConfig {
                 }
 
                 if no_more_accounts {
+                    assert_eq!(state_root, self.evm_root_hash);
+                    // TOOD: assert block number, and parent block_hash
                     break;
                 }
             }
-
-            if let Some(verify_state_root) = verify_state_root {
-                if state_root == verify_state_root {
-                    log::info!("State root hash DOES match");
-                } else {
-                    log::error!("State root hash DOES NOT match");
-                }
-            }
+            log::info!("Storage state root: {:?}", state_root);
         } else {
             warn!("Generating genesis with empty evm state");
             match self.cluster_type {
@@ -286,8 +280,8 @@ impl GenesisConfig {
         };
 
         let evm_state = {
-            // let evm_state_path = tempfile::TempDir::new()?;
-            let evm_state = evm_state::EvmState::new(ledger_path)
+            let incomming = evm_state::Incomming::genesis_from_state(self.evm_root_hash);
+            let evm_state = evm_state::EvmState::load_from(ledger_path, incomming, true)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}.", e)))?;
 
             if let evm_state::EvmState::Incomming(evm_state) = evm_state {
@@ -299,9 +293,6 @@ impl GenesisConfig {
 
         // create zero block
         let committed = evm_state.commit_block(0, H256::zero());
-        let genesis_evm_block = &committed.state.block;
-        assert_eq!(genesis_evm_block.state_root, self.evm_root_hash);
-        // TOOD: assert block number, and parent block_hash
         let mut evm_backup = ledger_path.to_path_buf();
         evm_backup.push(EVM_GENESIS);
 
@@ -820,7 +811,7 @@ mod tests {
         let evm_state_root = evm_genesis::generate_evm_state_json(&evm_state_path).unwrap();
         config.evm_root_hash = evm_state_root;
         config
-            .generate_evm_state(path, Some(&evm_state_path), None)
+            .generate_evm_state(path, Some(&evm_state_path))
             .expect("generate_evm_state");
         config.write(path).expect("write");
         let loaded_config = GenesisConfig::load(path).expect("load");

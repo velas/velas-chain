@@ -4054,7 +4054,7 @@ pub fn create_new_ledger(
 ) -> Result<Hash> {
     Blockstore::destroy(ledger_path)?;
 
-    genesis_config.generate_evm_state(ledger_path, evm_state_json, None)?;
+    genesis_config.generate_evm_state(ledger_path, evm_state_json)?;
     genesis_config.write(ledger_path)?;
 
     // Fill slot 0 with ticks that link back to the genesis_config to bootstrap the ledger.
