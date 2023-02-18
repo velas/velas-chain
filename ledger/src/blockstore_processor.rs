@@ -1778,7 +1778,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -1829,7 +1829,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         // Should return slot 0, the last slot on the fork that is valid
@@ -1854,7 +1854,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -1920,7 +1920,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let opts = ProcessOptions {
@@ -2005,7 +2005,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
         let (bank_forks, ..) = test_process_blockstore(
             &genesis_config,
@@ -2037,7 +2037,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
         let (bank_forks, ..) = test_process_blockstore(
             &genesis_config,
@@ -2117,7 +2117,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -2210,7 +2210,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -2279,7 +2279,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -2336,7 +2336,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -2397,7 +2397,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
         let (bank_forks, ..) = test_process_blockstore(
             &genesis_config,
@@ -2461,7 +2461,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -2619,7 +2619,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -2663,7 +2663,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -2696,7 +2696,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
         test_process_blockstore(
             &genesis_config,
@@ -2727,7 +2727,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (_bank_forks, leader_schedule, _) = test_process_blockstore(
@@ -2802,7 +2802,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
         test_process_blockstore(
             &genesis_config,
@@ -3470,7 +3470,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -4106,7 +4106,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -4151,7 +4151,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
@@ -4219,7 +4219,7 @@ pub mod tests {
             .path()
             .join(solana_sdk::genesis_config::EVM_GENESIS);
         genesis_config
-            .generate_evm_state(&ledger_path.path(), None)
+            .generate_evm_state(&ledger_path.path(), None, None)
             .unwrap();
 
         let (bank_forks, ..) = test_process_blockstore(
