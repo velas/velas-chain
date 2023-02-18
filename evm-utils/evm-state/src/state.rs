@@ -544,6 +544,7 @@ impl Default for EvmPersistState {
 }
 
 impl EvmState {
+    /// Clears content of `path` directory and creates new empty `EvmState`
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
         let evm_state = path.as_ref();
         if evm_state.is_dir() && evm_state.exists() {
@@ -555,6 +556,7 @@ impl EvmState {
         Self::load_from(evm_state, Incomming::default(), true)
     }
 
+    /// Clears content of `evm_state` directory and creates new `EvmState` from genesis
     pub fn new_from_genesis(
         evm_state: impl AsRef<Path>,
         evm_genesis: impl AsRef<Path>,
