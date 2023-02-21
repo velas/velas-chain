@@ -747,6 +747,7 @@ pub mod evm_genesis {
             Ok(evm_state::empty_trie_hash())
         }
 
+        #[cfg(test)]
         mod tests {
             use solana_program::pubkey::Pubkey;
 
@@ -1036,6 +1037,7 @@ pub mod evm_genesis {
             }
         }
 
+        #[cfg(test)]
         mod tests {
             // use super::*;
 
