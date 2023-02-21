@@ -4054,11 +4054,13 @@ pub fn create_new_ledger(
 ) -> Result<Hash> {
     Blockstore::destroy(ledger_path)?;
 
-    let dump_extractor = evm_state_json
-        .map(OpenEthereumAccountExtractor::open_dump)
-        .transpose()?;
-
-    genesis_config.generate_evm_state(ledger_path, dump_extractor)?;
+    match evm_state_json {
+        Some(path) => {
+            let de = OpenEthereumAccountExtractor::open_dump(path)?;
+            genesis_config.generate_evm_state_from_dump(ledger_path, de)?;
+        },
+        None => genesis_config.generate_evm_state_empty(ledger_path)?,
+    }
     genesis_config.write(ledger_path)?;
 
     // Fill slot 0 with ticks that link back to the genesis_config to bootstrap the ledger.

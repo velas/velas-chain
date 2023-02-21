@@ -222,7 +222,15 @@ impl GenesisConfig {
         file.write_all(&serialized)
     }
 
-    pub fn generate_evm_state(
+    pub fn generate_evm_state_empty(&self, ledger_path: &Path) -> Result<(), std::io::Error> {
+        self.generate_evm_state(ledger_path, None::<evm_genesis::NoDumpExtractor>)
+    }
+
+    pub fn generate_evm_state_from_dump(&self, ledger_path: &Path, dump_extractor: impl EvmAccountDumpExtractor) -> Result<(), std::io::Error> {
+        self.generate_evm_state(ledger_path, Some(dump_extractor))
+    }
+    
+    fn generate_evm_state(
         &self,
         ledger_path: &Path,
         dump_extractor: Option<impl EvmAccountDumpExtractor>,
@@ -442,6 +450,28 @@ pub mod evm_genesis {
 
         fn encode_key(&self, key: Self::Key) -> H256;
         fn read_account(&mut self) -> Result<Option<AccountPair>, Error>;
+    }
+
+    pub struct NoDumpExtractor;
+
+    impl EvmAccountDumpExtractor for NoDumpExtractor {
+        type Key = [u8; 1];
+
+        fn encode_key(&self, _key: Self::Key) -> H256 {
+            H256::zero()
+        }
+
+        fn read_account(&mut self) -> Result<Option<AccountPair>, Error> {
+            Ok(None)
+        }
+    }
+
+    impl Iterator for NoDumpExtractor {
+        type Item = Result<AccountPair, Error>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            None
+        }
     }
 
     pub fn copy_dir(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), Error> {
