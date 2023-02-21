@@ -22,7 +22,9 @@ use {
         clock,
         epoch_schedule::EpochSchedule,
         fee_calculator::FeeRateGovernor,
-    genesis_config::{self, ClusterType, GenesisConfig},
+        genesis_config::{
+            self, evm_genesis::OpenEthereumAccountExtractor, ClusterType, GenesisConfig,
+        },
         inflation::Inflation,
         native_token::sol_to_lamports,
         poh_config::PohConfig,
@@ -645,8 +647,14 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     if let Some(evm_state_json) = &evm_state_json {
         info!("Calculating evm state lamports");
-        for account in genesis_config::evm_genesis::read_accounts(evm_state_json).unwrap() {
-            evm_state_balance += account.unwrap().1.balance;
+        let dump_extractor =
+            OpenEthereumAccountExtractor::open_dump(&evm_state_json).expect(&format!(
+                "Unable to open dump at path: `{}`",
+                evm_state_json.display()
+            ));
+
+        for pair in dump_extractor {
+            evm_state_balance += pair.unwrap().account.balance;
         }
     }
 

@@ -44,7 +44,7 @@ pub use rocksdb; // avoid mess with dependencies for another crates
 
 type DB = OptimisticTransactionDB;
 type BincodeOpts = WithOtherEndian<DefaultOptions, BigEndian>;
-type ChangedStateH256 = HashMap<H256, (Maybe<AccountState>, HashMap<H256, H256>)>;
+type ChangedState = HashMap<H256, (Maybe<AccountState>, HashMap<H256, H256>)>;
 lazy_static! {
     static ref CODER: BincodeOpts = DefaultOptions::new().with_big_endian();
 }
@@ -383,6 +383,7 @@ impl Storage<OptimisticTransactionDBInner> {
         FixedSecureTrieMut::new(DatabaseTrieMut::trie_for(handle, root))
     }
 
+    // FIXME: flush_changes_hashed code duplication
     pub fn flush_changes(&self, state_root: H256, state_updates: crate::ChangedState) -> H256 {
         let r = self.rocksdb_trie_handle();
 
@@ -441,7 +442,8 @@ impl Storage<OptimisticTransactionDBInner> {
             .leak_root()
     }
 
-    pub fn flush_changes_hashed(&self, state_root: H256, state_updates: ChangedStateH256) -> H256 {
+    // FIXME: flush_changes code duplication
+    pub fn flush_changes_hashed(&self, state_root: H256, state_updates: ChangedState) -> H256 {
         let r = self.rocksdb_trie_handle();
 
         let db_trie = TrieCollection::new(r);
@@ -689,7 +691,7 @@ impl Storage<OptimisticTransactionDBInner> {
         Ok(backup_dir)
     }
 
-    pub fn set_initial_hashed(
+    pub fn set_initial(
         &mut self,
         accounts: impl IntoIterator<Item = (H256, evm::backend::MemoryAccount)>,
         state_root: H256,
@@ -697,7 +699,7 @@ impl Storage<OptimisticTransactionDBInner> {
         use std::collections::hash_map::Entry::*;
 
         fn set_account_state(
-            state_updates: &mut ChangedStateH256,
+            state_updates: &mut ChangedState,
             address: H256,
             account_state: AccountState,
         ) {
@@ -712,7 +714,7 @@ impl Storage<OptimisticTransactionDBInner> {
         }
 
         fn ext_storage(
-            state_updates: &mut ChangedStateH256,
+            state_updates: &mut ChangedState,
             address: H256,
             indexed_values: impl IntoIterator<Item = (H256, H256)>,
         ) {
@@ -723,7 +725,7 @@ impl Storage<OptimisticTransactionDBInner> {
             storage.extend(indexed_values);
         }
 
-        let mut state_updates: ChangedStateH256 = HashMap::new();
+        let mut state_updates: ChangedState = HashMap::new();
 
         for (
             address,
