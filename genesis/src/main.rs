@@ -647,11 +647,13 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     if let Some(evm_state_json) = &evm_state_json {
         info!("Calculating evm state lamports");
-        let dump_extractor =
-            OpenEthereumAccountExtractor::open_dump(&evm_state_json).expect(&format!(
-                "Unable to open dump at path: `{}`",
-                evm_state_json.display()
-            ));
+        let dump_extractor = OpenEthereumAccountExtractor::open_dump(evm_state_json)
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Unable to open dump at path: `{}`",
+                    evm_state_json.display()
+                )
+            });
 
         for pair in dump_extractor {
             evm_state_balance += pair.unwrap().account.balance;
