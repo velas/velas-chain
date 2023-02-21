@@ -417,8 +417,8 @@ pub mod evm_genesis {
     use std::fs;
     use std::path::PathBuf;
 
-    pub use geth::GethAccountReader;
-    pub use open_ethereum::OpenEthereumAccountExtractor;
+    pub use geth::GethAccountExtractor;
+    pub use open_ethereum::{generate_evm_state_json, OpenEthereumAccountExtractor};
 
     #[derive(Debug)]
     pub struct AccountPair {
@@ -444,7 +444,7 @@ pub mod evm_genesis {
         fn read_account(&mut self) -> Result<Option<AccountPair>, Error>;
     }
 
-    pub fn copy_dir(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), std::io::Error> {
+    pub fn copy_dir(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), Error> {
         let mut stack = vec![PathBuf::from(from.as_ref())];
 
         let output_root = PathBuf::from(to.as_ref());
@@ -740,12 +740,218 @@ pub mod evm_genesis {
             }
         }
 
+        pub fn generate_evm_state_json(file: &Path) -> Result<H256, Error> {
+            let json = b"{ \"state\": {\n}}";
+            let mut file = std::fs::File::create(file)?;
+            file.write_all(json)?;
+            Ok(evm_state::empty_trie_hash())
+        }
+
         mod tests {
-            // use super::*;
+            use solana_program::pubkey::Pubkey;
+
+            use crate::{
+                account::AccountSharedData,
+                genesis_config::{
+                    evm_genesis::{
+                        self, AccountPair, EvmAccountDumpExtractor, OpenEthereumAccountExtractor,
+                    },
+                    GenesisConfig,
+                },
+            };
+
+            use {
+                crate::signature::{Keypair, Signer},
+                std::path::PathBuf,
+            };
+
+            fn make_tmp_path(name: &str) -> PathBuf {
+                let out_dir = std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string());
+                let keypair = Keypair::new();
+
+                let path = [
+                    out_dir,
+                    "tmp".to_string(),
+                    format!("{}-{}", name, keypair.pubkey()),
+                ]
+                .iter()
+                .collect();
+
+                // whack any possible collision
+                let _ignored = std::fs::remove_dir_all(&path);
+                // whack any possible collision
+                let _ignored = std::fs::remove_file(&path);
+
+                path
+            }
 
             #[test]
-            fn parse_open_ethereum_dump() {
-                todo!("Need dump sample to write a test")
+            fn test_evm_genesis_config() {
+                let faucet_keypair = Keypair::new();
+                let mut config = GenesisConfig::default();
+                config.add_account(
+                    faucet_keypair.pubkey(),
+                    AccountSharedData::new(10_000, 0, &Pubkey::default()),
+                );
+                config.add_account(
+                    solana_sdk::pubkey::new_rand(),
+                    AccountSharedData::new(1, 0, &Pubkey::default()),
+                );
+                config.add_native_instruction_processor(
+                    "hi".to_string(),
+                    solana_sdk::pubkey::new_rand(),
+                );
+
+                assert_eq!(config.accounts.len(), 2);
+                assert!(config
+                    .accounts
+                    .iter()
+                    .any(|(pubkey, account)| *pubkey == faucet_keypair.pubkey()
+                        && account.lamports == 10_000));
+
+                let path = &make_tmp_path("genesis_config");
+                let evm_state_path = &make_tmp_path("evm_state_path");
+                std::fs::create_dir_all(&evm_state_path).unwrap();
+                let evm_state_path = evm_state_path.join("file.json");
+                let evm_state_root = evm_genesis::generate_evm_state_json(&evm_state_path).unwrap();
+                config.evm_root_hash = evm_state_root;
+                let dump_extractor =
+                    OpenEthereumAccountExtractor::open_dump(&evm_state_path).unwrap();
+                config
+                    .generate_evm_state(path, Some(dump_extractor))
+                    .expect("generate_evm_state");
+                config.write(path).expect("write");
+                let loaded_config = GenesisConfig::load(path).expect("load");
+                assert_eq!(config.hash(), loaded_config.hash());
+                let _ignored = std::fs::remove_file(&evm_state_path);
+                let _ignored = std::fs::remove_file(&path);
+            }
+
+            #[test]
+            fn test_genesis_config() {
+                let faucet_keypair = Keypair::new();
+                let mut config = GenesisConfig::default();
+                config.add_account(
+                    faucet_keypair.pubkey(),
+                    AccountSharedData::new(10_000, 0, &Pubkey::default()),
+                );
+                config.add_account(
+                    solana_sdk::pubkey::new_rand(),
+                    AccountSharedData::new(1, 0, &Pubkey::default()),
+                );
+                config.add_native_instruction_processor(
+                    "hi".to_string(),
+                    solana_sdk::pubkey::new_rand(),
+                );
+                config.evm_chain_id = 0x42;
+
+                assert_eq!(config.accounts.len(), 2);
+                assert!(config
+                    .accounts
+                    .iter()
+                    .any(|(pubkey, account)| *pubkey == faucet_keypair.pubkey()
+                        && account.lamports == 10_000));
+
+                let path = &make_tmp_path("genesis_config");
+                config.write(path).expect("write");
+                let loaded_config = GenesisConfig::load(path).expect("load");
+                assert_eq!(config.hash(), loaded_config.hash());
+                let _ignored = std::fs::remove_file(&path);
+            }
+
+            fn check_evm_genesis_file(data: &str) -> Result<Vec<AccountPair>, std::io::Error> {
+                let mut reader = OpenEthereumAccountExtractor::from_json_text(&data)?;
+
+                std::iter::from_fn(move || reader.read_account().transpose()).collect()
+            }
+
+            #[test]
+            fn test_invalid_evm_genesis() {
+                let no_header = r#"
+                    "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"}
+                }}"#;
+                assert!(dbg!(check_evm_genesis_file(no_header)).is_err());
+
+                let no_footer = r#"{ "state": {
+                    "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"}
+                "#;
+                assert!(dbg!(check_evm_genesis_file(no_footer)).is_err());
+
+                let no_colon = r#"{ "state": {
+                    "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c", {"balance": "2544faa778090e00000", "nonce": "0"}
+                }}"#;
+                assert!(dbg!(check_evm_genesis_file(no_colon)).is_err());
+
+                let not_valid_key = r#"{ "state": {
+                    "0xKKKKKKKKKKKKKKKKKKKKK": {"balance": "2544faa778090e00000", "nonce": "0"}
+                }}"#;
+                assert!(dbg!(check_evm_genesis_file(not_valid_key)).is_err());
+            }
+
+            #[test]
+            #[should_panic]
+            fn invalid_code_hash() {
+                let invalid_code_hash = r#"{ "state": {
+                    "0x984cf4e0001003d4ef5328d0fea9a3a430b78027": {"balance": "0", "nonce": "1", "code_hash": "0x11111111111111111111111110be7c0893f036ad196680a723a9665e3681e165", "code": "60102233" }
+                }}"#;
+                let _expect_panic = check_evm_genesis_file(invalid_code_hash);
+            }
+            #[test]
+            #[should_panic]
+            fn invalid_storage_hash() {
+                let invalid_storage_hash = r#"{ "state": {
+                    "0x984cf4e0001003d4ef5328d0fea9a3a430b78037": {"balance": "0", "nonce": "1", "storage_root": "0x11111111111111111111111110be7c0893f036ad196680a723a9665e3681e165", "storage": {
+                            "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
+                            "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
+                    }}
+                }}"#;
+                let _expect_panic = check_evm_genesis_file(invalid_storage_hash);
+            }
+
+            #[test]
+            fn test_valid_evm_genesis() {
+                let json_one_account = r#"{ "state": {
+                    "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"}
+                }}"#;
+                assert_eq!(check_evm_genesis_file(json_one_account).unwrap().len(), 1);
+
+                let json_two_accounts = r#"{ "state": {
+                    "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"},
+                    "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5e": {"balance": "2544faa778090e00000", "nonce": "0"}
+                }}"#;
+                assert_eq!(check_evm_genesis_file(json_two_accounts).unwrap().len(), 2);
+
+                let json_two_accounts_full = r#"{ "state": {
+                    "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"},
+                    "0x984cf4e0001003d4ef5328d0fea9a3a430b78027": {"balance": "0", "nonce": "1", "code_hash": "0x5304993ef62b8112c1e117e13d564987d722edb2588c485c7a074aac542ad710", "code": "60102233", "storage_root": "0xee496207d2c8ef7e41788519fc346ced8255be4850587f290b84d63bf405266a", "storage": {
+                            "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
+                            "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
+                    }}
+                }}"#;
+                assert_eq!(
+                    check_evm_genesis_file(json_two_accounts_full)
+                        .unwrap()
+                        .len(),
+                    2
+                );
+
+                let json_two_accounts_full = r#"{ "state": {
+                    "0x984cf4e0001003d4ef5328d0fea9a3a430b78027": {"balance": "0", "nonce": "1", "code_hash": "0x5304993ef62b8112c1e117e13d564987d722edb2588c485c7a074aac542ad710", "code": "60102233", "storage_root": "0xee496207d2c8ef7e41788519fc346ced8255be4850587f290b84d63bf405266a", "storage": {
+                            "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
+                            "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
+                    }},
+                    "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"},
+                    "0x984cf4e0001003d4ef5328d0fea9a3a430b78037": {"balance": "0", "nonce": "1", "storage_root": "0xee496207d2c8ef7e41788519fc346ced8255be4850587f290b84d63bf405266a", "storage": {
+                            "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
+                            "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
+                    }}
+                }}"#;
+                assert_eq!(
+                    check_evm_genesis_file(json_two_accounts_full)
+                        .unwrap()
+                        .len(),
+                    3
+                );
             }
         }
     }
@@ -753,11 +959,11 @@ pub mod evm_genesis {
     mod geth {
         use super::*;
 
-        pub struct GethAccountReader {
+        pub struct GethAccountExtractor {
             reader: BufReader<File>,
         }
 
-        impl GethAccountReader {
+        impl GethAccountExtractor {
             pub fn new(dump: &Path) -> Result<Self, Error> {
                 let mut reader = BufReader::new(File::open(dump)?);
                 // Skip first line `{"root": "..."}`
@@ -766,7 +972,7 @@ pub mod evm_genesis {
             }
         }
 
-        impl EvmAccountDumpExtractor for GethAccountReader {
+        impl EvmAccountDumpExtractor for GethAccountExtractor {
             type Key = H256;
 
             fn encode_key(&self, key: Self::Key) -> H256 {
@@ -822,7 +1028,7 @@ pub mod evm_genesis {
                 Ok(Some(pair))
             }
         }
-        impl Iterator for GethAccountReader {
+        impl Iterator for GethAccountExtractor {
             type Item = Result<AccountPair, Error>;
 
             fn next(&mut self) -> Option<Self::Item> {
@@ -838,204 +1044,5 @@ pub mod evm_genesis {
                 todo!("test not complete yet")
             }
         }
-    }
-
-    pub fn generate_evm_state_json(file: &Path) -> Result<H256, Error> {
-        let json = b"{ \"state\": {\n}}";
-        let mut file = std::fs::File::create(file)?;
-        file.write_all(json)?;
-        Ok(evm_state::empty_trie_hash())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use {
-        super::evm_genesis::*,
-        super::*,
-        crate::signature::{Keypair, Signer},
-        std::path::PathBuf,
-    };
-
-    fn make_tmp_path(name: &str) -> PathBuf {
-        let out_dir = std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string());
-        let keypair = Keypair::new();
-
-        let path = [
-            out_dir,
-            "tmp".to_string(),
-            format!("{}-{}", name, keypair.pubkey()),
-        ]
-        .iter()
-        .collect();
-
-        // whack any possible collision
-        let _ignored = std::fs::remove_dir_all(&path);
-        // whack any possible collision
-        let _ignored = std::fs::remove_file(&path);
-
-        path
-    }
-
-    #[test]
-    fn test_evm_genesis_config() {
-        let faucet_keypair = Keypair::new();
-        let mut config = GenesisConfig::default();
-        config.add_account(
-            faucet_keypair.pubkey(),
-            AccountSharedData::new(10_000, 0, &Pubkey::default()),
-        );
-        config.add_account(
-            solana_sdk::pubkey::new_rand(),
-            AccountSharedData::new(1, 0, &Pubkey::default()),
-        );
-        config.add_native_instruction_processor("hi".to_string(), solana_sdk::pubkey::new_rand());
-
-        assert_eq!(config.accounts.len(), 2);
-        assert!(config
-            .accounts
-            .iter()
-            .any(|(pubkey, account)| *pubkey == faucet_keypair.pubkey()
-                && account.lamports == 10_000));
-
-        let path = &make_tmp_path("genesis_config");
-        let evm_state_path = &make_tmp_path("evm_state_path");
-        std::fs::create_dir_all(&evm_state_path).unwrap();
-        let evm_state_path = evm_state_path.join("file.json");
-        let evm_state_root = evm_genesis::generate_evm_state_json(&evm_state_path).unwrap();
-        config.evm_root_hash = evm_state_root;
-        let dump_extractor = OpenEthereumAccountExtractor::open_dump(&evm_state_path).unwrap();
-        config
-            .generate_evm_state(path, Some(dump_extractor))
-            .expect("generate_evm_state");
-        config.write(path).expect("write");
-        let loaded_config = GenesisConfig::load(path).expect("load");
-        assert_eq!(config.hash(), loaded_config.hash());
-        let _ignored = std::fs::remove_file(&evm_state_path);
-        let _ignored = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn test_genesis_config() {
-        let faucet_keypair = Keypair::new();
-        let mut config = GenesisConfig::default();
-        config.add_account(
-            faucet_keypair.pubkey(),
-            AccountSharedData::new(10_000, 0, &Pubkey::default()),
-        );
-        config.add_account(
-            solana_sdk::pubkey::new_rand(),
-            AccountSharedData::new(1, 0, &Pubkey::default()),
-        );
-        config.add_native_instruction_processor("hi".to_string(), solana_sdk::pubkey::new_rand());
-        config.evm_chain_id = 0x42;
-
-        assert_eq!(config.accounts.len(), 2);
-        assert!(config
-            .accounts
-            .iter()
-            .any(|(pubkey, account)| *pubkey == faucet_keypair.pubkey()
-                && account.lamports == 10_000));
-
-        let path = &make_tmp_path("genesis_config");
-        config.write(path).expect("write");
-        let loaded_config = GenesisConfig::load(path).expect("load");
-        assert_eq!(config.hash(), loaded_config.hash());
-        let _ignored = std::fs::remove_file(&path);
-    }
-
-    fn check_evm_genesis_file(data: &str) -> Result<Vec<AccountPair>, std::io::Error> {
-        let mut reader = OpenEthereumAccountExtractor::from_json_text(&data)?;
-
-        std::iter::from_fn(move || reader.read_account().transpose()).collect()
-    }
-
-    #[test]
-    fn test_invalid_evm_genesis() {
-        let no_header = r#"
-            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"}
-        }}"#;
-        assert!(dbg!(check_evm_genesis_file(no_header)).is_err());
-
-        let no_footer = r#"{ "state": {
-            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"}
-        "#;
-        assert!(dbg!(check_evm_genesis_file(no_footer)).is_err());
-
-        let no_colon = r#"{ "state": {
-            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c", {"balance": "2544faa778090e00000", "nonce": "0"}
-        }}"#;
-        assert!(dbg!(check_evm_genesis_file(no_colon)).is_err());
-
-        let not_valid_key = r#"{ "state": {
-            "0xKKKKKKKKKKKKKKKKKKKKK": {"balance": "2544faa778090e00000", "nonce": "0"}
-        }}"#;
-        assert!(dbg!(check_evm_genesis_file(not_valid_key)).is_err());
-    }
-
-    #[test]
-    #[should_panic]
-    fn invalid_code_hash() {
-        let invalid_code_hash = r#"{ "state": {
-            "0x984cf4e0001003d4ef5328d0fea9a3a430b78027": {"balance": "0", "nonce": "1", "code_hash": "0x11111111111111111111111110be7c0893f036ad196680a723a9665e3681e165", "code": "60102233" }
-        }}"#;
-        let _expect_panic = check_evm_genesis_file(invalid_code_hash);
-    }
-    #[test]
-    #[should_panic]
-    fn invalid_storage_hash() {
-        let invalid_storage_hash = r#"{ "state": {
-            "0x984cf4e0001003d4ef5328d0fea9a3a430b78037": {"balance": "0", "nonce": "1", "storage_root": "0x11111111111111111111111110be7c0893f036ad196680a723a9665e3681e165", "storage": {
-                    "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
-                    "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
-            }}
-        }}"#;
-        let _expect_panic = check_evm_genesis_file(invalid_storage_hash);
-    }
-
-    #[test]
-    fn test_valid_evm_genesis() {
-        let json_one_account = r#"{ "state": {
-            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"}
-        }}"#;
-        assert_eq!(check_evm_genesis_file(json_one_account).unwrap().len(), 1);
-
-        let json_two_accounts = r#"{ "state": {
-            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"},
-            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5e": {"balance": "2544faa778090e00000", "nonce": "0"}
-        }}"#;
-        assert_eq!(check_evm_genesis_file(json_two_accounts).unwrap().len(), 2);
-
-        let json_two_accounts_full = r#"{ "state": {
-            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"},
-            "0x984cf4e0001003d4ef5328d0fea9a3a430b78027": {"balance": "0", "nonce": "1", "code_hash": "0x5304993ef62b8112c1e117e13d564987d722edb2588c485c7a074aac542ad710", "code": "60102233", "storage_root": "0xee496207d2c8ef7e41788519fc346ced8255be4850587f290b84d63bf405266a", "storage": {
-                    "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
-                    "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
-            }}
-        }}"#;
-        assert_eq!(
-            check_evm_genesis_file(json_two_accounts_full)
-                .unwrap()
-                .len(),
-            2
-        );
-
-        let json_two_accounts_full = r#"{ "state": {
-            "0x984cf4e0001003d4ef5328d0fea9a3a430b78027": {"balance": "0", "nonce": "1", "code_hash": "0x5304993ef62b8112c1e117e13d564987d722edb2588c485c7a074aac542ad710", "code": "60102233", "storage_root": "0xee496207d2c8ef7e41788519fc346ced8255be4850587f290b84d63bf405266a", "storage": {
-                    "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
-                    "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
-            }},
-            "0xffbb13a995ddf6ad35cf533e69f38d38887e8f5c": {"balance": "2544faa778090e00000", "nonce": "0"},
-            "0x984cf4e0001003d4ef5328d0fea9a3a430b78037": {"balance": "0", "nonce": "1", "storage_root": "0xee496207d2c8ef7e41788519fc346ced8255be4850587f290b84d63bf405266a", "storage": {
-                    "0x0000000000000000000000000000000000000000000000000000000000000000": "0x000000000000000000000000c47fa223c0b394a6bebb360603c9505dcebdcbe6",
-                    "0x0000000000000000000000000000000000000000000000000000000000000003": "0x0000000000000000000000003a1a9a4f4167b8c55f13b7189f210cc7b989d52b"
-            }}
-        }}"#;
-        assert_eq!(
-            check_evm_genesis_file(json_two_accounts_full)
-                .unwrap()
-                .len(),
-            3
-        );
     }
 }
