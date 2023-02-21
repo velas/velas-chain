@@ -32,7 +32,7 @@ use {
     solana_runtime::hardened_unpack::{unpack_genesis_archive, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
     solana_sdk::{
         clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
-        genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
+        genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, evm_genesis::OpenEthereumAccountExtractor},
         hash::Hash,
         pubkey::Pubkey,
         sanitize::Sanitize,
@@ -4054,7 +4054,11 @@ pub fn create_new_ledger(
 ) -> Result<Hash> {
     Blockstore::destroy(ledger_path)?;
 
-    genesis_config.generate_evm_state(ledger_path, evm_state_json)?;
+    let dump_extractor = evm_state_json
+        .map(OpenEthereumAccountExtractor::open_dump)
+        .transpose()?;
+
+    genesis_config.generate_evm_state(ledger_path, dump_extractor)?;
     genesis_config.write(ledger_path)?;
 
     // Fill slot 0 with ticks that link back to the genesis_config to bootstrap the ledger.
