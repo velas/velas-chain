@@ -226,10 +226,14 @@ impl GenesisConfig {
         self.generate_evm_state(ledger_path, None::<evm_genesis::NoDumpExtractor>)
     }
 
-    pub fn generate_evm_state_from_dump(&self, ledger_path: &Path, dump_extractor: impl EvmAccountDumpExtractor) -> Result<(), std::io::Error> {
+    pub fn generate_evm_state_from_dump(
+        &self,
+        ledger_path: &Path,
+        dump_extractor: impl EvmAccountDumpExtractor,
+    ) -> Result<(), std::io::Error> {
         self.generate_evm_state(ledger_path, Some(dump_extractor))
     }
-    
+
     fn generate_evm_state(
         &self,
         ledger_path: &Path,
@@ -990,12 +994,12 @@ pub mod evm_genesis {
     mod geth {
         use super::*;
 
-        pub struct GethAccountExtractor {
-            reader: BufReader<File>,
+        pub struct GethAccountExtractor<R: std::io::Read> {
+            reader: BufReader<R>,
         }
 
-        impl GethAccountExtractor {
-            pub fn new(dump: &Path) -> Result<Self, Error> {
+        impl GethAccountExtractor<File> {
+            pub fn open_dump(dump: &Path) -> Result<Self, Error> {
                 let mut reader = BufReader::new(File::open(dump)?);
                 // Skip first line `{"root": "..."}`
                 reader.read_line(&mut String::new())?;
@@ -1003,7 +1007,16 @@ pub mod evm_genesis {
             }
         }
 
-        impl EvmAccountDumpExtractor for GethAccountExtractor {
+        impl<'a> GethAccountExtractor<&'a [u8]> {
+            pub fn from_text(dump: &'a impl AsRef<str>) -> Result<Self, Error> {
+                let mut reader = BufReader::new(dump.as_ref().as_bytes());
+                // Skip first line `{"root": "..."}`
+                reader.read_line(&mut String::new())?;
+                Ok(Self { reader })
+            }
+        }
+
+        impl<R: std::io::Read> EvmAccountDumpExtractor for GethAccountExtractor<R> {
             type Key = H256;
 
             fn encode_key(&self, key: Self::Key) -> H256 {
@@ -1059,7 +1072,8 @@ pub mod evm_genesis {
                 Ok(Some(pair))
             }
         }
-        impl Iterator for GethAccountExtractor {
+
+        impl<R: std::io::Read> Iterator for GethAccountExtractor<R> {
             type Item = Result<AccountPair, Error>;
 
             fn next(&mut self) -> Option<Self::Item> {
@@ -1069,11 +1083,14 @@ pub mod evm_genesis {
 
         #[cfg(test)]
         mod tests {
-            // use super::*;
+            use super::*;
 
             #[test]
             fn parse_geth_dump() {
-                todo!("test not complete yet")
+                let test_geth_dump = include_str!("../tests/geth-dump.txt");
+                let account_extractor = GethAccountExtractor::from_text(&test_geth_dump).unwrap();
+                let accounts = account_extractor.collect::<Result<Vec<_>, _>>().unwrap();
+                assert_eq!(accounts.len(), 203)
             }
         }
     }
