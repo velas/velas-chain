@@ -3,7 +3,7 @@ pub mod exit_code;
 pub mod extensions;
 pub mod ledger;
 pub mod routines;
-pub mod timestamp;
+pub mod blocks_json;
 
 use clap::Parser;
 use cli::{Cli, Commands};
@@ -90,6 +90,7 @@ async fn main() -> anyhow::Result<()> {
             force_resume,
             timestamps,
             output_dir,
+            hrs_offset,
         } => {
             routines::restore_chain(
                 ledger::with_params(cli.creds, cli.instance).await?,
@@ -100,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
                 force_resume,
                 timestamps,
                 output_dir,
+                hrs_offset,
             )
             .await
         }

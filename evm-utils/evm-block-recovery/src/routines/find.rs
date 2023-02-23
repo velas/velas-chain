@@ -8,25 +8,28 @@ use super::find_uncommitted_ranges;
 pub async fn find_evm(
     creds: Option<String>,
     instance: String,
-    start_block: BlockNum,
+    first_block: BlockNum,
     end_block: BlockNum,
     max_limit: usize,
 ) -> Result<(), i32> {
     log::info!("Looking for missing EVM Blocks");
-    log::info!("start_block={start_block}, end_block={end_block}, bigtable_limit={max_limit}");
+    log::info!("start_block={first_block}, end_block={end_block}, bigtable_limit={max_limit}");
 
     let ledger = ledger::with_params(creds, instance).await.map_err(|_e| {
         log::error!("Unable to initialize `LedgerStorage` with provided credentials");
         err_to_output(exit_code::UNABLE_TO_CREATE_LEDGER)
     })?;
 
-    let mut start_block = start_block;
+    let mut start_block = first_block;
     let mut blocks = vec![];
 
     loop {
-        let total_limit = (end_block - start_block + 1) as usize;
-        let limit = usize::max(total_limit, max_limit);
+        let remaining_blocks = (end_block - start_block) as usize;
+
+        let limit = usize::min(remaining_blocks, max_limit);
         let end_block_to_query = start_block + limit as u64;
+
+        log::trace!("Requesting range #{start_block}..#{end_block_to_query}...");
         let mut chunk = ledger
             .get_evm_confirmed_full_blocks_nums(start_block, limit)
             .await
@@ -59,18 +62,19 @@ pub async fn find_evm(
 
         // If we reach the end
         // 1. we go outside of requested range
-        // 2. we didn't got all blocks that we requested
-        if last_in_chunk >= end_block || end_block_to_query >= last_in_chunk {
+        // 2. we receive less than requested
+        if dbg!(last_in_chunk) >= dbg!(end_block) || dbg!(chunk.len()) < dbg!(limit) {
+            log::trace!("Reaching the end of chunk...");
             break;
         }
     }
 
-    let missing_blocks = find_uncommitted_ranges(blocks, start_block, end_block);
+    let missing_blocks = find_uncommitted_ranges(blocks, first_block, end_block);
 
     if missing_blocks.is_empty() {
         log::info!(
             "Missing EVM Blocks in range: start_block={}, end_block={} are not found",
-            start_block,
+            first_block,
             end_block
         );
         print_task_ok()
@@ -121,9 +125,7 @@ pub async fn find_native(
             *block
         } else {
             // we reach the end just after last successfull query
-            log::debug!(
-                "Bigtable didn't return anything for range #{start_slot}..#{end_slot}"
-            );
+            log::debug!("Bigtable didn't return anything for range #{start_slot}..#{end_slot}");
             break;
         };
 
