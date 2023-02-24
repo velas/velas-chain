@@ -1,43 +1,60 @@
 use std::{path::PathBuf, str::FromStr, time::SystemTime};
 
-use anyhow::*;
 use evm_rpc::{Hex, RPCTransaction};
 use evm_state::{Block, BlockHeader, TransactionInReceipt, H256};
 use serde_json::json;
 use solana_client::{rpc_client::RpcClient, rpc_request::RpcRequest};
 use solana_evm_loader_program::instructions::v0;
 use solana_sdk::pubkey::Pubkey;
-use solana_storage_bigtable::LedgerStorage;
 
-use crate::extensions::NativeBlockExt;
+use crate::{
+    cli::RestoreChainArgs,
+    error::{AppError, RoutineResult},
+    extensions::NativeBlockExt,
+    ledger,
+};
 
 use super::write_blocks_collection;
 
+pub const SECONDS_PER_HOUR: i64 = 60 * 60;
+
 pub async fn restore_chain(
-    ledger: LedgerStorage,
-    first_block: u64,
-    last_block: u64,
-    archive_url: String,
-    modify_ledger: bool,
-    force_resume: bool,
-    timestamps: String,
-    output_dir: Option<String>,
-    hrs_offset: Option<i64>,
-) -> Result<()> {
+    creds: Option<String>,
+    instance: String,
+    args: RestoreChainArgs,
+) -> RoutineResult {
+    let RestoreChainArgs {
+        first_block,
+        last_block,
+        archive_url,
+        modify_ledger,
+        force_resume,
+        timestamps,
+        output_dir,
+        hrs_offset,
+    } = args;
+
+    let ledger = ledger::with_params(creds, instance)
+        .await
+        .map_err(AppError::OpenLedger)?;
+
     let rpc_client = RpcClient::new(archive_url);
 
     let tail = ledger
         .get_evm_confirmed_block_header(last_block + 1)
         .await
-        .context(format!("Unable to get EVM block header {}", last_block + 1))?;
+        .map_err(|source| AppError::GetEvmBlockHeader {
+            source,
+            number: last_block + 1,
+        })?;
 
     let mut header_template = ledger
         .get_evm_confirmed_block_header(first_block - 1)
         .await
-        .context(format!(
-            "Unable to get EVM block header {}",
-            first_block - 1
-        ))?;
+        .map_err(|source| AppError::GetEvmBlockHeader {
+            source,
+            number: first_block - 1,
+        })?;
 
     log::debug!(
         "Recovering evm blocks in range [{}..={}]",
@@ -56,20 +73,25 @@ pub async fn restore_chain(
     let mut slot_ids = ledger
         .get_confirmed_blocks(start_slot, limit)
         .await
-        .context(format!(
-            "Unable to get native blocks ids, start_slot={}, limit={}",
-            start_slot, limit
-        ))?;
+        .map_err(|source| AppError::GetNativeBlocks {
+            source,
+            start_block: start_slot,
+            limit,
+        })?;
     slot_ids.retain(|slot| *slot > start_slot && *slot < end_slot);
 
     log::debug!("Found slots {:?}", slot_ids);
     let mut native_blocks = vec![];
 
     for slot in slot_ids.iter() {
-        let native_block = ledger
-            .get_confirmed_block(*slot)
-            .await
-            .context(format!("Unable to get Native Block {}", slot))?;
+        let native_block =
+            ledger
+                .get_confirmed_block(*slot)
+                .await
+                .map_err(|source| AppError::GetNativeBlock {
+                    source,
+                    block: *slot,
+                })?;
         log::trace!("Found native block {:?}", native_block);
         native_blocks.push(native_block);
     }
@@ -88,9 +110,9 @@ pub async fn restore_chain(
 
     let blocks_json = crate::blocks_json::load_blocks(
         timestamps,
-        hrs_offset.unwrap_or_default() * crate::blocks_json::HR_TIMESTAMP,
-    )
-    .unwrap();
+        hrs_offset.unwrap_or_default() * SECONDS_PER_HOUR,
+    )?;
+
     let num_primitive_blocks = native_dict
         .iter()
         .filter(|(_id, nb)| nb.parse_instructions().instr_evm_transaction() > 0)
@@ -101,19 +123,21 @@ pub async fn restore_chain(
         .count();
 
     if native_blocks_amount != evm_blocks_to_recover_amount {
-        bail!(
+        log::error!(
             "The number of Native and EVM does not match. Native: {}, evm: {}",
             native_blocks_amount,
             evm_blocks_to_recover_amount,
-        )
+        );
+        return Err(AppError::BlocksAmountMismatch);
     }
     if num_primitive_blocks + num_blocks_with_prepared_txs < evm_blocks_to_recover_amount {
-        bail!(
+        log::error!(
             "The number of Native parsed blocks and EVM does not match. Native: {}, evm: {}, blocks with prepared txs: {}",
             num_primitive_blocks,
             evm_blocks_to_recover_amount,
             num_blocks_with_prepared_txs
-        )
+        );
+        return Err(AppError::BlocksAmountMismatch);
     }
     let mut restored_blocks = vec![];
     let mut not_find_block_info = false;
@@ -122,14 +146,13 @@ pub async fn restore_chain(
         let parsed_instructions = nb.parse_instructions();
         if (!parsed_instructions.only_trivial_instructions
             || parsed_instructions.has_velas_account_instruction)
-            && !blocks_json
+            && blocks_json
                 .get(&(header_template.block_number + 1))
-                .is_some()
+                .is_none()
         {
-            return Err(anyhow!(
-                "Native block {} contains non-trivial instructions",
-                nb.block_height.unwrap()
-            ));
+            return Err(AppError::NonTrivialInstructionsInBlock {
+                block_height: nb.block_height,
+            });
         }
         header_template.parent_hash = header_template.hash();
         header_template.native_chain_slot = id;
@@ -165,7 +188,7 @@ pub async fn restore_chain(
                     "Cannot find timestamp for block, native does not contain timestamp info",
                 ) + offset) as u64
             } else {
-                bail!("Cannot find block timestamp, native timestamp usage is forbidden")
+                return Err(AppError::NoTimestampForBlock);
             }
         };
 
@@ -200,8 +223,7 @@ pub async fn restore_chain(
         let state_root = header_template.state_root;
         let (restored_block, warns) =
             request_restored_block(&rpc_client, txs, last_hashes, header_template, state_root)
-                .await
-                .unwrap();
+                .await?;
 
         header_template = restored_block.header.clone();
 
@@ -221,7 +243,7 @@ pub async fn restore_chain(
                     header_template.native_chain_slot
                 );
                 log::error!("Failed transactions {:?}", &warns);
-                return Err(anyhow!("Block restore failed: try `--force-resume` mode"));
+                return Err(AppError::TxSimulatedWithErrors);
             }
             (warns, true) => {
                 log::warn!(
@@ -278,7 +300,7 @@ async fn request_restored_block(
     last_hashes: Vec<H256>,
     block_header: BlockHeader,
     state_root: H256,
-) -> Result<(Block, Vec<Hex<H256>>)> {
+) -> Result<(Block, Vec<Hex<H256>>), AppError> {
     let params = json!([
         txs,
         last_hashes,
@@ -289,9 +311,7 @@ async fn request_restored_block(
         2_000_000_000
     ]);
 
-    let result: (Block, Vec<Hex<H256>>) = rpc_client
+    rpc_client
         .send(RpcRequest::DebugRecoverBlockHeader, params)
-        .unwrap();
-
-    Ok(result)
+        .map_err(AppError::RpcRequest)
 }

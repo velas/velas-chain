@@ -1,26 +1,43 @@
 use std::collections::HashSet;
 
-use anyhow::*;
-use solana_storage_bigtable::LedgerStorage;
+use crate::{
+    cli::CompareNativeArgs,
+    error::{AppError, RoutineResult},
+    ledger,
+};
 
-pub async fn compare_native(
-    start_slot: u64,
-    limit: usize,
-    credible_ledger: LedgerStorage,
-    dubious_ledger: LedgerStorage,
-) -> Result<()> {
+pub async fn compare_native(args: CompareNativeArgs) -> RoutineResult {
+    let CompareNativeArgs {
+        start_slot,
+        limit,
+        credible_ledger_creds,
+        credible_ledger_instance,
+        dubious_ledger_creds,
+        dubious_ledger_instance,
+    } = args;
+
+    let credible_ledger =
+        ledger::with_params(Some(credible_ledger_creds), credible_ledger_instance)
+            .await
+            .map_err(AppError::OpenLedger)?;
+
+    let dubious_ledger = ledger::with_params(Some(dubious_ledger_creds), dubious_ledger_instance)
+        .await
+        .map_err(AppError::OpenLedger)?;
+
     log::info!("Getting credible blocks set: start_slot={start_slot}, limit={limit}");
 
     let credible_blocks = credible_ledger
         .get_confirmed_blocks(start_slot, limit)
         .await
-        .context(format!(
-            "Unable to get Native Confirmed Block IDs starting with slot {} limit by {}",
-            start_slot, limit
-        ))?;
+        .map_err(|source| AppError::GetNativeBlocks {
+            source,
+            start_block: start_slot,
+            limit,
+        })?;
 
     if credible_blocks.len() < 2 {
-        bail!("Not enough blocks to calculate difference")
+        return Err(AppError::NotEnoughBlocksToCompare);
     }
 
     log::info!(
@@ -33,13 +50,14 @@ pub async fn compare_native(
     let dubious_blocks = dubious_ledger
         .get_confirmed_blocks(start_slot, limit)
         .await
-        .context(format!(
-            "Unable to get Native Confirmed Block IDs starting with slot {} limit by {}",
-            start_slot, limit
-        ))?;
+        .map_err(|source| AppError::GetNativeBlocks {
+            source,
+            start_block: start_slot,
+            limit,
+        })?;
 
     if credible_blocks.len() < 2 {
-        bail!("Not enough blocks to calculate difference")
+        return Err(AppError::NotEnoughBlocksToCompare);
     }
 
     log::info!(

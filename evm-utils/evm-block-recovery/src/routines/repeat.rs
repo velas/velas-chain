@@ -1,12 +1,16 @@
-use anyhow::{bail, Context, Result};
 use evm_state::Block;
 use solana_sdk::hash::Hash;
-use solana_storage_bigtable::LedgerStorage;
 use solana_transaction_status::{
     ConfirmedBlock, ConfirmedBlockWithOptionalMetadata, TransactionWithMetadata,
     TransactionWithOptionalMetadata,
 };
 use tokio::sync::mpsc;
+
+use crate::{
+    cli::{RepeatEvmArgs, RepeatNativeArgs},
+    error::{AppError, RoutineResult},
+    ledger,
+};
 
 #[derive(Debug, Default)]
 struct History {
@@ -30,18 +34,30 @@ impl History {
 }
 
 #[derive(Debug)]
-struct BlockMessage<B> {
+pub struct BlockMessage<B> {
     idx: usize,
     block: B,
     block_number: u64,
 }
 
-pub async fn repeat_evm(
-    block_number: u64,
-    limit: u64,
-    src: LedgerStorage,
-    dst: LedgerStorage,
-) -> Result<()> {
+pub async fn repeat_evm(args: RepeatEvmArgs) -> RoutineResult {
+    let RepeatEvmArgs {
+        block_number,
+        limit,
+        src_creds,
+        src_instance,
+        dst_creds,
+        dst_instance,
+    } = args;
+
+    let src = ledger::with_params(Some(src_creds), src_instance)
+        .await
+        .map_err(AppError::OpenLedger)?;
+
+    let dst = ledger::with_params(Some(dst_creds), dst_instance)
+        .await
+        .map_err(AppError::OpenLedger)?;
+
     if limit == 1 {
         log::info!("Repeat EVM Block {}", block_number)
     } else {
@@ -64,10 +80,7 @@ pub async fn repeat_evm(
             let uploaded = dst
                 .upload_evm_block(message.block_number, message.block)
                 .await
-                .context(format!(
-                    "Unable to upload block {} to the Destination Ledger",
-                    message.block_number
-                ));
+                .map_err(AppError::UploadEvmBlock);
 
             match uploaded {
                 Ok(()) => {
@@ -95,7 +108,9 @@ pub async fn repeat_evm(
             success.len(),
             error.len()
         );
-        log::warn!("Erroneous block numbers: {:?}", error);
+        if !error.is_empty() {
+            log::warn!("Erroneous block numbers: {:?}", error);
+        }
     });
 
     for (idx, block_number) in (block_number..block_number + limit).enumerate() {
@@ -110,33 +125,44 @@ pub async fn repeat_evm(
         let block = src
             .get_evm_confirmed_full_block(block_number)
             .await
-            .context(format!(
-                "Unable to read Evm Block {} from the Source Ledger",
-                block_number
-            ))?;
+            .map_err(AppError::GetEvmBlock)?;
 
-        sender.send(BlockMessage {
-            idx,
-            block,
-            block_number,
-        })?;
+        sender
+            .send(BlockMessage {
+                idx,
+                block,
+                block_number,
+            })
+            .map_err(AppError::SendAsyncEVM)?;
     }
 
     drop(sender);
 
     log::info!("Reading complete, awaiting tasks to finish...");
 
-    writer.await.context("Writer job terminated with error")
+    writer.await.map_err(AppError::TokioTaskJoin)
 }
 
-pub async fn repeat_native(
-    start_slot: u64,
-    end_slot: u64,
-    src: LedgerStorage,
-    dst: LedgerStorage,
-) -> Result<()> {
+pub async fn repeat_native(args: RepeatNativeArgs) -> RoutineResult {
+    let RepeatNativeArgs {
+        start_slot,
+        end_slot,
+        src_creds,
+        src_instance,
+        dst_creds,
+        dst_instance,
+    } = args;
+
+    let src = ledger::with_params(Some(src_creds), src_instance)
+        .await
+        .map_err(AppError::OpenLedger)?;
+
+    let dst = ledger::with_params(Some(dst_creds), dst_instance)
+        .await
+        .map_err(AppError::OpenLedger)?;
+
     if end_slot < start_slot {
-        bail!("`end_slot` should be greater or equal than `start_slot`")
+        return Err(AppError::EndSlotLessThanStartSlot);
     }
 
     let limit = end_slot as usize - start_slot as usize + 1;
@@ -152,10 +178,11 @@ pub async fn repeat_native(
     let mut blocks_to_repeat: Vec<u64> = src
         .get_confirmed_blocks(start_slot, limit)
         .await
-        .context(format!(
-            "Unable to read Native Block {} from the Source Ledger",
-            start_slot
-        ))?
+        .map_err(|source| AppError::GetNativeBlocks {
+            source,
+            start_block: start_slot,
+            limit,
+        })?
         .into_iter()
         .filter(|slot| *slot <= end_slot)
         .collect();
@@ -261,11 +288,13 @@ pub async fn repeat_native(
 
         match block {
             Ok(block) => {
-                sender.send(BlockMessage {
-                    idx,
-                    block,
-                    block_number,
-                })?;
+                sender
+                    .send(BlockMessage {
+                        idx,
+                        block,
+                        block_number,
+                    })
+                    .map_err(AppError::SendAsyncNative)?;
             }
             Err(err) => {
                 log::warn!(
@@ -282,7 +311,7 @@ pub async fn repeat_native(
 
     log::info!("Reading complete, awaiting tasks to finish...");
 
-    let history = writer.await.context("Writer job terminated with error")?;
+    let history = writer.await.map_err(AppError::TokioTaskJoin)?;
 
     log::info!("Successful writes total: {}", history.oks.len());
 
