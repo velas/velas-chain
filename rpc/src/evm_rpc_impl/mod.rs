@@ -977,7 +977,7 @@ impl TraceERPC for TraceErpcImpl {
                     evm_state.clone(),
                     evm_state::ChainContext::new(last_hashes),
                     evm_config,
-                    evm_state::executor::FeatureSet::new(unsigned_tx_fix, clear_logs_on_error),
+                    evm_state::executor::FeatureSet::new(unsigned_tx_fix, clear_logs_on_error, true),
                 );
                 debug!("running on executor = {:?}", executor);
                 let meta_keys = meta_keys
