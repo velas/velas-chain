@@ -5,8 +5,6 @@ pub mod extensions;
 pub mod ledger;
 pub mod routines;
 
-use std::process::ExitCode;
-
 use clap::Parser;
 use cli::{Cli, Command::*};
 use error::AppError;
@@ -18,7 +16,7 @@ lazy_static::lazy_static! {
 }
 
 #[tokio::main]
-async fn main() -> ExitCode {
+async fn main() {
     let _dotenv = dotenvy::dotenv();
 
     if std::env::var("RUST_LOG").is_err() {
