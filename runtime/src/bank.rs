@@ -6888,6 +6888,10 @@ impl Bank {
             self.reset_all_sysvar_balances();
         }
 
+        if new_feature_activations.contains(&feature_set::velas::lock_gas_station::id()) {
+            self.lock_gas_station_account(&solana_sdk::evm_gas_station::EVM_GAS_STATION_SOURCE_KEY);
+        }
+
         if !debug_do_not_add_builtins {
             let apply_transitions_for_new_features = !init_finish_or_warp;
             self.apply_builtin_program_feature_transitions(
@@ -7019,6 +7023,18 @@ impl Bank {
                 self.feature_set.is_active(feature_id)
             }) {
                 self.add_precompile(&precompile.program_id);
+            }
+        }
+    }
+
+    fn lock_gas_station_account(&mut self, source_address: &Pubkey) {
+        if let Some(source_acc) = self.get_account_with_fixed_root(source_address) {
+            if source_acc.executable()
+                && self
+                    .get_account_with_fixed_root(&solana_sdk::evm_gas_station::id())
+                    .is_none()
+            {
+                self.store_account(&solana_sdk::evm_gas_station::id(), &source_acc);
             }
         }
     }
@@ -7273,6 +7289,7 @@ pub(crate) mod tests {
             clock::{DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
             compute_budget::ComputeBudgetInstruction,
             epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
+            evm_gas_station,
             feature::Feature,
             feature_set::reject_empty_instruction_without_program,
             genesis_config::create_genesis_config,
@@ -8696,6 +8713,64 @@ pub(crate) mod tests {
         assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
         assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (13500, 1));
         assert_eq!(bank.rent_collection_partitions(), vec![(0, 1, 432_000)]);
+    }
+
+    #[test]
+    fn test_lock_gas_station_feature_activation() {
+        let leader_pubkey = solana_sdk::pubkey::new_rand();
+        let leader_lamports = 3;
+        let mut genesis_config =
+            create_genesis_config_with_leader(5, &leader_pubkey, leader_lamports).genesis_config;
+        genesis_config
+            .accounts
+            .remove(&feature_set::velas::lock_gas_station::id());
+        let gas_station_source = Account::create(
+            9999,
+            vec![0u8, 1, 2, 3],
+            bpf_loader::id(),
+            true,
+            Epoch::default(),
+        );
+        genesis_config.accounts.insert(
+            evm_gas_station::EVM_GAS_STATION_SOURCE_KEY,
+            gas_station_source.clone(),
+        );
+
+        const SLOTS_PER_EPOCH: u64 = MINIMUM_SLOTS_PER_EPOCH as u64;
+        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        assert_eq!(DEFAULT_SLOTS_PER_EPOCH, 432_000);
+        assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
+        assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (0, 0));
+        assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 432_000)]);
+        assert!(bank
+            .feature_set
+            .inactive
+            .contains(&feature_set::velas::lock_gas_station::id()));
+
+        bank = Bank::new_from_parent(&Arc::new(bank), &Pubkey::default(), 31);
+        assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
+        assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (0, 31));
+
+        println!("Activating feature lock_gas_station");
+
+        let feature = Feature::default();
+        assert_eq!(feature.activated_at, None);
+        bank.store_account(
+            &feature_set::velas::lock_gas_station::id(),
+            &feature::create_account(&feature, 42),
+        );
+
+        bank = new_from_parent(&Arc::new(bank));
+
+        let locked_acc = bank.get_account(&evm_gas_station::id()).unwrap();
+        assert_eq!(locked_acc.data().to_vec(), gas_station_source.data);
+        assert!(locked_acc.executable());
+        assert!(bank
+            .feature_set
+            .active
+            .contains_key(&feature_set::velas::lock_gas_station::id()));
     }
 
     #[test]
