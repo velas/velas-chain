@@ -66,9 +66,9 @@ pub struct FindEvmArgs {
     /// Alternative to `end_block` if it's not set
     pub limit: Option<u64>,
 
-    /// Bigtable limit TODO: implement bitgable limit for evm part
+    /// Maximum amount of blocks in chunk per one fetch
     #[clap(long, value_name = "NUM", default_value = DEFAULT_BIGTABLE_LIMIT)]
-    pub bigtable_limit: usize, // TODO: max_chunk_size
+    pub bigtable_limit: usize,
 }
 
 #[derive(clap::Args)]
@@ -85,9 +85,9 @@ pub struct FindNativeArgs {
     /// Alternative to `end_block` if it's not set
     pub limit: Option<u64>,
 
-    /// Bigtable limit
+    /// Maximum amount of blocks in chunk per one fetch
     #[clap(long, value_name = "NUM", default_value = DEFAULT_BIGTABLE_LIMIT)]
-    pub bigtable_limit: usize, // TODO: max_chunk_size
+    pub bigtable_limit: usize,
 }
 
 #[derive(clap::Args)]
@@ -112,7 +112,7 @@ pub struct RestoreChainArgs {
     #[clap(long)]
     pub force_resume: bool,
 
-    /// TODO: explain JSON schema and reason why this param is required during blocks restore
+    /// Path to JSON file containing missing parts of EVM Blocks needed for restoration
     #[clap(long, value_name = "FILE_PATH", default_value = "./timestamps/blocks.json", value_hint = clap::ValueHint::FilePath)]
     pub timestamps: String,
 
@@ -230,7 +230,7 @@ pub struct RepeatNativeArgs {
 
 #[derive(clap::Args)]
 pub struct CompletionArgs {
-    /// Whick shell completions to generate
+    /// Which shell completions to generate
     #[arg(value_enum)]
     #[clap(long, value_name = "STRING")]
     pub shell: clap_complete::Shell,
