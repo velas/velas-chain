@@ -1035,12 +1035,12 @@ impl FromStr for EvmContractToPayerKeys {
     fn from_str(s: &str) -> StdResult<Self, Self::Err> {
         let (contract, keys) =
             s.split_once(':')
-                .ok_or(ParseEvmContractToPayerKeysError::InvalidFormat(
+                .ok_or_else(|| ParseEvmContractToPayerKeysError::InvalidFormat(
                     s.to_string(),
                 ))?;
         let (owner, storage_acc) =
             keys.split_once(':')
-                .ok_or(ParseEvmContractToPayerKeysError::InvalidFormat(
+                .ok_or_else(|| ParseEvmContractToPayerKeysError::InvalidFormat(
                     s.to_string(),
                 ))?;
         let contract = Address::from_str(contract).map_err(|_| {
