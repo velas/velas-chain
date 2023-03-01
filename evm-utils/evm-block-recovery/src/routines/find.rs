@@ -22,11 +22,7 @@ pub async fn find_evm(creds: Option<String>, instance: String, args: FindEvmArgs
         bigtable_limit,
     } = args;
 
-    if end_block.is_none() && limit.is_none() {
-        return Err(AppError::NoLastBlockBoundary);
-    }
-
-    let end_block = calculate_end_block(start_block, end_block, limit);
+    let end_block = calculate_end_block(start_block, end_block, limit)?;
 
     log::info!("Looking for missing EVM Blocks");
     log::info!("start_block={start_block}, end_block={end_block}, bigtable_limit={bigtable_limit}");
@@ -110,12 +106,7 @@ pub async fn find_native(
 
     let mut start_slot = start_block;
 
-    if end_block.is_none() && limit.is_none() {
-        log::error!("Not enough arguments to calculate `end_slot`");
-        return Err(AppError::NoLastBlockBoundary);
-    }
-
-    let end_slot = calculate_end_block(start_block, end_block, limit);
+    let end_slot = calculate_end_block(start_block, end_block, limit)?;
 
     log::info!("Looking for missing Native Blocks");
     log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={bigtable_limit}");
@@ -217,13 +208,22 @@ pub async fn find_native(
     }
 }
 
-fn calculate_end_block(start_block: u64, end_block: Option<u64>, limit: Option<u64>) -> u64 {
+fn calculate_end_block(
+    start_block: u64,
+    end_block: Option<u64>,
+    limit: Option<u64>,
+) -> Result<u64, AppError> {
+    if end_block.is_none() && limit.is_none() {
+        log::error!("Not enough arguments to calculate `end_block`");
+        return Err(AppError::NoLastBlockBoundary);
+    }
+
     if let Some(end_block) = end_block {
-        return end_block;
+        return Ok(end_block);
     }
 
     if let Some(limit) = limit {
-        return start_block + limit - 1;
+        return Ok(start_block + limit - 1);
     }
 
     unreachable!()
