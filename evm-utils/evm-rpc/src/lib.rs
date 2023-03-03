@@ -641,6 +641,7 @@ pub mod trace {
             state_root: H256,
             unsigned_tx_fix: bool,
             clear_logs_on_error: bool,
+            accept_zero_gas_price_with_native_fee: bool,
             burn_gas_price: u64,
         ) -> BoxFuture<Result<(Block, Vec<Hex<H256>>), Error>>;
     }
