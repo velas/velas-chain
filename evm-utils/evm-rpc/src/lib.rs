@@ -630,6 +630,7 @@ pub mod trace {
             meta_info: Option<TraceMeta>,
         ) -> BoxFuture<Result<Vec<TraceResultsWithTransactionHash>, Error>>;
 
+        #[allow(clippy::too_many_arguments)]
         #[allow(clippy::type_complexity)]
         #[rpc(meta, name = "debug_recoverBlockHeader")]
         fn recover_block_header(
