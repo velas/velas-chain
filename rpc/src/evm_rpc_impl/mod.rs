@@ -763,6 +763,7 @@ impl TraceERPC for TraceErpcImpl {
         state_root: H256,
         unsigned_tx_fix: bool,
         clear_logs_on_error: bool,
+        accept_zero_gas_price_with_native_fee: bool,
         burn_gas_price: u64,
     ) -> BoxFuture<Result<(Block, Vec<Hex<H256>>), Error>> {
         fn simulate_transaction(
@@ -977,7 +978,7 @@ impl TraceERPC for TraceErpcImpl {
                     evm_state.clone(),
                     evm_state::ChainContext::new(last_hashes),
                     evm_config,
-                    evm_state::executor::FeatureSet::new(unsigned_tx_fix, clear_logs_on_error, true),
+                    evm_state::executor::FeatureSet::new(unsigned_tx_fix, clear_logs_on_error, accept_zero_gas_price_with_native_fee),
                 );
                 debug!("running on executor = {:?}", executor);
                 let meta_keys = meta_keys
