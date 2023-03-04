@@ -50,13 +50,9 @@ pub async fn repeat_evm(args: RepeatEvmArgs) -> RoutineResult {
         dst_instance,
     } = args;
 
-    let src = ledger::with_params(Some(src_creds), src_instance)
-        .await
-        .map_err(AppError::OpenLedger)?;
+    let src = ledger::with_params(Some(src_creds), src_instance).await?;
 
-    let dst = ledger::with_params(Some(dst_creds), dst_instance)
-        .await
-        .map_err(AppError::OpenLedger)?;
+    let dst = ledger::with_params(Some(dst_creds), dst_instance).await?;
 
     if limit == 1 {
         log::info!("Repeat EVM Block {}", block_number)
@@ -153,13 +149,9 @@ pub async fn repeat_native(args: RepeatNativeArgs) -> RoutineResult {
         dst_instance,
     } = args;
 
-    let src = ledger::with_params(Some(src_creds), src_instance)
-        .await
-        .map_err(AppError::OpenLedger)?;
+    let src = ledger::with_params(Some(src_creds), src_instance).await?;
 
-    let dst = ledger::with_params(Some(dst_creds), dst_instance)
-        .await
-        .map_err(AppError::OpenLedger)?;
+    let dst = ledger::with_params(Some(dst_creds), dst_instance).await?;
 
     if end_slot < start_slot {
         return Err(AppError::EndSlotLessThanStartSlot);

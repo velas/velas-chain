@@ -11,9 +11,7 @@ pub async fn check_native(
     args: CheckNativeArgs,
 ) -> RoutineResult {
     let CheckNativeArgs { slot } = args;
-    let ledger = ledger::with_params(creds, instance)
-        .await
-        .map_err(AppError::OpenLedger)?;
+    let ledger = ledger::with_params(creds, instance).await?;
 
     let native_block =
         ledger

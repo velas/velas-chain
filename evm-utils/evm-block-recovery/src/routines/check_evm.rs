@@ -1,6 +1,6 @@
 use crate::{
     cli::CheckEvmArgs,
-    error::{AppError, RoutineResult},
+    error::RoutineResult,
     ledger,
 };
 
@@ -11,9 +11,7 @@ pub async fn check_evm(
 ) -> RoutineResult {
     let CheckEvmArgs { block_number } = args;
 
-    let ledger = ledger::with_params(creds, instance)
-        .await
-        .map_err(AppError::OpenLedger)?;
+    let ledger = ledger::with_params(creds, instance).await?;
 
     let evm_block = ledger.get_evm_confirmed_full_block(block_number).await;
 

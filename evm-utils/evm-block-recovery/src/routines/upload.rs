@@ -10,9 +10,7 @@ use super::write_blocks_collection;
 
 pub async fn upload(creds: Option<String>, instance: String, args: UploadArgs) -> RoutineResult {
     let UploadArgs { collection } = args;
-    let ledger = ledger::with_params(creds, instance)
-        .await
-        .map_err(AppError::OpenLedger)?;
+    let ledger = ledger::with_params(creds, instance).await?;
 
     log::info!("Reading file: '{}'...", &collection);
     let content = std::fs::read_to_string(&collection).map_err(AppError::ReadFile)?;

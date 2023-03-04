@@ -34,9 +34,7 @@ pub async fn restore_chain(
         hrs_offset,
     } = args;
 
-    let ledger = ledger::with_params(creds, instance)
-        .await
-        .map_err(AppError::OpenLedger)?;
+    let ledger = ledger::with_params(creds, instance).await?;
 
     let rpc_client = RpcClient::new(archive_url);
 

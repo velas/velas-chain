@@ -27,9 +27,7 @@ pub async fn find_evm(creds: Option<String>, instance: String, args: FindEvmArgs
     log::info!("Looking for missing EVM Blocks");
     log::info!("start_block={start_block}, end_block={end_block}, bigtable_limit={bigtable_limit}");
 
-    let ledger = ledger::with_params(creds, instance)
-        .await
-        .map_err(AppError::OpenLedger)?;
+    let ledger = ledger::with_params(creds, instance).await?;
 
     let mut start_block = start_block;
     let mut blocks = vec![];
@@ -111,9 +109,7 @@ pub async fn find_native(
     log::info!("Looking for missing Native Blocks");
     log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={bigtable_limit}");
 
-    let ledger = ledger::with_params(creds, instance)
-        .await
-        .map_err(AppError::OpenLedger)?;
+    let ledger = ledger::with_params(creds, instance).await?;
 
     let mut slots = vec![];
 

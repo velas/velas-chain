@@ -44,8 +44,13 @@ pub enum AppError {
     /////////////////////////////////////////////////////////////////////////////////////
     // Errors of LedgerStorage
     /////////////////////////////////////////////////////////////////////////////////////
-    #[error("Unable to initialize `LedgerStorage` with provided credentials")]
-    OpenLedger(#[source] solana_storage_bigtable::Error),
+    #[error("Unable to initialize `LedgerStorage` with creds={creds_path:?}, instance={instance}")]
+    OpenLedger {
+        #[source]
+        source: solana_storage_bigtable::Error,
+        creds_path: Option<String>,
+        instance: String,
+    },
 
     #[error("Unable to get EVM Block")]
     GetEvmBlock(#[source] solana_storage_bigtable::Error),
@@ -123,7 +128,7 @@ impl AppError {
             AppError::BlocksAmountMismatch => 1007,
             AppError::NoLastBlockBoundary => 1008,
             AppError::EndSlotLessThanStartSlot => 1009,
-            AppError::OpenLedger(_) => 1010,
+            AppError::OpenLedger { .. } => 1010,
             AppError::GetEvmBlock(_) => 1011,
             AppError::GetEvmBlockHeader { .. } => 1012,
             AppError::GetEvmBlockNums { .. } => 1013,

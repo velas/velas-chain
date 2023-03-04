@@ -17,13 +17,10 @@ pub async fn compare_native(args: CompareNativeArgs) -> RoutineResult {
     } = args;
 
     let credible_ledger =
-        ledger::with_params(Some(credible_ledger_creds), credible_ledger_instance)
-            .await
-            .map_err(AppError::OpenLedger)?;
+        ledger::with_params(Some(credible_ledger_creds), credible_ledger_instance).await?;
 
-    let dubious_ledger = ledger::with_params(Some(dubious_ledger_creds), dubious_ledger_instance)
-        .await
-        .map_err(AppError::OpenLedger)?;
+    let dubious_ledger =
+        ledger::with_params(Some(dubious_ledger_creds), dubious_ledger_instance).await?;
 
     log::info!("Getting credible blocks set: start_slot={start_slot}, limit={limit}");
 
