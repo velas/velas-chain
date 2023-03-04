@@ -301,13 +301,18 @@ async fn request_restored_block(
     block_header: BlockHeader,
     state_root: H256,
 ) -> Result<(Block, Vec<Hex<H256>>), AppError> {
+    let unsigned_tx_fix = true;
+    let clear_logs_on_error = true;
+    let accept_zero_gas_price_with_native_fee = true;
+
     let params = json!([
         txs,
         last_hashes,
         block_header,
         state_root,
-        true,
-        true,
+        unsigned_tx_fix,
+        clear_logs_on_error,
+        accept_zero_gas_price_with_native_fee,
         2_000_000_000
     ]);
 
