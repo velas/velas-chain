@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{any::Any, panic, time::Instant};
 
 use log::info;
 
@@ -140,7 +140,7 @@ where
         } else {
             Err(Status::internal("DB access error"))
         };
-        let bytes = value?.ok_or_else(|| Status::not_found(format!("not found {}", key)))?;
+        let bytes = value?.ok_or_else(|| Status::not_found(format!("not found {:?}", key)))?;
         Ok(bytes)
     }
     fn state_diff_body(
@@ -148,12 +148,31 @@ where
         from: H256,
         to: H256,
     ) -> Result<Response<app_grpc::GetStateDiffReply>, Status> {
-        let changeset = match self.storage {
-            UsedStorage::WritableWithGC(ref storage) => {
-                Self::get_state_diff_gc_storage(from, to, storage)?
-            }
-            UsedStorage::ReadOnlyNoGC(ref storage) => {
-                Self::get_state_diff_secondary_storage(from, to, storage)?
+        let storage = &self.storage;
+        let catched: Result<Result<Vec<DiffChange>, Status>, Box<dyn Any + Send>> =
+            panic::catch_unwind(|| {
+                let changeset = match storage {
+                    UsedStorage::WritableWithGC(ref storage) => {
+                        Self::get_state_diff_gc_storage(from, to, storage)?
+                    }
+                    UsedStorage::ReadOnlyNoGC(ref storage) => {
+                        Self::get_state_diff_secondary_storage(from, to, storage)?
+                    }
+                };
+                Ok(changeset)
+            });
+        let changeset = match catched {
+            Ok(result) => result?,
+            Err(panic_msg) => {
+                let description = if let Some(description) = panic_msg.downcast_ref::<String>() {
+                    format!("{:?}", description)
+                } else {
+                   format!("{:?}", panic_msg) 
+                };
+                return Err(Status::not_found(format!(
+                    "some problem below either {:?} or {:?}: {}",
+                    from, to, description
+                )));
             }
         };
 
@@ -208,7 +227,6 @@ impl<S: LittleBig + Sync + Send + 'static> Backend for Server<S> {
         &self,
         request: Request<app_grpc::GetRawBytesRequest>,
     ) -> Result<Response<app_grpc::GetRawBytesReply>, Status> {
-
         let request = request.into_inner();
         info!("Got a request: {:?}", request.hashes.len());
         if request.hashes.len() > MAX_CHUNK {
@@ -276,4 +294,3 @@ impl<S: LittleBig + Sync + Send + 'static> BackendServer<Server<S>> {
         Ok(())
     }
 }
-
