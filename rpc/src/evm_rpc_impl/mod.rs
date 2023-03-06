@@ -1,12 +1,14 @@
 use std::str::FromStr;
 
 use sha3::{Digest, Keccak256};
-use solana_sdk::account::{ReadableAccount, AccountSharedData};
+use solana_evm_loader_program::processor::BURN_ADDR;
+use solana_sdk::account::{AccountSharedData, ReadableAccount};
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::keyed_account::KeyedAccount;
 use solana_sdk::pubkey::Pubkey;
 
 use crate::rpc::JsonRpcRequestProcessor;
+use crate::rpc_health::RpcHealthStatus;
 use evm_rpc::error::EvmStateError;
 use evm_rpc::{
     chain::ChainERPC,
@@ -17,16 +19,15 @@ use evm_rpc::{
     RPCTopicFilter, RPCTransaction,
 };
 use evm_state::{
-    AccountProvider, AccountState, Address, Gas, LogFilter, Transaction, TransactionAction,
-    H160, H256, U256, Block, Committed, TransactionInReceipt, UnsignedTransactionWithCaller,
-    TransactionSignature, TransactionReceipt, ExecutionResult, BlockHeader,
+    AccountProvider, AccountState, Address, Block, BlockHeader, Committed, ExecutionResult, Gas,
+    LogFilter, Transaction, TransactionAction, TransactionInReceipt, TransactionReceipt,
+    TransactionSignature, UnsignedTransactionWithCaller, H160, H256, U256,
 };
 use jsonrpc_core::BoxFuture;
 use snafu::ensure;
 use snafu::ResultExt;
 use solana_runtime::bank::Bank;
 use std::{cell::RefCell, future::ready, sync::Arc};
-use crate::rpc_health::RpcHealthStatus;
 
 const GAS_PRICE: u64 = 3;
 
@@ -284,7 +285,7 @@ impl ChainERPC for ChainErpcImpl {
     ) -> BoxFuture<Result<Hex<H256>, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
-            let mut bytes = [0u8;32];
+            let mut bytes = [0u8; 32];
             data.0.to_big_endian(&mut bytes);
             let storage = state
                 .get_storage_at(&meta, address.0, H256::from_slice(&bytes))?
@@ -321,7 +322,7 @@ impl ChainERPC for ChainErpcImpl {
                 Some(num) => meta.get_evm_block_by_id(num).await,
                 None => None,
             }
-                .ok_or(Error::BlockNotFound { block })?;
+            .ok_or(Error::BlockNotFound { block })?;
             Ok(Hex(evm_block.transactions.len()))
         })
     }
@@ -337,7 +338,9 @@ impl ChainERPC for ChainErpcImpl {
                 Some(num) => meta.get_evm_block_by_id(num).await,
                 None => None,
             }
-                .ok_or(Error::BlockNotFound { block: BlockId::BlockHash { block_hash } })?;
+            .ok_or(Error::BlockNotFound {
+                block: BlockId::BlockHash { block_hash },
+            })?;
             Ok(Hex(evm_block.transactions.len()))
         })
     }
@@ -418,7 +421,9 @@ impl ChainERPC for ChainErpcImpl {
                 Some(num) => meta.get_evm_block_by_id(num).await,
                 None => None,
             }
-                .ok_or(Error::BlockNotFound { block: BlockId::BlockHash { block_hash } })?;
+            .ok_or(Error::BlockNotFound {
+                block: BlockId::BlockHash { block_hash },
+            })?;
             match evm_block.transactions.get(tx_id.0) {
                 Some((hash, receipt)) => Ok(Some(RPCTransaction::new_from_receipt(
                     receipt.clone(),
@@ -445,7 +450,7 @@ impl ChainERPC for ChainErpcImpl {
                 Some(num) => meta.get_evm_block_by_id(num).await,
                 None => None,
             }
-                .ok_or(Error::BlockNotFound { block })?;
+            .ok_or(Error::BlockNotFound { block })?;
             match evm_block.transactions.get(tx_id.0) {
                 Some((hash, receipt)) => Ok(Some(RPCTransaction::new_from_receipt(
                     receipt.clone(),
@@ -510,7 +515,6 @@ impl ChainERPC for ChainErpcImpl {
             Ok(Bytes(result.exit_data))
         })
     }
-
 
     #[instrument(skip(self, meta))]
     fn estimate_gas(
@@ -643,7 +647,7 @@ impl TraceERPC for TraceErpcImpl {
                     .await?
                     .into_iter()
                     .next()
-                    .expect("One item should be returned")
+                    .expect("One item should be returned"),
             )
         })
     }
@@ -687,7 +691,7 @@ impl TraceERPC for TraceErpcImpl {
                                     let tx = RPCTransaction::new_from_receipt(
                                         receipt, hash, block_hash, chain_id,
                                     )
-                                        .ok()?;
+                                    .ok()?;
                                     let mut meta_info = meta_info.clone();
                                     meta_info.transaction_hash = tx.hash.map(|v| v.0);
                                     meta_info.transaction_index = tx.transaction_index.map(|v| v.0);
@@ -696,13 +700,13 @@ impl TraceERPC for TraceErpcImpl {
                                     Some((tx, traces.clone(), Some(meta_info)))
                                 })
                                 .collect()
-                        },
+                        }
                         None => return Ok(None),
                     };
 
                     let traces = trace_call_many(meta, tx_traces, Some(base_block), false).await?;
                     Ok(traces.get(tx_index - 1).cloned())
-                },
+                }
                 Ok(None) => Ok(None),
                 Err(e) => Err(e),
             }
@@ -745,7 +749,8 @@ impl TraceERPC for TraceErpcImpl {
                 transactions,
                 Some(block.number.as_u64().saturating_sub(1).into()),
                 false,
-            ).await
+            )
+            .await
         })
     }
 
@@ -756,6 +761,10 @@ impl TraceERPC for TraceErpcImpl {
         last_hashes: Vec<H256>,
         block_header: BlockHeader,
         state_root: H256,
+        unsigned_tx_fix: bool,
+        clear_logs_on_error: bool,
+        accept_zero_gas_price_with_native_fee: bool,
+        burn_gas_price: u64,
     ) -> BoxFuture<Result<(Block, Vec<Hex<H256>>), Error>> {
         fn simulate_transaction(
             executor: &mut evm_state::Executor,
@@ -763,19 +772,24 @@ impl TraceERPC for TraceErpcImpl {
             meta_keys: Vec<solana_sdk::pubkey::Pubkey>,
         ) -> Result<ExecutionResult, Error> {
             use solana_evm_loader_program::precompiles::*;
-            let caller = tx.from.map(|a| a.0).unwrap_or_default();
+            macro_rules! unwrap_or_default {
+                ($tx:ident . $name: ident) => {
+                    $tx.$name.map(|a| a.0).unwrap_or_else(|| {
+                        log::warn!("Unable to find {} in tx, using default", stringify!($name));
+                        Default::default()
+                    })
+                };
+            }
+            let caller = unwrap_or_default!(tx.from);
 
-            let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
-            let input = tx.input.map(|a| a.0).unwrap_or_else(Vec::new);
-            let gas_limit = tx.gas.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
-            let gas_price = tx.gas_price.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
+            let value = unwrap_or_default!(tx.value);
+            let input = unwrap_or_default!(tx.input);
+            let gas_limit = unwrap_or_default!(tx.gas);
+            let gas_price = unwrap_or_default!(tx.gas_price);
 
-            let nonce = tx
-                .nonce
-                .map(|a| a.0)
-                .unwrap_or_else(|| executor.nonce(caller));
+            let nonce = unwrap_or_default!(tx.nonce);
             let tx_chain_id = executor.chain_id();
-            let tx_hash = tx.hash.map(|a| a.0).unwrap_or_else(H256::random);
+            let tx_hash = unwrap_or_default!(tx.hash);
 
             let evm_state_balance = u64::MAX - 1;
 
@@ -824,24 +838,27 @@ impl TraceERPC for TraceErpcImpl {
             };
 
             // system transfers always set s = 0x1
-            let mut is_native_swap = false;
+            let mut is_native_tx = false;
             if Some(Hex(U256::from(0x1))) == tx.s {
                 // check if it native swap, then predeposit, amount, to pass transaction
                 if caller == *ETH_TO_VLX_ADDR {
-                    is_native_swap = true;
                     let amount = value + gas_limit * gas_price;
                     executor.deposit(caller, amount)
                 }
+                is_native_tx = true;
             }
 
             let user_accounts: Vec<_> = user_accounts
                 .iter()
                 .map(|(user_account, pk)| KeyedAccount::new(pk, false, user_account))
                 .collect();
-            let evm_account = RefCell::new(solana_evm_loader_program::create_state_account(evm_state_balance));
-            let evm_keyed_account = KeyedAccount::new(&solana_sdk::evm_state::ID, false, &evm_account);
+            let evm_account = RefCell::new(solana_evm_loader_program::create_state_account(
+                evm_state_balance,
+            ));
+            let evm_keyed_account =
+                KeyedAccount::new(&solana_sdk::evm_state::ID, false, &evm_account);
 
-            let mut result = executor
+            let result = executor
                 .transaction_execute_raw(
                     caller,
                     nonce,
@@ -884,16 +901,34 @@ impl TraceERPC for TraceErpcImpl {
                 input,
             };
 
+            let full_fee = gas_price * result.used_gas;
+
+            let burn_fee = executor.config().burn_gas_price * result.used_gas;
+
+            if full_fee < burn_fee {
+                log::error!(
+                    "Transaction execution error: fee less than need to burn (burn_gas_price = {})",
+                    executor.config().burn_gas_price
+                );
+            }
+            // 2. Then we should burn some part of it.
+            // This if only register burn to the deposit address, withdrawal is done in 1.
+            if burn_fee > U256::zero() {
+                trace!("Burning fee {}", burn_fee);
+                // we already withdraw gas_price during transaction_execute,
+                // if burn_fixed_fee is activated, we should deposit to burn addr (0x00..00)
+                executor.deposit(BURN_ADDR, burn_fee);
+            };
+
             let tx_hashes = executor.evm_backend.get_executed_transactions();
             assert!(!tx_hashes.contains(&tx_hash));
 
-            let transaction = if is_native_swap {
-                result.used_gas = 0;
+            let transaction = if is_native_tx {
                 TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller {
                     unsigned_tx: transaction.into(),
-                    caller: *ETH_TO_VLX_ADDR,
                     chain_id: tx_chain_id,
                     signed_compatible: true,
+                    caller,
                 })
             } else {
                 TransactionInReceipt::Signed(transaction)
@@ -915,7 +950,7 @@ impl TraceERPC for TraceErpcImpl {
 
         Box::pin(async move {
             let mut evm_state = meta
-                .evm_state_archive(Some(block_header.block_number))
+                .evm_state_archive(Some(block_header.timestamp))
                 .ok_or(Error::ArchiveNotSupported)?
                 .new_incomming_for_root(state_root)
                 .ok_or(Error::StateNotFoundForBlock {
@@ -928,46 +963,59 @@ impl TraceERPC for TraceErpcImpl {
             let evm_config = evm_state::EvmConfig {
                 chain_id: meta.bank(None).evm_chain_id,
                 estimate: false,
+                burn_gas_price: burn_gas_price.into(),
                 ..Default::default()
             };
 
             let last_hashes = last_hashes
                 .try_into()
                 .map_err(|_| Error::InvalidParams {})?;
-            let mut executor = evm_state::Executor::with_config(
-                evm_state,
-                evm_state::ChainContext::new(last_hashes),
-                evm_config,
-                evm_state::executor::FeatureSet::default()
-            );
 
             let mut warn = vec![];
-            debug!("running evm executor = {:?}", executor);
+            debug!("running with evm_state = {:?}", evm_state);
             for (tx, meta_keys) in txs {
+                let mut executor = evm_state::Executor::with_config(
+                    evm_state.clone(),
+                    evm_state::ChainContext::new(last_hashes),
+                    evm_config,
+                    evm_state::executor::FeatureSet::new(unsigned_tx_fix, clear_logs_on_error, accept_zero_gas_price_with_native_fee),
+                );
+                debug!("running on executor = {:?}", executor);
                 let meta_keys = meta_keys
                     .iter()
                     .map(|s| solana_sdk::pubkey::Pubkey::from_str(s))
                     .collect::<Result<Vec<Pubkey>, _>>()
                     .map_err(|_| Error::InvalidParams {})?;
                 match simulate_transaction(&mut executor, tx.clone(), meta_keys) {
-                    Ok(_result) => (),
+                    Ok(_result) => {
+                        evm_state = executor.deconstruct();
+                    }
                     Err(err) => {
                         log::warn!("Tx {:?} simulation failed: {:?}", &tx.hash, &tx);
                         log::warn!("RPC Error: {:?}", &err);
                         warn.push(tx.hash.unwrap_or_default());
-                    },
+                        evm_state.apply_failed_update(&executor.deconstruct(), clear_logs_on_error)
+                    }
                 };
             }
 
-            let Committed { block: header, committed_transactions: transactions } = executor
-                .evm_backend
+            let Committed {
+                block: header,
+                committed_transactions: transactions,
+            } = evm_state
                 .commit_block(
                     block_header.native_chain_slot,
                     block_header.native_chain_hash,
                 )
                 .state;
 
-            Ok((Block { header, transactions }, warn))
+            Ok((
+                Block {
+                    header,
+                    transactions,
+                },
+                warn,
+            ))
         })
     }
 }
@@ -1052,12 +1100,10 @@ fn call_many(
         evm_state::ChainContext::new(last_hashes),
         estimate_config,
         evm_state::executor::FeatureSet::new(
-            bank.feature_set.is_active(
-                &solana_sdk::feature_set::velas::unsigned_tx_fix::id(),
-            ),
-            bank.feature_set.is_active(
-                &solana_sdk::feature_set::velas::clear_logs_on_error::id(),
-            ),
+            bank.feature_set
+                .is_active(&solana_sdk::feature_set::velas::unsigned_tx_fix::id()),
+            bank.feature_set
+                .is_active(&solana_sdk::feature_set::velas::clear_logs_on_error::id()),
             bank.feature_set.is_active(
                 &solana_sdk::feature_set::velas::accept_zero_gas_price_with_native_fee::id(),
             ),
@@ -1159,11 +1205,7 @@ fn call_inner(
     let evm_account = RefCell::new(solana_evm_loader_program::create_state_account(
         evm_state_balance,
     ));
-    let evm_keyed_account = KeyedAccount::new(
-        &solana_sdk::evm_state::ID,
-        false,
-        &evm_account,
-    );
+    let evm_keyed_account = KeyedAccount::new(&solana_sdk::evm_state::ID, false, &evm_account);
 
     let evm_state::executor::ExecutionResult {
         exit_reason,
@@ -1257,10 +1299,13 @@ async fn transaction_by_hash(
     let chain_id = bank.evm_chain_id;
     Ok(match meta.get_evm_receipt_by_hash(tx_hash.0).await {
         Some(receipt) => {
-            let (block, _) = meta.get_evm_block_by_id(receipt.block_number)
+            let (block, _) = meta
+                .get_evm_block_by_id(receipt.block_number)
                 .await
                 .ok_or({
-                    Error::BlockNotFound { block: receipt.block_number.into() }
+                    Error::BlockNotFound {
+                        block: receipt.block_number.into(),
+                    }
                 })?;
             let block_hash = block.header.hash();
             Some(RPCTransaction::new_from_receipt(

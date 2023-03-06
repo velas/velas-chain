@@ -91,6 +91,11 @@ pub enum Commands {
         /// Writes restored EVM Blocks as JSON file to directory if set
         #[clap(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
         output_dir: Option<String>,
+
+        /// Offset in hours to change timestamp string like "2022-08-16T02:02:04.000Z"
+        /// This is usefull when timestamp storage use Z as reference to local timestamp instead of unicode.
+        #[clap(long, value_name = "OFFSET_HOURS")]
+        hrs_offset: Option<i64>,
     },
 
     /// Checks content of Native Block
