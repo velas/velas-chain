@@ -59,7 +59,7 @@ pub struct Advance {
 }
 
 impl Advance {
-    pub fn next_biderectional(&mut self) -> Option<BlockNum> {
+    pub fn next_bidirectional(&mut self) -> Option<BlockNum> {
         if !self.backwards {
             self.added_range.next()
         } else {

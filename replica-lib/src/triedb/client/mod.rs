@@ -97,8 +97,12 @@ where
         let mut start = advance.start;
         log::warn!("attempting to advance {:?}", advance);
 
-        while let Some(next) = advance.next_biderectional() {
+        while let Some(next) = advance.next_bidirectional() {
             log::warn!("next height {}", next);
+            if self.range.get().contains(&next) {
+                log::warn!("skipping height {} as already present", next);
+                continue;
+            }
             let heights = (start, next);
             let hashes = self.fetch_state_roots(heights).await?;
             let diff_response = Self::download_and_apply_diff(
