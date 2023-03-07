@@ -188,7 +188,7 @@ async fn block_parse_confirmed_num(
 
 pub struct GeneralErpcImpl;
 impl GeneralERPC for GeneralErpcImpl {
-    type Metadata = JsonRpcRequestProcessor;
+    type Metadata = Arc<JsonRpcRequestProcessor>;
 
     fn client_version(&self, _meta: Self::Metadata) -> Result<String, Error> {
         Ok(String::from("velas-chain/v0.5.0"))
@@ -248,7 +248,7 @@ impl GeneralERPC for GeneralErpcImpl {
 
 pub struct ChainErpcImpl;
 impl ChainERPC for ChainErpcImpl {
-    type Metadata = JsonRpcRequestProcessor;
+    type Metadata = Arc<JsonRpcRequestProcessor>;
 
     #[instrument(skip(self, meta))]
     fn block_number(&self, meta: Self::Metadata) -> BoxFuture<Result<Hex<usize>, Error>> {
@@ -630,7 +630,7 @@ impl ChainERPC for ChainErpcImpl {
 
 pub struct TraceErpcImpl;
 impl TraceERPC for TraceErpcImpl {
-    type Metadata = JsonRpcRequestProcessor;
+    type Metadata = Arc<JsonRpcRequestProcessor>;
 
     #[instrument(skip(self, meta))]
     fn trace_call(
@@ -756,7 +756,7 @@ impl TraceERPC for TraceErpcImpl {
 
     fn recover_block_header(
         &self,
-        meta: JsonRpcRequestProcessor,
+        meta: Arc<JsonRpcRequestProcessor>,
         txs: Vec<(RPCTransaction, Vec<String>)>,
         last_hashes: Vec<H256>,
         block_header: BlockHeader,
@@ -1029,7 +1029,7 @@ struct TxOutput {
 
 #[instrument(skip(meta))]
 fn call(
-    meta: JsonRpcRequestProcessor,
+    meta: Arc<JsonRpcRequestProcessor>,
     tx: RPCTransaction,
     saved_state: StateRootWithBank,
     meta_keys: Vec<solana_sdk::pubkey::Pubkey>,
@@ -1058,7 +1058,7 @@ fn call(
 
 #[instrument(skip(meta))]
 fn call_many(
-    meta: JsonRpcRequestProcessor,
+    meta: Arc<JsonRpcRequestProcessor>,
     txs: &[(RPCTransaction, Vec<solana_sdk::pubkey::Pubkey>)],
     saved_state: StateRootWithBank,
     estimate: bool,
@@ -1243,7 +1243,7 @@ fn call_inner(
 
 #[instrument(skip(meta))]
 async fn block_by_number(
-    meta: JsonRpcRequestProcessor,
+    meta: Arc<JsonRpcRequestProcessor>,
     block: BlockId,
     full: bool,
 ) -> Result<Option<RPCBlock>, Error> {
@@ -1292,7 +1292,7 @@ async fn block_by_number(
 
 #[instrument(skip(meta))]
 async fn transaction_by_hash(
-    meta: JsonRpcRequestProcessor,
+    meta: Arc<JsonRpcRequestProcessor>,
     tx_hash: Hex<H256>,
 ) -> Result<Option<RPCTransaction>, Error> {
     let bank = meta.bank(None);
@@ -1318,7 +1318,7 @@ async fn transaction_by_hash(
 
 #[instrument(skip(meta))]
 async fn trace_call_many(
-    meta: JsonRpcRequestProcessor,
+    meta: Arc<JsonRpcRequestProcessor>,
     tx_traces: Vec<(RPCTransaction, Vec<String>, Option<TraceMeta>)>,
     block: Option<BlockId>,
     estimate: bool,

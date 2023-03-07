@@ -4094,6 +4094,7 @@ pub fn create_new_ledger(
     ];
 
     let output = std::process::Command::new("tar")
+        .env("COPYFILE_DISABLE", "1")
         .args(&args)
         .output()
         .unwrap();

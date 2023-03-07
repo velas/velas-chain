@@ -7261,6 +7261,7 @@ dependencies = [
  "log 0.4.17",
  "opentelemetry",
  "opentelemetry-jaeger",
+ "rand 0.7.3",
  "rayon",
  "regex",
  "serde",
