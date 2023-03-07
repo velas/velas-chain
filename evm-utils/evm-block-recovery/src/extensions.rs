@@ -108,8 +108,7 @@ impl NativeBlockExt for ConfirmedBlockWithOptionalMetadata {
                         .message
                         .account_keys
                         .iter()
-                        .find(|k| **k == STATIC_PROGRAM_ID)
-                        .is_some()
+                        .any(|k| *k == STATIC_PROGRAM_ID)
                 {
                     has_velas_account_instruction = true;
                 }

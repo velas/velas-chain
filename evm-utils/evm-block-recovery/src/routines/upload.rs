@@ -1,24 +1,23 @@
-use std::path::Path;
-
-use anyhow::*;
 use evm_state::Block;
-use solana_storage_bigtable::LedgerStorage;
+
+use crate::{
+    cli::UploadArgs,
+    error::{AppError, RoutineResult},
+    ledger,
+};
 
 use super::write_blocks_collection;
 
-pub async fn upload(ledger: LedgerStorage, collection: impl AsRef<Path>) -> Result<()> {
-    log::info!("Reading file: '{}'...", collection.as_ref().display());
-    let content = std::fs::read_to_string(collection.as_ref()).context(format!(
-        "unable to read file '{}'",
-        collection.as_ref().display()
-    ))?;
-    log::info!("{} length string read.", content.len());
+pub async fn upload(creds: Option<String>, instance: String, args: UploadArgs) -> RoutineResult {
+    let UploadArgs { collection } = args;
+    let ledger = ledger::with_params(creds, instance).await?;
 
+    log::info!("Reading file: '{}'...", &collection);
+    let content = std::fs::read_to_string(&collection).map_err(AppError::ReadFile)?;
+
+    log::info!("{} length string read.", content.len());
     log::info!("Deserializing data...");
-    let blocks: Vec<Block> = serde_json::from_str(&content).context(format!(
-        "unable to deserialize string into vector:\n{}",
-        &content
-    ))?;
+    let blocks: Vec<Block> = serde_json::from_str(&content).map_err(AppError::JsonDeserialize)?;
 
     if blocks.is_empty() {
         log::warn!("Blocks collection is empty, nothing to upload, exiting...");
@@ -31,9 +30,8 @@ pub async fn upload(ledger: LedgerStorage, collection: impl AsRef<Path>) -> Resu
         .iter()
         .map(|b| b.header.block_number)
         .collect::<Vec<_>>();
-    log::info!("Block numbers: {:?}", &block_ids);
 
-    // TODO: ask user confirmation before actually write blocks
+    log::info!("Block numbers: {:?}", &block_ids);
 
     write_blocks_collection(&ledger, blocks).await?;
 
