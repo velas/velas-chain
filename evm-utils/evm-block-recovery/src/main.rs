@@ -17,15 +17,30 @@ lazy_static::lazy_static! {
 
 #[tokio::main]
 async fn main() {
-    let _dotenv = dotenvy::dotenv();
+    let cli = Cli::parse();
 
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "evm_block_recovery");
+    let dotenv = dotenvy::dotenv();
+
+    match std::env::var("RUST_LOG") {
+        Ok(value) => {
+            env_logger::init();
+            log::info!(r#"RUST_LOG is set to "{value}""#);
+        }
+        Err(_err) => {
+            std::env::set_var("RUST_LOG", "evm_block_recovery");
+            env_logger::init();
+            log::warn!(r#"Environment variable "RUST_LOG" not found."#);
+        }
     }
 
-    env_logger::init();
-
-    let cli = Cli::parse();
+    match dotenv {
+        Ok(path) => {
+            log::info!(r#""{}" successfully loaded"#, path.display())
+        }
+        Err(e) => {
+            log::warn!(r#"".env" file not found: {e:?}""#)
+        }
+    }
 
     let execution_result = match cli.subcommand {
         FindEvm(args) => report(find_evm(cli.creds, cli.instance, args).await),
@@ -48,7 +63,7 @@ async fn main() {
     std::process::exit(exit_code);
 }
 
-fn report(find: Result<WhatFound, AppError>) -> Result<(), AppError> {
+fn report(found: Result<WhatFound, AppError>) -> Result<(), AppError> {
     fn print_task_ok() {
         println!("{}", json!({"status": "ok"}))
     }
@@ -62,12 +77,12 @@ fn report(find: Result<WhatFound, AppError>) -> Result<(), AppError> {
     }
 
     if *crate::IS_EMBED {
-        match &find {
+        match &found {
             Ok(WhatFound::AllGood) => print_task_ok(),
             Ok(WhatFound::ThereAreMisses(_)) => print_task_alert(),
             Err(error) => print_task_error(error.exit_code()),
         }
     }
 
-    find.map(|_| ())
+    found.map(|_| ())
 }

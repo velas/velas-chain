@@ -1,8 +1,4 @@
-use crate::{
-    cli::CheckEvmArgs,
-    error::RoutineResult,
-    ledger,
-};
+use crate::{cli::CheckEvmArgs, error::RoutineResult, ledger};
 
 pub async fn check_evm(
     creds: Option<String>,

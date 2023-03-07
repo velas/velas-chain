@@ -69,7 +69,7 @@ pub async fn find_evm(creds: Option<String>, instance: String, args: FindEvmArgs
         // If we reach the end
         // 1. we go outside of requested range
         // 2. we receive less than requested
-        if dbg!(last_in_chunk) >= dbg!(end_block) || dbg!(chunk.len()) < dbg!(limit) {
+        if last_in_chunk >= end_block || chunk.len() < limit {
             log::trace!("Reaching the end of chunk...");
             break;
         }
