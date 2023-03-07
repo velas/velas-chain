@@ -11,10 +11,6 @@ use error::AppError;
 use routines::{find::WhatFound, *};
 use serde_json::json;
 
-lazy_static::lazy_static! {
-    pub static ref IS_EMBED: bool = std::env::args().any(|arg| &arg == "--embed");
-}
-
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -43,8 +39,8 @@ async fn main() {
     }
 
     let execution_result = match cli.subcommand {
-        FindEvm(args) => report(find_evm(cli.creds, cli.instance, args).await),
-        FindNative(args) => report(find_native(cli.creds, cli.instance, args).await),
+        FindEvm(args) => report(cli.embed, find_evm(cli.creds, cli.instance, args).await),
+        FindNative(args) => report(cli.embed, find_native(cli.creds, cli.instance, args).await),
         RestoreChain(args) => restore_chain(cli.creds, cli.instance, args).await,
         CheckNative(args) => check_native(cli.creds, cli.instance, args).await,
         CheckEvm(args) => check_evm(cli.creds, cli.instance, args).await,
@@ -63,7 +59,7 @@ async fn main() {
     std::process::exit(exit_code);
 }
 
-fn report(found: Result<WhatFound, AppError>) -> Result<(), AppError> {
+fn report(is_embed: bool, found: Result<WhatFound, AppError>) -> Result<(), AppError> {
     fn print_task_ok() {
         println!("{}", json!({"status": "ok"}))
     }
@@ -72,15 +68,22 @@ fn report(found: Result<WhatFound, AppError>) -> Result<(), AppError> {
         println!("{}", json!({"status": "alert"}))
     }
 
-    fn print_task_error(error_kind: i32) {
-        println!("{}", json!({"status": "error", "kind": error_kind}))
+    fn print_task_error(error: &AppError) {
+        println!(
+            "{}",
+            json!({
+                "status": "error",
+                "code": error.exit_code(),
+                "details": error.to_string()
+            })
+        )
     }
 
-    if *crate::IS_EMBED {
+    if is_embed {
         match &found {
             Ok(WhatFound::AllGood) => print_task_ok(),
             Ok(WhatFound::ThereAreMisses(_)) => print_task_alert(),
-            Err(error) => print_task_error(error.exit_code()),
+            Err(error) => print_task_error(error),
         }
     }
 

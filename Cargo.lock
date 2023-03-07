@@ -1873,7 +1873,6 @@ dependencies = [
  "env_logger 0.9.3",
  "evm-rpc",
  "evm-state",
- "lazy_static",
  "log 0.4.17",
  "serde",
  "serde_json",
