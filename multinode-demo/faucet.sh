@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Starts an instance of solana-faucet
+# Starts an instance of velas-faucet
 #
 here=$(dirname "$0")
 
@@ -15,5 +15,5 @@ source "$here"/common.sh
 }
 
 set -x
-# shellcheck disable=SC2086 # Don't want to double quote $solana_faucet
+# shellcheck disable=SC2086 # Don't want to double quote $velas_faucet
 exec $velas_faucet --keypair "$SOLANA_CONFIG_DIR"/faucet.json "$@"

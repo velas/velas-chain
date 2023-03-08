@@ -1245,6 +1245,14 @@ pub fn main() {
                 .help("Number of seconds before timing out RPC requests backed by BigTable"),
         )
         .arg(
+            Arg::with_name("max_batch_duration")
+                .long("rpc-max-batch-time")
+                .value_name("SECONDS")
+                .validator(is_parsable::<u64>)
+                .takes_value(true)
+                .help("Maximum number of seconds to process batched jsonrpc requests."),
+        )
+        .arg(
             Arg::with_name("rpc_pubsub_worker_threads")
                 .long("rpc-pubsub-worker-threads")
                 .takes_value(true)
@@ -2354,6 +2362,9 @@ pub fn main() {
                 .map(Duration::from_secs),
             account_indexes: account_indexes.clone(),
             rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
+            max_batch_duration: value_t!(matches, "max_batch_duration", u64)
+                .ok()
+                .map(Duration::from_secs),
         },
         accountsdb_repl_service_config,
         geyser_plugin_config_files,
