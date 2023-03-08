@@ -1,5 +1,7 @@
+use evm_state::StorageSecondary;
 use futures_util::FutureExt;
 use std::thread::{Builder, JoinHandle};
+use std::time::Duration;
 use tokio::sync::oneshot::{self, Receiver, Sender};
 
 use tonic::{self, transport};
@@ -8,7 +10,7 @@ use log::{error, info};
 
 use crate::triedb::LittleBig;
 
-use super::tonic_server;
+use super::{tonic_server, UsedStorage};
 use super::{Deps, ServiceConfig};
 use tonic_server::app_grpc::backend_server::BackendServer;
 /// The service wraps the Rpc to make it runnable in the tokio runtime
@@ -17,6 +19,7 @@ pub struct Service<S: LittleBig + Sync + Send + 'static> {
     server: BackendServer<tonic_server::Server<S>>,
     config: ServiceConfig,
     runtime: Option<tokio::runtime::Runtime>,
+    storage_clone: UsedStorage,
 }
 
 pub struct RunningService<S: LittleBig + Sync + Send + 'static> {
@@ -31,13 +34,14 @@ impl<S: LittleBig + Sync + Send + 'static> Service<S> {
         log::info!("creating new evm state rpc service {:#?}", deps);
         Self {
             server: tonic_server::Server::new(
-                deps.storage,
+                deps.storage.clone(),
                 deps.range,
                 deps.service.block_threshold,
                 deps.block_storage,
             ),
             runtime: Some(deps.runtime),
             config: deps.service,
+            storage_clone: deps.storage,
         }
     }
 
@@ -60,7 +64,7 @@ impl<S: LittleBig + Sync + Send + 'static> Service<S> {
     // Start TriedbReplServer in a Tokio runtime
     fn block_on(mut self, exit_signal: Receiver<()>) {
         let runtime = self.runtime.take().unwrap();
-        let result = runtime.block_on(self.run(exit_signal));
+        let result = runtime.block_on(self.run(&runtime, exit_signal));
 
         match result {
             Ok(_) => {
@@ -71,17 +75,54 @@ impl<S: LittleBig + Sync + Send + 'static> Service<S> {
             }
         }
     }
+
+    async fn catch_up_secondary_background(storage: Option<StorageSecondary>) {
+        if let Some(storage) = storage {
+            
+            loop {
+
+                match storage.try_catch_up() {
+                    Ok(..) => {
+                        log::warn!("successfully synced up secondary rocksdb with primary");
+                    },
+                    Err(err) => {
+                        log::error!("problem with syncing up secondary rocksdb with primary {:?}", err);
+                    }
+                    
+                }
+            
+                tokio::time::sleep(Duration::new(1, 0)).await;
+            }
+        }
+        
+    }
     // Runs tonic_server implementation with a provided configuration
-    async fn run(self, exit_signal: Receiver<()>) -> Result<(), tonic::transport::Error> {
+    async fn run(self, runtime: &tokio::runtime::Runtime, exit_signal: Receiver<()>) -> Result<(), tonic::transport::Error> {
         info!(
             "Running TriedbReplServer at the endpoint: {:?}",
             self.config.server_addr
         );
+        let secondary_storage = match self.storage_clone {
+            UsedStorage::WritableWithGC(..) => None,
+            UsedStorage::ReadOnlyNoGC(storage) => Some(storage)
+        };
+        let bg_secondary_jh = runtime.spawn(Self::catch_up_secondary_background(secondary_storage));
 
-        transport::Server::builder()
+        let res = transport::Server::builder()
             .add_service(self.server)
             .serve_with_shutdown(self.config.server_addr, exit_signal.map(drop))
-            .await
+            .await;
+
+        match bg_secondary_jh.await {
+            Ok(..) => {
+                
+            },
+            Err(err) => {
+                log::error!("catch up with primary task panicked!!! {:?}", err);
+            }
+        }
+
+        res
     }
 }
 

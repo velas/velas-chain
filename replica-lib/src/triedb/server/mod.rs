@@ -10,7 +10,7 @@ use super::range::MasterRange;
 use derivative::Derivative;
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UsedStorage {
     WritableWithGC(StorageOptimistic),
     ReadOnlyNoGC(StorageSecondary),
