@@ -104,6 +104,40 @@ fn wait_finalization(rpc_url: &str, signatures: &[&Value]) -> bool {
 }
 
 #[test]
+fn test_batch_request() {
+    solana_logger::setup();
+
+    let alice = Keypair::new();
+    let test_validator = TestValidatorGenesis::default()
+        .rpc_config(JsonRpcConfig {
+            max_batch_duration: Some(Duration::from_secs(0)),
+            ..JsonRpcConfig::default_for_test()
+        })
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
+    let rpc_url = test_validator.rpc_url();
+
+    warn!("Sending batch...");
+    let batch: Vec<_> = (1..10)
+        .map(|id| {
+            json!({
+               "jsonrpc": "2.0",
+               "id": id,
+               "method": "getRecentBlockhash",
+               "params": json!([]),
+            })
+        })
+        .collect();
+    let res: Value = post_rpc(json!(batch), &rpc_url);
+    let results = res.as_array().unwrap();
+    let (success, failures) = results.split_first().unwrap();
+    assert!(success["result"].is_object());
+    for failure in failures {
+        assert!(failure["error"].is_object());
+    }
+}
+
+#[test]
 fn test_rpc_send_tx() {
     solana_logger::setup();
 

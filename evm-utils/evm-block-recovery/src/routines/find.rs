@@ -1,42 +1,51 @@
-use evm_state::BlockNum;
-use serde_json::json;
+use crate::{
+    cli::{FindEvmArgs, FindNativeArgs},
+    error::AppError,
+    ledger,
+    routines::BlockRange,
+};
 
-use crate::{exit_code, ledger, routines::BlockRange};
+pub type FindResult = Result<WhatFound, AppError>;
+
+pub enum WhatFound {
+    AllGood,
+    ThereAreMisses(Vec<BlockRange>),
+}
 
 use super::find_uncommitted_ranges;
 
-pub async fn find_evm(
-    creds: Option<String>,
-    instance: String,
-    start_block: BlockNum,
-    end_block: BlockNum,
-    max_limit: usize,
-) -> Result<(), i32> {
-    log::info!("Looking for missing EVM Blocks");
-    log::info!("start_block={start_block}, end_block={end_block}, bigtable_limit={max_limit}");
+pub async fn find_evm(creds: Option<String>, instance: String, args: FindEvmArgs) -> FindResult {
+    let FindEvmArgs {
+        start_block,
+        end_block,
+        limit,
+        bigtable_limit,
+    } = args;
 
-    let ledger = ledger::with_params(creds, instance).await.map_err(|_e| {
-        log::error!("Unable to initialize `LedgerStorage` with provided credentials");
-        err_to_output(exit_code::UNABLE_TO_CREATE_LEDGER)
-    })?;
+    let end_block = calculate_end_block(start_block, end_block, limit)?;
+
+    log::info!("Looking for missing EVM Blocks");
+    log::info!("start_block={start_block}, end_block={end_block}, bigtable_limit={bigtable_limit}");
+
+    let ledger = ledger::with_params(creds, instance).await?;
 
     let mut start_block = start_block;
     let mut blocks = vec![];
 
     loop {
-        let total_limit = (end_block - start_block + 1) as usize;
-        let limit = usize::max(total_limit, max_limit);
+        let remaining_blocks = (end_block - start_block) as usize;
+
+        let limit = usize::min(remaining_blocks, bigtable_limit);
         let end_block_to_query = start_block + limit as u64;
+
+        log::trace!("Requesting range #{start_block}..#{end_block_to_query}...");
         let mut chunk = ledger
             .get_evm_confirmed_full_blocks_nums(start_block, limit)
             .await
-            .map_err(|_e| {
-                log::error!(
-                    "Unable to get EVM Confirmed Block IDs starting with block {} limit by {}",
-                    start_block,
-                    limit
-                );
-                err_to_output(exit_code::UNABLE_TO_QUERY_BIGTABLE)
+            .map_err(|source| AppError::GetEvmBlockNums {
+                source,
+                start_block,
+                limit,
             })?;
 
         let last_in_chunk = if let Some(block) = chunk.last() {
@@ -59,8 +68,9 @@ pub async fn find_evm(
 
         // If we reach the end
         // 1. we go outside of requested range
-        // 2. we didn't got all blocks that we requested
-        if last_in_chunk >= end_block || end_block_to_query >= last_in_chunk {
+        // 2. we receive less than requested
+        if last_in_chunk >= end_block || chunk.len() < limit {
+            log::trace!("Reaching the end of chunk...");
             break;
         }
     }
@@ -73,57 +83,54 @@ pub async fn find_evm(
             start_block,
             end_block
         );
-        print_task_ok()
+        Ok(WhatFound::AllGood)
     } else {
         log::warn!("Found missing EVM blocks: {:?}", missing_blocks);
-        print_task_alert()
+        Ok(WhatFound::ThereAreMisses(missing_blocks))
     }
-
-    Ok(())
 }
 
 pub async fn find_native(
     creds: Option<String>,
     instance: String,
-    start_slot: u64,
-    end_slot: u64,
-    max_limit: usize,
-) -> Result<(), i32> {
+    args: FindNativeArgs,
+) -> FindResult {
+    let FindNativeArgs {
+        start_block,
+        end_block,
+        limit,
+        bigtable_limit,
+    } = args;
+
+    let mut start_slot = start_block;
+
+    let end_slot = calculate_end_block(start_block, end_block, limit)?;
+
     log::info!("Looking for missing Native Blocks");
-    log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={max_limit}");
+    log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={bigtable_limit}");
 
-    let ledger = ledger::with_params(creds, instance).await.map_err(|_e| {
-        log::error!("Unable to initialize `LedgerStorage` with provided credentials");
-        err_to_output(exit_code::UNABLE_TO_CREATE_LEDGER)
-    })?;
-
-    let mut start_slot = start_slot;
+    let ledger = ledger::with_params(creds, instance).await?;
 
     let mut slots = vec![];
 
     loop {
         let total_limit = (end_slot - start_slot + 1) as usize;
-        let limit = usize::min(total_limit, max_limit);
+        let limit = usize::min(total_limit, bigtable_limit);
 
         let mut chunk = ledger
             .get_confirmed_blocks(start_slot, limit)
             .await
-            .map_err(|_e| {
-                log::error!(
-                    "Unable to get Native Confirmed Block IDs starting with slot {} limit by {}",
-                    start_slot,
-                    total_limit
-                );
-                err_to_output(exit_code::UNABLE_TO_QUERY_BIGTABLE)
+            .map_err(|source| AppError::GetNativeBlocks {
+                source,
+                start_block,
+                limit,
             })?;
 
         let last_in_chunk = if let Some(block) = chunk.last() {
             *block
         } else {
             // we reach the end just after last successfull query
-            log::debug!(
-                "Bigtable didn't return anything for range #{start_slot}..#{end_slot}"
-            );
+            log::debug!("Bigtable didn't return anything for range #{start_slot}..#{end_slot}");
             break;
         };
 
@@ -140,10 +147,7 @@ pub async fn find_native(
     }
 
     if slots.len() < 2 {
-        let err = "Vector of ID's is too short, try to increase a limit";
-        log::warn!("{err}");
-        print_task_error(err);
-        return Err(exit_code::INVALID_ARGUMENTS);
+        return Err(AppError::VectorIsTooShort);
     }
 
     log::info!(
@@ -167,15 +171,21 @@ pub async fn find_native(
         let slot_prev = range.first() - 1;
         let slot_curr = range.last() + 1;
 
-        let block_prev = ledger.get_confirmed_block(slot_prev).await.map_err(|_e| {
-            log::error!("Unable to get native block {slot_prev}");
-            err_to_output(exit_code::UNABLE_TO_QUERY_BIGTABLE)
-        })?;
+        let block_prev = ledger
+            .get_confirmed_block(slot_prev)
+            .await
+            .map_err(|source| AppError::GetNativeBlock {
+                source,
+                block: slot_prev,
+            })?;
 
-        let block_curr = ledger.get_confirmed_block(slot_curr).await.map_err(|_e| {
-            log::error!("Unable to get native block {slot_curr}");
-            err_to_output(exit_code::UNABLE_TO_QUERY_BIGTABLE)
-        })?;
+        let block_curr = ledger
+            .get_confirmed_block(slot_curr)
+            .await
+            .map_err(|source| AppError::GetNativeBlock {
+                source,
+                block: slot_curr,
+            })?;
 
         if block_prev.blockhash == block_curr.previous_blockhash {
             let checked_range = BlockRange::new(slot_prev, slot_curr);
@@ -189,32 +199,28 @@ pub async fn find_native(
     log::info!("Search complete");
 
     match missing_ranges.is_empty() {
-        true => print_task_ok(),
-        false => print_task_alert(),
-    }
-
-    Ok(())
-}
-
-fn err_to_output(return_code: i32) -> i32 {
-    print_task_error(&format!("{return_code:?}"));
-    return_code
-}
-
-fn print_task_ok() {
-    if *crate::IS_EMBED {
-        println!("{}", json!({"status": "ok"}))
+        true => Ok(WhatFound::AllGood),
+        false => Ok(WhatFound::ThereAreMisses(missing_ranges)),
     }
 }
 
-fn print_task_alert() {
-    if *crate::IS_EMBED {
-        println!("{}", json!({"status": "alert"}))
+fn calculate_end_block(
+    start_block: u64,
+    end_block: Option<u64>,
+    limit: Option<u64>,
+) -> Result<u64, AppError> {
+    if end_block.is_none() && limit.is_none() {
+        log::error!("Not enough arguments to calculate `end_block`");
+        return Err(AppError::NoLastBlockBoundary);
     }
-}
 
-fn print_task_error(error_kind: &str) {
-    if *crate::IS_EMBED {
-        println!("{}", json!({"status": "error", "kind": error_kind}))
+    if let Some(end_block) = end_block {
+        return Ok(end_block);
     }
+
+    if let Some(limit) = limit {
+        return Ok(start_block + limit - 1);
+    }
+
+    unreachable!()
 }
