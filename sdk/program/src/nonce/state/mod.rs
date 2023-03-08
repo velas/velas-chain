@@ -57,7 +57,7 @@ impl Versions {
         };
         match **state {
             State::Uninitialized => None,
-            State::Initialized(ref data) => (recent_blockhash == &data.blockhash()).then(|| data),
+            State::Initialized(ref data) => (recent_blockhash == &data.blockhash()).then_some(data),
         }
     }
 

@@ -376,7 +376,7 @@ impl Blockstore {
         recovery_mode: Option<BlockstoreRecoveryMode>,
         enforce_ulimit_nofile: bool,
     ) -> Result<Blockstore> {
-        fs::create_dir_all(&ledger_path)?;
+        fs::create_dir_all(ledger_path)?;
         let blockstore_path = ledger_path.join(BLOCKSTORE_DIRECTORY);
 
         adjust_ulimit_nofile(enforce_ulimit_nofile)?;
@@ -2701,7 +2701,7 @@ impl Blockstore {
         // Check the active_transaction_status_index to see if it contains slot. If so, start with
         // that index, as it will contain higher slots
         let starting_primary_index = *self.active_transaction_status_index.read().unwrap();
-        let next_primary_index = if starting_primary_index == 0 { 1 } else { 0 };
+        let next_primary_index = u64::from(starting_primary_index == 0);
         let next_max_slot = self
             .transaction_status_index_cf
             .get(next_primary_index)?
@@ -3518,7 +3518,7 @@ impl Blockstore {
         let size = payload.len().max(SHRED_PAYLOAD_SIZE);
         payload.resize(size, 0u8);
         let new_shred = Shred::new_from_serialized_shred(payload).unwrap();
-        (existing_shred != new_shred.payload).then(|| existing_shred)
+        (existing_shred != new_shred.payload).then_some(existing_shred)
     }
 
     pub fn has_duplicate_shreds_in_slot(&self, slot: Slot) -> bool {
@@ -3674,7 +3674,7 @@ fn update_slot_meta(
     let maybe_first_insert = slot_meta.received == 0;
     // Index is zero-indexed, while the "received" height starts from 1,
     // so received = index + 1 for the same shred.
-    slot_meta.received = cmp::max((u64::from(index) + 1) as u64, slot_meta.received);
+    slot_meta.received = cmp::max(u64::from(index) + 1, slot_meta.received);
     if maybe_first_insert && slot_meta.received > 0 {
         // predict the timestamp of what would have been the first shred in this slot
         let slot_time_elapsed = u64::from(reference_tick) * 1000 / DEFAULT_TICKS_PER_SECOND;
@@ -4129,7 +4129,7 @@ pub fn create_new_ledger(
             let mut error_messages = String::new();
 
             fs::rename(
-                &ledger_path.join(DEFAULT_GENESIS_ARCHIVE),
+                ledger_path.join(DEFAULT_GENESIS_ARCHIVE),
                 ledger_path.join(format!("{}.failed", DEFAULT_GENESIS_ARCHIVE)),
             )
             .unwrap_or_else(|e| {
@@ -4140,7 +4140,7 @@ pub fn create_new_ledger(
                 );
             });
             fs::rename(
-                &ledger_path.join(DEFAULT_GENESIS_FILE),
+                ledger_path.join(DEFAULT_GENESIS_FILE),
                 ledger_path.join(format!("{}.failed", DEFAULT_GENESIS_FILE)),
             )
             .unwrap_or_else(|e| {
@@ -4151,7 +4151,7 @@ pub fn create_new_ledger(
                 );
             });
             fs::rename(
-                &ledger_path.join("rocksdb"),
+                ledger_path.join("rocksdb"),
                 ledger_path.join("rocksdb.failed"),
             )
             .unwrap_or_else(|e| {

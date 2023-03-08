@@ -226,7 +226,7 @@ impl ThinClient {
                 if num_confirmed == 0 {
                     // Send the transaction if there has been no confirmation (e.g. the first time)
                     self.transactions_socket
-                        .send_to(&buf[..], &self.tpu_addr())?;
+                        .send_to(&buf[..], self.tpu_addr())?;
                 }
 
                 if let Ok(confirmed_blocks) = self.poll_for_signature_confirmation(
@@ -624,7 +624,7 @@ impl AsyncClient for ThinClient {
             .expect("serialize Transaction in pub fn transfer_signed");
         assert!(buf.len() < PACKET_DATA_SIZE);
         self.transactions_socket
-            .send_to(&buf[..], &self.tpu_addr())?;
+            .send_to(&buf[..], self.tpu_addr())?;
         Ok(transaction.signatures[0])
     }
     fn async_send_message<T: Signers>(

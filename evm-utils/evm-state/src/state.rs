@@ -546,8 +546,8 @@ impl EvmState {
         let evm_state = path.as_ref();
         if evm_state.is_dir() && evm_state.exists() {
             warn!("deleting existing state {}", evm_state.display());
-            fs::remove_dir_all(&evm_state)?;
-            fs::create_dir(&evm_state)?;
+            fs::remove_dir_all(evm_state)?;
+            fs::create_dir(evm_state)?;
         }
 
         Self::load_from(evm_state, Incomming::default(), true)
@@ -563,11 +563,11 @@ impl EvmState {
         let evm_state = evm_state.as_ref();
         if evm_state.is_dir() && evm_state.exists() {
             warn!("deleting existing state {}", evm_state.display());
-            fs::remove_dir_all(&evm_state)?;
-            fs::create_dir(&evm_state)?;
+            fs::remove_dir_all(evm_state)?;
+            fs::create_dir(evm_state)?;
         }
 
-        KVS::restore_from(evm_genesis, &evm_state)?;
+        KVS::restore_from(evm_genesis, evm_state)?;
         let version = if spv_compatibility {
             BlockVersion::VersionConsistentHashes
         } else {

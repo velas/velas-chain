@@ -129,7 +129,7 @@ impl<T> SnapshotAccountsDbFields<T> {
                 // There must not be any overlap in the slots of storages between the full snapshot and the incremental snapshot
                 incremental_snapshot_storages
                     .iter()
-                    .all(|storage_entry| !full_snapshot_storages.contains_key(storage_entry.0)).then(|| ()).ok_or_else(|| {
+                    .all(|storage_entry| !full_snapshot_storages.contains_key(storage_entry.0)).then_some(()).ok_or_else(|| {
                         io::Error::new(io::ErrorKind::InvalidData, "Snapshots are incompatible: There are storages for the same slot in both the full snapshot and the incremental snapshot!")
                     })?;
 
@@ -391,7 +391,7 @@ where
             "deleting existing evm state folder {}",
             evm_state_path.display()
         );
-        std::fs::remove_dir_all(&evm_state_path)?;
+        std::fs::remove_dir_all(evm_state_path)?;
     }
 
     info!(
@@ -409,7 +409,7 @@ where
         tmp_evm_state_path_parent.pop();
         let tmp_dir = tempfile::TempDir::new_in(tmp_evm_state_path_parent)?;
         let mut measure = Measure::start("EVM tmp state database restore");
-        evm_state::Storage::restore_from(evm_state_backup_path, &tmp_dir.path()).map_err(|e| {
+        evm_state::Storage::restore_from(evm_state_backup_path, tmp_dir.path()).map_err(|e| {
             Error::custom(format!("Unable to restore tmp evm backup storage {}", e))
         })?;
         measure.stop();
@@ -445,7 +445,7 @@ where
         info!("{}", measure);
     } else {
         let mut measure = Measure::start("EVM state database restore");
-        evm_state::Storage::restore_from(evm_state_backup_path, &evm_state_path)
+        evm_state::Storage::restore_from(evm_state_backup_path, evm_state_path)
             .map_err(|e| Error::custom(format!("Unable to restore evm backup storage {}", e)))?;
         measure.stop();
         info!("{}", measure);
@@ -590,7 +590,7 @@ where
                     let remapped_append_vec_id = next_append_vec_id.fetch_add(1, Ordering::AcqRel);
                     let remapped_file_name = AppendVec::file_name(*slot, remapped_append_vec_id);
                     let remapped_append_vec_path =
-                        append_vec_path.parent().unwrap().join(&remapped_file_name);
+                        append_vec_path.parent().unwrap().join(remapped_file_name);
 
                     // Break out of the loop in the following situations:
                     // 1. The new ID is the same as the original ID.  This means we do not need to

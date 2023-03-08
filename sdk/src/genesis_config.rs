@@ -214,7 +214,7 @@ impl GenesisConfig {
             )
         })?;
 
-        std::fs::create_dir_all(&ledger_path)?;
+        std::fs::create_dir_all(ledger_path)?;
 
         let mut file = File::create(Self::genesis_filename(ledger_path))?;
         file.write_all(&serialized)
@@ -413,7 +413,7 @@ pub mod evm_genesis {
                     match path.file_name() {
                         Some(filename) => {
                             let dest_path = dest.join(filename);
-                            fs::copy(&path, &dest_path)?;
+                            fs::copy(&path, dest_path)?;
                         }
                         None => {
                             return Err(std::io::Error::new(
@@ -638,7 +638,7 @@ pub mod evm_genesis {
     pub fn read_accounts(
         evm_state_snapshot: &Path,
     ) -> Result<impl Iterator<Item = Result<(H160, MemoryAccount), Error>>, Error> {
-        let evm_file = BufReader::new(File::open(&evm_state_snapshot)?);
+        let evm_file = BufReader::new(File::open(evm_state_snapshot)?);
 
         let mut reader = StreamAccountReader::new(evm_file)?;
         Ok(iter::from_fn(move || reader.read_account().transpose()))

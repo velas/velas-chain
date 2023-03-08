@@ -162,7 +162,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
         ancestors: &Ancestors,
     ) -> Option<(Slot, T)> {
         let mut keys = vec![];
-        let mut val: Vec<_> = self.cache.iter().map(|(k, _)| *k).collect();
+        let mut val: Vec<_> = self.cache.keys().copied().collect();
         keys.append(&mut val);
 
         for blockhash in keys.iter() {

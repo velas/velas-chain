@@ -105,7 +105,7 @@ impl AccountsPackage {
             fs::create_dir_all(&snapshot_hardlink_dir)?;
             fs::hard_link(
                 &bank_snapshot_info.snapshot_path,
-                &snapshot_hardlink_dir.join(bank_snapshot_info.slot.to_string()),
+                snapshot_hardlink_dir.join(bank_snapshot_info.slot.to_string()),
             )?;
         }
 

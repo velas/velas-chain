@@ -1374,8 +1374,8 @@ fn new_banks_from_ledger(
     ) = bank_forks_utils::load(
         &genesis_config,
         &blockstore,
-        &evm_state_path,
-        &evm_genesis_path,
+        evm_state_path,
+        evm_genesis_path,
         config.account_paths.clone(),
         config.account_shrink_paths.clone(),
         config.snapshot_config.as_ref(),

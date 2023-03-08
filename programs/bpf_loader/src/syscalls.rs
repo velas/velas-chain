@@ -848,7 +848,7 @@ impl SyscallObject<BpfError> for SyscallAllocFree {
         };
         *result = if free_addr == 0 {
             match self.allocator.alloc(layout) {
-                Ok(addr) => Ok(addr as u64),
+                Ok(addr) => Ok(addr),
                 Err(_) => Ok(0),
             }
         } else {
@@ -2481,6 +2481,7 @@ fn check_authorized_program(
 }
 
 /// Call process instruction, common to both Rust and C
+#[allow(clippy::explicit_auto_deref)]
 fn call<'a, 'b: 'a>(
     syscall: &mut dyn SyscallInvokeSigned<'a, 'b>,
     instruction_addr: u64,

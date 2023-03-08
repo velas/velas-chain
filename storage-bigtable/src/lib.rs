@@ -807,8 +807,7 @@ impl LedgerStorage {
 
         let tx_deletion_rows = if !expected_tx_infos.is_empty() {
             let signatures = expected_tx_infos
-                .iter()
-                .map(|(signature, _info)| signature)
+                .keys()
                 .cloned()
                 .collect::<Vec<_>>();
             let fetched_tx_infos: HashMap<String, std::result::Result<UploadedTransaction, _>> =

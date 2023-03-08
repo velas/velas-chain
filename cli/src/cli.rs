@@ -557,7 +557,7 @@ impl CliConfig<'_> {
             (SettingType::Explicit, json_rpc_cfg_url.to_string()),
             (SettingType::SystemDefault, Self::default_json_rpc_url()),
         ]);
-        (setting_type, normalize_to_url_if_moniker(&url_or_moniker))
+        (setting_type, normalize_to_url_if_moniker(url_or_moniker))
     }
 
     pub fn compute_keypair_path_setting(

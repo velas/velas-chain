@@ -552,9 +552,9 @@ fn process_loader_upgradeable_instruction(
                 .push(AccountMeta::new(*buffer.unsigned_key(), false));
 
             let caller_program_id = invoke_context.get_caller()?;
-            let signers = [&[new_program_id.as_ref(), &[bump_seed]]]
+            let signers = [[new_program_id.as_ref(), &[bump_seed]]]
                 .iter()
-                .map(|seeds| Pubkey::create_program_address(*seeds, caller_program_id))
+                .map(|seeds| Pubkey::create_program_address(seeds, caller_program_id))
                 .collect::<Result<Vec<Pubkey>, solana_sdk::pubkey::PubkeyError>>()?;
             invoke_context.native_invoke(instruction, signers.as_slice())?;
 
