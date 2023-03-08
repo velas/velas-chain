@@ -259,6 +259,11 @@ impl StorageSecondary {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
     }
 
+    pub fn try_catch_up(&self) -> Result<()> {
+        self.db.0.try_catch_up_with_primary()?;
+        Ok(())
+    }
+
     pub fn rocksdb_trie_handle(
         &self,
     ) -> SyncRocksHandle<ReadOnlyDb> {
