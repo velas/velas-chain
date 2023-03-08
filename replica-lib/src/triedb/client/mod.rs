@@ -210,6 +210,11 @@ where
     }
 
     pub async fn bootstrap_state(&mut self, height: BlockNum) -> anyhow::Result<()> {
+        if self.range.get().contains(&height) {
+            log::warn!("skipping height {} as already present", height);
+            return Ok(());
+        }
+
         let root_hash = self
             .block_storage
             .get_evm_confirmed_state_root(height)
