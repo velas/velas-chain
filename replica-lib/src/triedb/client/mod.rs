@@ -8,6 +8,11 @@ use triedb::gc::RootGuard;
 
 use self::splice_count_stack::SpliceCountStack;
 
+use super::error::BootstrapError;
+use super::error::ClientAdvanceError;
+use super::error::ClientError;
+use super::error::EvmHeightError;
+use super::error::source_matches_type;
 use super::{
     range::{Advance, MasterRange},
     LittleBig,
@@ -24,7 +29,7 @@ mod splice_count_stack;
 type RocksHandleA<'a> = triedb::rocksdb::RocksHandle<'a, &'a triedb::rocksdb::DB>;
 
 pub struct Client<S> {
-    state_rpc_address: String,
+    pub state_rpc_address: String,
     storage: Storage,
     client: BackendClient<tonic::transport::Channel>,
     range: MasterRange,
@@ -44,7 +49,7 @@ impl<S> Client<S> {
         range: MasterRange,
         storage: Storage,
         block_storage: S,
-    ) -> Result<Self, tonic::transport::Error> {
+    ) -> Result<Self, ClientError> {
         log::info!("starting the client routine {}", state_rpc_address);
         let client = BackendClient::connect(state_rpc_address.clone()).await?;
         Ok(Self {
@@ -80,7 +85,7 @@ where
     async fn fetch_state_roots(
         &self,
         heights: (BlockNum, BlockNum),
-    ) -> anyhow::Result<(H256, H256)> {
+    ) -> Result<(H256, H256), EvmHeightError> {
         let from = self
             .block_storage
             .get_evm_confirmed_state_root(heights.0)
@@ -92,7 +97,11 @@ where
         Ok((from, to))
     }
 
-    async fn iterate_range(&mut self, mut advance: Advance) -> anyhow::Result<()> {
+    async fn iterate_range(
+        &mut self,
+        mut advance: Advance,
+        address: String,
+    ) -> Result<(), ClientAdvanceError> {
         let (db_handle, collection) = Self::db_handles(&self.storage);
         let mut start = advance.start;
         log::warn!("attempting to advance {:?}", advance);
@@ -115,12 +124,13 @@ where
             .await;
             match diff_response {
                 Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "heights advance error: {:?}, {:?}, {:?}",
-                        heights,
-                        hashes,
-                        e
-                    ));
+                    let _match = source_matches_type::<tonic::transport::Error>(&e);
+                    return Err(ClientAdvanceError::ClientErrorWithContext {
+                        heights: Some(heights),
+                        hashes: Some(hashes),
+                        state_rpc_address: address,
+                        error: e,
+                    });
                 }
                 Ok(guard) => {
                     let to = hashes.1;
@@ -135,15 +145,19 @@ where
         Ok(())
     }
 
-    async fn main_loop_iteration(&mut self) -> Result<Advance, (anyhow::Error, Duration)> {
-        let block_range = self.get_block_range().await;
+    async fn main_loop_iteration(&mut self) -> Result<Advance, (ClientAdvanceError, Duration)> {
+        let block_range = self.get_block_range().await.map_err(|status| {
+            let err: ClientError = status.into();
+            err
+        });
         if let Err(e) = block_range {
             return Err((
-                anyhow::anyhow!(
-                    "get block range from server {:?}: {:?}",
-                    self.state_rpc_address,
-                    e
-                ),
+                ClientAdvanceError::ClientErrorWithContext {
+                    heights: None,
+                    hashes: None,
+                    state_rpc_address: self.state_rpc_address.clone(),
+                    error: e,
+                },
                 Duration::new(1, 0),
             ));
         }
@@ -152,21 +166,19 @@ where
         let advance = self.compute_advance(block_range.clone());
         if advance.is_empty() {
             return Err((
-                anyhow::anyhow!(
-                    "no useful advance can be made on {:?};  our : {:?} ; offer: {:?}",
-                    self.state_rpc_address,
-                    self.range.get(),
-                    block_range,
-                ),
+                ClientAdvanceError::EmptyAdvance {
+                    state_rpc_address: self.state_rpc_address.clone(),
+                    self_range: self.range.get(),
+                    server_offer: block_range,
+                },
                 Duration::new(3, 0),
             ));
         }
-        let result = self.iterate_range(advance.clone()).await;
+        let result = self
+            .iterate_range(advance.clone(), self.state_rpc_address.clone())
+            .await;
         if let Err(e) = result {
-            Err((
-                anyhow::anyhow!("during iteration over advance.added_range {:?}", e),
-                Duration::new(5, 0),
-            ))
+            Err((e, Duration::new(5, 0)))
         } else {
             Ok(advance)
         }
@@ -187,18 +199,19 @@ where
         }
     }
 
-    pub async fn fetch_hashes_data_very_much(
+    pub async fn fetch_nodes_of_hashes(
         client: &mut BackendClient<tonic::transport::Channel>,
         input: Vec<(H256, bool)>,
-    ) -> anyhow::Result<Vec<((H256, bool), Vec<u8>)>> {
+    ) -> Result<Vec<((H256, bool), Vec<u8>)>, ClientError> {
         let input_clone: Vec<_> = input.iter().map(|el| el.0).collect();
-        let nodes = Self::get_raw_bytes(client, input_clone).await?;
+        let nodes = Self::get_array_of_nodes(client, input_clone).await;
+        if let Err(ref err) = nodes {
+            let _match = source_matches_type::<tonic::transport::Error>(err);
+        }
+
+        let nodes = nodes?;
         if nodes.nodes.len() != input.len() {
-            return Err(anyhow::anyhow!(
-                "fetch_hashes_data_very_much: len mismatch on input/output {} {}",
-                input.len(),
-                nodes.nodes.len()
-            ));
+            return Err(ClientError::GetArrayOfNodesReplyLenMismatch(input.len(), nodes.nodes.len()));
         }
 
         for (index, element) in input.iter().enumerate() {
@@ -209,7 +222,7 @@ where
         Ok(res)
     }
 
-    pub async fn bootstrap_state(&mut self, height: BlockNum) -> anyhow::Result<()> {
+    pub async fn bootstrap_state(&mut self, height: BlockNum) -> Result<(), BootstrapError> {
         if self.range.get().contains(&height) {
             log::warn!("skipping height {} as already present", height);
             return Ok(());
@@ -219,17 +232,18 @@ where
             .block_storage
             .get_evm_confirmed_state_root(height)
             .await?;
+        log::info!("starting bootstrap at height {}, hash {:?}", height, root_hash);
         let (db_handle, _) = Self::db_handles(&self.storage);
 
         let mut stack_children: SpliceCountStack<Vec<(H256, bool)>> =
             SpliceCountStack::new("children".to_string());
 
-        let mut stack_fetched: SpliceCountStack<anyhow::Result<Vec<NodeFullInfo>>> =
+        let mut stack_fetched: SpliceCountStack<Result<Vec<NodeFullInfo>, ClientError>> =
             SpliceCountStack::new("fetched and verified data".to_string());
 
         let root_guard = RootGuard::new(&db_handle, root_hash, account_extractor);
         let first_with_data =
-            Self::fetch_hashes_data_very_much(&mut self.client, vec![(root_hash, true)]).await;
+            Self::fetch_nodes_of_hashes(&mut self.client, vec![(root_hash, true)]).await;
         let first_with_data = first_with_data?;
 
         let children_layer = splice_children(&first_with_data)?;
@@ -259,7 +273,7 @@ where
                     let next_child_slice = stack_children.pop();
                     match next_child_slice {
                         Some(next_child_slice) => {
-                            let first_with_data = Self::fetch_hashes_data_very_much(
+                            let first_with_data = Self::fetch_nodes_of_hashes(
                                 &mut self.client,
                                 next_child_slice,
                             )
@@ -284,14 +298,10 @@ where
     }
 }
 
-fn verify_hash(value: &[u8], hash: H256) -> anyhow::Result<()> {
+fn verify_hash(value: &[u8], hash: H256) -> Result<(), ClientError> {
     let actual_hash = H256::from_slice(Keccak256::digest(value).as_slice());
     if hash != actual_hash {
-        return Err(anyhow::anyhow!(
-            "hash mismatch {:?} {:?}",
-            hash,
-            actual_hash
-        ))?;
+        return Err(ClientError::GetArrayOfNodesReplyHashMismatch(hash, actual_hash))?;
     }
     Ok(())
 }
@@ -302,7 +312,7 @@ pub fn no_childs(_: &[u8]) -> Vec<H256> {
 const MAX_CHUNK_HASHES: usize = 100_000;
 const SPLIT_FACTOR: usize = 20;
 
-fn splice_children(layer: &Vec<((H256, bool), Vec<u8>)>) -> anyhow::Result<Vec<Vec<(H256, bool)>>> {
+fn splice_children(layer: &Vec<((H256, bool), Vec<u8>)>) -> Result<Vec<Vec<(H256, bool)>>, ClientError> {
     let mut childs_all = vec![];
     for element in layer {
         let res = map_node_to_next_layer(element)?;
@@ -323,9 +333,12 @@ fn splice_children(layer: &Vec<((H256, bool), Vec<u8>)>) -> anyhow::Result<Vec<V
     Ok(res)
 }
 
-fn map_node_to_next_layer(parent: &((H256, bool), Vec<u8>)) -> anyhow::Result<Vec<(H256, bool)>> {
+fn map_node_to_next_layer(parent: &((H256, bool), Vec<u8>)) -> Result<Vec<(H256, bool)>, ClientError> {
     let ((_hash, direct), node) = parent;
-    let node = MerkleNode::decode(&Rlp::new(node))?;
+    let node = MerkleNode::decode(&Rlp::new(node)).map_err(|decode| {
+            let err: ClientError = decode.into();
+            err
+    })?;
 
     let (direct_childs, indirect_childs) = if *direct {
         ReachableHashes::collect(&node, account_extractor).childs()

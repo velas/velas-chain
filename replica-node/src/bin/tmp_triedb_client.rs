@@ -1,4 +1,5 @@
 use std::net::{AddrParseError, SocketAddr};
+use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -8,6 +9,8 @@ use clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches};
 use evm_state::{BlockNum, Storage};
 use futures::future::join_all;
 use solana_storage_bigtable::LedgerStorage;
+use thiserror::Error;
+
 #[derive(Debug)]
 struct ParsedArgs {
     state_rpc_addresses: Vec<String>,
@@ -15,8 +18,28 @@ struct ParsedArgs {
     range_file: String,
 }
 
+#[derive(Error, Debug)]
+enum Error {
+    #[error("address parse {0}")]
+    AddrParse(#[from] AddrParseError),
+    #[error("integer parse {0}")]
+    IntParse(#[from] ParseIntError),
+    #[error("storage error {0}")]
+    Storage(#[from] evm_state::storage::Error),
+    #[error("range init {0}")]
+    RangeInit(#[from] solana_replica_lib::triedb::error::RangeInitError),
+    #[error("solana storage bigtable {0}")]
+    StorageBigtable(#[from] solana_storage_bigtable::Error),
+    #[error("client error {0}")]
+    Client(#[from] solana_replica_lib::triedb::error::ClientError),
+    #[error("bootstrap error {0}")]
+    Bootstrap(#[from] solana_replica_lib::triedb::error::BootstrapError),
+
+    
+}
+
 impl ParsedArgs {
-    fn parse(matches: ArgMatches) -> anyhow::Result<(Option<BlockNum>, Self)> {
+    fn parse(matches: ArgMatches) -> Result<(Option<BlockNum>, Self), Error> {
         let state_rpc_addresses = matches
             .values_of("state_rpc_address")
             .unwrap()
@@ -53,7 +76,7 @@ impl ParsedArgs {
             },
         ))
     }
-    fn build(self) -> anyhow::Result<Vec<ClientOpts>> {
+    fn build(self) -> Result<Vec<ClientOpts>, Error> {
         log::info!("building ClientOpts {:#?}", self);
 
         let gc_enabled = true;
@@ -86,7 +109,7 @@ impl ClientOpts {
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<(), Error> {
     let matches = App::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())
@@ -138,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
         .get_matches();
 
     let _ = env_logger::Builder::from_default_env().try_init();
-    log::info!("cwd start {}", std::env::current_dir()?.display());
+    log::info!("cwd start {}", std::env::current_dir().unwrap().display());
 
     let (bootstrap_point, client_opts) = ParsedArgs::parse(matches)?;
     let client_opts = client_opts.build()?;
@@ -155,7 +178,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn connect(client_opts: Vec<ClientOpts>) -> anyhow::Result<Vec<Client<LedgerStorage>>> {
+async fn connect(client_opts: Vec<ClientOpts>) -> Result<Vec<Client<LedgerStorage>>, Error> {
     let block_storage = solana_storage_bigtable::LedgerStorage::new(false, None, None).await?;
     let servers: Vec<_> = client_opts
         .into_iter()
@@ -171,7 +194,7 @@ async fn connect(client_opts: Vec<ClientOpts>) -> anyhow::Result<Vec<Client<Ledg
             match client_result {
                 Err(e) => Err(e)?,
 
-                Ok(client) => Ok::<Client<LedgerStorage>, anyhow::Error>(client),
+                Ok(client) => Ok::<Client<LedgerStorage>, Error>(client),
             }
         })
         .collect();
@@ -193,7 +216,7 @@ async fn connect(client_opts: Vec<ClientOpts>) -> anyhow::Result<Vec<Client<Ledg
 async fn bootstrap(
     height: BlockNum,
     clients: Vec<Client<LedgerStorage>>,
-) -> anyhow::Result<Vec<Client<LedgerStorage>>> {
+) -> Result<Vec<Client<LedgerStorage>>, Error> {
     let fetch_ranges: Vec<_> = clients
         .into_iter()
         .map(|mut client| async move {
@@ -220,8 +243,8 @@ async fn bootstrap(
         .first()
         .expect("no server contains bootstrap point")
         .0;
-    log::info!("client_indices.first() {}", first);
-    let hero_client = &mut clients[0];
+    let hero_client = &mut clients[first];
+    log::info!("picked client for bootstrap -> {}", hero_client.state_rpc_address);
     hero_client.bootstrap_state(height).await?;
     Ok(clients)
 }

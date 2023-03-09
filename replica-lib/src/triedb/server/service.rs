@@ -28,6 +28,8 @@ pub struct RunningService<S: LittleBig + Sync + Send + 'static> {
     _exit_signal_sender: Sender<()>,
 }
 
+const SECONDARY_CATCH_UP_SECONDS: u64 = 7;
+
 #[allow(clippy::result_unit_err)]
 impl<S: LittleBig + Sync + Send + 'static> Service<S> {
     pub fn new(deps: Deps<S>) -> Service<S> {
@@ -91,7 +93,7 @@ impl<S: LittleBig + Sync + Send + 'static> Service<S> {
                     
                 }
             
-                tokio::time::sleep(Duration::new(1, 0)).await;
+                tokio::time::sleep(Duration::new(SECONDARY_CATCH_UP_SECONDS, 0)).await;
             }
         }
         

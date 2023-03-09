@@ -15,7 +15,7 @@ pub mod app_grpc {
     tonic::include_proto!("triedb_repl");
 }
 
-use crate::triedb::{check_root, debug_elapsed, lock_root, range::MasterRange, LittleBig};
+use crate::triedb::{check_root, debug_elapsed, lock_root, range::MasterRange, LittleBig, error::ServerError};
 
 pub struct Server<S> {
     storage: UsedStorage,
@@ -46,7 +46,7 @@ where
         &self,
         from: evm_state::BlockNum,
         to: evm_state::BlockNum,
-    ) -> anyhow::Result<(H256, H256)> {
+    ) -> Result<(H256, H256), ServerError> {
         let from = self
             .block_storage
             .get_evm_confirmed_state_root(from)
@@ -214,7 +214,7 @@ const MAX_CHUNK: usize = 100000; // contracting 256 times ; 16^(N-1)
 #[tonic::async_trait]
 impl<S: LittleBig + Sync + Send + 'static> Backend for Server<S> {
     async fn ping(&self, request: Request<()>) -> Result<Response<PingReply>, Status> {
-        info!("Got a request: {:?}", request);
+        info!("got a ping request: {:?}", request);
 
         let reply = app_grpc::PingReply {
             message: "ABDULA STATUS 7".to_string(),
@@ -223,12 +223,12 @@ impl<S: LittleBig + Sync + Send + 'static> Backend for Server<S> {
         Ok(Response::new(reply))
     }
 
-    async fn get_raw_bytes(
+    async fn get_array_of_nodes(
         &self,
-        request: Request<app_grpc::GetRawBytesRequest>,
-    ) -> Result<Response<app_grpc::GetRawBytesReply>, Status> {
+        request: Request<app_grpc::GetArrayOfNodesRequest>,
+    ) -> Result<Response<app_grpc::GetArrayOfNodesReply>, Status> {
         let request = request.into_inner();
-        info!("Got a request: {:?}", request.hashes.len());
+        info!("got a get_array_of_nodes request: {:?}", request.hashes.len());
         if request.hashes.len() > MAX_CHUNK {
             return Err(Status::failed_precondition(format!(
                 "chunk size {}",
@@ -242,7 +242,7 @@ impl<S: LittleBig + Sync + Send + 'static> Backend for Server<S> {
             nodes.push(bytes);
         }
 
-        let reply = app_grpc::GetRawBytesReply { nodes };
+        let reply = app_grpc::GetArrayOfNodesReply { nodes };
 
         Ok(Response::new(reply))
     }
@@ -251,7 +251,7 @@ impl<S: LittleBig + Sync + Send + 'static> Backend for Server<S> {
         &self,
         request: Request<app_grpc::GetStateDiffRequest>,
     ) -> Result<Response<app_grpc::GetStateDiffReply>, Status> {
-        info!("Got a request: {:?}", request);
+        info!("got a state_diff request: {:?}", request);
 
         let inner = request.into_inner();
         let height_diff = if inner.to >= inner.from {

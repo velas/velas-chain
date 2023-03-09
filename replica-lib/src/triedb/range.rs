@@ -6,6 +6,8 @@ use std::{
 use evm_state::BlockNum;
 use serde::{Deserialize, Serialize};
 
+use super::error::RangeInitError;
+
 /// Empty:
 /// {
 ///   "range": {
@@ -74,7 +76,7 @@ impl Advance {
 }
 
 impl MasterRange {
-    pub fn new(file_path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub fn new(file_path: impl AsRef<Path>) -> Result<Self, RangeInitError> {
         let ser = std::fs::read_to_string(file_path.as_ref())?;
         let i: MasterRangeInner = serde_json::from_str(&ser)?;
         log::info!("MasterRange::new {:#?}", i);

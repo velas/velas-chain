@@ -1,6 +1,7 @@
 pub mod client;
 pub mod server;
 pub mod range;
+pub mod error;
 
 use std::{time::Instant, net::SocketAddr};
 
@@ -9,7 +10,7 @@ use triedb::{Database, gc::DbCounter};
 
 use rocksdb::{DBWithThreadMode, SingleThreaded};
 
-use self::range::MasterRange;
+use self::{range::MasterRange, error::{EvmHeightError, LockError}};
 
 use async_trait::async_trait;
 use  solana_storage_bigtable::LedgerStorage;
@@ -20,7 +21,7 @@ pub trait LittleBig {
     async fn get_evm_confirmed_state_root(
         &self,
         block_num: evm_state::BlockNum,
-    ) -> anyhow::Result<H256> ;
+    ) -> Result<H256, EvmHeightError> ;
 }
 
 
@@ -29,7 +30,7 @@ impl LittleBig for LedgerStorage {
     async fn get_evm_confirmed_state_root(
         &self,
         block_num: evm_state::BlockNum,
-    ) -> anyhow::Result<H256> {
+    ) -> Result<H256, EvmHeightError> {
         if block_num == 0 {
             return Ok(empty_trie_hash());
         }
@@ -40,13 +41,11 @@ impl LittleBig for LedgerStorage {
     }
 }
 
-
-
 pub fn lock_root<D, F>(
     db: &D,
     locked: H256,
     func: F,
-) -> Result<triedb::gc::RootGuard<'_, D, F>, anyhow::Error>
+) -> Result<triedb::gc::RootGuard<'_, D, F>, LockError>
 where
     D: Database + DbCounter,
     F: FnMut(&[u8]) -> Vec<H256>
@@ -54,7 +53,7 @@ where
     let guard =
         triedb::gc::RootGuard::new(db, locked, func);
     if locked != triedb::empty_trie_hash() && !db.node_exist(locked) {
-        return Err(anyhow::anyhow!("cannot lock root {:?} (not found)", locked));
+        return Err(LockError::LockRootNotFound(locked));
 
     }
     Ok(guard)
@@ -63,15 +62,16 @@ where
 pub fn check_root(
     db: &DBWithThreadMode<SingleThreaded>,
     checked: H256,
-) -> Result<(), anyhow::Error>
+) -> Result<(), LockError>
 where
 {
     if checked != triedb::empty_trie_hash() && db.get(checked)?.is_none() {
-        return Err(anyhow::anyhow!("check root {:?} (not found)", checked));
+        return Err(LockError::LockRootNotFound(checked));
 
     }
     Ok(())
 }
+
 pub(self) fn debug_elapsed(msg: &str, start: &Instant) {
     let duration = start.elapsed();
 

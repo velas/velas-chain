@@ -5,7 +5,7 @@ import "google/protobuf/empty.proto";
 
 service Backend {
   rpc ping (google.protobuf.Empty) returns (PingReply);
-  rpc getRawBytes (GetRawBytesRequest) returns (GetRawBytesReply);
+  rpc getArrayOfNodes (GetArrayOfNodesRequest) returns (GetArrayOfNodesReply);
   rpc getStateDiff (GetStateDiffRequest) returns (GetStateDiffReply);
   rpc getBlockRange (google.protobuf.Empty) returns (GetBlockRangeReply);
 }
@@ -18,11 +18,11 @@ message Hash {
   string value = 1;
 }
 
-message GetRawBytesRequest {
+message GetArrayOfNodesRequest {
   repeated Hash hashes = 1;
 }
 
-message GetRawBytesReply {
+message GetArrayOfNodesReply {
   repeated bytes nodes = 1;
 }
 
