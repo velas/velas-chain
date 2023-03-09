@@ -1,12 +1,14 @@
 use std::net::SocketAddr;
 
-mod tonic_server;
+mod proto;
 mod service;
 
 use evm_state::{StorageSecondary, Storage as StorageOptimistic};
 pub use service::{Service, RunningService};
 
-use super::range::MasterRange;
+use self::proto::app_grpc::backend_server::BackendServer;
+
+use super::{range::MasterRange, EvmHeightIndex};
 use derivative::Derivative;
 
 
@@ -60,5 +62,30 @@ impl<S> Deps<S> {
             block_storage,
             runtime,
         }
+    }
+}
+
+pub struct Server<S> {
+    storage: UsedStorage,
+    range: MasterRange,
+    block_threshold: evm_state::BlockNum,
+    block_storage: S,
+}
+impl<S> Server<S>
+where
+    S: EvmHeightIndex + Send + Sync + 'static,
+{
+    pub fn new(
+        storage: UsedStorage,
+        range: MasterRange,
+        block_threshold: evm_state::BlockNum,
+        block_storage: S,
+    ) -> BackendServer<Self> {
+        BackendServer::new(Server {
+            storage,
+            range,
+            block_threshold,
+            block_storage,
+        })
     }
 }

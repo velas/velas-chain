@@ -8,34 +8,34 @@ use tonic::{self, transport};
 
 use log::{error, info};
 
-use crate::triedb::LittleBig;
+use crate::triedb::EvmHeightIndex;
 
-use super::{tonic_server, UsedStorage};
+use super::{proto, UsedStorage};
 use super::{Deps, ServiceConfig};
-use tonic_server::app_grpc::backend_server::BackendServer;
+use proto::app_grpc::backend_server::BackendServer;
 /// The service wraps the Rpc to make it runnable in the tokio runtime
 /// and handles start and stop of the service.
-pub struct Service<S: LittleBig + Sync + Send + 'static> {
-    server: BackendServer<tonic_server::Server<S>>,
+pub struct Service<S: EvmHeightIndex + Sync + Send + 'static> {
+    server: BackendServer<super::Server<S>>,
     config: ServiceConfig,
     runtime: Option<tokio::runtime::Runtime>,
     storage_clone: UsedStorage,
 }
 
-pub struct RunningService<S: LittleBig + Sync + Send + 'static> {
+pub struct RunningService<S: EvmHeightIndex + Sync + Send + 'static> {
     thread: JoinHandle<()>,
-    server_handle: BackendServer<tonic_server::Server<S>>,
+    server_handle: BackendServer<super::Server<S>>,
     _exit_signal_sender: Sender<()>,
 }
 
 const SECONDARY_CATCH_UP_SECONDS: u64 = 7;
 
 #[allow(clippy::result_unit_err)]
-impl<S: LittleBig + Sync + Send + 'static> Service<S> {
+impl<S: EvmHeightIndex + Sync + Send + 'static> Service<S> {
     pub fn new(deps: Deps<S>) -> Service<S> {
         log::info!("creating new evm state rpc service {:#?}", deps);
         Self {
-            server: tonic_server::Server::new(
+            server: super::Server::new(
                 deps.storage.clone(),
                 deps.range,
                 deps.service.block_threshold,
@@ -128,7 +128,7 @@ impl<S: LittleBig + Sync + Send + 'static> Service<S> {
     }
 }
 
-impl<S: LittleBig + Sync + Send + 'static> RunningService<S> {
+impl<S: EvmHeightIndex + Sync + Send + 'static> RunningService<S> {
     pub fn join(self) -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         self.server_handle.join()?;
         self.thread

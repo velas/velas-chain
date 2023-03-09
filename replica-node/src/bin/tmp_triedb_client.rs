@@ -253,7 +253,7 @@ async fn drive_into_infinity(clients: Vec<Client<LedgerStorage>>) {
     let extend_range_routines: Vec<_> = clients
         .into_iter()
         .map(|mut client| async move {
-            client.extend_range_routine().await;
+            client.routine().await;
         })
         .collect();
 
