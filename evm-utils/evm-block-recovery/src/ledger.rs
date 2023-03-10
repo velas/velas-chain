@@ -43,11 +43,11 @@ pub async fn get_confirmed_blocks(
         tokio::time::sleep(RETRY_PAUSE).await;
     }
 
-    return Err(AppError::GetNativeBlocks {
+    Err(AppError::GetNativeBlocks {
         source: source.unwrap(),
         start_block: start_slot,
         limit,
-    });
+    })
 }
 
 pub async fn get_confirmed_block(
@@ -65,8 +65,8 @@ pub async fn get_confirmed_block(
         tokio::time::sleep(RETRY_PAUSE).await;
     }
 
-    return Err(AppError::GetNativeBlock {
+    Err(AppError::GetNativeBlock {
         source: source.unwrap(),
         block: slot,
-    });
+    })
 }
