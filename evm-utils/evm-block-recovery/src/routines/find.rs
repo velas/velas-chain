@@ -117,14 +117,7 @@ pub async fn find_native(
         let total_limit = (end_slot - start_slot + 1) as usize;
         let limit = usize::min(total_limit, bigtable_limit);
 
-        let mut chunk = ledger
-            .get_confirmed_blocks(start_slot, limit)
-            .await
-            .map_err(|source| AppError::GetNativeBlocks {
-                source,
-                start_block,
-                limit,
-            })?;
+        let mut chunk = ledger::get_confirmed_blocks(&ledger, start_slot, limit).await?;
 
         let last_in_chunk = if let Some(block) = chunk.last() {
             *block
@@ -171,21 +164,9 @@ pub async fn find_native(
         let slot_prev = range.first() - 1;
         let slot_curr = range.last() + 1;
 
-        let block_prev = ledger
-            .get_confirmed_block(slot_prev)
-            .await
-            .map_err(|source| AppError::GetNativeBlock {
-                source,
-                block: slot_prev,
-            })?;
-
-        let block_curr = ledger
-            .get_confirmed_block(slot_curr)
-            .await
-            .map_err(|source| AppError::GetNativeBlock {
-                source,
-                block: slot_curr,
-            })?;
+        // tokio::join!() ?
+        let block_prev = ledger::get_confirmed_block(&ledger, slot_prev).await?;
+        let block_curr = ledger::get_confirmed_block(&ledger, slot_curr).await?;
 
         if block_prev.blockhash == block_curr.previous_blockhash {
             let checked_range = BlockRange::new(slot_prev, slot_curr);
@@ -196,11 +177,15 @@ pub async fn find_native(
         }
     }
 
-    log::info!("Search complete");
-
-    match missing_ranges.is_empty() {
-        true => Ok(WhatFound::AllGood),
-        false => Ok(WhatFound::ThereAreMisses(missing_ranges)),
+    if missing_ranges.is_empty() {
+        log::info!("Search complete. No missing ranges are found.");
+        Ok(WhatFound::AllGood)
+    } else {
+        log::warn!(
+            "Search complete. Found missing ranges: {:?}",
+            &missing_ranges
+        );
+        Ok(WhatFound::ThereAreMisses(missing_ranges))
     }
 }
 
