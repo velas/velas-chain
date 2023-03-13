@@ -13,7 +13,7 @@ pub mod app_grpc {
 mod helpers;
 mod storage;
 
-use crate::triedb::EvmHeightIndex;
+use crate::triedb::{error::ServerProtoError, EvmHeightIndex};
 
 trait TryConvert<S>: Sized {
     type Error;
@@ -45,10 +45,10 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
             request.hashes.len()
         );
         if request.hashes.len() > MAX_CHUNK {
-            return Err(Status::failed_precondition(format!(
-                "chunk size {}",
-                request.hashes.len()
-            )));
+            return Err(ServerProtoError::ExceededMaxChunkGetArrayOfNodes {
+                actual: request.hashes.len(),
+                max: MAX_CHUNK,
+            })?;
         }
         let mut nodes = vec![];
         for hash in request.hashes {
@@ -80,14 +80,11 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
                 inner.to - inner.from
             )));
         }
-        let (from, to) = self
-            .fetch_state_roots(inner.from, inner.to)
-            .await
-            .map_err(|err| {
-                log::error!("fetch_state_roots encountered err {:?}", err);
-                Status::internal("failure to fetch state roots")
-            })?;
-        self.state_diff_body(from, to)
+        let (from_hash, to_hash) = self.fetch_state_roots(inner.from, inner.to).await?;
+
+        helpers::check_hash(inner.from, inner.first_root, from_hash)?;
+        helpers::check_hash(inner.to, inner.second_root, to_hash)?;
+        Ok(self.state_diff_body(from_hash, to_hash)?)
     }
 
     async fn get_block_range(

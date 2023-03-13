@@ -2,6 +2,7 @@ use evm_state::{H256, BlockNum, storage::account_extractor};
 use triedb::gc::RootGuard;
 use triedb::gc::DbCounter;
 
+use crate::triedb::error::ClientProtoError;
 use crate::triedb::{error::{ClientError, BootstrapError, source_matches_type}, collection, EvmHeightIndex};
 
 use self::splice_count_stack::SpliceCountStack;
@@ -33,10 +34,10 @@ where
 
         let nodes = nodes?;
         if nodes.nodes.len() != input.len() {
-            return Err(ClientError::GetArrayOfNodesReplyLenMismatch(
+            return Err(ClientProtoError::GetArrayOfNodesReplyLenMismatch(
                 input.len(),
                 nodes.nodes.len(),
-            ));
+            ))?;
         }
 
         for (index, element) in input.iter().enumerate() {

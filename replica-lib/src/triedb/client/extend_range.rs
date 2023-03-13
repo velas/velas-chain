@@ -80,10 +80,7 @@ where
     }
 
     async fn iteration(&mut self) -> Result<Advance, (ClientAdvanceError, Duration)> {
-        let block_range = self.get_block_range().await.map_err(|status| {
-            let err: ClientError = status.into();
-            err
-        });
+        let block_range = self.get_block_range().await.map_err(Into::<ClientError>::into);
         if let Err(e) = block_range {
             return Err((
                 ClientAdvanceError::ClientErrorWithContext {

@@ -61,19 +61,17 @@ impl<S> super::Client<S> {
         debug_elapsed("locked root", &start);
 
         let response = client
-            .get_state_diff(helpers::state_diff_request(heights))
+            .get_state_diff(helpers::state_diff_request(heights, expected_hashes))
             .await?;
         debug_elapsed("queried response over network", &start);
 
         let response = response.into_inner();
         log::debug!(
             "changeset received {:?} -> {:?}, {}",
-            response.first_root,
-            response.second_root,
+            expected_hashes.0,
+            expected_hashes.1,
             response.changeset.len()
         );
-        helpers::check_hash(heights.0, response.first_root.clone(), expected_hashes.0)?;
-        helpers::check_hash(heights.1, response.second_root.clone(), expected_hashes.1)?;
 
         let diff_changes = helpers::parse_diff_response(response)?;
         debug_elapsed("parsed response", &start);

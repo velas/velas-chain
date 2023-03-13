@@ -34,6 +34,8 @@ message GetBlockRangeReply {
 message GetStateDiffRequest {
   uint64 from = 1;
   uint64 to = 2;
+  Hash first_root = 3;
+  Hash second_root = 4;
 }
 
 message Insert {
@@ -43,6 +45,4 @@ message Insert {
 
 message GetStateDiffReply {
   repeated Insert changeset = 1;
-  Hash first_root = 2;
-  Hash second_root = 3;
 }
