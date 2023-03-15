@@ -2453,9 +2453,9 @@ dependencies = [
 
 [[package]]
 name = "goblin"
-version = "0.4.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32401e89c6446dcd28185931a01b1093726d0356820ac744023e6850689bf926"
+checksum = "a7666983ed0dd8d21a6f6576ee00053ca0926fb281a5522577a4dbd0f1b54143"
 dependencies = [
  "log 0.4.17",
  "plain",
@@ -2504,9 +2504,9 @@ dependencies = [
 
 [[package]]
 name = "hash32"
-version = "0.1.1"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4041af86e63ac4298ce40e5cca669066e75b6f1aa3390fe2561ffa5e1d9f4cc"
+checksum = "b0c35f58762feb77d74ebe43bdbc3210f09be9fe6742234d573bacc26ed92b67"
 dependencies = [
  "byteorder",
 ]
@@ -4763,7 +4763,7 @@ dependencies = [
  "rand_core 0.3.1",
  "rand_hc 0.1.0",
  "rand_isaac",
- "rand_pcg 0.1.2",
+ "rand_pcg",
  "rand_xorshift 0.1.1",
  "rustc_version 0.2.3",
  "winapi 0.3.9",
@@ -4780,7 +4780,6 @@ dependencies = [
  "rand_chacha 0.2.2",
  "rand_core 0.5.1",
  "rand_hc 0.2.0",
- "rand_pcg 0.2.1",
 ]
 
 [[package]]
@@ -4892,15 +4891,6 @@ checksum = "abf9b09b01790cfe0364f52bf32995ea3c39f4d2dd011eac241d2914146d0b44"
 dependencies = [
  "autocfg 0.1.8",
  "rand_core 0.4.2",
-]
-
-[[package]]
-name = "rand_pcg"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16abd0c1b639e9eb4d7c50c0b8100b0d0f849be2349829c740fe8e6eb4816429"
-dependencies = [
- "rand_core 0.5.1",
 ]
 
 [[package]]
@@ -5385,18 +5375,18 @@ checksum = "ddccb15bcce173023b3fedd9436f882a0739b8dfb45e4f6b6002bee5929f61b2"
 
 [[package]]
 name = "scroll"
-version = "0.10.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fda28d4b4830b807a8b43f7b0e6b5df875311b3e7621d84577188c175b6ec1ec"
+checksum = "04c565b551bafbef4157586fa379538366e4385d42082f255bfd96e4fe8519da"
 dependencies = [
  "scroll_derive",
 ]
 
 [[package]]
 name = "scroll_derive"
-version = "0.10.5"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aaaae8f38bb311444cfb7f1979af0bc9240d95795f75f9ceddf6a59b79ceffa0"
+checksum = "bdbda6ac5cd1321e724fa9cee216f3a61885889b896f073b8f82322789c5250e"
 dependencies = [
  "proc-macro2 1.0.50",
  "quote 1.0.23",
@@ -7836,9 +7826,9 @@ dependencies = [
 
 [[package]]
 name = "solana_rbpf"
-version = "0.2.24"
+version = "0.2.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41e138f6d6d4eb6a65f8e9f01ca620bc9907d79648d5038a69dd3f07b6ed3f1f"
+checksum = "1a5735b8c9defc3723162321a61ef738d34168401eeef213f62a32809739b0f5"
 dependencies = [
  "byteorder",
  "combine",
@@ -7846,11 +7836,11 @@ dependencies = [
  "hash32",
  "libc",
  "log 0.4.17",
- "rand 0.7.3",
+ "rand 0.8.5",
  "rustc-demangle",
  "scroll",
  "thiserror",
- "time 0.1.45",
+ "winapi 0.3.9",
 ]
 
 [[package]]
