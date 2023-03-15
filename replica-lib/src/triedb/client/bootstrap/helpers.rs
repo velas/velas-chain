@@ -4,10 +4,7 @@ use rlp::Rlp;
 use sha3::{Digest, Keccak256};
 use triedb::{gc::ReachableHashes, merkle::MerkleNode};
 
-use crate::triedb::error::{ClientError, ClientProtoError};
-
-const MAX_CHUNK_HASHES: usize = 100_000;
-const SPLIT_FACTOR: usize = 20;
+use crate::triedb::{error::{ClientError, ClientProtoError}, MAX_CHUNK_HASHES};
 
 pub fn no_childs(_: &[u8]) -> Vec<H256> {
     vec![]
@@ -58,9 +55,8 @@ pub(super) fn compute_and_maybe_split_children(
         childs_all.extend(res.into_iter());
     }
     let res: Vec<_> = if childs_all.len() > MAX_CHUNK_HASHES {
-        let len = childs_all.len();
         childs_all
-            .rchunks(len / SPLIT_FACTOR)
+            .rchunks(MAX_CHUNK_HASHES)
             .map(|el| el.to_vec())
             .filter(|el| !el.is_empty())
             .collect()

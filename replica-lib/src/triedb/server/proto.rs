@@ -13,15 +13,13 @@ pub mod app_grpc {
 mod helpers;
 mod storage;
 
-use crate::triedb::{error::ServerProtoError, EvmHeightIndex};
+use crate::triedb::{error::ServerProtoError, EvmHeightIndex, MAX_CHUNK_HASHES};
 
 trait TryConvert<S>: Sized {
     type Error;
 
     fn try_from(value: S) -> Result<Self, Self::Error>;
 }
-
-const MAX_CHUNK: usize = 100000;
 
 #[tonic::async_trait]
 impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
@@ -44,10 +42,10 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
             "got a get_array_of_nodes request: {:?}",
             request.hashes.len()
         );
-        if request.hashes.len() > MAX_CHUNK {
+        if request.hashes.len() > MAX_CHUNK_HASHES {
             return Err(ServerProtoError::ExceededMaxChunkGetArrayOfNodes {
                 actual: request.hashes.len(),
-                max: MAX_CHUNK,
+                max: MAX_CHUNK_HASHES,
             })?;
         }
         let mut nodes = vec![];

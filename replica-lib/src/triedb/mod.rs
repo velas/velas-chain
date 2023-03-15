@@ -24,6 +24,10 @@ pub(self) fn collection(storage: &Storage) -> triedb::gc::TrieCollection<RocksHa
     triedb::gc::TrieCollection::new(storage.rocksdb_trie_handle())
 }
 
+// maximum number of hashes for GetArrayOfNodesRequest (should be around 200 MB 
+// worth of corresponding nodes)
+const MAX_CHUNK_HASHES: usize = 1_000_000;
+
 #[async_trait]
 pub trait EvmHeightIndex {
     async fn get_evm_confirmed_state_root(
