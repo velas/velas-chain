@@ -1,8 +1,8 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use evm_state::{BlockNum, H256};
 
-use crate::triedb::{error::{ClientAdvanceError, EvmHeightError, source_matches_type, ClientError}, range::Advance, EvmHeightIndex, collection};
+use crate::triedb::{error::{ClientAdvanceError, EvmHeightError, source_matches_type, ClientError}, range::Advance, EvmHeightIndex, collection, debug_elapsed};
 use triedb::gc::DbCounter;
 
 use super::Client;
@@ -23,6 +23,7 @@ where
         &self,
         heights: (BlockNum, BlockNum),
     ) -> Result<(H256, H256), EvmHeightError> {
+        let start = Instant::now();
         let from = self
             .block_storage
             .get_evm_confirmed_state_root(heights.0)
@@ -31,6 +32,7 @@ where
             .block_storage
             .get_evm_confirmed_state_root(heights.1)
             .await?;
+        debug_elapsed("fetched 2 roots from EvmHeightIndex", &start);
         Ok((from, to))
     }
 

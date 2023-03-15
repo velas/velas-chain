@@ -1,9 +1,11 @@
+use std::time::Instant;
+
 use evm_rpc::FormatHex;
 use evm_state::H256;
 use triedb::DiffChange;
 
 use crate::triedb::{
-     error::{ServerError, ServerProtoError}, server::Server, EvmHeightIndex,
+     error::{ServerError, ServerProtoError}, server::Server, EvmHeightIndex, debug_elapsed,
 };
 
 use super::{app_grpc, TryConvert};
@@ -73,11 +75,15 @@ where
         from: evm_state::BlockNum,
         to: evm_state::BlockNum,
     ) -> Result<(H256, H256), ServerError> {
+
+        let start = Instant::now();
         let from = self
             .block_storage
             .get_evm_confirmed_state_root(from)
             .await?;
         let to = self.block_storage.get_evm_confirmed_state_root(to).await?;
+
+        debug_elapsed("fetched 2 roots from EvmHeightIndex", &start);
         Ok((from, to))
     }
 }
