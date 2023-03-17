@@ -57,7 +57,10 @@ async fn main() {
 
     let exit_code = match execution_result {
         Ok(()) => 0,
-        Err(error) => error.exit_code(),
+        Err(error) => {
+            eprintln!("error {:?}", error);
+            error.exit_code()
+        },
     };
 
     std::process::exit(exit_code);
