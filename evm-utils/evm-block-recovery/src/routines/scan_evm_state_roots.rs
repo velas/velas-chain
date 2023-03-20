@@ -1,9 +1,8 @@
 mod bigtable_fetcha;
 mod range_map;
-mod storage;
 
 use async_trait::async_trait;
-use evm_state::{Block, BlockNum};
+use evm_state::{Block, BlockNum, storage::two_modes_enum::Storage};
 
 use crate::{cli::ScanEvmStateRootsArgs, error::AppError};
 
@@ -29,7 +28,7 @@ pub async fn command(args: &ScanEvmStateRootsArgs) -> Result<(), AppError> {
         rangemap_json,
     } = args;
     let handle = tokio::runtime::Handle::current();
-    let storage = storage::Storage::new(evm_state_path, *secondary, *gc)?;
+    let storage = Storage::new(evm_state_path, *secondary, *gc)?;
 
     let rangemap = range_map::MasterRange::new(rangemap_json)?;
     let mut fetcha = bigtable_fetcha::BigtableEVMBlockFetcher::new(*workers as usize);

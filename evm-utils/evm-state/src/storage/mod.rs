@@ -36,6 +36,7 @@ use triedb::{
 
 pub mod inspectors;
 pub mod walker;
+pub mod two_modes_enum;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub use rocksdb; // avoid mess with dependencies for another crates
