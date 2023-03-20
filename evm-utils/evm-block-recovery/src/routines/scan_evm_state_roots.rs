@@ -5,13 +5,13 @@ mod storage;
 use async_trait::async_trait;
 use evm_state::{Block, BlockNum};
 
-
 use crate::{cli::ScanEvmStateRootsArgs, error::AppError};
 
 #[async_trait]
 pub trait BigtableFetcher {
     async fn schedule_range(
         &mut self,
+        bigtable: &solana_storage_bigtable::LedgerStorage,
         handle: &tokio::runtime::Handle,
         height: std::ops::Range<BlockNum>,
     ) -> Result<(), AppError>;
@@ -39,8 +39,20 @@ pub async fn command(args: &ScanEvmStateRootsArgs) -> Result<(), AppError> {
     } else {
         *end_exclusive - *start
     };
+
+    let bigtable= solana_storage_bigtable::LedgerStorage::new(
+        false,
+        Some(std::time::Duration::new(5, 0)),
+        None,
+    )
+    .await
+    .map_err(|source| AppError::OpenLedger {
+        source,
+        creds_path: None,
+        instance: "velas-ledger".to_string(),
+    })?;
     fetcha
-        .schedule_range(&handle, *start..*end_exclusive)
+        .schedule_range(&bigtable, &handle, *start..*end_exclusive)
         .await?;
 
     let mut actual_len = 0;

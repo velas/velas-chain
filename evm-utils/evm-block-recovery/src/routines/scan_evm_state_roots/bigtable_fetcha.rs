@@ -58,39 +58,6 @@ pub async fn fetch_one_retry_backoff(
         .await
 }
 
-pub async fn connect_backoff(
-) -> Result<solana_storage_bigtable::LedgerStorage, solana_storage_bigtable::Error> {
-    let count = Arc::new(Mutex::new(0));
-    let connect_cl = || {
-        {
-            let mut lock = count.lock().expect("locked poisoned");
-            *lock += 1;
-        }
-        async {
-            log::warn!("attempting try fo connect {:?}", count.clone());
-            let storage = solana_storage_bigtable::LedgerStorage::new(
-                false,
-                Some(std::time::Duration::new(5, 0)),
-                None,
-            )
-            .await;
-            match &storage {
-                Ok(_) => {},
-                Err(err) => log::error!("connection attempt error {:?}", err),
-            }
-            storage
-
-        }
-    };
-
-    connect_cl
-        .retry(
-            &ExponentialBuilder::default()
-                .with_min_delay(std::time::Duration::new(0, MIN_DELAY_NANOS))
-                .with_max_times(MAX_TIMES),
-        )
-        .await
-}
 
 struct ChunkedRange {
     range: std::ops::Range<BlockNum>,
@@ -131,16 +98,10 @@ impl BigtableEVMBlockFetcher {
 const CHANNEL_CAPACITY: usize = 10000;
 
 async fn worker_task(
+    bigtable: solana_storage_bigtable::LedgerStorage,
     subrange: std::ops::Range<BlockNum>,
     tx: mpsc::Sender<(BlockNum, Option<Block>)>,
 ) {
-    let bigtable = connect_backoff().await;
-    let bigtable = match bigtable {
-        Err(e) => {
-            panic!("failing on retries to connect: {:?}", e);
-        }
-        Ok(bt) => bt,
-    };
     log::info!("spawned chunk {:?}", subrange);
     for height in subrange.clone() {
         let fetch_result = fetch_one_retry_backoff(&bigtable, height).await;
@@ -167,7 +128,7 @@ async fn worker_task(
 impl BigtableFetcher for BigtableEVMBlockFetcher {
     async fn schedule_range(
         &mut self,
-
+        bigtable: &solana_storage_bigtable::LedgerStorage,
         handle: &tokio::runtime::Handle,
         range: std::ops::Range<BlockNum>,
     ) -> Result<(), AppError> {
@@ -181,7 +142,7 @@ impl BigtableFetcher for BigtableEVMBlockFetcher {
         let chunked = ChunkedRange { range, chunk_size };
         for subrange in chunked {
             let tx_double = tx.clone();
-            let _worker_jh = handle.spawn(worker_task(subrange, tx_double));
+            let _worker_jh = handle.spawn(worker_task(bigtable.clone(), subrange, tx_double));
         }
         Ok(())
     }
