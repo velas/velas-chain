@@ -150,9 +150,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.63"
+version = "0.1.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eff18d764974428cf3a9328e23fc5c986f5fbed46e6cd4cdf42544df5d297ec1"
+checksum = "b84f9ebcc6c1f5b8cb160f6990096a5c127f423fcb6e1ccc46c370cbdfb75dfc"
 dependencies = [
  "proc-macro2 1.0.50",
  "quote 1.0.23",
@@ -286,6 +286,18 @@ dependencies = [
  "futures-core",
  "getrandom 0.2.8",
  "instant",
+ "pin-project",
+ "rand 0.8.5",
+ "tokio",
+]
+
+[[package]]
+name = "backon"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f34fac4d7cdaefa2deded0eda2d5d59dbfd43370ff3f856209e72340ae84c294"
+dependencies = [
+ "futures 0.3.25",
  "pin-project",
  "rand 0.8.5",
  "tokio",
@@ -1714,6 +1726,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "env_logger"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85cdab6a89accf66733ad5a1693a4dcced6aeff64602b634530dd73c1f3ee9f0"
+dependencies = [
+ "humantime",
+ "is-terminal",
+ "log 0.4.17",
+ "regex",
+ "termcolor",
+]
+
+[[package]]
 name = "environmental"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1865,15 +1890,17 @@ dependencies = [
 name = "evm-block-recovery"
 version = "0.1.0"
 dependencies = [
+ "backon",
  "bincode",
  "chrono",
  "clap 4.0.32",
  "clap_complete",
  "dotenvy",
- "env_logger 0.9.3",
+ "env_logger 0.10.0",
  "evm-rpc",
  "evm-state",
  "log 0.4.17",
+ "rangemap",
  "serde",
  "serde_json",
  "solana-client",
@@ -4922,6 +4949,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rangemap"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b9283c6b06096b47afc7109834fdedab891175bb5241ee5d4f7d2546549f263"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "raptorq"
 version = "1.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5520,9 +5556,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.91"
+version = "1.0.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "877c235533714907a8c2464236f5c4b2a17262ef1bd71f38f35ea592c8da6883"
+checksum = "1c533a59c9d8a93a09c6ab31f0fd5e5f4dd1b8fc9434804029839884765d04ea"
 dependencies = [
  "itoa 1.0.5",
  "ryu",

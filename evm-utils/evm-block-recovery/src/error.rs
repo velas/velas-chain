@@ -114,6 +114,11 @@ pub enum AppError {
 
     #[error("Unable to join async tasks")]
     TokioTaskJoin(#[source] tokio::task::JoinError),
+
+    #[error("i/o error")]
+    IO(#[from] std::io::Error),
+    #[error("i/o error")]
+    Storage(#[from] evm_state::storage::Error),
 }
 
 impl AppError {
@@ -140,6 +145,8 @@ impl AppError {
             AppError::SendAsyncEVM(_) => 1019,
             AppError::SendAsyncNative(_) => 1020,
             AppError::TokioTaskJoin(_) => 1021,
+            AppError::IO(_) => 1022,
+            AppError::Storage(_) => 1023,
         }
     }
 }

@@ -1,3 +1,7 @@
+use std::path::PathBuf;
+
+use evm_state::BlockNum;
+
 const DEFAULT_INSTANCE: &str = "solana-ledger";
 const DEFAULT_BIGTABLE_LIMIT: &str = "150000";
 
@@ -47,6 +51,8 @@ pub enum Command {
 
     /// Copies sequence of Native Blocks from Source to Destination Ledger
     RepeatNative(RepeatNativeArgs),
+
+    ScanEvmStateRoots(ScanEvmStateRootsArgs),
 
     /// Generetes Shell Completions for this Utility
     Completion(CompletionArgs),
@@ -226,6 +232,30 @@ pub struct RepeatNativeArgs {
     /// Destination Ledger Instance
     #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
     pub dst_instance: String,
+}
+
+#[derive(clap::Args)]
+pub struct ScanEvmStateRootsArgs {
+    #[arg(short, long)]
+    pub start: BlockNum,
+
+    #[arg(short, long)]
+    pub end_exclusive: BlockNum,
+
+    #[arg(short, long, value_name = "DIR")]
+    pub evm_state_path: PathBuf,
+
+    #[arg(short, long)]
+    pub workers: u16,
+
+    #[arg(short, long)]
+    pub secondary: bool,
+
+    #[arg(short, long)]
+    pub gc: bool,
+
+    #[arg(short, long, value_name = "FILE")]
+    pub rangemap_json: PathBuf,
 }
 
 #[derive(clap::Args)]
