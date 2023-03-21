@@ -10,10 +10,7 @@ use triedb::{gc::DbCounter, Database};
 
 use rocksdb::{DBWithThreadMode, SingleThreaded};
 
-use self::{
-    error::{EvmHeightError, LockError},
-    range::MasterRange,
-};
+use self::{error::{EvmHeightError, LockError}, range::RangeJSON};
 
 use async_trait::async_trait;
 use solana_storage_bigtable::LedgerStorage;
@@ -24,7 +21,7 @@ pub(self) fn collection(storage: &Storage) -> triedb::gc::TrieCollection<RocksHa
     triedb::gc::TrieCollection::new(storage.rocksdb_trie_handle())
 }
 
-// maximum number of hashes for GetArrayOfNodesRequest (should be around 200 MB 
+// maximum number of hashes for GetArrayOfNodesRequest (should be around 200 MB
 // worth of corresponding nodes)
 const MAX_CHUNK_HASHES: usize = 1_000_000;
 
@@ -87,7 +84,7 @@ pub(self) fn debug_elapsed(msg: &str, start: &Instant) {
 
 pub fn start_and_join<S: EvmHeightIndex + Sync + Send + 'static>(
     bind_address: SocketAddr,
-    range: MasterRange,
+    range: RangeJSON,
     block_threshold: evm_state::BlockNum,
     storage: server::UsedStorage,
     runtime: tokio::runtime::Runtime,

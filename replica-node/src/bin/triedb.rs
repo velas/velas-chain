@@ -5,7 +5,7 @@
 
 use std::net::SocketAddr;
 
-use solana_replica_lib::triedb::{range::MasterRange, server::UsedStorage, start_and_join};
+use solana_replica_lib::triedb::{range::RangeJSON, server::UsedStorage, start_and_join};
 
 use {
     clap::{crate_description, crate_name, App, AppSettings, Arg},
@@ -98,7 +98,7 @@ pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     };
 
     let range_file = matches.value_of("range_file").unwrap();
-    let range = MasterRange::new(range_file)?;
+    let range = RangeJSON::new(range_file)?;
     let block_threshold = matches
         .value_of("block_height_diff_threshold")
         .unwrap()

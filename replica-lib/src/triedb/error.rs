@@ -1,4 +1,4 @@
-use evm_state::{BlockNum, H256};
+use evm_state::H256;
 use rocksdb::Error as RocksError;
 use thiserror::Error;
 use triedb::Error as TriedbError;
@@ -23,11 +23,7 @@ pub enum ServerProtoError {
     #[error("invalid request: could not parse hash \"{0}\"")]
     CouldNotParseHash(String),
     #[error("get array of nodes request: exceeded max array len {actual}, max {max}")]
-    ExceededMaxChunkGetArrayOfNodes {
-        actual: usize,
-        max: usize,
-    }
-
+    ExceededMaxChunkGetArrayOfNodes { actual: usize, max: usize },
 }
 
 impl From<ServerProtoError> for tonic::Status {
@@ -35,10 +31,10 @@ impl From<ServerProtoError> for tonic::Status {
         match err {
             variant @ (ServerProtoError::EmptyHash | ServerProtoError::CouldNotParseHash(..)) => {
                 tonic::Status::invalid_argument(format!("{:?}", variant))
-            },
-            variant@ ServerProtoError::ExceededMaxChunkGetArrayOfNodes {..} => {
+            }
+            variant @ ServerProtoError::ExceededMaxChunkGetArrayOfNodes { .. } => {
                 tonic::Status::failed_precondition(format!("{:?}", variant))
-            },
+            }
         }
     }
 }
@@ -78,14 +74,23 @@ impl From<ServerError> for tonic::Status {
             proto_violated @ ServerError::ProtoViolated(..) => proto_violated.into(),
             hash_mismatch @ ServerError::HashMismatch { .. } => {
                 tonic::Status::failed_precondition(format!("{:?}", hash_mismatch))
-            },
-            not_found_top_level @ ServerError::NotFoundTopLevel(..) => tonic::Status::not_found(format!("{:?}", not_found_top_level)), 
-            lock @ ServerError::Lock(..) => tonic::Status::not_found(format!("{:?}", lock)), 
-            rocks @ ServerError::RocksDBError(..) => tonic::Status::internal(format!("{:?}", rocks)), 
-            evm_height @ ServerError::EvmHeight(..) => tonic::Status::internal(format!("{:?}", evm_height)), 
-            triedb_diff @ ServerError::TriedbDiff => tonic::Status::internal(format!("{:?}", triedb_diff)), 
-            not_found_nested @ ServerError::NotFoundNested { ..} => tonic::Status::not_found(format!("not found {:?}", not_found_nested)), 
-
+            }
+            not_found_top_level @ ServerError::NotFoundTopLevel(..) => {
+                tonic::Status::not_found(format!("{:?}", not_found_top_level))
+            }
+            lock @ ServerError::Lock(..) => tonic::Status::not_found(format!("{:?}", lock)),
+            rocks @ ServerError::RocksDBError(..) => {
+                tonic::Status::internal(format!("{:?}", rocks))
+            }
+            evm_height @ ServerError::EvmHeight(..) => {
+                tonic::Status::internal(format!("{:?}", evm_height))
+            }
+            triedb_diff @ ServerError::TriedbDiff => {
+                tonic::Status::internal(format!("{:?}", triedb_diff))
+            }
+            not_found_nested @ ServerError::NotFoundNested { .. } => {
+                tonic::Status::not_found(format!("not found {:?}", not_found_nested))
+            }
         }
     }
 }
@@ -128,12 +133,6 @@ pub enum ClientAdvanceError {
 
         #[source]
         error: ClientError,
-    },
-    #[error("no useful advance can be made on {state_rpc_address};  our : {self_range:?} ; offer: {server_offer:?}")]
-    EmptyAdvance {
-        state_rpc_address: String,
-        self_range: std::ops::Range<BlockNum>,
-        server_offer: std::ops::Range<BlockNum>,
     },
 }
 

@@ -3,17 +3,16 @@ use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use solana_replica_lib::triedb::{client::Client, range::MasterRange};
+use solana_replica_lib::triedb::{client::Client, range::RangeJSON};
 
 use clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches};
 use evm_state::{BlockNum, Storage};
-use futures::future::join_all;
 use solana_storage_bigtable::LedgerStorage;
 use thiserror::Error;
 
 #[derive(Debug)]
 struct ParsedArgs {
-    state_rpc_addresses: Vec<String>,
+    state_rpc_address: String,
     evm_state: PathBuf,
     range_file: String,
 }
@@ -34,27 +33,20 @@ enum Error {
     Client(#[from] solana_replica_lib::triedb::error::ClientError),
     #[error("bootstrap error {0}")]
     Bootstrap(#[from] solana_replica_lib::triedb::error::BootstrapError),
-
-    
 }
 
 impl ParsedArgs {
     fn parse(matches: ArgMatches) -> Result<(Option<BlockNum>, Self), Error> {
-        let state_rpc_addresses = matches
-            .values_of("state_rpc_address")
-            .unwrap()
-            .map(|str| str.to_string());
+        let state_rpc_address = matches.value_of("state_rpc_address").unwrap();
 
         let secure_flag = matches.is_present("tls");
         let secure_flag = if secure_flag { "s" } else { "" };
 
-        let result: Result<Vec<String>, AddrParseError> = state_rpc_addresses
-            .map(|address| {
-                SocketAddr::from_str(&address)?;
+        let state_rpc_address = {
+            SocketAddr::from_str(state_rpc_address)?;
 
-                Ok(format!("http{}://{}", secure_flag, address))
-            })
-            .collect();
+            format!("http{}://{}", secure_flag, state_rpc_address)
+        };
 
         let evm_state = PathBuf::from(matches.value_of("evm_state").unwrap());
         let range_file = matches.value_of("range_file").unwrap().to_string();
@@ -70,36 +62,32 @@ impl ParsedArgs {
         Ok((
             bootstrap_height,
             Self {
-                state_rpc_addresses: result?,
+                state_rpc_address,
                 evm_state,
                 range_file,
             },
         ))
     }
-    fn build(self) -> Result<Vec<ClientOpts>, Error> {
+
+    fn build(self) -> Result<ClientOpts, Error> {
         log::info!("building ClientOpts {:#?}", self);
 
         let gc_enabled = true;
         let storage = Storage::open_persistent(self.evm_state, gc_enabled)?;
 
-        let range = MasterRange::new(self.range_file)?;
-        let result = self
-            .state_rpc_addresses
-            .into_iter()
-            .map(|address| ClientOpts::new(address, storage.clone(), range.clone()))
-            .collect();
-        Ok(result)
+        let range = RangeJSON::new(self.range_file)?;
+        Ok(ClientOpts::new(self.state_rpc_address, storage, range))
     }
 }
 
 pub struct ClientOpts {
     state_rpc_address: String,
     storage: Storage,
-    range: MasterRange,
+    range: RangeJSON,
 }
 
 impl ClientOpts {
-    pub fn new(state_rpc_address: String, storage: Storage, range: MasterRange) -> Self {
+    pub fn new(state_rpc_address: String, storage: Storage, range: RangeJSON) -> Self {
         Self {
             state_rpc_address,
             storage,
@@ -128,8 +116,9 @@ async fn main() -> Result<(), Error> {
             Arg::with_name("state_rpc_address")
                 .long("state-rpc-address")
                 .value_name("HOST:PORT")
-                .multiple(true)
-                .number_of_values(1)
+                .multiple(false)
+                // .multiple(true)
+                // .number_of_values(1)
                 .takes_value(true)
                 .validator(solana_net_utils::is_host_port)
                 .required(true)
@@ -165,97 +154,42 @@ async fn main() -> Result<(), Error> {
 
     let (bootstrap_point, client_opts) = ParsedArgs::parse(matches)?;
     let client_opts = client_opts.build()?;
-    let clients = connect(client_opts).await?;
+    let mut client = connect(client_opts).await?;
 
     if let Some(height) = bootstrap_point {
-        let clients = bootstrap(height, clients).await?;
-        drive_into_infinity(clients).await;
+        let mut client = bootstrap(height, client).await?;
+        client.routine().await;
     } else {
-        drive_into_infinity(clients).await;
+        client.routine().await;
     }
 
     // fortunately, horizon is unreachable
     Ok(())
 }
 
-async fn connect(client_opts: Vec<ClientOpts>) -> Result<Vec<Client<LedgerStorage>>, Error> {
+async fn connect(client_opts: ClientOpts) -> Result<Client<LedgerStorage>, Error> {
     let block_storage = solana_storage_bigtable::LedgerStorage::new(false, None, None).await?;
-    let servers: Vec<_> = client_opts
-        .into_iter()
-        .map(|client_opts| async {
-            let client_result = Client::connect(
-                client_opts.state_rpc_address,
-                client_opts.range,
-                client_opts.storage,
-                block_storage.clone(),
-            )
-            .await;
+    let client = async {
+        Client::connect(
+            client_opts.state_rpc_address,
+            client_opts.range,
+            client_opts.storage,
+            block_storage,
+        )
+        .await
+    }
+    .await?;
 
-            match client_result {
-                Err(e) => Err(e)?,
-
-                Ok(client) => Ok::<Client<LedgerStorage>, Error>(client),
-            }
-        })
-        .collect();
-
-    let connected = join_all(servers).await;
-    let clients: Vec<Client<LedgerStorage>> = connected
-        .into_iter()
-        .filter(|res| {
-            if let Err(ref e) = res {
-                log::error!("couldn't connect {:?}", e);
-            }
-            res.is_ok()
-        })
-        .map(|res| res.unwrap())
-        .collect();
-    Ok(clients)
+    Ok(client)
 }
 
 async fn bootstrap(
     height: BlockNum,
-    clients: Vec<Client<LedgerStorage>>,
-) -> Result<Vec<Client<LedgerStorage>>, Error> {
-    let fetch_ranges: Vec<_> = clients
-        .into_iter()
-        .map(|mut client| async move {
-            let block_range = client.get_block_range().await;
-            (block_range, client)
-        })
-        .collect();
+    mut client: Client<LedgerStorage>,
+) -> Result<Client<LedgerStorage>, Error> {
+    // let block_range = client.get_block_range().await;
 
-    let fetched_ranges = join_all(fetch_ranges).await;
-    let (ranges, mut clients): (Vec<_>, Vec<_>) = fetched_ranges.into_iter().unzip();
 
-    let client_indices: Vec<_> = ranges
-        .into_iter()
-        .enumerate()
-        .filter(|(_index, result)| {
-            if let Ok(range) = result.clone() {
-                (range.start..range.end).contains(&height)
-            } else {
-                false
-            }
-        })
-        .collect();
-    let first = client_indices
-        .first()
-        .expect("no server contains bootstrap point")
-        .0;
-    let hero_client = &mut clients[first];
-    log::info!("picked client for bootstrap -> {}", hero_client.state_rpc_address);
-    hero_client.bootstrap_state(height).await?;
-    Ok(clients)
-}
-
-async fn drive_into_infinity(clients: Vec<Client<LedgerStorage>>) {
-    let extend_range_routines: Vec<_> = clients
-        .into_iter()
-        .map(|mut client| async move {
-            client.routine().await;
-        })
-        .collect();
-
-    join_all(extend_range_routines).await;
+    client.bootstrap_state(height).await?;
+    Ok(client)
 }

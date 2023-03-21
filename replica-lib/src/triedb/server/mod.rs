@@ -8,7 +8,7 @@ pub use service::{Service, RunningService};
 
 use self::proto::app_grpc::backend_server::BackendServer;
 
-use super::{range::MasterRange, EvmHeightIndex};
+use super::{range::RangeJSON, EvmHeightIndex};
 use derivative::Derivative;
 
 
@@ -23,7 +23,7 @@ pub enum UsedStorage {
 pub struct Deps<S> {
     service: ServiceConfig,
     storage: UsedStorage,
-    range: MasterRange,
+    range: RangeJSON,
 
     runtime: tokio::runtime::Runtime,
     #[derivative(Debug="ignore")]
@@ -51,7 +51,7 @@ impl<S> Deps<S> {
     pub fn new(
         service: ServiceConfig,
         storage: UsedStorage,
-        range: MasterRange,
+        range: RangeJSON,
         runtime: tokio::runtime::Runtime,
         block_storage: S,
     ) -> Self {
@@ -67,7 +67,7 @@ impl<S> Deps<S> {
 
 pub struct Server<S> {
     storage: UsedStorage,
-    range: MasterRange,
+    range: RangeJSON,
     block_threshold: evm_state::BlockNum,
     block_storage: S,
 }
@@ -77,7 +77,7 @@ where
 {
     pub fn new(
         storage: UsedStorage,
-        range: MasterRange,
+        range: RangeJSON,
         block_threshold: evm_state::BlockNum,
         block_storage: S,
     ) -> BackendServer<Self> {
