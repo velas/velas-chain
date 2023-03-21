@@ -50,6 +50,7 @@ use {
     },
 };
 use evm_state::Storage;
+use solana_ledger::blockstore::EvmStateJson;
 #[derive(Clone)]
 pub struct AccountInfo<'a> {
     pub address: Pubkey,
@@ -553,7 +554,7 @@ impl TestValidator {
 
                 let _ = create_new_ledger(
                     ledger_path,
-                    None,
+                    EvmStateJson::None,
                     &genesis_config,
                     config
                         .max_genesis_archive_unpacked_size
