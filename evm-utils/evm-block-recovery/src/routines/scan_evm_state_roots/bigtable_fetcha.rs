@@ -1,14 +1,11 @@
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
 use evm_state::{Block, BlockNum};
 use solana_storage_bigtable::LedgerStorage;
 use tokio::sync::mpsc;
 
 use crate::error::AppError;
-
-use super::BigtableFetcher;
 
 pub async fn fetch_one(
     bigtable: &LedgerStorage,
@@ -40,7 +37,7 @@ pub async fn fetch_one_retry_backoff(
             *lock += 1;
         }
         async {
-            log::debug!(
+            log::trace!(
                 "attempting try fo fetch block_num ({:?}) {}",
                 count.clone(),
                 height
@@ -124,9 +121,8 @@ async fn worker_task(
     log::info!("finished chunk {:?}", subrange);
 }
 
-#[async_trait]
-impl BigtableFetcher for BigtableEVMBlockFetcher {
-    async fn schedule_range(
+impl BigtableEVMBlockFetcher {
+    pub async fn schedule_range(
         &mut self,
         bigtable: &solana_storage_bigtable::LedgerStorage,
         handle: &tokio::runtime::Handle,
@@ -147,7 +143,7 @@ impl BigtableFetcher for BigtableEVMBlockFetcher {
         Ok(())
     }
 
-    async fn get_block(&mut self) -> Option<(BlockNum, Option<Block>)> {
+    pub async fn get_block(&mut self) -> Option<(BlockNum, Option<Block>)> {
         if let Some(ref mut receiver) = self.receiver {
             receiver.recv().await
         } else {

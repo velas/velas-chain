@@ -246,7 +246,7 @@ pub struct ScanEvmStateRootsArgs {
     pub evm_state_path: PathBuf,
 
     #[arg(short, long)]
-    pub workers: u8,
+    pub workers: u16,
 
     #[arg(short, long)]
     pub secondary: bool,

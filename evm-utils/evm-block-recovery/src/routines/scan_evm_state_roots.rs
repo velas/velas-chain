@@ -1,21 +1,9 @@
 mod bigtable_fetcha;
 mod range_map;
 
-use async_trait::async_trait;
-use evm_state::{Block, BlockNum, storage::two_modes_enum::Storage};
+use evm_state::storage::two_modes_enum::Storage;
 
 use crate::{cli::ScanEvmStateRootsArgs, error::AppError};
-
-#[async_trait]
-pub trait BigtableFetcher {
-    async fn schedule_range(
-        &mut self,
-        bigtable: &solana_storage_bigtable::LedgerStorage,
-        handle: &tokio::runtime::Handle,
-        height: std::ops::Range<BlockNum>,
-    ) -> Result<(), AppError>;
-    async fn get_block(&mut self) -> Option<(BlockNum, Option<Block>)>;
-}
 
 pub async fn command(args: &ScanEvmStateRootsArgs) -> Result<(), AppError> {
     let ScanEvmStateRootsArgs {
@@ -30,7 +18,7 @@ pub async fn command(args: &ScanEvmStateRootsArgs) -> Result<(), AppError> {
     let handle = tokio::runtime::Handle::current();
     let storage = Storage::new(evm_state_path, *secondary, *gc)?;
 
-    let rangemap = range_map::MasterRange::new(rangemap_json)?;
+    let mut rangemap = range_map::MasterRange::new(rangemap_json)?;
     let mut fetcha = bigtable_fetcha::BigtableEVMBlockFetcher::new(*workers as usize);
 
     let expected_len = if (*start..*end_exclusive).is_empty() {
@@ -39,7 +27,7 @@ pub async fn command(args: &ScanEvmStateRootsArgs) -> Result<(), AppError> {
         *end_exclusive - *start
     };
 
-    let bigtable= solana_storage_bigtable::LedgerStorage::new(
+    let bigtable = solana_storage_bigtable::LedgerStorage::new(
         false,
         Some(std::time::Duration::new(5, 0)),
         None,
@@ -61,17 +49,15 @@ pub async fn command(args: &ScanEvmStateRootsArgs) -> Result<(), AppError> {
         let result = if let Some(ref key) = key {
             let present = storage.check_node(key.header.state_root)?;
             if present {
-                Some("X")
+                "Present"
             } else {
-                None
+                "No root"
             }
         } else {
-            Some("N")
+            "NO BLOCK"
         };
-        if let Some(result) = result {
-            rangemap.update(height, result.to_string())?;
-            log::debug!("{} -> {:?}, {}", height, key, result,);
-        }
+        rangemap.update(height, result.to_string())?;
+        log::trace!("{} -> {:?}, {}", height, key, result,);
     }
     assert_eq!(
         actual_len, expected_len,

@@ -1890,7 +1890,6 @@ dependencies = [
 name = "evm-block-recovery"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "backon",
  "bincode",
  "chrono",
