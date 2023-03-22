@@ -14,7 +14,8 @@ use thiserror::Error;
 struct ParsedArgs {
     state_rpc_address: String,
     evm_state: PathBuf,
-    range_file: String,
+    coarse_range_file: String,
+    fine_range_file: String,
 }
 
 #[derive(Error, Debug)]
@@ -50,6 +51,7 @@ impl ParsedArgs {
 
         let evm_state = PathBuf::from(matches.value_of("evm_state").unwrap());
         let range_file = matches.value_of("range_file").unwrap().to_string();
+        let rangemap_file = matches.value_of("rangemap_file").unwrap().to_string();
 
         let bootstrap_height = match matches.value_of("bootstrap_height") {
             None => None,
@@ -64,7 +66,8 @@ impl ParsedArgs {
             Self {
                 state_rpc_address,
                 evm_state,
-                range_file,
+                coarse_range_file: range_file,
+                fine_range_file: rangemap_file,
             },
         ))
     }
@@ -75,7 +78,7 @@ impl ParsedArgs {
         let gc_enabled = true;
         let storage = Storage::open_persistent(self.evm_state, gc_enabled)?;
 
-        let range = RangeJSON::new(self.range_file)?;
+        let range = RangeJSON::new(self.coarse_range_file, Some(self.fine_range_file))?;
         Ok(ClientOpts::new(self.state_rpc_address, storage, range))
     }
 }
@@ -137,7 +140,16 @@ async fn main() -> Result<(), Error> {
                 .takes_value(true)
                 .required(true)
                 //  replica-lib/src/triedb/range.rs
-                .help("FILE with json of `MasterRange` serialization"),
+                .help("FILE with json of coarse `RangeJSON` serialization"),
+        )
+        .arg(
+            Arg::with_name("rangemap_file")
+                .long("rangemap-file")
+                .value_name("FILE")
+                .takes_value(true)
+                .required(true)
+                //  replica-lib/src/triedb/range.rs
+                .help("FILE with json of fine `RangeJSON` serialization"),
         )
         .arg(
             Arg::with_name("bootstrap_height")

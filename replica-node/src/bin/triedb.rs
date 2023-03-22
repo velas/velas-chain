@@ -61,20 +61,6 @@ pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
                 //  replica-lib/src/triedb/range.rs
                 .help("FILE with json of `MasterRange` serialization"),
         )
-        //  [2023-02-01T14:54:48Z ERROR solana_replica_lib::triedb::client] main loop during
-        //iteration over advance.added_range heights advance error: (0, 3197921),
-        // (0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421, 0x768c194b80104b21fd2596b02b05220bd1dab1b2a40d0ed961d07bf5f8b0a8a2),
-        // status: InvalidArgument, message: "blocks too far 3197921", details: [],
-        //metadata: MetadataMap { headers: {"content-type": "application/grpc", "date": "Wed, 01 Feb 2023 14:54:48 GMT", "content-length": "0"} }
-        .arg(
-            Arg::with_name("block_height_diff_threshold")
-                .long("block-height-diff-threshold")
-                .value_name("INTEGER")
-                .takes_value(true)
-                .required(true)
-                //  replica-lib/src/triedb/range.rs
-                .help("Max difference of block height, that server won't reject diff requests of"),
-        )
         .get_matches();
 
     let _ = env_logger::Builder::from_default_env().try_init();
@@ -98,11 +84,7 @@ pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     };
 
     let range_file = matches.value_of("range_file").unwrap();
-    let range = RangeJSON::new(range_file)?;
-    let block_threshold = matches
-        .value_of("block_height_diff_threshold")
-        .unwrap()
-        .parse::<evm_state::BlockNum>()?;
+    let range = RangeJSON::new(range_file, None)?;
 
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -115,7 +97,6 @@ pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     start_and_join(
         state_rpc_bind_address,
         range,
-        block_threshold,
         used_storage,
         runtime,
         block_storage,

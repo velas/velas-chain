@@ -4,9 +4,10 @@ use std::{
 };
 
 use evm_state::BlockNum;
-use serde::{Deserialize, Serialize};
+use rangemap::RangeSet;
 
 use super::error::RangeInitError;
+mod diff;
 
 /// Empty:
 /// {
@@ -23,69 +24,118 @@ use super::error::RangeInitError;
 ///     "end": 3197932
 ///   }
 /// }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct Inner {
-    range: std::ops::Range<BlockNum>,
+    update_count: usize,
+    coarse: std::ops::Range<BlockNum>,
+    fine: Option<RangeSet<BlockNum>>,
 }
 
 impl Inner {
-    fn update(&mut self, index: BlockNum) -> bool {
-        
-        if self.range.is_empty() {
-            self.range = index..index+1;
-            true
-        } else if index == self.range.start - 1  {
-            self.range = (self.range.start-1)..self.range.end;
-            true
-        } else  if index == self.range.end  {
-            self.range = self.range.start..(self.range.end + 1);
-            true
+    fn deserialize_self(coarse: &str, fine: Option<&str>) -> Result<Self, serde_json::Error> {
+        let coarse: std::ops::Range<BlockNum> = serde_json::from_str(coarse)?;
+        let fine: Option<RangeSet<BlockNum>> = match fine {
+            None => None,
+            Some(fine) => Some(serde_json::from_str(fine)?),
+        };
+        Ok(Self { update_count: 0, coarse, fine })
+    }
+
+    fn serialize_self(&self) -> Result<(String, Option<String>), serde_json::Error> {
+        let coarse_str = serde_json::to_string_pretty(&self.coarse)?;
+        let fine_str = match self.fine {
+            None => None,
+            Some(ref fine) => Some(serde_json::to_string_pretty(fine)?),
+        };
+        Ok((coarse_str, fine_str))
+    }
+
+    fn update_coarse(&mut self, index: BlockNum) {
+        if self.coarse.is_empty() {
+            self.coarse = index..index + 1;
+            return;
+        }
+        if self.coarse.contains(&index) {
+            return;
+        }
+        if index >= self.coarse.end {
+            self.coarse.end = index + 1;
         } else {
-            false
+            self.coarse.start = index;
+        }
+    }
+    fn update_fine(&mut self, index: BlockNum) {
+        if let Some(ref mut fine) = self.fine {
+            fine.insert(index..index + 1);
         }
     }
 
+    fn update(&mut self, index: BlockNum) {
+        self.update_coarse(index);
+        self.update_fine(index);
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct RangeJSON {
-    update_count: usize,
-    file_path: PathBuf,
+    coarse_file_path: PathBuf,
+    fine_file_path: Option<PathBuf>,
     inner: Arc<Mutex<Inner>>,
 }
 
-
+const FLUSH_EVERY: usize = 100;
 
 impl RangeJSON {
-    pub fn new(file_path: impl AsRef<Path>) -> Result<Self, RangeInitError> {
-        let ser = std::fs::read_to_string(file_path.as_ref())?;
-        let i: Inner = serde_json::from_str(&ser)?;
-        log::info!("MasterRange::new {:#?}", i);
+    pub fn new<P: AsRef<Path>>(
+        coarse_file_path: P,
+        fine_file_path: Option<P>,
+    ) -> Result<Self, RangeInitError> {
+        let coarse_str = std::fs::read_to_string(coarse_file_path.as_ref())?;
+        let fine_str = match fine_file_path {
+            Some(ref fine_file_path) => Some(std::fs::read_to_string(fine_file_path.as_ref())?),
+            None => None,
+        };
+        let ranges: Inner = Inner::deserialize_self(&coarse_str, fine_str.as_deref())?;
+        log::info!("MasterRange::new {:#?}", ranges);
         Ok(Self {
-            inner: Arc::new(Mutex::new(i)),
-            file_path: file_path.as_ref().to_owned(),
-            update_count: 0,
+            inner: Arc::new(Mutex::new(ranges)),
+            coarse_file_path: coarse_file_path.as_ref().to_owned(),
+            fine_file_path: fine_file_path.map(|path| path.as_ref().to_owned()),
         })
     }
+
     pub fn get(&self) -> std::ops::Range<BlockNum> {
-        let res = self.inner.lock().expect("lock poisoned").range.clone();
+        let res = self.inner.lock().expect("lock poisoned").coarse.clone();
         res
     }
-    
 
     pub fn update(&self, index: BlockNum) -> std::io::Result<()> {
         let mut inner = self.inner.lock().expect("lock poisoned");
-        let changed = inner.update(index);
-        if changed {
-            Self::persist(inner, self.file_path.clone())?;
-            
+        inner.update(index);
+        inner.update_count += 1;
+        if inner.update_count % FLUSH_EVERY == 0 {
+            self.flush_internal(inner)?;
         }
         Ok(())
     }
-    fn persist(inner: MutexGuard<Inner>, file_path: PathBuf) -> std::io::Result<()> {
-        let content = serde_json::to_string_pretty(&*inner).unwrap();
-        std::fs::write(file_path, content.as_bytes())?;
-        drop(inner);
+
+    fn flush_internal(&self, inner: MutexGuard<Inner>) -> std::io::Result<()> {
+        let (coarse, fine) = inner.serialize_self()
+            .expect("serialization of a struct can never fail, can it");
+        std::fs::write(&self.coarse_file_path, coarse.as_bytes())?;
+        if let Some(ref fine_file_path) = self.fine_file_path {
+            std::fs::write(
+                fine_file_path,
+                fine.expect("invariant broken: non null if fine_file_path is non-null")
+                    .as_bytes(),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        let inner = self.inner.lock().expect("lock poisoned");
+        self.flush_internal(inner)?;
         Ok(())
     }
 }

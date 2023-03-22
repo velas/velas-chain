@@ -5,7 +5,7 @@ pub mod server;
 
 use std::{net::SocketAddr, time::Instant};
 
-use evm_state::{empty_trie_hash, Storage, H256};
+use evm_state::{empty_trie_hash, Storage, H256, BlockNum};
 use triedb::{gc::DbCounter, Database};
 
 use rocksdb::{DBWithThreadMode, SingleThreaded};
@@ -20,6 +20,11 @@ type RocksHandleA<'a> = triedb::rocksdb::RocksHandle<'a, &'a triedb::rocksdb::DB
 pub(self) fn collection(storage: &Storage) -> triedb::gc::TrieCollection<RocksHandleA<'_>> {
     triedb::gc::TrieCollection::new(storage.rocksdb_trie_handle())
 }
+
+//  The difference between 58896219 and 59409340 is 513121.
+//  700_000 =~ 513121 * 1.33
+//  "Max difference of block height, that server won't reject diff requests of"
+pub const MAX_JUMP_OVER_ABYSS_GAP: usize = 700_000;
 
 // maximum number of hashes for GetArrayOfNodesRequest (should be around 200 MB
 // worth of corresponding nodes)
@@ -85,12 +90,11 @@ pub(self) fn debug_elapsed(msg: &str, start: &Instant) {
 pub fn start_and_join<S: EvmHeightIndex + Sync + Send + 'static>(
     bind_address: SocketAddr,
     range: RangeJSON,
-    block_threshold: evm_state::BlockNum,
     storage: server::UsedStorage,
     runtime: tokio::runtime::Runtime,
     block_storage: S,
 ) -> Result<(), Box<(dyn std::error::Error + 'static)>> {
-    let cfg = server::ServiceConfig::new(bind_address, block_threshold);
+    let cfg = server::ServiceConfig::new(bind_address, MAX_JUMP_OVER_ABYSS_GAP as BlockNum);
     let deps = server::Deps::new(cfg, storage, range, runtime, block_storage);
 
     log::info!("starting the thread");

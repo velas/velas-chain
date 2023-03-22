@@ -7329,6 +7329,7 @@ dependencies = [
  "log 0.4.17",
  "primitive-types 0.8.0",
  "prost 0.11.6",
+ "rangemap",
  "rlp",
  "rocksdb",
  "serde",
