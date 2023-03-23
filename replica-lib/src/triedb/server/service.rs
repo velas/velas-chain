@@ -65,7 +65,10 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Service<S> {
 
     // Start TriedbReplServer in a Tokio runtime
     fn block_on(mut self, exit_signal: Receiver<()>) {
-        let runtime = self.runtime.take().unwrap();
+        let runtime = self
+            .runtime
+            .take()
+            .expect("invariant broken: runtime should be moved out only once");
         let result = runtime.block_on(self.run(&runtime, exit_signal));
 
         match result {
@@ -80,33 +83,36 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Service<S> {
 
     async fn catch_up_secondary_background(storage: Option<StorageSecondary>) {
         if let Some(storage) = storage {
-            
             loop {
-
                 match storage.try_catch_up() {
                     Ok(..) => {
                         log::warn!("successfully synced up secondary rocksdb with primary");
-                    },
-                    Err(err) => {
-                        log::error!("problem with syncing up secondary rocksdb with primary {:?}", err);
                     }
-                    
+                    Err(err) => {
+                        log::error!(
+                            "problem with syncing up secondary rocksdb with primary {:?}",
+                            err
+                        );
+                    }
                 }
-            
+
                 tokio::time::sleep(Duration::new(SECONDARY_CATCH_UP_SECONDS, 0)).await;
             }
         }
-        
     }
     // Runs tonic_server implementation with a provided configuration
-    async fn run(self, runtime: &tokio::runtime::Runtime, exit_signal: Receiver<()>) -> Result<(), tonic::transport::Error> {
+    async fn run(
+        self,
+        runtime: &tokio::runtime::Runtime,
+        exit_signal: Receiver<()>,
+    ) -> Result<(), tonic::transport::Error> {
         info!(
             "Running TriedbReplServer at the endpoint: {:?}",
             self.config.server_addr
         );
         let secondary_storage = match self.storage_clone {
             UsedStorage::WritableWithGC(..) => None,
-            UsedStorage::ReadOnlyNoGC(storage) => Some(storage)
+            UsedStorage::ReadOnlyNoGC(storage) => Some(storage),
         };
         let bg_secondary_jh = runtime.spawn(Self::catch_up_secondary_background(secondary_storage));
 
@@ -116,9 +122,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Service<S> {
             .await;
 
         match bg_secondary_jh.await {
-            Ok(..) => {
-                
-            },
+            Ok(..) => {}
             Err(err) => {
                 log::error!("catch up with primary task panicked!!! {:?}", err);
             }

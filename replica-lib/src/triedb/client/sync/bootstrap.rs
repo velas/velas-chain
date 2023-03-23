@@ -2,12 +2,12 @@ use evm_state::{H256, BlockNum, storage::account_extractor};
 use triedb::gc::RootGuard;
 use triedb::gc::DbCounter;
 
+use crate::triedb::client::Client;
+use crate::triedb::client::proto::app_grpc::backend_client::BackendClient;
 use crate::triedb::error::ClientProtoError;
 use crate::triedb::{error::{ClientError, BootstrapError, source_matches_type}, collection, EvmHeightIndex};
 
 use self::splice_count_stack::SpliceCountStack;
-
-use super::{Client, proto::app_grpc::backend_client::BackendClient};
 
 mod splice_count_stack;
 mod helpers;
@@ -19,7 +19,7 @@ type NodeFullInfo = ((H256, bool), Vec<u8>);
 
 impl<S> Client<S> 
 where
-    S: EvmHeightIndex,
+    S: EvmHeightIndex + Sync,
 {
 
     pub async fn fetch_nodes_of_hashes(
@@ -56,13 +56,28 @@ where
 
         let root_hash = self
             .block_storage
-            .get_evm_confirmed_state_root(height)
+            .get_evm_confirmed_state_root_retried(height)
             .await?;
         log::info!(
             "starting bootstrap at height {}, hash {:?}",
             height,
             root_hash
         );
+
+        match self
+            .check_height(root_hash, height)
+            .await
+        {
+            Ok(..) => {},
+            Err(err) => match err {
+                mismatch @ ClientError::PrefetchHeightMismatch { .. } => {
+                    panic!("different chains {:?}", mismatch);
+                }
+                other @ _ => {
+                    return Err(other)?;
+                }
+            },
+        };
         let collection = collection(&self.storage);
 
         let mut stack_children: SpliceCountStack<Vec<(H256, bool)>> =
@@ -128,6 +143,7 @@ where
             collection.database.gc_count(to)
         );
         self.range.update(height).expect("persist range update");
+        self.range.flush().expect("persist range update");
 
         Ok(())
     }

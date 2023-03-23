@@ -5,18 +5,20 @@ use evm_state::H256;
 use triedb::DiffChange;
 
 use crate::triedb::{
-     error::{ServerError, ServerProtoError}, server::Server, EvmHeightIndex, debug_elapsed,
+    debug_elapsed,
+    error::{ServerError, ServerProtoError},
+    server::Server,
+    EvmHeightIndex, TryConvert,
 };
 
-use super::{app_grpc, TryConvert};
+use super::app_grpc;
 
 impl TryConvert<app_grpc::Hash> for H256 {
     type Error = ServerError;
 
     fn try_from(hash: app_grpc::Hash) -> Result<Self, Self::Error> {
-        let res = H256::from_hex(&hash.value).map_err(|_| {
-            ServerProtoError::CouldNotParseHash(hash.value.clone())
-        })?;
+        let res = H256::from_hex(&hash.value)
+            .map_err(|_| ServerProtoError::CouldNotParseHash(hash.value.clone()))?;
         Ok(res)
     }
 }
@@ -26,10 +28,12 @@ pub(super) fn check_hash(
     actual: Option<app_grpc::Hash>,
     expected: H256,
 ) -> Result<(), ServerError> {
-    if actual.is_none() {
-        return Err(ServerProtoError::EmptyHash)?;
-    }
-    let actual = actual.unwrap();
+    let actual = match actual {
+        Some(val) => val,
+        None => {
+            return Err(ServerProtoError::EmptyHash)?;
+        }
+    };
 
     let actual: H256 = FormatHex::from_hex(&actual.value)
         .map_err(|_e| ServerProtoError::CouldNotParseHash(actual.value.clone()))?;
@@ -75,7 +79,6 @@ where
         from: evm_state::BlockNum,
         to: evm_state::BlockNum,
     ) -> Result<(H256, H256), ServerError> {
-
         let start = Instant::now();
         let from = self
             .block_storage

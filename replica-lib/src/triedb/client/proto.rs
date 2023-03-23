@@ -1,6 +1,7 @@
 use evm_rpc::FormatHex;
-use evm_state::{storage::account_extractor, BlockNum};
 use evm_state::H256;
+use evm_state::{storage::account_extractor, BlockNum};
+use tonic::Code;
 
 use std::time::Instant;
 
@@ -8,6 +9,7 @@ use crate::triedb::{debug_elapsed, error::ClientError, lock_root, RocksHandleA};
 
 use self::app_grpc::backend_client::BackendClient;
 mod helpers;
+mod retried;
 
 pub mod app_grpc {
     tonic::include_proto!("triedb_repl");
@@ -21,12 +23,12 @@ impl From<app_grpc::GetBlockRangeReply> for std::ops::Range<BlockNum> {
     }
 }
 
-
-
 impl<S> super::Client<S> {
-    pub async fn ping(&mut self) -> Result<(), tonic::Status> {
+    pub async fn ping(
+        client: &mut BackendClient<tonic::transport::Channel>,
+    ) -> Result<(), tonic::Status> {
         let request = tonic::Request::new(());
-        let response = self.client.ping(request).await?;
+        let response = client.ping(request).await?;
         log::trace!("PING | RESPONSE={:?}", response);
         Ok(())
     }
@@ -91,9 +93,11 @@ impl<S> super::Client<S> {
         Ok(to_guard)
     }
 
-    pub async fn get_block_range(&mut self) -> Result<app_grpc::GetBlockRangeReply, tonic::Status> {
+    pub async fn get_block_range(
+        client: &mut BackendClient<tonic::transport::Channel>,
+    ) -> Result<app_grpc::GetBlockRangeReply, tonic::Status> {
         let request = tonic::Request::new(());
-        let response = self.client.get_block_range(request).await?;
+        let response = client.get_block_range(request).await?;
 
         let response = response.into_inner();
         log::info!(
@@ -102,5 +106,34 @@ impl<S> super::Client<S> {
             response.end,
         );
         Ok(response)
+    }
+
+    pub async fn prefetch_height(
+        client: &mut BackendClient<tonic::transport::Channel>,
+        height: BlockNum,
+    ) -> Result<Option<app_grpc::PrefetchHeightReply>, tonic::Status> {
+        let request = tonic::Request::new(app_grpc::PrefetchHeightRequest {
+            height,
+        });
+
+        let response = client.prefetch_height(request).await;
+        match response {
+            Err(ref err) => {
+                if err.code() == Code::NotFound {
+                    log::error!("not found {:?}", err);
+                    return Ok(None);
+                }
+            }
+            _ => {}
+        }
+        let response = response?;
+
+        let response = response.into_inner();
+        log::info!(
+            "prefetch_height received {} -> {:?}",
+            height,
+            response.hash.as_ref().map(|hash| hash.value.clone()).unwrap_or("empty".to_string()),
+        );
+        Ok(Some(response))
     }
 }

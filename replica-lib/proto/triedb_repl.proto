@@ -6,6 +6,7 @@ import "google/protobuf/empty.proto";
 service Backend {
   rpc ping (google.protobuf.Empty) returns (PingReply);
   rpc getArrayOfNodes (GetArrayOfNodesRequest) returns (GetArrayOfNodesReply);
+  rpc prefetchHeight (PrefetchHeightRequest) returns (PrefetchHeightReply);
   rpc getStateDiff (GetStateDiffRequest) returns (GetStateDiffReply);
   rpc getBlockRange (google.protobuf.Empty) returns (GetBlockRangeReply);
 }
@@ -20,6 +21,14 @@ message Hash {
 
 message GetArrayOfNodesRequest {
   repeated Hash hashes = 1;
+}
+
+message PrefetchHeightRequest {
+  uint64 height = 1;
+}
+
+message PrefetchHeightReply {
+  Hash hash = 1;
 }
 
 message GetArrayOfNodesReply {

@@ -7320,6 +7320,7 @@ name = "solana-replica-lib"
 version = "1.9.29"
 dependencies = [
  "async-trait",
+ "backon",
  "crossbeam-channel",
  "derivative",
  "derive_more",

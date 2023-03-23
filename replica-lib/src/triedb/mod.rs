@@ -3,9 +3,10 @@ pub mod error;
 pub mod range;
 pub mod server;
 
-use std::{net::SocketAddr, time::Instant};
+use std::{net::SocketAddr, time::Instant, sync::{Mutex, Arc}};
 
-use evm_state::{empty_trie_hash, Storage, H256, BlockNum};
+use backon::{ExponentialBuilder, Retryable};
+use evm_state::{Storage, H256, BlockNum};
 use triedb::{gc::DbCounter, Database};
 
 use rocksdb::{DBWithThreadMode, SingleThreaded};
@@ -21,6 +22,11 @@ pub(self) fn collection(storage: &Storage) -> triedb::gc::TrieCollection<RocksHa
     triedb::gc::TrieCollection::new(storage.rocksdb_trie_handle())
 }
 
+pub trait TryConvert<S>: Sized {
+    type Error;
+
+    fn try_from(value: S) -> Result<Self, Self::Error>;
+}
 //  The difference between 58896219 and 59409340 is 513121.
 //  700_000 =~ 513121 * 1.33
 //  "Max difference of block height, that server won't reject diff requests of"
@@ -30,12 +36,45 @@ pub const MAX_JUMP_OVER_ABYSS_GAP: usize = 700_000;
 // worth of corresponding nodes)
 const MAX_CHUNK_HASHES: usize = 1_000_000;
 
+const MAX_TIMES: usize = 8;
+const MIN_DELAY_SEC: u64 = 1;
+
 #[async_trait]
 pub trait EvmHeightIndex {
     async fn get_evm_confirmed_state_root(
         &self,
         block_num: evm_state::BlockNum,
     ) -> Result<H256, EvmHeightError>;
+
+    async fn get_evm_confirmed_state_root_retried(
+        &self,
+        block_num: evm_state::BlockNum,
+    ) -> Result<H256, EvmHeightError> {
+        let count = Arc::new(Mutex::new(0));
+        let fetch_cl = || {
+            {
+                let mut lock = count.lock().expect("locked poisoned");
+                *lock += 1;
+            }
+            async {
+                log::trace!(
+                    "attempting try to get_evm_confirmed_state_root ({:?})",
+                    count.clone(),
+                );
+
+                self.get_evm_confirmed_state_root(block_num).await
+            }
+        };
+
+        let result = fetch_cl
+            .retry(
+                &ExponentialBuilder::default()
+                    .with_min_delay(std::time::Duration::new(MIN_DELAY_SEC, 0))
+                    .with_max_times(MAX_TIMES),
+            )
+            .await?;
+        Ok(result)
+    }
 }
 
 #[async_trait]
@@ -45,12 +84,13 @@ impl EvmHeightIndex for LedgerStorage {
         block_num: evm_state::BlockNum,
     ) -> Result<H256, EvmHeightError> {
         if block_num == 0 {
-            return Ok(empty_trie_hash());
+            return Err(EvmHeightError::ZeroHeightForbidden);
         }
         let block = self.get_evm_confirmed_full_block(block_num).await?;
 
         Ok(block.header.state_root)
     }
+
 }
 
 pub(self) fn lock_root<D, F>(
@@ -81,7 +121,7 @@ where
     Ok(())
 }
 
-pub(self) fn debug_elapsed(msg: &str, start: &Instant) {
+pub fn debug_elapsed(msg: &str, start: &Instant) {
     let duration = start.elapsed();
 
     log::debug!("Time elapsed on {}  is: {:?}", msg, duration);

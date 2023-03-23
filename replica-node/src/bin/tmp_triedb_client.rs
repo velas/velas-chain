@@ -6,7 +6,7 @@ use std::str::FromStr;
 use solana_replica_lib::triedb::{client::Client, range::RangeJSON};
 
 use clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches};
-use evm_state::{BlockNum, Storage};
+use evm_state::Storage;
 use solana_storage_bigtable::LedgerStorage;
 use thiserror::Error;
 
@@ -37,7 +37,7 @@ enum Error {
 }
 
 impl ParsedArgs {
-    fn parse(matches: ArgMatches) -> Result<(Option<BlockNum>, Self), Error> {
+    fn parse(matches: ArgMatches) -> Result<Self, Error> {
         let state_rpc_address = matches.value_of("state_rpc_address").unwrap();
 
         let secure_flag = matches.is_present("tls");
@@ -53,23 +53,12 @@ impl ParsedArgs {
         let range_file = matches.value_of("range_file").unwrap().to_string();
         let rangemap_file = matches.value_of("rangemap_file").unwrap().to_string();
 
-        let bootstrap_height = match matches.value_of("bootstrap_height") {
-            None => None,
-            Some(height_str) => {
-                let height = height_str.parse::<BlockNum>()?;
-                Some(height)
-            }
-        };
-
-        Ok((
-            bootstrap_height,
-            Self {
-                state_rpc_address,
-                evm_state,
-                coarse_range_file: range_file,
-                fine_range_file: rangemap_file,
-            },
-        ))
+        Ok(Self {
+            state_rpc_address,
+            evm_state,
+            coarse_range_file: range_file,
+            fine_range_file: rangemap_file,
+        })
     }
 
     fn build(self) -> Result<ClientOpts, Error> {
@@ -151,29 +140,15 @@ async fn main() -> Result<(), Error> {
                 //  replica-lib/src/triedb/range.rs
                 .help("FILE with json of fine `RangeJSON` serialization"),
         )
-        .arg(
-            Arg::with_name("bootstrap_height")
-                .long("bootstrap-height")
-                .value_name("BLOCK_NUM")
-                .takes_value(true)
-                //  replica-lib/src/triedb/range.rs
-                .help("BLOCK_NUM to pull starting state from"),
-        )
         .get_matches();
 
     let _ = env_logger::Builder::from_default_env().try_init();
     log::info!("cwd start {}", std::env::current_dir().unwrap().display());
-
-    let (bootstrap_point, client_opts) = ParsedArgs::parse(matches)?;
+    let client_opts = ParsedArgs::parse(matches)?;
     let client_opts = client_opts.build()?;
     let mut client = connect(client_opts).await?;
 
-    if let Some(height) = bootstrap_point {
-        let mut client = bootstrap(height, client).await?;
-        client.routine().await;
-    } else {
-        client.routine().await;
-    }
+    client.sync().await;
 
     // fortunately, horizon is unreachable
     Ok(())
@@ -192,16 +167,5 @@ async fn connect(client_opts: ClientOpts) -> Result<Client<LedgerStorage>, Error
     }
     .await?;
 
-    Ok(client)
-}
-
-async fn bootstrap(
-    height: BlockNum,
-    mut client: Client<LedgerStorage>,
-) -> Result<Client<LedgerStorage>, Error> {
-    // let block_range = client.get_block_range().await;
-
-
-    client.bootstrap_state(height).await?;
     Ok(client)
 }

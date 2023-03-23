@@ -1,3 +1,4 @@
+use evm_rpc::FormatHex;
 use log::info;
 
 use evm_state::H256;
@@ -13,13 +14,10 @@ pub mod app_grpc {
 mod helpers;
 mod storage;
 
-use crate::triedb::{error::ServerProtoError, EvmHeightIndex, MAX_CHUNK_HASHES};
-
-trait TryConvert<S>: Sized {
-    type Error;
-
-    fn try_from(value: S) -> Result<Self, Self::Error>;
-}
+use crate::triedb::{
+    error::{ServerError, ServerProtoError},
+    EvmHeightIndex, TryConvert, MAX_CHUNK_HASHES,
+};
 
 #[tonic::async_trait]
 impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
@@ -96,6 +94,27 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         };
 
         Ok(Response::new(reply))
+    }
+
+    async fn prefetch_height(
+        &self,
+        request: tonic::Request<app_grpc::PrefetchHeightRequest>,
+    ) -> Result<tonic::Response<app_grpc::PrefetchHeightReply>, tonic::Status> {
+        let hash = self
+            .block_storage
+            .get_evm_confirmed_state_root(request.into_inner().height)
+            .await
+            .map_err(Into::<ServerError>::into)?;
+
+        // we have to minimally ensure a client has some basis to try to start work from
+        // otherwise a well-behaving client can trigger long chunks of work, all of which 
+        // are doomed to fail
+        self.get_node_body(hash)?;
+        Ok(Response::new(app_grpc::PrefetchHeightReply {
+            hash: Some(app_grpc::Hash {
+                value: hash.format_hex(),
+            }),
+        }))
     }
 }
 

@@ -133,7 +133,7 @@ impl RangeJSON {
         Ok(())
     }
 
-    fn flush(&self) -> std::io::Result<()> {
+    pub fn flush(&self) -> std::io::Result<()> {
         let inner = self.inner.lock().expect("lock poisoned");
         self.flush_internal(inner)?;
         Ok(())

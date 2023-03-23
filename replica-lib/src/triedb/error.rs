@@ -1,4 +1,4 @@
-use evm_state::H256;
+use evm_state::{H256, BlockNum};
 use rocksdb::Error as RocksError;
 use thiserror::Error;
 use triedb::Error as TriedbError;
@@ -7,8 +7,23 @@ use triedb::Error as TriedbError;
 pub enum EvmHeightError {
     #[error("bigtable error : `{0}`")]
     Bigtable(#[from] solana_storage_bigtable::Error),
+    #[error("zero hight forbidden")]
+    ZeroHeightForbidden,
 }
 
+impl From<EvmHeightError> for tonic::Status {
+    fn from(err: EvmHeightError) -> Self {
+        match err {
+            EvmHeightError::Bigtable(ref bigtable) => match bigtable {
+                solana_storage_bigtable::Error::BlockNotFound(..) => {
+                    tonic::Status::not_found(format!("{:?}", err))
+                }
+                _ => tonic::Status::internal(format!("{:?}", err)),
+            },
+            EvmHeightError::ZeroHeightForbidden => tonic::Status::not_found(format!("{:?}", err)),
+        }
+    }
+}
 #[derive(Error, Debug)]
 pub enum LockError {
     #[error("hash not found: `{0:?}`")]
@@ -82,9 +97,7 @@ impl From<ServerError> for tonic::Status {
             rocks @ ServerError::RocksDBError(..) => {
                 tonic::Status::internal(format!("{:?}", rocks))
             }
-            evm_height @ ServerError::EvmHeight(..) => {
-                tonic::Status::internal(format!("{:?}", evm_height))
-            }
+            ServerError::EvmHeight(inner) => inner.into(),
             triedb_diff @ ServerError::TriedbDiff => {
                 tonic::Status::internal(format!("{:?}", triedb_diff))
             }
@@ -119,6 +132,16 @@ pub enum ClientError {
     GRPC(#[from] tonic::Status),
     #[error("triedb error {0}")]
     Triedb(#[from] TriedbError),
+    #[error("prefetch height absent: {height}")]
+    PrefetchHeightAbsent {
+        height: BlockNum,
+    },
+    #[error("mismatch at height: {actual:?} instead of {expected:?}, {height}")]
+    PrefetchHeightMismatch {
+        actual: H256,
+        expected: H256,
+        height: BlockNum,
+    },
 }
 
 #[derive(Error, Debug)]

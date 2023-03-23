@@ -3,7 +3,6 @@ use std::ops::Range;
 use evm_state::BlockNum;
 use rangemap::RangeSet;
 
-use crate::triedb::MAX_JUMP_OVER_ABYSS_GAP;
 
 use super::RangeJSON;
 
@@ -54,7 +53,7 @@ impl RangeJSON {
         result
     }
 
-    fn diff_internal(
+    pub fn diff(
         input: Range<BlockNum>,
         target: std::ops::Range<BlockNum>,
         kickstart_point: BlockNum,
@@ -69,19 +68,7 @@ impl RangeJSON {
         let bounded = Self::bound(difference, event_horizon);
         Self::cap(bounded, input)
     }
-    pub fn diff(
-        &self,
-        target: std::ops::Range<BlockNum>,
-        kickstart_point: BlockNum,
-    ) -> Vec<Range<BlockNum>> {
-        let self_coarse = self.get();
-        Self::diff_internal(
-            self_coarse,
-            target,
-            kickstart_point,
-            MAX_JUMP_OVER_ABYSS_GAP,
-        )
-    }
+    
 }
 
 #[cfg(test)]
@@ -98,7 +85,7 @@ mod tests {
         let kickstart_point = 1_004_999;
         println!("{:?} -> {:?} {:?}", input, target, kickstart_point);
         let result =
-            RangeJSON::diff_internal(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
+            RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
         assert_eq!(990000..1000000, result[0]);
@@ -120,7 +107,7 @@ mod tests {
         let kickstart_point = 1_000_000;
         println!("{:?} -> {:?} {:?}", input, target, kickstart_point);
         let result =
-            RangeJSON::diff_internal(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
+            RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
         assert_eq!(990000..1000000, result[0]);
@@ -142,7 +129,7 @@ mod tests {
         let kickstart_point = 1;
         println!("{:?} -> {:?} {:?}", input, target, kickstart_point);
         let result =
-            RangeJSON::diff_internal(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
+            RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
         assert_eq!(2..10002, result[0]);
@@ -164,7 +151,7 @@ mod tests {
         let kickstart_point = 10001;
         println!("{:?} -> {:?} {:?}", input, target, kickstart_point);
         let result =
-            RangeJSON::diff_internal(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
+            RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
         assert_eq!(10002..20002, result[0]);
@@ -186,7 +173,7 @@ mod tests {
         let kickstart_point = 94999;
         println!("{:?} -> {:?} {:?}", input, target, kickstart_point);
         let result =
-            RangeJSON::diff_internal(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
+            RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
         assert_eq!(1..5000, result[0]);
@@ -209,7 +196,7 @@ mod tests {
         let kickstart_point = 100000;
         println!("{:?} -> {:?} {:?}", input, target, kickstart_point);
         let result =
-            RangeJSON::diff_internal(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
+            RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
         assert_eq!(90000..100000, result[0]);
@@ -231,7 +218,7 @@ mod tests {
         let kickstart_point = 200000;
         println!("{:?} -> {:?} {:?}", input, target, kickstart_point);
         let result =
-            RangeJSON::diff_internal(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
+            RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
         assert_eq!(200000..210000, result[0]);
@@ -253,7 +240,7 @@ mod tests {
         let kickstart_point = 1;
         println!("{:?} -> {:?} {:?}", input, target, kickstart_point);
         let result =
-            RangeJSON::diff_internal(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
+            RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
         assert_eq!(0, result.len());
@@ -275,7 +262,7 @@ mod tests {
         let kickstart_point = 199999;
         println!("{:?} -> {:?} {:?}", input, target, kickstart_point);
         let result =
-            RangeJSON::diff_internal(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
+            RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
         assert_eq!(200000..210000, result[0]);
