@@ -2,8 +2,9 @@ pub mod client;
 pub mod error;
 pub mod range;
 pub mod server;
+pub mod bigtable;
 
-use std::{net::SocketAddr, time::Instant, sync::{Mutex, Arc}};
+use std::{net::SocketAddr, time::Instant, ops::Range};
 
 use backon::{ExponentialBuilder, Retryable};
 use evm_state::{Storage, H256, BlockNum};
@@ -14,7 +15,6 @@ use rocksdb::{DBWithThreadMode, SingleThreaded};
 use self::{error::{EvmHeightError, LockError}, range::RangeJSON};
 
 use async_trait::async_trait;
-use solana_storage_bigtable::LedgerStorage;
 
 type RocksHandleA<'a> = triedb::rocksdb::RocksHandle<'a, &'a triedb::rocksdb::DB>;
 
@@ -50,16 +50,15 @@ pub trait EvmHeightIndex {
         &self,
         block_num: evm_state::BlockNum,
     ) -> Result<H256, EvmHeightError> {
-        let count = Arc::new(Mutex::new(0));
+        let mut count = 0;
         let fetch_cl = || {
-            {
-                let mut lock = count.lock().expect("locked poisoned");
-                *lock += 1;
-            }
-            async {
+            *(&mut count) += 1;
+            let val = count;
+            async move {
                 log::trace!(
-                    "attempting try to get_evm_confirmed_state_root ({:?})",
-                    count.clone(),
+                    "attempting try to get_evm_confirmed_state_root {} ({})",
+                    block_num,
+                    val,
                 );
 
                 self.get_evm_confirmed_state_root(block_num).await
@@ -75,23 +74,48 @@ pub trait EvmHeightIndex {
             .await?;
         Ok(result)
     }
-}
 
-#[async_trait]
-impl EvmHeightIndex for LedgerStorage {
-    async fn get_evm_confirmed_state_root(
+    async fn prefetch_roots(
         &self,
-        block_num: evm_state::BlockNum,
-    ) -> Result<H256, EvmHeightError> {
-        if block_num == 0 {
-            return Err(EvmHeightError::ZeroHeightForbidden);
+        range: &Range<evm_state::BlockNum>,
+    ) -> Result<(), EvmHeightError>;
+
+    async fn prefetch_roots_retried(
+        &self,
+        range: &Range<evm_state::BlockNum>,
+    ) -> Result<(), EvmHeightError> {
+        if (range.end - range.start) > MAX_PREFETCH_RANGE_CHUNK {
+            unreachable!("emv blocks bigtable max chunk exceeded");
         }
-        let block = self.get_evm_confirmed_full_block(block_num).await?;
+        let mut count = 0;
+        let fetch_cl = || {
+            *(&mut count) += 1;
+            let val = count;
+            async move {
+                log::trace!(
+                    "attempting try to prefetch_roots {:?} ({})",
+                    range,
+                    val,
+                );
 
-        Ok(block.header.state_root)
+                self.prefetch_roots(range).await
+            }
+        };
+
+        let result = fetch_cl
+            .retry(
+                &ExponentialBuilder::default()
+                    .with_min_delay(std::time::Duration::new(MIN_DELAY_SEC, 0))
+                    .with_max_times(MAX_TIMES),
+            )
+            .await?;
+        Ok(result)
+        
     }
-
 }
+
+const MAX_PREFETCH_RANGE_CHUNK : BlockNum = 5_000;
+
 
 pub(self) fn lock_root<D, F>(
     db: &D,
