@@ -5,7 +5,7 @@
 
 use std::net::SocketAddr;
 
-use solana_replica_lib::triedb::{range::RangeJSON, server::UsedStorage, start_and_join};
+use solana_replica_lib::triedb::{range::RangeJSON, server::UsedStorage, start_and_join, bigtable::CachedRootsLedgerStorage};
 
 use {
     clap::{crate_description, crate_name, App, AppSettings, Arg},
@@ -94,7 +94,8 @@ pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         .build()?;
     let block_storage = runtime
         .block_on(async { solana_storage_bigtable::LedgerStorage::new(false, None, None).await })?;
-    start_and_join(
+    let block_storage = CachedRootsLedgerStorage::new(block_storage);
+        start_and_join(
         state_rpc_bind_address,
         range,
         used_storage,

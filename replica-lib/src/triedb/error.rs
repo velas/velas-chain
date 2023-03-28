@@ -9,6 +9,12 @@ pub enum EvmHeightError {
     Bigtable(#[from] solana_storage_bigtable::Error),
     #[error("zero hight forbidden")]
     ZeroHeightForbidden,
+    #[error("max block chunk exceeded: {actual}, {max}")]
+    MaxBlockChunkExceeded {
+        actual: BlockNum,
+        max: BlockNum,
+    },
+
 }
 
 impl From<EvmHeightError> for tonic::Status {
@@ -21,6 +27,7 @@ impl From<EvmHeightError> for tonic::Status {
                 _ => tonic::Status::internal(format!("{:?}", err)),
             },
             EvmHeightError::ZeroHeightForbidden => tonic::Status::not_found(format!("{:?}", err)),
+            EvmHeightError::MaxBlockChunkExceeded { .. } => tonic::Status::resource_exhausted(format!("{:?}", err)),
         }
     }
 }

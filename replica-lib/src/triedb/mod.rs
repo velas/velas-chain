@@ -1,18 +1,22 @@
+pub mod bigtable;
 pub mod client;
 pub mod error;
 pub mod range;
 pub mod server;
-pub mod bigtable;
+pub use bigtable::CachedRootsLedgerStorage;
 
-use std::{net::SocketAddr, time::Instant, ops::Range};
+use std::{net::SocketAddr, ops::Range, time::Instant};
 
 use backon::{ExponentialBuilder, Retryable};
-use evm_state::{Storage, H256, BlockNum};
+use evm_state::{BlockNum, Storage, H256};
 use triedb::{gc::DbCounter, Database};
 
 use rocksdb::{DBWithThreadMode, SingleThreaded};
 
-use self::{error::{EvmHeightError, LockError}, range::RangeJSON};
+use self::{
+    error::{EvmHeightError, LockError},
+    range::RangeJSON,
+};
 
 use async_trait::async_trait;
 
@@ -85,18 +89,17 @@ pub trait EvmHeightIndex {
         range: &Range<evm_state::BlockNum>,
     ) -> Result<(), EvmHeightError> {
         if (range.end - range.start) > MAX_PREFETCH_RANGE_CHUNK {
-            unreachable!("emv blocks bigtable max chunk exceeded");
+            return Err(EvmHeightError::MaxBlockChunkExceeded {
+                max: MAX_PREFETCH_RANGE_CHUNK,
+                actual: range.end - range.start,
+            });
         }
         let mut count = 0;
         let fetch_cl = || {
             *(&mut count) += 1;
             let val = count;
             async move {
-                log::trace!(
-                    "attempting try to prefetch_roots {:?} ({})",
-                    range,
-                    val,
-                );
+                log::trace!("attempting try to prefetch_roots {:?} ({})", range, val,);
 
                 self.prefetch_roots(range).await
             }
@@ -110,12 +113,10 @@ pub trait EvmHeightIndex {
             )
             .await?;
         Ok(result)
-        
     }
 }
 
-const MAX_PREFETCH_RANGE_CHUNK : BlockNum = 5_000;
-
+const MAX_PREFETCH_RANGE_CHUNK: BlockNum = 5_000;
 
 pub(self) fn lock_root<D, F>(
     db: &D,
