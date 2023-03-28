@@ -4,7 +4,10 @@ use rlp::Rlp;
 use sha3::{Digest, Keccak256};
 use triedb::{gc::ReachableHashes, merkle::MerkleNode};
 
-use crate::triedb::{error::{ClientError, ClientProtoError}, MAX_CHUNK_HASHES};
+use crate::triedb::{
+    error::{ClientError, ClientProtoError},
+    MAX_CHUNK_HASHES,
+};
 
 pub fn no_childs(_: &[u8]) -> Vec<H256> {
     vec![]

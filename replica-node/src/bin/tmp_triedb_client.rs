@@ -3,11 +3,11 @@ use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use solana_replica_lib::triedb::CachedRootsLedgerStorage;
 use solana_replica_lib::triedb::{client::Client, range::RangeJSON};
 
 use clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches};
 use evm_state::Storage;
-use solana_storage_bigtable::LedgerStorage;
 use thiserror::Error;
 
 #[derive(Debug)]
@@ -154,8 +154,9 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
-async fn connect(client_opts: ClientOpts) -> Result<Client<LedgerStorage>, Error> {
+async fn connect(client_opts: ClientOpts) -> Result<Client<CachedRootsLedgerStorage>, Error> {
     let block_storage = solana_storage_bigtable::LedgerStorage::new(false, None, None).await?;
+    let block_storage = CachedRootsLedgerStorage::new(block_storage);
     let client = async {
         Client::connect(
             client_opts.state_rpc_address,

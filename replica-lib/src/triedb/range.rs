@@ -38,7 +38,11 @@ impl Inner {
             None => None,
             Some(fine) => Some(serde_json::from_str(fine)?),
         };
-        Ok(Self { update_count: 0, coarse, fine })
+        Ok(Self {
+            update_count: 0,
+            coarse,
+            fine,
+        })
     }
 
     fn serialize_self(&self) -> Result<(String, Option<String>), serde_json::Error> {
@@ -120,7 +124,8 @@ impl RangeJSON {
     }
 
     fn flush_internal(&self, inner: MutexGuard<Inner>) -> std::io::Result<()> {
-        let (coarse, fine) = inner.serialize_self()
+        let (coarse, fine) = inner
+            .serialize_self()
             .expect("serialization of a struct can never fail, can it");
         std::fs::write(&self.coarse_file_path, coarse.as_bytes())?;
         if let Some(ref fine_file_path) = self.fine_file_path {

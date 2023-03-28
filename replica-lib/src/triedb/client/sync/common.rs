@@ -1,6 +1,6 @@
-use evm_state::{H256, BlockNum};
+use evm_state::{BlockNum, H256};
 
-use crate::triedb::{error::ClientError, EvmHeightIndex, client::Client, TryConvert};
+use crate::triedb::{client::Client, error::ClientError, EvmHeightIndex, TryConvert};
 
 impl<S> Client<S>
 where

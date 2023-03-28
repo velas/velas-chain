@@ -8,6 +8,7 @@ service Backend {
   rpc getArrayOfNodes (GetArrayOfNodesRequest) returns (GetArrayOfNodesReply);
   rpc prefetchHeight (PrefetchHeightRequest) returns (PrefetchHeightReply);
   rpc getStateDiff (GetStateDiffRequest) returns (GetStateDiffReply);
+  rpc prefetchRange (PrefetchRangeRequest) returns (google.protobuf.Empty);
   rpc getBlockRange (google.protobuf.Empty) returns (GetBlockRangeReply);
 }
 
@@ -40,6 +41,10 @@ message GetBlockRangeReply {
   uint64 end = 2;
 }
 
+message PrefetchRangeRequest {
+  uint64 start = 1;
+  uint64 end = 2;
+}
 message GetStateDiffRequest {
   uint64 from = 1;
   uint64 to = 2;

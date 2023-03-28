@@ -1,7 +1,10 @@
 use evm_rpc::FormatHex;
 use evm_state::H256;
 
-use crate::triedb::{error::{ClientError, ClientProtoError}, TryConvert};
+use crate::triedb::{
+    error::{ClientError, ClientProtoError},
+    TryConvert,
+};
 
 use super::app_grpc;
 
@@ -9,11 +12,9 @@ impl TryConvert<Option<app_grpc::Hash>> for H256 {
     type Error = ClientProtoError;
 
     fn try_from(hash: Option<app_grpc::Hash>) -> Result<Self, Self::Error> {
-
         let hash = hash.ok_or(ClientProtoError::EmptyHash)?;
-        let res = H256::from_hex(&hash.value).map_err(|_| {
-            ClientProtoError::CouldNotParseHash(hash.value.clone())
-        })?;
+        let res = H256::from_hex(&hash.value)
+            .map_err(|_| ClientProtoError::CouldNotParseHash(hash.value.clone()))?;
         Ok(res)
     }
 }

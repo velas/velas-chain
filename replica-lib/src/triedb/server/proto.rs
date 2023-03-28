@@ -87,6 +87,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         &self,
         _request: tonic::Request<()>,
     ) -> Result<tonic::Response<app_grpc::GetBlockRangeReply>, tonic::Status> {
+        info!("got a get_block_range request");
         let r: std::ops::Range<evm_state::BlockNum> = self.range.get();
         let reply = app_grpc::GetBlockRangeReply {
             start: r.start,
@@ -100,6 +101,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         &self,
         request: tonic::Request<app_grpc::PrefetchHeightRequest>,
     ) -> Result<tonic::Response<app_grpc::PrefetchHeightReply>, tonic::Status> {
+        info!("got a prefetch_height request {:?}", request);
         let hash = self
             .block_storage
             .get_evm_confirmed_state_root(request.into_inner().height)
@@ -107,7 +109,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
             .map_err(Into::<ServerError>::into)?;
 
         // we have to minimally ensure a client has some basis to try to start work from
-        // otherwise a well-behaving client can trigger long chunks of work, all of which 
+        // otherwise a well-behaving client can trigger long chunks of work, all of which
         // are doomed to fail
         self.get_node_body(hash)?;
         Ok(Response::new(app_grpc::PrefetchHeightReply {
@@ -115,6 +117,28 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
                 value: hash.format_hex(),
             }),
         }))
+    }
+
+    async fn prefetch_range(
+        &self,
+        request: tonic::Request<app_grpc::PrefetchRangeRequest>,
+    ) -> Result<tonic::Response<()>, tonic::Status> {
+        info!("got a prefetch_range request {:?}", request);
+        let req = request.into_inner();
+        let requested = req.start..req.end;
+        let self_range = self.range.get();
+        if !self_range.contains(&requested.start) || !self_range.contains(&(requested.end - 1)) {
+            return Err(ServerError::PrefetchRange {
+                ours: self_range,
+                requested,
+            })?;
+        }
+
+        self.block_storage
+            .prefetch_roots(&requested)
+            .await
+            .map_err(Into::<ServerError>::into)?;
+        Ok(Response::new(()))
     }
 }
 

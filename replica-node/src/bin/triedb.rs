@@ -5,7 +5,9 @@
 
 use std::net::SocketAddr;
 
-use solana_replica_lib::triedb::{range::RangeJSON, server::UsedStorage, start_and_join, bigtable::CachedRootsLedgerStorage};
+use solana_replica_lib::triedb::{
+    bigtable::CachedRootsLedgerStorage, range::RangeJSON, server::UsedStorage, start_and_join,
+};
 
 use {
     clap::{crate_description, crate_name, App, AppSettings, Arg},
@@ -86,7 +88,6 @@ pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     let range_file = matches.value_of("range_file").unwrap();
     let range = RangeJSON::new(range_file, None)?;
 
-
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(10)
         .thread_name("velas-state-rpc-worker")
@@ -95,7 +96,7 @@ pub fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     let block_storage = runtime
         .block_on(async { solana_storage_bigtable::LedgerStorage::new(false, None, None).await })?;
     let block_storage = CachedRootsLedgerStorage::new(block_storage);
-        start_and_join(
+    start_and_join(
         state_rpc_bind_address,
         range,
         used_storage,

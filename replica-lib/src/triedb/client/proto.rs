@@ -3,6 +3,7 @@ use evm_state::H256;
 use evm_state::{storage::account_extractor, BlockNum};
 use tonic::Code;
 
+use std::ops::Range;
 use std::time::Instant;
 
 use crate::triedb::{debug_elapsed, error::ClientError, lock_root, RocksHandleA};
@@ -95,15 +96,17 @@ impl<S> super::Client<S> {
 
     pub async fn get_block_range(
         client: &mut BackendClient<tonic::transport::Channel>,
+        state_rpc_address: &str,
     ) -> Result<app_grpc::GetBlockRangeReply, tonic::Status> {
         let request = tonic::Request::new(());
         let response = client.get_block_range(request).await?;
 
         let response = response.into_inner();
         log::info!(
-            "block_range received {} -> {}",
+            "block_range retrieved: {} -> {}, {}",
             response.start,
             response.end,
+            state_rpc_address
         );
         Ok(response)
     }
@@ -111,10 +114,9 @@ impl<S> super::Client<S> {
     pub async fn prefetch_height(
         client: &mut BackendClient<tonic::transport::Channel>,
         height: BlockNum,
+        state_rpc_address: &str,
     ) -> Result<Option<app_grpc::PrefetchHeightReply>, tonic::Status> {
-        let request = tonic::Request::new(app_grpc::PrefetchHeightRequest {
-            height,
-        });
+        let request = tonic::Request::new(app_grpc::PrefetchHeightRequest { height });
 
         let response = client.prefetch_height(request).await;
         match response {
@@ -130,10 +132,34 @@ impl<S> super::Client<S> {
 
         let response = response.into_inner();
         log::info!(
-            "prefetch_height received {} -> {:?}",
+            "prefetch_height response retrieved: {} -> {:?}, {}",
             height,
-            response.hash.as_ref().map(|hash| hash.value.clone()).unwrap_or("empty".to_string()),
+            response
+                .hash
+                .as_ref()
+                .map(|hash| hash.value.clone())
+                .unwrap_or("empty".to_string()),
+            state_rpc_address
         );
         Ok(Some(response))
+    }
+
+    pub async fn prefetch_range(
+        client: &mut BackendClient<tonic::transport::Channel>,
+        range: &Range<BlockNum>,
+        state_rpc_address: &str,
+    ) -> Result<(), tonic::Status> {
+        let request = tonic::Request::new(app_grpc::PrefetchRangeRequest {
+            start: range.start,
+            end: range.end,
+        });
+
+        let response = client.prefetch_range(request).await?;
+        log::info!(
+            "prefetch_height response retrieved: {:?}, {}",
+            range,
+            state_rpc_address,
+        );
+        Ok(response.into_inner())
     }
 }

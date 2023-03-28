@@ -88,18 +88,12 @@ pub trait EvmHeightIndex {
         &self,
         range: &Range<evm_state::BlockNum>,
     ) -> Result<(), EvmHeightError> {
-        if (range.end - range.start) > MAX_PREFETCH_RANGE_CHUNK {
-            return Err(EvmHeightError::MaxBlockChunkExceeded {
-                max: MAX_PREFETCH_RANGE_CHUNK,
-                actual: range.end - range.start,
-            });
-        }
         let mut count = 0;
         let fetch_cl = || {
             *(&mut count) += 1;
             let val = count;
             async move {
-                log::trace!("attempting try to prefetch_roots {:?} ({})", range, val,);
+                log::trace!("attempting try to prefetch_roots {:?} ({})", range, val);
 
                 self.prefetch_roots(range).await
             }
@@ -116,6 +110,7 @@ pub trait EvmHeightIndex {
     }
 }
 
+// bigtable bulk api limited by Vladimir
 const MAX_PREFETCH_RANGE_CHUNK: BlockNum = 5_000;
 
 pub(self) fn lock_root<D, F>(

@@ -1,27 +1,27 @@
-use evm_state::{H256, BlockNum, storage::account_extractor};
-use triedb::gc::RootGuard;
+use evm_state::{storage::account_extractor, BlockNum, H256};
 use triedb::gc::DbCounter;
+use triedb::gc::RootGuard;
 
-use crate::triedb::client::Client;
 use crate::triedb::client::proto::app_grpc::backend_client::BackendClient;
+use crate::triedb::client::Client;
 use crate::triedb::error::ClientProtoError;
-use crate::triedb::{error::{ClientError, BootstrapError, source_matches_type}, collection, EvmHeightIndex};
+use crate::triedb::{
+    collection,
+    error::{source_matches_type, BootstrapError, ClientError},
+    EvmHeightIndex,
+};
 
 use self::splice_count_stack::SpliceCountStack;
 
-mod splice_count_stack;
 mod helpers;
-
+mod splice_count_stack;
 
 type NodeFullInfo = ((H256, bool), Vec<u8>);
 
-
-
-impl<S> Client<S> 
+impl<S> Client<S>
 where
     S: EvmHeightIndex + Sync,
 {
-
     pub async fn fetch_nodes_of_hashes(
         client: &mut BackendClient<tonic::transport::Channel>,
         input: Vec<(H256, bool)>,
@@ -64,11 +64,8 @@ where
             root_hash
         );
 
-        match self
-            .check_height(root_hash, height)
-            .await
-        {
-            Ok(..) => {},
+        match self.check_height(root_hash, height).await {
+            Ok(..) => {}
             Err(err) => match err {
                 mismatch @ ClientError::PrefetchHeightMismatch { .. } => {
                     panic!("different chains {:?}", mismatch);

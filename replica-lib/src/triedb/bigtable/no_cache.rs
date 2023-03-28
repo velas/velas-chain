@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use evm_state::H256;
 use solana_storage_bigtable::LedgerStorage;
 
-use crate::triedb::{EvmHeightIndex, error::EvmHeightError};
+use crate::triedb::{error::EvmHeightError, EvmHeightIndex};
 
 #[async_trait]
 impl EvmHeightIndex for LedgerStorage {

@@ -3,14 +3,13 @@ use std::net::SocketAddr;
 mod proto;
 mod service;
 
-use evm_state::{StorageSecondary, Storage as StorageOptimistic};
-pub use service::{Service, RunningService};
+use evm_state::{Storage as StorageOptimistic, StorageSecondary};
+pub use service::{RunningService, Service};
 
 use self::proto::app_grpc::backend_server::BackendServer;
 
 use super::{range::RangeJSON, EvmHeightIndex};
 use derivative::Derivative;
-
 
 #[derive(Debug, Clone)]
 pub enum UsedStorage {
@@ -26,7 +25,7 @@ pub struct Deps<S> {
     range: RangeJSON,
 
     runtime: tokio::runtime::Runtime,
-    #[derivative(Debug="ignore")]
+    #[derivative(Debug = "ignore")]
     block_storage: S,
 }
 
@@ -38,11 +37,11 @@ pub struct ServiceConfig {
 }
 
 impl ServiceConfig {
-    pub fn new(
-        server_addr: SocketAddr,
-        block_threshold: evm_state::BlockNum,
-    ) -> Self {
-        ServiceConfig { server_addr,  block_threshold }
+    pub fn new(server_addr: SocketAddr, block_threshold: evm_state::BlockNum) -> Self {
+        ServiceConfig {
+            server_addr,
+            block_threshold,
+        }
     }
 }
 

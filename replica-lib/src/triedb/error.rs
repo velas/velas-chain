@@ -1,4 +1,6 @@
-use evm_state::{H256, BlockNum};
+use std::ops::Range;
+
+use evm_state::{BlockNum, H256};
 use rocksdb::Error as RocksError;
 use thiserror::Error;
 use triedb::Error as TriedbError;
@@ -10,11 +12,7 @@ pub enum EvmHeightError {
     #[error("zero hight forbidden")]
     ZeroHeightForbidden,
     #[error("max block chunk exceeded: {actual}, {max}")]
-    MaxBlockChunkExceeded {
-        actual: BlockNum,
-        max: BlockNum,
-    },
-
+    MaxBlockChunkExceeded { actual: BlockNum, max: BlockNum },
 }
 
 impl From<EvmHeightError> for tonic::Status {
@@ -27,7 +25,9 @@ impl From<EvmHeightError> for tonic::Status {
                 _ => tonic::Status::internal(format!("{:?}", err)),
             },
             EvmHeightError::ZeroHeightForbidden => tonic::Status::not_found(format!("{:?}", err)),
-            EvmHeightError::MaxBlockChunkExceeded { .. } => tonic::Status::resource_exhausted(format!("{:?}", err)),
+            EvmHeightError::MaxBlockChunkExceeded { .. } => {
+                tonic::Status::resource_exhausted(format!("{:?}", err))
+            }
         }
     }
 }
@@ -88,6 +88,11 @@ pub enum ServerError {
         to: H256,
         description: String,
     },
+    #[error("not completely present {ours:?}, requested - {requested:?}")]
+    PrefetchRange {
+        ours: Range<BlockNum>,
+        requested: Range<BlockNum>,
+    },
 }
 
 impl From<ServerError> for tonic::Status {
@@ -109,7 +114,10 @@ impl From<ServerError> for tonic::Status {
                 tonic::Status::internal(format!("{:?}", triedb_diff))
             }
             not_found_nested @ ServerError::NotFoundNested { .. } => {
-                tonic::Status::not_found(format!("not found {:?}", not_found_nested))
+                tonic::Status::not_found(format!("{:?}", not_found_nested))
+            }
+            prefetch_range @ ServerError::PrefetchRange { .. } => {
+                tonic::Status::not_found(format!("{:?}", prefetch_range))
             }
         }
     }
@@ -140,30 +148,15 @@ pub enum ClientError {
     #[error("triedb error {0}")]
     Triedb(#[from] TriedbError),
     #[error("prefetch height absent: {height}")]
-    PrefetchHeightAbsent {
-        height: BlockNum,
-    },
+    PrefetchHeightAbsent { height: BlockNum },
     #[error("mismatch at height: {actual:?} instead of {expected:?}, {height}")]
     PrefetchHeightMismatch {
         actual: H256,
         expected: H256,
         height: BlockNum,
     },
-}
-
-#[derive(Error, Debug)]
-pub enum ClientAdvanceError {
     #[error("evm height : `{0}`")]
     EvmHeight(#[from] EvmHeightError),
-    #[error("heights advance error: {heights:?}, {hashes:?}, {state_rpc_address}, {error}")]
-    ClientErrorWithContext {
-        heights: Option<(evm_state::BlockNum, evm_state::BlockNum)>,
-        hashes: Option<(H256, H256)>,
-        state_rpc_address: String,
-
-        #[source]
-        error: ClientError,
-    },
 }
 
 #[derive(Error, Debug)]
