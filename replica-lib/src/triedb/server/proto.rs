@@ -71,10 +71,10 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
             inner.from - inner.to
         };
         if height_diff > self.block_threshold {
-            return Err(Status::invalid_argument(format!(
-                "blocks too far {}",
-                inner.to - inner.from
-            )));
+            return Err(ServerProtoError::StateDiffBlocksTooFar {
+                to: inner.to,
+                from: inner.from,
+            })?;
         }
         let (from_hash, to_hash) = self.fetch_state_roots(inner.from, inner.to).await?;
 

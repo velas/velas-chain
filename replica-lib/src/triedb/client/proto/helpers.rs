@@ -2,7 +2,7 @@ use evm_rpc::FormatHex;
 use evm_state::H256;
 
 use crate::triedb::{
-    error::{ClientError, ClientProtoError},
+    error::{ClientProtoError, DiffRequest},
     TryConvert,
 };
 
@@ -19,9 +19,9 @@ impl TryConvert<Option<app_grpc::Hash>> for H256 {
     }
 }
 
-pub(super) fn parse_diff_response(
+pub(in crate::triedb::client) fn parse_diff_response(
     in_: app_grpc::GetStateDiffReply,
-) -> Result<Vec<triedb::DiffChange>, ClientError> {
+) -> Result<Vec<triedb::DiffChange>, ClientProtoError> {
     let mut result: Vec<triedb::DiffChange> = vec![];
     for insert in in_.changeset {
         let hash = <H256 as TryConvert<_>>::try_from(insert.hash)?;
@@ -31,17 +31,16 @@ pub(super) fn parse_diff_response(
 }
 
 pub(super) fn state_diff_request(
-    heights: (evm_state::BlockNum, evm_state::BlockNum),
-    expected_hashes: (H256, H256),
+    request: DiffRequest,
 ) -> tonic::Request<app_grpc::GetStateDiffRequest> {
     tonic::Request::new(app_grpc::GetStateDiffRequest {
-        from: heights.0,
-        to: heights.1,
+        from: request.heights.0,
+        to: request.heights.1,
         first_root: Some(app_grpc::Hash {
-            value: expected_hashes.0.format_hex(),
+            value: request.expected_hashes.0.format_hex(),
         }),
         second_root: Some(app_grpc::Hash {
-            value: expected_hashes.1.format_hex(),
+            value: request.expected_hashes.1.format_hex(),
         }),
     })
 }

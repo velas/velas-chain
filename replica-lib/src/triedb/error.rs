@@ -3,6 +3,7 @@ use std::ops::Range;
 use evm_state::{BlockNum, H256};
 use rocksdb::Error as RocksError;
 use thiserror::Error;
+use tonic::Code;
 use triedb::Error as TriedbError;
 
 #[derive(Error, Debug)]
@@ -24,7 +25,9 @@ impl From<EvmHeightError> for tonic::Status {
                 }
                 _ => tonic::Status::internal(format!("{:?}", err)),
             },
-            EvmHeightError::ZeroHeightForbidden => tonic::Status::not_found(format!("{:?}", err)),
+            EvmHeightError::ZeroHeightForbidden => {
+                tonic::Status::invalid_argument(format!("{:?}", err))
+            }
             EvmHeightError::MaxBlockChunkExceeded { .. } => {
                 tonic::Status::resource_exhausted(format!("{:?}", err))
             }
@@ -38,6 +41,15 @@ pub enum LockError {
     #[error(transparent)]
     RocksDBError(#[from] RocksError),
 }
+
+impl From<LockError> for tonic::Status {
+    fn from(err: LockError) -> Self {
+        match err {
+            LockError::LockRootNotFound(..) => tonic::Status::not_found(format!("{:?}", err)),
+            LockError::RocksDBError { .. } => tonic::Status::internal(format!("{:?}", err)),
+        }
+    }
+}
 #[derive(Error, Debug)]
 pub enum ServerProtoError {
     #[error("invalid request: some of the hashes is empty")]
@@ -46,16 +58,21 @@ pub enum ServerProtoError {
     CouldNotParseHash(String),
     #[error("get array of nodes request: exceeded max array len {actual}, max {max}")]
     ExceededMaxChunkGetArrayOfNodes { actual: usize, max: usize },
+    #[error("requested diff of blocks too far away {from:?} -> {to:?}")]
+    StateDiffBlocksTooFar { from: u64, to: u64 },
 }
 
 impl From<ServerProtoError> for tonic::Status {
     fn from(err: ServerProtoError) -> Self {
         match err {
-            variant @ (ServerProtoError::EmptyHash | ServerProtoError::CouldNotParseHash(..)) => {
-                tonic::Status::invalid_argument(format!("{:?}", variant))
+            ServerProtoError::EmptyHash | ServerProtoError::CouldNotParseHash(..) => {
+                tonic::Status::invalid_argument(format!("{:?}", err))
             }
-            variant @ ServerProtoError::ExceededMaxChunkGetArrayOfNodes { .. } => {
-                tonic::Status::failed_precondition(format!("{:?}", variant))
+            ServerProtoError::ExceededMaxChunkGetArrayOfNodes { .. } => {
+                tonic::Status::failed_precondition(format!("{:?}", err))
+            }
+            ServerProtoError::StateDiffBlocksTooFar { .. } => {
+                tonic::Status::failed_precondition(format!("{:?}", err))
             }
         }
     }
@@ -98,14 +115,14 @@ pub enum ServerError {
 impl From<ServerError> for tonic::Status {
     fn from(err: ServerError) -> Self {
         match err {
-            proto_violated @ ServerError::ProtoViolated(..) => proto_violated.into(),
+            ServerError::ProtoViolated(err) => err.into(),
             hash_mismatch @ ServerError::HashMismatch { .. } => {
                 tonic::Status::failed_precondition(format!("{:?}", hash_mismatch))
             }
             not_found_top_level @ ServerError::NotFoundTopLevel(..) => {
                 tonic::Status::not_found(format!("{:?}", not_found_top_level))
             }
-            lock @ ServerError::Lock(..) => tonic::Status::not_found(format!("{:?}", lock)),
+            ServerError::Lock(lock) => lock.into(),
             rocks @ ServerError::RocksDBError(..) => {
                 tonic::Status::internal(format!("{:?}", rocks))
             }
@@ -175,6 +192,97 @@ pub enum RangeInitError {
     SerdeJson(#[from] serde_json::Error),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct DiffRequest {
+    pub heights: (evm_state::BlockNum, evm_state::BlockNum),
+    pub expected_hashes: (H256, H256),
+}
+
+#[derive(Error, Debug)]
+pub enum StageOneRequestFastError {
+    #[error("server hash mismatch {0:?}, {1:?}")]
+    ServerHashMismatch(DiffRequest, #[source] tonic::Status),
+    #[error("server blocks too far {0:?}, {1:?}")]
+    ServerBlocksTooFar(DiffRequest, #[source] tonic::Status),
+    #[error("server block not found {0:?}, {1:?}")]
+    ServerBlockNotFoundLedgerStorage(DiffRequest, #[source] tonic::Status),
+    #[error("server zero height metadata reqeusted {0:?}, {1:?}")]
+    ServerZeroHeight(DiffRequest, #[source] tonic::Status),
+    #[error("server proto, empty hash {0:?}, {1:?}")]
+    ServerProtoEmptyHash(DiffRequest, #[source] tonic::Status),
+    #[error("server proto, could not parse {0:?}, {1:?}")]
+    ServerProtoCouldNotParseHash(DiffRequest, #[source] tonic::Status),
+    #[error("server lock or check root, {0:?}, {1:?}")]
+    ServerLockOrCheckRoot(DiffRequest, #[source] tonic::Status),
+    #[error("server deeply broken tree, {0:?}, {1:?}")]
+    ServerDeeplyBrokenTree(DiffRequest, #[source] tonic::Status),
+    #[error("unknown {0:?}")]
+    Unknown(#[source] tonic::Status),
+}
+#[derive(Error, Debug)]
+#[error("the last after many retries {0:?}")]
+pub struct StageOneRequestSlowError(DiffRequest, #[source] tonic::Status);
+
+#[derive(Error, Debug)]
+pub enum StageOneRequestError {
+    #[error("fast {0}")]
+    Fast(StageOneRequestFastError),
+    #[error("retried {0}")]
+    Slow(StageOneRequestSlowError),
+}
+
+impl StageOneRequestError {
+    pub fn from_with_metadata(value: tonic::Status, request: DiffRequest) -> Self {
+        match value.code() {
+            Code::FailedPrecondition => match value.message() {
+                message @ _ if message.contains("HashMismatch") => {
+                    Self::Fast(StageOneRequestFastError::ServerHashMismatch(request, value))
+                }
+                message @ _ if message.contains("StateDiffBlocksTooFar") => {
+                    Self::Fast(StageOneRequestFastError::ServerBlocksTooFar(request, value))
+                }
+                _ => Self::Fast(StageOneRequestFastError::Unknown(value.clone())),
+            },
+            Code::NotFound => match value.message() {
+                message @ _ if message.contains("Bigtable(BlockNotFound") => Self::Fast(
+                    StageOneRequestFastError::ServerBlockNotFoundLedgerStorage(request, value),
+                ),
+                message @ _ if message.contains("LockRootNotFound") => Self::Fast(
+                    StageOneRequestFastError::ServerLockOrCheckRoot(request, value),
+                ),
+
+                message @ _ if message.contains("NotFoundNested") => Self::Fast(
+                    StageOneRequestFastError::ServerDeeplyBrokenTree(request, value),
+                ),
+
+                _ => Self::Fast(StageOneRequestFastError::Unknown(value.clone())),
+            },
+            Code::InvalidArgument => match value.message() {
+                message @ _ if message.contains("ZeroHeightForbidden") => {
+                    Self::Fast(StageOneRequestFastError::ServerZeroHeight(request, value))
+                }
+                message @ _ if message.contains("EmptyHash") => Self::Fast(
+                    StageOneRequestFastError::ServerProtoEmptyHash(request, value),
+                ),
+                message @ _ if message.contains("CouldNotParseHash(") => Self::Fast(
+                    StageOneRequestFastError::ServerProtoCouldNotParseHash(request, value),
+                ),
+
+                _ => Self::Fast(StageOneRequestFastError::Unknown(value.clone())),
+            },
+            _ => Self::Slow(StageOneRequestSlowError(request, value)),
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum StageOneError {
+    #[error("request {0}")]
+    Request(#[from] StageOneRequestError),
+    #[error("parse diff response {0}")]
+    ProtoViolated(#[from] ClientProtoError),
+}
+
 pub fn source_matches_type<T: std::error::Error + 'static>(
     mut err: &(dyn std::error::Error + 'static),
 ) -> bool {
@@ -190,5 +298,200 @@ pub fn source_matches_type<T: std::error::Error + 'static>(
         } else {
             break false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use evm_state::empty_trie_hash;
+    use tonic::Code;
+
+    use crate::triedb::error::{
+        DiffRequest, EvmHeightError, LockError, ServerProtoError, StageOneRequestError,
+        StageOneRequestFastError,
+    };
+
+    use super::ServerError;
+
+    #[test]
+    fn test_from_with_metadata() {
+        {
+            let err = ServerError::HashMismatch {
+                height: 10,
+                expected: empty_trie_hash(),
+                actual: empty_trie_hash(),
+            };
+
+            let status: tonic::Status = err.into();
+
+            let diff_request_stub = DiffRequest {
+                heights: (1, 2),
+                expected_hashes: (empty_trie_hash(), empty_trie_hash()),
+            };
+
+            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+
+            assert_matches!(
+                result,
+                StageOneRequestError::Fast(StageOneRequestFastError::ServerHashMismatch { .. })
+            );
+        }
+        // #### fence
+        {
+            let err = ServerProtoError::StateDiffBlocksTooFar {
+                from: 1,
+                to: 70000000,
+            };
+
+            let status: tonic::Status = err.into();
+
+            let diff_request_stub = DiffRequest {
+                heights: (1, 2),
+                expected_hashes: (empty_trie_hash(), empty_trie_hash()),
+            };
+
+            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+
+            assert_matches!(
+                result,
+                StageOneRequestError::Fast(StageOneRequestFastError::ServerBlocksTooFar { .. })
+            );
+        } // #### fence
+        {
+            let random_status =
+                tonic::Status::new(Code::FailedPrecondition, "undecipherable gibberish");
+            let diff_request_stub = DiffRequest {
+                heights: (1, 2),
+                expected_hashes: (empty_trie_hash(), empty_trie_hash()),
+            };
+            let random_status_result =
+                StageOneRequestError::from_with_metadata(random_status, diff_request_stub);
+            assert_matches!(
+                random_status_result,
+                StageOneRequestError::Fast(StageOneRequestFastError::Unknown(..))
+            );
+        }
+        // #### fence
+        {
+            let bt_err = solana_storage_bigtable::Error::BlockNotFound(70000000);
+            let evm_height = Into::<EvmHeightError>::into(bt_err);
+            let err = Into::<ServerError>::into(evm_height);
+
+            let status: tonic::Status = err.into();
+
+            let diff_request_stub = DiffRequest {
+                heights: (1, 2),
+                expected_hashes: (empty_trie_hash(), empty_trie_hash()),
+            };
+
+            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+
+            assert_matches!(
+                result,
+                StageOneRequestError::Fast(
+                    StageOneRequestFastError::ServerBlockNotFoundLedgerStorage { .. }
+                )
+            );
+        } // #### fence
+          // #### fence
+        {
+            let evm_height = EvmHeightError::ZeroHeightForbidden;
+            let err = Into::<ServerError>::into(evm_height);
+
+            let status: tonic::Status = err.into();
+
+            let diff_request_stub = DiffRequest {
+                heights: (1, 2),
+                expected_hashes: (empty_trie_hash(), empty_trie_hash()),
+            };
+
+            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+
+            assert_matches!(
+                result,
+                StageOneRequestError::Fast(StageOneRequestFastError::ServerZeroHeight { .. })
+            );
+        } // #### fence
+          // #### fence
+        {
+            let empty = ServerProtoError::EmptyHash;
+            let err = Into::<ServerError>::into(empty);
+
+            let status: tonic::Status = err.into();
+
+            let diff_request_stub = DiffRequest {
+                heights: (1, 2),
+                expected_hashes: (empty_trie_hash(), empty_trie_hash()),
+            };
+
+            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+
+            assert_matches!(
+                result,
+                StageOneRequestError::Fast(StageOneRequestFastError::ServerProtoEmptyHash { .. })
+            );
+        } // #### fence
+
+        {
+            let parse = ServerProtoError::CouldNotParseHash("gibberish".to_owned());
+            let err = Into::<ServerError>::into(parse);
+
+            let status: tonic::Status = err.into();
+
+            let diff_request_stub = DiffRequest {
+                heights: (1, 2),
+                expected_hashes: (empty_trie_hash(), empty_trie_hash()),
+            };
+
+            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+
+            assert_matches!(
+                result,
+                StageOneRequestError::Fast(
+                    StageOneRequestFastError::ServerProtoCouldNotParseHash { .. }
+                )
+            );
+        } // #### fence
+
+        {
+            let lock = LockError::LockRootNotFound(empty_trie_hash());
+            let err = Into::<ServerError>::into(lock);
+
+            let status: tonic::Status = err.into();
+
+            let diff_request_stub = DiffRequest {
+                heights: (1, 2),
+                expected_hashes: (empty_trie_hash(), empty_trie_hash()),
+            };
+
+            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+
+            assert_matches!(
+                result,
+                StageOneRequestError::Fast(StageOneRequestFastError::ServerLockOrCheckRoot { .. })
+            );
+        } // #### fence
+
+        {
+            let err = ServerError::NotFoundNested {
+                from: empty_trie_hash(),
+                to: empty_trie_hash(),
+                description: "giggsdfsfl".to_owned(),
+            };
+
+            let status: tonic::Status = err.into();
+
+            let diff_request_stub = DiffRequest {
+                heights: (1, 2),
+                expected_hashes: (empty_trie_hash(), empty_trie_hash()),
+            };
+
+            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+
+            assert_matches!(
+                result,
+                StageOneRequestError::Fast(StageOneRequestFastError::ServerDeeplyBrokenTree { .. })
+            );
+        } // #### fence
     }
 }

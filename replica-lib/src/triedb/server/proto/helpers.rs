@@ -79,14 +79,14 @@ where
         from: evm_state::BlockNum,
         to: evm_state::BlockNum,
     ) -> Result<(H256, H256), ServerError> {
-        let start = Instant::now();
+        let mut start = Instant::now();
         let from = self
             .block_storage
             .get_evm_confirmed_state_root(from)
             .await?;
         let to = self.block_storage.get_evm_confirmed_state_root(to).await?;
 
-        debug_elapsed("fetched 2 roots from EvmHeightIndex", &start);
+        debug_elapsed("fetched 2 roots from EvmHeightIndex", &mut start);
         Ok((from, to))
     }
 }

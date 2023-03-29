@@ -8,6 +8,7 @@ use crate::triedb::{client::Client, error::ClientError, EvmHeightIndex, MAX_PREF
 use self::{chunked_range::ChunkedRange, kickstart_point::KickStartPoint};
 mod chunked_range;
 mod kickstart_point;
+mod kilosievert;
 
 impl<S> Client<S>
 where

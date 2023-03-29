@@ -141,10 +141,11 @@ where
     Ok(())
 }
 
-pub fn debug_elapsed(msg: &str, start: &Instant) {
+pub fn debug_elapsed(msg: &str, start: &mut Instant) {
     let duration = start.elapsed();
 
     log::debug!("Time elapsed on {}  is: {:?}", msg, duration);
+    *start = Instant::now();
 }
 
 pub fn start_and_join<S: EvmHeightIndex + Sync + Send + 'static>(
