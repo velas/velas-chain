@@ -41,19 +41,20 @@ pub async fn get_native_block_obsessively<P: Fn(usize) -> Duration>(
     pause: P,
     // reinstantiate_ledger: Option<BTCreds>
 ) -> Result<ConfirmedBlockWithOptionalMetadata, AppError> {
-    for n in 0..num_retries+1 {
+    for n in 0..num_retries {
         let result = ledger.get_confirmed_block(slot).await;
         
         match result {
             Ok(block) => return Ok(block),
             Err(source) => {
-                if n == num_retries {
+                if n + 1 == num_retries {
                     return Err(AppError::GetNativeBlock {
                         source,
                         block: slot,
                     })
+                } else {
+                    tokio::time::sleep(pause(n+1)).await;
                 }
-                tokio::time::sleep(pause(n+1)).await;
             },
         }
     }
