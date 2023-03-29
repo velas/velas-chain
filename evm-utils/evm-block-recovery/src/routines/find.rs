@@ -109,7 +109,7 @@ pub async fn find_native(
     log::info!("Looking for missing Native Blocks");
     log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={bigtable_limit}");
 
-    let ledger = ledger::with_params(creds, instance).await?;
+    let mut ledger = ledger::with_params(creds, instance).await?;
 
     let mut slots = vec![];
 
@@ -167,25 +167,19 @@ pub async fn find_native(
 
     log::info!("Found {} possibly missing ranges", uncommitted_ranges.len());
 
+    let pause = |n: usize| {
+        std::time::Duration::from_millis(n as u64 * 5000)
+    };
+
     for range in uncommitted_ranges.into_iter() {
         let slot_prev = range.first() - 1;
         let slot_curr = range.last() + 1;
 
-        let block_prev = ledger
-            .get_confirmed_block(slot_prev)
-            .await
-            .map_err(|source| AppError::GetNativeBlock {
-                source,
-                block: slot_prev,
-            })?;
+        let block_prev = ledger::get_native_block_obsessively(&mut ledger, slot_prev, 10, pause)
+            .await?;
 
-        let block_curr = ledger
-            .get_confirmed_block(slot_curr)
-            .await
-            .map_err(|source| AppError::GetNativeBlock {
-                source,
-                block: slot_curr,
-            })?;
+        let block_curr = ledger::get_native_block_obsessively(&mut ledger, slot_curr, 10, pause)
+            .await?;
 
         if block_prev.blockhash == block_curr.previous_blockhash {
             let checked_range = BlockRange::new(slot_prev, slot_curr);
