@@ -29,7 +29,7 @@ pub async fn with_params(
 //     instance: String,
 // }
 
-/// Tries to fetch native block from bigtable with configurable retry
+/// Tries to fetch native block from bigtable `ledger` with configurable retry
 /// 
 /// * `slot` - number of block to fetch
 /// * `num_retries` - number of retries
@@ -41,23 +41,28 @@ pub async fn get_native_block_obsessively<P: Fn(usize) -> Duration>(
     pause: P,
     // reinstantiate_ledger: Option<BTCreds>
 ) -> Result<ConfirmedBlockWithOptionalMetadata, AppError> {
-    for n in 0..num_retries {
-        let result = ledger.get_confirmed_block(slot).await;
-        
-        match result {
-            Ok(block) => return Ok(block),
-            Err(source) => {
-                if n + 1 == num_retries {
-                    return Err(AppError::GetNativeBlock {
-                        source,
-                        block: slot,
-                    })
-                } else {
-                    tokio::time::sleep(pause(n+1)).await;
-                }
-            },
+    let mut result = ledger.get_confirmed_block(slot).await;
+
+    if let Err(_source) = &result {
+        for n in 0..num_retries {
+            let pause = pause(n+1);
+            let pause_ms = pause.as_millis();
+
+            log::info!("Block {} fetch failed, retry [{}] after {} ms...", slot, n + 1, pause_ms);
+
+            tokio::time::sleep(pause).await;
+
+            result = ledger.get_confirmed_block(slot).await;
+
+            if result.is_ok() {
+                log::info!("Retry success!");
+                break;
+            }
         }
     }
 
-    unreachable!()
+    return result.map_err(|source| AppError::GetNativeBlock {
+        source,
+        block: slot,
+    })
 }
