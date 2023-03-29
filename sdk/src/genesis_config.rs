@@ -43,6 +43,8 @@ pub const DEFAULT_GENESIS_DOWNLOAD_PATH: &str = "/genesis.tar.bz2";
 // deprecated default that is no longer used
 pub const UNUSED_DEFAULT: u64 = 1024;
 pub const EVM_GENESIS: &str = "evm-state-genesis";
+pub const EVM_GENESIS_ARCHIVE: &str = "genesis.evm.tar.bz2";
+pub const EVM_GENESIS_DOWNLOAD_PATH: &str = "/genesis.evm.tar.bz2";
 
 // Dont load to memory accounts, more specified count
 use evm_state::{Storage, MAX_IN_HEAP_EVM_ACCOUNTS_BYTES};

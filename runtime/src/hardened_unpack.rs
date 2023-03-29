@@ -3,7 +3,7 @@ use {
     bzip2::bufread::BzDecoder,
     log::*,
     rand::{thread_rng, Rng},
-    solana_sdk::genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
+    solana_sdk::genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, EVM_GENESIS},
     std::{
         collections::HashMap,
         fs::{self, File},
@@ -474,10 +474,10 @@ fn is_valid_genesis_archive_entry<'a>(
         (["rocksdb"], _) => UnpackPath::Ignore,
         (["rocksdb", _], GNUSparse) => UnpackPath::Ignore,
         (["rocksdb", _], Regular) => UnpackPath::Ignore,
-        (["evm-state-genesis"], Directory) => UnpackPath::Valid(unpack_dir),
-        (["evm-state-genesis", ..], GNUSparse) => UnpackPath::Valid(unpack_dir),
-        (["evm-state-genesis", ..], Regular) => UnpackPath::Valid(unpack_dir),
-        (["evm-state-genesis", ..], Directory) => UnpackPath::Valid(unpack_dir),
+        ([EVM_GENESIS], Directory) => UnpackPath::Valid(unpack_dir),
+        ([EVM_GENESIS, ..], GNUSparse) => UnpackPath::Valid(unpack_dir),
+        ([EVM_GENESIS, ..], Regular) => UnpackPath::Valid(unpack_dir),
+        ([EVM_GENESIS, ..], Directory) => UnpackPath::Valid(unpack_dir),
         _ => UnpackPath::Invalid,
     }
 }

@@ -7,7 +7,10 @@ use {
         snapshot_package::SnapshotType,
         snapshot_utils::{self, ArchiveFormat},
     },
-    solana_sdk::{clock::Slot, genesis_config::DEFAULT_GENESIS_ARCHIVE, hash::Hash},
+    solana_sdk::{
+        clock::Slot, genesis_config::{DEFAULT_GENESIS_ARCHIVE, EVM_GENESIS_ARCHIVE}, 
+        hash::Hash
+    },
     std::{
         fs::{self, File},
         io::{self, Read},
@@ -231,20 +234,28 @@ pub fn download_genesis_if_missing(
     rpc_addr: &SocketAddr,
     genesis_package: &Path,
     use_progress_bar: bool,
-) -> Result<PathBuf, String> {
+) -> Result<(PathBuf, PathBuf), String> {
     if !genesis_package.exists() {
-        let tmp_genesis_path = genesis_package.parent().unwrap().join("tmp-genesis");
-        let tmp_genesis_package = tmp_genesis_path.join(DEFAULT_GENESIS_ARCHIVE);
+        let tmp_genesis_path = genesis_package.join("tmp-genesis");
+        let tmp_genesis_native = tmp_genesis_path.join(DEFAULT_GENESIS_ARCHIVE);
+        let tmp_genesis_evm = tmp_genesis_path.join(EVM_GENESIS_ARCHIVE);
 
         let _ignored = fs::remove_dir_all(&tmp_genesis_path);
         download_file(
             &format!("http://{}/{}", rpc_addr, DEFAULT_GENESIS_ARCHIVE),
-            &tmp_genesis_package,
+            &tmp_genesis_native,
             use_progress_bar,
             &mut None,
         )?;
 
-        Ok(tmp_genesis_package)
+        download_file(
+            &format!("http://{}/{}", rpc_addr, EVM_GENESIS_ARCHIVE),
+            &tmp_genesis_evm,
+            use_progress_bar,
+            &mut None,
+        )?;
+
+        Ok((tmp_genesis_native, tmp_genesis_evm))
     } else {
         Err("genesis already exists".to_string())
     }

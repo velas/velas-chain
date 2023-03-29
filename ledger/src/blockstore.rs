@@ -32,8 +32,9 @@ use {
     solana_runtime::hardened_unpack::{unpack_genesis_archive, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
     solana_sdk::{
         clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
-        genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, 
-            evm_genesis::{OpenEthereumAccountExtractor, GethAccountExtractor}
+        genesis_config::{
+            DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, EVM_GENESIS_ARCHIVE, EVM_GENESIS,
+            GenesisConfig, evm_genesis::{OpenEthereumAccountExtractor, GethAccountExtractor}
         },
         hash::Hash,
         pubkey::Pubkey,
@@ -4101,35 +4102,55 @@ pub fn create_new_ledger(
     // Explicitly close the blockstore before we create the archived genesis file
     drop(blockstore);
 
-    let archive_path = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);
-    let args = vec![
-        "jcfhS",
-        archive_path.to_str().unwrap(),
-        "-C",
-        ledger_path.to_str().unwrap(),
-        DEFAULT_GENESIS_FILE,
-        "rocksdb",
-        "evm-state-genesis",
-    ];
+    fn execute_tar(root_dir: &Path, targets: &[&str], archive_name: &str) -> Result<PathBuf> {
+        
+        let archive_path = root_dir.join(archive_name);
+        let mut args = vec![
+            "jcfhS",
+            archive_path.to_str().unwrap(),
+            "-C",
+            root_dir.to_str().unwrap(),
+        ];
 
-    let output = std::process::Command::new("tar")
-        .args(&args)
-        .output()
-        .unwrap();
-    if !output.status.success() {
-        use std::str::from_utf8;
-        error!("tar stdout: {}", from_utf8(&output.stdout).unwrap_or("?"));
-        error!("tar stderr: {}", from_utf8(&output.stderr).unwrap_or("?"));
+        args.extend_from_slice(targets);
 
-        return Err(BlockstoreError::Io(IoError::new(
-            ErrorKind::Other,
-            format!(
-                "Error trying to generate snapshot archive: {}",
-                output.status
-            ),
-        )));
+        log::warn!("Args: {:?}", &args);
+
+        let output = std::process::Command::new("tar")
+            .args(&args)
+            .output()
+            .unwrap();
+        if !output.status.success() {
+            use std::str::from_utf8;
+            error!("tar stdout: {}", from_utf8(&output.stdout).unwrap_or("?"));
+            error!("tar stderr: {}", from_utf8(&output.stderr).unwrap_or("?"));
+    
+            return Err(BlockstoreError::Io(IoError::new(
+                ErrorKind::Other,
+                format!(
+                    "Error trying to generate snapshot archive: {}",
+                    output.status
+                ),
+            )));
+        }
+
+        Ok(archive_path)
     }
 
+    // native part
+    let archive_path = {
+        // NOTE: do we need `rocksdb` ?
+        let targets = &[DEFAULT_GENESIS_FILE, "rocksdb"];
+        execute_tar(ledger_path, targets, DEFAULT_GENESIS_ARCHIVE)?
+    };
+
+    // evm part
+    let _evm_archive_path = {
+        let targets = &[EVM_GENESIS];
+        execute_tar(ledger_path, targets, EVM_GENESIS_ARCHIVE)?
+    };
+
+    // NOTD: skipping EVM unpack check
     // ensure the genesis archive can be unpacked and it is under
     // max_genesis_archive_unpacked_size, immediately after creating it above.
     {

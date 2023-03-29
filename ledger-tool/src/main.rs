@@ -21,7 +21,7 @@ use {
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         bank_forks_utils,
-        blockstore::{create_new_ledger, Blockstore, PurgeType},
+        blockstore::{create_new_ledger, Blockstore, EvmStateJson, PurgeType},
         blockstore_db::{self, AccessType, BlockstoreRecoveryMode, Database},
         blockstore_processor::ProcessOptions,
         shred::Shred,
@@ -87,7 +87,6 @@ use ledger_path::*;
 
 mod evm_blockstore;
 use evm_blockstore::*;
-use solana_ledger::blockstore::EvmStateJson;
 
 mod evm_state;
 use crate::evm_state::*;

@@ -2,7 +2,7 @@ use {
     solana_download_utils::download_genesis_if_missing,
     solana_runtime::hardened_unpack::unpack_genesis_archive,
     solana_sdk::{
-        genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE},
+        genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, EVM_GENESIS_ARCHIVE},
         hash::Hash,
     },
     std::net::SocketAddr,
@@ -50,22 +50,36 @@ pub fn download_then_check_genesis_hash(
         return Ok(genesis_config);
     }
 
-    let genesis_package = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);
-    let genesis_config = if let Ok(tmp_genesis_package) =
-        download_genesis_if_missing(rpc_addr, &genesis_package, use_progress_bar)
+    let genesis_package_native = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);
+    let genesis_package_evm = ledger_path.join(EVM_GENESIS_ARCHIVE);
+
+    let genesis_config = if let Ok((tmp_genesis_native, tmp_genesis_evm)) =
+        download_genesis_if_missing(rpc_addr, &ledger_path, use_progress_bar)
     {
         unpack_genesis_archive(
-            &tmp_genesis_package,
+            &tmp_genesis_native,
             ledger_path,
             max_genesis_archive_unpacked_size,
         )
-        .map_err(|err| format!("Failed to unpack downloaded genesis config: {}", err))?;
+        .map_err(|err| format!("Failed to unpack downloaded native genesis config: {}", err))?;
+
+        unpack_genesis_archive(
+            &tmp_genesis_evm,
+            ledger_path,
+            max_genesis_archive_unpacked_size,
+        )
+        .map_err(|err| format!("Failed to unpack downloaded evm genesis config: {}", err))?;
 
         let downloaded_genesis = GenesisConfig::load(ledger_path)
             .map_err(|err| format!("Failed to load downloaded genesis config: {}", err))?;
 
         check_genesis_hash(&downloaded_genesis, expected_genesis_hash)?;
-        std::fs::rename(tmp_genesis_package, genesis_package)
+        // NOTE: evm genesis hash/state_root check?
+
+        std::fs::rename(tmp_genesis_native, genesis_package_native)
+            .map_err(|err| format!("Unable to rename: {:?}", err))?;
+
+        std::fs::rename(tmp_genesis_evm, genesis_package_evm)
             .map_err(|err| format!("Unable to rename: {:?}", err))?;
 
         downloaded_genesis
