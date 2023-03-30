@@ -61,7 +61,7 @@ pub async fn get_native_block_obsessively<P: Fn(usize) -> Duration>(
         }
     }
 
-    return result.map_err(|source| AppError::GetNativeBlock {
+    result.map_err(|source| AppError::GetNativeBlock {
         source,
         block: slot,
     })
