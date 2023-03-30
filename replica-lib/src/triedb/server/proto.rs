@@ -1,5 +1,5 @@
 use evm_rpc::FormatHex;
-use log::info;
+use log::debug;
 
 use evm_state::H256;
 
@@ -22,7 +22,7 @@ use crate::triedb::{
 #[tonic::async_trait]
 impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
     async fn ping(&self, request: Request<()>) -> Result<Response<PingReply>, Status> {
-        info!("got a ping request: {:?}", request);
+        debug!("got a ping request: {:?}", request);
 
         let reply = app_grpc::PingReply {
             message: "ABDULA STATUS 7".to_string(),
@@ -36,7 +36,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         request: Request<app_grpc::GetArrayOfNodesRequest>,
     ) -> Result<Response<app_grpc::GetArrayOfNodesReply>, Status> {
         let request = request.into_inner();
-        info!(
+        debug!(
             "got a get_array_of_nodes request: {:?}",
             request.hashes.len()
         );
@@ -62,7 +62,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         &self,
         request: Request<app_grpc::GetStateDiffRequest>,
     ) -> Result<Response<app_grpc::GetStateDiffReply>, Status> {
-        info!("got a state_diff request: {:?}", request);
+        debug!("got a state_diff request: {:?}", request);
 
         let inner = request.into_inner();
         let height_diff = if inner.to >= inner.from {
@@ -87,7 +87,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         &self,
         _request: tonic::Request<()>,
     ) -> Result<tonic::Response<app_grpc::GetBlockRangeReply>, tonic::Status> {
-        info!("got a get_block_range request");
+        debug!("got a get_block_range request");
         let r: std::ops::Range<evm_state::BlockNum> = self.range.get();
         let reply = app_grpc::GetBlockRangeReply {
             start: r.start,
@@ -101,7 +101,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         &self,
         request: tonic::Request<app_grpc::PrefetchHeightRequest>,
     ) -> Result<tonic::Response<app_grpc::PrefetchHeightReply>, tonic::Status> {
-        info!("got a prefetch_height request {:?}", request);
+        debug!("got a prefetch_height request {:?}", request);
         let hash = self
             .block_storage
             .get_evm_confirmed_state_root(request.into_inner().height)
@@ -123,7 +123,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         &self,
         request: tonic::Request<app_grpc::PrefetchRangeRequest>,
     ) -> Result<tonic::Response<()>, tonic::Status> {
-        info!("got a prefetch_range request {:?}", request);
+        debug!("got a prefetch_range request {:?}", request);
         let req = request.into_inner();
         let requested = req.start..req.end;
         let self_range = self.range.get();

@@ -23,7 +23,7 @@ fn get_state_diff_gc_storage(
     let db_handle = storage.rocksdb_trie_handle();
     let _from_guard = lock_root(&db_handle, from, evm_state::storage::account_extractor)?;
     let _to_guard = lock_root(&db_handle, to, evm_state::storage::account_extractor)?;
-    debug_elapsed("locked roots before diffing", &mut start);
+    let _ = debug_elapsed(&mut start);
 
     let ach = triedb::rocksdb::SyncRocksHandle::new(triedb::rocksdb::RocksDatabaseHandle::new(
         storage.db(),
@@ -31,7 +31,12 @@ fn get_state_diff_gc_storage(
 
     let changeset = triedb::diff(&ach, evm_state::storage::account_extractor, from, to)
         .map_err(|_err| ServerError::TriedbDiff)?;
-    debug_elapsed("disk i/o retrieved diff changeset", &mut start);
+    let disk_io = debug_elapsed(&mut start);
+    log::debug!(
+        "disk i/o retrieved diff changeset {:?} {}",
+        disk_io,
+        changeset.len()
+    );
     Ok(changeset)
 }
 
@@ -45,13 +50,18 @@ fn get_state_diff_secondary_storage(
     let db = storage.db();
     check_root(db, from)?;
     check_root(db, to)?;
-    debug_elapsed("checked roots before diffing", &mut start);
+    let _ = debug_elapsed(&mut start);
 
     let ach = storage.rocksdb_trie_handle();
 
     let changeset = triedb::diff(&ach, evm_state::storage::account_extractor, from, to)
         .map_err(|_err| ServerError::TriedbDiff)?;
-    debug_elapsed("disk i/o  retrieved diff hangeset", &mut start);
+    let disk_io = debug_elapsed(&mut start);
+    log::debug!(
+        "disk i/o retrieved diff changeset {:?} {}",
+        disk_io,
+        changeset.len()
+    );
     Ok(changeset)
 }
 impl<S> Server<S> {

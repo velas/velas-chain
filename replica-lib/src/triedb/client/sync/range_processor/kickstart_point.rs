@@ -9,9 +9,9 @@ pub struct KickStartPoint {
 
 #[derive(Clone, Copy)]
 pub struct Entry {
-    height: BlockNum,
-    hash: H256,
-    upward: bool,
+    pub height: BlockNum,
+    pub hash: H256,
+    pub upward: bool,
 }
 
 impl KickStartPoint {

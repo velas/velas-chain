@@ -3,6 +3,7 @@ use std::ops::Range;
 use evm_state::{BlockNum, H256};
 use rocksdb::Error as RocksError;
 use thiserror::Error;
+use tokio::task::JoinError;
 use tonic::Code;
 use triedb::Error as TriedbError;
 
@@ -199,7 +200,7 @@ pub struct DiffRequest {
 }
 
 #[derive(Error, Debug)]
-pub enum StageOneRequestFastError {
+pub enum StageOneNetworkFastError {
     #[error("server hash mismatch {0:?}, {1:?}")]
     ServerHashMismatch(DiffRequest, #[source] tonic::Status),
     #[error("server blocks too far {0:?}, {1:?}")]
@@ -221,66 +222,92 @@ pub enum StageOneRequestFastError {
 }
 #[derive(Error, Debug)]
 #[error("the last after many retries {0:?}")]
-pub struct StageOneRequestSlowError(DiffRequest, #[source] tonic::Status);
+pub struct StageOneNetworkSlowError(DiffRequest, #[source] tonic::Status);
 
 #[derive(Error, Debug)]
-pub enum StageOneRequestError {
+pub enum StageOneNetworkError {
     #[error("fast {0}")]
-    Fast(StageOneRequestFastError),
+    Fast(StageOneNetworkFastError),
     #[error("retried {0}")]
-    Slow(StageOneRequestSlowError),
+    Slow(StageOneNetworkSlowError),
 }
 
-impl StageOneRequestError {
+impl StageOneNetworkError {
     pub fn from_with_metadata(value: tonic::Status, request: DiffRequest) -> Self {
         match value.code() {
             Code::FailedPrecondition => match value.message() {
                 message @ _ if message.contains("HashMismatch") => {
-                    Self::Fast(StageOneRequestFastError::ServerHashMismatch(request, value))
+                    Self::Fast(StageOneNetworkFastError::ServerHashMismatch(request, value))
                 }
                 message @ _ if message.contains("StateDiffBlocksTooFar") => {
-                    Self::Fast(StageOneRequestFastError::ServerBlocksTooFar(request, value))
+                    Self::Fast(StageOneNetworkFastError::ServerBlocksTooFar(request, value))
                 }
-                _ => Self::Fast(StageOneRequestFastError::Unknown(value.clone())),
+                _ => Self::Fast(StageOneNetworkFastError::Unknown(value.clone())),
             },
             Code::NotFound => match value.message() {
                 message @ _ if message.contains("Bigtable(BlockNotFound") => Self::Fast(
-                    StageOneRequestFastError::ServerBlockNotFoundLedgerStorage(request, value),
+                    StageOneNetworkFastError::ServerBlockNotFoundLedgerStorage(request, value),
                 ),
                 message @ _ if message.contains("LockRootNotFound") => Self::Fast(
-                    StageOneRequestFastError::ServerLockOrCheckRoot(request, value),
+                    StageOneNetworkFastError::ServerLockOrCheckRoot(request, value),
                 ),
 
                 message @ _ if message.contains("NotFoundNested") => Self::Fast(
-                    StageOneRequestFastError::ServerDeeplyBrokenTree(request, value),
+                    StageOneNetworkFastError::ServerDeeplyBrokenTree(request, value),
                 ),
 
-                _ => Self::Fast(StageOneRequestFastError::Unknown(value.clone())),
+                _ => Self::Fast(StageOneNetworkFastError::Unknown(value.clone())),
             },
             Code::InvalidArgument => match value.message() {
                 message @ _ if message.contains("ZeroHeightForbidden") => {
-                    Self::Fast(StageOneRequestFastError::ServerZeroHeight(request, value))
+                    Self::Fast(StageOneNetworkFastError::ServerZeroHeight(request, value))
                 }
                 message @ _ if message.contains("EmptyHash") => Self::Fast(
-                    StageOneRequestFastError::ServerProtoEmptyHash(request, value),
+                    StageOneNetworkFastError::ServerProtoEmptyHash(request, value),
                 ),
                 message @ _ if message.contains("CouldNotParseHash(") => Self::Fast(
-                    StageOneRequestFastError::ServerProtoCouldNotParseHash(request, value),
+                    StageOneNetworkFastError::ServerProtoCouldNotParseHash(request, value),
                 ),
 
-                _ => Self::Fast(StageOneRequestFastError::Unknown(value.clone())),
+                _ => Self::Fast(StageOneNetworkFastError::Unknown(value.clone())),
             },
-            _ => Self::Slow(StageOneRequestSlowError(request, value)),
+            _ => Self::Slow(StageOneNetworkSlowError(request, value)),
         }
     }
+}
+
+#[derive(Error, Debug)]
+pub enum StageOneRequestError {
+    #[error("network {0}")]
+    Network(#[from] StageOneNetworkError),
+    #[error("parse diff response {0}")]
+    ProtoViolated(#[from] ClientProtoError),
 }
 
 #[derive(Error, Debug)]
 pub enum StageOneError {
     #[error("request {0}")]
     Request(#[from] StageOneRequestError),
-    #[error("parse diff response {0}")]
-    ProtoViolated(#[from] ClientProtoError),
+    #[error("evm_height {0}")]
+    EvmHeight(#[from] EvmHeightError),
+}
+
+#[derive(Error, Debug)]
+pub enum StageTwoError {
+    #[error("stage one {0}")]
+    StageOne(#[from] StageOneError),
+    #[error("apply {0}")]
+    Apply(#[from] StageTwoApplyError),
+    #[error("joined blocking db task panicked {0}")]
+    ApplyDBTaskPanicked(#[from] JoinError),
+}
+
+#[derive(Error, Debug)]
+pub enum StageTwoApplyError {
+    #[error("triedb error {0}")]
+    Triedb(#[from] TriedbError),
+    #[error("lock error {0}")]
+    Lock(#[from] LockError),
 }
 
 pub fn source_matches_type<T: std::error::Error + 'static>(
@@ -307,8 +334,8 @@ mod tests {
     use tonic::Code;
 
     use crate::triedb::error::{
-        DiffRequest, EvmHeightError, LockError, ServerProtoError, StageOneRequestError,
-        StageOneRequestFastError,
+        DiffRequest, EvmHeightError, LockError, ServerProtoError, StageOneNetworkError,
+        StageOneNetworkFastError,
     };
 
     use super::ServerError;
@@ -329,11 +356,11 @@ mod tests {
                 expected_hashes: (empty_trie_hash(), empty_trie_hash()),
             };
 
-            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+            let result = StageOneNetworkError::from_with_metadata(status, diff_request_stub);
 
             assert_matches!(
                 result,
-                StageOneRequestError::Fast(StageOneRequestFastError::ServerHashMismatch { .. })
+                StageOneNetworkError::Fast(StageOneNetworkFastError::ServerHashMismatch { .. })
             );
         }
         // #### fence
@@ -350,11 +377,11 @@ mod tests {
                 expected_hashes: (empty_trie_hash(), empty_trie_hash()),
             };
 
-            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+            let result = StageOneNetworkError::from_with_metadata(status, diff_request_stub);
 
             assert_matches!(
                 result,
-                StageOneRequestError::Fast(StageOneRequestFastError::ServerBlocksTooFar { .. })
+                StageOneNetworkError::Fast(StageOneNetworkFastError::ServerBlocksTooFar { .. })
             );
         } // #### fence
         {
@@ -365,10 +392,10 @@ mod tests {
                 expected_hashes: (empty_trie_hash(), empty_trie_hash()),
             };
             let random_status_result =
-                StageOneRequestError::from_with_metadata(random_status, diff_request_stub);
+                StageOneNetworkError::from_with_metadata(random_status, diff_request_stub);
             assert_matches!(
                 random_status_result,
-                StageOneRequestError::Fast(StageOneRequestFastError::Unknown(..))
+                StageOneNetworkError::Fast(StageOneNetworkFastError::Unknown(..))
             );
         }
         // #### fence
@@ -384,12 +411,12 @@ mod tests {
                 expected_hashes: (empty_trie_hash(), empty_trie_hash()),
             };
 
-            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+            let result = StageOneNetworkError::from_with_metadata(status, diff_request_stub);
 
             assert_matches!(
                 result,
-                StageOneRequestError::Fast(
-                    StageOneRequestFastError::ServerBlockNotFoundLedgerStorage { .. }
+                StageOneNetworkError::Fast(
+                    StageOneNetworkFastError::ServerBlockNotFoundLedgerStorage { .. }
                 )
             );
         } // #### fence
@@ -405,11 +432,11 @@ mod tests {
                 expected_hashes: (empty_trie_hash(), empty_trie_hash()),
             };
 
-            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+            let result = StageOneNetworkError::from_with_metadata(status, diff_request_stub);
 
             assert_matches!(
                 result,
-                StageOneRequestError::Fast(StageOneRequestFastError::ServerZeroHeight { .. })
+                StageOneNetworkError::Fast(StageOneNetworkFastError::ServerZeroHeight { .. })
             );
         } // #### fence
           // #### fence
@@ -424,11 +451,11 @@ mod tests {
                 expected_hashes: (empty_trie_hash(), empty_trie_hash()),
             };
 
-            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+            let result = StageOneNetworkError::from_with_metadata(status, diff_request_stub);
 
             assert_matches!(
                 result,
-                StageOneRequestError::Fast(StageOneRequestFastError::ServerProtoEmptyHash { .. })
+                StageOneNetworkError::Fast(StageOneNetworkFastError::ServerProtoEmptyHash { .. })
             );
         } // #### fence
 
@@ -443,12 +470,12 @@ mod tests {
                 expected_hashes: (empty_trie_hash(), empty_trie_hash()),
             };
 
-            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+            let result = StageOneNetworkError::from_with_metadata(status, diff_request_stub);
 
             assert_matches!(
                 result,
-                StageOneRequestError::Fast(
-                    StageOneRequestFastError::ServerProtoCouldNotParseHash { .. }
+                StageOneNetworkError::Fast(
+                    StageOneNetworkFastError::ServerProtoCouldNotParseHash { .. }
                 )
             );
         } // #### fence
@@ -464,11 +491,11 @@ mod tests {
                 expected_hashes: (empty_trie_hash(), empty_trie_hash()),
             };
 
-            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+            let result = StageOneNetworkError::from_with_metadata(status, diff_request_stub);
 
             assert_matches!(
                 result,
-                StageOneRequestError::Fast(StageOneRequestFastError::ServerLockOrCheckRoot { .. })
+                StageOneNetworkError::Fast(StageOneNetworkFastError::ServerLockOrCheckRoot { .. })
             );
         } // #### fence
 
@@ -486,11 +513,11 @@ mod tests {
                 expected_hashes: (empty_trie_hash(), empty_trie_hash()),
             };
 
-            let result = StageOneRequestError::from_with_metadata(status, diff_request_stub);
+            let result = StageOneNetworkError::from_with_metadata(status, diff_request_stub);
 
             assert_matches!(
                 result,
-                StageOneRequestError::Fast(StageOneRequestFastError::ServerDeeplyBrokenTree { .. })
+                StageOneNetworkError::Fast(StageOneNetworkFastError::ServerDeeplyBrokenTree { .. })
             );
         } // #### fence
     }

@@ -86,7 +86,7 @@ where
             .await?;
         let to = self.block_storage.get_evm_confirmed_state_root(to).await?;
 
-        debug_elapsed("fetched 2 roots from EvmHeightIndex", &mut start);
+        let _ = debug_elapsed(&mut start);
         Ok((from, to))
     }
 }

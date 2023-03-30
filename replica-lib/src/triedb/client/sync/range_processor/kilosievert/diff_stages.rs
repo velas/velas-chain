@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use backon::{ExponentialBuilder, Retryable};
 use evm_state::{storage::account_extractor, H256};
@@ -13,8 +13,8 @@ use crate::triedb::{
     },
     debug_elapsed,
     error::{
-        ClientError, DiffRequest, StageOneError, StageOneRequestError, StageOneRequestFastError,
-        StageOneRequestSlowError,
+        DiffRequest, StageOneNetworkError, StageOneNetworkFastError, StageOneNetworkSlowError,
+        StageOneRequestError, StageTwoApplyError,
     },
     lock_root, RocksHandleA, MAX_TIMES, MIN_DELAY_SEC,
 };
@@ -34,13 +34,13 @@ pub async fn get_and_apply_diff<'a, S>(
 
 pub enum StageOneRequestResponse {
     Ok(GetStateDiffReply),
-    FailFast(StageOneRequestFastError),
+    FailFast(StageOneNetworkFastError),
 }
 pub async fn get_diff_retried<S>(
     client: &BackendClient<tonic::transport::Channel>,
     request: DiffRequest,
     state_rpc_address: &str,
-) -> Result<StageOneRequestResponse, StageOneRequestSlowError> {
+) -> Result<StageOneRequestResponse, StageOneNetworkSlowError> {
     let mut count = 0;
     let fetch_cl = || {
         *(&mut count) += 1;
@@ -57,9 +57,9 @@ pub async fn get_diff_retried<S>(
             let result = Client::<S>::get_diff(&mut client, request, state_rpc_address).await;
             match result {
                 Ok(res) => Ok(StageOneRequestResponse::Ok(res)),
-                Err(err) => match StageOneRequestError::from_with_metadata(err, request) {
-                    StageOneRequestError::Fast(fast) => Ok(StageOneRequestResponse::FailFast(fast)),
-                    StageOneRequestError::Slow(slow) => Err(slow),
+                Err(err) => match StageOneNetworkError::from_with_metadata(err, request) {
+                    StageOneNetworkError::Fast(fast) => Ok(StageOneRequestResponse::FailFast(fast)),
+                    StageOneNetworkError::Slow(slow) => Err(slow),
                 },
             }
         }
@@ -76,31 +76,37 @@ pub async fn get_diff_retried<S>(
 }
 
 pub async fn one<S>(
-    client: &mut BackendClient<tonic::transport::Channel>,
+    client: &BackendClient<tonic::transport::Channel>,
     request: DiffRequest,
     state_rpc_address: &str,
-) -> Result<(DiffRequest, Vec<triedb::DiffChange>), StageOneError> {
+) -> Result<(Duration, DiffRequest, Vec<triedb::DiffChange>), StageOneRequestError> {
     let mut start = Instant::now();
 
     let response = get_diff_retried::<S>(client, request, state_rpc_address).await;
 
-    debug_elapsed("queried diff response over network", &mut start);
+    let network_dur = debug_elapsed(&mut start);
     let response = match response {
         Ok(StageOneRequestResponse::Ok(result)) => result,
-        Ok(StageOneRequestResponse::FailFast(fast)) => Err(StageOneRequestError::Fast(fast))?,
-        Err(slow) => Err(StageOneRequestError::Slow(slow))?,
+        Ok(StageOneRequestResponse::FailFast(fast)) => Err(StageOneNetworkError::Fast(fast))?,
+        Err(slow) => Err(StageOneNetworkError::Slow(slow))?,
     };
 
     let diff_changes = helpers::parse_diff_response(response)?;
 
-    debug_elapsed("parsed diff response", &mut start);
-    Ok((request, diff_changes))
+    let _ = debug_elapsed(&mut start);
+    Ok((network_dur, request, diff_changes))
 }
 
-pub async fn two<'a>(
+pub fn two<'a>(
     incoming: (DiffRequest, Vec<triedb::DiffChange>),
     collection: &'a triedb::gc::TrieCollection<RocksHandleA<'a>>,
-) -> Result<triedb::gc::RootGuard<'a, RocksHandleA<'a>, ChildExtractorFn>, ClientError> {
+) -> Result<
+    (
+        Duration,
+        triedb::gc::RootGuard<'a, RocksHandleA<'a>, ChildExtractorFn>,
+    ),
+    StageTwoApplyError,
+> {
     let mut start = Instant::now();
     let (request, diff_changes) = incoming;
 
@@ -111,19 +117,19 @@ pub async fn two<'a>(
         account_extractor,
         false,
     )?;
-    debug_elapsed("verified diff response", &mut start);
+    // let _ = debug_elapsed(&mut start);
 
     let _from_guard = lock_root(
         &collection.database,
         request.expected_hashes.0,
         account_extractor,
     )?;
-    debug_elapsed("locked or checked root before diff", &mut start);
+    // debug_elapsed(&mut start);
 
     let to_guard =
         collection.apply_diff_patch(diff_patch, account_extractor as ChildExtractorFn)?;
-    debug_elapsed("applied diff response", &mut start);
-    Ok(to_guard)
+    let applied_dur = debug_elapsed(&mut start);
+    Ok((applied_dur, to_guard))
 }
 
 #[doc(hidden)]

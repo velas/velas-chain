@@ -1,7 +1,7 @@
-use std::{ops::Range, time::Duration};
+use std::ops::Range;
 
 use evm_state::BlockNum;
-use tokio::time::sleep;
+use tokio::sync::mpsc;
 
 use crate::triedb::{client::Client, error::ClientError, EvmHeightIndex, MAX_PREFETCH_RANGE_CHUNK};
 
@@ -12,7 +12,7 @@ mod kilosievert;
 
 impl<S> Client<S>
 where
-    S: EvmHeightIndex + Sync,
+    S: EvmHeightIndex + Clone + Sync + Send + 'static,
 {
     pub(super) async fn process_ranges(
         &mut self,
@@ -60,11 +60,65 @@ where
         range: Range<BlockNum>,
         kickstart_point: KickStartPoint,
     ) -> Result<KickStartPoint, ClientError> {
+        log::warn!("start range {:?}", range);
         self.block_storage.prefetch_roots_retried(&range).await?;
 
         self.prefetch_range_retried(&range).await?;
 
-        sleep(Duration::new(20, 0)).await;
+        let (stage_one_output, stage_two_input) = mpsc::channel(STAGE_TWO_CHANNEL_CAPACITY);
+        let range_clone = range.clone();
+        let kickstart_clone = kickstart_point.clone();
+        let client_clone = self.client.clone();
+        let block_storage_clone = self.block_storage.clone();
+        let rpc_address = self.state_rpc_address.to_owned();
+        let request_workers = self.request_workers;
+        let _jh_stage_one = tokio::task::spawn(async move {
+            kilosievert::concrete_chamber::process(
+                &client_clone,
+                &block_storage_clone,
+                range_clone,
+                kickstart_clone,
+                rpc_address,
+                stage_one_output,
+                request_workers,
+            )
+            .await;
+        });
+
+        let (stage_two_output, mut stage_three_input) = mpsc::channel(STAGE_THREE_CHANNEL_CAPACITY);
+        let kickstart_clone = kickstart_point.clone();
+        let storage_clone = self.storage.clone();
+        let db_workers = self.db_workers;
+        let _jh_stage_two = tokio::task::spawn(async move {
+            kilosievert::concrete_chamber::steel_container::process(
+                kickstart_clone,
+                storage_clone,
+                stage_two_input,
+                stage_two_output,
+                db_workers,
+            )
+            .await;
+        });
+
+        while let Some(result) = stage_three_input.recv().await {
+            match result {
+                Err(err) => {
+                    log::error!("{:#?}", err);
+                }
+                Ok(result) => {
+                    log::debug!("{:#?}", result);
+                    self.range
+                        .update(result.request.heights.1)
+                        .expect("persist range");
+                }
+            }
+        }
+
+        log::warn!("done range {:?}", range);
+        self.range.flush().expect("persist range");
         Ok(kickstart_point)
     }
 }
+
+const STAGE_TWO_CHANNEL_CAPACITY: usize = 50;
+const STAGE_THREE_CHANNEL_CAPACITY: usize = 10000;

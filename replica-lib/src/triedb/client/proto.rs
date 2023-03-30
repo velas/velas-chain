@@ -111,7 +111,7 @@ impl<S> super::Client<S> {
 
         let response = client.prefetch_range(request).await?;
         log::info!(
-            "prefetch_height response retrieved: {:?}, {}",
+            "prefetch_range response retrieved: {:?}, {}",
             range,
             state_rpc_address,
         );
@@ -128,7 +128,7 @@ impl<S> super::Client<S> {
             .await?;
 
         let response = response.into_inner();
-        log::debug!(
+        log::trace!(
             "changeset retrieved {:?} -> {:?} {}, {}",
             request.expected_hashes.0,
             request.expected_hashes.1,

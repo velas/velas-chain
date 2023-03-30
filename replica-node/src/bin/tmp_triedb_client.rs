@@ -16,6 +16,8 @@ struct ParsedArgs {
     evm_state: PathBuf,
     coarse_range_file: String,
     fine_range_file: String,
+    request_workers: u32,
+    db_workers: u32,
 }
 
 #[derive(Error, Debug)]
@@ -52,12 +54,20 @@ impl ParsedArgs {
         let evm_state = PathBuf::from(matches.value_of("evm_state").unwrap());
         let range_file = matches.value_of("range_file").unwrap().to_string();
         let rangemap_file = matches.value_of("rangemap_file").unwrap().to_string();
+        let db_workers = matches.value_of("db_workers").unwrap().parse().unwrap();
+        let request_workers = matches
+            .value_of("request_workers")
+            .unwrap()
+            .parse()
+            .unwrap();
 
         Ok(Self {
             state_rpc_address,
             evm_state,
             coarse_range_file: range_file,
             fine_range_file: rangemap_file,
+            db_workers,
+            request_workers,
         })
     }
 
@@ -68,7 +78,13 @@ impl ParsedArgs {
         let storage = Storage::open_persistent(self.evm_state, gc_enabled)?;
 
         let range = RangeJSON::new(self.coarse_range_file, Some(self.fine_range_file))?;
-        Ok(ClientOpts::new(self.state_rpc_address, storage, range))
+        Ok(ClientOpts::new(
+            self.state_rpc_address,
+            storage,
+            range,
+            self.request_workers,
+            self.db_workers,
+        ))
     }
 }
 
@@ -76,14 +92,24 @@ pub struct ClientOpts {
     state_rpc_address: String,
     storage: Storage,
     range: RangeJSON,
+    request_workers: u32,
+    db_workers: u32,
 }
 
 impl ClientOpts {
-    pub fn new(state_rpc_address: String, storage: Storage, range: RangeJSON) -> Self {
+    pub fn new(
+        state_rpc_address: String,
+        storage: Storage,
+        range: RangeJSON,
+        request_workers: u32,
+        db_workers: u32,
+    ) -> Self {
         Self {
             state_rpc_address,
             storage,
             range,
+            request_workers,
+            db_workers,
         }
     }
 }
@@ -140,6 +166,24 @@ async fn main() -> Result<(), Error> {
                 //  replica-lib/src/triedb/range.rs
                 .help("FILE with json of fine `RangeJSON` serialization"),
         )
+        .arg(
+            Arg::with_name("request_workers")
+                .long("request-workers")
+                .value_name("NUM")
+                .takes_value(true)
+                .default_value("50")
+                //  replica-lib/src/triedb/range.rs
+                .help("NUM of parallel grpc requests' workers"),
+        )
+        .arg(
+            Arg::with_name("db_workers")
+                .long("db-workers")
+                .value_name("NUM")
+                .takes_value(true)
+                .default_value("50")
+                //  replica-lib/src/triedb/range.rs
+                .help("NUM of parallel db workers"),
+        )
         .get_matches();
 
     let _ = env_logger::Builder::from_default_env().try_init();
@@ -163,6 +207,8 @@ async fn connect(client_opts: ClientOpts) -> Result<Client<CachedRootsLedgerStor
             client_opts.range,
             client_opts.storage,
             block_storage,
+            client_opts.request_workers,
+            client_opts.db_workers,
         )
         .await
     }

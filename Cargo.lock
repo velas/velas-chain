@@ -303,7 +303,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f34fac4d7cdaefa2deded0eda2d5d59dbfd43370ff3f856209e72340ae84c294"
 dependencies = [
- "futures 0.3.25",
+ "futures 0.3.26",
  "pin-project",
  "rand 0.8.5",
  "tokio",

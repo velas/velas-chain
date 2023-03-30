@@ -14,6 +14,8 @@ pub struct Client<S> {
     client: BackendClient<tonic::transport::Channel>,
     range: RangeJSON,
     block_storage: S,
+    request_workers: u32,
+    db_workers: u32,
 }
 
 impl<S> Client<S> {
@@ -22,6 +24,8 @@ impl<S> Client<S> {
         range: RangeJSON,
         storage: Storage,
         block_storage: S,
+        request_workers: u32,
+        db_workers: u32,
     ) -> Result<Self, ClientError> {
         log::info!("starting the client routine {}", state_rpc_address);
 
@@ -33,6 +37,8 @@ impl<S> Client<S> {
             state_rpc_address,
             storage,
             block_storage,
+            request_workers,
+            db_workers,
         })
     }
 }

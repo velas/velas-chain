@@ -5,7 +5,11 @@ pub mod range;
 pub mod server;
 pub use bigtable::CachedRootsLedgerStorage;
 
-use std::{net::SocketAddr, ops::Range, time::Instant};
+use std::{
+    net::SocketAddr,
+    ops::Range,
+    time::{Duration, Instant},
+};
 
 use backon::{ExponentialBuilder, Retryable};
 use evm_state::{BlockNum, Storage, H256};
@@ -141,11 +145,11 @@ where
     Ok(())
 }
 
-pub fn debug_elapsed(msg: &str, start: &mut Instant) {
+pub fn debug_elapsed(start: &mut Instant) -> Duration {
     let duration = start.elapsed();
 
-    log::debug!("Time elapsed on {}  is: {:?}", msg, duration);
     *start = Instant::now();
+    duration
 }
 
 pub fn start_and_join<S: EvmHeightIndex + Sync + Send + 'static>(

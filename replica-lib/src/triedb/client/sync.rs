@@ -13,7 +13,7 @@ mod range_processor;
 
 impl<S> Client<S>
 where
-    S: EvmHeightIndex + Sync,
+    S: EvmHeightIndex + Clone + Sync + Send + 'static,
 {
     pub async fn sync(&mut self) {
         loop {

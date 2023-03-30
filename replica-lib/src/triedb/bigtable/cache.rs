@@ -36,7 +36,9 @@ impl EvmHeightIndex for CachedRootsLedgerStorage {
             return Err(EvmHeightError::ZeroHeightForbidden);
         }
         match self.cache.lock().expect("poison").get(&block_num) {
-            Some(result) => return Ok(*result),
+            Some(result) => {
+                return Ok(*result);
+            }
             None => {}
         }
         let block = self
