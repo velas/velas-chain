@@ -192,11 +192,15 @@ pub async fn find_native(
         }
     }
 
-    log::info!("Search complete");
-
-    match missing_ranges.is_empty() {
-        true => Ok(WhatFound::AllGood),
-        false => Ok(WhatFound::ThereAreMisses(missing_ranges)),
+    if missing_ranges.is_empty() {
+        log::info!("Search complete. No missing ranges are found.");
+        Ok(WhatFound::AllGood)
+    } else {
+        log::warn!(
+            "Search complete. Found missing ranges: {:?}",
+            &missing_ranges
+        );
+        Ok(WhatFound::ThereAreMisses(missing_ranges))
     }
 }
 
