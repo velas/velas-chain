@@ -113,6 +113,9 @@ where
                             .database
                             .gc_insert_node(hash, &value, account_extractor);
                         total += 1;
+                        if total % 200_000 == 0 {
+                            log::info!("bootstrapping ... {}", total);
+                        }
                     }
                 }
                 None => {
