@@ -1,9 +1,13 @@
+use std::time::Duration;
+
 use crate::{
     cli::{FindEvmArgs, FindNativeArgs},
     error::AppError,
     ledger,
     routines::BlockRange,
 };
+
+use super::find_uncommitted_ranges;
 
 pub type FindResult = Result<WhatFound, AppError>;
 
@@ -12,7 +16,9 @@ pub enum WhatFound {
     ThereAreMisses(Vec<BlockRange>),
 }
 
-use super::find_uncommitted_ranges;
+fn retry_pause(retry_number: usize) -> Duration {
+    Duration::from_millis(retry_number as u64 * 5000)
+}
 
 pub async fn find_evm(creds: Option<String>, instance: String, args: FindEvmArgs) -> FindResult {
     let FindEvmArgs {
@@ -109,7 +115,7 @@ pub async fn find_native(
     log::info!("Looking for missing Native Blocks");
     log::info!("start_slot={start_slot}, end_slot={end_slot}, bigtable_limit={bigtable_limit}");
 
-    let ledger = ledger::with_params(creds, instance).await?;
+    let mut ledger = ledger::with_params(creds, instance).await?;
 
     let mut slots = vec![];
 
@@ -171,21 +177,11 @@ pub async fn find_native(
         let slot_prev = range.first() - 1;
         let slot_curr = range.last() + 1;
 
-        let block_prev = ledger
-            .get_confirmed_block(slot_prev)
-            .await
-            .map_err(|source| AppError::GetNativeBlock {
-                source,
-                block: slot_prev,
-            })?;
+        let block_prev =
+            ledger::get_native_block_obsessively(&mut ledger, slot_prev, 10, retry_pause).await?;
 
-        let block_curr = ledger
-            .get_confirmed_block(slot_curr)
-            .await
-            .map_err(|source| AppError::GetNativeBlock {
-                source,
-                block: slot_curr,
-            })?;
+        let block_curr =
+            ledger::get_native_block_obsessively(&mut ledger, slot_curr, 10, retry_pause).await?;
 
         if block_prev.blockhash == block_curr.previous_blockhash {
             let checked_range = BlockRange::new(slot_prev, slot_curr);
@@ -196,11 +192,15 @@ pub async fn find_native(
         }
     }
 
-    log::info!("Search complete");
-
-    match missing_ranges.is_empty() {
-        true => Ok(WhatFound::AllGood),
-        false => Ok(WhatFound::ThereAreMisses(missing_ranges)),
+    if missing_ranges.is_empty() {
+        log::info!("Search complete. No missing ranges are found.");
+        Ok(WhatFound::AllGood)
+    } else {
+        log::warn!(
+            "Search complete. Found missing ranges: {:?}",
+            &missing_ranges
+        );
+        Ok(WhatFound::ThereAreMisses(missing_ranges))
     }
 }
 
