@@ -100,6 +100,8 @@ where
             .await;
         });
 
+        let mut count_total_nodes = 0;
+        let mut thousands_count = 0;
         while let Some(result) = stage_three_input.recv().await {
             match result {
                 Err(err) => {
@@ -107,6 +109,12 @@ where
                 }
                 Ok(result) => {
                     log::debug!("{:#?}", result);
+                    count_total_nodes += result.changeset_len;
+                    if count_total_nodes/100_000 > thousands_count {
+                        thousands_count = count_total_nodes/100_000;
+                        log::info!("running total nodes {}", count_total_nodes);
+                        
+                    }
                     self.range
                         .update(result.request.heights.1)
                         .expect("persist range");
@@ -121,4 +129,5 @@ where
 }
 
 const STAGE_TWO_CHANNEL_CAPACITY: usize = 50;
+
 const STAGE_THREE_CHANNEL_CAPACITY: usize = 10000;

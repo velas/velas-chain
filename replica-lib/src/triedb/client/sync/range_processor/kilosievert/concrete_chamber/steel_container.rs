@@ -55,17 +55,20 @@ pub async fn process(
             .acquire_owned()
             .await
             .expect("semaphore closed?!?");
-        let stage_two_output_cloned = stage_two_output.clone();
-        let storage_clone = storage.clone();
-        let kickstart_clone = kickstart_point.clone();
-        let _jh = tokio::task::spawn(async move {
+        let _jh = tokio::task::spawn({
+
+            let stage_two_output = stage_two_output.clone();
+            let storage = storage.clone();
+            let kickstart_point = kickstart_point.clone();
+
+            async move {
             let changeset_len = stage_one.changeset.len();
             //
             // rocksdb's `ColumnFamily` being not `Send` prevents it being used across `await` point
             //
             let result = tokio::task::spawn_blocking(move || {
                 let result: Result<StageTwoPayload, StageTwoError> = {
-                    let collection = collection(&storage_clone);
+                    let collection = collection(&storage);
                     let apply_result =
                         diff_stages::two((stage_one.request, stage_one.changeset), &collection);
                     match apply_result {
@@ -75,7 +78,7 @@ pub async fn process(
 
                             collection.database.gc_pin_root(target);
                             let result_count = collection.database.gc_count(target);
-                            kickstart_clone.update(stage_one.request.heights.1, target);
+                            kickstart_point.update(stage_one.request.heights.1, target);
                             Ok(StageTwoPayload {
                                 apply_duration: duration,
                                 changeset_len,
@@ -95,12 +98,12 @@ pub async fn process(
                 Ok(result) => result,
             };
 
-            let send_res = stage_two_output_cloned.send(result).await;
+            let send_res = stage_two_output.send(result).await;
 
             if send_res.is_err() {
                 log::error!("stage three input closed");
             }
             drop(permit);
-        });
+        }});
     }
 }

@@ -43,28 +43,19 @@ where
                     Ok(_) => continue,
                 }
             } else {
-                let (left_diff, right_diff) = (
-                    RangeJSON::diff(
-                        self_range.clone(),
-                        server_range.clone(),
-                        self_range.start,
-                        MAX_JUMP_OVER_ABYSS_GAP,
-                    ),
-                    RangeJSON::diff(
-                        self_range.clone(),
-                        server_range,
-                        self_range.end - 1,
-                        MAX_JUMP_OVER_ABYSS_GAP,
-                    ),
+                let right_diff = RangeJSON::diff(
+                    self_range.clone(),
+                    server_range,
+                    self_range.end - 1,
+                    MAX_JUMP_OVER_ABYSS_GAP,
                 );
-                let result = match (left_diff.is_empty(), right_diff.is_empty()) {
-                    (true, true) => {
+                let result = match right_diff.is_empty() {
+                    true => {
                         log::error!("server range is too far away");
                         sleep(time::Duration::new(100, 0));
                         continue;
                     }
-                    (false, _) => self.process_ranges(left_diff, self_range.start).await,
-                    (true, false) => self.process_ranges(right_diff, self_range.end - 1).await,
+                    false => self.process_ranges(right_diff, self_range.end - 1).await,
                 };
                 match result {
                     Err(err) => {

@@ -5,7 +5,6 @@ use rangemap::RangeSet;
 
 use super::RangeJSON;
 
-const MAX_CLIENT_WORK_CHUNK: usize = 10_000;
 
 impl RangeJSON {
     fn event_horizon(kickstart_point: BlockNum, max_gap: usize) -> Range<BlockNum> {
@@ -14,25 +13,14 @@ impl RangeJSON {
         start..end
     }
 
-    fn cap<'a>(input: RangeSet<BlockNum>, base: Range<BlockNum>) -> Vec<Range<BlockNum>> {
-        let mut left = MAX_CLIENT_WORK_CHUNK as BlockNum;
+    fn filter_right<'a>(input: RangeSet<BlockNum>, base: Range<BlockNum>) -> Vec<Range<BlockNum>> {
         let mut result = vec![];
         for element in input.into_iter() {
-            let elem_len = if element.is_empty() {
-                0
+            if element.start < base.start {
+                // forbidding backwards ranges for now
+                continue;
             } else {
-                element.end - element.start
-            };
-            if elem_len > left {
-                if element.start < base.start {
-                    result.push((element.end - left)..element.end);
-                } else {
-                    result.push(element.start..(element.start + left));
-                }
-                break;
-            } else {
-                result.push(element.clone());
-                left -= elem_len;
+                result.push(element);
             }
         }
         result
@@ -65,7 +53,7 @@ impl RangeJSON {
         let event_horizon = Self::event_horizon(kickstart_point, max_gap);
         // println!("event_horizon: {:#?}", event_horizon);
         let bounded = Self::bound(difference, event_horizon);
-        Self::cap(bounded, input)
+        Self::filter_right(bounded, input)
     }
 }
 
@@ -73,7 +61,7 @@ impl RangeJSON {
 mod tests {
     use evm_state::BlockNum;
 
-    use crate::triedb::range::{diff::MAX_CLIENT_WORK_CHUNK, RangeJSON};
+    use crate::triedb::range::RangeJSON;
     const TEST_MAX_JUMP_OVER_ABYSS_GAP: usize = 100_000;
 
     #[test]
@@ -85,9 +73,9 @@ mod tests {
         let result = RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
-        assert_eq!(990000..1000000, result[0]);
+        assert_eq!(1005000..1105000, result[0]);
         assert_eq!(
-            MAX_CLIENT_WORK_CHUNK,
+            100000,
             result
                 .clone()
                 .into_iter()
@@ -106,9 +94,9 @@ mod tests {
         let result = RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
-        assert_eq!(990000..1000000, result[0]);
+        assert_eq!(1005000..1100001, result[0]);
         assert_eq!(
-            MAX_CLIENT_WORK_CHUNK,
+            95001,
             result
                 .clone()
                 .into_iter()
@@ -127,9 +115,9 @@ mod tests {
         let result = RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
-        assert_eq!(2..10002, result[0]);
+        assert_eq!(2..100002, result[0]);
         assert_eq!(
-            MAX_CLIENT_WORK_CHUNK,
+            100_000,
             result
                 .clone()
                 .into_iter()
@@ -148,9 +136,9 @@ mod tests {
         let result = RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
-        assert_eq!(10002..20002, result[0]);
+        assert_eq!(10002..110002, result[0]);
         assert_eq!(
-            MAX_CLIENT_WORK_CHUNK,
+            100_000,
             result
                 .clone()
                 .into_iter()
@@ -169,10 +157,9 @@ mod tests {
         let result = RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
-        assert_eq!(1..5000, result[0]);
-        assert_eq!(95000..100001, result[1]);
+        assert_eq!(95000..195000, result[0]);
         assert_eq!(
-            MAX_CLIENT_WORK_CHUNK,
+            100_000,
             result
                 .clone()
                 .into_iter()
@@ -191,9 +178,9 @@ mod tests {
         let result = RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
-        assert_eq!(90000..100000, result[0]);
+        assert_eq!(200000..200001, result[0]);
         assert_eq!(
-            MAX_CLIENT_WORK_CHUNK,
+            1,
             result
                 .clone()
                 .into_iter()
@@ -212,9 +199,9 @@ mod tests {
         let result = RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
-        assert_eq!(200000..210000, result[0]);
+        assert_eq!(200000..300001, result[0]);
         assert_eq!(
-            MAX_CLIENT_WORK_CHUNK,
+            100_001,
             result
                 .clone()
                 .into_iter()
@@ -254,9 +241,9 @@ mod tests {
         let result = RangeJSON::diff(input, target, kickstart_point, TEST_MAX_JUMP_OVER_ABYSS_GAP);
         println!("{:#?}", result);
 
-        assert_eq!(200000..210000, result[0]);
+        assert_eq!(200000..300000, result[0]);
         assert_eq!(
-            MAX_CLIENT_WORK_CHUNK,
+            100_000,
             result
                 .clone()
                 .into_iter()
