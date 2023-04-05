@@ -64,6 +64,8 @@ mod tests {
     use crate::triedb::range::RangeJSON;
     const TEST_MAX_JUMP_OVER_ABYSS_GAP: usize = 100_000;
 
+   const TEST_LARGE_MAX_JUMP_OVER_ABYSS_GAP: usize = 700_000;
+
     #[test]
     fn test_1() {
         let input = 1_000_000..1_005_000;
@@ -244,6 +246,27 @@ mod tests {
         assert_eq!(200000..300000, result[0]);
         assert_eq!(
             100_000,
+            result
+                .clone()
+                .into_iter()
+                .flatten()
+                .collect::<Vec<BlockNum>>()
+                .len()
+        );
+    }
+
+    #[test]
+    fn test_10() {
+        let input = 1..200000;
+        let target = 200000..60_000_000;
+        let kickstart_point = 199999;
+        println!("{:?} -> {:?} {:?}", input, target, kickstart_point);
+        let result = RangeJSON::diff(input, target, kickstart_point, TEST_LARGE_MAX_JUMP_OVER_ABYSS_GAP);
+        println!("{:#?}", result);
+
+        assert_eq!(200000..900000, result[0]);
+        assert_eq!(
+            TEST_LARGE_MAX_JUMP_OVER_ABYSS_GAP,
             result
                 .clone()
                 .into_iter()

@@ -11,15 +11,13 @@ pub struct KickStartPoint {
 pub struct Entry {
     pub height: BlockNum,
     pub hash: H256,
-    pub upward: bool,
 }
 
 impl KickStartPoint {
-    pub fn new(height: BlockNum, hash: H256, upward: bool) -> Self {
+    pub fn new(height: BlockNum, hash: H256) -> Self {
         let entry = Entry {
             height,
             hash,
-            upward,
         };
 
         Self {
@@ -33,16 +31,9 @@ impl KickStartPoint {
 
     pub fn update(&self, height: BlockNum, hash: H256) {
         let mut lock = self.data.lock().expect("poison");
-        if lock.upward {
-            if height > lock.height {
-                lock.height = height;
-                lock.hash = hash;
-            }
-        } else {
-            if height < lock.height {
-                lock.height = height;
-                lock.hash = hash;
-            }
+        if height > lock.height {
+            lock.height = height;
+            lock.hash = hash;
         }
     }
 }

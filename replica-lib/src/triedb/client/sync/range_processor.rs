@@ -48,7 +48,7 @@ where
             .flatten()
             .collect::<Vec<_>>();
 
-        let mut kick = KickStartPoint::new(kickstart_point, hash, true);
+        let mut kick = KickStartPoint::new(kickstart_point, hash);
         for range in ranges {
             kick = self.process_range(range, kick).await?;
         }
