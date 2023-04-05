@@ -11,7 +11,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use backon::{ExponentialBuilder, Retryable};
 use evm_state::{BlockNum, Storage, H256};
 use triedb::{gc::DbCounter, Database};
 
@@ -23,6 +22,7 @@ use self::{
 };
 
 use async_trait::async_trait;
+use std::future::Future;
 
 type RocksHandleA<'a> = triedb::rocksdb::RocksHandle<'a, &'a triedb::rocksdb::DB>;
 
@@ -47,6 +47,41 @@ const MAX_CHUNK_HASHES: usize = 1_000_000;
 const MAX_TIMES: usize = 8;
 const MIN_DELAY_SEC: u64 = 1;
 
+async fn retry_logged<T, E, Fut, FutureFn>(
+    mut f: FutureFn,
+    msg: String,
+    level: log::Level,
+) -> Result<T, E>
+where
+    Fut: Future<Output = Result<T, E>>,
+    FutureFn: FnMut() -> Fut,
+{
+    let mut count = 0;
+    let msg = &msg;
+
+    log::log!(level, "attempting try to {} ({})", msg, count);
+    let mut result = (f)().await;
+    let mut delay = Duration::new(MIN_DELAY_SEC, 0);
+
+    if let Err(..) = &result {
+        for _ in 0..MAX_TIMES-1{
+
+
+            tokio::time::sleep(delay).await;
+
+            log::log!(level, "attempting try to {} ({})", msg, count);
+            result = (f)().await;
+
+            if result.is_ok() {
+                break;
+            }
+            count +=1;
+            delay *= 2;
+        }
+    }
+    result 
+}
+
 #[async_trait]
 pub trait EvmHeightIndex {
     async fn get_evm_confirmed_state_root(
@@ -58,29 +93,12 @@ pub trait EvmHeightIndex {
         &self,
         block_num: evm_state::BlockNum,
     ) -> Result<H256, EvmHeightError> {
-        let mut count = 0;
-        let fetch_cl = || {
-            *(&mut count) += 1;
-            let val = count;
-            async move {
-                log::trace!(
-                    "attempting try to get_evm_confirmed_state_root {} ({})",
-                    block_num,
-                    val,
-                );
-
-                self.get_evm_confirmed_state_root(block_num).await
-            }
-        };
-
-        let result = fetch_cl
-            .retry(
-                &ExponentialBuilder::default()
-                    .with_min_delay(std::time::Duration::new(MIN_DELAY_SEC, 0))
-                    .with_max_times(MAX_TIMES),
-            )
-            .await?;
-        Ok(result)
+        retry_logged(
+            || async { self.get_evm_confirmed_state_root(block_num).await },
+            format!("get_evm_confirmed_state_root {}", block_num),
+            log::Level::Trace,
+        )
+        .await
     }
 
     async fn prefetch_roots(
@@ -92,25 +110,12 @@ pub trait EvmHeightIndex {
         &self,
         range: &Range<evm_state::BlockNum>,
     ) -> Result<(), EvmHeightError> {
-        let mut count = 0;
-        let fetch_cl = || {
-            *(&mut count) += 1;
-            let val = count;
-            async move {
-                log::trace!("attempting try to prefetch_roots {:?} ({})", range, val);
-
-                self.prefetch_roots(range).await
-            }
-        };
-
-        let result = fetch_cl
-            .retry(
-                &ExponentialBuilder::default()
-                    .with_min_delay(std::time::Duration::new(MIN_DELAY_SEC, 0))
-                    .with_max_times(MAX_TIMES),
-            )
-            .await?;
-        Ok(result)
+        retry_logged(
+            || async { self.prefetch_roots(range).await },
+            format!("prefetch_roots {:?}", range),
+            log::Level::Trace,
+        )
+        .await
     }
 }
 

@@ -5,7 +5,6 @@ use rangemap::RangeSet;
 
 use super::RangeJSON;
 
-
 impl RangeJSON {
     fn event_horizon(kickstart_point: BlockNum, max_gap: usize) -> Range<BlockNum> {
         let start = kickstart_point.saturating_sub(max_gap as BlockNum);
@@ -64,7 +63,7 @@ mod tests {
     use crate::triedb::range::RangeJSON;
     const TEST_MAX_JUMP_OVER_ABYSS_GAP: usize = 100_000;
 
-   const TEST_LARGE_MAX_JUMP_OVER_ABYSS_GAP: usize = 700_000;
+    const TEST_LARGE_MAX_JUMP_OVER_ABYSS_GAP: usize = 700_000;
 
     #[test]
     fn test_1() {
@@ -261,7 +260,12 @@ mod tests {
         let target = 200000..60_000_000;
         let kickstart_point = 199999;
         println!("{:?} -> {:?} {:?}", input, target, kickstart_point);
-        let result = RangeJSON::diff(input, target, kickstart_point, TEST_LARGE_MAX_JUMP_OVER_ABYSS_GAP);
+        let result = RangeJSON::diff(
+            input,
+            target,
+            kickstart_point,
+            TEST_LARGE_MAX_JUMP_OVER_ABYSS_GAP,
+        );
         println!("{:#?}", result);
 
         assert_eq!(200000..900000, result[0]);

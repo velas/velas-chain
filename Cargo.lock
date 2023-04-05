@@ -7321,7 +7321,6 @@ version = "1.9.29"
 dependencies = [
  "assert_matches",
  "async-trait",
- "backon",
  "crossbeam-channel",
  "derivative",
  "derive_more",

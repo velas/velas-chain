@@ -56,54 +56,54 @@ pub async fn process(
             .await
             .expect("semaphore closed?!?");
         let _jh = tokio::task::spawn({
-
             let stage_two_output = stage_two_output.clone();
             let storage = storage.clone();
             let kickstart_point = kickstart_point.clone();
 
             async move {
-            let changeset_len = stage_one.changeset.len();
-            //
-            // rocksdb's `ColumnFamily` being not `Send` prevents it being used across `await` point
-            //
-            let result = tokio::task::spawn_blocking(move || {
-                let result: Result<StageTwoPayload, StageTwoError> = {
-                    let collection = collection(&storage);
-                    let apply_result =
-                        diff_stages::two((stage_one.request, stage_one.changeset), &collection);
-                    match apply_result {
-                        Ok((duration, root_guard)) => {
-                            let target = root_guard.leak_root();
-                            assert_eq!(stage_one.request.expected_hashes.1, target);
+                let changeset_len = stage_one.changeset.len();
+                //
+                // rocksdb's `ColumnFamily` being not `Send` prevents it being used across `await` point
+                //
+                let result = tokio::task::spawn_blocking(move || {
+                    let result: Result<StageTwoPayload, StageTwoError> = {
+                        let collection = collection(&storage);
+                        let apply_result =
+                            diff_stages::two((stage_one.request, stage_one.changeset), &collection);
+                        match apply_result {
+                            Ok((duration, root_guard)) => {
+                                let target = root_guard.leak_root();
+                                assert_eq!(stage_one.request.expected_hashes.1, target);
 
-                            collection.database.gc_pin_root(target);
-                            let result_count = collection.database.gc_count(target);
-                            kickstart_point.update(stage_one.request.heights.1, target);
-                            Ok(StageTwoPayload {
-                                apply_duration: duration,
-                                changeset_len,
-                                request: stage_one.request,
-                                result_root_gc_count: result_count,
-                            })
+                                collection.database.gc_pin_root(target);
+                                let result_count = collection.database.gc_count(target);
+                                kickstart_point.update(stage_one.request.heights.1, target);
+                                Ok(StageTwoPayload {
+                                    apply_duration: duration,
+                                    changeset_len,
+                                    request: stage_one.request,
+                                    result_root_gc_count: result_count,
+                                })
+                            }
+                            Err(err) => Err(err.into()),
                         }
-                        Err(err) => Err(err.into()),
-                    }
-                    // let guard =
+                        // let guard =
+                    };
+                    result
+                })
+                .await;
+                let result = match result {
+                    Err(err) => Err(err.into()),
+                    Ok(result) => result,
                 };
-                result
-            })
-            .await;
-            let result = match result {
-                Err(err) => Err(err.into()),
-                Ok(result) => result,
-            };
 
-            let send_res = stage_two_output.send(result).await;
+                let send_res = stage_two_output.send(result).await;
 
-            if send_res.is_err() {
-                log::error!("stage three input closed");
+                if send_res.is_err() {
+                    log::error!("stage three input closed");
+                }
+                drop(permit);
             }
-            drop(permit);
-        }});
+        });
     }
 }

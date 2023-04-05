@@ -1,6 +1,5 @@
 use std::time::{Duration, Instant};
 
-use backon::{ExponentialBuilder, Retryable};
 use evm_state::{storage::account_extractor, H256};
 
 use crate::triedb::{
@@ -16,7 +15,7 @@ use crate::triedb::{
         DiffRequest, StageOneNetworkError, StageOneNetworkFastError, StageOneNetworkSlowError,
         StageOneRequestError, StageTwoApplyError,
     },
-    lock_root, RocksHandleA, MAX_TIMES, MIN_DELAY_SEC,
+    lock_root, retry_logged, RocksHandleA,
 };
 
 type ChildExtractorFn = fn(&[u8]) -> Vec<H256>;
@@ -32,47 +31,31 @@ pub async fn get_and_apply_diff<'a, S>(
     two(one_output, collection).await
 }
 
-pub enum StageOneRequestResponse {
-    Ok(GetStateDiffReply),
-    FailFast(StageOneNetworkFastError),
-}
+type StageOneRequestResponse = Result<GetStateDiffReply, StageOneNetworkFastError>;
+
 pub async fn get_diff_retried<S>(
     client: &BackendClient<tonic::transport::Channel>,
     request: DiffRequest,
     state_rpc_address: &str,
 ) -> Result<StageOneRequestResponse, StageOneNetworkSlowError> {
-    let mut count = 0;
-    let fetch_cl = || {
-        *(&mut count) += 1;
-        let val = count;
-        async move {
-            log::trace!(
-                "attempting try to get_diff {:?} {} ({})",
-                request,
-                state_rpc_address,
-                val
-            );
-
+    retry_logged(
+        || {
             let mut client = client.clone();
-            let result = Client::<S>::get_diff(&mut client, request, state_rpc_address).await;
-            match result {
-                Ok(res) => Ok(StageOneRequestResponse::Ok(res)),
-                Err(err) => match StageOneNetworkError::from_with_metadata(err, request) {
-                    StageOneNetworkError::Fast(fast) => Ok(StageOneRequestResponse::FailFast(fast)),
-                    StageOneNetworkError::Slow(slow) => Err(slow),
-                },
+            async move {
+                let result = Client::<S>::get_diff(&mut client, request, state_rpc_address).await;
+                match result {
+                    Ok(res) => Ok(StageOneRequestResponse::Ok(res)),
+                    Err(err) => match StageOneNetworkError::from_with_metadata(err, request) {
+                        StageOneNetworkError::Fast(fast) => Ok(Err(fast)),
+                        StageOneNetworkError::Slow(slow) => Err(slow),
+                    },
+                }
             }
-        }
-    };
-
-    let res = fetch_cl
-        .retry(
-            &ExponentialBuilder::default()
-                .with_min_delay(std::time::Duration::new(MIN_DELAY_SEC, 0))
-                .with_max_times(MAX_TIMES),
-        )
-        .await;
-    res
+        },
+        format!("get_diff {:?} {}", request, state_rpc_address),
+        log::Level::Trace,
+    )
+    .await
 }
 
 pub async fn one<S>(
@@ -86,8 +69,8 @@ pub async fn one<S>(
 
     let network_dur = debug_elapsed(&mut start);
     let response = match response {
-        Ok(StageOneRequestResponse::Ok(result)) => result,
-        Ok(StageOneRequestResponse::FailFast(fast)) => Err(StageOneNetworkError::Fast(fast))?,
+        Ok(Ok(result)) => result,
+        Ok(Err(fast)) => Err(StageOneNetworkError::Fast(fast))?,
         Err(slow) => Err(StageOneNetworkError::Slow(slow))?,
     };
 

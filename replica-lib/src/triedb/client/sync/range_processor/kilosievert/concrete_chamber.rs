@@ -51,7 +51,6 @@ pub async fn process<S>(
 
         let from = kickstart_point.get();
         let _jh = tokio::task::spawn({
-
             let block_storage = block_storage.clone();
             let state_rpc_address = state_rpc_address.clone();
             let job_for_a_cowboy = job_for_a_cowboy.clone();

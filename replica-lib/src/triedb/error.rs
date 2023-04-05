@@ -175,6 +175,8 @@ pub enum ClientError {
     },
     #[error("evm height : `{0}`")]
     EvmHeight(#[from] EvmHeightError),
+    #[error("get nodes details: `{0}`")]
+    GetNodes(#[from] GetNodesError),
 }
 
 #[derive(Error, Debug)]
@@ -197,6 +199,58 @@ pub enum RangeInitError {
 pub struct DiffRequest {
     pub heights: (evm_state::BlockNum, evm_state::BlockNum),
     pub expected_hashes: (H256, H256),
+}
+
+#[derive(Error, Debug)]
+pub enum GetNodesError {
+    #[error("fast {0}")]
+    Fast(GetNodesFastError),
+    #[error("retried {0}")]
+    Slow(GetNodesSlowError),
+}
+
+#[derive(Error, Debug)]
+#[error("the last after many retries {0:?}")]
+pub struct GetNodesSlowError(usize, #[source] tonic::Status);
+
+#[derive(Error, Debug)]
+pub enum GetNodesFastError {
+    #[error("server exceeded max chunk of get nodes {0:?}, {1:?}")]
+    ServerExceededMaxChunk(usize, #[source] tonic::Status),
+    #[error("server could not parse hash {0:?}, {1:?}")]
+    ServerCouldNotParseHash(usize, #[source] tonic::Status),
+    #[error("server not found {0:?}, {1:?}")]
+    ServerNotFound(usize, #[source] tonic::Status),
+    #[error("unknown {0:?}")]
+    Unknown(#[source] tonic::Status),
+}
+
+impl GetNodesError {
+    pub fn from_with_metadata(value: tonic::Status, request_len: usize) -> Self {
+        match value.code() {
+            Code::FailedPrecondition => match value.message() {
+                message @ _ if message.contains("ExceededMaxChunkGetArrayOfNodes") => Self::Fast(
+                    GetNodesFastError::ServerExceededMaxChunk(request_len, value),
+                ),
+                _ => Self::Fast(GetNodesFastError::Unknown(value.clone())),
+            },
+            Code::NotFound => match value.message() {
+                message @ _ if message.contains("NotFoundTopLevel") => {
+                    Self::Fast(GetNodesFastError::ServerNotFound(request_len, value))
+                }
+
+                _ => Self::Fast(GetNodesFastError::Unknown(value.clone())),
+            },
+            Code::InvalidArgument => match value.message() {
+                message @ _ if message.contains("CouldNotParseHash") => Self::Fast(
+                    GetNodesFastError::ServerCouldNotParseHash(request_len, value),
+                ),
+
+                _ => Self::Fast(GetNodesFastError::Unknown(value.clone())),
+            },
+            _ => Self::Slow(GetNodesSlowError(request_len, value)),
+        }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -334,14 +388,14 @@ mod tests {
     use tonic::Code;
 
     use crate::triedb::error::{
-        DiffRequest, EvmHeightError, LockError, ServerProtoError, StageOneNetworkError,
-        StageOneNetworkFastError,
+        DiffRequest, EvmHeightError, GetNodesError, GetNodesFastError, LockError, ServerProtoError,
+        StageOneNetworkError, StageOneNetworkFastError,
     };
 
     use super::ServerError;
 
     #[test]
-    fn test_from_with_metadata() {
+    fn test_from_with_metadata_diff_request() {
         {
             let err = ServerError::HashMismatch {
                 height: 10,
@@ -521,4 +575,52 @@ mod tests {
             );
         } // #### fence
     }
+
+    #[test]
+    fn test_from_with_metadata_get_nodes() {
+        {
+            let empty = ServerProtoError::ExceededMaxChunkGetArrayOfNodes {
+                actual: 100,
+                max: 50,
+            };
+            let err = Into::<ServerError>::into(empty);
+
+            let status: tonic::Status = err.into();
+
+            let result = GetNodesError::from_with_metadata(status, 10);
+
+            assert_matches!(
+                result,
+                GetNodesError::Fast(GetNodesFastError::ServerExceededMaxChunk { .. })
+            );
+        }
+
+        {
+            let empty = ServerProtoError::CouldNotParseHash("gibberish".to_string());
+            let err = Into::<ServerError>::into(empty);
+
+            let status: tonic::Status = err.into();
+
+            let result = GetNodesError::from_with_metadata(status, 10);
+
+            assert_matches!(
+                result,
+                GetNodesError::Fast(GetNodesFastError::ServerCouldNotParseHash { .. })
+            );
+        }
+
+        {
+            let err = ServerError::NotFoundTopLevel(empty_trie_hash());
+
+            let status: tonic::Status = err.into();
+
+            let result = GetNodesError::from_with_metadata(status, 10);
+
+            assert_matches!(
+                result,
+                GetNodesError::Fast(GetNodesFastError::ServerNotFound { .. })
+            );
+        }
+    }
+    // #### fence
 }

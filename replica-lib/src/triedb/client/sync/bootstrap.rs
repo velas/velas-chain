@@ -5,9 +5,10 @@ use triedb::gc::RootGuard;
 use crate::triedb::client::proto::app_grpc::backend_client::BackendClient;
 use crate::triedb::client::Client;
 use crate::triedb::error::ClientProtoError;
+use crate::triedb::error::GetNodesError;
 use crate::triedb::{
     collection,
-    error::{source_matches_type, BootstrapError, ClientError},
+    error::{BootstrapError, ClientError},
     EvmHeightIndex,
 };
 
@@ -24,15 +25,18 @@ where
 {
     pub async fn fetch_nodes_of_hashes(
         client: &mut BackendClient<tonic::transport::Channel>,
+        rpc_address: &String,
         input: Vec<(H256, bool)>,
     ) -> Result<Vec<((H256, bool), Vec<u8>)>, ClientError> {
         let input_clone: Vec<_> = input.iter().map(|el| el.0).collect();
-        let nodes = Self::get_array_of_nodes(client, input_clone).await;
-        if let Err(ref err) = nodes {
-            let _match = source_matches_type::<tonic::transport::Error>(err);
-        }
+        let response = Self::get_array_of_nodes_retried(client, rpc_address, input_clone).await;
 
-        let nodes = nodes?;
+        let nodes = match response {
+            Ok(Ok(result)) => result,
+            Ok(Err(fast)) => Err(GetNodesError::Fast(fast))?,
+            Err(slow) => Err(GetNodesError::Slow(slow))?,
+        };
+
         if nodes.nodes.len() != input.len() {
             return Err(ClientProtoError::GetArrayOfNodesReplyLenMismatch(
                 input.len(),
@@ -84,8 +88,12 @@ where
             SpliceCountStack::new("fetched and verified data".to_string());
 
         let root_guard = RootGuard::new(&collection.database, root_hash, account_extractor);
-        let first_with_data =
-            Self::fetch_nodes_of_hashes(&mut self.client, vec![(root_hash, true)]).await;
+        let first_with_data = Self::fetch_nodes_of_hashes(
+            &mut self.client,
+            &self.state_rpc_address,
+            vec![(root_hash, true)],
+        )
+        .await;
         let first_with_data = first_with_data?;
 
         let children_layer = helpers::compute_and_maybe_split_children(&first_with_data)?;
@@ -122,9 +130,12 @@ where
                     let next_child_slice = stack_children.pop();
                     match next_child_slice {
                         Some(next_child_slice) => {
-                            let first_with_data =
-                                Self::fetch_nodes_of_hashes(&mut self.client, next_child_slice)
-                                    .await;
+                            let first_with_data = Self::fetch_nodes_of_hashes(
+                                &mut self.client,
+                                &self.state_rpc_address,
+                                next_child_slice,
+                            )
+                            .await;
                             stack_fetched.push(first_with_data);
                         }
                         None => {

@@ -15,10 +15,7 @@ pub struct Entry {
 
 impl KickStartPoint {
     pub fn new(height: BlockNum, hash: H256) -> Self {
-        let entry = Entry {
-            height,
-            hash,
-        };
+        let entry = Entry { height, hash };
 
         Self {
             data: Arc::new(Mutex::new(entry)),

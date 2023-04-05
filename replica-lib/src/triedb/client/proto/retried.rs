@@ -1,40 +1,27 @@
 use std::ops::Range;
 
-use backon::{ExponentialBuilder, Retryable};
-use evm_state::BlockNum;
+use evm_state::{BlockNum, H256};
 
-use crate::triedb::client::Client;
+use crate::triedb::{
+    client::Client,
+    error::{GetNodesError, GetNodesFastError, GetNodesSlowError},
+    retry_logged,
+};
 
-use super::app_grpc;
-
-const MAX_TIMES: usize = 8;
-const MIN_DELAY_SEC: u64 = 1;
+use super::app_grpc::{self, backend_client::BackendClient};
 
 impl<S> Client<S> {
     pub(crate) async fn get_server_range_retried(&self) -> Result<Range<BlockNum>, tonic::Status> {
-        let mut count = 0;
-        let fetch_cl = || {
-            *(&mut count) += 1;
-            let val = count;
-            async move {
-                log::trace!(
-                    "attempting try to fetch servers_range {} ({})",
-                    self.state_rpc_address,
-                    val,
-                );
+        let res = retry_logged(
+            || {
                 let mut client = self.client.clone();
+                async move { Self::get_block_range(&mut client, &self.state_rpc_address).await }
+            },
+            format!("fetch servers_range {}", self.state_rpc_address),
+            log::Level::Trace,
+        )
+        .await?;
 
-                Self::get_block_range(&mut client, &self.state_rpc_address).await
-            }
-        };
-
-        let res = fetch_cl
-            .retry(
-                &ExponentialBuilder::default()
-                    .with_min_delay(std::time::Duration::new(MIN_DELAY_SEC, 0))
-                    .with_max_times(MAX_TIMES),
-            )
-            .await?;
         Ok(res.into())
     }
 
@@ -42,60 +29,72 @@ impl<S> Client<S> {
         &self,
         height: BlockNum,
     ) -> Result<Option<app_grpc::PrefetchHeightReply>, tonic::Status> {
-        let mut count = 0;
-        let fetch_cl = || {
-            *(&mut count) += 1;
-            let val = count;
-            async move {
-                log::info!(
-                    "attempting try to issue prefetch_height request {}, {height} ({})",
-                    self.state_rpc_address,
-                    val,
-                );
+        let res = retry_logged(
+            || {
                 let mut client = self.client.clone();
+                async move { Self::prefetch_height(&mut client, height, &self.state_rpc_address).await }
+            },
+            format!(
+                "issue prefetch_height request {}, {height}",
+                self.state_rpc_address
+            ),
+            log::Level::Info,
+        )
+        .await?;
 
-                Self::prefetch_height(&mut client, height, &self.state_rpc_address).await
-            }
-        };
-
-        let res = fetch_cl
-            .retry(
-                &ExponentialBuilder::default()
-                    .with_min_delay(std::time::Duration::new(MIN_DELAY_SEC, 0))
-                    .with_max_times(MAX_TIMES),
-            )
-            .await?;
         Ok(res)
     }
 
-    pub async fn prefetch_range_retried(
+    pub(crate) async fn prefetch_range_retried(
         &self,
         range: &Range<BlockNum>,
     ) -> Result<(), tonic::Status> {
-        let mut count = 0;
-        let fetch_cl = || {
-            *(&mut count) += 1;
-            let val = count;
-            async move {
-                log::info!(
-                    "attempting try to send prefetch_range request {} {:?} ({})",
-                    self.state_rpc_address,
-                    range,
-                    val,
-                );
+        let res = retry_logged(
+            || {
                 let mut client = self.client.clone();
+                async move { Self::prefetch_range(&mut client, range, &self.state_rpc_address).await }
+            },
+            format!(
+                "send prefetch_range request {} {:?}",
+                self.state_rpc_address, range
+            ),
+            log::Level::Info,
+        )
+        .await?;
 
-                Self::prefetch_range(&mut client, range, &self.state_rpc_address).await
-            }
-        };
+        Ok(res)
+    }
 
-        let res = fetch_cl
-            .retry(
-                &ExponentialBuilder::default()
-                    .with_min_delay(std::time::Duration::new(MIN_DELAY_SEC, 0))
-                    .with_max_times(MAX_TIMES),
-            )
-            .await?;
+    pub(crate) async fn get_array_of_nodes_retried(
+        client: &BackendClient<tonic::transport::Channel>,
+        rpc_address: &String,
+        hashes: Vec<H256>,
+    ) -> Result<Result<app_grpc::GetArrayOfNodesReply, GetNodesFastError>, GetNodesSlowError> {
+        let request_len = hashes.len();
+        let res = retry_logged(
+            || {
+                let hashes = hashes.clone();
+                let mut client = client.clone();
+                async move {
+                    let result = Self::get_array_of_nodes(&mut client, hashes).await;
+                    match result {
+                        Ok(res) => Ok(Ok(res)),
+                        Err(err) => match GetNodesError::from_with_metadata(err, request_len) {
+                            GetNodesError::Fast(fast) => Ok(Err(fast)),
+                            GetNodesError::Slow(slow) => Err(slow),
+                        },
+                    }
+                }
+            },
+            format!(
+                "get_array_of_nodes request {} {}",
+                rpc_address,
+                hashes.len()
+            ),
+            log::Level::Trace,
+        )
+        .await?;
+
         Ok(res)
     }
 }
