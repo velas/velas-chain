@@ -16,8 +16,12 @@ pub enum WhatFound {
     ThereAreMisses(Vec<BlockRange>),
 }
 
-fn retry_pause(retry_number: usize) -> Duration {
-    Duration::from_millis(retry_number as u64 * 5000)
+/// Pause calculator for Nth retry
+/// 
+/// * `n` - number of retry
+fn retry_pause(n: u64) -> Duration {
+    let ms = n * n * 1300; // Approx. ~22min total for 15 retries
+    Duration::from_millis(ms)
 }
 
 pub async fn find_evm(creds: Option<String>, instance: String, args: FindEvmArgs) -> FindResult {
@@ -173,22 +177,36 @@ pub async fn find_native(
 
     log::info!("Found {} possibly missing ranges", uncommitted_ranges.len());
 
+    use ledger::Fetched::*;
+
     for range in uncommitted_ranges.into_iter() {
         let slot_prev = range.first() - 1;
         let slot_curr = range.last() + 1;
 
         let block_prev =
-            ledger::get_native_block_obsessively(&mut ledger, slot_prev, 10, retry_pause).await?;
+            ledger::get_native_block_obsessively(&mut ledger, slot_prev, 15, retry_pause).await?;
 
         let block_curr =
-            ledger::get_native_block_obsessively(&mut ledger, slot_curr, 10, retry_pause).await?;
+            ledger::get_native_block_obsessively(&mut ledger, slot_curr, 15, retry_pause).await?;
 
-        if block_prev.blockhash == block_curr.previous_blockhash {
-            let checked_range = BlockRange::new(slot_prev, slot_curr);
-            log::trace!("{checked_range} passed hash check");
-        } else {
-            log::warn!("Found missing {}", range);
-            missing_ranges.push(range.clone())
+        match (block_prev, block_curr) {
+            (BlockFound(block_prev), BlockFound(block_curr)) => {
+                if block_prev.blockhash == block_curr.previous_blockhash {
+                    let checked_range = BlockRange::new(slot_prev, slot_curr);
+                    log::trace!("{checked_range} passed hash check");
+                } else {
+                    log::warn!("Found missing {}", range);
+                    missing_ranges.push(range.clone())
+                }
+            },
+            (BlockNotFound, _) => {
+                log::warn!("Block {slot_prev} not found in table");
+                missing_ranges.push(range.clone())
+            },
+            (_, BlockNotFound) => {
+                log::warn!("Block {slot_curr} not found in table");
+                missing_ranges.push(range.clone())
+            },
         }
     }
 

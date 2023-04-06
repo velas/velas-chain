@@ -29,30 +29,47 @@ pub async fn with_params(
 //     instance: String,
 // }
 
+#[derive(Debug)]
+pub enum Fetched<T> {
+    BlockFound(T),
+    BlockNotFound
+}
+
+fn to_fetched<T>(result: solana_storage_bigtable::Result<T>, slot: u64) -> Result<Fetched<T>, AppError> {
+    match result {
+        Ok(block) => Ok(Fetched::BlockFound(block)),
+        Err(error) => match error {
+            solana_storage_bigtable::Error::BlockNotFound(_) => Ok(Fetched::BlockNotFound),
+            other_error => Err(AppError::GetNativeBlock { source: other_error, block: slot }),
+        },
+    }
+}
+
 /// Tries to fetch native block from bigtable `ledger` with configurable retry
 /// 
 /// * `slot` - number of block to fetch
 /// * `num_retries` - number of retries
 /// * `pause` - function which generates pause duration for nth retry
-pub async fn get_native_block_obsessively<P: Fn(usize) -> Duration>(
+pub async fn get_native_block_obsessively<P: Fn(u64) -> Duration>(
     ledger: &mut LedgerStorage,
     slot: u64,
-    num_retries: usize,
+    num_retries: u64,
     pause: P,
     // reinstantiate_ledger: Option<BTCreds>
-) -> Result<ConfirmedBlockWithOptionalMetadata, AppError> {
-    let mut result = ledger.get_confirmed_block(slot).await;
+) -> Result<Fetched<ConfirmedBlockWithOptionalMetadata>, AppError> {
+    let mut result = to_fetched(ledger.get_confirmed_block(slot).await, slot);
 
-    if let Err(_source) = &result {
+    if result.is_err() {
         for n in 0..num_retries {
             let pause = pause(n+1);
             let pause_ms = pause.as_millis();
 
             log::info!("Block {} fetch failed, retry [{}] after {} ms...", slot, n + 1, pause_ms);
-
+            log::warn!("Fail reason: {}", result.unwrap_err());
+            
             tokio::time::sleep(pause).await;
 
-            result = ledger.get_confirmed_block(slot).await;
+            result = to_fetched(ledger.get_confirmed_block(slot).await, slot);
 
             if result.is_ok() {
                 log::info!("Retry success!");
@@ -61,8 +78,5 @@ pub async fn get_native_block_obsessively<P: Fn(usize) -> Duration>(
         }
     }
 
-    result.map_err(|source| AppError::GetNativeBlock {
-        source,
-        block: slot,
-    })
+    result
 }
