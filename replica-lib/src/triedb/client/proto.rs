@@ -5,7 +5,7 @@ use tonic::Code;
 
 use std::ops::Range;
 
-use crate::triedb::error::DiffRequest;
+use crate::triedb::DiffRequest;
 
 use self::app_grpc::backend_client::BackendClient;
 use self::app_grpc::GetStateDiffReply;

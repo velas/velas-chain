@@ -2,11 +2,7 @@ use std::ops::Range;
 
 use evm_state::{BlockNum, H256};
 
-use crate::triedb::{
-    client::Client,
-    error::{GetNodesError, GetNodesFastError, GetNodesSlowError},
-    retry_logged,
-};
+use crate::triedb::{client::Client, error::client::bootstrap::fetch_nodes, retry_logged};
 
 use super::app_grpc::{self, backend_client::BackendClient};
 
@@ -29,18 +25,21 @@ impl<S> Client<S> {
         &self,
         height: BlockNum,
     ) -> Result<Option<app_grpc::PrefetchHeightReply>, tonic::Status> {
-        let res = retry_logged(
-            || {
-                let mut client = self.client.clone();
-                async move { Self::prefetch_height(&mut client, height, &self.state_rpc_address).await }
-            },
-            format!(
-                "issue prefetch_height request {}, {height}",
-                self.state_rpc_address
-            ),
-            log::Level::Info,
-        )
-        .await?;
+        let res =
+            retry_logged(
+                || {
+                    let mut client = self.client.clone();
+                    async move {
+                        Self::prefetch_height(&mut client, height, &self.state_rpc_address).await
+                    }
+                },
+                format!(
+                    "issue prefetch_height request {}, {height}",
+                    self.state_rpc_address
+                ),
+                log::Level::Info,
+            )
+            .await?;
 
         Ok(res)
     }
@@ -49,18 +48,21 @@ impl<S> Client<S> {
         &self,
         range: &Range<BlockNum>,
     ) -> Result<(), tonic::Status> {
-        let res = retry_logged(
-            || {
-                let mut client = self.client.clone();
-                async move { Self::prefetch_range(&mut client, range, &self.state_rpc_address).await }
-            },
-            format!(
-                "send prefetch_range request {} {:?}",
-                self.state_rpc_address, range
-            ),
-            log::Level::Info,
-        )
-        .await?;
+        let res =
+            retry_logged(
+                || {
+                    let mut client = self.client.clone();
+                    async move {
+                        Self::prefetch_range(&mut client, range, &self.state_rpc_address).await
+                    }
+                },
+                format!(
+                    "send prefetch_range request {} {:?}",
+                    self.state_rpc_address, range
+                ),
+                log::Level::Info,
+            )
+            .await?;
 
         Ok(res)
     }
@@ -69,8 +71,10 @@ impl<S> Client<S> {
         client: &BackendClient<tonic::transport::Channel>,
         rpc_address: &String,
         hashes: Vec<H256>,
-    ) -> Result<Result<app_grpc::GetArrayOfNodesReply, GetNodesFastError>, GetNodesSlowError> {
-        let request_len = hashes.len();
+    ) -> Result<
+        Result<app_grpc::GetArrayOfNodesReply, fetch_nodes::get::FastError>,
+        fetch_nodes::get::SlowError,
+    > {
         let res = retry_logged(
             || {
                 let hashes = hashes.clone();
@@ -79,9 +83,9 @@ impl<S> Client<S> {
                     let result = Self::get_array_of_nodes(&mut client, hashes).await;
                     match result {
                         Ok(res) => Ok(Ok(res)),
-                        Err(err) => match GetNodesError::from_with_metadata(err, request_len) {
-                            GetNodesError::Fast(fast) => Ok(Err(fast)),
-                            GetNodesError::Slow(slow) => Err(slow),
+                        Err(err) => match err.into() {
+                            fetch_nodes::get::Error::Fast(fast) => Ok(Err(fast)),
+                            fetch_nodes::get::Error::Slow(slow) => Err(slow),
                         },
                     }
                 }

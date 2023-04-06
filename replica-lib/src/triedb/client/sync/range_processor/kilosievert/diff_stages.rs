@@ -11,11 +11,8 @@ use crate::triedb::{
         Client,
     },
     debug_elapsed,
-    error::{
-        DiffRequest, StageOneNetworkError, StageOneNetworkFastError, StageOneNetworkSlowError,
-        StageOneRequestError, StageTwoApplyError,
-    },
-    lock_root, retry_logged, RocksHandleA,
+    error::client::range_sync::stages,
+    lock_root, retry_logged, DiffRequest, RocksHandleA,
 };
 
 type ChildExtractorFn = fn(&[u8]) -> Vec<H256>;
@@ -27,27 +24,29 @@ pub async fn get_and_apply_diff<'a, S>(
     state_rpc_address: &str,
     collection: &'a triedb::gc::TrieCollection<RocksHandleA<'a>>,
 ) -> Result<triedb::gc::RootGuard<'a, RocksHandleA<'a>, ChildExtractorFn>, ClientError> {
+    use crate::triedb::DiffRequest;
+
     let one_output = one::<S>(client, request, state_rpc_address).await?;
     two(one_output, collection).await
 }
 
-type StageOneRequestResponse = Result<GetStateDiffReply, StageOneNetworkFastError>;
+type OneResponse = Result<GetStateDiffReply, stages::one::request::network::FastError>;
 
 pub async fn get_diff_retried<S>(
     client: &BackendClient<tonic::transport::Channel>,
     request: DiffRequest,
     state_rpc_address: &str,
-) -> Result<StageOneRequestResponse, StageOneNetworkSlowError> {
+) -> Result<OneResponse, stages::one::request::network::SlowError> {
     retry_logged(
         || {
             let mut client = client.clone();
             async move {
                 let result = Client::<S>::get_diff(&mut client, request, state_rpc_address).await;
                 match result {
-                    Ok(res) => Ok(StageOneRequestResponse::Ok(res)),
-                    Err(err) => match StageOneNetworkError::from_with_metadata(err, request) {
-                        StageOneNetworkError::Fast(fast) => Ok(Err(fast)),
-                        StageOneNetworkError::Slow(slow) => Err(slow),
+                    Ok(res) => Ok(OneResponse::Ok(res)),
+                    Err(err) => match err.into() {
+                        stages::one::request::network::Error::Fast(fast) => Ok(Err(fast)),
+                        stages::one::request::network::Error::Slow(slow) => Err(slow),
                     },
                 }
             }
@@ -62,7 +61,7 @@ pub async fn one<S>(
     client: &BackendClient<tonic::transport::Channel>,
     request: DiffRequest,
     state_rpc_address: &str,
-) -> Result<(Duration, DiffRequest, Vec<triedb::DiffChange>), StageOneRequestError> {
+) -> Result<(Duration, DiffRequest, Vec<triedb::DiffChange>), stages::one::request::Error> {
     let mut start = Instant::now();
 
     let response = get_diff_retried::<S>(client, request, state_rpc_address).await;
@@ -70,11 +69,20 @@ pub async fn one<S>(
     let network_dur = debug_elapsed(&mut start);
     let response = match response {
         Ok(Ok(result)) => result,
-        Ok(Err(fast)) => Err(StageOneNetworkError::Fast(fast))?,
-        Err(slow) => Err(StageOneNetworkError::Slow(slow))?,
+        Ok(Err(fast)) => {
+            let err = stages::one::request::network::Error::Fast(fast);
+            let err = stages::one::request::Error::Network(request, err);
+            Err(err)
+        }?,
+        Err(slow) => {
+            let err = stages::one::request::network::Error::Slow(slow);
+            let err = stages::one::request::Error::Network(request, err);
+            Err(err)
+        }?,
     };
 
-    let diff_changes = helpers::parse_diff_response(response)?;
+    let diff_changes = helpers::parse_diff_response(response)
+        .map_err(|err| stages::one::request::Error::Proto(request, err))?;
 
     let _ = debug_elapsed(&mut start);
     Ok((network_dur, request, diff_changes))
@@ -88,7 +96,7 @@ pub fn two<'a>(
         Duration,
         triedb::gc::RootGuard<'a, RocksHandleA<'a>, ChildExtractorFn>,
     ),
-    StageTwoApplyError,
+    stages::two::apply::Error,
 > {
     let mut start = Instant::now();
     let (request, diff_changes) = incoming;

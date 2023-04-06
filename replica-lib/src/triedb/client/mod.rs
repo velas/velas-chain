@@ -1,6 +1,5 @@
 use proto::app_grpc::backend_client::BackendClient;
 
-use super::error::ClientError;
 use super::range::RangeJSON;
 use evm_state::Storage;
 use log;
@@ -26,7 +25,7 @@ impl<S> Client<S> {
         block_storage: S,
         request_workers: u32,
         db_workers: u32,
-    ) -> Result<Self, ClientError> {
+    ) -> Result<Self, tonic::transport::Error> {
         log::info!("starting the client routine {}", state_rpc_address);
 
         let client = BackendClient::connect(state_rpc_address.clone()).await?;

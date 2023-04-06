@@ -17,7 +17,7 @@ use triedb::{gc::DbCounter, Database};
 use rocksdb::{DBWithThreadMode, SingleThreaded};
 
 use self::{
-    error::{EvmHeightError, LockError},
+    error::{evm_height, lock},
     range::RangeJSON,
 };
 
@@ -35,6 +35,7 @@ pub trait TryConvert<S>: Sized {
 
     fn try_from(value: S) -> Result<Self, Self::Error>;
 }
+
 //  The difference between 58896219 and 59409340 is 513121.
 //  700_000 =~ 513121 * 1.33
 //  "Max difference of block height, that server won't reject diff requests of"
@@ -46,6 +47,12 @@ const MAX_CHUNK_HASHES: usize = 1_000_000;
 
 const MAX_TIMES: usize = 8;
 const MIN_DELAY_SEC: u64 = 1;
+
+#[derive(Clone, Copy, Debug)]
+pub struct DiffRequest {
+    pub heights: (evm_state::BlockNum, evm_state::BlockNum),
+    pub expected_hashes: (H256, H256),
+}
 
 async fn retry_logged<T, E, Fut, FutureFn>(
     mut f: FutureFn,
@@ -64,9 +71,7 @@ where
     let mut delay = Duration::new(MIN_DELAY_SEC, 0);
 
     if let Err(..) = &result {
-        for _ in 0..MAX_TIMES-1{
-
-
+        for _ in 0..MAX_TIMES - 1 {
             tokio::time::sleep(delay).await;
 
             log::log!(level, "attempting try to {} ({})", msg, count);
@@ -75,11 +80,11 @@ where
             if result.is_ok() {
                 break;
             }
-            count +=1;
+            count += 1;
             delay *= 2;
         }
     }
-    result 
+    result
 }
 
 #[async_trait]
@@ -87,12 +92,12 @@ pub trait EvmHeightIndex {
     async fn get_evm_confirmed_state_root(
         &self,
         block_num: evm_state::BlockNum,
-    ) -> Result<H256, EvmHeightError>;
+    ) -> Result<H256, evm_height::Error>;
 
     async fn get_evm_confirmed_state_root_retried(
         &self,
         block_num: evm_state::BlockNum,
-    ) -> Result<H256, EvmHeightError> {
+    ) -> Result<H256, evm_height::Error> {
         retry_logged(
             || async { self.get_evm_confirmed_state_root(block_num).await },
             format!("get_evm_confirmed_state_root {}", block_num),
@@ -104,12 +109,12 @@ pub trait EvmHeightIndex {
     async fn prefetch_roots(
         &self,
         range: &Range<evm_state::BlockNum>,
-    ) -> Result<(), EvmHeightError>;
+    ) -> Result<(), evm_height::Error>;
 
     async fn prefetch_roots_retried(
         &self,
         range: &Range<evm_state::BlockNum>,
-    ) -> Result<(), EvmHeightError> {
+    ) -> Result<(), evm_height::Error> {
         retry_logged(
             || async { self.prefetch_roots(range).await },
             format!("prefetch_roots {:?}", range),
@@ -126,14 +131,14 @@ pub(self) fn lock_root<D, F>(
     db: &D,
     locked: H256,
     func: F,
-) -> Result<triedb::gc::RootGuard<'_, D, F>, LockError>
+) -> Result<triedb::gc::RootGuard<'_, D, F>, lock::Error>
 where
     D: Database + DbCounter,
     F: FnMut(&[u8]) -> Vec<H256>,
 {
     let guard = triedb::gc::RootGuard::new(db, locked, func);
     if locked != triedb::empty_trie_hash() && !db.node_exist(locked) {
-        return Err(LockError::LockRootNotFound(locked));
+        return Err(lock::Error::NotFoundTop(locked));
     }
     Ok(guard)
 }
@@ -141,11 +146,11 @@ where
 pub(self) fn check_root(
     db: &DBWithThreadMode<SingleThreaded>,
     checked: H256,
-) -> Result<(), LockError>
+) -> Result<(), lock::Error>
 where
 {
     if checked != triedb::empty_trie_hash() && db.get(checked)?.is_none() {
-        return Err(LockError::LockRootNotFound(checked));
+        return Err(lock::Error::NotFoundTop(checked));
     }
     Ok(())
 }

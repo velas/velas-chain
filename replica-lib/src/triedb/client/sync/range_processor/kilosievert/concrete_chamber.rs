@@ -13,8 +13,8 @@ use crate::triedb::{
         sync::range_processor::kickstart_point::KickStartPoint,
     },
     debug_elapsed,
-    error::{DiffRequest, StageOneError},
-    EvmHeightIndex,
+    error::client::range_sync::stages,
+    DiffRequest, EvmHeightIndex,
 };
 
 use super::diff_stages;
@@ -35,7 +35,7 @@ pub async fn process<S>(
     range: Range<BlockNum>,
     kickstart_point: KickStartPoint,
     state_rpc_address: String,
-    stage_one_output: Sender<Result<StageOnePayload, StageOneError>>,
+    stage_one_output: Sender<Result<StageOnePayload, stages::one::Error>>,
     request_workers: u32,
 ) where
     S: EvmHeightIndex + Clone + Sync + Send + 'static,

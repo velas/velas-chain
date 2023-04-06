@@ -10,7 +10,8 @@ use triedb::gc::DbCounter;
 use crate::triedb::{
     client::sync::range_processor::{kickstart_point::KickStartPoint, kilosievert::diff_stages},
     collection,
-    error::{DiffRequest, StageOneError, StageTwoError},
+    error::client::range_sync::stages,
+    DiffRequest,
 };
 
 use super::StageOnePayload;
@@ -26,8 +27,8 @@ pub struct StageTwoPayload {
 pub async fn process(
     kickstart_point: KickStartPoint,
     storage: Storage,
-    mut stage_two_input: Receiver<Result<StageOnePayload, StageOneError>>,
-    stage_two_output: Sender<Result<StageTwoPayload, StageTwoError>>,
+    mut stage_two_input: Receiver<Result<StageOnePayload, stages::one::Error>>,
+    stage_two_output: Sender<Result<StageTwoPayload, stages::two::Error>>,
     db_workers: u32,
 ) {
     let s = Arc::new(Semaphore::new(db_workers as usize));
@@ -66,7 +67,7 @@ pub async fn process(
                 // rocksdb's `ColumnFamily` being not `Send` prevents it being used across `await` point
                 //
                 let result = tokio::task::spawn_blocking(move || {
-                    let result: Result<StageTwoPayload, StageTwoError> = {
+                    let result: Result<StageTwoPayload, stages::two::Error> = {
                         let collection = collection(&storage);
                         let apply_result =
                             diff_stages::two((stage_one.request, stage_one.changeset), &collection);
@@ -85,7 +86,10 @@ pub async fn process(
                                     result_root_gc_count: result_count,
                                 })
                             }
-                            Err(err) => Err(err.into()),
+                            Err(err) => {
+                                let err = stages::two::Error::Apply(stage_one.request, err);
+                                Err(err)
+                            }
                         }
                         // let guard =
                     };
@@ -93,7 +97,11 @@ pub async fn process(
                 })
                 .await;
                 let result = match result {
-                    Err(err) => Err(err.into()),
+                    Err(err) => {
+                        let err = stages::two::Error::TaskPanicked(stage_one.request, err);
+
+                        Err(err)
+                    }
                     Ok(result) => result,
                 };
 

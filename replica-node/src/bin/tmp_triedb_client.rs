@@ -32,10 +32,8 @@ enum Error {
     RangeInit(#[from] solana_replica_lib::triedb::error::RangeInitError),
     #[error("solana storage bigtable {0}")]
     StorageBigtable(#[from] solana_storage_bigtable::Error),
-    #[error("client error {0}")]
-    Client(#[from] solana_replica_lib::triedb::error::ClientError),
-    #[error("bootstrap error {0}")]
-    Bootstrap(#[from] solana_replica_lib::triedb::error::BootstrapError),
+    #[error("connect error {0}")]
+    Connect(#[from] tonic::transport::Error),
 }
 
 impl ParsedArgs {

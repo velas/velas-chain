@@ -6,7 +6,7 @@ use triedb::DiffChange;
 
 use crate::triedb::{
     check_root, debug_elapsed,
-    error::ServerError,
+    error::{lock, server},
     lock_root,
     server::{Server, UsedStorage},
 };
@@ -17,7 +17,7 @@ fn get_state_diff_gc_storage(
     from: H256,
     to: H256,
     storage: &Storage,
-) -> Result<Vec<DiffChange>, ServerError> {
+) -> Result<Vec<DiffChange>, server::Error> {
     let mut start = Instant::now();
 
     let db_handle = storage.rocksdb_trie_handle();
@@ -30,7 +30,7 @@ fn get_state_diff_gc_storage(
     ));
 
     let changeset = triedb::diff(&ach, evm_state::storage::account_extractor, from, to)
-        .map_err(|_err| ServerError::TriedbDiff)?;
+        .map_err(|_err| server::Error::TriedbDiff)?;
     let disk_io = debug_elapsed(&mut start);
     log::debug!(
         "disk i/o retrieved diff changeset {:?} {}",
@@ -44,7 +44,7 @@ fn get_state_diff_secondary_storage(
     from: H256,
     to: H256,
     storage: &StorageSecondary,
-) -> Result<Vec<DiffChange>, ServerError> {
+) -> Result<Vec<DiffChange>, server::Error> {
     let mut start = Instant::now();
 
     let db = storage.db();
@@ -55,7 +55,7 @@ fn get_state_diff_secondary_storage(
     let ach = storage.rocksdb_trie_handle();
 
     let changeset = triedb::diff(&ach, evm_state::storage::account_extractor, from, to)
-        .map_err(|_err| ServerError::TriedbDiff)?;
+        .map_err(|_err| server::Error::TriedbDiff)?;
     let disk_io = debug_elapsed(&mut start);
     log::debug!(
         "disk i/o retrieved diff changeset {:?} {}",
@@ -65,23 +65,23 @@ fn get_state_diff_secondary_storage(
     Ok(changeset)
 }
 impl<S> Server<S> {
-    pub(super) fn get_node_body(&self, key: H256) -> Result<Vec<u8>, ServerError> {
+    pub(super) fn get_node_body(&self, key: H256) -> Result<Vec<u8>, server::Error> {
         let maybe_bytes = match self.storage {
             UsedStorage::WritableWithGC(ref storage) => storage.db().get(key),
 
             UsedStorage::ReadOnlyNoGC(ref storage) => storage.db().get(key),
         };
 
-        let bytes = maybe_bytes?.ok_or(ServerError::NotFoundTopLevel(key))?;
+        let bytes = maybe_bytes?.ok_or(lock::Error::NotFoundTop(key))?;
         Ok(bytes)
     }
     pub(super) fn state_diff_body(
         &self,
         from: H256,
         to: H256,
-    ) -> Result<Response<app_grpc::GetStateDiffReply>, ServerError> {
+    ) -> Result<Response<app_grpc::GetStateDiffReply>, server::Error> {
         let storage = &self.storage;
-        let catched: Result<Result<Vec<DiffChange>, ServerError>, Box<dyn Any + Send>> =
+        let catched: Result<Result<Vec<DiffChange>, server::Error>, Box<dyn Any + Send>> =
             panic::catch_unwind(|| {
                 let changeset = match storage {
                     UsedStorage::WritableWithGC(ref storage) => {
@@ -101,11 +101,11 @@ impl<S> Server<S> {
                 } else {
                     format!("{:?}", panic_msg)
                 };
-                return Err(ServerError::NotFoundNested {
+                return Err(lock::Error::NotFoundNested {
                     from,
                     to,
                     description,
-                });
+                })?;
             }
         };
 

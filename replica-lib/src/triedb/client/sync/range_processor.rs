@@ -3,7 +3,7 @@ use std::ops::Range;
 use evm_state::BlockNum;
 use tokio::sync::mpsc;
 
-use crate::triedb::{client::Client, error::ClientError, EvmHeightIndex, MAX_PREFETCH_RANGE_CHUNK};
+use crate::triedb::{client::Client, error::client, EvmHeightIndex, MAX_PREFETCH_RANGE_CHUNK};
 
 use self::{chunked_range::ChunkedRange, kickstart_point::KickStartPoint};
 mod chunked_range;
@@ -18,7 +18,7 @@ where
         &mut self,
         ranges: Vec<Range<BlockNum>>,
         kickstart_point: BlockNum,
-    ) -> Result<(), ClientError> {
+    ) -> Result<(), client::range_sync::Error> {
         let expected_hash = self
             .block_storage
             .get_evm_confirmed_state_root_retried(kickstart_point)
@@ -27,11 +27,11 @@ where
         let hash = match self.check_height(expected_hash, kickstart_point).await {
             Ok(hash) => hash,
             Err(err) => match err {
-                mismatch @ ClientError::PrefetchHeightMismatch { .. } => {
+                mismatch @ client::check_height::Error::HashMismatch { .. } => {
                     panic!("different chains {:?}", mismatch);
                 }
                 other @ _ => {
-                    return Err(other);
+                    return Err(other)?;
                 }
             },
         };
@@ -59,7 +59,7 @@ where
         &mut self,
         range: Range<BlockNum>,
         kickstart_point: KickStartPoint,
-    ) -> Result<KickStartPoint, ClientError> {
+    ) -> Result<KickStartPoint, client::range_sync::Error> {
         log::warn!("start range {:?}", range);
         self.block_storage.prefetch_roots_retried(&range).await?;
 
@@ -91,7 +91,6 @@ where
 
         let (stage_two_output, mut stage_three_input) = mpsc::channel(STAGE_THREE_CHANNEL_CAPACITY);
         let _jh_stage_two = tokio::task::spawn({
-
             let kickstart_point = kickstart_point.clone();
             let storage = self.storage.clone();
             let db_workers = self.db_workers;

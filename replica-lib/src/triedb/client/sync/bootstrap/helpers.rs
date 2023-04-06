@@ -4,30 +4,24 @@ use rlp::Rlp;
 use sha3::{Digest, Keccak256};
 use triedb::{gc::ReachableHashes, merkle::MerkleNode};
 
-use crate::triedb::{
-    error::{ClientError, ClientProtoError},
-    MAX_CHUNK_HASHES,
-};
+use crate::triedb::{error::client, MAX_CHUNK_HASHES};
 
 pub fn no_childs(_: &[u8]) -> Vec<H256> {
     vec![]
 }
-pub(super) fn verify_hash(value: &[u8], hash: H256) -> Result<(), ClientError> {
+pub(super) fn verify_hash(value: &[u8], hash: H256) -> Result<(), client::proto::Error> {
     let actual_hash = H256::from_slice(Keccak256::digest(value).as_slice());
     if hash != actual_hash {
-        return Err(ClientProtoError::GetArrayOfNodesReplyHashMismatch(
-            hash,
-            actual_hash,
-        ))?;
+        return Err(client::proto::Error::NodesHashMismatch(hash, actual_hash))?;
     }
     Ok(())
 }
 
 fn map_node_to_next_layer(
     parent: &((H256, bool), Vec<u8>),
-) -> Result<Vec<(H256, bool)>, ClientError> {
+) -> Result<Vec<(H256, bool)>, triedb::Error> {
     let ((_hash, direct), node) = parent;
-    let node = MerkleNode::decode(&Rlp::new(node)).map_err(Into::<ClientError>::into)?;
+    let node = MerkleNode::decode(&Rlp::new(node))?;
 
     let (direct_childs, indirect_childs) = if *direct {
         ReachableHashes::collect(&node, account_extractor).childs()
@@ -51,7 +45,7 @@ fn map_node_to_next_layer(
 }
 pub(super) fn compute_and_maybe_split_children(
     layer: &Vec<((H256, bool), Vec<u8>)>,
-) -> Result<Vec<Vec<(H256, bool)>>, ClientError> {
+) -> Result<Vec<Vec<(H256, bool)>>, triedb::Error> {
     let mut childs_all = vec![];
     for element in layer {
         let res = map_node_to_next_layer(element)?;

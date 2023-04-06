@@ -9,7 +9,7 @@ use evm_state::{BlockNum, H256};
 use async_trait::async_trait;
 use solana_storage_bigtable::LedgerStorage;
 
-use crate::triedb::{error::EvmHeightError, EvmHeightIndex, MAX_PREFETCH_RANGE_CHUNK};
+use crate::triedb::{error::evm_height, EvmHeightIndex, MAX_PREFETCH_RANGE_CHUNK};
 
 #[derive(Clone)]
 pub struct CachedRootsLedgerStorage {
@@ -31,9 +31,9 @@ impl EvmHeightIndex for CachedRootsLedgerStorage {
     async fn get_evm_confirmed_state_root(
         &self,
         block_num: evm_state::BlockNum,
-    ) -> Result<H256, EvmHeightError> {
+    ) -> Result<H256, evm_height::Error> {
         if block_num == 0 {
-            return Err(EvmHeightError::ZeroHeightForbidden);
+            return Err(evm_height::Error::ForbidZero);
         }
         match self.cache.lock().expect("poison").get(&block_num) {
             Some(result) => {
@@ -54,10 +54,10 @@ impl EvmHeightIndex for CachedRootsLedgerStorage {
     async fn prefetch_roots(
         &self,
         range: &Range<evm_state::BlockNum>,
-    ) -> Result<(), EvmHeightError> {
+    ) -> Result<(), evm_height::Error> {
         log::info!("issuing prefetch roots request to bt: {:?}", range);
         if (range.end - range.start) > MAX_PREFETCH_RANGE_CHUNK {
-            return Err(EvmHeightError::MaxBlockChunkExceeded {
+            return Err(evm_height::Error::ExceedMaxChunk {
                 max: MAX_PREFETCH_RANGE_CHUNK,
                 actual: range.end - range.start,
             });

@@ -4,21 +4,16 @@ use evm_rpc::FormatHex;
 use evm_state::H256;
 use triedb::DiffChange;
 
-use crate::triedb::{
-    debug_elapsed,
-    error::{ServerError, ServerProtoError},
-    server::Server,
-    EvmHeightIndex, TryConvert,
-};
+use crate::triedb::{debug_elapsed, error::server, server::Server, EvmHeightIndex, TryConvert};
 
 use super::app_grpc;
 
 impl TryConvert<app_grpc::Hash> for H256 {
-    type Error = ServerError;
+    type Error = server::Error;
 
     fn try_from(hash: app_grpc::Hash) -> Result<Self, Self::Error> {
         let res = H256::from_hex(&hash.value)
-            .map_err(|_| ServerProtoError::CouldNotParseHash(hash.value.clone()))?;
+            .map_err(|_| server::proto::Error::HashParse(hash.value.clone()))?;
         Ok(res)
     }
 }
@@ -27,19 +22,19 @@ pub(super) fn check_hash(
     height: evm_state::BlockNum,
     actual: Option<app_grpc::Hash>,
     expected: H256,
-) -> Result<(), ServerError> {
+) -> Result<(), server::Error> {
     let actual = match actual {
         Some(val) => val,
         None => {
-            return Err(ServerProtoError::EmptyHash)?;
+            return Err(server::proto::Error::HashEmpty)?;
         }
     };
 
     let actual: H256 = FormatHex::from_hex(&actual.value)
-        .map_err(|_e| ServerProtoError::CouldNotParseHash(actual.value.clone()))?;
+        .map_err(|_e| server::proto::Error::HashParse(actual.value.clone()))?;
 
     if actual != expected {
-        return Err(ServerError::HashMismatch {
+        return Err(server::Error::HashMismatch {
             height,
             expected,
             actual,
@@ -78,7 +73,7 @@ where
         &self,
         from: evm_state::BlockNum,
         to: evm_state::BlockNum,
-    ) -> Result<(H256, H256), ServerError> {
+    ) -> Result<(H256, H256), server::Error> {
         let mut start = Instant::now();
         let from = self
             .block_storage

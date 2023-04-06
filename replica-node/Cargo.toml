@@ -43,6 +43,8 @@ solana-version = { path = "../version", version = "=0.6.3" }
 velas-validator = { path = "../validator", version = "=1.9.29" }
 # To run triedb_repl_client
 tokio = { version = "1.14.1", features = ["full"] }
+tonic = { version = "0.8.1", features = ["tls", "transport", "gzip"] }
+
 
 thiserror = "1.0.39"
 

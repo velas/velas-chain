@@ -14,10 +14,7 @@ pub mod app_grpc {
 mod helpers;
 mod storage;
 
-use crate::triedb::{
-    error::{ServerError, ServerProtoError},
-    EvmHeightIndex, TryConvert, MAX_CHUNK_HASHES,
-};
+use crate::triedb::{error::server, EvmHeightIndex, TryConvert, MAX_CHUNK_HASHES};
 
 #[tonic::async_trait]
 impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
@@ -41,7 +38,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
             request.hashes.len()
         );
         if request.hashes.len() > MAX_CHUNK_HASHES {
-            return Err(ServerProtoError::ExceededMaxChunkGetArrayOfNodes {
+            return Err(server::proto::Error::ExceedNodesMaxChunk {
                 actual: request.hashes.len(),
                 max: MAX_CHUNK_HASHES,
             })?;
@@ -71,7 +68,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
             inner.from - inner.to
         };
         if height_diff > self.block_threshold {
-            return Err(ServerProtoError::StateDiffBlocksTooFar {
+            return Err(server::proto::Error::ExceedBlocksMaxGap {
                 to: inner.to,
                 from: inner.from,
             })?;
@@ -106,7 +103,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
             .block_storage
             .get_evm_confirmed_state_root(request.into_inner().height)
             .await
-            .map_err(Into::<ServerError>::into)?;
+            .map_err(Into::<server::Error>::into)?;
 
         // we have to minimally ensure a client has some basis to try to start work from
         // otherwise a well-behaving client can trigger long chunks of work, all of which
@@ -128,7 +125,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         let requested = req.start..req.end;
         let self_range = self.range.get();
         if !self_range.contains(&requested.start) || !self_range.contains(&(requested.end - 1)) {
-            return Err(ServerError::PrefetchRange {
+            return Err(server::Error::PrefetchRange {
                 ours: self_range,
                 requested,
             })?;
@@ -137,7 +134,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         self.block_storage
             .prefetch_roots(&requested)
             .await
-            .map_err(Into::<ServerError>::into)?;
+            .map_err(Into::<server::Error>::into)?;
         Ok(Response::new(()))
     }
 }

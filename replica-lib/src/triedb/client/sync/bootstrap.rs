@@ -4,13 +4,9 @@ use triedb::gc::RootGuard;
 
 use crate::triedb::client::proto::app_grpc::backend_client::BackendClient;
 use crate::triedb::client::Client;
-use crate::triedb::error::ClientProtoError;
-use crate::triedb::error::GetNodesError;
-use crate::triedb::{
-    collection,
-    error::{BootstrapError, ClientError},
-    EvmHeightIndex,
-};
+use crate::triedb::error::client;
+use crate::triedb::error::client::bootstrap::fetch_nodes;
+use crate::triedb::{collection, error::client::bootstrap, EvmHeightIndex};
 
 use self::splice_count_stack::SpliceCountStack;
 
@@ -27,18 +23,28 @@ where
         client: &mut BackendClient<tonic::transport::Channel>,
         rpc_address: &String,
         input: Vec<(H256, bool)>,
-    ) -> Result<Vec<((H256, bool), Vec<u8>)>, ClientError> {
-        let input_clone: Vec<_> = input.iter().map(|el| el.0).collect();
-        let response = Self::get_array_of_nodes_retried(client, rpc_address, input_clone).await;
+    ) -> Result<Vec<((H256, bool), Vec<u8>)>, fetch_nodes::Error> {
+        let response = {
+            let input = input.iter().map(|el| el.0).collect();
+            Self::get_array_of_nodes_retried(client, rpc_address, input).await
+        };
 
         let nodes = match response {
             Ok(Ok(result)) => result,
-            Ok(Err(fast)) => Err(GetNodesError::Fast(fast))?,
-            Err(slow) => Err(GetNodesError::Slow(slow))?,
+            Ok(Err(fast)) => {
+                let err = fetch_nodes::get::Error::Fast(fast);
+                let err = fetch_nodes::Error::Get(input.len(), err);
+                Err(err)
+            }?,
+            Err(slow) => {
+                let err = fetch_nodes::get::Error::Slow(slow);
+                let err = fetch_nodes::Error::Get(input.len(), err);
+                Err(err)
+            }?,
         };
 
         if nodes.nodes.len() != input.len() {
-            return Err(ClientProtoError::GetArrayOfNodesReplyLenMismatch(
+            return Err(client::proto::Error::NodesLenMismatch(
                 input.len(),
                 nodes.nodes.len(),
             ))?;
@@ -52,7 +58,7 @@ where
         Ok(res)
     }
 
-    pub async fn bootstrap_state(&mut self, height: BlockNum) -> Result<(), BootstrapError> {
+    pub async fn bootstrap_state(&mut self, height: BlockNum) -> Result<(), bootstrap::Error> {
         if self.range.get().contains(&height) {
             log::warn!("skipping height {} as already present", height);
             return Ok(());
@@ -71,7 +77,7 @@ where
         match self.check_height(root_hash, height).await {
             Ok(..) => {}
             Err(err) => match err {
-                mismatch @ ClientError::PrefetchHeightMismatch { .. } => {
+                mismatch @ client::check_height::Error::HashMismatch { .. } => {
                     panic!("different chains {:?}", mismatch);
                 }
                 other @ _ => {
@@ -84,7 +90,7 @@ where
         let mut stack_children: SpliceCountStack<Vec<(H256, bool)>> =
             SpliceCountStack::new("children".to_string());
 
-        let mut stack_fetched: SpliceCountStack<Result<Vec<NodeFullInfo>, ClientError>> =
+        let mut stack_fetched: SpliceCountStack<Result<Vec<NodeFullInfo>, fetch_nodes::Error>> =
             SpliceCountStack::new("fetched and verified data".to_string());
 
         let root_guard = RootGuard::new(&collection.database, root_hash, account_extractor);
