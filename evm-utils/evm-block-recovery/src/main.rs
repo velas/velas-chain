@@ -29,7 +29,7 @@ async fn main() {
     }
 
     let mut builder = Builder::from_default_env();
-    builder.target(Target::Stdout);
+    builder.target(Target::Stderr);
     builder.init();
 
     match dotenv {
