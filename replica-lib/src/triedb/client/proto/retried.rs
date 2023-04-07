@@ -48,8 +48,7 @@ impl<S> Client<S> {
         &self,
         range: &Range<BlockNum>,
     ) -> Result<(), tonic::Status> {
-        let res =
-            retry_logged(
+        retry_logged(
                 || {
                     let mut client = self.client.clone();
                     async move {
@@ -64,7 +63,7 @@ impl<S> Client<S> {
             )
             .await?;
 
-        Ok(res)
+        Ok(())
     }
 
     pub(crate) async fn get_array_of_nodes_retried(

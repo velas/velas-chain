@@ -80,7 +80,7 @@ where
                 mismatch @ client::check_height::Error::HashMismatch { .. } => {
                     panic!("different chains {:?}", mismatch);
                 }
-                other @ _ => {
+                other => {
                     return Err(other)?;
                 }
             },

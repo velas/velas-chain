@@ -40,36 +40,36 @@ impl From<tonic::Status> for Error {
     fn from(value: tonic::Status) -> Self {
         match value.code() {
             Code::FailedPrecondition => match value.message() {
-                message @ _ if message.contains("HashMismatch") => {
+                message if message.contains("HashMismatch") => {
                     Self::Fast(FastError::HashMismatch(value))
                 }
-                message @ _ if message.contains("ExceedBlocksMaxGap") => {
+                message if message.contains("ExceedBlocksMaxGap") => {
                     Self::Fast(FastError::ExceedDiffMaxGap(value))
                 }
                 _ => Self::Fast(FastError::Unknown(value.clone())),
             },
             Code::NotFound => match value.message() {
-                message @ _ if message.contains("Bigtable(BlockNotFound") => {
+                message if message.contains("Bigtable(BlockNotFound") => {
                     Self::Fast(FastError::BlockNotFound(value))
                 }
-                message @ _ if message.contains("NotFoundTop") => {
+                message if message.contains("NotFoundTop") => {
                     Self::Fast(FastError::LockRoot(value))
                 }
 
-                message @ _ if message.contains("NotFoundNested") => {
+                message if message.contains("NotFoundNested") => {
                     Self::Fast(FastError::TreeBroken(value))
                 }
 
                 _ => Self::Fast(FastError::Unknown(value.clone())),
             },
             Code::InvalidArgument => match value.message() {
-                message @ _ if message.contains("ForbidZero") => {
+                message if message.contains("ForbidZero") => {
                     Self::Fast(FastError::ZeroHeight(value))
                 }
-                message @ _ if message.contains("HashEmpty") => {
+                message if message.contains("HashEmpty") => {
                     Self::Fast(FastError::EmptyHash(value))
                 }
-                message @ _ if message.contains("HashParse") => {
+                message if message.contains("HashParse") => {
                     Self::Fast(FastError::ParseHash(value))
                 }
 

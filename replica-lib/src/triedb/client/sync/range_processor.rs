@@ -30,7 +30,7 @@ where
                 mismatch @ client::check_height::Error::HashMismatch { .. } => {
                     panic!("different chains {:?}", mismatch);
                 }
-                other @ _ => {
+                other => {
                     return Err(other)?;
                 }
             },
@@ -38,14 +38,12 @@ where
 
         let ranges = ranges
             .into_iter()
-            .map(|range| {
+            .flat_map(|range| {
                 ChunkedRange {
                     range,
                     chunk_size: MAX_PREFETCH_RANGE_CHUNK,
                 }
-                .into_iter()
             })
-            .flatten()
             .collect::<Vec<_>>();
 
         let mut kick = KickStartPoint::new(kickstart_point, hash);

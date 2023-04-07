@@ -57,12 +57,9 @@ where
                     }
                     false => self.process_ranges(right_diff, self_range.end - 1).await,
                 };
-                match result {
-                    Err(err) => {
-                        log::error!("{:?}", err);
-                        thread::sleep(time::Duration::new(30, 0));
-                    }
-                    _ => {}
+                if let Err(err) = result {
+                    log::error!("{:?}", err);
+                    thread::sleep(time::Duration::new(30, 0));
                 }
             }
         }

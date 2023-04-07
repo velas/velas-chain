@@ -74,14 +74,12 @@ impl<S> super::Client<S> {
         let request = tonic::Request::new(app_grpc::PrefetchHeightRequest { height });
 
         let response = client.prefetch_height(request).await;
-        match response {
-            Err(ref err) => {
-                if err.code() == Code::NotFound {
-                    log::error!("not found {:?}", err);
-                    return Ok(None);
-                }
+        if let Err(ref err) = response {
+            
+            if err.code() == Code::NotFound {
+                log::error!("not found {:?}", err);
+                return Ok(None);
             }
-            _ => {}
         }
         let response = response?;
 
@@ -93,7 +91,7 @@ impl<S> super::Client<S> {
                 .hash
                 .as_ref()
                 .map(|hash| hash.value.clone())
-                .unwrap_or("empty".to_string()),
+                .unwrap_or_else(|| "empty".to_string()),
             state_rpc_address
         );
         Ok(Some(response))
@@ -109,13 +107,13 @@ impl<S> super::Client<S> {
             end: range.end,
         });
 
-        let response = client.prefetch_range(request).await?;
+        client.prefetch_range(request).await?;
         log::info!(
             "prefetch_range response retrieved: {:?}, {}",
             range,
             state_rpc_address,
         );
-        Ok(response.into_inner())
+        Ok(())
     }
 
     pub async fn get_diff(

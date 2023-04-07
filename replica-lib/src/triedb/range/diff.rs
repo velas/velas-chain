@@ -12,7 +12,7 @@ impl RangeJSON {
         start..end
     }
 
-    fn filter_right<'a>(input: RangeSet<BlockNum>, base: Range<BlockNum>) -> Vec<Range<BlockNum>> {
+    fn filter_right(input: RangeSet<BlockNum>, base: Range<BlockNum>) -> Vec<Range<BlockNum>> {
         let mut result = vec![];
         for element in input.into_iter() {
             if element.start < base.start {

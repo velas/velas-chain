@@ -30,20 +30,20 @@ impl From<tonic::Status> for Error {
     fn from(value: tonic::Status) -> Self {
         match value.code() {
             Code::FailedPrecondition => match value.message() {
-                message @ _ if message.contains("ExceedNodesMaxChunk") => {
+                message if message.contains("ExceedNodesMaxChunk") => {
                     Self::Fast(FastError::ExceedMaxChunk(value))
                 }
                 _ => Self::Fast(FastError::Unknown(value.clone())),
             },
             Code::NotFound => match value.message() {
-                message @ _ if message.contains("NotFoundTop") => {
+                message if message.contains("NotFoundTop") => {
                     Self::Fast(FastError::NotFound(value))
                 }
 
                 _ => Self::Fast(FastError::Unknown(value.clone())),
             },
             Code::InvalidArgument => match value.message() {
-                message @ _ if message.contains("HashParse") => {
+                message if message.contains("HashParse") => {
                     Self::Fast(FastError::ParseHash(value))
                 }
 
