@@ -64,7 +64,7 @@ fn get_state_diff_secondary_storage(
     );
     Ok(changeset)
 }
-impl<S> Server<S> {
+impl Server {
     pub(super) fn get_node_body(&self, key: H256) -> Result<Vec<u8>, server::Error> {
         let maybe_bytes = match self.storage {
             UsedStorage::WritableWithGC(ref storage) => storage.db().get(key),

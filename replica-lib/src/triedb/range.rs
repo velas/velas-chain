@@ -6,7 +6,11 @@ use std::{
 use evm_state::BlockNum;
 use rangemap::RangeSet;
 
-use super::error::RangeInitError;
+use super::{
+    error::{evm_height, RangeInitError},
+    ReadRange, WriteRange,
+};
+use async_trait::async_trait;
 mod diff;
 
 /// Empty:
@@ -108,21 +112,6 @@ impl RangeJSON {
         })
     }
 
-    pub fn get(&self) -> std::ops::Range<BlockNum> {
-        let res = self.inner.lock().expect("lock poisoned").coarse.clone();
-        res
-    }
-
-    pub fn update(&self, index: BlockNum) -> std::io::Result<()> {
-        let mut inner = self.inner.lock().expect("lock poisoned");
-        inner.update(index);
-        inner.update_count += 1;
-        if inner.update_count % FLUSH_EVERY == 0 {
-            self.flush_internal(inner)?;
-        }
-        Ok(())
-    }
-
     fn flush_internal(&self, inner: MutexGuard<Inner>) -> std::io::Result<()> {
         let (coarse, fine) = inner
             .serialize_self()
@@ -137,8 +126,28 @@ impl RangeJSON {
         }
         Ok(())
     }
+}
 
-    pub fn flush(&self) -> std::io::Result<()> {
+#[async_trait]
+impl ReadRange for RangeJSON {
+    async fn get(&self) -> Result<std::ops::Range<BlockNum>, evm_height::Error> {
+        let res = self.inner.lock().expect("lock poisoned").coarse.clone();
+        Ok(res)
+    }
+}
+#[async_trait]
+impl WriteRange for RangeJSON {
+    fn update(&self, index: BlockNum) -> std::io::Result<()> {
+        let mut inner = self.inner.lock().expect("lock poisoned");
+        inner.update(index);
+        inner.update_count += 1;
+        if inner.update_count % FLUSH_EVERY == 0 {
+            self.flush_internal(inner)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
         let inner = self.inner.lock().expect("lock poisoned");
         self.flush_internal(inner)?;
         Ok(())

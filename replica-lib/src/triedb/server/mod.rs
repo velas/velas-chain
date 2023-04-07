@@ -8,7 +8,7 @@ pub use service::{RunningService, Service};
 
 use self::proto::app_grpc::backend_server::BackendServer;
 
-use super::{range::RangeJSON, EvmHeightIndex};
+use super::{EvmHeightIndex, ReadRange};
 use derivative::Derivative;
 
 #[derive(Debug, Clone)]
@@ -19,14 +19,15 @@ pub enum UsedStorage {
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct Deps<S> {
+pub struct Deps {
     service: ServiceConfig,
     storage: UsedStorage,
-    range: RangeJSON,
+    #[derivative(Debug = "ignore")]
+    range: Box<dyn ReadRange>,
 
     runtime: tokio::runtime::Runtime,
     #[derivative(Debug = "ignore")]
-    block_storage: S,
+    block_storage: Box<dyn EvmHeightIndex>,
 }
 
 #[derive(Debug)]
@@ -46,13 +47,13 @@ impl ServiceConfig {
 }
 
 // as there are only 2 fields, the name is shortened: Dependencies -> Deps
-impl<S> Deps<S> {
+impl Deps {
     pub fn new(
         service: ServiceConfig,
         storage: UsedStorage,
-        range: RangeJSON,
+        range: Box<dyn ReadRange>,
         runtime: tokio::runtime::Runtime,
-        block_storage: S,
+        block_storage: Box<dyn EvmHeightIndex>,
     ) -> Self {
         Self {
             service,
@@ -64,21 +65,19 @@ impl<S> Deps<S> {
     }
 }
 
-pub struct Server<S> {
+pub struct Server {
     storage: UsedStorage,
-    range: RangeJSON,
+    range: Box<dyn ReadRange>,
     block_threshold: evm_state::BlockNum,
-    block_storage: S,
+    block_storage: Box<dyn EvmHeightIndex>,
 }
-impl<S> Server<S>
-where
-    S: EvmHeightIndex + Send + Sync + 'static,
-{
+
+impl Server {
     pub fn new(
         storage: UsedStorage,
-        range: RangeJSON,
+        range: Box<dyn ReadRange>,
         block_threshold: evm_state::BlockNum,
-        block_storage: S,
+        block_storage: Box<dyn EvmHeightIndex>,
     ) -> BackendServer<Self> {
         BackendServer::new(Server {
             storage,

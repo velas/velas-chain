@@ -3,6 +3,7 @@ use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use solana_replica_lib::triedb::error::evm_height;
 use solana_replica_lib::triedb::CachedRootsLedgerStorage;
 use solana_replica_lib::triedb::{client::Client, range::RangeJSON};
 
@@ -26,6 +27,8 @@ enum Error {
     AddrParse(#[from] AddrParseError),
     #[error("integer parse {0}")]
     IntParse(#[from] ParseIntError),
+    #[error("evm height sanity check {0}")]
+    EvmHeightSanityCheck(#[from] evm_height::Error),
     #[error("storage error {0}")]
     Storage(#[from] evm_state::storage::Error),
     #[error("range init {0}")]
@@ -197,8 +200,18 @@ async fn main() -> Result<(), Error> {
 }
 
 async fn connect(client_opts: ClientOpts) -> Result<Client<CachedRootsLedgerStorage>, Error> {
-    let block_storage = solana_storage_bigtable::LedgerStorage::new(false, None, None).await?;
-    let block_storage = CachedRootsLedgerStorage::new(block_storage);
+    let block_storage = solana_storage_bigtable::LedgerStorage::new(
+        false,
+        Some(std::time::Duration::new(20, 0)),
+        None,
+    )
+    .await?;
+
+    let block_storage = CachedRootsLedgerStorage::new(
+        block_storage,
+        MAINNET_HINT_DEFAULT.parse().expect("parse hint"),
+    );
+
     let client = async {
         Client::connect(
             client_opts.state_rpc_address,
@@ -214,3 +227,5 @@ async fn connect(client_opts: ClientOpts) -> Result<Client<CachedRootsLedgerStor
 
     Ok(client)
 }
+
+const MAINNET_HINT_DEFAULT: &str = "62184801";

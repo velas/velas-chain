@@ -6,6 +6,8 @@ use crate::triedb::client::proto::app_grpc::backend_client::BackendClient;
 use crate::triedb::client::Client;
 use crate::triedb::error::client;
 use crate::triedb::error::client::bootstrap::fetch_nodes;
+use crate::triedb::ReadRange;
+use crate::triedb::WriteRange;
 use crate::triedb::{collection, error::client::bootstrap, EvmHeightIndex};
 
 use self::splice_count_stack::SpliceCountStack;
@@ -59,7 +61,7 @@ where
     }
 
     pub async fn bootstrap_state(&mut self, height: BlockNum) -> Result<(), bootstrap::Error> {
-        if self.range.get().contains(&height) {
+        if self.range.get().await.expect("get range").contains(&height) {
             log::warn!("skipping height {} as already present", height);
             return Ok(());
         }

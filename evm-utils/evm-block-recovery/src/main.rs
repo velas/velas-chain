@@ -52,6 +52,7 @@ async fn main() {
         RepeatEvm(args) => repeat_evm(args).await,
         RepeatNative(args) => repeat_native(args).await,
         ScanEvmStateRoots(ref args) => scan_evm_state_roots::command(args).await,
+        ScratchPad => scratchpad::command().await,
         Completion(args) => completion(args),
     };
 

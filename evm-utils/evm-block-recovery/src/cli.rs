@@ -54,6 +54,8 @@ pub enum Command {
 
     ScanEvmStateRoots(ScanEvmStateRootsArgs),
 
+    ScratchPad,
+
     /// Generetes Shell Completions for this Utility
     Completion(CompletionArgs),
 }

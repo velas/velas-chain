@@ -3,7 +3,7 @@ use std::{
     time,
 };
 
-use crate::triedb::{range::RangeJSON, EvmHeightIndex, MAX_JUMP_OVER_ABYSS_GAP};
+use crate::triedb::{range::RangeJSON, EvmHeightIndex, ReadRange, MAX_JUMP_OVER_ABYSS_GAP};
 
 use super::Client;
 
@@ -30,10 +30,8 @@ where
                 sleep(time::Duration::new(100, 0));
                 continue;
             }
-            let self_range = self.range.get();
+            let self_range = self.range.get().await.expect("get range");
             if self_range.is_empty() {
-                // TODO: split errors of bootstrap_state in retryable/non-retryable
-                // and add backon for retries
                 match self.bootstrap_state(server_range.start).await {
                     Err(err) => {
                         log::error!("after some tries {:?}", err);

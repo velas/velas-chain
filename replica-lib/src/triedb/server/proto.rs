@@ -14,10 +14,13 @@ pub mod app_grpc {
 mod helpers;
 mod storage;
 
-use crate::triedb::{error::server, EvmHeightIndex, TryConvert, MAX_CHUNK_HASHES};
+use crate::triedb::{
+    error::{evm_height, server},
+    TryConvert, MAX_CHUNK_HASHES,
+};
 
 #[tonic::async_trait]
-impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
+impl Backend for Server {
     async fn ping(&self, request: Request<()>) -> Result<Response<PingReply>, Status> {
         debug!("got a ping request: {:?}", request);
 
@@ -85,7 +88,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         _request: tonic::Request<()>,
     ) -> Result<tonic::Response<app_grpc::GetBlockRangeReply>, tonic::Status> {
         debug!("got a get_block_range request");
-        let r: std::ops::Range<evm_state::BlockNum> = self.range.get();
+        let r: std::ops::Range<evm_state::BlockNum> = self.range.get().await?;
         let reply = app_grpc::GetBlockRangeReply {
             start: r.start,
             end: r.end,
@@ -99,11 +102,18 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         request: tonic::Request<app_grpc::PrefetchHeightRequest>,
     ) -> Result<tonic::Response<app_grpc::PrefetchHeightReply>, tonic::Status> {
         debug!("got a prefetch_height request {:?}", request);
+        let height = request.into_inner().height;
         let hash = self
             .block_storage
-            .get_evm_confirmed_state_root(request.into_inner().height)
+            .get_evm_confirmed_state_root(height)
             .await
             .map_err(Into::<server::Error>::into)?;
+
+        let hash = match hash {
+            Some(hash) => hash,
+            None => Err(evm_height::Error::NoHeightFound(height))
+                .map_err(Into::<server::Error>::into)?,
+        };
 
         // we have to minimally ensure a client has some basis to try to start work from
         // otherwise a well-behaving client can trigger long chunks of work, all of which
@@ -123,7 +133,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
         debug!("got a prefetch_range request {:?}", request);
         let req = request.into_inner();
         let requested = req.start..req.end;
-        let self_range = self.range.get();
+        let self_range = self.range.get().await?;
         if !self_range.contains(&requested.start) || !self_range.contains(&(requested.end - 1)) {
             return Err(server::Error::PrefetchRange {
                 ours: self_range,
@@ -139,8 +149,8 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Backend for Server<S> {
     }
 }
 
-impl<S: EvmHeightIndex + Sync + Send + 'static> BackendServer<Server<S>> {
-    pub fn join(&self) -> Result<(), Box<(dyn std::error::Error + 'static)>> {
+impl BackendServer<Server> {
+    pub fn join(&self) -> Result<(), ()> {
         Ok(())
     }
 }

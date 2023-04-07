@@ -3,7 +3,9 @@ use std::ops::Range;
 use evm_state::BlockNum;
 use tokio::sync::mpsc;
 
-use crate::triedb::{client::Client, error::client, EvmHeightIndex, MAX_PREFETCH_RANGE_CHUNK};
+use crate::triedb::{
+    client::Client, error::client, EvmHeightIndex, WriteRange, MAX_PREFETCH_RANGE_CHUNK,
+};
 
 use self::{chunked_range::ChunkedRange, kickstart_point::KickStartPoint};
 mod chunked_range;
@@ -38,11 +40,9 @@ where
 
         let ranges = ranges
             .into_iter()
-            .flat_map(|range| {
-                ChunkedRange {
-                    range,
-                    chunk_size: MAX_PREFETCH_RANGE_CHUNK,
-                }
+            .flat_map(|range| ChunkedRange {
+                range,
+                chunk_size: MAX_PREFETCH_RANGE_CHUNK,
             })
             .collect::<Vec<_>>();
 

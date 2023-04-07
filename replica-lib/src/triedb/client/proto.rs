@@ -75,7 +75,6 @@ impl<S> super::Client<S> {
 
         let response = client.prefetch_height(request).await;
         if let Err(ref err) = response {
-            
             if err.code() == Code::NotFound {
                 log::error!("not found {:?}", err);
                 return Ok(None);

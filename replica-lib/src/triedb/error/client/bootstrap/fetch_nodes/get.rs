@@ -43,9 +43,7 @@ impl From<tonic::Status> for Error {
                 _ => Self::Fast(FastError::Unknown(value.clone())),
             },
             Code::InvalidArgument => match value.message() {
-                message if message.contains("HashParse") => {
-                    Self::Fast(FastError::ParseHash(value))
-                }
+                message if message.contains("HashParse") => Self::Fast(FastError::ParseHash(value)),
 
                 _ => Self::Fast(FastError::Unknown(value.clone())),
             },

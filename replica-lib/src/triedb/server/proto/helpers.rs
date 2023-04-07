@@ -4,7 +4,12 @@ use evm_rpc::FormatHex;
 use evm_state::H256;
 use triedb::DiffChange;
 
-use crate::triedb::{debug_elapsed, error::server, server::Server, EvmHeightIndex, TryConvert};
+use crate::triedb::{
+    debug_elapsed,
+    error::{evm_height, server},
+    server::Server,
+    TryConvert,
+};
 
 use super::app_grpc;
 
@@ -65,21 +70,33 @@ pub(super) fn map_changeset(changeset: Vec<DiffChange>) -> Vec<app_grpc::Insert>
     }
     reply_changeset
 }
-impl<S> Server<S>
-where
-    S: EvmHeightIndex + Send + Sync + 'static,
-{
+impl Server {
     pub(super) async fn fetch_state_roots(
         &self,
-        from: evm_state::BlockNum,
-        to: evm_state::BlockNum,
+        from_height: evm_state::BlockNum,
+        to_height: evm_state::BlockNum,
     ) -> Result<(H256, H256), server::Error> {
         let mut start = Instant::now();
         let from = self
             .block_storage
-            .get_evm_confirmed_state_root(from)
+            .get_evm_confirmed_state_root(from_height)
             .await?;
-        let to = self.block_storage.get_evm_confirmed_state_root(to).await?;
+
+        let from = match from {
+            Some(from) => from,
+            None => Err(evm_height::Error::NoHeightFound(from_height))
+                .map_err(Into::<server::Error>::into)?,
+        };
+        let to = self
+            .block_storage
+            .get_evm_confirmed_state_root(to_height)
+            .await?;
+
+        let to = match to {
+            Some(to) => to,
+            None => Err(evm_height::Error::NoHeightFound(to_height))
+                .map_err(Into::<server::Error>::into)?,
+        };
 
         let _ = debug_elapsed(&mut start);
         Ok((from, to))

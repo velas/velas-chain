@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use proto::app_grpc::backend_client::BackendClient;
 
 use super::range::RangeJSON;
@@ -28,7 +30,12 @@ impl<S> Client<S> {
     ) -> Result<Self, tonic::transport::Error> {
         log::info!("starting the client routine {}", state_rpc_address);
 
-        let client = BackendClient::connect(state_rpc_address.clone()).await?;
+        let endpoint: tonic::transport::Endpoint = state_rpc_address.clone().try_into()?;
+
+        // for getting 641_000 of nodes in single request 20 sec timeout has been seen 
+        // to be surpassed
+        let endpoint = endpoint.timeout(Duration::new(60, 0));
+        let client = BackendClient::connect(endpoint).await?;
 
         Ok(Self {
             client,

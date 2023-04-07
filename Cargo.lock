@@ -7337,6 +7337,7 @@ dependencies = [
  "serde_json",
  "sha3 0.9.1",
  "solana-client",
+ "solana-ledger",
  "solana-rpc",
  "solana-runtime",
  "solana-sdk",

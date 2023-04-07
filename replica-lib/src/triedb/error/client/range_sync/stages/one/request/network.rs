@@ -66,12 +66,8 @@ impl From<tonic::Status> for Error {
                 message if message.contains("ForbidZero") => {
                     Self::Fast(FastError::ZeroHeight(value))
                 }
-                message if message.contains("HashEmpty") => {
-                    Self::Fast(FastError::EmptyHash(value))
-                }
-                message if message.contains("HashParse") => {
-                    Self::Fast(FastError::ParseHash(value))
-                }
+                message if message.contains("HashEmpty") => Self::Fast(FastError::EmptyHash(value)),
+                message if message.contains("HashParse") => Self::Fast(FastError::ParseHash(value)),
 
                 _ => Self::Fast(FastError::Unknown(value.clone())),
             },

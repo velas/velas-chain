@@ -8,32 +8,36 @@ use tonic::{self, transport};
 
 use log::{error, info};
 
-use crate::triedb::EvmHeightIndex;
-
 use super::{proto, UsedStorage};
 use super::{Deps, ServiceConfig};
 use proto::app_grpc::backend_server::BackendServer;
 /// The service wraps the Rpc to make it runnable in the tokio runtime
 /// and handles start and stop of the service.
-pub struct Service<S: EvmHeightIndex + Sync + Send + 'static> {
-    server: BackendServer<super::Server<S>>,
+pub struct Service {
+    server: BackendServer<super::Server>,
     config: ServiceConfig,
     runtime: Option<tokio::runtime::Runtime>,
     storage_clone: UsedStorage,
 }
 
-pub struct RunningService<S: EvmHeightIndex + Sync + Send + 'static> {
+pub struct RunningService {
     thread: JoinHandle<()>,
-    server_handle: BackendServer<super::Server<S>>,
+    server_handle: BackendServer<super::Server>,
     _exit_signal_sender: Sender<()>,
 }
 
 const SECONDARY_CATCH_UP_SECONDS: u64 = 7;
 
 #[allow(clippy::result_unit_err)]
-impl<S: EvmHeightIndex + Sync + Send + 'static> Service<S> {
-    pub fn new(deps: Deps<S>) -> Service<S> {
+impl Service {
+    pub fn new(deps: Deps) -> Service {
         log::info!("creating new evm state rpc service {:#?}", deps);
+
+        deps.runtime.block_on(async {
+            let result = deps.range.get().await;
+            log::info!("check range at startup : {:?}", result);
+        });
+
         Self {
             server: super::Server::new(
                 deps.storage.clone(),
@@ -47,7 +51,7 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Service<S> {
         }
     }
 
-    pub fn into_thread(self) -> std::io::Result<RunningService<S>> {
+    pub fn into_thread(self) -> std::io::Result<RunningService> {
         let (exit_signal_sender, exit_signal_receiver) = oneshot::channel::<()>();
         let server_handle = self.server.clone();
         let thread = Builder::new()
@@ -132,12 +136,14 @@ impl<S: EvmHeightIndex + Sync + Send + 'static> Service<S> {
     }
 }
 
-impl<S: EvmHeightIndex + Sync + Send + 'static> RunningService<S> {
-    pub fn join(self) -> Result<(), Box<(dyn std::error::Error + 'static)>> {
-        self.server_handle.join()?;
+impl RunningService {
+    pub fn join(self) -> Result<(), String> {
+        self.server_handle
+            .join()
+            .map_err(|err| format!("server handle join {:?}", err))?;
         self.thread
             .join()
-            .map_err(|err| format!("thread join err {:?}", err.type_id()))?;
+            .map_err(|err| format!("repr of thread join err {:?}", err))?;
         Ok(())
     }
 }

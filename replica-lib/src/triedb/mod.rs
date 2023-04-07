@@ -1,4 +1,5 @@
 pub mod bigtable;
+mod blockstore;
 pub mod client;
 pub mod error;
 pub mod range;
@@ -16,13 +17,12 @@ use triedb::{gc::DbCounter, Database};
 
 use rocksdb::{DBWithThreadMode, SingleThreaded};
 
-use self::{
-    error::{evm_height, lock},
-    range::RangeJSON,
-};
+use self::error::{evm_height, lock};
 
 use async_trait::async_trait;
 use std::future::Future;
+
+use thiserror::Error;
 
 type RocksHandleA<'a> = triedb::rocksdb::RocksHandle<'a, &'a triedb::rocksdb::DB>;
 
@@ -88,18 +88,37 @@ where
 }
 
 #[async_trait]
-pub trait EvmHeightIndex {
+pub trait WriteRange: ReadRange {
+    fn update(&self, index: BlockNum) -> std::io::Result<()>;
+
+    fn flush(&self) -> std::io::Result<()>;
+}
+
+#[async_trait]
+pub trait ReadRange: Send + Sync {
+    async fn get(&self) -> Result<std::ops::Range<BlockNum>, evm_height::Error>;
+}
+
+#[async_trait]
+pub trait EvmHeightIndex: Send + Sync {
     async fn get_evm_confirmed_state_root(
         &self,
         block_num: evm_state::BlockNum,
-    ) -> Result<H256, evm_height::Error>;
+    ) -> Result<Option<H256>, evm_height::Error>;
 
     async fn get_evm_confirmed_state_root_retried(
         &self,
         block_num: evm_state::BlockNum,
     ) -> Result<H256, evm_height::Error> {
         retry_logged(
-            || async { self.get_evm_confirmed_state_root(block_num).await },
+            || async {
+                let result = self.get_evm_confirmed_state_root(block_num).await;
+                match result {
+                    Ok(Some(hash)) => Ok(hash),
+                    Ok(None) => Err(evm_height::Error::NoHeightFound(block_num)),
+                    Err(err) => Err(err),
+                }
+            },
             format!("get_evm_confirmed_state_root {}", block_num),
             log::Level::Trace,
         )
@@ -118,7 +137,7 @@ pub trait EvmHeightIndex {
         retry_logged(
             || async { self.prefetch_roots(range).await },
             format!("prefetch_roots {:?}", range),
-            log::Level::Trace,
+            log::Level::Info,
         )
         .await
     }
@@ -162,17 +181,28 @@ pub fn debug_elapsed(start: &mut Instant) -> Duration {
     duration
 }
 
-pub fn start_and_join<S: EvmHeightIndex + Sync + Send + 'static>(
+#[derive(Debug, Error)]
+pub enum RunError {
+    #[error("io {0}")]
+    Io(#[from] std::io::Error),
+    #[error("thread join {0:?}")]
+    Thread(Box<dyn std::error::Error + 'static>),
+}
+
+pub fn start_and_join(
     bind_address: SocketAddr,
-    range: RangeJSON,
+    range: Box<dyn ReadRange>,
     storage: server::UsedStorage,
     runtime: tokio::runtime::Runtime,
-    block_storage: S,
-) -> Result<(), Box<(dyn std::error::Error + 'static)>> {
+    block_storage: Box<dyn EvmHeightIndex>,
+) -> Result<(), RunError> {
     let cfg = server::ServiceConfig::new(bind_address, MAX_JUMP_OVER_ABYSS_GAP as BlockNum);
     let deps = server::Deps::new(cfg, storage, range, runtime, block_storage);
 
     log::info!("starting the thread");
-    server::Service::new(deps).into_thread()?.join()?;
+    server::Service::new(deps)
+        .into_thread()?
+        .join()
+        .map_err(|err| RunError::Thread(err.into()))?;
     Ok(())
 }
