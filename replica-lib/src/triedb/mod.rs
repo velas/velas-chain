@@ -5,9 +5,9 @@ pub mod error;
 pub mod range;
 pub mod server;
 pub use bigtable::CachedRootsLedgerStorage;
+pub use server::config::{Config, HeightIndexSource, ParseError, RangeSource};
 
 use std::{
-    net::SocketAddr,
     ops::Range,
     time::{Duration, Instant},
 };
@@ -21,8 +21,6 @@ use self::error::{evm_height, lock};
 
 use async_trait::async_trait;
 use std::future::Future;
-
-use thiserror::Error;
 
 type RocksHandleA<'a> = triedb::rocksdb::RocksHandle<'a, &'a triedb::rocksdb::DB>;
 
@@ -179,30 +177,4 @@ pub fn debug_elapsed(start: &mut Instant) -> Duration {
 
     *start = Instant::now();
     duration
-}
-
-#[derive(Debug, Error)]
-pub enum RunError {
-    #[error("io {0}")]
-    Io(#[from] std::io::Error),
-    #[error("thread join {0:?}")]
-    Thread(Box<dyn std::error::Error + 'static>),
-}
-
-pub fn start_and_join(
-    bind_address: SocketAddr,
-    range: Box<dyn ReadRange>,
-    storage: server::UsedStorage,
-    runtime: tokio::runtime::Runtime,
-    block_storage: Box<dyn EvmHeightIndex>,
-) -> Result<(), RunError> {
-    let cfg = server::ServiceConfig::new(bind_address, MAX_JUMP_OVER_ABYSS_GAP as BlockNum);
-    let deps = server::Deps::new(cfg, storage, range, runtime, block_storage);
-
-    log::info!("starting the thread");
-    server::Service::new(deps)
-        .into_thread()?
-        .join()
-        .map_err(|err| RunError::Thread(err.into()))?;
-    Ok(())
 }

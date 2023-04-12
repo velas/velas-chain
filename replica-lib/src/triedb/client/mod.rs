@@ -32,7 +32,7 @@ impl<S> Client<S> {
 
         let endpoint: tonic::transport::Endpoint = state_rpc_address.clone().try_into()?;
 
-        // for getting 641_000 of nodes in single request 20 sec timeout has been seen 
+        // for getting 641_000 of nodes in single request 20 sec timeout has been seen
         // to be surpassed
         let endpoint = endpoint.timeout(Duration::new(60, 0));
         let client = BackendClient::connect(endpoint).await?;

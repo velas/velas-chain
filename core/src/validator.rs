@@ -121,9 +121,11 @@ pub struct ValidatorConfig {
     pub account_paths: Vec<PathBuf>,
     pub account_shrink_paths: Option<Vec<PathBuf>>,
     pub rpc_config: JsonRpcConfig,
+    pub evm_state_rpc_config: Option<solana_replica_lib::triedb::Config>,
     pub accountsdb_repl_service_config: Option<AccountsDbReplServiceConfig>,
     pub geyser_plugin_config_files: Option<Vec<PathBuf>>,
     pub rpc_addrs: Option<(SocketAddr, SocketAddr)>, // (JsonRpc, JsonRpcPubSub)
+    pub evm_state_rpc_addr: Option<SocketAddr>,
     pub pubsub_config: PubSubConfig,
     pub snapshot_config: Option<SnapshotConfig>,
     pub max_ledger_shreds: Option<u64>,
@@ -184,9 +186,11 @@ impl Default for ValidatorConfig {
             account_paths: Vec::new(),
             account_shrink_paths: None,
             rpc_config: JsonRpcConfig::default(),
+            evm_state_rpc_config: None,
             accountsdb_repl_service_config: None,
             geyser_plugin_config_files: None,
             rpc_addrs: None,
+            evm_state_rpc_addr: None,
             pubsub_config: PubSubConfig::default(),
             snapshot_config: None,
             broadcast_stage_type: BroadcastStageType::Standard,
@@ -312,6 +316,7 @@ pub struct Validator {
     pub bank_forks: Arc<RwLock<BankForks>>,
     accountsdb_repl_service: Option<AccountsDbReplService>,
     geyser_plugin_service: Option<GeyserPluginService>,
+    evm_state_rpc_service: Option<solana_replica_lib::triedb::server::RunningService>,
 }
 
 // in the distant future, get rid of ::new()/exit() and use Result properly...
@@ -499,6 +504,7 @@ impl Validator {
             transaction_notifier,
         );
 
+
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
 
         if !config.no_os_network_stats_reporting {
@@ -677,7 +683,7 @@ impl Validator {
                     max_slots.clone(),
                     leader_schedule_cache.clone(),
                     max_complete_transaction_status_slot,
-                    evm_state_archive,
+                    evm_state_archive.clone(),
                     config.jaeger_collector_url.clone(),
                 )),
                 if !config.rpc_config.full_api {
@@ -709,6 +715,47 @@ impl Validator {
             )
         } else {
             (None, None, None, None, None)
+        };
+
+        let evm_state_rpc_service = match (config.evm_state_rpc_addr.as_ref(), config.evm_state_rpc_config.as_ref(), evm_state_archive) {
+            (Some(addr), Some(config), Some(archive)) => {
+
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(30)
+                    .thread_name("velas-evm-state-rpc-worker")
+                    .enable_all()
+                    .build();
+                match runtime {
+                    Ok(runtime) => {
+                        let used_storage = solana_replica_lib::triedb::server::UsedStorage::WritableWithGC(
+                            archive
+                        );
+
+                        match solana_replica_lib::triedb::server::RunningService::start(
+                            *addr,
+                            config.clone(),
+                            used_storage,
+                            runtime,
+                            Some(blockstore.clone()),
+                        ) {
+                            Ok(service) => Some(service),
+                            Err(err) => {
+                                error!("error starting solana_replica_lib::triedb::server {:#?}", err);
+                                None
+                            },
+                            
+                        }
+                        
+                    }, 
+                    Err(err) => {
+                        error!("error initializing velas-evm-state-rpc-worker runtime {:#?}", err);
+                        None
+                    }
+                    
+                }
+                
+            },
+            _ => None,
         };
 
         if config.dev_halt_at_slot.is_some() {
@@ -950,6 +997,7 @@ impl Validator {
         );
 
         *start_progress.write().unwrap() = ValidatorStartProgress::Running;
+
         Self {
             gossip_service,
             serve_repair_service,
@@ -976,6 +1024,7 @@ impl Validator {
             bank_forks,
             accountsdb_repl_service,
             geyser_plugin_service,
+            evm_state_rpc_service,
         }
     }
 
@@ -1108,6 +1157,10 @@ impl Validator {
 
         if let Some(geyser_plugin_service) = self.geyser_plugin_service {
             geyser_plugin_service.join().expect("geyser_plugin_service");
+        }
+
+        if let Some(evm_state_rpc_service) = self.evm_state_rpc_service {
+            evm_state_rpc_service.join().expect("evm_state_rpc_service");
         }
     }
 }

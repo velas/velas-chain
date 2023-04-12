@@ -1,5 +1,8 @@
-use evm_state::StorageSecondary;
+use evm_state::{BlockNum, StorageSecondary};
 use futures_util::FutureExt;
+use solana_ledger::blockstore::Blockstore;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::thread::{Builder, JoinHandle};
 use std::time::Duration;
 use tokio::sync::oneshot::{self, Receiver, Sender};
@@ -8,14 +11,23 @@ use tonic::{self, transport};
 
 use log::{error, info};
 
+use crate::triedb::error::{evm_height, RangeJsonInitError};
+use crate::triedb::{server, EvmHeightIndex, ReadRange, MAX_JUMP_OVER_ABYSS_GAP};
+
+use self::helpers::{dispatch_sources, maybe_init_bigtable};
+
+use super::config::Config;
 use super::{proto, UsedStorage};
-use super::{Deps, ServiceConfig};
+
 use proto::app_grpc::backend_server::BackendServer;
+use thiserror::Error;
+
+pub(super) mod helpers;
 /// The service wraps the Rpc to make it runnable in the tokio runtime
 /// and handles start and stop of the service.
 pub struct Service {
+    server_addr: SocketAddr,
     server: BackendServer<super::Server>,
-    config: ServiceConfig,
     runtime: Option<tokio::runtime::Runtime>,
     storage_clone: UsedStorage,
 }
@@ -30,24 +42,24 @@ const SECONDARY_CATCH_UP_SECONDS: u64 = 7;
 
 #[allow(clippy::result_unit_err)]
 impl Service {
-    pub fn new(deps: Deps) -> Service {
-        log::info!("creating new evm state rpc service {:#?}", deps);
-
-        deps.runtime.block_on(async {
-            let result = deps.range.get().await;
+    pub fn new(
+        server_addr: SocketAddr,
+        block_threshold: evm_state::BlockNum,
+        storage: UsedStorage,
+        range: Box<dyn ReadRange>,
+        runtime: tokio::runtime::Runtime,
+        block_storage: Box<dyn EvmHeightIndex>,
+    ) -> Service {
+        runtime.block_on(async {
+            let result = range.get().await;
             log::info!("check range at startup : {:?}", result);
         });
 
         Self {
-            server: super::Server::new(
-                deps.storage.clone(),
-                deps.range,
-                deps.service.block_threshold,
-                deps.block_storage,
-            ),
-            runtime: Some(deps.runtime),
-            config: deps.service,
-            storage_clone: deps.storage,
+            server_addr,
+            server: super::Server::new(storage.clone(), range, block_threshold, block_storage),
+            runtime: Some(runtime),
+            storage_clone: storage,
         }
     }
 
@@ -111,8 +123,8 @@ impl Service {
         exit_signal: Receiver<()>,
     ) -> Result<(), tonic::transport::Error> {
         info!(
-            "Running TriedbReplServer at the endpoint: {:?}",
-            self.config.server_addr
+            "Running triedb replica server at the endpoint: {:?}",
+            self.server_addr
         );
         let secondary_storage = match self.storage_clone {
             UsedStorage::WritableWithGC(..) => None,
@@ -122,7 +134,7 @@ impl Service {
 
         let res = transport::Server::builder()
             .add_service(self.server)
-            .serve_with_shutdown(self.config.server_addr, exit_signal.map(drop))
+            .serve_with_shutdown(self.server_addr, exit_signal.map(drop))
             .await;
 
         match bg_secondary_jh.await {
@@ -136,14 +148,85 @@ impl Service {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum RunError {
+    #[error("io {0}")]
+    Io(#[from] std::io::Error),
+    #[error("thread join {0:?}")]
+    Thread(Box<dyn std::error::Error + 'static>),
+}
+
+#[derive(Debug, Error)]
+pub enum DispatchSourcesError {
+    #[error("empty json file arg")]
+    EmptyJsonFileArg,
+    #[error("range init json {0}")]
+    RangeInit(#[from] RangeJsonInitError),
+    #[error("bigtable blockstore not initialized")]
+    BigtableNonInit,
+    #[error("solana blockstore not initialized")]
+    SolanaBlockstoreNonInit,
+}
+
+#[derive(Debug, Error)]
+pub enum StartError {
+    #[error("evm height {0}")]
+    EvmHeight(#[from] evm_height::Error),
+
+    #[error("dispatch sources error {0}")]
+    DispatchSources(#[from] DispatchSourcesError),
+    #[error("run error {0}")]
+    Run(#[from] RunError),
+}
+
 impl RunningService {
-    pub fn join(self) -> Result<(), String> {
-        self.server_handle
-            .join()
-            .map_err(|err| format!("server handle join {:?}", err))?;
-        self.thread
-            .join()
-            .map_err(|err| format!("repr of thread join err {:?}", err))?;
+    pub fn start(
+        bind_address: SocketAddr,
+
+        config: Config,
+        used_storage: server::UsedStorage,
+        runtime: tokio::runtime::Runtime,
+        solana_blockstore: Option<Arc<Blockstore>>,
+    ) -> Result<Self, StartError> {
+        log::info!("starting triedb replica server, {:#?}", config);
+
+        let bigtable_blockstore = maybe_init_bigtable(config.clone(), &runtime)?;
+
+        let (range, blockstore) = dispatch_sources(config, bigtable_blockstore, solana_blockstore)?;
+
+        let service =
+            RunningService::start_internal(bind_address, range, used_storage, runtime, blockstore)?;
+        Ok(service)
+    }
+
+    fn start_internal(
+        bind_address: SocketAddr,
+        range: Box<dyn ReadRange>,
+        storage: server::UsedStorage,
+        runtime: tokio::runtime::Runtime,
+        block_storage: Box<dyn EvmHeightIndex>,
+    ) -> Result<Self, RunError> {
+        log::info!("starting the thread");
+        let service = server::Service::new(
+            bind_address,
+            MAX_JUMP_OVER_ABYSS_GAP as BlockNum,
+            storage,
+            range,
+            runtime,
+            block_storage,
+        )
+        .into_thread()?;
+        Ok(service)
+    }
+    pub fn join(self) -> Result<(), RunError> {
+        self.server_handle.join().map_err(|err| {
+            let str = format!("server handle join {:?}", err);
+            RunError::Thread(str.into())
+        })?;
+        self.thread.join().map_err(|err| {
+            let str = format!("repr of thread join err {:?}", err);
+            RunError::Thread(str.into())
+        })?;
         Ok(())
     }
 }

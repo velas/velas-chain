@@ -3622,6 +3622,10 @@ impl Blockstore {
         );
         Ok(())
     }
+
+    pub fn try_catch_up_with_primary(&self) -> Result<bool> {
+        self.db.try_catch_up()
+    }
 }
 
 // Update the `completed_data_indexes` with a new shred `new_shred_index`. If a

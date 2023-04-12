@@ -1,7 +1,7 @@
-use std::ops::Range;
+use std::{ops::Range, time::Duration};
 
 use evm_state::BlockNum;
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::sleep};
 
 use crate::triedb::{
     client::Client, error::client, EvmHeightIndex, WriteRange, MAX_PREFETCH_RANGE_CHUNK,
@@ -49,6 +49,10 @@ where
         let mut kick = KickStartPoint::new(kickstart_point, hash);
         for range in ranges {
             kick = self.process_range(range, kick).await?;
+        }
+        if kick.get().height - kickstart_point < 10 {
+            sleep(Duration::new(3, 0)).await;
+            
         }
         Ok(())
     }
@@ -107,17 +111,32 @@ where
 
         let mut count_total_nodes = 0;
         let mut thousands_count = 0;
+        let mut count_total_errs = 0;
+        let mut err_hundrends_count = 0;
         while let Some(result) = stage_three_input.recv().await {
             match result {
                 Err(err) => {
-                    log::error!("{:#?}", err);
+                    log::debug!("{:#?}", err);
+                    count_total_errs += 1;
+                    if count_total_errs / 100 > err_hundrends_count {
+                        err_hundrends_count = count_total_errs / 100;
+                        log::info!(
+                            "running total nodes {}, errs {}",
+                            count_total_nodes,
+                            count_total_errs
+                        );
+                    }
                 }
                 Ok(result) => {
                     log::debug!("{:#?}", result);
                     count_total_nodes += result.changeset_len;
                     if count_total_nodes / 100_000 > thousands_count {
                         thousands_count = count_total_nodes / 100_000;
-                        log::info!("running total nodes {}", count_total_nodes);
+                        log::info!(
+                            "running total nodes {}, errs {}",
+                            count_total_nodes,
+                            count_total_errs
+                        );
                     }
                     self.range
                         .update(result.request.heights.1)

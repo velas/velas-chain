@@ -7,7 +7,7 @@ use evm_state::BlockNum;
 use rangemap::RangeSet;
 
 use super::{
-    error::{evm_height, RangeInitError},
+    error::{evm_height, RangeJsonInitError},
     ReadRange, WriteRange,
 };
 use async_trait::async_trait;
@@ -97,14 +97,14 @@ impl RangeJSON {
     pub fn new<P: AsRef<Path>>(
         coarse_file_path: P,
         fine_file_path: Option<P>,
-    ) -> Result<Self, RangeInitError> {
+    ) -> Result<Self, RangeJsonInitError> {
         let coarse_str = std::fs::read_to_string(coarse_file_path.as_ref())?;
         let fine_str = match fine_file_path {
             Some(ref fine_file_path) => Some(std::fs::read_to_string(fine_file_path.as_ref())?),
             None => None,
         };
         let ranges: Inner = Inner::deserialize_self(&coarse_str, fine_str.as_deref())?;
-        log::info!("MasterRange::new {:#?}", ranges);
+        log::info!("RangeJSON::new {:#?}", ranges);
         Ok(Self {
             inner: Arc::new(Mutex::new(ranges)),
             coarse_file_path: coarse_file_path.as_ref().to_owned(),

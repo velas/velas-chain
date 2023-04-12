@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use async_trait::async_trait;
 use evm_state::{BlockNum, H256};
-use solana_ledger::blockstore::Blockstore;
+use solana_ledger::{blockstore::Blockstore, blockstore_db::BlockstoreError};
 
 use super::{error::evm_height, EvmHeightIndex, ReadRange};
 
@@ -18,7 +18,6 @@ impl ReadRange for Arc<Blockstore> {
     }
 }
 
-
 #[async_trait]
 impl EvmHeightIndex for Arc<Blockstore> {
     async fn get_evm_confirmed_state_root(
@@ -29,7 +28,17 @@ impl EvmHeightIndex for Arc<Blockstore> {
             return Err(evm_height::Error::ForbidZero);
         }
 
-        let (block, confirmed) = self.get_evm_block(block_num)?;
+        let result = self.get_evm_block(block_num);
+        let (block, confirmed) = match result {
+            Ok((block, confirmed)) => (block, confirmed),
+            Err(BlockstoreError::SlotCleanedUp) => {
+                return Ok(None);
+            }
+            Err(err) => {
+                return Err(err)?;
+            }
+        };
+
         if !confirmed {
             return Ok(None);
         }

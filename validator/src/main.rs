@@ -599,6 +599,31 @@ pub fn main() {
                 .help("Use DIR as evm-state archive location"),
         )
         .arg(
+            Arg::with_name("evm_state_rpc_port")
+                .long("evm-state-rpc-port")
+                .value_name("PORT")
+                .takes_value(true)
+                .validator(velas_validator::port_validator)
+                .help("Enable evm state rpc on this port"),
+        )
+        .arg(
+            Arg::with_name("evm_height_index_source")
+                .long("evm-height-index-source")
+                .value_name("STRING")
+                .takes_value(true)
+                .possible_values(&["bigtable", "solana_blockstore"])
+                .required(false)
+                .help("source of evm height index data"),
+        )
+        .arg(
+            Arg::with_name("bigtable_evm_blockstore_length_hint")
+                .long("bigtable-evm-blockstore-length-hint")
+                .value_name("NUMBER")
+                .takes_value(true)
+                .required(false)
+                .help("NUMBER of last evm block hint"),
+        )
+        .arg(
             Arg::with_name("evm_state_path")
                 .long("evm-state")
                 .value_name("DIR")
@@ -2159,6 +2184,27 @@ pub fn main() {
         bind_address
     };
 
+    let (evm_state_rpc_addr, evm_state_rpc_config): (Option<SocketAddr>, Option<solana_replica_lib::triedb::Config>) = match evm_state_archive {
+        Some(..) => {
+            let addr = value_t!(matches, "evm_state_rpc_port", u16).ok().map(|rpc_port| {
+                SocketAddr::new(rpc_bind_address, rpc_port)
+            });
+
+            let config = match solana_replica_lib::triedb::Config::parse_validator(&matches) {
+                Ok(config) => Some(config),
+                Err(err) => {
+                    
+                        error!("parse evm_state_rpc_config: {:#?}", err);
+                    None
+                }
+                
+            };
+            (addr, config)
+        }, 
+        None => (None,None)
+        
+    };
+
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
 
     let account_indexes = process_account_indexes(&matches);
@@ -2366,6 +2412,7 @@ pub fn main() {
                 .ok()
                 .map(Duration::from_secs),
         },
+        evm_state_rpc_config,
         accountsdb_repl_service_config,
         geyser_plugin_config_files,
         rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
@@ -2377,6 +2424,7 @@ pub fn main() {
                 // https://github.com/solana-labs/solana/issues/12250
             )
         }),
+        evm_state_rpc_addr,
         pubsub_config: PubSubConfig {
             enable_block_subscription: matches.is_present("rpc_pubsub_enable_block_subscription"),
             enable_vote_subscription: matches.is_present("rpc_pubsub_enable_vote_subscription"),

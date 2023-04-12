@@ -9,14 +9,13 @@ use std::{
     sync::Arc,
 };
 
-use clap::ArgMatches;
 use solana_ledger::{blockstore::Blockstore, blockstore_db::AccessType};
 use solana_replica_lib::triedb::{
-    bigtable::CachedRootsLedgerStorage,
-    error::{evm_height, RangeInitError},
-    range::RangeJSON,
-    server::UsedStorage,
-    start_and_join, EvmHeightIndex, ReadRange, RunError,
+    {Config, RangeSource, HeightIndexSource, ParseError},
+    error::{evm_height, RangeJsonInitError},
+    server::{
+        RunError, RunningService, StartError, UsedStorage,
+    },
 };
 
 use {
@@ -24,7 +23,7 @@ use {
     std::{env, path::PathBuf},
 };
 
-use evm_state::{BlockNum, Storage};
+use evm_state::Storage;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -34,15 +33,20 @@ pub enum Error {
     #[error(transparent)]
     AddrParse(#[from] AddrParseError),
     #[error(transparent)]
-    RangeInit(#[from] RangeInitError),
+    RangeInit(#[from] RangeJsonInitError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("evm height {0}")]
     EvmHeight(#[from] evm_height::Error),
     #[error("blockstore {0}")]
     Blockstore(#[from] solana_ledger::blockstore::BlockstoreError),
+
     #[error(transparent)]
     Run(#[from] RunError),
+    #[error("config parse {0}")]
+    ConfigParse(#[from] ParseError),
+    #[error(transparent)]
+    Start(#[from] StartError),
     #[error(transparent)]
     RangeSource(Box<dyn std::error::Error + 'static>),
 }
@@ -155,110 +159,37 @@ pub fn main() -> Result<(), Error> {
         .enable_all()
         .build()?;
 
-    let range_source = matches.value_of("range_source").unwrap();
-    let height_index_source = matches.value_of("height_index_source").unwrap();
     let blockstore_path = matches.value_of("blockstore_path");
-    let solana_blockstore =
-        init_solana_blockstore(range_source, height_index_source, blockstore_path)?;
 
-    let bigtable_length_hint = matches
-        .value_of("bigtable_length_hint")
-        .unwrap_or(MAINNET_HINT_DEFAULT)
-        .parse()
-        .expect("parse bigtable_length_hint");
+    let config = Config::parse_standalone(&matches)?;
 
-    let bigtable_blockstore = init_bigtable(
-        range_source,
-        height_index_source,
-        &runtime,
-        bigtable_length_hint,
+    // fence
+
+    let solana_blockstore = init_solana_blockstore(
+        config.range_source.clone(),
+        config.height_index_source.clone(),
+        blockstore_path,
     )?;
 
-    let range = dispatch_range_source(
-        range_source,
-        &matches,
-        bigtable_blockstore.clone(),
-        solana_blockstore.clone(),
-    )?;
-    let bigtable_blockstore =
-        dispatch_height_index_source(height_index_source, bigtable_blockstore, solana_blockstore)?;
-
-    start_and_join(
+    let service = RunningService::start(
         state_rpc_bind_address,
-        range,
+        config,
         used_storage,
         runtime,
-        bigtable_blockstore,
+        solana_blockstore,
     )?;
+
+    service.join().map_err(|err| RunError::Thread(err.into()))?;
     Ok(())
 }
 
-const MAINNET_HINT_DEFAULT: &str = "62800000";
-
-fn dispatch_range_source(
-    range_source: &str,
-    matches: &ArgMatches,
-    bigtable_blockstore: Option<CachedRootsLedgerStorage>,
-    solana_blockstore: Option<Arc<Blockstore>>,
-) -> Result<Box<dyn ReadRange>, Error> {
-    let range: Box<dyn ReadRange> = match range_source {
-        value if value == "json" => {
-            let range_file = matches
-                .value_of("range_file")
-                .expect("empty range-file param");
-            let range = RangeJSON::new(range_file, None)?;
-            Box::new(range)
-        }
-        value if value == "bigtable" => {
-            let bigtable_blockstore =
-                bigtable_blockstore.expect("bigtable_blockstore not initialized");
-            Box::new(bigtable_blockstore)
-        }
-
-        value if value == "solana_blockstore" => {
-            let solana_blockstore = solana_blockstore.expect("blockstore_path arg empty");
-            Box::new(solana_blockstore)
-        }
-        value => {
-            return Err(Error::RangeSource(
-                format!("invalid choice of range_source {}", value).into(),
-            ));
-        }
-    };
-    Ok(range)
-}
-
-fn dispatch_height_index_source(
-    height_index_source: &str,
-    bigtable_blockstore: Option<CachedRootsLedgerStorage>,
-    solana_blockstore: Option<Arc<Blockstore>>,
-) -> Result<Box<dyn EvmHeightIndex>, Error> {
-    let index: Box<dyn EvmHeightIndex> = match height_index_source {
-        value if value == "bigtable" => {
-            let bigtable_blockstore =
-                bigtable_blockstore.expect("bigtable_blockstore not initialized");
-            Box::new(bigtable_blockstore)
-        }
-
-        value if value == "solana_blockstore" => {
-            let solana_blockstore = solana_blockstore.expect("solana_blockstore not initialized");
-            Box::new(solana_blockstore)
-        }
-        value => {
-            return Err(Error::RangeSource(
-                format!("invalid choice of range_source {}", value).into(),
-            ));
-        }
-    };
-    Ok(index)
-}
 fn init_solana_blockstore(
-    range_source: &str,
-    height_index_source: &str,
+    range_source: RangeSource,
+    height_index_source: HeightIndexSource,
     blockstore_path: Option<&str>,
 ) -> Result<Option<Arc<Blockstore>>, Error> {
     let solana_blockstore = match (range_source, height_index_source) {
-        ("solana_blockstore", _) | (_, "solana_blockstore") => {
+        (RangeSource::SolanaBlockstore, _) | (_, HeightIndexSource::SolanaBlockstore) => {
             log::warn!("init solana_blockstore called");
             let blockstore_path = blockstore_path.expect("blockstore_path is empty");
 
@@ -275,44 +206,4 @@ fn init_solana_blockstore(
         _ => None,
     };
     Ok(solana_blockstore)
-}
-
-fn init_bigtable(
-    range_source: &str,
-    height_index_source: &str,
-    runtime: &tokio::runtime::Runtime,
-    bigtable_length_hint: BlockNum,
-) -> Result<Option<CachedRootsLedgerStorage>, Error> {
-    let bigtable = match (range_source, height_index_source) {
-        ("bigtable", _) | (_, "bigtable") => {
-            log::warn!("init bigtable called");
-            let bigtable_blockstore = runtime.block_on(async {
-                let bigtable_blockstore = solana_storage_bigtable::LedgerStorage::new(
-                    false,
-                    Some(std::time::Duration::new(20, 0)),
-                    None,
-                )
-                .await;
-
-                let bigtable_blockstore = match bigtable_blockstore {
-                    Err(err) => return Err(evm_height::Error::from(err)),
-                    Ok(bigtable_blockstore) => bigtable_blockstore,
-                };
-                let bigtable_blockstore =
-                    CachedRootsLedgerStorage::new(bigtable_blockstore, bigtable_length_hint);
-                match bigtable_blockstore.get_last_available_block().await {
-                    Err(err) => {
-                        return Err(err);
-                    }
-                    Ok(height) => {
-                        log::info!("ledger storage sanity check done : last height {}", height);
-                    }
-                }
-                Ok(bigtable_blockstore)
-            })?;
-            Some(bigtable_blockstore)
-        }
-        _ => None,
-    };
-    Ok(bigtable)
 }

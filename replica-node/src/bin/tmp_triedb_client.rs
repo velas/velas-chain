@@ -32,7 +32,7 @@ enum Error {
     #[error("storage error {0}")]
     Storage(#[from] evm_state::storage::Error),
     #[error("range init {0}")]
-    RangeInit(#[from] solana_replica_lib::triedb::error::RangeInitError),
+    RangeInit(#[from] solana_replica_lib::triedb::error::RangeJsonInitError),
     #[error("solana storage bigtable {0}")]
     StorageBigtable(#[from] solana_storage_bigtable::Error),
     #[error("connect error {0}")]

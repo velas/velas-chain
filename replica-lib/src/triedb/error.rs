@@ -11,7 +11,7 @@ pub use common::lock;
 mod tests;
 
 #[derive(Error, Debug)]
-pub enum RangeInitError {
+pub enum RangeJsonInitError {
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error(transparent)]

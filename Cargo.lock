@@ -7321,6 +7321,7 @@ version = "1.9.29"
 dependencies = [
  "assert_matches",
  "async-trait",
+ "clap 2.34.0",
  "crossbeam-channel",
  "derivative",
  "derive_more",
@@ -9449,6 +9450,7 @@ dependencies = [
  "sysctl",
  "tempfile",
  "tikv-jemallocator",
+ "tokio",
 ]
 
 [[package]]
