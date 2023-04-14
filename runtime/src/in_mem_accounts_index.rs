@@ -572,7 +572,7 @@ impl<T: IndexValue> InMemAccountsIndex<T> {
                     Some((slot_list, ref_count))
                 } else {
                     // doesn't exist on disk yet, so insert it
-                    let ref_count = if account_info.is_cached() { 0 } else { 1 };
+                    let ref_count = u64::from(!account_info.is_cached());
                     Some((vec![(slot, account_info)], ref_count))
                 }
             });

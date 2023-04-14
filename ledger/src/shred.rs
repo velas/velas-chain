@@ -385,7 +385,7 @@ impl Shred {
         };
         shred
             .sanitize()
-            .then(|| shred)
+            .then_some(shred)
             .ok_or(ShredError::InvalidPayload)
     }
 
@@ -549,7 +549,7 @@ impl Shred {
                 let position = usize::from(self.coding_header.position);
                 let fec_set_size = num_data_shreds.checked_add(num_coding_shreds)?;
                 let index = position.checked_add(num_data_shreds)?;
-                (index < fec_set_size).then(|| index)
+                (index < fec_set_size).then_some(index)
             }
         }
     }

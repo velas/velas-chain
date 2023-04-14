@@ -716,12 +716,12 @@ fn main() {
 }
 
 fn remove_directory_contents(ledger_path: &Path) -> Result<(), io::Error> {
-    for entry in fs::read_dir(&ledger_path)? {
+    for entry in fs::read_dir(ledger_path)? {
         let entry = entry?;
         if entry.metadata()?.is_dir() {
-            fs::remove_dir_all(&entry.path())?
+            fs::remove_dir_all(entry.path())?
         } else {
-            fs::remove_file(&entry.path())?
+            fs::remove_file(entry.path())?
         }
     }
     Ok(())

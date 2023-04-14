@@ -1947,7 +1947,7 @@ impl AccountsDb {
             .iter()
             .filter_map(|entry| {
                 let slot = *entry.key();
-                (slot <= max_slot).then(|| slot)
+                (slot <= max_slot).then_some(slot)
             })
             .collect()
     }
@@ -7012,7 +7012,7 @@ impl AccountsDb {
                     let len = map_bin.read().unwrap().len_for_stats();
                     min_bin_size = std::cmp::min(min_bin_size, len);
                     max_bin_size = std::cmp::max(max_bin_size, len);
-                    len as usize
+                    len
                 })
                 .sum();
 

@@ -237,7 +237,7 @@ fn wait_for_restart_window(
                 style("Node is unhealthy").red().to_string()
             } else {
                 // Wait until a hole in the leader schedule before restarting the node
-                let in_leader_schedule_hole = if epoch_info.slot_index + min_idle_slots as u64
+                let in_leader_schedule_hole = if epoch_info.slot_index + min_idle_slots
                     > epoch_info.slots_in_epoch
                 {
                     Err("Current epoch is almost complete".to_string())
@@ -295,7 +295,7 @@ fn wait_for_restart_window(
                         if skip_new_snapshot_check {
                             break; // Restart!
                         }
-                        if restart_snapshot == None {
+                        if restart_snapshot.is_none() {
                             restart_snapshot = snapshot_slot;
                         }
                         if restart_snapshot == snapshot_slot && !monitoring_another_validator {

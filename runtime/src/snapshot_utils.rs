@@ -305,7 +305,7 @@ pub fn archive_snapshot_package(
     // Add the snapshots to the staging directory
     symlink::symlink_dir(
         snapshot_package.snapshot_links.path(),
-        &staging_snapshots_dir,
+        staging_snapshots_dir,
     )
     .map_err(|e| SnapshotError::IoWithSource(e, "create staging symlinks"))?;
     // Add the AppendVecs into the compressible list
@@ -412,7 +412,7 @@ pub fn archive_snapshot_package(
     // Atomically move the archive into position for other validators to find
     let metadata = fs::metadata(&archive_path)
         .map_err(|e| SnapshotError::IoWithSource(e, "archive path stat"))?;
-    fs::rename(&archive_path, &snapshot_package.path())
+    fs::rename(&archive_path, snapshot_package.path())
         .map_err(|e| SnapshotError::IoWithSource(e, "archive path rename"))?;
 
     purge_old_snapshot_archives(
@@ -795,10 +795,7 @@ pub fn bank_from_snapshot_archives(
         incremental_snapshot_archive_info,
     )?;
 
-    let parallel_divisions = std::cmp::min(
-        PARALLEL_UNTAR_READERS_DEFAULT,
-        std::cmp::max(1, num_cpus::get() / 4),
-    );
+    let parallel_divisions = (num_cpus::get() / 4).clamp(1, PARALLEL_UNTAR_READERS_DEFAULT);
 
     let unarchived_full_snapshot = unarchive_snapshot(
         &bank_snapshots_dir,
@@ -1026,7 +1023,7 @@ where
     info!("{}", measure_untar);
 
     let unpacked_version_file = unpack_dir.path().join("version");
-    let snapshot_version = snapshot_version_from_file(&unpacked_version_file)?;
+    let snapshot_version = snapshot_version_from_file(unpacked_version_file)?;
 
     Ok(UnarchivedSnapshot {
         unpack_dir,
@@ -1074,7 +1071,7 @@ fn check_are_snapshots_compatible(
     let incremental_snapshot_archive_info = incremental_snapshot_archive_info.unwrap();
 
     (full_snapshot_archive_info.slot() == incremental_snapshot_archive_info.base_slot())
-        .then(|| ())
+        .then_some(())
         .ok_or_else(|| {
             SnapshotError::MismatchedBaseSlot(
                 full_snapshot_archive_info.slot(),
@@ -1696,7 +1693,7 @@ pub fn verify_snapshot_archive<P, Q, R>(
     .unwrap();
 
     // Check snapshots are the same
-    let unpacked_snapshots = unpack_dir.join(&TAR_SNAPSHOTS_DIR);
+    let unpacked_snapshots = unpack_dir.join(TAR_SNAPSHOTS_DIR);
 
     // TODO: Make evm-state snapshot more consistent, currently rocksdb incremental backup is
     // not consistent (because it support more than one backup at a time)
@@ -1704,7 +1701,7 @@ pub fn verify_snapshot_archive<P, Q, R>(
     assert!(!cmp_dir::is_different(&snapshots_to_verify, unpacked_snapshots, true).unwrap());
 
     // Check the account entries are the same
-    let unpacked_accounts = unpack_dir.join(&TAR_ACCOUNTS_DIR);
+    let unpacked_accounts = unpack_dir.join(TAR_ACCOUNTS_DIR);
     assert!(!cmp_dir::is_different(&storages_to_verify, unpacked_accounts, false).unwrap());
 }
 

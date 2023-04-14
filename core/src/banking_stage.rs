@@ -1490,8 +1490,8 @@ impl BankingStage {
         let (units, times): (Vec<_>, Vec<_>) = execute_timings
             .details
             .per_program_timings
-            .iter()
-            .map(|(_program_id, program_timings)| {
+            .values()
+            .map(|program_timings| {
                 (
                     program_timings.accumulated_units,
                     program_timings.accumulated_us,
@@ -1827,7 +1827,7 @@ impl BankingStage {
         );
         let filter_retryable_packets_us = filter_retryable_packets_time.as_us();
         slot_metrics_tracker
-            .increment_filter_retryable_packets_us(filter_retryable_packets_us as u64);
+            .increment_filter_retryable_packets_us(filter_retryable_packets_us);
         banking_stage_stats
             .filter_pending_packets_elapsed
             .fetch_add(filter_retryable_packets_us, Ordering::Relaxed);

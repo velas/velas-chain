@@ -55,6 +55,7 @@ impl Versions {
             }
             Self::Current(state) => state,
         };
+        #[allow(clippy::unnecessary_lazy_evaluations)]
         match **state {
             State::Uninitialized => None,
             State::Initialized(ref data) => (recent_blockhash == &data.blockhash()).then(|| data),

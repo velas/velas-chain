@@ -680,7 +680,7 @@ impl EvmProcessor {
         // 1. Fee can be charged from evm account or native. (evm part is done in Executor::transaction_execute* methods.)
         if !withdraw_fee_from_evm {
             let sender = sender.as_ref().ok_or(EvmError::MissingRequiredSignature)?;
-            Self::charge_native_account(&result, full_fee, *sender, accounts.evm)?;
+            Self::charge_native_account(&result, full_fee, sender, accounts.evm)?;
         }
 
         // 2. Then we should burn some part of it.

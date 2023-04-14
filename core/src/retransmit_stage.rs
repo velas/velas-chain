@@ -381,7 +381,7 @@ pub fn retransmitter(
     let mut stats = RetransmitStats::default();
     let shreds_received = Mutex::new((LruCache::new(DEFAULT_LRU_SIZE), PacketHasher::default()));
     let first_shreds_received = Mutex::<BTreeSet<Slot>>::default();
-    let num_threads = get_thread_count().min(8).max(sockets.len());
+    let num_threads = get_thread_count().clamp(sockets.len(), 8);
     let thread_pool = ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .thread_name(|i| format!("retransmit-{}", i))

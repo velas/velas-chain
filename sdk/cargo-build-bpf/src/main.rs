@@ -131,7 +131,7 @@ fn install_if_missing(
             .next()
             .is_none()
     {
-        fs::remove_dir(&target_path).map_err(|err| err.to_string())?;
+        fs::remove_dir(target_path).map_err(|err| err.to_string())?;
     }
 
     // Check whether the package is already in ~/.cache/solana.
@@ -143,9 +143,9 @@ fn install_if_missing(
             .unwrap_or(false)
     {
         if target_path.exists() {
-            fs::remove_file(&target_path).map_err(|err| err.to_string())?;
+            fs::remove_file(target_path).map_err(|err| err.to_string())?;
         }
-        fs::create_dir_all(&target_path).map_err(|err| err.to_string())?;
+        fs::create_dir_all(target_path).map_err(|err| err.to_string())?;
         let mut url = String::from(url);
         url.push('/');
         url.push_str(version);
@@ -160,7 +160,7 @@ fn install_if_missing(
         let tar = BzDecoder::new(BufReader::new(zip));
         let mut archive = Archive::new(tar);
         archive
-            .unpack(&target_path)
+            .unpack(target_path)
             .map_err(|err| err.to_string())?;
         fs::remove_file(download_file_path).map_err(|err| err.to_string())?;
     }
@@ -354,7 +354,7 @@ fn link_bpf_toolchain(config: &Config) {
     let rustup_args = vec!["toolchain", "list", "-v"];
     let rustup_output = spawn(
         &rustup,
-        &rustup_args,
+        rustup_args,
         config.generate_child_script_on_failure,
     );
     if config.verbose {
@@ -370,7 +370,7 @@ fn link_bpf_toolchain(config: &Config) {
                 let rustup_args = vec!["toolchain", "uninstall", "bpf"];
                 let output = spawn(
                     &rustup,
-                    &rustup_args,
+                    rustup_args,
                     config.generate_child_script_on_failure,
                 );
                 if config.verbose {
@@ -386,7 +386,7 @@ fn link_bpf_toolchain(config: &Config) {
         let rustup_args = vec!["toolchain", "link", "bpf", toolchain_path.to_str().unwrap()];
         let output = spawn(
             &rustup,
-            &rustup_args,
+            rustup_args,
             config.generate_child_script_on_failure,
         );
         if config.verbose {
@@ -444,7 +444,7 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
         .join("bpfel-unknown-unknown")
         .join("release");
 
-    env::set_current_dir(&root_package_dir).unwrap_or_else(|err| {
+    env::set_current_dir(root_package_dir).unwrap_or_else(|err| {
         eprintln!(
             "Unable to set current directory to {}: {}",
             root_package_dir, err
@@ -496,7 +496,7 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
         // The package version directory doesn't contain a valid
         // installation, and it should be removed.
         let target_path_parent = target_path.parent().expect("Invalid package path");
-        fs::remove_dir_all(&target_path_parent).unwrap_or_else(|err| {
+        fs::remove_dir_all(target_path_parent).unwrap_or_else(|err| {
             eprintln!(
                 "Failed to remove {} while recovering from installation failure: {}",
                 target_path_parent.to_string_lossy(),
@@ -522,7 +522,7 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
     const RF_LTO: &str = "-C lto=no";
     let mut rustflags = match env::var("RUSTFLAGS") {
         Ok(rf) => {
-            if rf.contains(&RF_LTO) {
+            if rf.contains(RF_LTO) {
                 rf
             } else {
                 format!("{} {}", rf, RF_LTO)
@@ -577,10 +577,10 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
     }
 
     if let Some(program_name) = program_name {
-        let program_unstripped_so = target_build_directory.join(&format!("{}.so", program_name));
-        let program_dump = bpf_out_dir.join(&format!("{}-dump.txt", program_name));
-        let program_so = bpf_out_dir.join(&format!("{}.so", program_name));
-        let program_keypair = bpf_out_dir.join(&format!("{}-keypair.json", program_name));
+        let program_unstripped_so = target_build_directory.join(format!("{}.so", program_name));
+        let program_dump = bpf_out_dir.join(format!("{}-dump.txt", program_name));
+        let program_so = bpf_out_dir.join(format!("{}.so", program_name));
+        let program_keypair = bpf_out_dir.join(format!("{}-keypair.json", program_name));
 
         fn file_older_or_missing(prerequisite_file: &Path, target_file: &Path) -> bool {
             let prerequisite_metadata = fs::metadata(prerequisite_file).unwrap_or_else(|err| {
@@ -626,7 +626,7 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
             #[cfg(not(windows))]
             let output = spawn(
                 &config.bpf_sdk.join("scripts").join("strip.sh"),
-                &[&program_unstripped_so, &program_so],
+                [&program_unstripped_so, &program_so],
                 config.generate_child_script_on_failure,
             );
             if config.verbose {
@@ -649,7 +649,7 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
             {
                 let output = spawn(
                     &dump_script,
-                    &[&program_unstripped_so, &program_dump],
+                    [&program_unstripped_so, &program_dump],
                     config.generate_child_script_on_failure,
                 );
                 if config.verbose {

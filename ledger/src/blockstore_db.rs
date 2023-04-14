@@ -326,7 +326,7 @@ impl Rocks {
     ) -> Result<Rocks> {
         use columns::*;
 
-        fs::create_dir_all(&path)?;
+        fs::create_dir_all(path)?;
 
         // Use default database options
         if matches!(access_type, AccessType::PrimaryOnlyForMaintenance) {

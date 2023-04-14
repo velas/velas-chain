@@ -800,7 +800,7 @@ impl RpcSubscriptions {
                             {
                                 debug!("slot notify: {:?}", slot_info);
                                 inc_new_counter_info!("rpc-subscription-notify-slot", 1);
-                                notifier.notify(&slot_info, sub, false);
+                                notifier.notify(slot_info, sub, false);
                             }
                         }
                         NotificationEntry::SlotUpdate(slot_update) => {
@@ -809,7 +809,7 @@ impl RpcSubscriptions {
                                 .get(&SubscriptionParams::SlotsUpdates)
                             {
                                 inc_new_counter_info!("rpc-subscription-notify-slots-updates", 1);
-                                notifier.notify(&slot_update, sub, false);
+                                notifier.notify(slot_update, sub, false);
                             }
                         }
                         // These notifications are only triggered by votes observed on gossip,
@@ -839,7 +839,7 @@ impl RpcSubscriptions {
                             {
                                 debug!("root notify: {:?}", root);
                                 inc_new_counter_info!("rpc-subscription-notify-root", 1);
-                                notifier.notify(&root, sub, false);
+                                notifier.notify(root, sub, false);
                             }
                         }
                         NotificationEntry::Bank(commitment_slots) => {
@@ -899,7 +899,7 @@ impl RpcSubscriptions {
                                 } else {
                                     panic!("Wrong param in evm log watcher")
                                 };
-                                
+
                                 inc_new_counter_info!("rpc-subscription-notify-evm-logs", 1);
                                 for log in logs.iter() {
                                     if filter.is_log_match(&log.clone().into()) {
@@ -1040,10 +1040,7 @@ impl RpcSubscriptions {
                             let mut slots_to_notify: Vec<_> =
                                 (*w_last_unnotified_slot..slot).collect();
                             let ancestors = bank.proper_ancestors_set();
-                            slots_to_notify = slots_to_notify
-                                .into_iter()
-                                .filter(|slot| ancestors.contains(slot))
-                                .collect();
+                            slots_to_notify.retain(|slot| ancestors.contains(slot));
                             slots_to_notify.push(slot);
                             for s in slots_to_notify {
                                 // To avoid skipping a slot that fails this condition,

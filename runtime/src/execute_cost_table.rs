@@ -51,7 +51,7 @@ impl ExecuteCostTable {
         if self.table.is_empty() {
             0
         } else {
-            self.table.iter().map(|(_, value)| value).sum::<u64>() / self.get_count() as u64
+            self.table.values().sum::<u64>() / self.get_count() as u64
         }
     }
 
