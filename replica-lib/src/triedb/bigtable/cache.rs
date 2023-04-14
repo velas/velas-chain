@@ -82,11 +82,8 @@ impl EvmHeightIndex for CachedRootsLedgerStorage {
         if block_num == 0 {
             return Err(evm_height::Error::ForbidZero);
         }
-        match self.cache.lock().expect("poison").map.get(&block_num) {
-            Some(result) => {
-                return Ok(Some(*result));
-            }
-            None => {}
+        if let Some(result) = self.cache.lock().expect("poison").map.get(&block_num) {
+            return Ok(Some(*result));
         }
         let block = self.bigtable.get_evm_confirmed_full_block(block_num).await;
         let block = match block {
