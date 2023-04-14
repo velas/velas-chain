@@ -7,6 +7,7 @@ pub mod routines;
 
 use clap::Parser;
 use cli::{Cli, Command::*};
+use env_logger::{Builder, Target};
 use error::AppError;
 use routines::{find::WhatFound, *};
 use serde_json::json;
@@ -19,15 +20,17 @@ async fn main() {
 
     match std::env::var("RUST_LOG") {
         Ok(value) => {
-            env_logger::init();
             log::info!(r#"RUST_LOG is set to "{value}""#);
         }
         Err(_err) => {
             std::env::set_var("RUST_LOG", "evm_block_recovery");
-            env_logger::init();
             log::warn!(r#"Environment variable "RUST_LOG" not found."#);
         }
     }
+
+    let mut builder = Builder::from_default_env();
+    builder.target(Target::Stderr);
+    builder.init();
 
     match dotenv {
         Ok(path) => {
@@ -48,12 +51,16 @@ async fn main() {
         Upload(args) => upload(cli.creds, cli.instance, args).await,
         RepeatEvm(args) => repeat_evm(args).await,
         RepeatNative(args) => repeat_native(args).await,
+        ScanEvmStateRoots(ref args) => scan_evm_state_roots::command(args).await,
         Completion(args) => completion(args),
     };
 
     let exit_code = match execution_result {
         Ok(()) => 0,
-        Err(error) => error.exit_code(),
+        Err(error) => {
+            eprintln!("error {:?}", error);
+            error.exit_code()
+        },
     };
 
     std::process::exit(exit_code);
