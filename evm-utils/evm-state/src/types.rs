@@ -499,11 +499,7 @@ mod transaction_roots {
                 gas_used: receipt.used_gas.into(),
                 log_bloom: receipt.logs_bloom,
                 logs: receipt.logs.clone(),
-                status: if let crate::ExitReason::Succeed(_) = receipt.status {
-                    1
-                } else {
-                    0
-                },
+                status: u8::from(matches!(receipt.status, crate::ExitReason::Succeed(_))),
             }
         }
     }

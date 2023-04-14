@@ -237,8 +237,8 @@ impl CostTracker {
     /// count number of none-zero CU accounts
     fn number_of_accounts(&self) -> usize {
         self.cost_by_writable_accounts
-            .iter()
-            .map(|(_key, units)| if *units > 0 { 1 } else { 0 })
+            .values()
+            .map(|units| usize::from(*units > 0))
             .sum()
     }
 }

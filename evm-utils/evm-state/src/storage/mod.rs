@@ -358,7 +358,7 @@ impl Storage<OptimisticTransactionDBInner> {
             target.display()
         );
         let mut engine = BackupEngine::open(&BackupEngineOptions::default(), path)?;
-        engine.restore_from_latest_backup(&target, &target, &RestoreOptions::default())?;
+        engine.restore_from_latest_backup(target, target, &RestoreOptions::default())?;
 
         Ok(())
     }
@@ -488,7 +488,7 @@ impl Storage<OptimisticTransactionDBInner> {
         let slots_cf = self.cf::<SlotsRoots>();
         let mut tx = self.db().transaction();
         let trie = self.rocksdb_trie_handle();
-        let val = tx.get_cf(slots_cf, &slot.to_be_bytes())?;
+        let val = tx.get_cf(slots_cf, slot.to_be_bytes())?;
         let remove_root = if let Some(root) = val {
             let root = H256::from_slice(root.as_ref());
 
@@ -506,7 +506,7 @@ impl Storage<OptimisticTransactionDBInner> {
             None
         };
 
-        tx.delete_cf(slots_cf, &slot.to_be_bytes())?;
+        tx.delete_cf(slots_cf, slot.to_be_bytes())?;
         tx.commit()?;
         Ok(remove_root)
     }
@@ -561,7 +561,7 @@ impl Storage<OptimisticTransactionDBInner> {
         info!("Register slot:{} root:{}", slot, root);
 
         const NUM_RETRY: usize = 500; // ~10ms-100ms
-        let purge_root = if let Some(data) = self.db().get_cf(slots_cf, &slot.to_be_bytes())? {
+        let purge_root = if let Some(data) = self.db().get_cf(slots_cf, slot.to_be_bytes())? {
             let purge_root = H256::from_slice(data.as_ref());
             // root should be changed only on purpose, and changed to different value
             if !reset_slot_root || root == purge_root {
@@ -578,7 +578,7 @@ impl Storage<OptimisticTransactionDBInner> {
 
         let retry = || -> Result<_> {
             let mut tx = self.db().transaction();
-            tx.put_cf(slots_cf, &slot.to_be_bytes(), root.as_ref())?;
+            tx.put_cf(slots_cf, slot.to_be_bytes(), root.as_ref())?;
             trie.db.increase(&mut tx, root)?;
             tx.commit()?;
             Ok(())

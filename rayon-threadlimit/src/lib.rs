@@ -9,8 +9,8 @@ lazy_static! {
     // hogging cpu
     static ref MAX_RAYON_THREADS: usize =
             env::var("SOLANA_RAYON_THREADS")
-                .map(|x| x.parse().unwrap_or(num_cpus::get() as usize / 2))
-                .unwrap_or(num_cpus::get() as usize / 2);
+                .map(|x| x.parse().unwrap_or(num_cpus::get() / 2))
+                .unwrap_or(num_cpus::get() / 2);
 }
 
 pub fn get_thread_count() -> usize {

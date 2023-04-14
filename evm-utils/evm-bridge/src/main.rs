@@ -224,7 +224,7 @@ impl EvmBridge {
         let rpc_client = AsyncRpcClient::new(addr);
 
         info!("Loading keypair from: {}", keypath);
-        let key = solana_sdk::signature::read_keypair_file(&keypath).unwrap();
+        let key = solana_sdk::signature::read_keypair_file(keypath).unwrap();
 
         info!("Creating mempool...");
         let pool = EthPool::new(SystemClock);
@@ -434,7 +434,7 @@ impl BridgeERPC for BridgeErpcImpl {
 
     #[instrument]
     fn accounts(&self, meta: Self::Metadata) -> EvmResult<Vec<Hex<Address>>> {
-        Ok(meta.accounts.iter().map(|(k, _)| Hex(*k)).collect())
+        Ok(meta.accounts.keys().map(|k| Hex(*k)).collect())
     }
 
     #[instrument]

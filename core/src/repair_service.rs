@@ -379,8 +379,7 @@ impl RepairService {
                             slot,
                             slot_repairs
                                 .pubkey_repairs
-                                .iter()
-                                .map(|(_key, count)| count)
+                                .values()
                                 .sum::<u64>(),
                         )
                     })

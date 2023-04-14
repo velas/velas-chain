@@ -72,7 +72,8 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     const SOCKADDR_STORAGE_SIZE: usize = mem::size_of::<sockaddr_storage>();
 
     let mut hdrs: [mmsghdr; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
-    let mut iovs: [iovec; NUM_RCVMMSGS] = unsafe { mem::MaybeUninit::uninit().assume_init() };
+    let iovs = mem::MaybeUninit::<[iovec; NUM_RCVMMSGS]>::uninit();
+    let mut iovs: [iovec; NUM_RCVMMSGS] = unsafe { iovs.assume_init() };
     let mut addrs: [sockaddr_storage; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
 
     let sock_fd = sock.as_raw_fd();

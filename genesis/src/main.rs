@@ -663,8 +663,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let issued_lamports = genesis_config
         .accounts
-        .iter()
-        .map(|(_key, account)| account.lamports)
+        .values()
+        .map(|account| account.lamports)
         .sum::<u64>();
 
     info!(

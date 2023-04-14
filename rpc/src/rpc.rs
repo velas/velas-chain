@@ -821,7 +821,7 @@ impl JsonRpcRequestProcessor {
     }
 
     fn get_transaction_count(&self, commitment: Option<CommitmentConfig>) -> u64 {
-        self.bank(commitment).transaction_count() as u64
+        self.bank(commitment).transaction_count()
     }
 
     fn get_total_supply(&self, commitment: Option<CommitmentConfig>) -> u64 {
@@ -989,9 +989,9 @@ impl JsonRpcRequestProcessor {
                 })
             })
             .partition(|vote_account_info| {
-                if bank.slot() >= delinquent_validator_slot_distance as u64 {
+                if bank.slot() >= delinquent_validator_slot_distance {
                     vote_account_info.last_vote
-                        > bank.slot() - delinquent_validator_slot_distance as u64
+                        > bank.slot() - delinquent_validator_slot_distance
                 } else {
                     vote_account_info.last_vote > 0
                 }
@@ -4131,9 +4131,7 @@ pub mod rpc_full {
             }
 
             if !config.skip_preflight {
-                if let Err(e) = verify_transaction(&transaction, &preflight_bank.feature_set) {
-                    return Err(e);
-                }
+                verify_transaction(&transaction, &preflight_bank.feature_set)?;
 
                 match meta.health.check() {
                     RpcHealthStatus::Ok => (),
@@ -4899,7 +4897,7 @@ where
         .deserialize_from(&wire_output[..])
         .map_err(|err| {
             info!("deserialize error: {}", err);
-            Error::invalid_params(&err.to_string())
+            Error::invalid_params(err.to_string())
         })
         .map(|output| (wire_output, output))
 }

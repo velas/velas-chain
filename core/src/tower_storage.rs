@@ -107,7 +107,7 @@ impl TowerStorage for FileTowerStorage {
         trace!("load {}", filename.display());
 
         // Ensure to create parent dir here, because restore() precedes save() always
-        fs::create_dir_all(&filename.parent().unwrap())?;
+        fs::create_dir_all(filename.parent().unwrap())?;
 
         let file = File::open(&filename)?;
         let mut stream = BufReader::new(file);

@@ -176,7 +176,7 @@ impl MetricsAgent {
         .iter()
         .filter_map(|level| points_map.remove(level))
         .flat_map(|(counters, points)| {
-            let counter_points = counters.into_iter().map(|(_, v)| v.into());
+            let counter_points = counters.into_values().map(|v| v.into());
             points.into_iter().chain(counter_points)
         })
         .collect();

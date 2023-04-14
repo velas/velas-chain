@@ -119,7 +119,7 @@ pub fn serialize_parameters_unaligned(
                 .map_err(|_| InstructionError::InvalidArgument)?;
             v.write_u8(keyed_account.executable()? as u8)
                 .map_err(|_| InstructionError::InvalidArgument)?;
-            v.write_u64::<LittleEndian>(keyed_account.rent_epoch()? as u64)
+            v.write_u64::<LittleEndian>(keyed_account.rent_epoch()?)
                 .map_err(|_| InstructionError::InvalidArgument)?;
         }
     }
@@ -245,7 +245,7 @@ pub fn serialize_parameters_aligned(
                 0,
             )
             .map_err(|_| InstructionError::InvalidArgument)?;
-            v.write_u64::<LittleEndian>(keyed_account.rent_epoch()? as u64)
+            v.write_u64::<LittleEndian>(keyed_account.rent_epoch()?)
                 .map_err(|_| InstructionError::InvalidArgument)?;
         }
     }
