@@ -131,6 +131,14 @@ pub fn main() -> Result<(), Error> {
                 .required(false)
                 .help("PATH of blockstore local storage for range and/or state root index"),
         )
+        .arg(
+            Arg::with_name("max_height_diff")
+                .long("max-height-diff")
+                .value_name("NUM")
+                .takes_value(true)
+                .required(false)
+                .help("NUM of maximum height difference"),
+        )
         .get_matches();
 
     let _ = env_logger::Builder::from_default_env().try_init();

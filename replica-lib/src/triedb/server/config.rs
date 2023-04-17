@@ -22,6 +22,7 @@ pub struct Config {
     pub range_source: RangeSource,
     pub height_index_source: HeightIndexSource,
     pub bigtable_length_hint: BlockNum,
+    pub max_diff_height_gap: usize,
 }
 
 #[derive(Debug, Error)]
@@ -36,6 +37,10 @@ pub enum ParseError {
     InvalidOption(String, String),
 }
 const MAINNET_HINT_DEFAULT: &str = "62800000";
+//  The difference between 58896219 and 59409340 is 513121.
+//  700_000 =~ 513121 * 1.33
+//  "Max difference of block height, that server won't reject diff requests of"
+const MAX_HEIGHT_DIFF_DEFAULT: &str = "700000";
 
 impl TryFrom<(&str, Option<&str>)> for RangeSource {
     type Error = ParseError;
@@ -82,10 +87,16 @@ impl Config {
             .unwrap_or(MAINNET_HINT_DEFAULT)
             .parse()?;
 
+        let max_diff_height_gap: usize = matches
+            .value_of("max_height_diff")
+            .unwrap_or(MAX_HEIGHT_DIFF_DEFAULT)
+            .parse()?;
+
         let res = Self {
             range_source: (range_source, range_file).try_into()?,
             height_index_source: height_index_source.try_into()?,
             bigtable_length_hint,
+            max_diff_height_gap,
         };
         Ok(res)
     }
@@ -102,11 +113,16 @@ impl Config {
             .value_of("bigtable_evm_blockstore_length_hint")
             .unwrap_or(MAINNET_HINT_DEFAULT)
             .parse()?;
+        let max_diff_height_gap: usize= matches
+            .value_of("evm_state_rpc_max_height_diff")
+            .unwrap_or(MAX_HEIGHT_DIFF_DEFAULT)
+            .parse()?;
 
         let res = Self {
             range_source: (range_source, range_file).try_into()?,
             height_index_source: height_index_source.try_into()?,
             bigtable_length_hint,
+            max_diff_height_gap,
         };
         Ok(res)
     }

@@ -14,6 +14,8 @@ use thiserror::Error;
 #[derive(Debug)]
 struct ParsedArgs {
     state_rpc_address: String,
+    timeout_seconds: u64,
+    max_height_gap: usize,
     evm_state: PathBuf,
     coarse_range_file: String,
     fine_range_file: String,
@@ -38,6 +40,8 @@ enum Error {
     #[error("connect error {0}")]
     Connect(#[from] tonic::transport::Error),
 }
+const MAX_HEIGHT_DIFF_DEFAULT: &str = "700000";
+const TIMEOUT_SECONDS_DEFAULT: &str = "60";
 
 impl ParsedArgs {
     fn parse(matches: ArgMatches) -> Result<Self, Error> {
@@ -62,8 +66,20 @@ impl ParsedArgs {
             .parse()
             .unwrap();
 
+        let max_height_gap: usize = matches
+            .value_of("max_height_diff")
+            .unwrap_or(MAX_HEIGHT_DIFF_DEFAULT)
+            .parse()?;
+
+        let timeout_seconds: u64 = matches
+            .value_of("grpc_timeout_sec")
+            .unwrap_or(TIMEOUT_SECONDS_DEFAULT)
+            .parse()?;
+
         Ok(Self {
             state_rpc_address,
+            timeout_seconds,
+            max_height_gap,
             evm_state,
             coarse_range_file: range_file,
             fine_range_file: rangemap_file,
@@ -79,41 +95,28 @@ impl ParsedArgs {
         let storage = Storage::open_persistent(self.evm_state, gc_enabled)?;
 
         let range = RangeJSON::new(self.coarse_range_file, Some(self.fine_range_file))?;
-        Ok(ClientOpts::new(
-            self.state_rpc_address,
+        Ok(ClientOpts{
+            state_rpc_address: self.state_rpc_address,
+            timeout_seconds: self.timeout_seconds,
+            max_height_gap: self.max_height_gap,
             storage,
             range,
-            self.request_workers,
-            self.db_workers,
-        ))
+            request_workers: self.request_workers,
+            db_workers: self.db_workers,
+        })
     }
 }
 
 pub struct ClientOpts {
     state_rpc_address: String,
+    timeout_seconds: u64,
+    max_height_gap: usize,
     storage: Storage,
     range: RangeJSON,
     request_workers: u32,
     db_workers: u32,
 }
 
-impl ClientOpts {
-    pub fn new(
-        state_rpc_address: String,
-        storage: Storage,
-        range: RangeJSON,
-        request_workers: u32,
-        db_workers: u32,
-    ) -> Self {
-        Self {
-            state_rpc_address,
-            storage,
-            range,
-            request_workers,
-            db_workers,
-        }
-    }
-}
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() -> Result<(), Error> {
@@ -185,6 +188,23 @@ async fn main() -> Result<(), Error> {
                 //  replica-lib/src/triedb/range.rs
                 .help("NUM of parallel db workers"),
         )
+        .arg(
+            Arg::with_name("grpc_timeout_sec")
+                .long("grpc-timeout-sec")
+                .value_name("SEC")
+                .takes_value(true)
+                //  replica-lib/src/triedb/range.rs
+                .help("grpc timeout SEC"),
+        )
+        .arg(
+            Arg::with_name("max_height_diff")
+                .long("max-height-diff")
+                .value_name("NUM")
+                .hidden(true)
+                .takes_value(true)
+                //  replica-lib/src/triedb/range.rs
+                .help("NUM of maximum height diff attempted"),
+        )
         .get_matches();
 
     let _ = env_logger::Builder::from_default_env().try_init();
@@ -215,11 +235,13 @@ async fn connect(client_opts: ClientOpts) -> Result<Client<CachedRootsLedgerStor
     let client = async {
         Client::connect(
             client_opts.state_rpc_address,
+            client_opts.timeout_seconds,
             client_opts.range,
             client_opts.storage,
             block_storage,
             client_opts.request_workers,
             client_opts.db_workers,
+            client_opts.max_height_gap,
         )
         .await
     }

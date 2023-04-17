@@ -15,7 +15,7 @@ path = "src/bin/triedb.rs"
 
 [[bin]]
 name = "triedb_replica_client"
-path = "src/bin/tmp_triedb_client.rs"
+path = "src/bin/triedb_client.rs"
 
 [dependencies]
 clap = "2.33.1"

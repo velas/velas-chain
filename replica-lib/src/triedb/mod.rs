@@ -34,10 +34,6 @@ pub trait TryConvert<S>: Sized {
     fn try_from(value: S) -> Result<Self, Self::Error>;
 }
 
-//  The difference between 58896219 and 59409340 is 513121.
-//  700_000 =~ 513121 * 1.33
-//  "Max difference of block height, that server won't reject diff requests of"
-pub const MAX_JUMP_OVER_ABYSS_GAP: usize = 700_000;
 
 // maximum number of hashes for GetArrayOfNodesRequest (should be around 200 MB
 // worth of corresponding nodes)

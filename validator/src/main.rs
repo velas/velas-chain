@@ -624,6 +624,14 @@ pub fn main() {
                 .help("NUMBER of last evm block hint"),
         )
         .arg(
+            Arg::with_name("evm_state_rpc_max_height_diff")
+                .long("evm-state-rpc-max-height-diff")
+                .value_name("NUM")
+                .takes_value(true)
+                .required(false)
+                .help("NUM of maximum height difference"),
+        )
+        .arg(
             Arg::with_name("evm_state_path")
                 .long("evm-state")
                 .value_name("DIR")

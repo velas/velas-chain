@@ -3,7 +3,7 @@ use std::{
     time,
 };
 
-use crate::triedb::{range::RangeJSON, EvmHeightIndex, ReadRange, MAX_JUMP_OVER_ABYSS_GAP};
+use crate::triedb::{range::RangeJSON, EvmHeightIndex, ReadRange};
 
 use super::Client;
 
@@ -45,7 +45,7 @@ where
                     self_range.clone(),
                     server_range,
                     self_range.end - 1,
-                    MAX_JUMP_OVER_ABYSS_GAP,
+                    self.max_height_gap,
                 );
                 let result = match right_diff.is_empty() {
                     true => {

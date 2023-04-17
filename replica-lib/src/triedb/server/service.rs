@@ -12,7 +12,7 @@ use tonic::{self, transport};
 use log::{error, info};
 
 use crate::triedb::error::{evm_height, RangeJsonInitError};
-use crate::triedb::{server, EvmHeightIndex, ReadRange, MAX_JUMP_OVER_ABYSS_GAP};
+use crate::triedb::{server, EvmHeightIndex, ReadRange};
 
 use self::helpers::{dispatch_sources, maybe_init_bigtable};
 
@@ -192,10 +192,11 @@ impl RunningService {
 
         let bigtable_blockstore = maybe_init_bigtable(config.clone(), &runtime)?;
 
+        let max_diff_gap = config.max_diff_height_gap;
         let (range, blockstore) = dispatch_sources(config, bigtable_blockstore, solana_blockstore)?;
 
         let service =
-            RunningService::start_internal(bind_address, range, used_storage, runtime, blockstore)?;
+            RunningService::start_internal(bind_address, range, used_storage, runtime, blockstore, max_diff_gap)?;
         Ok(service)
     }
 
@@ -205,11 +206,12 @@ impl RunningService {
         storage: server::UsedStorage,
         runtime: tokio::runtime::Runtime,
         block_storage: Box<dyn EvmHeightIndex>,
+        max_diff_height_gap: usize,
     ) -> Result<Self, RunError> {
         log::info!("starting the thread");
         let service = server::Service::new(
             bind_address,
-            MAX_JUMP_OVER_ABYSS_GAP as BlockNum,
+            max_diff_height_gap as BlockNum,
             storage,
             range,
             runtime,
