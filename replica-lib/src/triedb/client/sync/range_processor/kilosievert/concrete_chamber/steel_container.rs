@@ -11,7 +11,7 @@ use crate::triedb::{
     client::sync::range_processor::{kickstart_point::KickStartPoint, kilosievert::diff_stages},
     collection,
     error::client::range_sync::stages,
-    DiffRequest,
+    DiffRequest, DB_SEMAPHORE_PERMITS_PER_LARGE_DIFF,
 };
 
 use super::StageOnePayload;
@@ -23,6 +23,8 @@ pub struct StageTwoPayload {
     pub changeset_len: usize,
     pub result_root_gc_count: usize,
 }
+
+const SEMAPHORE_PERMITS_THRESHOLD: u64 = 100_000;
 
 pub async fn process(
     kickstart_point: KickStartPoint,
@@ -51,9 +53,16 @@ pub async fn process(
             stage_one.request
         );
 
+        let n_permits = if (stage_one.request.heights.1 - stage_one.request.heights.0)
+            > SEMAPHORE_PERMITS_THRESHOLD
+        {
+            DB_SEMAPHORE_PERMITS_PER_LARGE_DIFF
+        } else {
+            1
+        };
         let permit = s
             .clone()
-            .acquire_owned()
+            .acquire_many_owned(n_permits)
             .await
             .expect("semaphore closed?!?");
         let _jh = tokio::task::spawn({

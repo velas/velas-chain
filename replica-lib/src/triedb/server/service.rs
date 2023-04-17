@@ -209,6 +209,9 @@ impl RunningService {
         max_diff_height_gap: usize,
     ) -> Result<Self, RunError> {
         log::info!("starting the thread");
+        if max_diff_height_gap < CURSES_MAX_HEIGHT_GAP {
+            log::error!("\"evm-state-rpc-max-height-dif\" param specified too low: {}", max_diff_height_gap);
+        }
         let service = server::Service::new(
             bind_address,
             max_diff_height_gap as BlockNum,
@@ -232,3 +235,5 @@ impl RunningService {
         Ok(())
     }
 }
+
+const CURSES_MAX_HEIGHT_GAP: usize = 10_000;

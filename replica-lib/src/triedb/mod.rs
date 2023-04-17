@@ -39,6 +39,8 @@ pub trait TryConvert<S>: Sized {
 // worth of corresponding nodes)
 const MAX_CHUNK_HASHES: usize = 1_000_000;
 
+pub const DB_SEMAPHORE_PERMITS_PER_LARGE_DIFF: u32 = 10;
+
 const MAX_TIMES: usize = 8;
 const MIN_DELAY_SEC: u64 = 1;
 

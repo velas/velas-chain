@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use solana_replica_lib::triedb::error::evm_height;
-use solana_replica_lib::triedb::CachedRootsLedgerStorage;
 use solana_replica_lib::triedb::{client::Client, range::RangeJSON};
+use solana_replica_lib::triedb::{CachedRootsLedgerStorage, DB_SEMAPHORE_PERMITS_PER_LARGE_DIFF};
 
 use clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches};
 use evm_state::Storage;
@@ -39,6 +39,8 @@ enum Error {
     StorageBigtable(#[from] solana_storage_bigtable::Error),
     #[error("connect error {0}")]
     Connect(#[from] tonic::transport::Error),
+    #[error("db workers param specified too low : actual {0}, min {1}")]
+    DbWorkersTooLow(u32, u32),
 }
 const MAX_HEIGHT_DIFF_DEFAULT: &str = "700000";
 const TIMEOUT_SECONDS_DEFAULT: &str = "60";
@@ -95,7 +97,13 @@ impl ParsedArgs {
         let storage = Storage::open_persistent(self.evm_state, gc_enabled)?;
 
         let range = RangeJSON::new(self.coarse_range_file, Some(self.fine_range_file))?;
-        Ok(ClientOpts{
+        if self.db_workers < DB_SEMAPHORE_PERMITS_PER_LARGE_DIFF {
+            return Err(Error::DbWorkersTooLow(
+                self.db_workers,
+                DB_SEMAPHORE_PERMITS_PER_LARGE_DIFF,
+            ));
+        }
+        Ok(ClientOpts {
             state_rpc_address: self.state_rpc_address,
             timeout_seconds: self.timeout_seconds,
             max_height_gap: self.max_height_gap,
@@ -116,7 +124,6 @@ pub struct ClientOpts {
     request_workers: u32,
     db_workers: u32,
 }
-
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() -> Result<(), Error> {
