@@ -2518,9 +2518,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.3.17"
+version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66b91535aa35fea1523ad1b86cb6b53c28e0ae566ba4a460f4457e936cad7c6f"
+checksum = "17f8a914c2987b688368b5138aa05321db91f4090cf26118185672ad588bce21"
 dependencies = [
  "bytes 1.4.0",
  "fnv",
@@ -3354,7 +3354,7 @@ checksum = "348108ab3fba42ec82ff6e9564fc4ca0247bdccdc68dd8af9764bbc79c3c8ffb"
 [[package]]
 name = "librocksdb-sys"
 version = "0.8.0+7.4.4"
-source = "git+https://github.com/velas/rust-rocksdb#7330656ddd0ef00aadd623faccbdb809e1b98062"
+source = "git+https://github.com/velas/rust-rocksdb?tag=v0.19.0-only-Vadim#1aa044a51b31929f91841a7cb05c0dea7a41dfac"
 dependencies = [
  "bindgen",
  "bzip2-sys",
@@ -3446,9 +3446,9 @@ checksum = "d4d2456c373231a208ad294c33dc5bff30051eafd954cd4caae83a712b12854d"
 
 [[package]]
 name = "linux-raw-sys"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d59d8c75012853d2e872fb56bc8a2e53718e2cafe1a4c823143141c6d90c322f"
+checksum = "3f508063cc7bb32987c71511216bd5a32be15bccb6a80b52df8b9d7f01fc3aa2"
 
 [[package]]
 name = "lock_api"
@@ -5265,7 +5265,7 @@ dependencies = [
 [[package]]
 name = "rocksdb"
 version = "0.19.0"
-source = "git+https://github.com/velas/rust-rocksdb#7330656ddd0ef00aadd623faccbdb809e1b98062"
+source = "git+https://github.com/velas/rust-rocksdb?tag=v0.19.0-only-Vadim#1aa044a51b31929f91841a7cb05c0dea7a41dfac"
 dependencies = [
  "libc",
  "librocksdb-sys",
@@ -5283,9 +5283,9 @@ dependencies = [
 
 [[package]]
 name = "rustc-demangle"
-version = "0.1.22"
+version = "0.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4a36c42d1873f9a77c53bde094f9664d9891bc604a45b4798fd2c389ed12e5b"
+checksum = "d626bb9dae77e28219937af045c257c28bfd3f69333c512553507f5f9798cb76"
 
 [[package]]
 name = "rustc-hash"
@@ -5347,7 +5347,7 @@ dependencies = [
  "errno 0.3.1",
  "io-lifetimes 1.0.10",
  "libc",
- "linux-raw-sys 0.3.1",
+ "linux-raw-sys 0.3.2",
  "windows-sys 0.48.0",
 ]
 
@@ -9092,7 +9092,7 @@ checksum = "0de5f738ceab88e2491a94ddc33c3feeadfa95fedc60363ef110845df12f3878"
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/velas/triedb?tag=optimal_children_expose_error#6cef9352ebda60189a5cd4c9a424fb6dcb5e37ee"
+source = "git+https://github.com/velas/triedb?tag=optimal_children_expose_error_rocksdb_orthodox_v1#36b61aad1f92b103f1ef2044732b4c6c52bfc358"
 dependencies = [
  "anyhow",
  "bincode",

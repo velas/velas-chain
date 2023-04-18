@@ -39,9 +39,9 @@ derivative="2.2"
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
 primitive-types = "0.8.0"
-rocksdb = { git = "https://github.com/velas/rust-rocksdb", version = "0.19.0", default-features = false }
+rocksdb = { git = "https://github.com/velas/rust-rocksdb", tag = "v0.19.0-only-Vadim", default-features = false }
 
-triedb = { git = "https://github.com/velas/triedb", tag = "optimal_children_expose_error", features = ["rocksdb"] }
+triedb = { git = "https://github.com/velas/triedb", tag = "optimal_children_expose_error_rocksdb_orthodox_v1", features = ["rocksdb"] }
 
 rangemap = { version = "1.3.0", features = ["serde1"]}
 

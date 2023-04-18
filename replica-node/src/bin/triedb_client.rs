@@ -90,6 +90,7 @@ impl ParsedArgs {
         })
     }
 
+
     fn build(self) -> Result<ClientOpts, Error> {
         log::info!("building ClientOpts {:#?}", self);
 
