@@ -375,7 +375,9 @@ impl Storage<OptimisticTransactionDB> {
             path.display(),
             target.display()
         );
-        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), path)?;
+        let opts = BackupEngineOptions::new(path)?;
+        let env = Env::new()?;
+        let mut engine = BackupEngine::open(&opts, &env)?;
         engine.restore_from_latest_backup(target, target, &RestoreOptions::default())?;
 
         Ok(())
@@ -697,7 +699,10 @@ impl Storage<OptimisticTransactionDB> {
         let backup_dir = backup_dir.unwrap_or_else(|| self.location.as_ref().join(BACKUP_SUBDIR));
         info!("EVM Backup storage data into {}", backup_dir.display());
 
-        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), &backup_dir)?;
+        let opts = BackupEngineOptions::new(&backup_dir)?;
+        let env = Env::new()?;
+
+        let mut engine = BackupEngine::open(&opts, &env)?;
         if engine.get_backup_info().len() > HARD_BACKUPS_COUNT {
             // TODO: measure
             engine.purge_old_backups(HARD_BACKUPS_COUNT)?;
@@ -1058,7 +1063,7 @@ pub fn default_db_opts() -> Result<Options> {
     let mut opts = Options::default();
     opts.create_if_missing(true);
     opts.create_missing_column_families(true);
-    let mut env = Env::default()?;
+    let mut env = Env::new()?;
     env.join_all_threads();
     opts.set_env(&env);
     Ok(opts)
