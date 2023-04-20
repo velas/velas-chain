@@ -1,11 +1,12 @@
+use bytes::BufMut;
 use derive_more::{AsRef, From, Into};
 use itertools::Itertools;
-use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use triedb::empty_trie_hash;
+use triedb::rlp::{Encodable, Decodable};
 
 use crate::TransactionReceipt;
 use auto_enums::auto_enum;
@@ -94,23 +95,46 @@ impl AccountState {
 }
 
 impl Encodable for AccountState {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(3)
-            .append(&self.nonce)
-            .append(&self.balance)
-            .append(&self.code);
+    fn encode(&self,out: &mut dyn BufMut) {
+        unimplemented!();
+    }
+    fn length(&self) -> usize {
+        unimplemented!();
+        
     }
 }
 
-impl Decodable for AccountState {
-    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        Ok(Self {
-            nonce: rlp.val_at(0)?,
-            balance: rlp.val_at(1)?,
-            code: rlp.val_at(2)?,
-        })
+impl<'de> Decodable<'de> for AccountState {
+    fn decode(buf: &mut &'de [u8]) -> Result<Self, triedb::rlp::decode::DecodeError> {
+        unimplemented!();
     }
 }
+
+#[cfg(test)]
+mod account_state_old_rlp {
+    use rlp::{Decodable as OldDecodable, DecoderError as OldDecoderError, Encodable as OldEncodable, Rlp as RlpOld, RlpStream as RlpStreamOld};
+    use super::AccountState;
+    impl OldEncodable for AccountState {
+        fn rlp_append(&self, s: &mut RlpStreamOld) {
+            s.begin_list(3)
+                .append(&self.nonce)
+                .append(&self.balance)
+                .append(&self.code);
+        }
+    }
+
+    impl OldDecodable for AccountState {
+        fn decode(rlp: &RlpOld) -> Result<Self, OldDecoderError> {
+            Ok(Self {
+                nonce: rlp.val_at(0)?,
+                balance: rlp.val_at(1)?,
+                code: rlp.val_at(2)?,
+            })
+        }
+    }   
+}
+
+
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, From, Into, AsRef, Serialize, Deserialize)]
 pub struct Code(Vec<u8>);
@@ -134,16 +158,42 @@ impl Code {
 }
 
 impl Encodable for Code {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        self.0.rlp_append(s)
+    fn encode(&self,out: &mut dyn BufMut) {
+        unimplemented!();
+    }
+    fn length(&self) -> usize {
+        unimplemented!();
+        
     }
 }
 
-impl Decodable for Code {
-    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        <_>::decode(rlp).map(Self)
+impl<'de> Decodable<'de> for Code {
+    fn decode(buf: &mut &'de [u8]) -> Result<Self, triedb::rlp::decode::DecodeError> {
+        unimplemented!();
     }
 }
+
+#[cfg(test)]
+mod code_old_rlp {
+    use rlp::{Decodable as OldDecodable, DecoderError as OldDecoderError, Encodable as OldEncodable, Rlp as RlpOld, RlpStream as RlpStreamOld};
+    use super::Code;
+
+    impl OldEncodable for Code {
+        fn rlp_append(&self, s: &mut RlpStreamOld) {
+            self.0.rlp_append(s)
+        }
+    }
+
+    impl OldDecodable for Code {
+        fn decode(rlp: &RlpOld) -> Result<Self, OldDecoderError> {
+            <Vec<u8> as OldDecodable>::decode(rlp).map(Self)
+        }
+    }
+}
+
+
+
+
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 // TODO: restrict roots modification anywhere outside State Apply logic
@@ -174,24 +224,48 @@ impl Default for Account {
     }
 }
 
-impl Encodable for Account {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(4)
-            .append(&self.nonce)
-            .append(&self.balance)
-            .append(&self.storage_root)
-            .append(&self.code_hash);
+#[cfg(test)]
+mod account_old_rlp {
+    use rlp::{Decodable as OldDecodable, DecoderError as OldDecoderError, Encodable as OldEncodable, Rlp as RlpOld, RlpStream as RlpStreamOld};
+    use super::Account;
+    
+    impl OldEncodable for Account {
+        fn rlp_append(&self, s: &mut RlpStreamOld) {
+            s.begin_list(4)
+                .append(&self.nonce)
+                .append(&self.balance)
+                .append(&self.storage_root)
+                .append(&self.code_hash);
+        }
+    }
+
+    impl OldDecodable for Account {
+        fn decode(rlp: &RlpOld) -> Result<Self, OldDecoderError> {
+            Ok(Self {
+                nonce: rlp.val_at(0)?,
+                balance: rlp.val_at(1)?,
+                storage_root: rlp.val_at(2)?,
+                code_hash: rlp.val_at(3)?,
+            })
+        }
     }
 }
 
-impl Decodable for Account {
-    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        Ok(Self {
-            nonce: rlp.val_at(0)?,
-            balance: rlp.val_at(1)?,
-            storage_root: rlp.val_at(2)?,
-            code_hash: rlp.val_at(3)?,
-        })
+
+impl Encodable for Account {
+    fn encode(&self,out: &mut dyn BufMut) {
+        unimplemented!();
+    }
+    fn length(&self) -> usize {
+        unimplemented!();
+        
+    }
+}
+
+
+impl<'de> Decodable<'de> for Account {
+    fn decode(buf: &mut &'de [u8]) -> Result<Self, triedb::rlp::decode::DecodeError> {
+        unimplemented!();
     }
 }
 
@@ -347,6 +421,97 @@ pub struct BlockHeader {
     pub version: BlockVersion,
 }
 
+impl BlockHeader {
+    pub fn hash(&self) -> H256 {
+        unimplemented!();
+    }
+}
+
+impl Encodable for BlockHeader {
+    fn encode(&self,out: &mut dyn BufMut) {
+        unimplemented!();
+    }
+    fn length(&self) -> usize {
+        unimplemented!();
+        
+    }
+}
+
+#[cfg(test)]
+mod block_header_old_rlp {
+    
+    use keccak_hash::H256;
+    use primitive_types::{H160, U256};
+    use rlp::{Encodable as OldEncodable, RlpStream as RlpStreamOld};
+    use sha3::Keccak256;
+    use crate::{empty_ommers_hash, H64};
+
+    use super::BlockHeader;
+    use super::BlockVersion;
+
+    impl OldEncodable for BlockHeader {
+        fn rlp_append(&self, s: &mut RlpStreamOld) {
+            match self.version {
+                BlockVersion::InitVersion => self.rlp_append_legacy(s),
+                BlockVersion::VersionConsistentHashes => self.rlp_append_newer(s),
+            }
+        }
+    }
+    impl BlockHeader {
+        pub fn hash_old(&self) -> H256 {
+            let mut stream = RlpStreamOld::new();
+            self.rlp_append(&mut stream);
+            H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
+        }
+
+        fn rlp_append_legacy(&self, s: &mut RlpStreamOld) {
+            const EMPTH_HASH: H256 = H256::zero();
+            const EXTRA_DATA: &[u8; 32] = b"Velas EVM compatibility layer...";
+            let extra_data = H256::from_slice(EXTRA_DATA);
+            s.begin_list(15);
+            s.append(&self.parent_hash);
+            s.append(&EMPTH_HASH); // ommers/unkles is impossible
+            s.append(&H160::from(EMPTH_HASH)); // Beneficiar address is empty, because reward received in native chain
+            s.append(&self.state_root);
+            s.append(&self.transactions_root);
+            s.append(&self.receipts_root);
+            s.append(&self.logs_bloom);
+            s.append(&EMPTH_HASH); // difficulty, is emtpy
+            s.append(&U256::from(self.block_number));
+            s.append(&U256::from(self.gas_limit));
+            s.append(&U256::from(self.gas_used));
+            s.append(&self.timestamp);
+            s.append(&extra_data);
+            s.append(&self.native_chain_hash); // mix hash is not available in PoS chains, using native chain hash.
+            s.append(&self.native_chain_slot); // nonce like mix hash is not available in PoS, using native chain slot.
+        }
+
+        fn rlp_append_newer(&self, s: &mut RlpStreamOld) {
+            const EMPTH_HASH: H256 = H256::zero();
+            const ZERO_DIFFICULTY: U256 = U256::zero();
+            const EXTRA_DATA: &[u8; 32] = b"Velas EVM compatibility layer.v2";
+            let extra_data = H256::from_slice(EXTRA_DATA);
+            let nonce = H64::from_low_u64_be(self.native_chain_slot);
+            s.begin_list(15);
+            s.append(&self.parent_hash);
+            s.append(&empty_ommers_hash()); // ommers/unkles is impossible
+            s.append(&H160::from(EMPTH_HASH)); // Beneficiar address is empty, because reward received in native chain
+            s.append(&self.state_root);
+            s.append(&self.transactions_root);
+            s.append(&self.receipts_root);
+            s.append(&self.logs_bloom);
+            s.append(&ZERO_DIFFICULTY); // difficulty, is zero
+            s.append(&U256::from(self.block_number));
+            s.append(&U256::from(self.gas_limit));
+            s.append(&U256::from(self.gas_used));
+            s.append(&self.timestamp);
+            s.append(&extra_data);
+            s.append(&self.native_chain_hash); // mix hash is not available in PoS chains, using native chain hash.
+            s.append(&nonce); // nonce like mix hash is not available in PoS, using native chain slot but as 8 bytes array.
+        }
+    }
+}
+
 // TODO: Add transactions in block
 impl BlockHeader {
     #[allow(clippy::too_many_arguments)]
@@ -394,57 +559,8 @@ impl BlockHeader {
         }
     }
 
-    pub fn hash(&self) -> H256 {
-        let mut stream = RlpStream::new();
-        self.rlp_append(&mut stream);
-        H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
-    }
 
-    pub fn rlp_append_legacy(&self, s: &mut RlpStream) {
-        const EMPTH_HASH: H256 = H256::zero();
-        const EXTRA_DATA: &[u8; 32] = b"Velas EVM compatibility layer...";
-        let extra_data = H256::from_slice(EXTRA_DATA);
-        s.begin_list(15);
-        s.append(&self.parent_hash);
-        s.append(&EMPTH_HASH); // ommers/unkles is impossible
-        s.append(&H160::from(EMPTH_HASH)); // Beneficiar address is empty, because reward received in native chain
-        s.append(&self.state_root);
-        s.append(&self.transactions_root);
-        s.append(&self.receipts_root);
-        s.append(&self.logs_bloom);
-        s.append(&EMPTH_HASH); // difficulty, is emtpy
-        s.append(&U256::from(self.block_number));
-        s.append(&U256::from(self.gas_limit));
-        s.append(&U256::from(self.gas_used));
-        s.append(&self.timestamp);
-        s.append(&extra_data);
-        s.append(&self.native_chain_hash); // mix hash is not available in PoS chains, using native chain hash.
-        s.append(&self.native_chain_slot); // nonce like mix hash is not available in PoS, using native chain slot.
-    }
 
-    pub fn rlp_append_newer(&self, s: &mut RlpStream) {
-        const EMPTH_HASH: H256 = H256::zero();
-        const ZERO_DIFFICULTY: U256 = U256::zero();
-        const EXTRA_DATA: &[u8; 32] = b"Velas EVM compatibility layer.v2";
-        let extra_data = H256::from_slice(EXTRA_DATA);
-        let nonce = H64::from_low_u64_be(self.native_chain_slot);
-        s.begin_list(15);
-        s.append(&self.parent_hash);
-        s.append(&empty_ommers_hash()); // ommers/unkles is impossible
-        s.append(&H160::from(EMPTH_HASH)); // Beneficiar address is empty, because reward received in native chain
-        s.append(&self.state_root);
-        s.append(&self.transactions_root);
-        s.append(&self.receipts_root);
-        s.append(&self.logs_bloom);
-        s.append(&ZERO_DIFFICULTY); // difficulty, is zero
-        s.append(&U256::from(self.block_number));
-        s.append(&U256::from(self.gas_limit));
-        s.append(&U256::from(self.gas_used));
-        s.append(&self.timestamp);
-        s.append(&extra_data);
-        s.append(&self.native_chain_hash); // mix hash is not available in PoS chains, using native chain hash.
-        s.append(&nonce); // nonce like mix hash is not available in PoS, using native chain slot but as 8 bytes array.
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -453,14 +569,6 @@ pub struct Block {
     pub transactions: Vec<(crate::H256, TransactionReceipt)>,
 }
 
-impl Encodable for BlockHeader {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        match self.version {
-            BlockVersion::InitVersion => self.rlp_append_legacy(s),
-            BlockVersion::VersionConsistentHashes => self.rlp_append_newer(s),
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Maybe<T> {
@@ -480,10 +588,11 @@ impl<T> From<Maybe<T>> for Option<T> {
 mod transaction_roots {
 
     use crate::{Log, TransactionReceipt, H256, U256};
+    use bytes::BufMut;
     use ethbloom::Bloom;
-    use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
     use triedb::gc::{MapWithCounterCached, TrieCollection};
     use triedb::FixedTrieMut;
+    use triedb::rlp::{Encodable, Decodable};
 
     #[derive(Clone, Debug)]
     pub struct EthereumReceipt {
@@ -491,6 +600,22 @@ mod transaction_roots {
         pub log_bloom: Bloom,
         pub logs: Vec<Log>,
         pub status: u8,
+    }
+
+    impl Encodable for EthereumReceipt {
+        fn encode(&self,out: &mut dyn BufMut) {
+            unimplemented!();
+        }
+        fn length(&self) -> usize {
+            unimplemented!();
+        
+        }
+    }
+
+    impl<'de> Decodable<'de> for EthereumReceipt {
+        fn decode(buf: &mut &'de [u8]) -> Result<Self, triedb::rlp::decode::DecodeError> {
+            unimplemented!();
+        }
     }
 
     impl<'a> From<&'a TransactionReceipt> for EthereumReceipt {
@@ -503,33 +628,41 @@ mod transaction_roots {
             }
         }
     }
+    #[cfg(test)]
+    mod ethereum_receipt_old_rlp {
 
-    impl Encodable for EthereumReceipt {
-        fn rlp_append(&self, s: &mut RlpStream) {
-            s.begin_list(4);
-            s.append(&self.status);
-            s.append(&self.gas_used);
-            s.append(&self.log_bloom);
-            s.append_list(&self.logs);
+        use rlp::{Decodable as OldDecodable, DecoderError as OldDecoderError, Encodable as OldEncodable, Rlp as RlpOld, RlpStream as RlpStreamOld};
+        use super::EthereumReceipt;
+        
+        impl OldEncodable for EthereumReceipt {
+            fn rlp_append(&self, s: &mut RlpStreamOld) {
+                s.begin_list(4);
+                s.append(&self.status);
+                s.append(&self.gas_used);
+                s.append(&self.log_bloom);
+                s.append_list(&self.logs);
+            }
+        }
+
+        impl OldDecodable for EthereumReceipt {
+            fn decode(rlp: &RlpOld<'_>) -> Result<Self, OldDecoderError> {
+                Ok(EthereumReceipt {
+                    gas_used: rlp.val_at(1)?,
+                    log_bloom: rlp.val_at(2)?,
+                    logs: rlp.list_at(3)?,
+                    status: rlp.val_at(0)?,
+                })
+            }
         }
     }
 
-    impl Decodable for EthereumReceipt {
-        fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
-            Ok(EthereumReceipt {
-                gas_used: rlp.val_at(1)?,
-                log_bloom: rlp.val_at(2)?,
-                logs: rlp.list_at(3)?,
-                status: rlp.val_at(0)?,
-            })
-        }
-    }
+
 
     pub fn transactions_root<'a>(receipts: impl Iterator<Item = &'a TransactionReceipt>) -> H256 {
         fn no_childs(_: &[u8]) -> Vec<H256> {
             vec![]
         }
-        let trie_c = TrieCollection::new(MapWithCounterCached::default());
+        let trie_c: TrieCollection<_> = TrieCollection::new(MapWithCounterCached::default());
 
         let mut root = trie_c.empty_guard(no_childs);
         for (i, receipt) in receipts.enumerate() {
@@ -619,7 +752,7 @@ mod tests {
 
     // Ethereum header type for tests
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct Header {
+    pub struct TestHeader {
         pub parent_hash: H256,
         pub ommers_hash: H256,
         pub beneficiary: Address,
@@ -637,7 +770,7 @@ mod tests {
         pub nonce: H64,
     }
 
-    impl Encodable for Header {
+    impl OldEncodable for TestHeader {
         fn rlp_append(&self, s: &mut RlpStream) {
             s.begin_list(15);
             s.append(&self.parent_hash);
@@ -658,8 +791,8 @@ mod tests {
         }
     }
 
-    impl Decodable for Header {
-        fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+    impl OldDecodable for TestHeader {
+        fn decode(rlp: &Rlp) -> Result<Self, OldDecoderError> {
             Ok(Self {
                 parent_hash: rlp.val_at(0)?,
                 ommers_hash: rlp.val_at(1)?,
@@ -931,7 +1064,7 @@ mod tests {
         let block_bytes = block.rlp_bytes();
         println!("debug {:x}", block_bytes);
         let rlp = Rlp::new(&block_bytes);
-        let header: Header = rlp.as_val().unwrap();
+        let header: TestHeader = rlp.as_val().unwrap();
         assert_eq!(
             Keccak256::digest(&rlp::encode(&header).to_vec()).as_slice(),
             block.hash().as_bytes()
@@ -1003,7 +1136,7 @@ mod tests {
         println!("debug {:x}", block_bytes);
 
         let rlp = Rlp::new(&block_bytes);
-        let header: Header = rlp.as_val().unwrap();
+        let header: TestHeader = rlp.as_val().unwrap();
         assert_eq!(
             Keccak256::digest(&rlp::encode(&header).to_vec()).as_slice(),
             block.hash().as_bytes()

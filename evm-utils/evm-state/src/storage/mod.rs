@@ -13,7 +13,6 @@ use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
 use derive_more::{AsRef, Deref};
 use lazy_static::lazy_static;
 use log::*;
-use rlp::{Decodable, Encodable};
 use rocksdb::{
     backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
     db::{DBInner, DBWithThreadModeInner},
@@ -32,6 +31,7 @@ use triedb::{
     gc::{DatabaseTrieMut, DbCounter, TrieCollection},
     rocksdb::{RocksDatabaseHandleGC, RocksHandle},
     FixedSecureTrieMut,
+    rlp::Encodable, rlp::Decodable,
 };
 
 pub mod inspectors;
@@ -371,7 +371,7 @@ impl Storage<OptimisticTransactionDBInner> {
         }
     }
 
-    pub fn typed_for<K: AsRef<[u8]>, V: Encodable + Decodable>(
+    pub fn typed_for<K: AsRef<[u8]>, V: Encodable + for<'r> Decodable<'r>>(
         &self,
         root: H256,
     ) -> FixedSecureTrieMut<DatabaseTrieMut<RocksHandle<&DB>>, K, V> {
@@ -633,7 +633,7 @@ impl Storage<OptimisticTransactionDBInner> {
 static SECONDARY_MODE_PATH_SUFFIX: &str = "velas-secondary";
 
 fn account_extractor(data: &[u8]) -> Vec<H256> {
-    if let Ok(account) = rlp::decode::<Account>(data) {
+    if let Ok(account) = triedb::rlp::decode::<Account>(data) {
         vec![account.storage_root]
     } else {
         vec![] // this trie is mixed collection, and can contain storage values among with accounts
@@ -730,7 +730,7 @@ impl<D: DBInner> std::fmt::Debug for DbWithClose<D> {
 }
 pub trait SubStorage {
     const COLUMN_NAME: &'static str;
-    type Key: Encodable + Decodable;
+    type Key: Encodable + for<'de> Decodable<'de>;
     type Value: Serialize + DeserializeOwned;
 }
 
@@ -781,7 +781,7 @@ where
 {
     pub fn get<S: SubStorage>(&self, key: S::Key) -> Option<S::Value> {
         let cf = self.cf::<S>();
-        let key_bytes = rlp::encode(&key);
+        let key_bytes = triedb::rlp::encode(&key);
 
         self.db
             .get_pinned_cf(cf, key_bytes)
@@ -795,7 +795,7 @@ where
 
     pub fn set<S: SubStorage>(&self, key: S::Key, value: S::Value) {
         let cf = self.cf::<S>();
-        let key_bytes = rlp::encode(&key);
+        let key_bytes = triedb::rlp::encode(&key);
         let value_bytes = CODER.serialize(&value).expect("Unable to serialize value");
         self.db
             .put_cf(cf, key_bytes, value_bytes)
