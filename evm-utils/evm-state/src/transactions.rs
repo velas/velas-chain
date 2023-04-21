@@ -1,10 +1,12 @@
 use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
+use bytes::BufMut;
 use evm::{backend::Log, ExitReason, ExitRevert};
 use primitive_types::{H160, H256, U256};
-use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+use rlp::{Decodable as DecodableOld, DecoderError, Encodable as EncodableOld, Rlp, RlpStream};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::str::FromStr;
+use triedb::rlp::{Encodable, Decodable};
 
 use crate::error::*;
 use secp256k1::{
@@ -137,7 +139,8 @@ pub struct UnsignedTransaction {
 }
 
 impl UnsignedTransaction {
-    fn signing_rlp_append(&self, s: &mut RlpStream, chain_id: Option<u64>) {
+    #[cfg(test)]
+    fn signing_rlp_append_old(&self, s: &mut RlpStream, chain_id: Option<u64>) {
         s.begin_list(if chain_id.is_some() { 9 } else { 6 });
         s.append(&self.nonce);
         s.append(&self.gas_price);
@@ -152,11 +155,19 @@ impl UnsignedTransaction {
             s.append(&0u8);
         }
     }
+    fn signing_rlp_append(&self, chain_id: Option<u64>) {
+        unimplemented!();
+    }
+    
+    #[cfg(test)]
+    pub fn signing_hash_old(&self, chain_id: Option<u64>) -> H256 {
+        let mut stream = RlpStream::new();
+        self.signing_rlp_append_old(&mut stream, chain_id);
+        H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
+    }
 
     pub fn signing_hash(&self, chain_id: Option<u64>) -> H256 {
-        let mut stream = RlpStream::new();
-        self.signing_rlp_append(&mut stream, chain_id);
-        H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
+        unimplemented!();
     }
 
     pub fn sign(self, key: &SecretKey, chain_id: Option<u64>) -> Transaction {
@@ -296,7 +307,7 @@ impl TransactionSignature {
     }
 }
 
-impl Encodable for TransactionAction {
+impl EncodableOld for TransactionAction {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self {
             TransactionAction::Call(address) => {
@@ -309,7 +320,7 @@ impl Encodable for TransactionAction {
     }
 }
 
-impl Decodable for TransactionAction {
+impl DecodableOld for TransactionAction {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         Ok(if rlp.is_empty() {
             if rlp.is_data() {
@@ -323,7 +334,7 @@ impl Decodable for TransactionAction {
     }
 }
 
-impl Encodable for Transaction {
+impl EncodableOld for Transaction {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.begin_list(9);
         s.append(&self.nonce);
@@ -338,7 +349,7 @@ impl Encodable for Transaction {
     }
 }
 
-impl Decodable for Transaction {
+impl DecodableOld for Transaction {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         Ok(Self {
             nonce: rlp.val_at(0)?,
@@ -356,7 +367,7 @@ impl Decodable for Transaction {
     }
 }
 
-impl Encodable for UnsignedTransaction {
+impl EncodableOld for UnsignedTransaction {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.begin_list(6);
         s.append(&self.nonce);
@@ -368,7 +379,7 @@ impl Encodable for UnsignedTransaction {
     }
 }
 
-impl Decodable for UnsignedTransaction {
+impl DecodableOld for UnsignedTransaction {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         Ok(Self {
             nonce: rlp.val_at(0)?,
@@ -410,6 +421,22 @@ impl TransactionInReceipt {
 }
 
 impl Encodable for TransactionInReceipt {
+
+    fn encode(&self,out: &mut dyn BufMut) {
+        unimplemented!();
+    }
+    fn length(&self) -> usize {
+        unimplemented!();
+
+    }
+}
+
+impl<'de> Decodable<'de> for TransactionInReceipt {
+    fn decode(buf: &mut &'de [u8]) -> Result<Self, triedb::rlp::decode::DecodeError> {
+        unimplemented!();
+    }
+}
+impl EncodableOld for TransactionInReceipt {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self {
             TransactionInReceipt::Signed(tx) => {
@@ -434,7 +461,7 @@ impl From<UnsignedTransactionWithCaller> for TransactionInReceipt {
     }
 }
 
-impl Decodable for TransactionInReceipt {
+impl DecodableOld for TransactionInReceipt {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         let items = rlp.item_count()?;
         Ok(match items {
@@ -463,7 +490,7 @@ pub struct UnsignedTransactionWithCaller {
     pub signed_compatible: bool,
 }
 
-impl Encodable for UnsignedTransactionWithCaller {
+impl EncodableOld for UnsignedTransactionWithCaller {
     fn rlp_append(&self, s: &mut RlpStream) {
         let chain_id = self.chain_id;
         if self.signed_compatible {
@@ -646,9 +673,9 @@ mod test {
         let chain_id = 0x77;
 
         let mut stream = RlpStream::new();
-        tx.signing_rlp_append(&mut stream, Some(chain_id));
+        tx.signing_rlp_append_old(&mut stream, Some(chain_id));
         println!("rlp = {}", hex::encode(stream.out()));
-        println!("hash = {:x}", tx.signing_hash(Some(chain_id)));
+        println!("hash = {:x}", tx.signing_hash_old(Some(chain_id)));
 
         let tx = tx.sign(&secret_key, Some(chain_id));
         assert_eq!(tx.signature.chain_id(), Some(chain_id));

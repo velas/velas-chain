@@ -49,7 +49,7 @@ pub mod encoding {
     where
         T: DataInspector<K, V>,
         K: TryFromSlice,
-        V: rlp::Decodable,
+        V: for<'r> triedb::rlp::Decodable<'r>,
     {
         fn inspect_data_raw<Data: AsRef<[u8]>>(&self, key: Vec<u8>, value: Data) -> Result<()> {
             let key = TryFromSlice::try_from_slice(&key)?;
@@ -93,11 +93,11 @@ pub mod encoding {
 
     fn data_from_bytes<Data: AsRef<[u8]>, Value>(data: Data) -> Result<Value>
     where
-        Value: rlp::Decodable,
+        Value: for<'r> triedb::rlp::Decodable<'r>,
     {
-        let rlp = rlp::Rlp::new(data.as_ref());
-        trace!("rlp: {:?}", rlp);
-        let t = Value::decode(&rlp)?;
+        trace!("rlp: {:?}", hexutil::to_hex(data.as_ref()));
+
+        let t = triedb::rlp::decode(data.as_ref())?;
         Ok(t)
     }
 }

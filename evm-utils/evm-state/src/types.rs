@@ -1,11 +1,13 @@
+use bytes::{BufMut, Buf};
 use derive_more::{AsRef, From, Into};
 use itertools::Itertools;
-use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+use rlp::{Decodable as DecodableOld, DecoderError as OldDecoderError, Encodable as EncodableOld, Rlp, RlpStream};
 
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use triedb::empty_trie_hash;
+use triedb::rlp::{Encodable, Decodable};
 
 use crate::TransactionReceipt;
 use auto_enums::auto_enum;
@@ -93,7 +95,7 @@ impl AccountState {
     }
 }
 
-impl Encodable for AccountState {
+impl EncodableOld for AccountState {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.begin_list(3)
             .append(&self.nonce)
@@ -102,8 +104,8 @@ impl Encodable for AccountState {
     }
 }
 
-impl Decodable for AccountState {
-    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+impl DecodableOld for AccountState {
+    fn decode(rlp: &Rlp) -> Result<Self, OldDecoderError> {
         Ok(Self {
             nonce: rlp.val_at(0)?,
             balance: rlp.val_at(1)?,
@@ -133,15 +135,15 @@ impl Code {
     }
 }
 
-impl Encodable for Code {
+impl EncodableOld for Code {
     fn rlp_append(&self, s: &mut RlpStream) {
         self.0.rlp_append(s)
     }
 }
 
-impl Decodable for Code {
-    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        <_>::decode(rlp).map(Self)
+impl DecodableOld for Code {
+    fn decode(rlp: &Rlp) -> Result<Self, OldDecoderError> {
+        <Vec<u8> as rlp::Decodable>::decode(rlp).map(Self)
     }
 }
 
@@ -153,6 +155,7 @@ pub struct Account {
     pub storage_root: H256,
     pub code_hash: H256,
 }
+
 
 impl Account {
     pub fn is_empty(&self) -> bool {
@@ -174,7 +177,8 @@ impl Default for Account {
     }
 }
 
-impl Encodable for Account {
+#[cfg(test)]
+impl EncodableOld for Account {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.begin_list(4)
             .append(&self.nonce)
@@ -183,9 +187,61 @@ impl Encodable for Account {
             .append(&self.code_hash);
     }
 }
+impl Encodable for Account {
+    fn encode(&self,out: &mut dyn BufMut) {
 
-impl Decodable for Account {
-    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        let len = self.nonce.length() + self.balance.length() + self.storage_root.length() + self.code_hash.length();
+        fastrlp::Header {
+            list: true,
+            payload_length: len,
+        }.encode(out);
+        self.nonce.encode(out);
+        self.balance.encode(out);
+        self.storage_root.encode(out);
+        self.code_hash.encode(out);
+    }
+
+    fn length(&self) -> usize {
+
+        let len = self.nonce.length() + self.balance.length() + self.storage_root.length() + self.code_hash.length();
+        fastrlp::Header {
+            list: true,
+            payload_length: len,
+        }
+        .length()
+            + len
+
+    }
+}
+
+
+impl<'de> Decodable<'de> for Account {
+    fn decode(buf: &mut &'de [u8]) -> Result<Self, fastrlp::DecodeError> {
+        let h = fastrlp::Header::decode(buf)?;
+        if !h.list {
+            return Err(fastrlp::DecodeError::UnexpectedString);
+        }
+        let payload_view = &mut &buf[..h.payload_length];
+        let cnt = fastrlp::count(*payload_view)?;
+        if cnt!= 4 {
+            return Err(fastrlp::DecodeError::ListLengthMismatch { expected: 4, got: cnt });
+        }
+
+        let nonce = fastrlp::Decodable::decode(payload_view)?;
+        let balance = fastrlp::Decodable::decode(payload_view)?;
+        let storage_root= fastrlp::Decodable::decode(payload_view)?;
+        let code_hash = fastrlp::Decodable::decode(payload_view)?;
+        buf.advance(h.payload_length);
+        Ok(Self {
+            nonce, balance, storage_root, code_hash,
+        })
+    }
+}
+
+
+#[cfg(test)]
+impl DecodableOld for Account {
+    fn decode(rlp: &Rlp) -> Result<Self, OldDecoderError> {
         Ok(Self {
             nonce: rlp.val_at(0)?,
             balance: rlp.val_at(1)?,
@@ -453,7 +509,7 @@ pub struct Block {
     pub transactions: Vec<(crate::H256, TransactionReceipt)>,
 }
 
-impl Encodable for BlockHeader {
+impl EncodableOld for BlockHeader {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self.version {
             BlockVersion::InitVersion => self.rlp_append_legacy(s),
@@ -477,15 +533,19 @@ impl<T> From<Maybe<T>> for Option<T> {
     }
 }
 
-mod transaction_roots {
+pub(super) mod transaction_roots {
 
     use crate::{Log, TransactionReceipt, H256, U256};
+    use bytes::{BufMut, Buf};
     use ethbloom::Bloom;
-    use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+    #[cfg(test)]
+    use rlp::{Decodable as DecodableOld, DecoderError as OldDecoderError, Encodable as EncodableOld, Rlp, RlpStream};
     use triedb::gc::{MapWithCounterCached, TrieCollection};
     use triedb::FixedTrieMut;
+    use triedb::rlp::{Encodable, Decodable};
 
-    #[derive(Clone, Debug)]
+
+    #[derive(Clone, Debug, PartialEq,)]
     pub struct EthereumReceipt {
         pub gas_used: U256,
         pub log_bloom: Bloom,
@@ -504,7 +564,59 @@ mod transaction_roots {
         }
     }
 
+
     impl Encodable for EthereumReceipt {
+        fn encode(&self,out: &mut dyn BufMut) {
+            let len = self.status.length() + self.gas_used.length() + self.log_bloom.length() + self.logs.length();
+            fastrlp::Header {
+                list: true,
+                payload_length: len,
+            }.encode(out);
+            self.status.encode(out);
+            self.gas_used.encode(out);
+            self.log_bloom.encode(out);
+            self.logs.encode(out);
+        }
+
+        fn length(&self) -> usize {
+            let len = self.status.length() + self.gas_used.length() + self.log_bloom.length() + self.logs.length();
+            fastrlp::Header {
+                list: true,
+                payload_length: len,
+            }
+            .length()
+                + len
+
+        }
+    }
+
+
+
+    impl<'de> Decodable<'de> for EthereumReceipt {
+        fn decode(buf: &mut &'de [u8]) -> Result<Self, triedb::rlp::decode::DecodeError> {
+            let h = fastrlp::Header::decode(buf)?;
+            if !h.list {
+                return Err(fastrlp::DecodeError::UnexpectedString);
+            }
+            let payload_view = &mut &buf[..h.payload_length];
+            let cnt = fastrlp::count(*payload_view)?;
+            if cnt!= 4 {
+                return Err(fastrlp::DecodeError::ListLengthMismatch { expected: 4, got: cnt });
+            }
+    
+            let status = fastrlp::Decodable::decode(payload_view)?;
+            let gas_used = fastrlp::Decodable::decode(payload_view)?;
+            let log_bloom= fastrlp::Decodable::decode(payload_view)?;
+            let logs = fastrlp::Decodable::decode(payload_view)?;
+            buf.advance(h.payload_length);
+            Ok(Self {
+                status, gas_used, log_bloom, logs,
+            })
+        }
+    }
+
+    #[cfg(test)]
+    impl EncodableOld for EthereumReceipt {
         fn rlp_append(&self, s: &mut RlpStream) {
             s.begin_list(4);
             s.append(&self.status);
@@ -514,8 +626,9 @@ mod transaction_roots {
         }
     }
 
-    impl Decodable for EthereumReceipt {
-        fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+    #[cfg(test)]
+    impl DecodableOld for EthereumReceipt {
+        fn decode(rlp: &Rlp<'_>) -> Result<Self, OldDecoderError> {
             Ok(EthereumReceipt {
                 gas_used: rlp.val_at(1)?,
                 log_bloom: rlp.val_at(2)?,
@@ -637,7 +750,7 @@ mod tests {
         pub nonce: H64,
     }
 
-    impl Encodable for Header {
+    impl EncodableOld for Header {
         fn rlp_append(&self, s: &mut RlpStream) {
             s.begin_list(15);
             s.append(&self.parent_hash);
@@ -658,8 +771,8 @@ mod tests {
         }
     }
 
-    impl Decodable for Header {
-        fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+    impl DecodableOld for Header {
+        fn decode(rlp: &Rlp) -> Result<Self, OldDecoderError> {
             Ok(Self {
                 parent_hash: rlp.val_at(0)?,
                 ommers_hash: rlp.val_at(1)?,

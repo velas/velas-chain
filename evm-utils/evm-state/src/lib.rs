@@ -18,6 +18,8 @@ pub use ethbloom::Bloom;
 pub use traces::*;
 pub use transactions::*;
 pub use types::*;
+#[cfg(test)]
+mod rlp_roundtrip_tests;
 
 pub use {
     context::{ChainContext, EvmConfig},
