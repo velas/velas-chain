@@ -32,7 +32,9 @@ use {
     solana_runtime::hardened_unpack::{unpack_genesis_archive, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
     solana_sdk::{
         clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
-        genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
+        genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, 
+            evm_genesis::{OpenEthereumAccountExtractor, GethAccountExtractor}
+        },
         hash::Hash,
         pubkey::Pubkey,
         sanitize::Sanitize,
@@ -70,6 +72,7 @@ use {
     thiserror::Error,
     trees::{Tree, TreeWalk},
 };
+
 pub use crate::blockstore_db::BlockstoreError;
 
 pub mod blockstore_purge;
@@ -4050,19 +4053,35 @@ fn slot_has_updates(slot_meta: &SlotMeta, slot_meta_backup: &Option<SlotMeta>) -
         (slot_meta_backup.is_some() && slot_meta_backup.as_ref().unwrap().consumed != slot_meta.consumed))
 }
 
+pub enum EvmStateJson<'a> {
+    OpenEthereum(&'a Path),
+    Geth(&'a Path),
+    None
+}
+
 // Creates a new ledger with slot 0 full of ticks (and only ticks).
 //
 // Returns the blockhash that can be used to append entries with.
 pub fn create_new_ledger(
     ledger_path: &Path,
-    evm_state_json: Option<&Path>,
+    evm_state_json: EvmStateJson,
     genesis_config: &GenesisConfig,
     max_genesis_archive_unpacked_size: u64,
     access_type: AccessType,
 ) -> Result<Hash> {
     Blockstore::destroy(ledger_path)?;
 
-    genesis_config.generate_evm_state(ledger_path, evm_state_json)?;
+    match evm_state_json {
+        EvmStateJson::OpenEthereum(path) => {
+            let extractor = OpenEthereumAccountExtractor::open_dump(path).unwrap();
+            genesis_config.generate_evm_state_from_dump(ledger_path, extractor)?;
+        },
+        EvmStateJson::Geth(path) => {
+            let extractor = GethAccountExtractor::open_dump(path).unwrap();
+            genesis_config.generate_evm_state_from_dump(ledger_path, extractor)?;
+        },
+        EvmStateJson::None => genesis_config.generate_evm_state_empty(ledger_path)?,
+    }
     genesis_config.write(ledger_path)?;
 
     // Fill slot 0 with ticks that link back to the genesis_config to bootstrap the ledger.
@@ -4302,7 +4321,7 @@ pub fn create_new_ledger_from_name_auto_delete(
         solana_sdk::genesis_config::evm_genesis::generate_evm_state_json(&evm_state_json).unwrap();
     let blockhash = create_new_ledger(
         ledger_path.path(),
-        Some(evm_state_json.as_ref()),
+        EvmStateJson::OpenEthereum(evm_state_json.as_ref()),
         genesis_config,
         MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         access_type,
