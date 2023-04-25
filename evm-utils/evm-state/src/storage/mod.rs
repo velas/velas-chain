@@ -696,35 +696,6 @@ impl Storage<OptimisticTransactionDBInner> {
         accounts: impl IntoIterator<Item = (H256, evm::backend::MemoryAccount)>,
         state_root: H256,
     ) -> H256 {
-        use std::collections::hash_map::Entry::*;
-
-        fn set_account_state(
-            state_updates: &mut ChangedState,
-            address: H256,
-            account_state: AccountState,
-        ) {
-            match state_updates.entry(address) {
-                Occupied(mut e) => {
-                    e.get_mut().0 = Maybe::Just(account_state);
-                }
-                Vacant(e) => {
-                    e.insert((Maybe::Just(account_state), HashMap::new()));
-                }
-            };
-        }
-
-        fn ext_storage(
-            state_updates: &mut ChangedState,
-            address: H256,
-            indexed_values: impl IntoIterator<Item = (H256, H256)>,
-        ) {
-            let (_, storage) = state_updates
-                .entry(address)
-                .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()));
-
-            storage.extend(indexed_values);
-        }
-
         let mut state_updates: ChangedState = HashMap::new();
 
         for (
@@ -743,8 +714,15 @@ impl Storage<OptimisticTransactionDBInner> {
                 code: code.into(),
             };
 
-            set_account_state(&mut state_updates, address, account_state);
-            ext_storage(&mut state_updates, address, storage);
+            state_updates
+                .entry(address)
+                .or_insert((Maybe::Nothing, HashMap::new()))
+                .0 = Maybe::Just(account_state);
+            
+            state_updates
+                .entry(address)
+                .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()))
+                .1.extend(storage);
         }
 
         self.flush_changes_hashed(state_root, state_updates)
