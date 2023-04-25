@@ -11,11 +11,9 @@ use std::{
 
 use solana_ledger::{blockstore::Blockstore, blockstore_db::AccessType};
 use solana_replica_lib::triedb::{
-    {Config, RangeSource, HeightIndexSource, ParseError},
     error::{evm_height, RangeJsonInitError},
-    server::{
-        RunError, RunningService, StartError, UsedStorage,
-    },
+    server::{RunError, RunningService, StartError, UsedStorage},
+    {Config, HeightIndexSource, ParseError, RangeSource},
 };
 
 use {
@@ -71,7 +69,7 @@ pub fn main() -> Result<(), Error> {
                 .long("gc")
                 .required(false)
                 .takes_value(false)
-                .help("whether to open evm_state_db in secondary mode"),
+                .help("whether to open evm_state_db with gc_enabled"),
         )
         .arg(
             Arg::with_name("secondary_mode")
@@ -113,6 +111,7 @@ pub fn main() -> Result<(), Error> {
                 .value_name("FILE")
                 .takes_value(true)
                 .required(false)
+                .required_if("range_source", "json")
                 .help("FILE with json of `RangeJSON` serialization"),
         )
         .arg(
@@ -129,6 +128,10 @@ pub fn main() -> Result<(), Error> {
                 .value_name("DIR")
                 .takes_value(true)
                 .required(false)
+                .required_ifs(&[
+                    ("range_source", "solana_blockstore"),
+                    ("height_index_source", "solana_blockstore"),
+                ])
                 .help("PATH of blockstore local storage for range and/or state root index"),
         )
         .arg(

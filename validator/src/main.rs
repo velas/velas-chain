@@ -603,6 +603,8 @@ pub fn main() {
                 .long("evm-state-rpc-port")
                 .value_name("PORT")
                 .takes_value(true)
+                .requires("evm_state_archive_path")
+                .requires("evm_height_index_source")
                 .validator(velas_validator::port_validator)
                 .help("Enable evm state rpc on this port"),
         )
