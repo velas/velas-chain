@@ -22,6 +22,7 @@ use {
     bincode::{deserialize, serialize},
     chrono::{TimeZone, Utc},
     evm_state::H256,
+    itertools::Itertools,
     log::warn,
     memmap2::Mmap,
     std::{
@@ -240,45 +241,50 @@ impl GenesisConfig {
         dump_extractor: Option<impl EvmAccountDumpExtractor>,
     ) -> Result<(), std::io::Error> {
         std::fs::create_dir_all(ledger_path)?;
-        if let Some(mut dump_extractor) = dump_extractor {
+
+        if let Some(dump_extractor) = dump_extractor {
+            // Group accounts from iterator into chunks of `MAX_IN_HEAP_EVM_ACCOUNTS_BYTES` heap bytes
+            let chunks = dump_extractor.batching(|iter| {
+                let mut chunk = vec![];
+                let mut chunk_heap_bytes: usize = 0;
+
+                loop {
+                    match iter.next() {
+                        Some(Ok(AccountPair { encoded_key, account })) => {
+                            // Heap size calculation is rough
+                            chunk_heap_bytes += account.code.capacity() + account.storage.len() * 64;
+                            chunk.push((encoded_key, account));
+                            if chunk_heap_bytes > MAX_IN_HEAP_EVM_ACCOUNTS_BYTES {
+                                break;
+                            }
+                        },
+                        Some(Err(err)) => return Some(Err(err)),
+                        None => break
+                    }
+                }
+
+                if chunk.is_empty() {
+                    return None
+                } else {
+                    return Some(Ok(chunk))
+                }
+            });
+
             let mut storage = Storage::open_persistent(ledger_path, true).unwrap();
             let mut state_root = evm_state::empty_trie_hash();
 
-            let mut chunk = vec![];
-            let mut chunk_heap_bytes: usize = 0;
-            let mut accounts_pointer: usize = 1;
-            let mut no_more_accounts = false;
-            loop {
-                let pair = dump_extractor.next();
-                match pair {
-                    Some(Ok(AccountPair {
-                        encoded_key,
-                        account,
-                    })) => {
-                        chunk_heap_bytes += account.code.capacity() + account.storage.len() * 16;
-                        chunk.push((encoded_key, account));
-                        accounts_pointer += 1;
-                    }
-                    Some(Err(err)) => return Err(err),
-                    None => no_more_accounts = true,
-                }
-
-                if chunk_heap_bytes > MAX_IN_HEAP_EVM_ACCOUNTS_BYTES || no_more_accounts {
-                    log::info!(
-                        "Adding {} accounts to storage. Account pointer: {}",
-                        chunk.len(),
-                        accounts_pointer
-                    );
-                    state_root = storage.set_initial(mem::take(&mut chunk), state_root);
-                    chunk_heap_bytes = 0;
-                }
-
-                if no_more_accounts {
-                    assert_eq!(state_root, self.evm_root_hash);
-                    // TOOD: assert block number, and parent block_hash
-                    break;
-                }
+            let mut total_written = 0;
+            for chunk in chunks {
+                let chunk = chunk?;
+                total_written += chunk.len();
+                log::info!(
+                    "Adding {} accounts to storage. Account pointer: {}",
+                    chunk.len(),
+                    total_written + 1
+                );
+                state_root = storage.set_initial(chunk, state_root);
             }
+
             log::info!("Storage state root: {:?}", state_root);
         } else {
             warn!("Generating genesis with empty evm state");
