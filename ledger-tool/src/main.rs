@@ -87,6 +87,7 @@ use ledger_path::*;
 
 mod evm_blockstore;
 use evm_blockstore::*;
+use solana_ledger::blockstore::EvmStateJson;
 
 mod evm_state;
 use crate::evm_state::*;
@@ -1746,7 +1747,7 @@ fn main() {
 
                 create_new_ledger(
                     &output_directory,
-                    None,
+                    EvmStateJson::None,
                     &genesis_config,
                     solana_runtime::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
                     AccessType::PrimaryOnly,

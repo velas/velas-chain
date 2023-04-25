@@ -1,7 +1,7 @@
 use std::{
     array::TryFromSliceError,
     borrow::Borrow,
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     convert::TryInto,
     fs,
     io::Error as IoError,
@@ -11,6 +11,7 @@ use std::{
 
 use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
 use derive_more::{AsRef, Deref};
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::*;
 use rlp::{Decodable as DecodableOld, Encodable as EncodableOld};
@@ -44,6 +45,7 @@ pub use rocksdb; // avoid mess with dependencies for another crates
 
 type DB = OptimisticTransactionDB;
 type BincodeOpts = WithOtherEndian<DefaultOptions, BigEndian>;
+type ChangedState = HashMap<H256, (Maybe<AccountState>, HashMap<H256, H256>)>;
 lazy_static! {
     static ref CODER: BincodeOpts = DefaultOptions::new().with_big_endian();
 }
@@ -65,6 +67,7 @@ pub enum Error {
 
 const BACKUP_SUBDIR: &str = "backup";
 const CUSTOM_LOCATION: &str = "tmp_inner_space";
+const NUM_ENTRIES_IN_STORAGES_CHUNK: usize = 10000;
 
 /// Marker-like wrapper for cleaning temporary directory.
 /// Temporary directory is only used in tests.
@@ -194,7 +197,6 @@ impl Descriptors {
     }
 }
 
-
 impl<D> Storage<D>
 where
     D: DBInner,
@@ -257,7 +259,6 @@ type ReadOnlyDb = rocksdb::DBWithThreadMode<rocksdb::SingleThreaded>;
 pub type StorageSecondary = Storage<DBWithThreadModeInner>;
 
 impl StorageSecondary {
-
     pub fn open_secondary_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
     }
@@ -305,9 +306,11 @@ impl Storage<OptimisticTransactionDBInner> {
     pub fn create_temporary() -> Result<Self> {
         Self::open(Location::Temporary(Arc::new(TempDir::new()?)), false)
     }
+
     pub fn create_temporary_gc() -> Result<Self> {
         Self::open(Location::Temporary(Arc::new(TempDir::new()?)), true)
     }
+
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {
         log::warn!("gc_enabled {}", gc_enabled);
         log::info!("location is {:?}", location);
@@ -381,6 +384,7 @@ impl Storage<OptimisticTransactionDBInner> {
         FixedSecureTrieMut::new(DatabaseTrieMut::trie_for(handle, root))
     }
 
+    // FIXME: flush_changes_hashed code duplication
     pub fn flush_changes(&self, state_root: H256, state_updates: crate::ChangedState) -> H256 {
         let r = self.rocksdb_trie_handle();
 
@@ -434,6 +438,65 @@ impl Storage<OptimisticTransactionDBInner> {
 
         let mut accounts_patch = accounts.to_trie().into_patch();
         accounts_patch.change.merge_child(&storage_patches);
+        db_trie
+            .apply_increase(accounts_patch, account_extractor)
+            .leak_root()
+    }
+
+    // FIXME: flush_changes code duplication
+    pub fn flush_changes_hashed(&self, state_root: H256, state_updates: ChangedState) -> H256 {
+        let r = self.rocksdb_trie_handle();
+
+        let db_trie = TrieCollection::new(r);
+
+        use triedb::TrieMut;
+        let mut accounts = db_trie.trie_for(state_root);
+
+        for (address, (state, storages)) in state_updates {
+            if let Maybe::Just(AccountState {
+                nonce,
+                balance,
+                code,
+            }) = state
+            {
+                let mut account: Account = accounts
+                    .get(address.as_bytes())
+                    .and_then(|accounts| rlp::decode(&accounts).ok())
+                    .unwrap_or_default();
+
+                account.nonce = nonce;
+                account.balance = balance;
+
+                if !code.is_empty() {
+                    let code_hash = code.hash();
+                    self.set::<Codes>(code_hash, code);
+                    account.code_hash = code_hash;
+                }
+
+                let storage_values = storages.into_iter().chunks(NUM_ENTRIES_IN_STORAGES_CHUNK);
+                for index_changes in storage_values.into_iter() {
+                    let mut storage = db_trie.trie_for(account.storage_root);
+                    for (index, value) in index_changes {
+                        if value != H256::default() {
+                            let value = U256::from_big_endian(&value[..]);
+                            storage.insert(index.as_bytes(), &rlp::encode(&value));
+                        } else {
+                            storage.delete(index.as_bytes());
+                        }
+                    }
+
+                    let storage_patch = storage.into_patch();
+                    account.storage_root = db_trie
+                        .apply_increase(storage_patch, |_| vec![])
+                        .leak_root()
+                }
+                accounts.insert(address.as_bytes(), &rlp::encode(&account));
+            } else {
+                accounts.delete(address.as_bytes());
+            }
+        }
+
+        let accounts_patch = accounts.into_patch();
         db_trie
             .apply_increase(accounts_patch, account_extractor)
             .leak_root()
@@ -612,8 +675,7 @@ impl Storage<OptimisticTransactionDBInner> {
         if !self.gc_enabled {
             return (vec![], vec![]);
         }
-        self
-            .rocksdb_trie_handle()
+        self.rocksdb_trie_handle()
             .gc_cleanup_layer(removes, account_extractor)
     }
 
@@ -628,6 +690,43 @@ impl Storage<OptimisticTransactionDBInner> {
         }
         engine.create_new_backup_flush(self.db.as_ref(), true)?;
         Ok(backup_dir)
+    }
+
+    pub fn set_initial(
+        &mut self,
+        accounts: impl IntoIterator<Item = (H256, evm::backend::MemoryAccount)>,
+        state_root: H256,
+    ) -> H256 {
+        let mut state_updates: ChangedState = HashMap::new();
+
+        for (
+            address,
+            evm::backend::MemoryAccount {
+                nonce,
+                balance,
+                storage,
+                code,
+            },
+        ) in accounts
+        {
+            let account_state = AccountState {
+                nonce,
+                balance,
+                code: code.into(),
+            };
+
+            state_updates
+                .entry(address)
+                .or_insert((Maybe::Nothing, HashMap::new()))
+                .0 = Maybe::Just(account_state);
+            
+            state_updates
+                .entry(address)
+                .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()))
+                .1.extend(storage);
+        }
+
+        self.flush_changes_hashed(state_root, state_updates)
     }
 }
 
