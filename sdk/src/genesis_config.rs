@@ -598,21 +598,8 @@ pub mod evm_genesis {
 
         impl OpenEthereumAccountExtractor<File> {
             pub fn open_dump(dump: &Path) -> Result<Self, Error> {
-                let mut reader = BufReader::new(File::open(dump)?);
-
-                let mut buffer = String::new();
-
-                let _header_size = reader.read_line(&mut buffer)?;
-                if buffer.as_str() != "{ \"state\": {\n" {
-                    return Err(Error::new(
-                        ErrorKind::Other,
-                        format!("Trying to read header of evm state json file, and it is invalid, should be '{{ \"state\": {{' got: {}", buffer),
-                    ));
-                }
-
-                let reader = IoRead::new(reader);
-
-                Ok(Self { reader })
+                let file = File::open(dump)?;
+                Self::new_with_reader(file)
             }
         }
 
@@ -620,11 +607,16 @@ pub mod evm_genesis {
             pub fn from_json_text(
                 dump: &'a impl AsRef<str>,
             ) -> Result<OpenEthereumAccountExtractor<&'a [u8]>, Error> {
-                let mut reader = BufReader::new(dump.as_ref().as_bytes());
+                Self::new_with_reader(dump.as_ref().as_bytes())
+            }
+        }
 
+        impl<R: std::io::Read> OpenEthereumAccountExtractor<R> {
+            pub fn new_with_reader(reader: R) -> Result<Self, Error> {
+                let mut buf_reader = BufReader::new(reader);
                 let mut buffer = String::new();
 
-                let _header_size = reader.read_line(&mut buffer)?;
+                let _header_size = buf_reader.read_line(&mut buffer)?;
                 if buffer.as_str() != "{ \"state\": {\n" {
                     return Err(Error::new(
                         ErrorKind::Other,
@@ -632,13 +624,11 @@ pub mod evm_genesis {
                     ));
                 }
 
-                let reader = IoRead::new(reader);
+                let reader = IoRead::new(buf_reader);
 
                 Ok(Self { reader })
             }
-        }
 
-        impl<R: std::io::Read> OpenEthereumAccountExtractor<R> {
             /// Return true if end brackets found.
             fn end_brackets(&mut self) -> Result<bool, Error> {
                 self.skip_whitespaces()?;
