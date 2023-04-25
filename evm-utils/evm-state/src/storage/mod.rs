@@ -461,7 +461,7 @@ impl Storage<OptimisticTransactionDBInner> {
             {
                 let mut account: Account = accounts
                     .get(address.as_bytes())
-                    .and_then(|accounts| rlp::decode(&accounts).ok())
+                    .and_then(|accounts| triedb::rlp::decode(&accounts).ok())
                     .unwrap_or_default();
 
                 account.nonce = nonce;
@@ -490,7 +490,7 @@ impl Storage<OptimisticTransactionDBInner> {
                         .apply_increase(storage_patch, |_| vec![])
                         .leak_root()
                 }
-                accounts.insert(address.as_bytes(), &rlp::encode(&account));
+                accounts.insert(address.as_bytes(), &triedb::rlp::encode(&account));
             } else {
                 accounts.delete(address.as_bytes());
             }
