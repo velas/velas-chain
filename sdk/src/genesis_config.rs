@@ -241,7 +241,6 @@ impl GenesisConfig {
         dump_extractor: Option<impl EvmAccountDumpExtractor>,
     ) -> Result<(), std::io::Error> {
         std::fs::create_dir_all(ledger_path)?;
-
         if let Some(dump_extractor) = dump_extractor {
             // Group accounts from iterator into chunks of `MAX_IN_HEAP_EVM_ACCOUNTS_BYTES` heap bytes
             let chunks = dump_extractor.batching(|iter| {
@@ -284,7 +283,7 @@ impl GenesisConfig {
                 );
                 state_root = storage.set_initial(chunk, state_root);
             }
-
+            assert_eq!(state_root, self.evm_root_hash);
             log::info!("Storage state root: {:?}", state_root);
         } else {
             warn!("Generating genesis with empty evm state");
