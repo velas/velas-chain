@@ -7707,6 +7707,7 @@ dependencies = [
  "solana-sdk",
  "solana-transaction-status",
  "tonic-build 0.8.4",
+ "triedb",
 ]
 
 [[package]]

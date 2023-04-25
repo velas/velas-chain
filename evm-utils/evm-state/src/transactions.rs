@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
-use bytes::BufMut;
+use bytes::{BufMut, Buf};
 use evm::{backend::Log, ExitReason, ExitRevert};
 use primitive_types::{H160, H256, U256};
 use rlp::{Decodable as DecodableOld, DecoderError, Encodable as EncodableOld, Rlp, RlpStream};
@@ -129,6 +129,8 @@ impl Transaction {
     Serialize,
     Deserialize,
 )]
+
+
 pub struct UnsignedTransaction {
     pub nonce: U256,
     pub gas_price: U256,
@@ -139,8 +141,7 @@ pub struct UnsignedTransaction {
 }
 
 impl UnsignedTransaction {
-    #[cfg(test)]
-    fn signing_rlp_append_old(&self, s: &mut RlpStream, chain_id: Option<u64>) {
+    fn signing_rlp_append(&self, s: &mut RlpStream, chain_id: Option<u64>) {
         s.begin_list(if chain_id.is_some() { 9 } else { 6 });
         s.append(&self.nonce);
         s.append(&self.gas_price);
@@ -155,19 +156,12 @@ impl UnsignedTransaction {
             s.append(&0u8);
         }
     }
-    fn signing_rlp_append(&self, chain_id: Option<u64>) {
-        unimplemented!();
-    }
     
-    #[cfg(test)]
-    pub fn signing_hash_old(&self, chain_id: Option<u64>) -> H256 {
-        let mut stream = RlpStream::new();
-        self.signing_rlp_append_old(&mut stream, chain_id);
-        H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
-    }
-
+    
     pub fn signing_hash(&self, chain_id: Option<u64>) -> H256 {
-        unimplemented!();
+        let mut stream = RlpStream::new();
+        self.signing_rlp_append(&mut stream, chain_id);
+        H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
     }
 
     pub fn sign(self, key: &SecretKey, chain_id: Option<u64>) -> Transaction {
@@ -333,6 +327,47 @@ impl DecodableOld for TransactionAction {
         })
     }
 }
+impl Encodable for TransactionAction {
+
+    fn encode(&self,out: &mut dyn BufMut) {
+        match self {
+            TransactionAction::Create => {
+                let empty : &[u8] = &[];
+                empty.encode(out);
+            },
+            TransactionAction::Call(address) => {
+                address.encode(out);
+            },
+        }
+    }
+    fn length(&self) -> usize {
+        match self {
+            TransactionAction::Create => {
+                let empty : &[u8] = &[];
+                empty.length()
+            },
+            TransactionAction::Call(address) => {
+                address.length()
+            },
+        }
+
+    }
+}
+
+impl<'de> Decodable<'de> for TransactionAction {
+    fn decode(buf: &mut &'de [u8]) -> Result<Self, triedb::rlp::decode::DecodeError> {
+        let mut buf_view = *buf;
+        let h = fastrlp::Header::decode(&mut buf_view)?;
+        dbg!("header : {:?}", &h);
+        if h.payload_length == 0 {
+            let _h = fastrlp::Header::decode(buf)?;
+            return Ok(Self::Create);
+        }
+        let address : H160 = <H160 as Decodable>::decode(buf)?;
+        Ok(TransactionAction::Call(address))
+        
+    }
+}
 
 impl EncodableOld for Transaction {
     fn rlp_append(&self, s: &mut RlpStream) {
@@ -367,6 +402,7 @@ impl DecodableOld for Transaction {
     }
 }
 
+#[cfg(test)]
 impl EncodableOld for UnsignedTransaction {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.begin_list(6);
@@ -379,6 +415,8 @@ impl EncodableOld for UnsignedTransaction {
     }
 }
 
+
+#[cfg(test)]
 impl DecodableOld for UnsignedTransaction {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         Ok(Self {
@@ -391,6 +429,65 @@ impl DecodableOld for UnsignedTransaction {
         })
     }
 }
+
+impl Encodable for UnsignedTransaction {
+    fn encode(&self,out: &mut dyn BufMut) {
+
+        let len = self.nonce.length() + self.gas_price.length() + 
+            self.gas_limit.length() + self.action.length() + self.value.length() + self.input.length();
+        fastrlp::Header {
+            list: true,
+            payload_length: len,
+        }.encode(out);
+        self.nonce.encode(out);
+        self.gas_price.encode(out);
+        self.gas_limit.encode(out);
+        self.action.encode(out);
+        self.value.encode(out);
+        self.input.encode(out);
+    }
+
+    fn length(&self) -> usize {
+
+        let len = self.nonce.length() + self.gas_price.length() + 
+            self.gas_limit.length() + self.action.length() + self.value.length() + self.input.length();
+        fastrlp::Header {
+            list: true,
+            payload_length: len,
+        }
+        .length()
+            + len
+
+    }
+}
+
+
+impl<'de> Decodable<'de> for UnsignedTransaction {
+    fn decode(buf: &mut &'de [u8]) -> Result<Self, fastrlp::DecodeError> {
+        let h = fastrlp::Header::decode(buf)?;
+        if !h.list {
+            return Err(fastrlp::DecodeError::UnexpectedString);
+        }
+        let payload_view = &mut &buf[..h.payload_length];
+        let cnt = fastrlp::count(*payload_view)?;
+        if cnt!= 6 {
+            return Err(fastrlp::DecodeError::ListLengthMismatch { expected: 6, got: cnt });
+        }
+
+        let nonce = fastrlp::Decodable::decode(payload_view)?;
+        let gas_price = fastrlp::Decodable::decode(payload_view)?;
+        let gas_limit = fastrlp::Decodable::decode(payload_view)?;
+        let action = fastrlp::Decodable::decode(payload_view)?;
+        let value = fastrlp::Decodable::decode(payload_view)?;
+        let input: &[u8] = fastrlp::Decodable::decode(payload_view)?;
+        buf.advance(h.payload_length);
+        Ok(Self {
+            nonce, gas_price, gas_limit, action, value, input: input.to_vec(),
+        })
+    }
+}
+
+
 
 impl From<Transaction> for UnsignedTransaction {
     fn from(val: Transaction) -> UnsignedTransaction {
@@ -673,9 +770,9 @@ mod test {
         let chain_id = 0x77;
 
         let mut stream = RlpStream::new();
-        tx.signing_rlp_append_old(&mut stream, Some(chain_id));
+        tx.signing_rlp_append(&mut stream, Some(chain_id));
         println!("rlp = {}", hex::encode(stream.out()));
-        println!("hash = {:x}", tx.signing_hash_old(Some(chain_id)));
+        println!("hash = {:x}", tx.signing_hash(Some(chain_id)));
 
         let tx = tx.sign(&secret_key, Some(chain_id));
         assert_eq!(tx.signature.chain_id(), Some(chain_id));

@@ -1115,9 +1115,9 @@ impl From<evm_state::UnsignedTransactionWithCaller>
     for generated_evm::UnsignedTransactionWithCaller
 {
     fn from(unsigned: evm_state::UnsignedTransactionWithCaller) -> Self {
-        let bytes = rlp::encode(&unsigned.unsigned_tx);
+        let bytes = triedb::rlp::encode(&unsigned.unsigned_tx);
         Self {
-            rlp_encoded_body: bytes.to_vec(),
+            rlp_encoded_body: bytes,
             chain_id: unsigned.chain_id,
             caller: unsigned.caller.into_vec(),
             signed_compatible: unsigned.signed_compatible,
@@ -1136,7 +1136,7 @@ impl TryFrom<generated_evm::UnsignedTransactionWithCaller>
             chain_id: unsigned.chain_id,
             signed_compatible: unsigned.signed_compatible,
             caller: convert_from_bytes(unsigned.caller)?,
-            unsigned_tx: rlp::decode(&unsigned.rlp_encoded_body)
+            unsigned_tx: triedb::rlp::decode(&unsigned.rlp_encoded_body)
                 .map_err(|_| "Failed to deserialize rlp tx body")?,
         })
     }

@@ -1,4 +1,4 @@
-use crate::transaction_roots::EthereumReceipt;
+use crate::{transaction_roots::EthereumReceipt, TransactionAction, UnsignedTransaction};
 
 use super::types::Account;
 
@@ -137,4 +137,44 @@ fn test_check_ethereum_receipt_roundtrip() {
     };
 
     check_roundtrip!(receipt => EthereumReceipt);
+}
+
+#[test]
+fn test_check_tranaaction_action_roundtrip() {
+    let ta1 = TransactionAction::Create;
+
+
+    check_roundtrip!(ta1 => TransactionAction);
+
+    let ta2 = TransactionAction::Call(H160([56; 20]));
+
+    check_roundtrip!(ta2 => TransactionAction);
+
+}
+#[test]
+fn test_check_unsigned_transaction_roundtrip() {
+    let ta2 = TransactionAction::Call(H160([56; 20]));
+
+    let ut2 = UnsignedTransaction {
+        nonce: U256([46;4]),
+        gas_price: U256([543; 4]),
+        gas_limit: U256([342;4]),
+        action: ta2,
+        value: U256([20000; 4]),
+        input: vec![34, 45, 12, 123, 243],
+    };
+ 
+    check_roundtrip!(ut2 => UnsignedTransaction);
+    let ta1 = TransactionAction::Create;
+
+    let ut1 = UnsignedTransaction {
+        nonce: U256([46;4]),
+        gas_price: U256([543; 4]),
+        gas_limit: U256([342;4]),
+        action: ta1,
+        value: U256([23000;4]),
+        input: vec![34, 45, 12, 123, 243],
+    };
+    check_roundtrip!(ut1 => UnsignedTransaction);
+
 }
