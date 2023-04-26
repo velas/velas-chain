@@ -222,7 +222,7 @@ impl<'de> Decodable<'de> for Account {
             return Err(fastrlp::DecodeError::UnexpectedString);
         }
         let payload_view = &mut &buf[..h.payload_length];
-        let cnt = fastrlp::count(*payload_view)?;
+        let cnt = fastrlp::count(payload_view)?;
         if cnt!= 4 {
             return Err(fastrlp::DecodeError::ListLengthMismatch { expected: 4, got: cnt });
         }
@@ -599,7 +599,7 @@ pub(super) mod transaction_roots {
                 return Err(fastrlp::DecodeError::UnexpectedString);
             }
             let payload_view = &mut &buf[..h.payload_length];
-            let cnt = fastrlp::count(*payload_view)?;
+            let cnt = fastrlp::count(payload_view)?;
             if cnt!= 4 {
                 return Err(fastrlp::DecodeError::ListLengthMismatch { expected: 4, got: cnt });
             }

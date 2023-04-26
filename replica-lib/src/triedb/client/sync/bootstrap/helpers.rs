@@ -1,8 +1,7 @@
 use evm_state::{storage::account_extractor, H256};
 
-use rlp::Rlp;
 use sha3::{Digest, Keccak256};
-use triedb::{gc::ReachableHashes, merkle::MerkleNode};
+use triedb::gc::ReachableHashes;
 
 use crate::triedb::{error::client, MAX_CHUNK_HASHES};
 

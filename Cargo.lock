@@ -7379,7 +7379,6 @@ dependencies = [
  "primitive-types 0.8.0",
  "prost 0.11.9",
  "rangemap",
- "rlp",
  "rocksdb",
  "serde",
  "serde_json",
