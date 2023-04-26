@@ -17,9 +17,9 @@ use log::*;
 use rlp::{Decodable as DecodableOld, Encodable as EncodableOld};
 use rocksdb::{
     backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
-    db::{DBInner, DBWithThreadModeInner},
     ColumnFamily, ColumnFamilyDescriptor, Env, IteratorMode, OptimisticTransactionDB,
-    OptimisticTransactionDBInner, Options, ReadOptions,
+    DBWithThreadMode,
+    Options, ReadOptions, AsColumnFamilyRef, DBIteratorWithThreadMode, DBAccess, DBPinnableSlice,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
@@ -96,16 +96,17 @@ impl AsRef<Path> for Location {
     }
 }
 
-pub struct Storage<D = OptimisticTransactionDBInner>
+pub struct Storage<D=OptimisticTransactionDB>
 where
-    D: DBInner,
+    D: VelasDBCommon,
 {
     pub(crate) db: Arc<DbWithClose<D>>,
     // Location should be second field, because of drop order in Rust.
     location: Location,
     gc_enabled: bool,
 }
-impl<D: DBInner> Clone for Storage<D> {
+
+impl<D: VelasDBCommon> Clone for Storage<D> {
     fn clone(&self) -> Self {
         Self {
             db: Arc::clone(&self.db),
@@ -115,7 +116,7 @@ impl<D: DBInner> Clone for Storage<D> {
     }
 }
 
-impl<D: DBInner> std::fmt::Debug for Storage<D> {
+impl<D: VelasDBCommon> std::fmt::Debug for Storage<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Storage<D>")
             .field("db", &self.db)
@@ -199,13 +200,13 @@ impl Descriptors {
 
 impl<D> Storage<D>
 where
-    D: DBInner,
+    D: VelasDBCommon,
 {
     pub fn gc_enabled(&self) -> bool {
         self.gc_enabled
     }
 
-    pub fn db(&self) -> &rocksdb::DBCommon<rocksdb::SingleThreaded, D> {
+    pub fn db(&self) -> &D {
         (*self.db).borrow()
     }
 
@@ -254,11 +255,12 @@ where
     }
 }
 
-type ReadOnlyDb = rocksdb::DBWithThreadMode<rocksdb::SingleThreaded>;
+type RocksWithThreadMode = DBWithThreadMode<rocksdb::SingleThreaded>;
 
-pub type StorageSecondary = Storage<DBWithThreadModeInner>;
+pub type StorageSecondary = Storage<RocksWithThreadMode >;
 
 impl StorageSecondary {
+
     pub fn open_secondary_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
     }
@@ -270,7 +272,7 @@ impl StorageSecondary {
 
     pub fn rocksdb_trie_handle(
         &self,
-    ) -> SyncRocksHandle<ReadOnlyDb> {
+    ) -> SyncRocksHandle<RocksWithThreadMode> {
         SyncRocksHandle::new(RocksDatabaseHandle::new(self.db()))
     }
 
@@ -293,7 +295,7 @@ impl StorageSecondary {
                 temporarily cause the performance of 
                 another db use (like by validator) to degrade"
             );
-            ReadOnlyDb::open_cf_as_secondary(
+            RocksWithThreadMode::open_cf_as_secondary(
                 &db_opts,
                 path.as_ref(),
                 secondary_path.as_path(),
@@ -309,7 +311,9 @@ impl StorageSecondary {
     }
 }
 
-impl Storage<OptimisticTransactionDBInner> {
+impl Storage<OptimisticTransactionDB> {
+
+
     pub fn open_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
     }
@@ -372,7 +376,9 @@ impl Storage<OptimisticTransactionDBInner> {
             path.display(),
             target.display()
         );
-        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), path)?;
+        let opts = BackupEngineOptions::new(path)?;
+        let env = Env::new()?;
+        let mut engine = BackupEngine::open(&opts, &env)?;
         engine.restore_from_latest_backup(target, target, &RestoreOptions::default())?;
 
         Ok(())
@@ -694,7 +700,10 @@ impl Storage<OptimisticTransactionDBInner> {
         let backup_dir = backup_dir.unwrap_or_else(|| self.location.as_ref().join(BACKUP_SUBDIR));
         info!("EVM Backup storage data into {}", backup_dir.display());
 
-        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), &backup_dir)?;
+        let opts = BackupEngineOptions::new(&backup_dir)?;
+        let env = Env::new()?;
+
+        let mut engine = BackupEngine::open(&opts, &env)?;
         if engine.get_backup_info().len() > HARD_BACKUPS_COUNT {
             // TODO: measure
             engine.purge_old_backups(HARD_BACKUPS_COUNT)?;
@@ -810,19 +819,127 @@ impl<'a> RootCleanup<'a> {
     }
 }
 
-impl Borrow<DB> for Storage<OptimisticTransactionDBInner> {
+impl Borrow<DB> for Storage<OptimisticTransactionDB> {
     fn borrow(&self) -> &DB {
         self.db()
     }
 }
 
+pub trait VelasDBCommon: DBAccess + std::fmt::Debug + Sized {
+
+    fn flush(&self) -> Result<(), rocksdb::Error> ;    
+    fn cancel_all_background_work(&self, wait: bool) ;
+
+    fn iterator_cf<'a: 'b, 'b>(
+        &'a self,
+        cf_handle: &impl AsColumnFamilyRef,
+        mode: IteratorMode,
+    ) -> DBIteratorWithThreadMode<'b, Self> ;
+
+    fn get_pinned_cf<K: AsRef<[u8]>>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+    ) -> Result<Option<DBPinnableSlice>, rocksdb::Error> ;
+
+    fn put_cf<K, V>(&self, cf: &impl AsColumnFamilyRef, key: K, value: V) -> Result<(), rocksdb::Error>
+    where
+        K: AsRef<[u8]>,
+        V: AsRef<[u8]>;
+
+    fn cf_handle(&self, name: &str) -> Option<&ColumnFamily> ;
+        
+}
+
+impl VelasDBCommon for rocksdb::DBWithThreadMode<rocksdb::SingleThreaded> {
+
+    fn flush(&self) -> Result<(), rocksdb::Error> {
+        self.flush()
+    }
+
+    fn cancel_all_background_work(&self, wait: bool) {
+        self.cancel_all_background_work(wait)
+    }
+
+    fn iterator_cf<'a: 'b, 'b>(
+        &'a self,
+        cf_handle: &impl AsColumnFamilyRef,
+        mode: IteratorMode,
+    ) -> DBIteratorWithThreadMode<'b, Self> {
+        self.iterator_cf(cf_handle, mode)
+    }
+    fn get_pinned_cf<K: AsRef<[u8]>>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+    ) -> Result<Option<DBPinnableSlice>, rocksdb::Error> {
+        self.get_pinned_cf(cf, key)
+        
+    }
+
+    fn put_cf<K, V>(&self, cf: &impl AsColumnFamilyRef, key: K, value: V) -> Result<(), rocksdb::Error>
+    where
+        K: AsRef<[u8]>,
+        V: AsRef<[u8]> {
+        self.put_cf(cf, key, value)
+        
+    }
+
+    fn cf_handle(&self, name: &str) -> Option<&ColumnFamily> {
+        self.cf_handle(name)
+    }
+    
+}
+
+impl VelasDBCommon for OptimisticTransactionDB {
+    fn flush(&self) -> Result<(), rocksdb::Error> {
+        self.flush()
+    }
+
+    fn cancel_all_background_work(&self, wait: bool) {
+        self.cancel_all_background_work(wait)
+    }
+
+    fn iterator_cf<'a: 'b, 'b>(
+        &'a self,
+        cf_handle: &impl AsColumnFamilyRef,
+        mode: IteratorMode,
+    ) -> DBIteratorWithThreadMode<'b, Self> {
+        self.iterator_cf(cf_handle, mode)
+    }
+
+    fn get_pinned_cf<K: AsRef<[u8]>>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+    ) -> Result<Option<DBPinnableSlice>, rocksdb::Error> {
+        self.get_pinned_cf(cf, key)
+        
+    }
+
+    fn put_cf<K, V>(&self, cf: &impl AsColumnFamilyRef, key: K, value: V) -> Result<(), rocksdb::Error>
+    where
+        K: AsRef<[u8]>,
+        V: AsRef<[u8]> {
+        self.put_cf(cf, key, value)
+        
+    }
+
+    fn cf_handle(&self, name: &str) -> Option<&ColumnFamily> {
+        self.cf_handle(name)
+    }
+
+
+    
+}
+
 #[derive(AsRef, Deref)]
 // Hack to close rocksdb background threads. And flush database.
-pub struct DbWithClose<D: DBInner>(rocksdb::DBCommon<rocksdb::SingleThreaded, D>);
+pub struct DbWithClose<D: VelasDBCommon>(D);
 
 impl<D> Drop for DbWithClose<D>
 where
-    D: rocksdb::db::DBInner,
+    D: VelasDBCommon,
 {
     fn drop(&mut self) {
         if let Err(e) = self.flush() {
@@ -832,7 +949,7 @@ where
     }
 }
 
-impl<D: DBInner> std::fmt::Debug for DbWithClose<D> {
+impl<D: VelasDBCommon> std::fmt::Debug for DbWithClose<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DbWithClose<D>")
             .field("0", &self.0)
@@ -888,7 +1005,7 @@ impl SubStorage for TransactionHashesPerBlock {
 
 impl<D> Storage<D>
 where
-    D: DBInner,
+    D: VelasDBCommon,
 {
     pub fn get<S: SubStorage>(&self, key: S::Key) -> Option<S::Value> {
         let cf = self.cf::<S>();
@@ -947,7 +1064,7 @@ pub fn default_db_opts() -> Result<Options> {
     let mut opts = Options::default();
     opts.create_if_missing(true);
     opts.create_missing_column_families(true);
-    let mut env = Env::default()?;
+    let mut env = Env::new()?;
     env.join_all_threads();
     opts.set_env(&env);
     Ok(opts)

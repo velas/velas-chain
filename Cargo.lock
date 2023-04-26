@@ -259,9 +259,9 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
 name = "axum"
-version = "0.6.16"
+version = "0.6.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "113713495a32dd0ab52baf5c10044725aa3aec00b31beda84218e469029b72a3"
+checksum = "b70caf9f1b0c045f7da350636435b775a9733adf2df56e8aa2a29210fbc335d4"
 dependencies = [
  "async-trait",
  "axum-core",
@@ -409,9 +409,9 @@ dependencies = [
 
 [[package]]
 name = "bindgen"
-version = "0.60.1"
+version = "0.64.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "062dddbc1ba4aca46de6338e2bf87771414c335f7b2f2036e8f3e9befebf88e6"
+checksum = "c4243e6031260db77ede97ad86c27e501d646a27ab57b59a574f725d98ab1fb4"
 dependencies = [
  "bitflags",
  "cexpr",
@@ -424,6 +424,7 @@ dependencies = [
  "regex",
  "rustc-hash",
  "shlex",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -889,9 +890,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "3.2.23"
+version = "3.2.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71655c45cb9845d3270c9d6df84ebe72b4dad3c2ba3f7023ad47c144e4e473a5"
+checksum = "eef2b3ded6a26dfaec672a742c93c8cf6b689220324da509ec5caa20de55dc83"
 dependencies = [
  "atty",
  "bitflags",
@@ -1151,7 +1152,7 @@ dependencies = [
  "atty",
  "cast 0.3.0",
  "ciborium",
- "clap 3.2.23",
+ "clap 3.2.24",
  "criterion-plot",
  "itertools",
  "lazy_static",
@@ -2152,7 +2153,7 @@ dependencies = [
 [[package]]
 name = "fastrlp"
 version = "0.3.0"
-source = "git+https://github.com/velas/fastrlp?tag=second_release_candidate#f4e921c54f7669e157b2e7e8f5385eed54e105cc"
+source = "git+https://github.com/velas/fastrlp?tag=second_release_candidate#7a967beb99c5627b90013a3ba0b4b74577797bc4"
 dependencies = [
  "arrayvec 0.7.2",
  "auto_impl 1.0.1",
@@ -2167,7 +2168,7 @@ dependencies = [
 [[package]]
 name = "fastrlp-derive"
 version = "0.2.0"
-source = "git+https://github.com/velas/fastrlp?tag=second_release_candidate#f4e921c54f7669e157b2e7e8f5385eed54e105cc"
+source = "git+https://github.com/velas/fastrlp?tag=second_release_candidate#7a967beb99c5627b90013a3ba0b4b74577797bc4"
 dependencies = [
  "bytes 1.4.0",
  "proc-macro2 1.0.56",
@@ -3102,7 +3103,7 @@ checksum = "adcf93614601c8129ddf72e2d5633df827ba6551541c6d8c59520a371475be1f"
 dependencies = [
  "hermit-abi 0.3.1",
  "io-lifetimes 1.0.10",
- "rustix 0.37.14",
+ "rustix 0.37.15",
  "windows-sys 0.48.0",
 ]
 
@@ -3387,8 +3388,9 @@ checksum = "348108ab3fba42ec82ff6e9564fc4ca0247bdccdc68dd8af9764bbc79c3c8ffb"
 
 [[package]]
 name = "librocksdb-sys"
-version = "0.8.0+7.4.4"
-source = "git+https://github.com/velas/rust-rocksdb#7330656ddd0ef00aadd623faccbdb809e1b98062"
+version = "0.10.0+7.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fe4d5874f5ff2bc616e55e8c6086d478fcda13faf9495768a4aa1c22042d30b"
 dependencies = [
  "bindgen",
  "bzip2-sys",
@@ -3396,6 +3398,7 @@ dependencies = [
  "glob",
  "libc",
  "libz-sys",
+ "lz4-sys",
 ]
 
 [[package]]
@@ -3528,6 +3531,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "469898e909a1774d844793b347135a0cd344ca2f69d082013ecb8061a2229a3a"
 dependencies = [
  "hashbrown 0.11.2",
+]
+
+[[package]]
+name = "lz4-sys"
+version = "1.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57d27b317e207b10f69f5e75494119e391a96f48861ae870d1da6edac98ca900"
+dependencies = [
+ "cc",
+ "libc",
 ]
 
 [[package]]
@@ -3929,9 +3942,9 @@ checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
 
 [[package]]
 name = "openssl"
-version = "0.10.51"
+version = "0.10.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97ea2d98598bf9ada7ea6ee8a30fb74f9156b63bbe495d64ec2b87c269d2dda3"
+checksum = "01b8574602df80f7b85fdfc5392fa884a4e3b3f4f35402c070ab34c3d3f78d56"
 dependencies = [
  "bitflags",
  "cfg-if 1.0.0",
@@ -3970,9 +3983,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.86"
+version = "0.9.87"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "992bac49bdbab4423199c654a5515bd2a6c6a23bf03f2dd3bdb7e5ae6259bc69"
+checksum = "8e17f59264b2809d77ae94f0e1ebabc434773f370d6ca667bd223ea10e06cc7e"
 dependencies = [
  "cc",
  "libc",
@@ -5081,7 +5094,7 @@ dependencies = [
 name = "rbpf-cli"
 version = "1.9.29"
 dependencies = [
- "clap 3.2.23",
+ "clap 3.2.24",
  "serde",
  "serde_json",
  "solana-bpf-loader-program",
@@ -5298,8 +5311,9 @@ dependencies = [
 
 [[package]]
 name = "rocksdb"
-version = "0.19.0"
-source = "git+https://github.com/velas/rust-rocksdb#7330656ddd0ef00aadd623faccbdb809e1b98062"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "015439787fce1e75d55f279078d33ff14b4af5d93d995e8838ee4631301c8a99"
 dependencies = [
  "libc",
  "librocksdb-sys",
@@ -5373,9 +5387,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.37.14"
+version = "0.37.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b864d3c18a5785a05953adeed93e2dca37ed30f18e69bba9f30079d51f363f"
+checksum = "a0661814f891c57c930a610266415528da53c4933e6dea5fb350cbfe048a9ece"
 dependencies = [
  "bitflags",
  "errno 0.3.1",
@@ -5481,9 +5495,9 @@ dependencies = [
 
 [[package]]
 name = "scale-info"
-version = "2.5.0"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cfdffd972d76b22f3d7f81c8be34b2296afd3a25e0a547bd9abe340a4dbbe97"
+checksum = "dfdef77228a4c05dc94211441595746732131ad7f6530c6c18f045da7b7ab937"
 dependencies = [
  "bitvec 1.0.1",
  "cfg-if 1.0.0",
@@ -5494,9 +5508,9 @@ dependencies = [
 
 [[package]]
 name = "scale-info-derive"
-version = "2.5.0"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61fa974aea2d63dd18a4ec3a49d59af9f34178c73a4f56d2f18205628d00681e"
+checksum = "53012eae69e5aa5c14671942a5dd47de59d4cdcff8532a6dd0e081faf1119482"
 dependencies = [
  "proc-macro-crate 1.3.1",
  "proc-macro2 1.0.56",
@@ -7393,7 +7407,7 @@ dependencies = [
  "tokio",
  "tonic 0.8.3",
  "tonic-build 0.8.4",
- "triedb 0.5.0 (git+https://github.com/velas/triedb?tag=optimal_children_expose_error)",
+ "triedb 0.5.0 (git+https://github.com/velas/triedb?tag=rocksdb-v0.20.1-orth)",
 ]
 
 [[package]]
@@ -8369,7 +8383,7 @@ dependencies = [
  "cfg-if 1.0.0",
  "fastrand",
  "redox_syscall 0.3.5",
- "rustix 0.37.14",
+ "rustix 0.37.15",
  "windows-sys 0.45.0",
 ]
 
@@ -9009,11 +9023,10 @@ dependencies = [
 
 [[package]]
 name = "tracing"
-version = "0.1.37"
+version = "0.1.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ce8c33a8d48bd45d624a6e523445fd21ec13d3653cd51f681abf67418f54eb8"
+checksum = "cf9cf6a813d3f40c88b0b6b6f29a5c95c6cdbf97c1f9cc53fb820200f5ad814d"
 dependencies = [
- "cfg-if 1.0.0",
  "log 0.4.17",
  "pin-project-lite",
  "tracing-attributes",
@@ -9126,7 +9139,7 @@ checksum = "0de5f738ceab88e2491a94ddc33c3feeadfa95fedc60363ef110845df12f3878"
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/velas/triedb?tag=fast_rlp#4897a7febd6808523879aa4b41e87aa3a091c8ec"
+source = "git+https://github.com/velas/triedb?tag=fast_rlp#a0019f6073a081bc9f177b4b7fb41362fb5d6649"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -9150,7 +9163,7 @@ dependencies = [
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/velas/triedb?tag=optimal_children_expose_error#6cef9352ebda60189a5cd4c9a424fb6dcb5e37ee"
+source = "git+https://github.com/velas/triedb?tag=rocksdb-v0.20.1-orth#48ad76f5c1491234840676d2721cc5287462f3d3"
 dependencies = [
  "anyhow",
  "bincode",
