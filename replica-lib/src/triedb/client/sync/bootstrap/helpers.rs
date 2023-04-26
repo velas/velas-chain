@@ -20,7 +20,7 @@ fn map_node_to_next_layer(
     parent: &((H256, bool), Vec<u8>),
 ) -> Result<Vec<(H256, bool)>, triedb::Error> {
     let ((_hash, direct), node) = parent;
-    let node = MerkleNode::decode(&Rlp::new(node))?;
+    let node = triedb::rlp::decode(node)?;
 
     let (direct_childs, indirect_childs) = if *direct {
         ReachableHashes::collect(&node, account_extractor).childs()

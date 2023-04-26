@@ -1,4 +1,4 @@
-use crate::{transaction_roots::EthereumReceipt, TransactionAction, UnsignedTransaction};
+use crate::{transaction_roots::EthereumReceipt, TransactionAction, UnsignedTransaction, UnsignedTransactionWithCaller};
 
 use super::types::Account;
 
@@ -151,6 +151,7 @@ fn test_check_tranaaction_action_roundtrip() {
     check_roundtrip!(ta2 => TransactionAction);
 
 }
+
 #[test]
 fn test_check_unsigned_transaction_roundtrip() {
     let ta2 = TransactionAction::Call(H160([56; 20]));
@@ -177,4 +178,86 @@ fn test_check_unsigned_transaction_roundtrip() {
     };
     check_roundtrip!(ut1 => UnsignedTransaction);
 
+}
+
+#[test]
+fn test_check_unsigned_transaction_with_caller_roundtrip1() {
+    let ta = TransactionAction::Call(H160([56; 20]));
+
+    let ut = UnsignedTransaction {
+        nonce: U256([46;4]),
+        gas_price: U256([543; 4]),
+        gas_limit: U256([342;4]),
+        action: ta,
+        value: U256([20000; 4]),
+        input: vec![34, 45, 12, 123, 243],
+    };
+
+    let ut_c = UnsignedTransactionWithCaller {
+        unsigned_tx: ut,
+        caller: H160([23; 20]),
+        chain_id: 24,
+        signed_compatible: true,
+        
+    }; 
+    let old_rlp_raw: Vec<u8>;
+    let rlp_raw;
+    {
+        old_rlp_raw = encode_old(&ut_c).to_vec();
+        dbg!(hexutil::to_hex(&old_rlp_raw));
+        let rlp = Rlp::new(&old_rlp_raw);
+        let decoded_node: UnsignedTransactionWithCaller = UnsignedTransactionWithCaller::decode_old(&rlp, true).unwrap();
+        assert_eq!(decoded_node, ut_c);
+    }
+    {
+        rlp_raw = encode(&ut_c);
+        dbg!(hexutil::to_hex(&rlp_raw));
+        let decoded_node: UnsignedTransactionWithCaller = UnsignedTransactionWithCaller::decode(&mut rlp_raw.as_ref(), true).unwrap();
+        assert_eq!(decoded_node, ut_c);
+    }
+
+    {
+        assert_eq!(old_rlp_raw, rlp_raw);
+    }
+}
+
+#[test]
+fn test_check_unsigned_transaction_with_caller_roundtrip2() {
+    let ta = TransactionAction::Create;
+
+    let ut = UnsignedTransaction {
+        nonce: U256([46;4]),
+        gas_price: U256([543; 4]),
+        gas_limit: U256([342;4]),
+        action: ta,
+        value: U256([23000;4]),
+        input: vec![34, 45, 12, 123, 243],
+    };
+
+    let ut_c = UnsignedTransactionWithCaller {
+        unsigned_tx: ut,
+        caller: H160([23; 20]),
+        chain_id: 24,
+        signed_compatible: false,
+        
+    }; 
+    let old_rlp_raw: Vec<u8>;
+    let rlp_raw;
+    {
+        old_rlp_raw = encode_old(&ut_c).to_vec();
+        dbg!(hexutil::to_hex(&old_rlp_raw));
+        let rlp = Rlp::new(&old_rlp_raw);
+        let decoded_node: UnsignedTransactionWithCaller = UnsignedTransactionWithCaller::decode_old(&rlp, false).unwrap();
+        assert_eq!(decoded_node, ut_c);
+    }
+    {
+        rlp_raw = encode(&ut_c);
+        dbg!(hexutil::to_hex(&rlp_raw));
+        let decoded_node: UnsignedTransactionWithCaller = UnsignedTransactionWithCaller::decode(&mut rlp_raw.as_ref(), false).unwrap();
+        assert_eq!(decoded_node, ut_c);
+    }
+
+    {
+        assert_eq!(old_rlp_raw, rlp_raw);
+    }
 }

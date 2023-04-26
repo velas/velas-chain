@@ -2101,7 +2101,7 @@ dependencies = [
  "snafu",
  "tempfile",
  "thiserror",
- "triedb 0.5.0 (git+https://github.com/velas/triedb?tag=fast_rlp)",
+ "triedb",
 ]
 
 [[package]]
@@ -6999,7 +6999,7 @@ dependencies = [
  "solana-vote-program",
  "tikv-jemallocator",
  "tokio",
- "triedb 0.5.0 (git+https://github.com/velas/triedb?tag=fast_rlp)",
+ "triedb",
 ]
 
 [[package]]
@@ -7407,7 +7407,7 @@ dependencies = [
  "tokio",
  "tonic 0.8.3",
  "tonic-build 0.8.4",
- "triedb 0.5.0 (git+https://github.com/velas/triedb?tag=rocksdb-v0.20.1-orth)",
+ "triedb",
 ]
 
 [[package]]
@@ -7794,7 +7794,7 @@ dependencies = [
  "solana-sdk",
  "solana-transaction-status",
  "tonic-build 0.8.4",
- "triedb 0.5.0 (git+https://github.com/velas/triedb?tag=fast_rlp)",
+ "triedb",
 ]
 
 [[package]]
@@ -9149,27 +9149,6 @@ dependencies = [
  "derivative",
  "etcommon-hexutil",
  "fastrlp",
- "log 0.4.17",
- "primitive-types 0.11.1",
- "rayon",
- "rlp",
- "rocksdb",
- "serde",
- "sha3 0.9.1",
- "termtree",
- "thiserror",
-]
-
-[[package]]
-name = "triedb"
-version = "0.5.0"
-source = "git+https://github.com/velas/triedb?tag=rocksdb-v0.20.1-orth#48ad76f5c1491234840676d2721cc5287462f3d3"
-dependencies = [
- "anyhow",
- "bincode",
- "dashmap 4.0.2",
- "derivative",
- "etcommon-hexutil",
  "log 0.4.17",
  "primitive-types 0.11.1",
  "rayon",
