@@ -12,7 +12,7 @@ rand2 = { version = "=0.6.1", package = "rand" }
 rocksdb = { package = "rocksdb", version = "0.20.1", default-features = false }
 
 # rocksdb = { version = "0.16.0", default-features = false }
-triedb = { git = "https://github.com/velas/triedb", tag = "optimal_children_expose_error_rocksdb_orthodox_v2", features = ["rocksdb"] }
+triedb = { git = "https://github.com/velas/triedb", tag = "rocksdb-v0.20.1-orth", features = ["rocksdb"] }
 # triedb = { path = "../../../triedb",  features = ["rocksdb"] }
 
 primitive-types = { version = "0.11.0", features = ["borsh"] }
