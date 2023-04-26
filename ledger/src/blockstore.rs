@@ -3625,6 +3625,14 @@ impl Blockstore {
         );
         Ok(())
     }
+
+    // result indicates, if this was indeed opened in `secondary` mode
+    // and called the underlying rocksdb catch up method
+    // true - if catch_up occured
+    // false - if this function call was a noop
+    pub fn try_catch_up_with_primary(&self) -> Result<bool> {
+        self.db.try_catch_up()
+    }
 }
 
 // Update the `completed_data_indexes` with a new shred `new_shred_index`. If a

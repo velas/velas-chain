@@ -41,7 +41,7 @@ tokio = { version = "1.14.1", features = ["full"] }
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
 solana-evm-loader-program = { path = "../evm-utils/programs/evm_loader" }
-triedb = { git = "https://github.com/velas/triedb", tag = "optimal_children", features = ["rocksdb"] }
+triedb = { git = "https://github.com/velas/triedb", tag = "optimal_children_expose_error", features = ["rocksdb"] }
 rlp = "0.5.0"
 anyhow = "1.0.43"
 rayon = "1.5.0"

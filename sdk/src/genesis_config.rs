@@ -30,7 +30,6 @@ use {
         fmt,
         fs::{File, OpenOptions},
         io::Write,
-        mem,
         path::{Path, PathBuf},
         str::FromStr,
         time::{SystemTime, UNIX_EPOCH},
@@ -263,9 +262,9 @@ impl GenesisConfig {
                 }
 
                 if chunk.is_empty() {
-                    return None
+                    None
                 } else {
-                    return Some(Ok(chunk))
+                    Some(Ok(chunk))
                 }
             });
 

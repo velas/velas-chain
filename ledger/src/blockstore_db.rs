@@ -662,6 +662,22 @@ impl Rocks {
     fn is_primary_access(&self) -> bool {
         self.1 == ActualAccessType::Primary
     }
+
+    pub(crate) fn try_catch_up(&self) -> Result<bool>{
+        let res = match self.1 {
+            ActualAccessType::Secondary => {
+                self.0.try_catch_up_with_primary()?;
+                true
+                
+            },
+            ActualAccessType::Primary => {
+                false
+            }
+        };
+
+        Ok(res)
+        
+    }
 }
 
 pub trait Column {
@@ -1401,6 +1417,10 @@ impl Database {
 
     pub fn set_oldest_block_num(&self, oldest_block_num: BlockNum) {
         self.backend.3.set(oldest_block_num);
+    }
+
+    pub(crate) fn try_catch_up(&self) -> Result<bool>{
+        self.backend.try_catch_up()
     }
 }
 

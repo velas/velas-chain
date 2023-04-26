@@ -7,6 +7,9 @@ pub(crate) mod repeat;
 pub(crate) mod restore_chain;
 pub(crate) mod upload;
 pub(crate) mod scan_evm_state_roots;
+// a tmp placeholder to test out various new commands or approaches
+// it's convenient, as all potentially required dependencies have been imported
+pub(crate) mod scratchpad;
 
 pub use check_evm::check_evm;
 pub use check_native::check_native;

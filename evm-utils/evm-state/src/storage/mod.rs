@@ -31,7 +31,7 @@ use crate::{
 use triedb::{
     empty_trie_hash,
     gc::{DatabaseTrieMut, DbCounter, TrieCollection},
-    rocksdb::{RocksDatabaseHandleGC, RocksHandle},
+    rocksdb::{RocksDatabaseHandle, RocksDatabaseHandleGC, RocksHandle, SyncRocksHandle},
     FixedSecureTrieMut,
 };
 
@@ -260,6 +260,17 @@ pub type StorageSecondary = Storage<DBWithThreadModeInner>;
 impl StorageSecondary {
     pub fn open_secondary_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
+    }
+
+    pub fn try_catch_up(&self) -> Result<()> {
+        self.db.0.try_catch_up_with_primary()?;
+        Ok(())
+    }
+
+    pub fn rocksdb_trie_handle(
+        &self,
+    ) -> SyncRocksHandle<ReadOnlyDb> {
+        SyncRocksHandle::new(RocksDatabaseHandle::new(self.db()))
     }
 
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {
@@ -731,7 +742,7 @@ impl Storage<OptimisticTransactionDBInner> {
 
 static SECONDARY_MODE_PATH_SUFFIX: &str = "velas-secondary";
 
-fn account_extractor(data: &[u8]) -> Vec<H256> {
+pub fn account_extractor(data: &[u8]) -> Vec<H256> {
     if let Ok(account) = rlp::decode::<Account>(data) {
         vec![account.storage_root]
     } else {
