@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
-use bytes::BufMut;
+use bytes::{BufMut, Buf, BytesMut};
 use evm::{backend::Log, ExitReason, ExitRevert};
 use primitive_types::{H160, H256, U256};
 use rlp::{Decodable as DecodableOld, DecoderError, Encodable as EncodableOld, Rlp, RlpStream};
@@ -129,8 +129,6 @@ impl Transaction {
     Serialize,
     Deserialize,
 )]
-
-
 #[derive(Decodable, Encodable)]
 pub struct UnsignedTransaction {
     pub nonce: U256,
@@ -359,7 +357,6 @@ impl<'de> Decodable<'de> for TransactionAction {
     fn decode(buf: &mut &'de [u8]) -> Result<Self, triedb::rlp::decode::DecodeError> {
         let mut buf_view = *buf;
         let h = fastrlp::Header::decode(&mut buf_view)?;
-        dbg!("header : {:?}", &h);
         if h.payload_length == 0 {
             let _h = fastrlp::Header::decode(buf)?;
             return Ok(Self::Create);
@@ -385,6 +382,74 @@ impl EncodableOld for Transaction {
     }
 }
 
+impl Encodable for Transaction {
+    fn encode(&self,out: &mut dyn BufMut) {
+
+        let len = self.nonce.length() + self.gas_price.length() 
+            + self.gas_limit.length() + self.action.length() 
+            + self.value.length() + self.input.length() 
+            + self.signature.v.length() + self.signature.r.length() + self.signature.s.length() ;
+        fastrlp::Header {
+            list: true,
+            payload_length: len,
+        }.encode(out);
+        self.nonce.encode(out);
+        self.gas_price.encode(out);
+        self.gas_limit.encode(out);
+        self.action.encode(out);
+        self.value.encode(out);
+        self.input.encode(out);
+        self.signature.v.encode(out);
+        self.signature.r.encode(out);
+        self.signature.s.encode(out);
+    }
+
+    fn length(&self) -> usize {
+
+        let len = self.nonce.length() + self.gas_price.length() 
+            + self.gas_limit.length() + self.action.length() 
+            + self.value.length() + self.input.length() 
+            + self.signature.v.length() + self.signature.r.length() + self.signature.s.length() ;
+        fastrlp::Header {
+            list: true,
+            payload_length: len,
+        }
+        .length()
+            + len
+
+    }
+}
+
+impl<'de> Decodable<'de> for Transaction {
+    fn decode(buf: &mut &'de [u8]) -> Result<Self, fastrlp::DecodeError> {
+        let h = fastrlp::Header::decode(buf)?;
+        if !h.list {
+            return Err(fastrlp::DecodeError::UnexpectedString);
+        }
+        let payload_view = &mut &buf[..h.payload_length];
+        let cnt = fastrlp::count(payload_view)?;
+        if cnt!= 9 {
+            return Err(fastrlp::DecodeError::ListLengthMismatch { expected: 9, got: cnt });
+        }
+
+        let nonce = fastrlp::Decodable::decode(payload_view)?;
+        let gas_price = fastrlp::Decodable::decode(payload_view)?;
+        let gas_limit = fastrlp::Decodable::decode(payload_view)?;
+        let action = fastrlp::Decodable::decode(payload_view)?;
+        let value = fastrlp::Decodable::decode(payload_view)?;
+        let input= fastrlp::Decodable::decode(payload_view)?;
+        let v= fastrlp::Decodable::decode(payload_view)?;
+        let r = fastrlp::Decodable::decode(payload_view)?;
+        let s = fastrlp::Decodable::decode(payload_view)?;
+        buf.advance(h.payload_length);
+        Ok(Self {
+            nonce, gas_price, gas_limit, action, value, input,
+            signature: TransactionSignature { v, r, s},
+        })
+    }
+}
+
+#[cfg(test)]
 impl DecodableOld for Transaction {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         Ok(Self {
@@ -462,19 +527,75 @@ impl TransactionInReceipt {
 impl Encodable for TransactionInReceipt {
 
     fn encode(&self,out: &mut dyn BufMut) {
-        unimplemented!();
+        match self {
+            TransactionInReceipt::Signed(tx) => {
+                tx.encode(out);
+            },
+            TransactionInReceipt::Unsigned(tx) => {
+                tx.encode(out);
+            },
+        }
     }
     fn length(&self) -> usize {
-        unimplemented!();
-
+        match self {
+            TransactionInReceipt::Signed(tx) => {
+                tx.length()
+            },
+            TransactionInReceipt::Unsigned(tx) => {
+                tx.length()
+            },
+        }
     }
 }
 
+pub fn consume(buf: &mut &[u8]) -> Result<(), triedb::rlp::decode::DecodeError> {
+    let h = fastrlp::Header::decode(buf)?;
+
+    buf.advance(h.payload_length);
+    Ok(())
+
+    
+}
 impl<'de> Decodable<'de> for TransactionInReceipt {
     fn decode(buf: &mut &'de [u8]) -> Result<Self, triedb::rlp::decode::DecodeError> {
-        unimplemented!();
+        let mut count_view = *buf;
+        let h = fastrlp::Header::decode(&mut count_view)?;
+        if !h.list {
+            return Err(fastrlp::DecodeError::UnexpectedString);
+        }
+        let count_view = &mut &count_view[..h.payload_length];
+        let cnt = fastrlp::count(count_view)?;
+
+        let res = match cnt {
+            8 => {
+                TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode(buf, false)?)
+            },
+            9 => {
+                for _repeat in 0..8 {
+                    consume(count_view)?;
+                }
+                let res: Result<u8,_> = fastrlp::Decodable::decode(count_view);
+                match (count_view.is_empty(), res) {
+                    (true, Ok(UNSIGNED_TX_MARKER)) => {
+                        TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode(buf, true)?)
+                    },
+                    _ => {
+                        TransactionInReceipt::Signed(<Transaction as Decodable>::decode(buf)?)
+                    }
+                    
+                }
+                
+            },
+            _ => return Err(fastrlp::DecodeError::Custom(
+                "list len must be either 8 or 9 for TransactionInReceipt"
+            ) ),
+            
+        };
+        Ok(res)
     }
 }
+
+#[cfg(test)]
 impl EncodableOld for TransactionInReceipt {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self {
@@ -500,6 +621,7 @@ impl From<UnsignedTransactionWithCaller> for TransactionInReceipt {
     }
 }
 
+#[cfg(test)]
 impl DecodableOld for TransactionInReceipt {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         let items = rlp.item_count()?;
@@ -511,7 +633,7 @@ impl DecodableOld for TransactionInReceipt {
                         rlp, true,
                     )?)
                 } else {
-                    TransactionInReceipt::Signed(Transaction::decode(rlp)?)
+                    TransactionInReceipt::Signed(<Transaction as DecodableOld>::decode(rlp)?)
                 }
             }
             _ => return Err(DecoderError::RlpInvalidLength),
@@ -529,6 +651,7 @@ pub struct UnsignedTransactionWithCaller {
     pub signed_compatible: bool,
 }
 
+#[cfg(test)]
 impl EncodableOld for UnsignedTransactionWithCaller {
     fn rlp_append(&self, s: &mut RlpStream) {
         let chain_id = self.chain_id;
@@ -648,7 +771,9 @@ impl Encodable for UnsignedTransactionWithCaller {
 }
 
 impl UnsignedTransactionWithCaller {
-    pub fn tx_id_hash(&self) -> H256 {
+
+    #[cfg(test)]
+    pub fn tx_id_hash_old(&self) -> H256 {
         // old transaction hash was calculated with different rlp structure, use signing_hash to be compatible
         if !self.signed_compatible {
             return self.unsigned_tx.signing_hash(Some(self.chain_id));
@@ -657,6 +782,18 @@ impl UnsignedTransactionWithCaller {
         self.rlp_append(&mut stream);
         H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
     }
+    pub fn tx_id_hash(&self) -> H256 {
+
+        if !self.signed_compatible {
+            return self.unsigned_tx.signing_hash(Some(self.chain_id));
+        }
+        let mut buf = BytesMut::with_capacity(1024);
+        self.encode(&mut buf);
+        
+        H256::from_slice(Keccak256::digest(buf.as_ref()).as_slice())
+
+    }
+    #[cfg(test)]
     pub(super) fn decode_old(rlp: &Rlp<'_>, signed_compatible: bool) -> Result<Self, DecoderError> {
         let nonce = rlp.val_at(0)?;
         let gas_price = rlp.val_at(1)?;

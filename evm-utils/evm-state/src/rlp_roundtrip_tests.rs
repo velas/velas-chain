@@ -1,4 +1,4 @@
-use crate::{transaction_roots::EthereumReceipt, TransactionAction, UnsignedTransaction, UnsignedTransactionWithCaller};
+use crate::{transaction_roots::EthereumReceipt, TransactionAction, UnsignedTransaction, UnsignedTransactionWithCaller, Transaction, TransactionSignature, TransactionInReceipt};
 
 use super::types::Account;
 
@@ -260,4 +260,150 @@ fn test_check_unsigned_transaction_with_caller_roundtrip2() {
     {
         assert_eq!(old_rlp_raw, rlp_raw);
     }
+}
+
+#[test]
+fn test_check_transaction_roundtrip() {
+
+    let ta1 = TransactionAction::Create;
+    let tx1 = Transaction{
+        nonce: U256([72; 4]),
+        gas_price: U256([3213;4]),
+        gas_limit: U256([4324; 4]),
+        action: ta1,
+        value: U256([7732; 4]),
+        signature: TransactionSignature {
+            v: 88979,
+            r: H256([34; 32]),
+            s: H256([78; 32]),
+        },
+        input: vec![32, 31, 0, 34, 76, 173],
+
+    };
+ 
+    check_roundtrip!(tx1 => Transaction);
+
+    let ta2 = TransactionAction::Call(H160([56; 20]));
+    let tx2 = Transaction{
+        nonce: U256([79; 4]),
+        gas_price: U256([3013;4]),
+        gas_limit: U256([4124; 4]),
+        action: ta2,
+        value: U256([7832; 4]),
+        signature: TransactionSignature {
+            v: 88979,
+            r: H256([38; 32]),
+            s: H256([76; 32]),
+        },
+        input: vec![32, 31, 0, 34, 76, 173],
+
+    };
+ 
+    check_roundtrip!(tx2 => Transaction);
+
+}
+
+#[test]
+fn test_check_transaction_in_receipt_roundtrip1() {
+
+    let ta = TransactionAction::Create;
+    let tx = Transaction{
+        nonce: U256([72; 4]),
+        gas_price: U256([3213;4]),
+        gas_limit: U256([4324; 4]),
+        action: ta,
+        value: U256([7732; 4]),
+        signature: TransactionSignature {
+            v: 88979,
+            r: H256([34; 32]),
+            s: H256([78; 32]),
+        },
+        input: vec![32, 31, 0, 34, 76, 173],
+
+    };
+
+    let tx_in_rec1 = TransactionInReceipt::Signed(tx);
+ 
+    check_roundtrip!(tx_in_rec1 => TransactionInReceipt);
+
+}
+
+#[test]
+fn test_check_transaction_in_receipt_roundtrip2() {
+    let ta = TransactionAction::Create;
+
+    let ut = UnsignedTransaction {
+        nonce: U256([46;4]),
+        gas_price: U256([543; 4]),
+        gas_limit: U256([342;4]),
+        action: ta,
+        value: U256([23000;4]),
+        input: vec![34, 45, 12, 123, 243],
+    };
+
+    let ut_c = UnsignedTransactionWithCaller {
+        unsigned_tx: ut,
+        caller: H160([23; 20]),
+        chain_id: 24,
+        signed_compatible: false,
+        
+    }; 
+
+    let tx_in_rec2 = TransactionInReceipt::Unsigned(ut_c);
+
+ 
+    check_roundtrip!(tx_in_rec2 => TransactionInReceipt);
+}
+
+#[test]
+fn test_check_transaction_in_receipt_roundtrip3() {
+    let ta2 = TransactionAction::Call(H160([56; 20]));
+
+    let ut2 = UnsignedTransaction {
+        nonce: U256([46;4]),
+        gas_price: U256([543; 4]),
+        gas_limit: U256([342;4]),
+        action: ta2,
+        value: U256([20000; 4]),
+        input: vec![34, 45, 12, 123, 243],
+    };
+
+    let ut_c2 = UnsignedTransactionWithCaller {
+        unsigned_tx: ut2,
+        caller: H160([23; 20]),
+        chain_id: 24,
+        signed_compatible: true,
+        
+    }; 
+    let tx_in_rec3 = TransactionInReceipt::Unsigned(ut_c2);
+
+    check_roundtrip!(tx_in_rec3 => TransactionInReceipt);
+
+}
+
+#[test]
+fn test_check_unsigned_transaction_with_caller_tx_id_hash() {
+    let ta2 = TransactionAction::Call(H160([56; 20]));
+
+    let ut2 = UnsignedTransaction {
+        nonce: U256([46;4]),
+        gas_price: U256([543; 4]),
+        gas_limit: U256([342;4]),
+        action: ta2,
+        value: U256([20000; 4]),
+        input: vec![34, 45, 12, 123, 243],
+    };
+
+    let ut_c2 = UnsignedTransactionWithCaller {
+        unsigned_tx: ut2,
+        caller: H160([23; 20]),
+        chain_id: 24,
+        signed_compatible: true,
+        
+    }; 
+
+    let old = ut_c2.tx_id_hash_old();
+    let new = ut_c2.tx_id_hash();
+
+    assert_eq!(old, new);
 }
