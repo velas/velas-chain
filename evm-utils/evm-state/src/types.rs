@@ -231,6 +231,8 @@ impl<'de> Decodable<'de> for Account {
         let balance = fastrlp::Decodable::decode(payload_view)?;
         let storage_root= fastrlp::Decodable::decode(payload_view)?;
         let code_hash = fastrlp::Decodable::decode(payload_view)?;
+
+        debug_assert!(payload_view.is_empty());
         buf.advance(h.payload_length);
         Ok(Self {
             nonce, balance, storage_root, code_hash,
@@ -608,6 +610,8 @@ pub(super) mod transaction_roots {
             let gas_used = fastrlp::Decodable::decode(payload_view)?;
             let log_bloom= fastrlp::Decodable::decode(payload_view)?;
             let logs = fastrlp::Decodable::decode(payload_view)?;
+
+            debug_assert!(payload_view.is_empty());
             buf.advance(h.payload_length);
             Ok(Self {
                 status, gas_used, log_bloom, logs,

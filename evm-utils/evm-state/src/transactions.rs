@@ -441,6 +441,7 @@ impl<'de> Decodable<'de> for Transaction {
         let v= fastrlp::Decodable::decode(payload_view)?;
         let r = fastrlp::Decodable::decode(payload_view)?;
         let s = fastrlp::Decodable::decode(payload_view)?;
+        debug_assert!(payload_view.is_empty());
         buf.advance(h.payload_length);
         Ok(Self {
             nonce, gas_price, gas_limit, action, value, input,
@@ -861,15 +862,15 @@ impl UnsignedTransactionWithCaller {
             let caller = fastrlp::Decodable::decode(payload_view)?;
             let _marker: u8 = fastrlp::Decodable::decode(payload_view)?;
             debug_assert_eq!(_marker, UNSIGNED_TX_MARKER);
-            debug_assert!(payload_view.is_empty());
             (chain_id, caller)
         } else {
             let caller = fastrlp::Decodable::decode(payload_view)?;
             let chain_id = fastrlp::Decodable::decode(payload_view)?;
-            debug_assert!(payload_view.is_empty());
             (chain_id, caller)
             
         };
+        debug_assert!(payload_view.is_empty());
+        buf.advance(h.payload_length);
 
         Ok(Self {
             unsigned_tx: UnsignedTransaction {
