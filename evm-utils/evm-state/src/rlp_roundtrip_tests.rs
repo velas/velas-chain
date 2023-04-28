@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 use crate::{transaction_roots::EthereumReceipt, TransactionAction, UnsignedTransaction, UnsignedTransactionWithCaller, Transaction, TransactionSignature, TransactionInReceipt};
 
 use super::types::Account;
@@ -382,6 +384,31 @@ fn test_check_transaction_in_receipt_roundtrip3() {
 }
 
 #[test]
+fn test_check_transaction_in_receipt_roundtrip4() {
+
+    let ta = TransactionAction::Call(H160([10; 20]));
+    let tx = Transaction{
+        nonce: U256([72; 4]),
+        gas_price: U256([3213;4]),
+        gas_limit: U256([4324; 4]),
+        action: ta,
+        value: U256([7732; 4]),
+        signature: TransactionSignature {
+            v: 88979,
+            r: H256([34; 32]),
+            s: H256([78; 32]),
+        },
+        input: vec![32, 31, 0, 34, 76, 173],
+
+    };
+
+    let tx_in_rec1 = TransactionInReceipt::Signed(tx);
+ 
+    check_roundtrip!(tx_in_rec1 => TransactionInReceipt);
+
+}
+
+#[test]
 fn test_check_unsigned_transaction_with_caller_tx_id_hash() {
     let ta2 = TransactionAction::Call(H160([56; 20]));
 
@@ -406,4 +433,65 @@ fn test_check_unsigned_transaction_with_caller_tx_id_hash() {
     let new = ut_c2.tx_id_hash();
 
     assert_eq!(old, new);
+}
+
+
+#[test]
+fn test_check_transaction_in_receipt_roundtrip5() {
+    let ta_inner = hexutil::read_hex("5c44f6325198ac3d4007727211040311e9e6a1f0").unwrap();
+    let r_inner = hexutil::read_hex("ed30d3b0afdffef99887e8fcba2de50f3b390286ae2047588ceb1b989ae52dbd").unwrap();
+    let s_inner = hexutil::read_hex("1aa5f7e761f7866ee87381e6e1d8efbcdb02daa7f752c3c0478854da0eafc170").unwrap();
+    let ta = TransactionAction::Call(H160(ta_inner.try_into().unwrap()));
+
+    let tx = Transaction{
+        nonce: U256::from_dec_str("2787").unwrap(),
+        gas_price: U256::from_dec_str("3000000000").unwrap(),
+        gas_limit: U256::from_dec_str("45348").unwrap(),
+        action: ta,
+        value: U256::from_dec_str("0").unwrap(),
+        signature: TransactionSignature {
+            v: 247,
+            r: H256(r_inner.try_into().unwrap()),
+            s: H256(s_inner.try_into().unwrap()),
+        },
+        input: vec![162, 44, 180, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 46, 126, 29, 14, 117, 75, 59, 62, 29, 25, 113, 208, 49, 29, 132, 62, 179, 181, 26, 230, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+
+    };
+
+    let tx_in_rec1 = TransactionInReceipt::Signed(tx);
+ 
+    check_roundtrip!(tx_in_rec1 => TransactionInReceipt);
+    
+}
+
+#[test]
+fn test_check_transaction_in_receipt_roundtrip6() {
+    let ta_inner = hexutil::read_hex("c848e8767a209ec1538f7bc8a5d849ea521443dc").unwrap();
+
+    let r_inner = hexutil::read_hex("e8f46e259e3f8586a25a0f6037e13dbeb59123d7faa7a65e8d8c9edf6338433e").unwrap();
+    let s_inner = hexutil::read_hex("7316d2aaacdb75a1d25b12d3843fd30e16d11aecf68974f0c96f6d33299b6cf6").unwrap();
+    let ta = TransactionAction::Call(H160(ta_inner.try_into().unwrap()));
+
+    let tx = Transaction{
+        nonce: U256::from_dec_str("975723").unwrap(),
+        gas_price: U256::from_dec_str("5000000000").unwrap(),
+        gas_limit: U256::from_dec_str("700000").unwrap(),
+        action: ta,
+        value: U256::from_dec_str("0").unwrap(),
+        signature: TransactionSignature {
+            v: 248,
+            r: H256(r_inner.try_into().unwrap()),
+            s: H256(s_inner.try_into().unwrap()),
+        },
+        input: vec![70,
+             65,
+             37,
+             125],
+
+    };
+
+    let tx_in_rec1 = TransactionInReceipt::Signed(tx);
+ 
+    check_roundtrip!(tx_in_rec1 => TransactionInReceipt);
+    
 }
