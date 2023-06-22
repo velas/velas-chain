@@ -18,7 +18,7 @@ async fn redirect(
     id: Id,
 ) -> Option<Output> {
     debug!("Method not found! Redirecting to node...");
-    let response = match meta.rpc_client._send_request(call_json).await {
+    let response = match meta.get_rpc_client()._send_request(call_json).await {
         Ok(response) => response,
         Err(err) => {
             let mut error = Error::internal_error();

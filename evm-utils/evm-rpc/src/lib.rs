@@ -649,6 +649,7 @@ pub mod trace {
 }
 
 pub use bridge::BridgeERPC;
+pub use bundler::BundlerERPC;
 pub use chain::ChainERPC;
 pub use general::GeneralERPC;
 pub use trace::TraceERPC;
@@ -901,6 +902,104 @@ pub mod bridge {
 
         #[rpc(meta, name = "eth_getCompilers")]
         fn compilers(&self, meta: Self::Metadata) -> Result<Vec<String>, Error>;
+    }
+}
+
+pub mod bundler {
+    use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+    use sha3::{Digest, Keccak256};
+    use super::*;
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct UserOperation {
+        pub sender: Address,
+        pub nonce: U256,
+        pub init_code: Bytes,
+        pub call_data: Bytes,
+        pub call_gas_limit: U256,
+        pub verification_gas_limit: U256,
+        pub pre_verification_gas: U256,
+        pub max_fee_per_gas: U256,
+        pub max_priority_fee_per_gas: U256,
+        pub paymaster_and_data: Bytes,
+        pub signature: Bytes,
+    }
+
+    impl UserOperation {
+        pub fn get_init_code(&self) -> &Vec<u8> {
+            &self.init_code.0
+        }
+
+        pub fn get_sender(&self) -> Address {
+            self.sender
+        }
+
+        pub fn hash(&self, entry_point: Address, chain_id: u64) -> H256 {
+            let mut stream = RlpStream::new();
+            stream.begin_list(12);
+            stream.append(&self.sender);
+            stream.append(&self.nonce);
+            stream.append(&self.init_code.0);
+            stream.append(&self.call_data.0);
+            stream.append(&self.call_gas_limit);
+            stream.append(&self.verification_gas_limit);
+            stream.append(&self.pre_verification_gas);
+            stream.append(&self.max_fee_per_gas);
+            stream.append(&self.max_priority_fee_per_gas);
+            stream.append(&self.paymaster_and_data.0);
+            stream.append(&entry_point);
+            stream.append(&chain_id);
+            H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
+        }
+    }
+
+    impl Encodable for UserOperation {
+        fn rlp_append(&self, s: &mut RlpStream) {
+            s.begin_list(11)
+                .append(&self.sender)
+                .append(&self.nonce)
+                .append(&self.init_code.0)
+                .append(&self.call_data.0)
+                .append(&self.call_gas_limit)
+                .append(&self.verification_gas_limit)
+                .append(&self.pre_verification_gas)
+                .append(&self.max_fee_per_gas)
+                .append(&self.max_priority_fee_per_gas)
+                .append(&self.paymaster_and_data.0)
+                .append(&self.signature.0);
+        }
+    }
+
+    impl Decodable for UserOperation {
+        fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+            Ok(Self {
+                sender: rlp.val_at(0)?,
+                nonce: rlp.val_at(1)?,
+                init_code: Bytes::from(rlp.val_at::<Vec<u8>>(2)?),
+                call_data: Bytes::from(rlp.val_at::<Vec<u8>>(3)?),
+                call_gas_limit: rlp.val_at(4)?,
+                verification_gas_limit: rlp.val_at(5)?,
+                pre_verification_gas: rlp.val_at(6)?,
+                max_fee_per_gas: rlp.val_at(7)?,
+                max_priority_fee_per_gas: rlp.val_at(8)?,
+                paymaster_and_data: Bytes::from(rlp.val_at::<Vec<u8>>(9)?),
+                signature: Bytes::from(rlp.val_at::<Vec<u8>>(10)?),
+            })
+        }
+    }
+
+    #[rpc]
+    pub trait BundlerERPC {
+        type Metadata;
+
+        #[rpc(meta, name = "eth_sendUserOperation")]
+        fn send_user_operation(
+            &self,
+            meta: Self::Metadata,
+            user_operation: UserOperation,
+            entry_point: Address,
+        ) -> BoxFuture<Result<Hex<H256>, Error>>;
     }
 }
 

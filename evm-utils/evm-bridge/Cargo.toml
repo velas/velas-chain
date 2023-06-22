@@ -60,5 +60,10 @@ tracing-opentelemetry  =  "0.16"
 opentelemetry = { version = "0.16", default-features = false, features = ["trace"] }
 opentelemetry-jaeger = { version = "0.15", features = [ "reqwest_collector_client", "rt-tokio" ] }
 
+[dev-dependencies]
+solana-streamer = { path = "../../streamer", version = "=1.9.29" }
+solana-test-validator = { path = "../../test-validator", version = "=1.9.29" }
+tokio-test = "*"
+
 [features]
 default=[]

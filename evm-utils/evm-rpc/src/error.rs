@@ -122,7 +122,42 @@ pub enum Error {
     MempoolImport { details: String },
     #[snafu(display("Invalid rpc params"))]
     InvalidParams {},
-    // InvalidParams {},
+    // User operation related errors:
+    #[snafu(display("invalid UserOperation struct/fields"))]
+    InvalidUserOp,
+    #[snafu(display("{}", message))]
+    UserOpSimulateValidationError { message: String },
+    #[snafu(display("{}", message))]
+    ValidatePaymasterUserOpError {
+        message: String,
+        paymaster: evm_state::Address,
+    },
+    #[snafu(display("transaction rejected because of opcode validation"))]
+    UserOpOpcodeValidationError,
+    #[snafu(display("user operation time-range is already expired (or will expire soon)"))]
+    UserOpOutOfTimeRange {
+        valid_after: u64,
+        valid_until: u64,
+        paymaster: Option<evm_state::Address>,
+    },
+    #[snafu(display("paymaster (or signature aggregator) is throttled/banned"))]
+    EntityThrottledOrBanned {
+        paymaster: Option<evm_state::Address>,
+        aggregator: Option<evm_state::Address>,
+    },
+    #[snafu(display("paymaster (or signature aggregator) stake or unstake-delay is too low"))]
+    EntityStakeOrUnstakeDelayTooLow {
+        paymaster: Option<evm_state::Address>,
+        aggregator: Option<evm_state::Address>,
+        minimum_stake: u64,
+        minimum_unstake_delay: u64,
+    },
+    #[snafu(display("wallet specified unsupported signature aggregator"))]
+    UnsupportedSignatureAggregator { aggregator: evm_state::Address },
+    #[snafu(display("user specified unsupported entry point"))]
+    UnsupportedEntryPoint { entry_point: evm_state::Address },
+    #[snafu(display("wallet signature check failed (or paymaster signature, if the paymaster uses its data as signature)"))]
+    UserOpSignatureCheckFailed,
     // UnsupportedTrieQuery,
     // NotFound,
     // UnknownSourceMapJump
@@ -196,6 +231,18 @@ const EVM_EXECUTION_ERROR: i64 = 3; // from geth docs
 const ERROR_EVM_BASE_SUBCODE: i64 = 100; //reserved place for evm errors range: 100 - 200
 const ERROR_EVM_BASE_SUBRANGE: i64 = 100;
 const SERVER_ERROR: i64 = -32005;
+
+//UserOperation related codes:
+const INVALID_USER_OP_ERROR: i64 = -32602;
+const USER_OP_SIMULATE_VALIDATION_ERROR: i64 = -32500;
+const VALIDATE_PAYMASTER_USER_OP_ERROR: i64 = -32501;
+const USER_OP_OPCODE_VALIDATION_ERROR: i64 = -32502;
+const USER_OP_OUT_OF_TIME_RANGE_ERROR: i64 = -32503;
+const ENTITY_THROTTLED_OR_BANNED_ERROR: i64 = -32504;
+const ENTITY_STAKE_OR_UNSTAKE_DELAY_TOO_LOW_ERROR: i64 = -32505;
+const UNSUPPORTED_SIGNATURE_AGGREGATOR_ERROR: i64 = -32506;
+const USER_OP_SIGNATURE_CHECK_FAILED_ERROR: i64 = -32507;
+const UNSUPPORTED_ENTRY_POINT_ERROR: i64 = -32508;
 
 impl From<Error> for JRpcError {
     fn from(err: Error) -> Self {
@@ -289,6 +336,83 @@ impl From<Error> for JRpcError {
             Error::GasPriceTooLow { .. } => internal_error(GAS_PRICE_TOO_LOW, &err),
             Error::TransactionRemoved {} => internal_error(TRANSACTION_REPLACED, &err),
             Error::MempoolImport { .. } => internal_error(MEMPOOL_IMPORT, &err),
+            Error::InvalidUserOp {} => internal_error(INVALID_USER_OP_ERROR, &err),
+            Error::UserOpSimulateValidationError { .. } => {
+                internal_error(USER_OP_SIMULATE_VALIDATION_ERROR, &err)
+            }
+            Error::ValidatePaymasterUserOpError { message, paymaster } => {
+                internal_error_with_details(
+                    VALIDATE_PAYMASTER_USER_OP_ERROR,
+                    message,
+                    &json!({ "paymaster": *paymaster }),
+                )
+            }
+            Error::UserOpOpcodeValidationError => {
+                internal_error(USER_OP_OPCODE_VALIDATION_ERROR, &err)
+            }
+            Error::UserOpOutOfTimeRange {
+                valid_after,
+                valid_until,
+                paymaster,
+            } => {
+                let mut data = json!({
+                    "valid_after": *valid_after,
+                    "valid_until": *valid_until,
+                });
+                if let Some(paymaster) = paymaster {
+                    data["paymaster"] = json!(*paymaster);
+                }
+                internal_error_with_details(USER_OP_OUT_OF_TIME_RANGE_ERROR, &err, &data)
+            }
+            Error::EntityThrottledOrBanned {
+                paymaster,
+                aggregator,
+            } => {
+                let data = match (paymaster, aggregator) {
+                    (Some(paymaster), None) => json!({ "paymaster": *paymaster }),
+                    (None, Some(aggregator)) => json!({ "aggregator": *aggregator }),
+                    (Some(paymaster), Some(aggregator)) => {
+                        json!({ "paymaster": *paymaster, "aggregator": *aggregator })
+                    }
+                    (None, None) => json!({}),
+                };
+                internal_error_with_details(ENTITY_THROTTLED_OR_BANNED_ERROR, &err, &data)
+            }
+            Error::EntityStakeOrUnstakeDelayTooLow {
+                paymaster,
+                aggregator,
+                minimum_stake,
+                minimum_unstake_delay,
+            } => {
+                let mut data = json!({
+                    "minimum_stake": *minimum_stake,
+                    "minimum_unstake_delay": *minimum_unstake_delay
+                });
+                if let Some(paymaster) = paymaster {
+                    data["paymaster"] = json!(*paymaster);
+                }
+                if let Some(aggregator) = aggregator {
+                    data["aggregator"] = json!(*aggregator);
+                }
+                internal_error_with_details(
+                    ENTITY_STAKE_OR_UNSTAKE_DELAY_TOO_LOW_ERROR,
+                    &err,
+                    &data,
+                )
+            }
+            Error::UnsupportedSignatureAggregator { aggregator } => internal_error_with_details(
+                UNSUPPORTED_SIGNATURE_AGGREGATOR_ERROR,
+                &err,
+                &json!({ "aggregator": *aggregator }),
+            ),
+            Error::UnsupportedEntryPoint { entry_point } => internal_error_with_details(
+                UNSUPPORTED_ENTRY_POINT_ERROR,
+                &err,
+                &json!({ "entry_point": *entry_point }),
+            ),
+            Error::UserOpSignatureCheckFailed => {
+                internal_error(USER_OP_SIGNATURE_CHECK_FAILED_ERROR, &err)
+            }
         }
     }
 }

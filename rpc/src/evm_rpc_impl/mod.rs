@@ -1234,9 +1234,9 @@ fn call_inner(
         .with_context(|_| EvmStateError)?;
 
     Ok(TxOutput {
-        exit_reason,
-        exit_data,
-        used_gas,
+        exit_reason: dbg!(exit_reason),
+        exit_data: dbg!(exit_data),
+        used_gas: dbg!(used_gas),
         traces,
     })
 }

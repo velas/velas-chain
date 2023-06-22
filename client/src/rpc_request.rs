@@ -279,6 +279,7 @@ pub enum RpcResponseErrorData {
     Empty,
     SendTransactionPreflightFailure(RpcSimulateTransactionResult),
     NodeUnhealthy { num_slots_behind: Option<Slot> },
+    Reverted { data: Vec<u8> },
 }
 
 impl fmt::Display for RpcResponseErrorData {

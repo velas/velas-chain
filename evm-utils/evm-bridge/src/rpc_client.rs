@@ -34,7 +34,7 @@ use solana_sdk::{
 };
 use solana_transaction_status::{TransactionStatus, UiTransactionEncoding};
 
-use evm_rpc::{BlockId, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTransaction};
+use evm_rpc::{BlockId, Bytes, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTransaction};
 use evm_state::{Address, H256, U256};
 use solana_evm_loader_program::scope::solana;
 
@@ -81,7 +81,7 @@ impl AsyncRpcClient {
         match self._send_request(request_json).await {
             Ok(response) => {
                 let json: Value = response.json().await?;
-                if json["error"].is_object() {
+                if dbg!(&json["error"]).is_object() {
                     match serde_json::from_value::<RpcErrorObject>(json["error"].clone()) {
                         Ok(rpc_error_object) => {
                             let data = match rpc_error_object.code {
@@ -102,6 +102,14 @@ impl AsyncRpcClient {
                                         }
                                     }
                                 },
+                                rpc_custom_error::JSON_RPC_SERVER_ERROR_REVERTED => {
+                                    match serde_json::from_value::<Bytes>(dbg!(&json["error"])["data"].clone()) {
+                                        Ok(bytes) => RpcResponseErrorData::Reverted { data: bytes.0 },
+                                        Err(_err) => {
+                                            RpcResponseErrorData::Empty
+                                        }
+                                    }
+                                }
                                 _ => RpcResponseErrorData::Empty
                             };
 
@@ -202,6 +210,11 @@ impl AsyncRpcClient {
         self.send::<Hex<_>>(RpcRequest::EthBlockNumber, json!([]))
             .await
             .map(|h| h.0)
+    }
+
+    pub async fn get_evm_code(&self, address: &Address) -> ClientResult<Bytes> {
+        self.send(RpcRequest::EthGetCode, json!([address, "latest"]))
+            .await
     }
 
     pub async fn get_evm_logs(&self, filter: &RPCLogFilter) -> ClientResult<Vec<RPCLog>> {

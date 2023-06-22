@@ -3,6 +3,7 @@ mod listener;
 use std::{
     collections::{HashMap, HashSet},
     ops::Deref,
+    result::Result as StdResult,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -15,7 +16,11 @@ use listener::PoolListener;
 use log::*;
 use once_cell::sync::Lazy;
 use serde_json::json;
-use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
+use solana_client::{
+    rpc_config::RpcSendTransactionConfig,
+    rpc_request::RpcRequest,
+    rpc_response::Response as RpcResponse,
+};
 use solana_evm_loader_program::{
     scope::{evm, solana},
     tx_chunks::TxChunks,
@@ -33,9 +38,12 @@ use txpool::{
     scoring::Choice, Pool, Readiness, Ready, Scoring, ShouldReplace, VerifiedTransaction,
 };
 
+use solana_sdk::clock::MS_PER_TICK;
+use solana_sdk::signers::Signers;
 use tracing_attributes::instrument;
 
-use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult};
+use crate::bridge::{from_client_error, EvmBridge, EvmResult};
+use crate::rpc_client::AsyncRpcClient;
 
 type UnixTimeMs = u64;
 
@@ -394,7 +402,7 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
     info!("Running deploy worker task...");
 
     loop {
-        let tx = bridge.pool.pending();
+        let tx = bridge.get_pool().pending();
 
         if let Some(pooled_tx) = tx {
             let hash = pooled_tx.hash;
@@ -419,7 +427,7 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
                     // Any error is a reason to limit user activity.
                     // If error is recoverable, then implement delay to avoid flooding.
                     // If error is not recoverable, then client form invalid tx.
-                    bridge.pool.pause_processing(&sender, SENDER_PAUSE);
+                    bridge.get_pool().pause_processing(&sender, SENDER_PAUSE);
 
                     if is_recoverable_error(&e) {
                         debug!(
@@ -437,12 +445,12 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
                 }
             }
 
-            match bridge.pool.remove(&hash) {
+            match bridge.get_pool().remove(&hash) {
                 Some(tx) => {
                     info!("Transaction {} removed from the pool", tx.hash)
                 }
                 None => {
-                    match bridge.pool.remove_by_nonce(&sender, nonce) {
+                    match bridge.get_pool().remove_by_nonce(&sender, nonce) {
                         Some(dup_tx) => {
                             info!("Tx was replaced during deploy, duplicate tx with hash = {} removed", dup_tx.hash);
                         }
@@ -465,7 +473,7 @@ pub async fn worker_cleaner(bridge: Arc<EvmBridge>) {
     loop {
         tokio::time::sleep(CLEANUP_WORKER_PAUSE).await;
 
-        let (before_strip, after_strip) = bridge.pool.strip_outdated();
+        let (before_strip, after_strip) = bridge.get_pool().strip_outdated();
         info!("Cleanup of outdated `last deployed` infos. Entries before cleanup: {}, after cleanup: {}", before_strip, after_strip);
     }
 }
@@ -478,29 +486,29 @@ pub async fn worker_signature_checker(bridge: Arc<EvmBridge>) {
     loop {
         info!("Worker checks signatures");
 
-        for (hash, generated) in bridge.pool.get_scheduled_for_check_transactions() {
+        for (hash, generated) in bridge.get_pool().get_scheduled_for_check_transactions() {
             debug!("Checking scheduled transaction {}", &hash);
 
-            let now = bridge.pool.clock.now();
+            let now = bridge.get_pool().clock.now();
 
             match bridge.is_transaction_landed(&hash).await {
                 Some(true) => {
                     info!("Transaction {} finalized.", &hash);
-                    bridge.pool.drop_from_cache(&hash);
+                    bridge.get_pool().drop_from_cache(&hash);
                 }
                 Some(false) | None => {
                     if now - generated > TX_REIMPORT_THRESHOLD.as_millis() as u64 {
                         info!("Transaction {} needs to redeploy", &hash);
-                        let evm_tx = bridge.pool.transaction_for_redeploy(&hash);
+                        let evm_tx = bridge.get_pool().transaction_for_redeploy(&hash);
                         match evm_tx {
                             Some(cached) => {
                                 warn!("Redeploying transaction {}", &hash);
                                 if let Ok(pooled_tx) =
                                     PooledTransaction::reimported(cached.evm_tx, cached.meta_keys)
                                 {
-                                    match bridge.pool.import(pooled_tx) {
+                                    match bridge.get_pool().import(pooled_tx) {
                                         Ok(tx) => {
-                                            bridge.pool.drop_from_cache(&hash);
+                                            bridge.get_pool().drop_from_cache(&hash);
                                             info!(
                                                 "Transaction reimported to the pool. New tx hash: {}",
                                                 tx.hash
@@ -546,10 +554,10 @@ async fn process_tx(
 
     let rpc_tx = RPCTransaction::from_transaction(tx.clone().into())?;
 
-    if bridge.simulate {
+    if bridge.is_simulation_enabled() {
         // Try simulate transaction execution
         bridge
-            .rpc_client
+            .get_rpc_client()
             .send::<Bytes>(RpcRequest::EthCall, json!([rpc_tx, "latest"]))
             .await
             .map_err(from_client_error)?;
@@ -557,7 +565,7 @@ async fn process_tx(
 
     if bytes.len() > evm::TX_MTU {
         debug!("Sending tx = {}, by chunks", hash);
-        match deploy_big_tx(&bridge, &bridge.key, &tx).await {
+        match deploy_big_tx(&bridge, &bridge.get_key(), &tx).await {
             Ok(_tx) => {
                 return Ok(Hex(hash));
             }
@@ -595,12 +603,12 @@ async fn process_tx(
     }
 
     let instructions = bridge.make_send_tx_instructions(&tx, &meta_keys);
-    let message = Message::new(&instructions, Some(&bridge.key.pubkey()));
+    let message = Message::new(&instructions, Some(&bridge.get_key().pubkey()));
     let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
 
     debug!("Getting block hash");
     let (blockhash, _height) = bridge
-        .rpc_client
+        .get_rpc_client()
         .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
         .await
         .map(|response| response.value)
@@ -608,10 +616,10 @@ async fn process_tx(
         .map_err(|e| evm_rpc::Error::NativeRpcError {
             details: String::from("Failed to get recent blockhash"),
             source: e.into(),
-            verbose: bridge.verbose_errors,
+            verbose: bridge.is_verbose(),
         })?;
 
-    send_raw_tx.sign(&[&bridge.key], blockhash);
+    send_raw_tx.sign(&[bridge.get_key()], blockhash);
     debug!("Sending tx = {:?}", send_raw_tx);
 
     debug!(
@@ -620,12 +628,12 @@ async fn process_tx(
     );
 
     let signature = bridge
-        .rpc_client
+        .get_rpc_client()
         .send_transaction_with_config(
             &send_raw_tx,
             RpcSendTransactionConfig {
                 preflight_commitment: Some(CommitmentLevel::Processed),
-                skip_preflight: !bridge.simulate,
+                skip_preflight: !bridge.is_simulation_enabled(),
                 ..Default::default()
             },
         )
@@ -633,7 +641,7 @@ async fn process_tx(
         .map_err(from_client_error)?;
 
     bridge
-        .pool
+        .get_pool()
         .schedule_after_deploy_check(hash, signature, meta_keys, tx);
 
     Ok(Hex(hash))
@@ -654,13 +662,13 @@ async fn deploy_big_tx(
 
     debug!("Create new storage {} for EVM tx {:?}", storage_pubkey, tx);
 
-    let tx_bytes = if bridge.borsh_encoding {
+    let tx_bytes = if bridge.is_borsh_enabled() {
         let mut tx_bytes = vec![];
         BorshSerialize::serialize(&tx, &mut tx_bytes)
-            .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
+            .map_err(|e| into_native_error(e, bridge.is_verbose()))?;
         tx_bytes
     } else {
-        bincode::serialize(&tx).map_err(|e| into_native_error(e, bridge.verbose_errors))?
+        bincode::serialize(&tx).map_err(|e| into_native_error(e, bridge.is_verbose()))?
     };
 
     debug!(
@@ -671,16 +679,16 @@ async fn deploy_big_tx(
     );
 
     let balance = bridge
-        .rpc_client
+        .get_rpc_client()
         .get_minimum_balance_for_rent_exemption(tx_bytes.len())
         .await
-        .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
+        .map_err(|e| into_native_error(e, bridge.is_verbose()))?;
 
     let (blockhash, _height) = bridge
-        .rpc_client
+        .get_rpc_client()
         .get_latest_blockhash_with_commitment(CommitmentConfig::finalized())
         .await
-        .map_err(|e| into_native_error(e, bridge.verbose_errors))?
+        .map_err(|e| into_native_error(e, bridge.is_verbose()))?
         .value;
 
     let create_storage_ix = system_instruction::create_account(
@@ -691,7 +699,7 @@ async fn deploy_big_tx(
         &solana_evm_loader_program::ID,
     );
 
-    let allocate_storage_ix = if bridge.borsh_encoding {
+    let allocate_storage_ix = if bridge.is_borsh_enabled() {
         solana_evm_loader_program::big_tx_allocate(storage_pubkey, tx_bytes.len())
     } else {
         solana_evm_loader_program::big_tx_allocate_old(storage_pubkey, tx_bytes.len())
@@ -709,13 +717,13 @@ async fn deploy_big_tx(
         create_and_allocate_tx.signatures
     );
     let rpc_send_cfg = RpcSendTransactionConfig {
-        skip_preflight: !bridge.simulate,
+        skip_preflight: !bridge.is_simulation_enabled(),
         preflight_commitment: Some(CommitmentLevel::Processed),
         ..Default::default()
     };
 
     match bridge
-        .rpc_client
+        .get_rpc_client()
         .send_and_confirm_transaction_with_config(&create_and_allocate_tx, rpc_send_cfg)
         .await
     {
@@ -732,22 +740,22 @@ async fn deploy_big_tx(
         }
         Err(e) => {
             error!("Error create and allocate {} tx: {:?}", storage_pubkey, e);
-            return Err(into_native_error(e, bridge.verbose_errors));
+            return Err(into_native_error(e, bridge.is_verbose()));
         }
     }
 
     let blockhash = bridge
-        .rpc_client
+        .get_rpc_client()
         .get_new_blockhash(&blockhash)
         .await
-        .map_err(|e| into_native_error(e, bridge.verbose_errors))?;
+        .map_err(|e| into_native_error(e, bridge.is_verbose()))?;
 
     let write_data_txs: Vec<solana::Transaction> = tx_bytes
         // TODO: encapsulate
         .chunks(evm_state::TX_MTU)
         .enumerate()
         .map(|(i, chunk)| {
-            if bridge.borsh_encoding {
+            if bridge.is_borsh_enabled() {
                 solana_evm_loader_program::big_tx_write(
                     storage_pubkey,
                     (i * evm_state::TX_MTU) as u64,
@@ -773,19 +781,19 @@ async fn deploy_big_tx(
 
     debug!("Write data txs: {:?}", write_data_txs);
 
-    send_and_confirm_transactions(&bridge.rpc_client, write_data_txs, &signers)
+    send_and_confirm_transactions(&bridge.get_rpc_client(), write_data_txs, &signers)
         .await
         .map(|_| debug!("All write txs for storage {} was done", storage_pubkey))
         .map_err(|e| {
             error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
-            into_native_error(e, bridge.verbose_errors)
+            into_native_error(e, bridge.is_verbose())
         })?;
 
     let (blockhash, _height) = bridge
-        .rpc_client
+        .get_rpc_client()
         .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
         .await
-        .map_err(|e| into_native_error(e, bridge.verbose_errors))?
+        .map_err(|e| into_native_error(e, bridge.is_verbose()))?
         .value;
 
     let instructions = bridge.make_send_big_tx_instructions(tx, storage_pubkey, payer_pubkey);
@@ -799,7 +807,7 @@ async fn deploy_big_tx(
     debug!("Execute EVM transaction at storage {} ...", storage_pubkey);
 
     match bridge
-        .rpc_client
+        .get_rpc_client()
         .send_transaction_with_config(&execute_tx, rpc_send_cfg)
         .await
     {
@@ -851,6 +859,89 @@ fn is_recoverable_error(e: &evm_rpc::Error) -> bool {
         }
     }
     false
+}
+
+async fn send_and_confirm_transactions<T: Signers>(
+    rpc_client: &AsyncRpcClient,
+    mut transactions: Vec<solana::Transaction>,
+    signer_keys: &T,
+) -> StdResult<(), anyhow::Error> {
+    const SEND_RETRIES: usize = 5;
+    const STATUS_RETRIES: usize = 15;
+
+    for _ in 0..SEND_RETRIES {
+        // Send all transactions
+        let mut transactions_signatures = vec![];
+        for transaction in transactions.drain(..) {
+            if cfg!(not(test)) {
+                // Delay ~1 tick between write transactions in an attempt to reduce AccountInUse errors
+                // when all the write transactions modify the same program account (eg, deploying a
+                // new program)
+                tokio::time::sleep(Duration::from_millis(MS_PER_TICK)).await;
+            }
+
+            debug!("Sending {:?}", transaction.signatures);
+
+            let signature = rpc_client
+                .send_transaction_with_config(
+                    &transaction,
+                    RpcSendTransactionConfig {
+                        skip_preflight: true, // NOTE: was true
+                        ..RpcSendTransactionConfig::default()
+                    },
+                )
+                .await
+                .map_err(|e| error!("Send transaction error: {:?}", e))
+                .ok();
+
+            transactions_signatures.push((transaction, signature));
+        }
+
+        for _ in 0..STATUS_RETRIES {
+            // Collect statuses for all the transactions, drop those that are confirmed
+
+            if cfg!(not(test)) {
+                // Retry twice a second
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+
+            let mut retained = vec![];
+            for (transaction, signature) in transactions_signatures {
+                if let Some(signature) = signature {
+                    if rpc_client
+                        .get_signature_statuses(&[signature])
+                        .await
+                        .ok()
+                        .and_then(|RpcResponse { mut value, .. }| value.remove(0))
+                        .and_then(|status| status.confirmations)
+                        .map(|confirmations| confirmations == 0) // retain unconfirmed only
+                        .unwrap_or(true)
+                    {
+                        retained.push((transaction, Some(signature)));
+                    }
+                } else {
+                    retained.push((transaction, signature));
+                }
+            }
+            transactions_signatures = retained;
+
+            if transactions_signatures.is_empty() {
+                return Ok(());
+            }
+        }
+
+        // Re-sign any failed transactions with a new blockhash and retry
+        let blockhash = rpc_client
+            .get_new_blockhash(&transactions_signatures[0].0.message().recent_blockhash)
+            .await?;
+
+        for (mut transaction, _) in transactions_signatures {
+            transaction.try_sign(signer_keys, blockhash)?;
+            debug!("Resending {:?}", transaction);
+            transactions.push(transaction);
+        }
+    }
+    Err(anyhow::Error::msg("Transactions failed"))
 }
 
 #[cfg(test)]
