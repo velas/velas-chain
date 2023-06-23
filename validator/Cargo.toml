@@ -14,7 +14,7 @@ chrono = { version = "0.4.11", features = ["serde"] }
 clap = "2.33.1"
 console = "0.15.0"
 core_affinity = "0.5.10"
-fd-lock = "3.0.1"
+fd-lock = "=3.0.6"
 indicatif = "0.16.2"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = { version = "18.0.0", features = ["ipc", "ws"] }
@@ -48,6 +48,8 @@ solana-streamer = { path = "../streamer", version = "=1.9.29" }
 solana-test-validator = { path = "../test-validator", version = "=1.9.29" }
 solana-version = { path = "../version", version = "=0.6.3" }
 solana-vote-program = { path = "../programs/vote", version = "=1.9.29" }
+
+tokio = { version = "1.14.1", features = ["full"] }
 symlink = "0.1.0"
 
 evm-state = { path = "../evm-utils/evm-state" }

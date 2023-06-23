@@ -2137,7 +2137,7 @@ impl Bank {
             hash: *self.hash.read().unwrap(),
             parent_hash: self.parent_hash,
             parent_slot: self.parent_slot,
-            hard_forks: &*self.hard_forks,
+            hard_forks: &self.hard_forks,
             transaction_count: self.transaction_count.load(Relaxed),
             tick_height: self.tick_height.load(Relaxed),
             signature_count: self.signature_count.load(Relaxed),
@@ -2998,7 +2998,7 @@ impl Bank {
             let vote_state = account.vote_state();
             let vote_state = vote_state.as_ref().ok()?;
             let slot_delta = self.slot().checked_sub(vote_state.last_timestamp.slot)?;
-            (slot_delta <= slots_per_epoch).then(|| {
+            (slot_delta <= slots_per_epoch).then_some({
                 (
                     *pubkey,
                     (
@@ -3048,7 +3048,7 @@ impl Bank {
     // still being stake-weighted.
     // Ref: distribute_rent_to_validators
     fn collect_fees(&self) {
-        let collector_fees = self.collector_fees.load(Relaxed) as u64;
+        let collector_fees = self.collector_fees.load(Relaxed);
 
         if collector_fees != 0 {
             let (deposit, mut burn) = self.fee_rate_governor.burn(collector_fees);
@@ -3690,10 +3690,10 @@ impl Bank {
     }
 
     /// Prepare a transaction batch without locking accounts for transaction simulation.
-    pub(crate) fn prepare_simulation_batch<'a>(
-        &'a self,
+    pub(crate) fn prepare_simulation_batch(
+        &self,
         transaction: SanitizedTransaction,
-    ) -> TransactionBatch<'a, '_> {
+    ) -> TransactionBatch<'_, '_> {
         let lock_result = transaction.get_account_locks(&self.feature_set).map(|_| ());
         let mut batch =
             TransactionBatch::new(vec![lock_result], self, Cow::Owned(vec![transaction]));
@@ -4230,7 +4230,7 @@ impl Bank {
             self.feature_set.clone(),
             compute_budget,
             timings,
-            &*self.sysvar_cache.read().unwrap(),
+            &self.sysvar_cache.read().unwrap(),
             blockhash,
             lamports_per_signature,
             self.load_accounts_data_len(),
@@ -6173,7 +6173,7 @@ impl Bank {
         // If there are no accounts, return the hash of the previous state and the latest blockhash
         let accounts_delta_hash = self.rc.accounts.bank_hash_info_at(self.slot());
         let mut signature_count_buf = [0u8; 8];
-        LittleEndian::write_u64(&mut signature_count_buf[..], self.signature_count() as u64);
+        LittleEndian::write_u64(&mut signature_count_buf[..], self.signature_count());
 
         let evm_state_root = self
             .evm_state

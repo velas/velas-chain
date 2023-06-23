@@ -1,6 +1,8 @@
 //! A command-line executable for generating the chain's genesis config.
 #![allow(clippy::integer_arithmetic)]
 
+use solana_ledger::blockstore::EvmStateJson;
+
 use {
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     evm_state::U256,
@@ -22,7 +24,10 @@ use {
         clock,
         epoch_schedule::EpochSchedule,
         fee_calculator::FeeRateGovernor,
-    genesis_config::{self, ClusterType, GenesisConfig},
+        genesis_config::{
+            self, evm_genesis::{OpenEthereumAccountExtractor, GethAccountExtractor}, ClusterType,
+            GenesisConfig,
+        },
         inflation::Inflation,
         native_token::sol_to_lamports,
         poh_config::PohConfig,
@@ -398,6 +403,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .takes_value(true)
                 .help("Path to EVM state json file, can be retrived from `parity export state` command."),
         ).arg(
+            Arg::with_name("evm-state-format")
+                .long("evm-state-format")
+                .takes_value(true)
+                .help("EVM state json file format [`open-ethereum` or `geth`]")
+        ).arg(
             Arg::with_name("evm-chain-id")
                 .required(false)
                 .long("evm-chain-id")
@@ -558,7 +568,22 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
     }
 
-    let evm_state_json = matches.value_of("evm-state-file").map(PathBuf::from);
+    let evm_state_file = matches.value_of("evm-state-file");
+    let evm_state_format = matches.value_of("evm-state-format");
+    let evm_state_json = match (evm_state_file, evm_state_format) {
+        (Some(path), Some(format)) if format == "geth" => {
+            EvmStateJson::Geth(std::path::Path::new(path))
+        },
+        (Some(path), Some(format)) if format == "open-ethereum" => {
+            EvmStateJson::OpenEthereum(std::path::Path::new(path))
+        },
+        (None, _) => {
+            EvmStateJson::None
+        },
+        _ => {
+            panic!("`evm-state-format` argument value must be `open-ethereum` or `geth`")
+        }
+    };
 
     if let Ok(raw_inflation) = value_t!(matches, "inflation", String) {
         let inflation = match raw_inflation.as_str() {
@@ -643,11 +668,38 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let mut evm_state_balance = U256::zero();
 
-    if let Some(evm_state_json) = &evm_state_json {
-        info!("Calculating evm state lamports");
-        for account in genesis_config::evm_genesis::read_accounts(evm_state_json).unwrap() {
-            evm_state_balance += account.unwrap().1.balance;
-        }
+    match evm_state_json {
+        EvmStateJson::OpenEthereum(path) => {
+            info!("Calculating evm state lamports");
+            let dump_extractor = OpenEthereumAccountExtractor::open_dump(path)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Unable to open dump at path: `{}`",
+                        path.display()
+                    )
+                });
+    
+            for pair in dump_extractor {
+                evm_state_balance += pair.unwrap().account.balance;
+            }
+        },
+        EvmStateJson::Geth(path) => {
+            info!("Calculating evm state lamports");
+            let dump_extractor = GethAccountExtractor::open_dump(path)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Unable to open dump at path: `{}`",
+                        path.display()
+                    )
+                });
+    
+            for pair in dump_extractor {
+                evm_state_balance += pair.unwrap().account.balance;
+            }
+        },
+        EvmStateJson::None => {
+            info!("No evm state file provided");
+        },
     }
 
     let (mut evm_state_lamports, change) =
@@ -663,8 +715,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let issued_lamports = genesis_config
         .accounts
-        .iter()
-        .map(|(_key, account)| account.lamports)
+        .values()
+        .map(|account| account.lamports)
         .sum::<u64>();
 
     info!(
@@ -715,7 +767,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     create_new_ledger(
         &ledger_path,
-        evm_state_json.as_ref().map(AsRef::as_ref),
+        evm_state_json,
         &genesis_config,
         max_genesis_archive_unpacked_size,
         AccessType::PrimaryOnly,

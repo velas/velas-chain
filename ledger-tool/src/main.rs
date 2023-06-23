@@ -87,6 +87,7 @@ use ledger_path::*;
 
 mod evm_blockstore;
 use evm_blockstore::*;
+use solana_ledger::blockstore::EvmStateJson;
 
 mod evm_state;
 use crate::evm_state::*;
@@ -1746,7 +1747,7 @@ fn main() {
 
                 create_new_ledger(
                     &output_directory,
-                    None,
+                    EvmStateJson::None,
                     &genesis_config,
                     solana_runtime::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
                     AccessType::PrimaryOnly,
@@ -2821,7 +2822,7 @@ fn main() {
                             let mut csv_writer = if arg_matches.is_present("csv_filename") {
                                 let csv_filename =
                                     value_t_or_exit!(arg_matches, "csv_filename", String);
-                                let file = File::create(&csv_filename).unwrap();
+                                let file = File::create(csv_filename).unwrap();
                                 Some(csv::WriterBuilder::new().from_writer(file))
                             } else {
                                 None

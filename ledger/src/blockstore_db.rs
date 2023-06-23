@@ -326,7 +326,7 @@ impl Rocks {
     ) -> Result<Rocks> {
         use columns::*;
 
-        fs::create_dir_all(&path)?;
+        fs::create_dir_all(path)?;
 
         // Use default database options
         if matches!(access_type, AccessType::PrimaryOnlyForMaintenance) {
@@ -661,6 +661,22 @@ impl Rocks {
 
     fn is_primary_access(&self) -> bool {
         self.1 == ActualAccessType::Primary
+    }
+
+    pub(crate) fn try_catch_up(&self) -> Result<bool>{
+        let res = match self.1 {
+            ActualAccessType::Secondary => {
+                self.0.try_catch_up_with_primary()?;
+                true
+                
+            },
+            ActualAccessType::Primary => {
+                false
+            }
+        };
+
+        Ok(res)
+        
     }
 }
 
@@ -1402,6 +1418,10 @@ impl Database {
     pub fn set_oldest_block_num(&self, oldest_block_num: BlockNum) {
         self.backend.3.set(oldest_block_num);
     }
+
+    pub(crate) fn try_catch_up(&self) -> Result<bool>{
+        self.backend.try_catch_up()
+    }
 }
 
 impl<C> LedgerColumn<C>
@@ -1753,7 +1773,7 @@ fn get_db_options(access_type: &AccessType) -> Options {
     // A good value for this is the number of cores on the machine
     options.increase_parallelism(num_cpus::get() as i32);
 
-    let mut env = rocksdb::Env::default().unwrap();
+    let mut env = rocksdb::Env::new().unwrap();
 
     // While a compaction is ongoing, all the background threads
     // could be used by the compaction. This can stall writes which

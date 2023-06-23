@@ -32,7 +32,9 @@ use {
     solana_runtime::hardened_unpack::{unpack_genesis_archive, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
     solana_sdk::{
         clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
-        genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
+        genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, 
+            evm_genesis::{OpenEthereumAccountExtractor, GethAccountExtractor}
+        },
         hash::Hash,
         pubkey::Pubkey,
         sanitize::Sanitize,
@@ -70,6 +72,7 @@ use {
     thiserror::Error,
     trees::{Tree, TreeWalk},
 };
+
 pub use crate::blockstore_db::BlockstoreError;
 
 pub mod blockstore_purge;
@@ -376,7 +379,7 @@ impl Blockstore {
         recovery_mode: Option<BlockstoreRecoveryMode>,
         enforce_ulimit_nofile: bool,
     ) -> Result<Blockstore> {
-        fs::create_dir_all(&ledger_path)?;
+        fs::create_dir_all(ledger_path)?;
         let blockstore_path = ledger_path.join(BLOCKSTORE_DIRECTORY);
 
         adjust_ulimit_nofile(enforce_ulimit_nofile)?;
@@ -2701,7 +2704,7 @@ impl Blockstore {
         // Check the active_transaction_status_index to see if it contains slot. If so, start with
         // that index, as it will contain higher slots
         let starting_primary_index = *self.active_transaction_status_index.read().unwrap();
-        let next_primary_index = if starting_primary_index == 0 { 1 } else { 0 };
+        let next_primary_index = u64::from(starting_primary_index == 0);
         let next_max_slot = self
             .transaction_status_index_cf
             .get(next_primary_index)?
@@ -3518,7 +3521,7 @@ impl Blockstore {
         let size = payload.len().max(SHRED_PAYLOAD_SIZE);
         payload.resize(size, 0u8);
         let new_shred = Shred::new_from_serialized_shred(payload).unwrap();
-        (existing_shred != new_shred.payload).then(|| existing_shred)
+        (existing_shred != new_shred.payload).then_some(existing_shred)
     }
 
     pub fn has_duplicate_shreds_in_slot(&self, slot: Slot) -> bool {
@@ -3622,6 +3625,14 @@ impl Blockstore {
         );
         Ok(())
     }
+
+    // result indicates, if this was indeed opened in `secondary` mode
+    // and called the underlying rocksdb catch up method
+    // true - if catch_up occured
+    // false - if this function call was a noop
+    pub fn try_catch_up_with_primary(&self) -> Result<bool> {
+        self.db.try_catch_up()
+    }
 }
 
 // Update the `completed_data_indexes` with a new shred `new_shred_index`. If a
@@ -3674,7 +3685,7 @@ fn update_slot_meta(
     let maybe_first_insert = slot_meta.received == 0;
     // Index is zero-indexed, while the "received" height starts from 1,
     // so received = index + 1 for the same shred.
-    slot_meta.received = cmp::max((u64::from(index) + 1) as u64, slot_meta.received);
+    slot_meta.received = cmp::max(u64::from(index) + 1, slot_meta.received);
     if maybe_first_insert && slot_meta.received > 0 {
         // predict the timestamp of what would have been the first shred in this slot
         let slot_time_elapsed = u64::from(reference_tick) * 1000 / DEFAULT_TICKS_PER_SECOND;
@@ -4042,19 +4053,35 @@ fn slot_has_updates(slot_meta: &SlotMeta, slot_meta_backup: &Option<SlotMeta>) -
         (slot_meta_backup.is_some() && slot_meta_backup.as_ref().unwrap().consumed != slot_meta.consumed))
 }
 
+pub enum EvmStateJson<'a> {
+    OpenEthereum(&'a Path),
+    Geth(&'a Path),
+    None
+}
+
 // Creates a new ledger with slot 0 full of ticks (and only ticks).
 //
 // Returns the blockhash that can be used to append entries with.
 pub fn create_new_ledger(
     ledger_path: &Path,
-    evm_state_json: Option<&Path>,
+    evm_state_json: EvmStateJson,
     genesis_config: &GenesisConfig,
     max_genesis_archive_unpacked_size: u64,
     access_type: AccessType,
 ) -> Result<Hash> {
     Blockstore::destroy(ledger_path)?;
 
-    genesis_config.generate_evm_state(ledger_path, evm_state_json)?;
+    match evm_state_json {
+        EvmStateJson::OpenEthereum(path) => {
+            let extractor = OpenEthereumAccountExtractor::open_dump(path).unwrap();
+            genesis_config.generate_evm_state_from_dump(ledger_path, extractor)?;
+        },
+        EvmStateJson::Geth(path) => {
+            let extractor = GethAccountExtractor::open_dump(path).unwrap();
+            genesis_config.generate_evm_state_from_dump(ledger_path, extractor)?;
+        },
+        EvmStateJson::None => genesis_config.generate_evm_state_empty(ledger_path)?,
+    }
     genesis_config.write(ledger_path)?;
 
     // Fill slot 0 with ticks that link back to the genesis_config to bootstrap the ledger.
@@ -4129,7 +4156,7 @@ pub fn create_new_ledger(
             let mut error_messages = String::new();
 
             fs::rename(
-                &ledger_path.join(DEFAULT_GENESIS_ARCHIVE),
+                ledger_path.join(DEFAULT_GENESIS_ARCHIVE),
                 ledger_path.join(format!("{}.failed", DEFAULT_GENESIS_ARCHIVE)),
             )
             .unwrap_or_else(|e| {
@@ -4140,7 +4167,7 @@ pub fn create_new_ledger(
                 );
             });
             fs::rename(
-                &ledger_path.join(DEFAULT_GENESIS_FILE),
+                ledger_path.join(DEFAULT_GENESIS_FILE),
                 ledger_path.join(format!("{}.failed", DEFAULT_GENESIS_FILE)),
             )
             .unwrap_or_else(|e| {
@@ -4151,7 +4178,7 @@ pub fn create_new_ledger(
                 );
             });
             fs::rename(
-                &ledger_path.join("rocksdb"),
+                ledger_path.join("rocksdb"),
                 ledger_path.join("rocksdb.failed"),
             )
             .unwrap_or_else(|e| {
@@ -4294,7 +4321,7 @@ pub fn create_new_ledger_from_name_auto_delete(
         solana_sdk::genesis_config::evm_genesis::generate_evm_state_json(&evm_state_json).unwrap();
     let blockhash = create_new_ledger(
         ledger_path.path(),
-        Some(evm_state_json.as_ref()),
+        EvmStateJson::OpenEthereum(evm_state_json.as_ref()),
         genesis_config,
         MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         access_type,

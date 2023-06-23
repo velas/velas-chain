@@ -624,7 +624,7 @@ async fn process_tx(
 
     debug!(
         "Sending tx raw = {:?}",
-        base64::encode(&send_raw_tx.message_data())
+        base64::encode(send_raw_tx.message_data())
     );
 
     let signature = bridge

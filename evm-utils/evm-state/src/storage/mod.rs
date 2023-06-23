@@ -1,7 +1,7 @@
 use std::{
     array::TryFromSliceError,
     borrow::Borrow,
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     convert::TryInto,
     fs,
     io::Error as IoError,
@@ -11,14 +11,15 @@ use std::{
 
 use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
 use derive_more::{AsRef, Deref};
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::*;
 use rlp::{Decodable, Encodable};
 use rocksdb::{
     backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
-    db::{DBInner, DBWithThreadModeInner},
     ColumnFamily, ColumnFamilyDescriptor, Env, IteratorMode, OptimisticTransactionDB,
-    OptimisticTransactionDBInner, Options, ReadOptions,
+    DBWithThreadMode,
+    Options, ReadOptions, AsColumnFamilyRef, DBIteratorWithThreadMode, DBAccess, DBPinnableSlice,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
@@ -30,18 +31,20 @@ use crate::{
 use triedb::{
     empty_trie_hash,
     gc::{DatabaseTrieMut, DbCounter, TrieCollection},
-    rocksdb::{RocksDatabaseHandleGC, RocksHandle},
+    rocksdb::{RocksDatabaseHandle, RocksDatabaseHandleGC, RocksHandle, SyncRocksHandle},
     FixedSecureTrieMut,
 };
 
 pub mod inspectors;
 pub mod walker;
+pub mod two_modes_enum;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub use rocksdb; // avoid mess with dependencies for another crates
 
 type DB = OptimisticTransactionDB;
 type BincodeOpts = WithOtherEndian<DefaultOptions, BigEndian>;
+type ChangedState = HashMap<H256, (Maybe<AccountState>, HashMap<H256, H256>)>;
 lazy_static! {
     static ref CODER: BincodeOpts = DefaultOptions::new().with_big_endian();
 }
@@ -63,6 +66,7 @@ pub enum Error {
 
 const BACKUP_SUBDIR: &str = "backup";
 const CUSTOM_LOCATION: &str = "tmp_inner_space";
+const NUM_ENTRIES_IN_STORAGES_CHUNK: usize = 10000;
 
 /// Marker-like wrapper for cleaning temporary directory.
 /// Temporary directory is only used in tests.
@@ -91,16 +95,17 @@ impl AsRef<Path> for Location {
     }
 }
 
-pub struct Storage<D = OptimisticTransactionDBInner>
+pub struct Storage<D=OptimisticTransactionDB>
 where
-    D: DBInner,
+    D: VelasDBCommon,
 {
     pub(crate) db: Arc<DbWithClose<D>>,
     // Location should be second field, because of drop order in Rust.
     location: Location,
     gc_enabled: bool,
 }
-impl<D: DBInner> Clone for Storage<D> {
+
+impl<D: VelasDBCommon> Clone for Storage<D> {
     fn clone(&self) -> Self {
         Self {
             db: Arc::clone(&self.db),
@@ -110,7 +115,7 @@ impl<D: DBInner> Clone for Storage<D> {
     }
 }
 
-impl<D: DBInner> std::fmt::Debug for Storage<D> {
+impl<D: VelasDBCommon> std::fmt::Debug for Storage<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Storage<D>")
             .field("db", &self.db)
@@ -192,16 +197,15 @@ impl Descriptors {
     }
 }
 
-
 impl<D> Storage<D>
 where
-    D: DBInner,
+    D: VelasDBCommon,
 {
     pub fn gc_enabled(&self) -> bool {
         self.gc_enabled
     }
 
-    pub fn db(&self) -> &rocksdb::DBCommon<rocksdb::SingleThreaded, D> {
+    pub fn db(&self) -> &D {
         (*self.db).borrow()
     }
 
@@ -250,14 +254,25 @@ where
     }
 }
 
-type ReadOnlyDb = rocksdb::DBWithThreadMode<rocksdb::SingleThreaded>;
+type RocksWithThreadMode = DBWithThreadMode<rocksdb::SingleThreaded>;
 
-pub type StorageSecondary = Storage<DBWithThreadModeInner>;
+pub type StorageSecondary = Storage<RocksWithThreadMode >;
 
 impl StorageSecondary {
 
     pub fn open_secondary_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
+    }
+
+    pub fn try_catch_up(&self) -> Result<()> {
+        self.db.0.try_catch_up_with_primary()?;
+        Ok(())
+    }
+
+    pub fn rocksdb_trie_handle(
+        &self,
+    ) -> SyncRocksHandle<RocksWithThreadMode> {
+        SyncRocksHandle::new(RocksDatabaseHandle::new(self.db()))
     }
 
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {
@@ -279,7 +294,7 @@ impl StorageSecondary {
                 temporarily cause the performance of 
                 another db use (like by validator) to degrade"
             );
-            ReadOnlyDb::open_cf_as_secondary(
+            RocksWithThreadMode::open_cf_as_secondary(
                 &db_opts,
                 path.as_ref(),
                 secondary_path.as_path(),
@@ -295,7 +310,9 @@ impl StorageSecondary {
     }
 }
 
-impl Storage<OptimisticTransactionDBInner> {
+impl Storage<OptimisticTransactionDB> {
+
+
     pub fn open_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
     }
@@ -303,9 +320,11 @@ impl Storage<OptimisticTransactionDBInner> {
     pub fn create_temporary() -> Result<Self> {
         Self::open(Location::Temporary(Arc::new(TempDir::new()?)), false)
     }
+
     pub fn create_temporary_gc() -> Result<Self> {
         Self::open(Location::Temporary(Arc::new(TempDir::new()?)), true)
     }
+
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {
         log::warn!("gc_enabled {}", gc_enabled);
         log::info!("location is {:?}", location);
@@ -356,8 +375,10 @@ impl Storage<OptimisticTransactionDBInner> {
             path.display(),
             target.display()
         );
-        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), path)?;
-        engine.restore_from_latest_backup(&target, &target, &RestoreOptions::default())?;
+        let opts = BackupEngineOptions::new(path)?;
+        let env = Env::new()?;
+        let mut engine = BackupEngine::open(&opts, &env)?;
+        engine.restore_from_latest_backup(target, target, &RestoreOptions::default())?;
 
         Ok(())
     }
@@ -379,6 +400,7 @@ impl Storage<OptimisticTransactionDBInner> {
         FixedSecureTrieMut::new(DatabaseTrieMut::trie_for(handle, root))
     }
 
+    // FIXME: flush_changes_hashed code duplication
     pub fn flush_changes(&self, state_root: H256, state_updates: crate::ChangedState) -> H256 {
         let r = self.rocksdb_trie_handle();
 
@@ -437,6 +459,65 @@ impl Storage<OptimisticTransactionDBInner> {
             .leak_root()
     }
 
+    // FIXME: flush_changes code duplication
+    pub fn flush_changes_hashed(&self, state_root: H256, state_updates: ChangedState) -> H256 {
+        let r = self.rocksdb_trie_handle();
+
+        let db_trie = TrieCollection::new(r);
+
+        use triedb::TrieMut;
+        let mut accounts = db_trie.trie_for(state_root);
+
+        for (address, (state, storages)) in state_updates {
+            if let Maybe::Just(AccountState {
+                nonce,
+                balance,
+                code,
+            }) = state
+            {
+                let mut account: Account = accounts
+                    .get(address.as_bytes())
+                    .and_then(|accounts| rlp::decode(&accounts).ok())
+                    .unwrap_or_default();
+
+                account.nonce = nonce;
+                account.balance = balance;
+
+                if !code.is_empty() {
+                    let code_hash = code.hash();
+                    self.set::<Codes>(code_hash, code);
+                    account.code_hash = code_hash;
+                }
+
+                let storage_values = storages.into_iter().chunks(NUM_ENTRIES_IN_STORAGES_CHUNK);
+                for index_changes in storage_values.into_iter() {
+                    let mut storage = db_trie.trie_for(account.storage_root);
+                    for (index, value) in index_changes {
+                        if value != H256::default() {
+                            let value = U256::from_big_endian(&value[..]);
+                            storage.insert(index.as_bytes(), &rlp::encode(&value));
+                        } else {
+                            storage.delete(index.as_bytes());
+                        }
+                    }
+
+                    let storage_patch = storage.into_patch();
+                    account.storage_root = db_trie
+                        .apply_increase(storage_patch, |_| vec![])
+                        .leak_root()
+                }
+                accounts.insert(address.as_bytes(), &rlp::encode(&account));
+            } else {
+                accounts.delete(address.as_bytes());
+            }
+        }
+
+        let accounts_patch = accounts.into_patch();
+        db_trie
+            .apply_increase(accounts_patch, account_extractor)
+            .leak_root()
+    }
+
     pub fn merge_from_db(&self, other_db: &Self) -> Result<()> {
         assert!(!self.gc_enabled, "Cannot merge to db with rc counters");
         assert!(
@@ -487,7 +568,7 @@ impl Storage<OptimisticTransactionDBInner> {
         let slots_cf = self.cf::<SlotsRoots>();
         let mut tx = self.db().transaction();
         let trie = self.rocksdb_trie_handle();
-        let val = tx.get_cf(slots_cf, &slot.to_be_bytes())?;
+        let val = tx.get_cf(slots_cf, slot.to_be_bytes())?;
         let remove_root = if let Some(root) = val {
             let root = H256::from_slice(root.as_ref());
 
@@ -505,7 +586,7 @@ impl Storage<OptimisticTransactionDBInner> {
             None
         };
 
-        tx.delete_cf(slots_cf, &slot.to_be_bytes())?;
+        tx.delete_cf(slots_cf, slot.to_be_bytes())?;
         tx.commit()?;
         Ok(remove_root)
     }
@@ -560,7 +641,7 @@ impl Storage<OptimisticTransactionDBInner> {
         info!("Register slot:{} root:{}", slot, root);
 
         const NUM_RETRY: usize = 500; // ~10ms-100ms
-        let purge_root = if let Some(data) = self.db().get_cf(slots_cf, &slot.to_be_bytes())? {
+        let purge_root = if let Some(data) = self.db().get_cf(slots_cf, slot.to_be_bytes())? {
             let purge_root = H256::from_slice(data.as_ref());
             // root should be changed only on purpose, and changed to different value
             if !reset_slot_root || root == purge_root {
@@ -577,7 +658,7 @@ impl Storage<OptimisticTransactionDBInner> {
 
         let retry = || -> Result<_> {
             let mut tx = self.db().transaction();
-            tx.put_cf(slots_cf, &slot.to_be_bytes(), root.as_ref())?;
+            tx.put_cf(slots_cf, slot.to_be_bytes(), root.as_ref())?;
             trie.db.increase(&mut tx, root)?;
             tx.commit()?;
             Ok(())
@@ -610,8 +691,7 @@ impl Storage<OptimisticTransactionDBInner> {
         if !self.gc_enabled {
             return (vec![], vec![]);
         }
-        self
-            .rocksdb_trie_handle()
+        self.rocksdb_trie_handle()
             .gc_cleanup_layer(removes, account_extractor)
     }
 
@@ -619,7 +699,10 @@ impl Storage<OptimisticTransactionDBInner> {
         let backup_dir = backup_dir.unwrap_or_else(|| self.location.as_ref().join(BACKUP_SUBDIR));
         info!("EVM Backup storage data into {}", backup_dir.display());
 
-        let mut engine = BackupEngine::open(&BackupEngineOptions::default(), &backup_dir)?;
+        let opts = BackupEngineOptions::new(&backup_dir)?;
+        let env = Env::new()?;
+
+        let mut engine = BackupEngine::open(&opts, &env)?;
         if engine.get_backup_info().len() > HARD_BACKUPS_COUNT {
             // TODO: measure
             engine.purge_old_backups(HARD_BACKUPS_COUNT)?;
@@ -627,11 +710,48 @@ impl Storage<OptimisticTransactionDBInner> {
         engine.create_new_backup_flush(self.db.as_ref(), true)?;
         Ok(backup_dir)
     }
+
+    pub fn set_initial(
+        &mut self,
+        accounts: impl IntoIterator<Item = (H256, evm::backend::MemoryAccount)>,
+        state_root: H256,
+    ) -> H256 {
+        let mut state_updates: ChangedState = HashMap::new();
+
+        for (
+            address,
+            evm::backend::MemoryAccount {
+                nonce,
+                balance,
+                storage,
+                code,
+            },
+        ) in accounts
+        {
+            let account_state = AccountState {
+                nonce,
+                balance,
+                code: code.into(),
+            };
+
+            state_updates
+                .entry(address)
+                .or_insert((Maybe::Nothing, HashMap::new()))
+                .0 = Maybe::Just(account_state);
+            
+            state_updates
+                .entry(address)
+                .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()))
+                .1.extend(storage);
+        }
+
+        self.flush_changes_hashed(state_root, state_updates)
+    }
 }
 
 static SECONDARY_MODE_PATH_SUFFIX: &str = "velas-secondary";
 
-fn account_extractor(data: &[u8]) -> Vec<H256> {
+pub fn account_extractor(data: &[u8]) -> Vec<H256> {
     if let Ok(account) = rlp::decode::<Account>(data) {
         vec![account.storage_root]
     } else {
@@ -698,19 +818,127 @@ impl<'a> RootCleanup<'a> {
     }
 }
 
-impl Borrow<DB> for Storage<OptimisticTransactionDBInner> {
+impl Borrow<DB> for Storage<OptimisticTransactionDB> {
     fn borrow(&self) -> &DB {
         self.db()
     }
 }
 
+pub trait VelasDBCommon: DBAccess + std::fmt::Debug + Sized {
+
+    fn flush(&self) -> Result<(), rocksdb::Error> ;    
+    fn cancel_all_background_work(&self, wait: bool) ;
+
+    fn iterator_cf<'a: 'b, 'b>(
+        &'a self,
+        cf_handle: &impl AsColumnFamilyRef,
+        mode: IteratorMode,
+    ) -> DBIteratorWithThreadMode<'b, Self> ;
+
+    fn get_pinned_cf<K: AsRef<[u8]>>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+    ) -> Result<Option<DBPinnableSlice>, rocksdb::Error> ;
+
+    fn put_cf<K, V>(&self, cf: &impl AsColumnFamilyRef, key: K, value: V) -> Result<(), rocksdb::Error>
+    where
+        K: AsRef<[u8]>,
+        V: AsRef<[u8]>;
+
+    fn cf_handle(&self, name: &str) -> Option<&ColumnFamily> ;
+        
+}
+
+impl VelasDBCommon for rocksdb::DBWithThreadMode<rocksdb::SingleThreaded> {
+
+    fn flush(&self) -> Result<(), rocksdb::Error> {
+        self.flush()
+    }
+
+    fn cancel_all_background_work(&self, wait: bool) {
+        self.cancel_all_background_work(wait)
+    }
+
+    fn iterator_cf<'a: 'b, 'b>(
+        &'a self,
+        cf_handle: &impl AsColumnFamilyRef,
+        mode: IteratorMode,
+    ) -> DBIteratorWithThreadMode<'b, Self> {
+        self.iterator_cf(cf_handle, mode)
+    }
+    fn get_pinned_cf<K: AsRef<[u8]>>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+    ) -> Result<Option<DBPinnableSlice>, rocksdb::Error> {
+        self.get_pinned_cf(cf, key)
+        
+    }
+
+    fn put_cf<K, V>(&self, cf: &impl AsColumnFamilyRef, key: K, value: V) -> Result<(), rocksdb::Error>
+    where
+        K: AsRef<[u8]>,
+        V: AsRef<[u8]> {
+        self.put_cf(cf, key, value)
+        
+    }
+
+    fn cf_handle(&self, name: &str) -> Option<&ColumnFamily> {
+        self.cf_handle(name)
+    }
+    
+}
+
+impl VelasDBCommon for OptimisticTransactionDB {
+    fn flush(&self) -> Result<(), rocksdb::Error> {
+        self.flush()
+    }
+
+    fn cancel_all_background_work(&self, wait: bool) {
+        self.cancel_all_background_work(wait)
+    }
+
+    fn iterator_cf<'a: 'b, 'b>(
+        &'a self,
+        cf_handle: &impl AsColumnFamilyRef,
+        mode: IteratorMode,
+    ) -> DBIteratorWithThreadMode<'b, Self> {
+        self.iterator_cf(cf_handle, mode)
+    }
+
+    fn get_pinned_cf<K: AsRef<[u8]>>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+    ) -> Result<Option<DBPinnableSlice>, rocksdb::Error> {
+        self.get_pinned_cf(cf, key)
+        
+    }
+
+    fn put_cf<K, V>(&self, cf: &impl AsColumnFamilyRef, key: K, value: V) -> Result<(), rocksdb::Error>
+    where
+        K: AsRef<[u8]>,
+        V: AsRef<[u8]> {
+        self.put_cf(cf, key, value)
+        
+    }
+
+    fn cf_handle(&self, name: &str) -> Option<&ColumnFamily> {
+        self.cf_handle(name)
+    }
+
+
+    
+}
+
 #[derive(AsRef, Deref)]
 // Hack to close rocksdb background threads. And flush database.
-pub struct DbWithClose<D: DBInner>(rocksdb::DBCommon<rocksdb::SingleThreaded, D>);
+pub struct DbWithClose<D: VelasDBCommon>(D);
 
 impl<D> Drop for DbWithClose<D>
 where
-    D: rocksdb::db::DBInner,
+    D: VelasDBCommon,
 {
     fn drop(&mut self) {
         if let Err(e) = self.flush() {
@@ -720,7 +948,7 @@ where
     }
 }
 
-impl<D: DBInner> std::fmt::Debug for DbWithClose<D> {
+impl<D: VelasDBCommon> std::fmt::Debug for DbWithClose<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DbWithClose<D>")
             .field("0", &self.0)
@@ -776,7 +1004,7 @@ impl SubStorage for TransactionHashesPerBlock {
 
 impl<D> Storage<D>
 where
-    D: DBInner,
+    D: VelasDBCommon,
 {
     pub fn get<S: SubStorage>(&self, key: S::Key) -> Option<S::Value> {
         let cf = self.cf::<S>();
@@ -835,7 +1063,7 @@ pub fn default_db_opts() -> Result<Options> {
     let mut opts = Options::default();
     opts.create_if_missing(true);
     opts.create_missing_column_families(true);
-    let mut env = Env::default()?;
+    let mut env = Env::new()?;
     env.join_all_threads();
     opts.set_env(&env);
     Ok(opts)

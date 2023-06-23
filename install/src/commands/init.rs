@@ -558,7 +558,7 @@ fn extract_release_archive(
     progress_bar.set_message(&format!("{}Extracting...", PACKAGE));
 
     if extract_dir.exists() {
-        let _ = fs::remove_dir_all(&extract_dir);
+        let _ = fs::remove_dir_all(extract_dir);
     }
 
     let tmp_extract_dir = extract_dir.with_file_name("tmp-extract");
@@ -589,7 +589,7 @@ fn load_release_target(release_dir: &Path) -> Result<String, String> {
 }
 
 fn load_release_version(version_yml: &Path) -> Result<ReleaseVersion, String> {
-    let file = File::open(&version_yml)
+    let file = File::open(version_yml)
         .map_err(|err| format!("Unable to open {:?}: {:?}", version_yml, err))?;
     let version: ReleaseVersion = serde_yaml::from_reader(file)
         .map_err(|err| format!("Unable to parse {:?}: {:?}", version_yml, err))?;
@@ -635,7 +635,7 @@ pub fn gc(config_file: &str) -> Result<(), String> {
             progress_bar.set_message(&format!("{}Removing old releases", RECYCLING));
             for (release, _modified_type) in old_releases {
                 progress_bar.inc(1);
-                let _ = fs::remove_dir_all(&release);
+                let _ = fs::remove_dir_all(release);
             }
             progress_bar.finish_and_clear();
         }

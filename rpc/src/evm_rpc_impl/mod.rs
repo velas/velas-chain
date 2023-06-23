@@ -1117,7 +1117,7 @@ fn call_many(
             &mut executor,
             tx.clone(),
             meta_keys.clone(),
-            &*bank,
+            &bank,
         )?)
     }
     Ok(result)

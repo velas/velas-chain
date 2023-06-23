@@ -118,7 +118,7 @@ impl TpuClient {
 
         Ok(Self {
             send_socket: UdpSocket::bind("0.0.0.0:0").unwrap(),
-            fanout_slots: config.fanout_slots.min(MAX_FANOUT_SLOTS).max(1),
+            fanout_slots: config.fanout_slots.clamp(1, MAX_FANOUT_SLOTS),
             leader_tpu_service,
             exit,
             rpc_client,
@@ -257,7 +257,7 @@ impl TpuClient {
                 }
             }
 
-            transactions = pending_transactions.into_iter().map(|(_k, v)| v).collect();
+            transactions = pending_transactions.into_values().collect();
             progress_bar.println(format!(
                 "Blockhash expired. {} retries remaining",
                 expired_blockhash_retries

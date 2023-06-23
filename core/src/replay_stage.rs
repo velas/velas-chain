@@ -869,7 +869,7 @@ impl ReplayStage {
                         replay_active_banks_time.as_us(),
                         wait_receive_time.as_us(),
                         heaviest_fork_failures_time.as_us(),
-                        if did_complete_bank {1} else {0},
+                        u64::from(did_complete_bank),
                         process_gossip_duplicate_confirmed_slots_time.as_us(),
                         process_unfrozen_gossip_verified_vote_hashes_time.as_us(),
                         process_duplicate_slots_time.as_us(),
@@ -2646,7 +2646,7 @@ impl ReplayStage {
         loop {
             // These cases mean confirmation of propagation on any earlier
             // leader blocks must have been reached
-            if current_leader_slot == None || current_leader_slot.unwrap() < root {
+            if current_leader_slot.is_none() || current_leader_slot.unwrap() < root {
                 break;
             }
 

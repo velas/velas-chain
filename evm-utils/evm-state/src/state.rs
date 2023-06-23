@@ -24,6 +24,8 @@ pub const DEFAULT_GAS_LIMIT: u64 = 300_000_000;
 pub const BURN_GAS_PRICE: u64 = 2_000_000_000; // 2 lamports per gas.
 /// Dont load to many account to memory, to avoid OOM.
 pub const MAX_IN_MEMORY_EVM_ACCOUNTS: usize = 10000;
+/// Approximate size, real size could be twice as much
+pub const MAX_IN_HEAP_EVM_ACCOUNTS_BYTES: usize = 100_000_000;
 
 pub type ChangedState = HashMap<H160, (Maybe<AccountState>, HashMap<H256, H256>)>;
 
@@ -66,6 +68,13 @@ pub struct Incomming {
 }
 
 impl Incomming {
+    pub fn genesis_from_state(state_root: H256) -> Self {
+        Self {
+            state_root,
+            ..Default::default()
+        }
+    }
+
     fn new(
         block_number: BlockNum,
         state_root: H256,
@@ -542,17 +551,19 @@ impl Default for EvmPersistState {
 }
 
 impl EvmState {
+    /// Clears content of `path` directory and creates new empty `EvmState`
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
         let evm_state = path.as_ref();
         if evm_state.is_dir() && evm_state.exists() {
             warn!("deleting existing state {}", evm_state.display());
-            fs::remove_dir_all(&evm_state)?;
-            fs::create_dir(&evm_state)?;
+            fs::remove_dir_all(evm_state)?;
+            fs::create_dir(evm_state)?;
         }
 
         Self::load_from(evm_state, Incomming::default(), true)
     }
 
+    /// Clears content of `evm_state` directory and creates new `EvmState` from genesis
     pub fn new_from_genesis(
         evm_state: impl AsRef<Path>,
         evm_genesis: impl AsRef<Path>,
@@ -563,11 +574,11 @@ impl EvmState {
         let evm_state = evm_state.as_ref();
         if evm_state.is_dir() && evm_state.exists() {
             warn!("deleting existing state {}", evm_state.display());
-            fs::remove_dir_all(&evm_state)?;
-            fs::create_dir(&evm_state)?;
+            fs::remove_dir_all(evm_state)?;
+            fs::create_dir(evm_state)?;
         }
 
-        KVS::restore_from(evm_genesis, &evm_state)?;
+        KVS::restore_from(evm_genesis, evm_state)?;
         let version = if spv_compatibility {
             BlockVersion::VersionConsistentHashes
         } else {
