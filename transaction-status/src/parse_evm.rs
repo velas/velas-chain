@@ -4,12 +4,14 @@ use crate::parse_instruction::{
 use bincode::deserialize;
 use evm_rpc::RPCTransaction;
 use serde_json::json;
-use solana_evm_loader_program::instructions::{EvmBigTransaction, EvmInstruction, ExecuteTransaction};
-use solana_sdk::{instruction::CompiledInstruction, pubkey::Pubkey};
+use solana_evm_loader_program::instructions::{
+    EvmBigTransaction, EvmInstruction, ExecuteTransaction,
+};
+use solana_sdk::{instruction::CompiledInstruction, message::AccountKeys};
 
 pub fn parse_evm(
     instruction: &CompiledInstruction,
-    account_keys: &[Pubkey],
+    account_keys: &AccountKeys,
 ) -> Result<ParsedInstructionEnum, ParseInstructionError> {
     let evm_instruction: EvmInstruction = deserialize(&instruction.data)
         .map_err(|_| ParseInstructionError::InstructionNotParsable(ParsableProgram::Stake))?;
@@ -70,7 +72,10 @@ pub fn parse_evm(
                 })
             }
         },
-        EvmInstruction::ExecuteTransaction { tx: ExecuteTransaction::Signed { tx: Some(evm_tx) }, fee_type } => {
+        EvmInstruction::ExecuteTransaction {
+            tx: ExecuteTransaction::Signed { tx: Some(evm_tx) },
+            fee_type,
+        } => {
             let info = if instruction.accounts.len() >= 2 {
                 json!({
                     "bridgeAccount":  account_keys[instruction.accounts[1] as usize].to_string(),
@@ -93,7 +98,14 @@ pub fn parse_evm(
                 info,
             })
         }
-        EvmInstruction::ExecuteTransaction { tx: ExecuteTransaction::ProgramAuthorized { tx: Some(unsigned_tx), from }, fee_type } => {
+        EvmInstruction::ExecuteTransaction {
+            tx:
+                ExecuteTransaction::ProgramAuthorized {
+                    tx: Some(unsigned_tx),
+                    from,
+                },
+            fee_type,
+        } => {
             check_num_stake_accounts(&instruction.accounts, 2)?;
             let tx = evm_state::UnsignedTransactionWithCaller {
                 caller: from,
@@ -114,19 +126,22 @@ pub fn parse_evm(
                 info,
             })
         }
-        EvmInstruction::ExecuteTransaction { tx: ExecuteTransaction::Signed { tx: None }, fee_type } => {
+        EvmInstruction::ExecuteTransaction {
+            tx: ExecuteTransaction::Signed { tx: None },
+            fee_type,
+        } => {
             check_num_stake_accounts(&instruction.accounts, 2)?;
             let info = if instruction.accounts.len() >= 3 {
                 json!({
-                        "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
-                        "bridgeAccount":  account_keys[instruction.accounts[2] as usize].to_string(),
-                        "feeType": fee_type,
-                    })
+                    "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "bridgeAccount":  account_keys[instruction.accounts[2] as usize].to_string(),
+                    "feeType": fee_type,
+                })
             } else {
                 json!({
-                        "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
-                        "feeType": fee_type,
-                    })
+                    "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "feeType": fee_type,
+                })
             };
 
             Ok(ParsedInstructionEnum {
@@ -134,21 +149,24 @@ pub fn parse_evm(
                 info,
             })
         }
-        EvmInstruction::ExecuteTransaction { tx: ExecuteTransaction::ProgramAuthorized { tx: None, from }, fee_type } => {
+        EvmInstruction::ExecuteTransaction {
+            tx: ExecuteTransaction::ProgramAuthorized { tx: None, from },
+            fee_type,
+        } => {
             check_num_stake_accounts(&instruction.accounts, 2)?;
             let info = if instruction.accounts.len() >= 3 {
                 json!({
-                        "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
-                        "bridgeAccount":  account_keys[instruction.accounts[2] as usize].to_string(),
-                        "from": from.to_string(),
-                        "feeType": fee_type,
-                    })
+                    "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "bridgeAccount":  account_keys[instruction.accounts[2] as usize].to_string(),
+                    "from": from.to_string(),
+                    "feeType": fee_type,
+                })
             } else {
                 json!({
-                        "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
-                        "from": from.to_string(),
-                        "feeType": fee_type,
-                    })
+                    "storageAccount": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "from": from.to_string(),
+                    "feeType": fee_type,
+                })
             };
 
             Ok(ParsedInstructionEnum {

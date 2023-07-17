@@ -1,7 +1,7 @@
 use {
     crate::{
         args::{DistributeTokensArgs, SplTokenArgs},
-        commands::{Allocation, Error, FundingSource},
+        commands::{get_fees_for_messages, Allocation, Error, FundingSource},
     },
     console::style,
     solana_account_decoder::parse_token::{
@@ -10,8 +10,10 @@ use {
     solana_client::rpc_client::RpcClient,
     solana_sdk::{instruction::Instruction, message::Message, native_token::lamports_to_sol},
     solana_transaction_status::parse_token::spl_token_instruction,
-    spl_associated_token_account_v1_0::{create_associated_token_account, get_associated_token_address},
-    spl_token_v2_0::{
+    spl_associated_token_account::{
+        get_associated_token_address, instruction::create_associated_token_account,
+    },
+    spl_token::{
         solana_program::program_pack::Pack,
         state::{Account as SplTokenAccount, Mint},
     },
@@ -61,13 +63,14 @@ pub fn build_spl_token_instructions(
             &spl_token_pubkey(&args.fee_payer.pubkey()),
             &wallet_address,
             &spl_token_pubkey(&spl_token_args.mint),
+            &spl_token::id(),
         );
         instructions.push(spl_token_instruction(
             create_associated_token_account_instruction,
         ));
     }
-    let spl_instruction = spl_token_v2_0::instruction::transfer_checked(
-        &spl_token_v2_0::id(),
+    let spl_instruction = spl_token::instruction::transfer_checked(
+        &spl_token::id(),
         &spl_token_pubkey(&spl_token_args.token_account_address),
         &spl_token_pubkey(&spl_token_args.mint),
         &associated_token_address,
@@ -93,14 +96,7 @@ pub fn check_spl_token_balances(
         .as_ref()
         .expect("spl_token_args must be some");
     let allocation_amount: u64 = allocations.iter().map(|x| x.amount).sum();
-
-    let fees: u64 = messages
-        .iter()
-        .map(|message| client.get_fee_for_message(message))
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap()
-        .iter()
-        .sum();
+    let fees = get_fees_for_messages(messages, client)?;
 
     let token_account_rent_exempt_balance =
         client.get_minimum_balance_for_rent_exemption(SplTokenAccount::LEN)?;

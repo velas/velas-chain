@@ -3,18 +3,19 @@
 #![cfg(feature = "program")]
 #![allow(unreachable_code)]
 
-use crate::instructions::*;
-use solana_bpf_rust_invoked::instructions::*;
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint,
-    entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
-    instruction::Instruction,
-    msg,
-    program::{get_return_data, invoke, invoke_signed, set_return_data},
-    program_error::ProgramError,
-    pubkey::{Pubkey, PubkeyError},
-    system_instruction,
+use {
+    crate::instructions::*,
+    solana_bpf_rust_invoked::instructions::*,
+    solana_program::{
+        account_info::AccountInfo,
+        entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
+        instruction::Instruction,
+        msg,
+        program::{get_return_data, invoke, invoke_signed, set_return_data},
+        program_error::ProgramError,
+        pubkey::{Pubkey, PubkeyError},
+        system_instruction,
+    },
 };
 
 fn do_nested_invokes(num_nested_invokes: u64, accounts: &[AccountInfo]) -> ProgramResult {
@@ -22,8 +23,12 @@ fn do_nested_invokes(num_nested_invokes: u64, accounts: &[AccountInfo]) -> Progr
 
     let pre_argument_lamports = accounts[ARGUMENT_INDEX].lamports();
     let pre_invoke_argument_lamports = accounts[INVOKED_ARGUMENT_INDEX].lamports();
-    **accounts[ARGUMENT_INDEX].lamports.borrow_mut() -= 5;
-    **accounts[INVOKED_ARGUMENT_INDEX].lamports.borrow_mut() += 5;
+    {
+        let mut lamports = (*accounts[ARGUMENT_INDEX].lamports).borrow_mut();
+        **lamports = (*lamports).saturating_sub(5);
+        let mut lamports = (*accounts[INVOKED_ARGUMENT_INDEX].lamports).borrow_mut();
+        **lamports = (*lamports).saturating_add(5);
+    }
 
     msg!("First invoke");
     let instruction = create_instruction(
@@ -41,16 +46,20 @@ fn do_nested_invokes(num_nested_invokes: u64, accounts: &[AccountInfo]) -> Progr
 
     assert_eq!(
         accounts[ARGUMENT_INDEX].lamports(),
-        pre_argument_lamports - 5 + (2 * num_nested_invokes)
+        pre_argument_lamports
+            .saturating_sub(5)
+            .saturating_add(2_u64.saturating_mul(num_nested_invokes))
     );
     assert_eq!(
         accounts[INVOKED_ARGUMENT_INDEX].lamports(),
-        pre_invoke_argument_lamports + 5 - (2 * num_nested_invokes)
+        pre_invoke_argument_lamports
+            .saturating_add(5)
+            .saturating_sub(2_u64.saturating_mul(num_nested_invokes))
     );
     Ok(())
 }
 
-entrypoint!(process_instruction);
+solana_program::entrypoint!(process_instruction);
 fn process_instruction(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -86,17 +95,23 @@ fn process_instruction(
                     &[&[b"You pass butter", &[bump_seed1]]],
                 )?;
 
-                assert_eq!(accounts[FROM_INDEX].lamports(), from_lamports - 42);
-                assert_eq!(accounts[DERIVED_KEY1_INDEX].lamports(), to_lamports + 42);
+                assert_eq!(
+                    accounts[FROM_INDEX].lamports(),
+                    from_lamports.saturating_sub(42)
+                );
+                assert_eq!(
+                    accounts[DERIVED_KEY1_INDEX].lamports(),
+                    to_lamports.saturating_add(42)
+                );
                 assert_eq!(program_id, accounts[DERIVED_KEY1_INDEX].owner);
                 assert_eq!(
                     accounts[DERIVED_KEY1_INDEX].data_len(),
                     MAX_PERMITTED_DATA_INCREASE
                 );
                 let mut data = accounts[DERIVED_KEY1_INDEX].try_borrow_mut_data()?;
-                assert_eq!(data[MAX_PERMITTED_DATA_INCREASE - 1], 0);
-                data[MAX_PERMITTED_DATA_INCREASE - 1] = 0x0f;
-                assert_eq!(data[MAX_PERMITTED_DATA_INCREASE - 1], 0x0f);
+                assert_eq!(data[MAX_PERMITTED_DATA_INCREASE.saturating_sub(1)], 0);
+                data[MAX_PERMITTED_DATA_INCREASE.saturating_sub(1)] = 0x0f;
+                assert_eq!(data[MAX_PERMITTED_DATA_INCREASE.saturating_sub(1)], 0x0f);
                 for i in 0..20 {
                     data[i] = i as u8;
                 }
@@ -112,8 +127,14 @@ fn process_instruction(
                     1,
                 );
                 invoke(&instruction, accounts)?;
-                assert_eq!(accounts[FROM_INDEX].lamports(), from_lamports - 1);
-                assert_eq!(accounts[DERIVED_KEY1_INDEX].lamports(), to_lamports + 1);
+                assert_eq!(
+                    accounts[FROM_INDEX].lamports(),
+                    from_lamports.saturating_sub(1)
+                );
+                assert_eq!(
+                    accounts[DERIVED_KEY1_INDEX].lamports(),
+                    to_lamports.saturating_add(1)
+                );
             }
 
             msg!("Test data translation");
@@ -356,11 +377,17 @@ fn process_instruction(
                 );
                 invoke(&instruction, accounts)?;
 
-                assert_eq!(accounts[FROM_INDEX].lamports(), from_lamports - 1);
-                assert_eq!(accounts[DERIVED_KEY2_INDEX].lamports(), to_lamports + 1);
+                assert_eq!(
+                    accounts[FROM_INDEX].lamports(),
+                    from_lamports.saturating_sub(1)
+                );
+                assert_eq!(
+                    accounts[DERIVED_KEY2_INDEX].lamports(),
+                    to_lamports.saturating_add(1)
+                );
                 let data = accounts[DERIVED_KEY2_INDEX].try_borrow_mut_data()?;
                 assert_eq!(data[0], 0x0e);
-                assert_eq!(data[MAX_PERMITTED_DATA_INCREASE - 1], 0x0f);
+                assert_eq!(data[MAX_PERMITTED_DATA_INCREASE.saturating_sub(1)], 0x0f);
                 for i in 1..20 {
                     assert_eq!(data[i], i as u8);
                 }
@@ -394,7 +421,7 @@ fn process_instruction(
                     &[(accounts[FROM_INDEX].key, true, true)],
                     vec![RETURN_OK],
                 );
-                // put the relavant account at the end of a larger account list
+                // put the relevant account at the end of a larger account list
                 let mut reordered_accounts = accounts.to_vec();
                 let account_info = reordered_accounts.remove(FROM_INDEX);
                 reordered_accounts.push(accounts[0].clone());
@@ -607,9 +634,15 @@ fn process_instruction(
 
             // set account to executable and subtract lamports
             accounts[ARGUMENT_INDEX].executable = true;
-            **(*accounts[ARGUMENT_INDEX].lamports).borrow_mut() -= 1;
+            {
+                let mut lamports = (*accounts[ARGUMENT_INDEX].lamports).borrow_mut();
+                **lamports = (*lamports).saturating_sub(1);
+            }
             // add lamports to dest account
-            **(*accounts[DERIVED_KEY1_INDEX].lamports).borrow_mut() += 1;
+            {
+                let mut lamports = (*accounts[DERIVED_KEY1_INDEX].lamports).borrow_mut();
+                **lamports = (*lamports).saturating_add(1);
+            }
 
             let instruction = create_instruction(
                 *program_id,
@@ -622,7 +655,10 @@ fn process_instruction(
             let _ = invoke(&instruction, &accounts);
 
             // reset executable account
-            **(*accounts[ARGUMENT_INDEX].lamports).borrow_mut() += 1;
+            {
+                let mut lamports = (*accounts[ARGUMENT_INDEX].lamports).borrow_mut();
+                **lamports = (*lamports).saturating_add(1);
+            }
         }
         TEST_CALL_PRECOMPILE => {
             msg!("Test calling precompiled program from cpi");
@@ -632,7 +668,10 @@ fn process_instruction(
         }
         ADD_LAMPORTS => {
             // make sure the total balance is fine
-            **accounts[0].lamports.borrow_mut() += 1;
+            {
+                let mut lamports = (*accounts[0].lamports).borrow_mut();
+                **lamports = (*lamports).saturating_add(1);
+            }
         }
         TEST_RETURN_DATA_TOO_LARGE => {
             set_return_data(&[1u8; 1028]);

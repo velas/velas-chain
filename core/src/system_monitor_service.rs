@@ -12,11 +12,16 @@ use {
         thread::{self, sleep, Builder, JoinHandle},
         time::Duration,
     },
+    sys_info::{Error, LoadAvg},
 };
 
 const MS_PER_S: u64 = 1_000;
+const MS_PER_M: u64 = MS_PER_S * 60;
+const MS_PER_H: u64 = MS_PER_M * 60;
 const SAMPLE_INTERVAL_UDP_MS: u64 = 2 * MS_PER_S;
+const SAMPLE_INTERVAL_OS_NETWORK_LIMITS_MS: u64 = MS_PER_H;
 const SAMPLE_INTERVAL_MEM_MS: u64 = MS_PER_S;
+const SAMPLE_INTERVAL_CPU_MS: u64 = MS_PER_S;
 const SLEEP_INTERVAL: Duration = Duration::from_millis(500);
 
 #[cfg(target_os = "linux")]
@@ -36,6 +41,37 @@ struct UdpStats {
     sndbuf_errors: usize,
     in_csum_errors: usize,
     ignored_multi: usize,
+}
+
+struct CpuInfo {
+    cpu_num: u32,
+    cpu_freq_mhz: u64,
+    load_avg: LoadAvg,
+    num_threads: u64,
+}
+
+impl UdpStats {
+    fn from_map(udp_stats: &HashMap<String, usize>) -> Self {
+        Self {
+            in_datagrams: *udp_stats.get("InDatagrams").unwrap_or(&0),
+            no_ports: *udp_stats.get("NoPorts").unwrap_or(&0),
+            in_errors: *udp_stats.get("InErrors").unwrap_or(&0),
+            out_datagrams: *udp_stats.get("OutDatagrams").unwrap_or(&0),
+            rcvbuf_errors: *udp_stats.get("RcvbufErrors").unwrap_or(&0),
+            sndbuf_errors: *udp_stats.get("SndbufErrors").unwrap_or(&0),
+            in_csum_errors: *udp_stats.get("InCsumErrors").unwrap_or(&0),
+            ignored_multi: *udp_stats.get("IgnoredMulti").unwrap_or(&0),
+        }
+    }
+}
+
+fn platform_id() -> String {
+    format!(
+        "{}/{}/{}",
+        std::env::consts::FAMILY,
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -73,16 +109,7 @@ fn parse_udp_stats(reader: &mut impl BufRead) -> Result<UdpStats, String> {
         .map(|(label, val)| (label.to_string(), val.parse::<usize>().unwrap()))
         .collect();
 
-    let stats = UdpStats {
-        in_datagrams: *udp_stats.get("InDatagrams").unwrap_or(&0),
-        no_ports: *udp_stats.get("NoPorts").unwrap_or(&0),
-        in_errors: *udp_stats.get("InErrors").unwrap_or(&0),
-        out_datagrams: *udp_stats.get("OutDatagrams").unwrap_or(&0),
-        rcvbuf_errors: *udp_stats.get("RcvbufErrors").unwrap_or(&0),
-        sndbuf_errors: *udp_stats.get("SndbufErrors").unwrap_or(&0),
-        in_csum_errors: *udp_stats.get("InCsumErrors").unwrap_or(&0),
-        ignored_multi: *udp_stats.get("IgnoredMulti").unwrap_or(&0),
-    };
+    let stats = UdpStats::from_map(&udp_stats);
 
     Ok(stats)
 }
@@ -99,16 +126,112 @@ pub fn verify_udp_stats_access() -> Result<(), String> {
 }
 
 impl SystemMonitorService {
-    pub fn new(exit: Arc<AtomicBool>, report_os_network_stats: bool) -> Self {
+    pub fn new(
+        exit: Arc<AtomicBool>,
+        report_os_memory_stats: bool,
+        report_os_network_stats: bool,
+        report_os_cpu_stats: bool,
+    ) -> Self {
         info!("Starting SystemMonitorService");
         let thread_hdl = Builder::new()
             .name("system-monitor".to_string())
             .spawn(move || {
-                Self::run(exit, report_os_network_stats);
+                Self::run(
+                    exit,
+                    report_os_memory_stats,
+                    report_os_network_stats,
+                    report_os_cpu_stats,
+                );
             })
             .unwrap();
 
         Self { thread_hdl }
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn linux_get_recommended_network_limits() -> HashMap<&'static str, i64> {
+        // Reference: https://medium.com/@CameronSparr/increase-os-udp-buffers-to-improve-performance-51d167bb1360
+        let mut recommended_limits: HashMap<&str, i64> = HashMap::default();
+        recommended_limits.insert("net.core.rmem_max", 134217728);
+        recommended_limits.insert("net.core.rmem_default", 134217728);
+        recommended_limits.insert("net.core.wmem_max", 134217728);
+        recommended_limits.insert("net.core.wmem_default", 134217728);
+        recommended_limits.insert("vm.max_map_count", 1000000);
+
+        // Additionally collect the following limits
+        recommended_limits.insert("net.core.optmem_max", 0);
+        recommended_limits.insert("net.core.netdev_max_backlog", 0);
+
+        recommended_limits
+    }
+
+    #[cfg(target_os = "linux")]
+    fn linux_get_current_network_limits(
+        recommended_limits: &HashMap<&'static str, i64>,
+    ) -> HashMap<&'static str, i64> {
+        use sysctl::Sysctl;
+
+        fn sysctl_read(name: &str) -> Result<String, sysctl::SysctlError> {
+            let ctl = sysctl::Ctl::new(name)?;
+            let val = ctl.value_string()?;
+            Ok(val)
+        }
+
+        let mut current_limits: HashMap<&str, i64> = HashMap::default();
+        for (key, _) in recommended_limits.iter() {
+            let current_val = match sysctl_read(key) {
+                Ok(val) => val.parse::<i64>().unwrap(),
+                Err(e) => {
+                    error!("Failed to query value for {}: {}", key, e);
+                    -1
+                }
+            };
+            current_limits.insert(key, current_val);
+        }
+        current_limits
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn linux_report_network_limits(
+        current_limits: &HashMap<&str, i64>,
+        recommended_limits: &HashMap<&'static str, i64>,
+    ) -> bool {
+        let mut check_failed = false;
+        for (key, recommended_val) in recommended_limits.iter() {
+            let current_val = *current_limits.get(key).unwrap_or(&-1);
+            if current_val < *recommended_val {
+                datapoint_warn!("os-config", (key, current_val, i64));
+                warn!(
+                    "  {}: recommended={} current={}, too small",
+                    key, recommended_val, current_val
+                );
+                check_failed = true;
+            } else {
+                datapoint_info!("os-config", (key, current_val, i64));
+                info!(
+                    "  {}: recommended={} current={}",
+                    key, recommended_val, current_val
+                );
+            }
+        }
+        if check_failed {
+            datapoint_warn!("os-config", ("network_limit_test_failed", 1, i64));
+        }
+        !check_failed
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn check_os_network_limits() -> bool {
+        datapoint_info!("os-config", ("platform", platform_id(), String));
+        true
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn check_os_network_limits() -> bool {
+        datapoint_info!("os-config", ("platform", platform_id(), String));
+        let recommended_limits = Self::linux_get_recommended_network_limits();
+        let current_limits = Self::linux_get_current_network_limits(&recommended_limits);
+        Self::linux_report_network_limits(&current_limits, &recommended_limits)
     }
 
     #[cfg(target_os = "linux")]
@@ -116,7 +239,7 @@ impl SystemMonitorService {
         match read_udp_stats(PROC_NET_SNMP_PATH) {
             Ok(new_stats) => {
                 if let Some(old_stats) = udp_stats {
-                    SystemMonitorService::report_udp_stats(old_stats, &new_stats);
+                    Self::report_udp_stats(old_stats, &new_stats);
                 }
                 *udp_stats = Some(new_stats);
             }
@@ -227,24 +350,64 @@ impl SystemMonitorService {
         }
     }
 
-    pub fn run(exit: Arc<AtomicBool>, report_os_network_stats: bool) {
-        let mut udp_stats = None;
+    fn cpu_info() -> Result<CpuInfo, Error> {
+        let cpu_num = sys_info::cpu_num()?;
+        let cpu_freq_mhz = sys_info::cpu_speed()?;
+        let load_avg = sys_info::loadavg()?;
+        let num_threads = sys_info::proc_total()?;
 
+        Ok(CpuInfo {
+            cpu_num,
+            cpu_freq_mhz,
+            load_avg,
+            num_threads,
+        })
+    }
+
+    fn report_cpu_stats() {
+        if let Ok(info) = Self::cpu_info() {
+            datapoint_info!(
+                "cpu-stats",
+                ("cpu_num", info.cpu_num as i64, i64),
+                ("cpu0_freq_mhz", info.cpu_freq_mhz as i64, i64),
+                ("average_load_one_minute", info.load_avg.one, f64),
+                ("average_load_five_minutes", info.load_avg.five, f64),
+                ("average_load_fifteen_minutes", info.load_avg.fifteen, f64),
+                ("total_num_threads", info.num_threads as i64, i64),
+            )
+        }
+    }
+
+    pub fn run(
+        exit: Arc<AtomicBool>,
+        report_os_memory_stats: bool,
+        report_os_network_stats: bool,
+        report_os_cpu_stats: bool,
+    ) {
+        let mut udp_stats = None;
+        let network_limits_timer = AtomicInterval::default();
         let udp_timer = AtomicInterval::default();
         let mem_timer = AtomicInterval::default();
+        let cpu_timer = AtomicInterval::default();
+
         loop {
             if exit.load(Ordering::Relaxed) {
                 break;
             }
-
-            if report_os_network_stats && udp_timer.should_update(SAMPLE_INTERVAL_UDP_MS) {
-                SystemMonitorService::process_udp_stats(&mut udp_stats);
+            if report_os_network_stats {
+                if network_limits_timer.should_update(SAMPLE_INTERVAL_OS_NETWORK_LIMITS_MS) {
+                    Self::check_os_network_limits();
+                }
+                if udp_timer.should_update(SAMPLE_INTERVAL_UDP_MS) {
+                    Self::process_udp_stats(&mut udp_stats);
+                }
             }
-
-            if mem_timer.should_update(SAMPLE_INTERVAL_MEM_MS) {
-                SystemMonitorService::report_mem_stats();
+            if report_os_memory_stats && mem_timer.should_update(SAMPLE_INTERVAL_MEM_MS) {
+                Self::report_mem_stats();
             }
-
+            if report_os_cpu_stats && cpu_timer.should_update(SAMPLE_INTERVAL_CPU_MS) {
+                Self::report_cpu_stats();
+            }
             sleep(SLEEP_INTERVAL);
         }
     }

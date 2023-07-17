@@ -1,6 +1,7 @@
 //! The `net_utils` module assists with networking
 #![allow(clippy::integer_arithmetic)]
 use {
+    crossbeam_channel::unbounded,
     log::*,
     rand::{thread_rng, Rng},
     socket2::{Domain, SockAddr, Socket, Type},
@@ -8,7 +9,7 @@ use {
         collections::{BTreeMap, HashSet},
         io::{self, Read, Write},
         net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
-        sync::{mpsc::channel, Arc, RwLock},
+        sync::{Arc, RwLock},
         time::{Duration, Instant},
     },
     url::Url,
@@ -26,6 +27,9 @@ pub struct UdpSocketPair {
 }
 
 pub type PortRange = (u16, u16);
+
+pub const VALIDATOR_PORT_RANGE: PortRange = (8000, 10_000);
+pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 13; // VALIDATOR_PORT_RANGE must be at least this wide
 
 pub(crate) const HEADER_LENGTH: usize = 4;
 pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
@@ -138,7 +142,7 @@ fn do_verify_reachable_ports(
 
     // Wait for a connection to open on each TCP port
     for (port, tcp_listener) in tcp_listeners {
-        let (sender, receiver) = channel();
+        let (sender, receiver) = unbounded();
         let listening_addr = tcp_listener.local_addr().unwrap();
         let thread_handle = std::thread::spawn(move || {
             debug!("Waiting for incoming connection on tcp/{}", port);
@@ -435,6 +439,18 @@ pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpS
     ))
 }
 
+pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
+    let sock = udp_socket(false)?;
+    let addr = SocketAddr::new(ip_addr, 0);
+    match sock.bind(&SockAddr::from(addr)) {
+        Ok(_) => Result::Ok(sock.into()),
+        Err(err) => Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("No available UDP port: {}", err),
+        )),
+    }
+}
+
 // binds many sockets to the same port in a range
 pub fn multi_bind_in_range(
     ip_addr: IpAddr,
@@ -673,6 +689,17 @@ mod tests {
     }
 
     #[test]
+    fn test_bind_with_any_port() {
+        let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let x = bind_with_any_port(ip_addr).unwrap();
+        let y = bind_with_any_port(ip_addr).unwrap();
+        assert_ne!(
+            x.local_addr().unwrap().port(),
+            y.local_addr().unwrap().port()
+        );
+    }
+
+    #[test]
     fn test_bind_in_range_nil() {
         let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
         bind_in_range(ip_addr, (2000, 2000)).unwrap_err();
@@ -788,5 +815,15 @@ mod tests {
             2,
             3,
         ));
+    }
+
+    #[test]
+    fn test_bind_two_consecutive_in_range() {
+        solana_logger::setup();
+        let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        if let Ok(((port1, _), (port2, _))) = bind_two_consecutive_in_range(ip_addr, (1024, 65535))
+        {
+            assert!(port2 == port1 + 1);
+        }
     }
 }

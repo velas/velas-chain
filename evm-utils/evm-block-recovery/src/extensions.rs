@@ -1,8 +1,6 @@
 use solana_evm_loader_program::instructions::v0;
 use solana_sdk::{evm_loader::ID as STATIC_PROGRAM_ID, instruction::CompiledInstruction};
-use solana_transaction_status::{
-    ConfirmedBlockWithOptionalMetadata, TransactionWithOptionalMetadata,
-};
+use solana_transaction_status::ConfirmedBlock;
 
 #[derive(Debug)]
 pub struct ParsedInstructions {
@@ -73,7 +71,7 @@ pub trait NativeBlockExt {
     fn parse_instructions(&self) -> ParsedInstructions;
 }
 
-impl NativeBlockExt for ConfirmedBlockWithOptionalMetadata {
+impl NativeBlockExt for ConfirmedBlock {
     fn parse_instructions(&self) -> ParsedInstructions {
         use std::str::FromStr;
         let velas_account_pk =
@@ -83,14 +81,16 @@ impl NativeBlockExt for ConfirmedBlockWithOptionalMetadata {
         let mut instructions = vec![];
         let mut has_velas_account_instruction = false;
 
-        for TransactionWithOptionalMetadata { transaction, .. } in &self.transactions {
+        for tx in &self.transactions {
+            let transaction = tx.get_transaction();
             for CompiledInstruction {
                 data,
                 program_id_index,
                 ..
-            } in &transaction.message.instructions
+            } in transaction.message.instructions()
             {
-                if transaction.message.account_keys[*program_id_index as usize] == STATIC_PROGRAM_ID
+                if transaction.message.static_account_keys()[*program_id_index as usize]
+                    == STATIC_PROGRAM_ID
                 {
                     if data[0] == 0xff {
                         panic!("Borsh format is currently unsupported");
@@ -102,11 +102,11 @@ impl NativeBlockExt for ConfirmedBlockWithOptionalMetadata {
                     }
 
                     instructions.push(instruction);
-                } else if transaction.message.account_keys[*program_id_index as usize]
+                } else if transaction.message.static_account_keys()[*program_id_index as usize]
                     == velas_account_pk
                     && transaction
                         .message
-                        .account_keys
+                        .static_account_keys()
                         .iter()
                         .any(|k| *k == STATIC_PROGRAM_ID)
                 {

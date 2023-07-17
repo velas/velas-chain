@@ -37,17 +37,21 @@
 //! types continue to be exposed to Solana programs, for backwards compatibility
 //! reasons.
 
+mod compiled_keys;
 pub mod legacy;
 
 #[cfg(not(target_arch = "bpf"))]
 #[path = ""]
 mod non_bpf_modules {
+    mod account_keys;
+    mod address_loader;
     mod sanitized;
     mod versions;
 
-    pub use {sanitized::*, versions::*};
+    pub use {account_keys::*, address_loader::*, sanitized::*, versions::*};
 }
 
+use compiled_keys::*;
 pub use legacy::Message;
 #[cfg(not(target_arch = "bpf"))]
 pub use non_bpf_modules::*;
@@ -88,7 +92,7 @@ pub const MESSAGE_HEADER_LENGTH: usize = 3;
 /// access the same read-write accounts are processed sequentially.
 ///
 /// [PoH]: https://docs.solana.com/cluster/synchronization
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, AbiExample)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, Copy, AbiExample)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageHeader {
     /// The number of signatures required for this message to be considered

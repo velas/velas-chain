@@ -1,12 +1,13 @@
 use {
-    crate::tower_storage::{SavedTower, TowerStorage},
+    crate::tower_storage::{SavedTowerVersions, TowerStorage},
+    crossbeam_channel::Receiver,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{clock::Slot, transaction::Transaction},
     std::{
-        sync::{mpsc::Receiver, Arc, Mutex, RwLock},
+        sync::{Arc, Mutex, RwLock},
         thread::{self, Builder, JoinHandle},
     },
 };
@@ -15,7 +16,7 @@ pub enum VoteOp {
     PushVote {
         tx: Transaction,
         tower_slots: Vec<Slot>,
-        saved_tower: SavedTower,
+        saved_tower: SavedTowerVersions,
     },
     RefreshVote {
         tx: Transaction,
@@ -80,12 +81,15 @@ impl VotingService {
             inc_new_counter_info!("tower_save-ms", measure.as_ms() as usize);
         }
 
-        let target_address = if send_to_tpu_vote_port {
+        let pubkey_and_target_address = if send_to_tpu_vote_port {
             crate::banking_stage::next_leader_tpu_vote(cluster_info, poh_recorder)
         } else {
             crate::banking_stage::next_leader_tpu(cluster_info, poh_recorder)
         };
-        let _ = cluster_info.send_transaction(vote_op.tx(), target_address);
+        let _ = cluster_info.send_transaction(
+            vote_op.tx(),
+            pubkey_and_target_address.map(|(_pubkey, target_addr)| target_addr),
+        );
 
         match vote_op {
             VoteOp::PushVote {

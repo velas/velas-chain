@@ -131,9 +131,14 @@ impl Dashboard {
                     progress_bar.println(format_name_value("Identity:", &identity.to_string()));
                 }
 
+                let new_identity = rpc_client.get_identity().unwrap_or(identity);
+                if identity != new_identity {
+                    identity = new_identity;
+                    progress_bar.println(&format_name_value("Identity:", &identity.to_string()));
+                }
+
                 match get_validator_stats(&rpc_client, &identity) {
                     Ok((
-                        max_retransmit_slot,
                         processed_slot,
                         confirmed_slot,
                         finalized_slot,
@@ -154,7 +159,7 @@ impl Dashboard {
                         };
 
                         progress_bar.set_message(format!(
-                            "{}{}{}| \
+                            "{}{}| \
                                     Processed Slot: {} | Confirmed Slot: {} | Finalized Slot: {} | \
                                     Full Snapshot Slot: {} | Incremental Snapshot Slot: {} | \
                                     Transactions: {} | {}",
@@ -163,11 +168,6 @@ impl Dashboard {
                                 "".to_string()
                             } else {
                                 format!("| {} ", style(health).bold().red())
-                            },
-                            if max_retransmit_slot == 0 {
-                                "".to_string()
-                            } else {
-                                format!("| Max Slot: {} ", max_retransmit_slot)
                             },
                             processed_slot,
                             confirmed_slot,
@@ -266,11 +266,10 @@ fn get_contact_info(rpc_client: &RpcClient, identity: &Pubkey) -> Option<RpcCont
 fn get_validator_stats(
     rpc_client: &RpcClient,
     identity: &Pubkey,
-) -> client_error::Result<(Slot, Slot, Slot, Slot, u64, Sol, String)> {
+) -> client_error::Result<(Slot, Slot, Slot, u64, Sol, String)> {
     let finalized_slot = rpc_client.get_slot_with_commitment(CommitmentConfig::finalized())?;
     let confirmed_slot = rpc_client.get_slot_with_commitment(CommitmentConfig::confirmed())?;
     let processed_slot = rpc_client.get_slot_with_commitment(CommitmentConfig::processed())?;
-    let max_retransmit_slot = rpc_client.get_max_retransmit_slot()?;
     let transaction_count =
         rpc_client.get_transaction_count_with_commitment(CommitmentConfig::processed())?;
     let identity_balance = rpc_client
@@ -298,7 +297,6 @@ fn get_validator_stats(
     };
 
     Ok((
-        max_retransmit_slot,
         processed_slot,
         confirmed_slot,
         finalized_slot,

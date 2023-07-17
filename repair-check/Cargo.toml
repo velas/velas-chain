@@ -9,10 +9,10 @@ clap = "2.33.1"
 log = "0.4.14"
 rand = "0.7.0"
 
-solana-core = { path = "../core", version = "=1.9.29" }
-solana-gossip = { path = "../gossip", version = "=1.9.29" }
-solana-logger = { path = "../logger", version = "=1.9.29" }
-solana-net-utils = { path = "../net-utils", version = "=1.9.29" }
-solana-sdk = { path = "../sdk", version = "=1.9.29" }
-solana-streamer = { path = "../streamer", version = "=1.9.29" }
+solana-core = { path = "../core", version = "=1.10.41" }
+solana-gossip = { path = "../gossip", version = "=1.10.41" }
+solana-logger = { path = "../logger", version = "=1.10.41" }
+solana-net-utils = { path = "../net-utils", version = "=1.10.41" }
+solana-sdk = { path = "../sdk", version = "=1.10.41" }
+solana-streamer = { path = "../streamer", version = "=1.10.41" }
 solana-version = { path = "../version" }

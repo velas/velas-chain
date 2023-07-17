@@ -12,7 +12,7 @@ use {
         fmt::Debug,
         sync::{
             atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
-            Arc, Mutex,
+            Arc,
         },
         time::Duration,
     },
@@ -32,7 +32,7 @@ pub struct BucketMapHolder<T: IndexValue> {
 
     // used by bg processing to know when any bucket has become dirty
     pub wait_dirty_or_aged: Arc<WaitableCondvar>,
-    next_bucket_to_flush: Mutex<usize>,
+    next_bucket_to_flush: AtomicUsize,
     bins: usize,
 
     pub threads: usize,
@@ -57,6 +57,11 @@ impl<T: IndexValue> Debug for BucketMapHolder<T> {
 
 #[allow(clippy::mutex_atomic)]
 impl<T: IndexValue> BucketMapHolder<T> {
+    /// is the accounts index using disk as a backing store
+    pub fn is_disk_index_enabled(&self) -> bool {
+        self.disk.is_some()
+    }
+
     pub fn increment_age(&self) {
         // since we are about to change age, there are now 0 buckets that have been flushed at this age
         // this should happen before the age.fetch_add
@@ -148,7 +153,20 @@ impl<T: IndexValue> BucketMapHolder<T> {
 
         let mut bucket_config = BucketMapConfig::new(bins);
         bucket_config.drives = config.as_ref().and_then(|config| config.drives.clone());
-        let mem_budget_mb = config.as_ref().and_then(|config| config.index_limit_mb);
+        let mut mem_budget_mb = config.as_ref().and_then(|config| config.index_limit_mb);
+        let bucket_map_tests_allowed = mem_budget_mb.is_none()
+            && !config
+                .as_ref()
+                .map(|config| config.started_from_validator)
+                .unwrap_or_default();
+        if bucket_map_tests_allowed {
+            if let Ok(limit) = std::env::var("SOLANA_TEST_ACCOUNTS_INDEX_MEMORY_LIMIT_MB") {
+                // allocate with disk buckets if mem budget was not set, we were NOT started from validator, and env var was set
+                // we do not want the env var to have an effect when running the validator (only tests, benches, etc.)
+                mem_budget_mb = Some(limit.parse::<usize>().unwrap());
+            }
+        }
+
         // only allocate if mem_budget_mb is Some
         let disk = mem_budget_mb.map(|_| BucketMap::new(bucket_config));
         Self {
@@ -158,7 +176,7 @@ impl<T: IndexValue> BucketMapHolder<T> {
             age: AtomicU8::default(),
             stats: BucketMapHolderStats::new(bins),
             wait_dirty_or_aged: Arc::default(),
-            next_bucket_to_flush: Mutex::new(0),
+            next_bucket_to_flush: AtomicUsize::new(0),
             age_timer: AtomicInterval::default(),
             bins,
             startup: AtomicBool::default(),
@@ -170,12 +188,11 @@ impl<T: IndexValue> BucketMapHolder<T> {
     // get the next bucket to flush, with the idea that the previous bucket
     // is perhaps being flushed by another thread already.
     pub fn next_bucket_to_flush(&self) -> usize {
-        // could be lock-free as an optimization
-        // wrapping is tricky
-        let mut lock = self.next_bucket_to_flush.lock().unwrap();
-        let result = *lock;
-        *lock = (result + 1) % self.bins;
-        result
+        self.next_bucket_to_flush
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bucket| {
+                Some((bucket + 1) % self.bins)
+            })
+            .unwrap()
     }
 
     /// prepare for this to be dynamic if necessary
@@ -294,14 +311,7 @@ impl<T: IndexValue> BucketMapHolder<T> {
 
 #[cfg(test)]
 pub mod tests {
-    use {
-        super::*,
-        rayon::prelude::*,
-        std::{
-            sync::atomic::{AtomicUsize, Ordering},
-            time::Instant,
-        },
-    };
+    use {super::*, rayon::prelude::*, std::time::Instant};
 
     #[test]
     fn test_next_bucket_to_flush() {
@@ -352,6 +362,7 @@ pub mod tests {
         solana_logger::setup();
         let bins = 100;
         let test = BucketMapHolder::<u64>::new(bins, &Some(AccountsIndexConfig::default()), 1);
+        assert!(!test.is_disk_index_enabled());
         let bins = test.bins as u64;
         let interval_ms = test.age_interval_ms();
         // 90% of time elapsed, all but 1 bins flushed, should not wait since we'll end up right on time
@@ -374,6 +385,17 @@ pub mod tests {
         let bins_flushed = bins * 12 / 100;
         let result = test.throttling_wait_ms_internal(interval_ms, elapsed_ms, bins_flushed);
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_disk_index_enabled() {
+        let bins = 1;
+        let config = AccountsIndexConfig {
+            index_limit_mb: Some(0),
+            ..AccountsIndexConfig::default()
+        };
+        let test = BucketMapHolder::<u64>::new(bins, &Some(config), 1);
+        assert!(test.is_disk_index_enabled());
     }
 
     #[test]

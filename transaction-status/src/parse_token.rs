@@ -2,23 +2,33 @@ use {
     crate::parse_instruction::{
         check_num_accounts, ParsableProgram, ParseInstructionError, ParsedInstructionEnum,
     },
+    extension::{
+        default_account_state::*, interest_bearing_mint::*, memo_transfer::*,
+        mint_close_authority::*, reallocate::*, transfer_fee::*,
+    },
     serde_json::{json, Map, Value},
-    solana_account_decoder::parse_token::{pubkey_from_spl_token, token_amount_to_ui_amount},
+    solana_account_decoder::parse_token::{
+        pubkey_from_spl_token, token_amount_to_ui_amount, UiAccountState,
+    },
     solana_sdk::{
         instruction::{AccountMeta, CompiledInstruction, Instruction},
-        pubkey::Pubkey,
+        message::AccountKeys,
     },
-    spl_token::{
+    spl_token_2022::{
+        extension::ExtensionType,
         instruction::{AuthorityType, TokenInstruction},
         solana_program::{
             instruction::Instruction as SplTokenInstruction, program_option::COption,
+            pubkey::Pubkey,
         },
     },
 };
 
+mod extension;
+
 pub fn parse_token(
     instruction: &CompiledInstruction,
-    account_keys: &[Pubkey],
+    account_keys: &AccountKeys,
 ) -> Result<ParsedInstructionEnum, ParseInstructionError> {
     let token_instruction = TokenInstruction::unpack(&instruction.data)
         .map_err(|_| ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken))?;
@@ -56,6 +66,29 @@ pub fn parse_token(
                 info: value,
             })
         }
+        TokenInstruction::InitializeMint2 {
+            decimals,
+            mint_authority,
+            freeze_authority,
+        } => {
+            check_num_token_accounts(&instruction.accounts, 1)?;
+            let mut value = json!({
+                "mint": account_keys[instruction.accounts[0] as usize].to_string(),
+                "decimals": decimals,
+                "mintAuthority": mint_authority.to_string(),
+            });
+            let map = value.as_object_mut().unwrap();
+            if let COption::Some(freeze_authority) = freeze_authority {
+                map.insert(
+                    "freezeAuthority".to_string(),
+                    json!(freeze_authority.to_string()),
+                );
+            }
+            Ok(ParsedInstructionEnum {
+                instruction_type: "initializeMint2".to_string(),
+                info: value,
+            })
+        }
         TokenInstruction::InitializeAccount => {
             check_num_token_accounts(&instruction.accounts, 4)?;
             Ok(ParsedInstructionEnum {
@@ -80,6 +113,17 @@ pub fn parse_token(
                 }),
             })
         }
+        TokenInstruction::InitializeAccount3 { owner } => {
+            check_num_token_accounts(&instruction.accounts, 2)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "initializeAccount3".to_string(),
+                info: json!({
+                    "account": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "mint": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "owner": owner.to_string(),
+                }),
+            })
+        }
         TokenInstruction::InitializeMultisig { m } => {
             check_num_token_accounts(&instruction.accounts, 3)?;
             let mut signers: Vec<String> = vec![];
@@ -96,6 +140,22 @@ pub fn parse_token(
                 }),
             })
         }
+        TokenInstruction::InitializeMultisig2 { m } => {
+            check_num_token_accounts(&instruction.accounts, 2)?;
+            let mut signers: Vec<String> = vec![];
+            for i in instruction.accounts[1..].iter() {
+                signers.push(account_keys[*i as usize].to_string());
+            }
+            Ok(ParsedInstructionEnum {
+                instruction_type: "initializeMultisig2".to_string(),
+                info: json!({
+                    "multisig": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "signers": signers,
+                    "m": m,
+                }),
+            })
+        }
+        #[allow(deprecated)]
         TokenInstruction::Transfer { amount } => {
             check_num_token_accounts(&instruction.accounts, 3)?;
             let mut value = json!({
@@ -163,16 +223,18 @@ pub fn parse_token(
         } => {
             check_num_token_accounts(&instruction.accounts, 2)?;
             let owned = match authority_type {
-                AuthorityType::MintTokens | AuthorityType::FreezeAccount => "mint",
+                AuthorityType::MintTokens
+                | AuthorityType::FreezeAccount
+                | AuthorityType::TransferFeeConfig
+                | AuthorityType::WithheldWithdraw
+                | AuthorityType::CloseMint
+                | AuthorityType::InterestRate => "mint",
                 AuthorityType::AccountOwner | AuthorityType::CloseAccount => "account",
             };
             let mut value = json!({
                 owned: account_keys[instruction.accounts[0] as usize].to_string(),
                 "authorityType": Into::<UiAuthorityType>::into(authority_type),
-                "newAuthority": match new_authority {
-                    COption::Some(authority) => Some(authority.to_string()),
-                    COption::None => None,
-                },
+                "newAuthority": map_coption_pubkey(new_authority),
             });
             let map = value.as_object_mut().unwrap();
             parse_signers(
@@ -385,6 +447,131 @@ pub fn parse_token(
                 }),
             })
         }
+        TokenInstruction::GetAccountDataSize { extension_types } => {
+            check_num_token_accounts(&instruction.accounts, 1)?;
+            let mut value = json!({
+                "mint": account_keys[instruction.accounts[0] as usize].to_string(),
+            });
+            let map = value.as_object_mut().unwrap();
+            if !extension_types.is_empty() {
+                map.insert(
+                    "extensionTypes".to_string(),
+                    json!(extension_types
+                        .into_iter()
+                        .map(UiExtensionType::from)
+                        .collect::<Vec<_>>()),
+                );
+            }
+            Ok(ParsedInstructionEnum {
+                instruction_type: "getAccountDataSize".to_string(),
+                info: value,
+            })
+        }
+        TokenInstruction::InitializeImmutableOwner => {
+            check_num_token_accounts(&instruction.accounts, 1)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "initializeImmutableOwner".to_string(),
+                info: json!({
+                    "account": account_keys[instruction.accounts[0] as usize].to_string(),
+                }),
+            })
+        }
+        TokenInstruction::AmountToUiAmount { amount } => {
+            check_num_token_accounts(&instruction.accounts, 1)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "amountToUiAmount".to_string(),
+                info: json!({
+                    "mint": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "amount": amount,
+                }),
+            })
+        }
+        TokenInstruction::UiAmountToAmount { ui_amount } => {
+            check_num_token_accounts(&instruction.accounts, 1)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "uiAmountToAmount".to_string(),
+                info: json!({
+                    "mint": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "uiAmount": ui_amount,
+                }),
+            })
+        }
+        TokenInstruction::InitializeMintCloseAuthority { close_authority } => {
+            parse_initialize_mint_close_authority_instruction(
+                close_authority,
+                &instruction.accounts,
+                account_keys,
+            )
+        }
+        TokenInstruction::TransferFeeExtension(transfer_fee_instruction) => {
+            parse_transfer_fee_instruction(
+                transfer_fee_instruction,
+                &instruction.accounts,
+                account_keys,
+            )
+        }
+        TokenInstruction::ConfidentialTransferExtension => Err(
+            ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken),
+        ),
+        TokenInstruction::DefaultAccountStateExtension => {
+            if instruction.data.len() <= 2 {
+                return Err(ParseInstructionError::InstructionNotParsable(
+                    ParsableProgram::SplToken,
+                ));
+            }
+            parse_default_account_state_instruction(
+                &instruction.data[1..],
+                &instruction.accounts,
+                account_keys,
+            )
+        }
+        TokenInstruction::Reallocate { extension_types } => {
+            parse_reallocate_instruction(extension_types, &instruction.accounts, account_keys)
+        }
+        TokenInstruction::MemoTransferExtension => {
+            if instruction.data.len() < 2 {
+                return Err(ParseInstructionError::InstructionNotParsable(
+                    ParsableProgram::SplToken,
+                ));
+            }
+            parse_memo_transfer_instruction(
+                &instruction.data[1..],
+                &instruction.accounts,
+                account_keys,
+            )
+        }
+        TokenInstruction::CreateNativeMint => {
+            check_num_token_accounts(&instruction.accounts, 3)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "createNativeMint".to_string(),
+                info: json!({
+                    "payer": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "nativeMint": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "systemProgram": account_keys[instruction.accounts[2] as usize].to_string(),
+                }),
+            })
+        }
+        TokenInstruction::InitializeNonTransferableMint => {
+            check_num_token_accounts(&instruction.accounts, 1)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "initializeNonTransferableMint".to_string(),
+                info: json!({
+                    "mint": account_keys[instruction.accounts[0] as usize].to_string(),
+                }),
+            })
+        }
+        TokenInstruction::InterestBearingMintExtension => {
+            if instruction.data.len() < 2 {
+                return Err(ParseInstructionError::InstructionNotParsable(
+                    ParsableProgram::SplToken,
+                ));
+            }
+            parse_interest_bearing_mint_instruction(
+                &instruction.data[1..],
+                &instruction.accounts,
+                account_keys,
+            )
+        }
     }
 }
 
@@ -395,6 +582,10 @@ pub enum UiAuthorityType {
     FreezeAccount,
     AccountOwner,
     CloseAccount,
+    TransferFeeConfig,
+    WithheldWithdraw,
+    CloseMint,
+    InterestRate,
 }
 
 impl From<AuthorityType> for UiAuthorityType {
@@ -404,6 +595,46 @@ impl From<AuthorityType> for UiAuthorityType {
             AuthorityType::FreezeAccount => UiAuthorityType::FreezeAccount,
             AuthorityType::AccountOwner => UiAuthorityType::AccountOwner,
             AuthorityType::CloseAccount => UiAuthorityType::CloseAccount,
+            AuthorityType::TransferFeeConfig => UiAuthorityType::TransferFeeConfig,
+            AuthorityType::WithheldWithdraw => UiAuthorityType::WithheldWithdraw,
+            AuthorityType::CloseMint => UiAuthorityType::CloseMint,
+            AuthorityType::InterestRate => UiAuthorityType::InterestRate,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum UiExtensionType {
+    Uninitialized,
+    TransferFeeConfig,
+    TransferFeeAmount,
+    MintCloseAuthority,
+    ConfidentialTransferMint,
+    ConfidentialTransferAccount,
+    DefaultAccountState,
+    ImmutableOwner,
+    MemoTransfer,
+    NonTransferable,
+    InterestBearingConfig,
+}
+
+impl From<ExtensionType> for UiExtensionType {
+    fn from(extension_type: ExtensionType) -> Self {
+        match extension_type {
+            ExtensionType::Uninitialized => UiExtensionType::Uninitialized,
+            ExtensionType::TransferFeeConfig => UiExtensionType::TransferFeeConfig,
+            ExtensionType::TransferFeeAmount => UiExtensionType::TransferFeeAmount,
+            ExtensionType::MintCloseAuthority => UiExtensionType::MintCloseAuthority,
+            ExtensionType::ConfidentialTransferMint => UiExtensionType::ConfidentialTransferMint,
+            ExtensionType::ConfidentialTransferAccount => {
+                UiExtensionType::ConfidentialTransferAccount
+            }
+            ExtensionType::DefaultAccountState => UiExtensionType::DefaultAccountState,
+            ExtensionType::ImmutableOwner => UiExtensionType::ImmutableOwner,
+            ExtensionType::MemoTransfer => UiExtensionType::MemoTransfer,
+            ExtensionType::NonTransferable => UiExtensionType::NonTransferable,
+            ExtensionType::InterestBearingConfig => UiExtensionType::InterestBearingConfig,
         }
     }
 }
@@ -411,7 +642,7 @@ impl From<AuthorityType> for UiAuthorityType {
 fn parse_signers(
     map: &mut Map<String, Value>,
     last_nonsigner_index: usize,
-    account_keys: &[Pubkey],
+    account_keys: &AccountKeys,
     accounts: &[u8],
     owner_field_name: &str,
     multisig_field_name: &str,
@@ -454,12 +685,19 @@ pub fn spl_token_instruction(instruction: SplTokenInstruction) -> Instruction {
     }
 }
 
+fn map_coption_pubkey(pubkey: COption<Pubkey>) -> Option<String> {
+    match pubkey {
+        COption::Some(pubkey) => Some(pubkey.to_string()),
+        COption::None => None,
+    }
+}
+
 #[cfg(test)]
 mod test {
     use {
         super::*,
-        solana_sdk::instruction::CompiledInstruction,
-        spl_token::{
+        solana_sdk::{instruction::CompiledInstruction, pubkey::Pubkey},
+        spl_token_2022::{
             instruction::*,
             solana_program::{
                 instruction::CompiledInstruction as SplTokenCompiledInstruction, message::Message,
@@ -469,11 +707,11 @@ mod test {
         std::str::FromStr,
     };
 
-    fn convert_pubkey(pubkey: Pubkey) -> SplTokenPubkey {
+    pub(super) fn convert_pubkey(pubkey: Pubkey) -> SplTokenPubkey {
         SplTokenPubkey::from_str(&pubkey.to_string()).unwrap()
     }
 
-    fn convert_compiled_instruction(
+    pub(super) fn convert_compiled_instruction(
         instruction: &SplTokenCompiledInstruction,
     ) -> CompiledInstruction {
         CompiledInstruction {
@@ -483,43 +721,53 @@ mod test {
         }
     }
 
-    #[test]
-    #[allow(clippy::same_item_push)]
-    fn test_parse_token() {
-        let mut keys: Vec<Pubkey> = vec![];
-        for _ in 0..10 {
-            keys.push(solana_sdk::pubkey::new_rand());
-        }
+    pub(super) fn convert_account_keys(message: &Message) -> Vec<Pubkey> {
+        message
+            .account_keys
+            .iter()
+            .map(pubkey_from_spl_token)
+            .collect()
+    }
+
+    fn test_parse_token(program_id: &SplTokenPubkey) {
+        let mint_pubkey = Pubkey::new_unique();
+        let mint_authority = Pubkey::new_unique();
+        let freeze_authority = Pubkey::new_unique();
+        let rent_sysvar = solana_sdk::sysvar::rent::id();
 
         // Test InitializeMint variations
         let initialize_mint_ix = initialize_mint(
-            &spl_token::id(),
-            &convert_pubkey(keys[0]),
-            &convert_pubkey(keys[2]),
-            Some(&convert_pubkey(keys[3])),
+            program_id,
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(mint_authority),
+            Some(&convert_pubkey(freeze_authority)),
             2,
         )
         .unwrap();
         let message = Message::new(&[initialize_mint_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "initializeMint".to_string(),
                 info: json!({
-                    "mint": keys[0].to_string(),
+                    "mint": mint_pubkey.to_string(),
                     "decimals": 2,
-                    "mintAuthority": keys[2].to_string(),
-                    "freezeAuthority": keys[3].to_string(),
-                    "rentSysvar": keys[1].to_string(),
+                    "mintAuthority": mint_authority.to_string(),
+                    "freezeAuthority": freeze_authority.to_string(),
+                    "rentSysvar": rent_sysvar.to_string(),
                 })
             }
         );
 
         let initialize_mint_ix = initialize_mint(
-            &spl_token::id(),
-            &convert_pubkey(keys[0]),
-            &convert_pubkey(keys[2]),
+            program_id,
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(mint_authority),
             None,
             2,
         )
@@ -527,49 +775,144 @@ mod test {
         let message = Message::new(&[initialize_mint_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "initializeMint".to_string(),
                 info: json!({
-                   "mint": keys[0].to_string(),
-                   "decimals": 2,
-                   "mintAuthority": keys[2].to_string(),
-                   "rentSysvar": keys[1].to_string(),
+                    "mint": mint_pubkey.to_string(),
+                    "decimals": 2,
+                    "mintAuthority": mint_authority.to_string(),
+                    "rentSysvar": rent_sysvar.to_string(),
+                })
+            }
+        );
+
+        // Test InitializeMint2
+        let initialize_mint_ix = initialize_mint2(
+            program_id,
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(mint_authority),
+            Some(&convert_pubkey(freeze_authority)),
+            2,
+        )
+        .unwrap();
+        let message = Message::new(&[initialize_mint_ix], None);
+        let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert_eq!(
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "initializeMint2".to_string(),
+                info: json!({
+                    "mint": mint_pubkey.to_string(),
+                    "decimals": 2,
+                    "mintAuthority": mint_authority.to_string(),
+                    "freezeAuthority": freeze_authority.to_string(),
                 })
             }
         );
 
         // Test InitializeAccount
+        let account_pubkey = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
         let initialize_account_ix = initialize_account(
-            &spl_token::id(),
-            &convert_pubkey(keys[0]),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(owner),
         )
         .unwrap();
         let message = Message::new(&[initialize_account_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "initializeAccount".to_string(),
                 info: json!({
-                   "account": keys[0].to_string(),
-                   "mint": keys[1].to_string(),
-                   "owner": keys[2].to_string(),
-                   "rentSysvar": keys[3].to_string(),
+                    "account": account_pubkey.to_string(),
+                    "mint": mint_pubkey.to_string(),
+                    "owner": owner.to_string(),
+                    "rentSysvar": rent_sysvar.to_string(),
+                })
+            }
+        );
+
+        // Test InitializeAccount2
+        let initialize_account_ix = initialize_account2(
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(owner),
+        )
+        .unwrap();
+        let message = Message::new(&[initialize_account_ix], None);
+        let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert_eq!(
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "initializeAccount2".to_string(),
+                info: json!({
+                   "account": account_pubkey.to_string(),
+                   "mint": mint_pubkey.to_string(),
+                   "owner": owner.to_string(),
+                   "rentSysvar": rent_sysvar.to_string(),
+                })
+            }
+        );
+
+        // Test InitializeAccount3
+        let initialize_account_ix = initialize_account3(
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(owner),
+        )
+        .unwrap();
+        let message = Message::new(&[initialize_account_ix], None);
+        let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert_eq!(
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "initializeAccount3".to_string(),
+                info: json!({
+                   "account": account_pubkey.to_string(),
+                   "mint": mint_pubkey.to_string(),
+                   "owner": owner.to_string(),
                 })
             }
         );
 
         // Test InitializeMultisig
+        let multisig_pubkey = Pubkey::new_unique();
+        let multisig_signer0 = Pubkey::new_unique();
+        let multisig_signer1 = Pubkey::new_unique();
+        let multisig_signer2 = Pubkey::new_unique();
         let initialize_multisig_ix = initialize_multisig(
-            &spl_token::id(),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(multisig_pubkey),
             &[
-                &convert_pubkey(keys[2]),
-                &convert_pubkey(keys[3]),
-                &convert_pubkey(keys[4]),
+                &convert_pubkey(multisig_signer0),
+                &convert_pubkey(multisig_signer1),
+                &convert_pubkey(multisig_signer2),
             ],
             2,
         )
@@ -577,24 +920,68 @@ mod test {
         let message = Message::new(&[initialize_multisig_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "initializeMultisig".to_string(),
                 info: json!({
-                   "multisig": keys[0].to_string(),
-                   "m": 2,
-                   "rentSysvar": keys[1].to_string(),
-                   "signers": keys[2..5].iter().map(|key| key.to_string()).collect::<Vec<String>>(),
+                    "multisig": multisig_pubkey.to_string(),
+                    "m": 2,
+                    "rentSysvar": rent_sysvar.to_string(),
+                    "signers": vec![
+                        multisig_signer0.to_string(),
+                        multisig_signer1.to_string(),
+                        multisig_signer2.to_string(),
+                    ],
+                })
+            }
+        );
+
+        // Test InitializeMultisig2
+        let initialize_multisig_ix = initialize_multisig2(
+            program_id,
+            &convert_pubkey(multisig_pubkey),
+            &[
+                &convert_pubkey(multisig_signer0),
+                &convert_pubkey(multisig_signer1),
+                &convert_pubkey(multisig_signer2),
+            ],
+            2,
+        )
+        .unwrap();
+        let message = Message::new(&[initialize_multisig_ix], None);
+        let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert_eq!(
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "initializeMultisig2".to_string(),
+                info: json!({
+                    "multisig": multisig_pubkey.to_string(),
+                    "m": 2,
+                    "signers": vec![
+                        multisig_signer0.to_string(),
+                        multisig_signer1.to_string(),
+                        multisig_signer2.to_string(),
+                    ],
                 })
             }
         );
 
         // Test Transfer, incl multisig
+        let recipient = Pubkey::new_unique();
+        #[allow(deprecated)]
         let transfer_ix = transfer(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(recipient),
+            &convert_pubkey(owner),
             &[],
             42,
         )
@@ -602,49 +989,64 @@ mod test {
         let message = Message::new(&[transfer_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "transfer".to_string(),
                 info: json!({
-                   "source": keys[1].to_string(),
-                   "destination": keys[2].to_string(),
-                   "authority": keys[0].to_string(),
-                   "amount": "42",
+                    "source": account_pubkey.to_string(),
+                    "destination": recipient.to_string(),
+                    "authority": owner.to_string(),
+                    "amount": "42",
                 })
             }
         );
 
+        #[allow(deprecated)]
         let transfer_ix = transfer(
-            &spl_token::id(),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[3]),
-            &convert_pubkey(keys[4]),
-            &[&convert_pubkey(keys[0]), &convert_pubkey(keys[1])],
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(recipient),
+            &convert_pubkey(multisig_pubkey),
+            &[
+                &convert_pubkey(multisig_signer0),
+                &convert_pubkey(multisig_signer1),
+            ],
             42,
         )
         .unwrap();
         let message = Message::new(&[transfer_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "transfer".to_string(),
                 info: json!({
-                   "source": keys[2].to_string(),
-                   "destination": keys[3].to_string(),
-                   "multisigAuthority": keys[4].to_string(),
-                   "signers": keys[0..2].iter().map(|key| key.to_string()).collect::<Vec<String>>(),
-                   "amount": "42",
+                    "source": account_pubkey.to_string(),
+                    "destination": recipient.to_string(),
+                    "multisigAuthority": multisig_pubkey.to_string(),
+                    "signers": vec![
+                        multisig_signer0.to_string(),
+                        multisig_signer1.to_string(),
+                    ],
+                    "amount": "42",
                 })
             }
         );
 
         // Test Approve, incl multisig
         let approve_ix = approve(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(recipient),
+            &convert_pubkey(owner),
             &[],
             42,
         )
@@ -652,95 +1054,118 @@ mod test {
         let message = Message::new(&[approve_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "approve".to_string(),
                 info: json!({
-                   "source": keys[1].to_string(),
-                   "delegate": keys[2].to_string(),
-                   "owner": keys[0].to_string(),
-                   "amount": "42",
+                    "source": account_pubkey.to_string(),
+                    "delegate": recipient.to_string(),
+                    "owner": owner.to_string(),
+                    "amount": "42",
                 })
             }
         );
 
         let approve_ix = approve(
-            &spl_token::id(),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[3]),
-            &convert_pubkey(keys[4]),
-            &[&convert_pubkey(keys[0]), &convert_pubkey(keys[1])],
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(recipient),
+            &convert_pubkey(multisig_pubkey),
+            &[
+                &convert_pubkey(multisig_signer0),
+                &convert_pubkey(multisig_signer1),
+            ],
             42,
         )
         .unwrap();
         let message = Message::new(&[approve_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "approve".to_string(),
                 info: json!({
-                   "source": keys[2].to_string(),
-                   "delegate": keys[3].to_string(),
-                   "multisigOwner": keys[4].to_string(),
-                   "signers": keys[0..2].iter().map(|key| key.to_string()).collect::<Vec<String>>(),
-                   "amount": "42",
+                    "source": account_pubkey.to_string(),
+                    "delegate": recipient.to_string(),
+                    "multisigOwner": multisig_pubkey.to_string(),
+                    "signers": vec![
+                        multisig_signer0.to_string(),
+                        multisig_signer1.to_string(),
+                    ],
+                    "amount": "42",
                 })
             }
         );
 
         // Test Revoke
         let revoke_ix = revoke(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(owner),
             &[],
         )
         .unwrap();
         let message = Message::new(&[revoke_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "revoke".to_string(),
                 info: json!({
-                   "source": keys[1].to_string(),
-                   "owner": keys[0].to_string(),
+                    "source": account_pubkey.to_string(),
+                    "owner": owner.to_string(),
                 })
             }
         );
 
         // Test SetOwner
+        let new_freeze_authority = Pubkey::new_unique();
         let set_authority_ix = set_authority(
-            &spl_token::id(),
-            &convert_pubkey(keys[0]),
-            Some(&convert_pubkey(keys[2])),
+            program_id,
+            &convert_pubkey(mint_pubkey),
+            Some(&convert_pubkey(new_freeze_authority)),
             AuthorityType::FreezeAccount,
-            &convert_pubkey(keys[1]),
+            &convert_pubkey(freeze_authority),
             &[],
         )
         .unwrap();
         let message = Message::new(&[set_authority_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "setAuthority".to_string(),
                 info: json!({
-                   "mint": keys[1].to_string(),
-                   "newAuthority": keys[2].to_string(),
-                   "authority": keys[0].to_string(),
-                   "authorityType": "freezeAccount".to_string(),
+                    "mint": mint_pubkey.to_string(),
+                    "newAuthority": new_freeze_authority.to_string(),
+                    "authority": freeze_authority.to_string(),
+                    "authorityType": "freezeAccount".to_string(),
                 })
             }
         );
 
         let set_authority_ix = set_authority(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
+            program_id,
+            &convert_pubkey(account_pubkey),
             None,
             AuthorityType::CloseAccount,
-            &convert_pubkey(keys[0]),
+            &convert_pubkey(owner),
             &[],
         )
         .unwrap();
@@ -748,24 +1173,28 @@ mod test {
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         let new_authority: Option<String> = None;
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "setAuthority".to_string(),
                 info: json!({
-                   "account": keys[1].to_string(),
-                   "newAuthority": new_authority,
-                   "authority": keys[0].to_string(),
-                   "authorityType": "closeAccount".to_string(),
+                    "account": account_pubkey.to_string(),
+                    "newAuthority": new_authority,
+                    "authority": owner.to_string(),
+                    "authorityType": "closeAccount".to_string(),
                 })
             }
         );
 
         // Test MintTo
         let mint_to_ix = mint_to(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_authority),
             &[],
             42,
         )
@@ -773,24 +1202,28 @@ mod test {
         let message = Message::new(&[mint_to_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "mintTo".to_string(),
                 info: json!({
-                   "mint": keys[1].to_string(),
-                   "account": keys[2].to_string(),
-                   "mintAuthority": keys[0].to_string(),
-                   "amount": "42",
+                    "mint": mint_pubkey.to_string(),
+                    "account": account_pubkey.to_string(),
+                    "mintAuthority": mint_authority.to_string(),
+                    "amount": "42",
                 })
             }
         );
 
         // Test Burn
         let burn_ix = burn(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(owner),
             &[],
             42,
         )
@@ -798,94 +1231,110 @@ mod test {
         let message = Message::new(&[burn_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "burn".to_string(),
                 info: json!({
-                   "account": keys[1].to_string(),
-                   "mint": keys[2].to_string(),
-                   "authority": keys[0].to_string(),
-                   "amount": "42",
+                    "account": account_pubkey.to_string(),
+                    "mint": mint_pubkey.to_string(),
+                    "authority": owner.to_string(),
+                    "amount": "42",
                 })
             }
         );
 
         // Test CloseAccount
         let close_account_ix = close_account(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(recipient),
+            &convert_pubkey(owner),
             &[],
         )
         .unwrap();
         let message = Message::new(&[close_account_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "closeAccount".to_string(),
                 info: json!({
-                   "account": keys[1].to_string(),
-                   "destination": keys[2].to_string(),
-                   "owner": keys[0].to_string(),
+                    "account": account_pubkey.to_string(),
+                    "destination": recipient.to_string(),
+                    "owner": owner.to_string(),
                 })
             }
         );
 
         // Test FreezeAccount
         let freeze_account_ix = freeze_account(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(freeze_authority),
             &[],
         )
         .unwrap();
         let message = Message::new(&[freeze_account_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "freezeAccount".to_string(),
                 info: json!({
-                   "account": keys[1].to_string(),
-                   "mint": keys[2].to_string(),
-                   "freezeAuthority": keys[0].to_string(),
+                    "account": account_pubkey.to_string(),
+                    "mint": mint_pubkey.to_string(),
+                    "freezeAuthority": freeze_authority.to_string(),
                 })
             }
         );
 
         // Test ThawAccount
         let thaw_account_ix = thaw_account(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(freeze_authority),
             &[],
         )
         .unwrap();
         let message = Message::new(&[thaw_account_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "thawAccount".to_string(),
                 info: json!({
-                   "account": keys[1].to_string(),
-                   "mint": keys[2].to_string(),
-                   "freezeAuthority": keys[0].to_string(),
+                    "account": account_pubkey.to_string(),
+                    "mint": mint_pubkey.to_string(),
+                    "freezeAuthority": freeze_authority.to_string(),
                 })
             }
         );
 
         // Test TransferChecked, incl multisig
         let transfer_ix = transfer_checked(
-            &spl_token::id(),
-            &convert_pubkey(keys[0]),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[3]),
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(recipient),
+            &convert_pubkey(owner),
             &[],
             42,
             2,
@@ -894,31 +1343,38 @@ mod test {
         let message = Message::new(&[transfer_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "transferChecked".to_string(),
                 info: json!({
-                   "source": keys[1].to_string(),
-                   "destination": keys[2].to_string(),
-                   "mint": keys[3].to_string(),
-                   "authority": keys[0].to_string(),
-                   "tokenAmount": {
-                       "uiAmount": 0.42,
-                       "decimals": 2,
-                       "amount": "42",
-                       "uiAmountString": "0.42",
+                    "source": account_pubkey.to_string(),
+                    "destination": recipient.to_string(),
+                    "mint": mint_pubkey.to_string(),
+                    "authority": owner.to_string(),
+                    "tokenAmount": {
+                        "uiAmount": 0.42,
+                        "decimals": 2,
+                        "amount": "42",
+                        "uiAmountString": "0.42",
                    }
                 })
             }
         );
 
         let transfer_ix = transfer_checked(
-            &spl_token::id(),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[3]),
-            &convert_pubkey(keys[4]),
-            &convert_pubkey(keys[5]),
-            &[&convert_pubkey(keys[0]), &convert_pubkey(keys[1])],
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(recipient),
+            &convert_pubkey(multisig_pubkey),
+            &[
+                &convert_pubkey(multisig_signer0),
+                &convert_pubkey(multisig_signer1),
+            ],
             42,
             2,
         )
@@ -926,20 +1382,27 @@ mod test {
         let message = Message::new(&[transfer_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "transferChecked".to_string(),
                 info: json!({
-                   "source": keys[2].to_string(),
-                   "destination": keys[3].to_string(),
-                   "mint": keys[4].to_string(),
-                   "multisigAuthority": keys[5].to_string(),
-                   "signers": keys[0..2].iter().map(|key| key.to_string()).collect::<Vec<String>>(),
-                   "tokenAmount": {
-                       "uiAmount": 0.42,
-                       "decimals": 2,
-                       "amount": "42",
-                       "uiAmountString": "0.42",
+                    "source": account_pubkey.to_string(),
+                    "destination": recipient.to_string(),
+                    "mint": mint_pubkey.to_string(),
+                    "multisigAuthority": multisig_pubkey.to_string(),
+                    "signers": vec![
+                        multisig_signer0.to_string(),
+                        multisig_signer1.to_string(),
+                    ],
+                    "tokenAmount": {
+                        "uiAmount": 0.42,
+                        "decimals": 2,
+                        "amount": "42",
+                        "uiAmountString": "0.42",
                    }
                 })
             }
@@ -947,11 +1410,11 @@ mod test {
 
         // Test ApproveChecked, incl multisig
         let approve_ix = approve_checked(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[3]),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(recipient),
+            &convert_pubkey(owner),
             &[],
             42,
             2,
@@ -960,31 +1423,38 @@ mod test {
         let message = Message::new(&[approve_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "approveChecked".to_string(),
                 info: json!({
-                   "source": keys[1].to_string(),
-                   "mint": keys[2].to_string(),
-                   "delegate": keys[3].to_string(),
-                   "owner": keys[0].to_string(),
-                   "tokenAmount": {
-                       "uiAmount": 0.42,
-                       "decimals": 2,
-                       "amount": "42",
-                       "uiAmountString": "0.42",
-                   }
+                    "source": account_pubkey.to_string(),
+                    "mint": mint_pubkey.to_string(),
+                    "delegate": recipient.to_string(),
+                    "owner": owner.to_string(),
+                    "tokenAmount": {
+                        "uiAmount": 0.42,
+                        "decimals": 2,
+                        "amount": "42",
+                        "uiAmountString": "0.42",
+                    }
                 })
             }
         );
 
         let approve_ix = approve_checked(
-            &spl_token::id(),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[3]),
-            &convert_pubkey(keys[4]),
-            &convert_pubkey(keys[5]),
-            &[&convert_pubkey(keys[0]), &convert_pubkey(keys[1])],
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(recipient),
+            &convert_pubkey(multisig_pubkey),
+            &[
+                &convert_pubkey(multisig_signer0),
+                &convert_pubkey(multisig_signer1),
+            ],
             42,
             2,
         )
@@ -992,15 +1462,22 @@ mod test {
         let message = Message::new(&[approve_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "approveChecked".to_string(),
                 info: json!({
-                    "source": keys[2].to_string(),
-                    "mint": keys[3].to_string(),
-                    "delegate": keys[4].to_string(),
-                    "multisigOwner": keys[5].to_string(),
-                    "signers": keys[0..2].iter().map(|key| key.to_string()).collect::<Vec<String>>(),
+                    "source": account_pubkey.to_string(),
+                    "mint": mint_pubkey.to_string(),
+                    "delegate": recipient.to_string(),
+                    "multisigOwner": multisig_pubkey.to_string(),
+                    "signers": vec![
+                        multisig_signer0.to_string(),
+                        multisig_signer1.to_string(),
+                    ],
                     "tokenAmount": {
                         "uiAmount": 0.42,
                         "decimals": 2,
@@ -1013,10 +1490,10 @@ mod test {
 
         // Test MintToChecked
         let mint_to_ix = mint_to_checked(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_authority),
             &[],
             42,
             2,
@@ -1025,29 +1502,33 @@ mod test {
         let message = Message::new(&[mint_to_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "mintToChecked".to_string(),
                 info: json!({
-                   "mint": keys[1].to_string(),
-                   "account": keys[2].to_string(),
-                   "mintAuthority": keys[0].to_string(),
-                   "tokenAmount": {
-                       "uiAmount": 0.42,
-                       "decimals": 2,
-                       "amount": "42",
-                       "uiAmountString": "0.42",
-                   }
+                    "mint": mint_pubkey.to_string(),
+                    "account": account_pubkey.to_string(),
+                    "mintAuthority": mint_authority.to_string(),
+                    "tokenAmount": {
+                        "uiAmount": 0.42,
+                        "decimals": 2,
+                        "amount": "42",
+                        "uiAmountString": "0.42",
+                    }
                 })
             }
         );
 
         // Test BurnChecked
         let burn_ix = burn_checked(
-            &spl_token::id(),
-            &convert_pubkey(keys[1]),
-            &convert_pubkey(keys[2]),
-            &convert_pubkey(keys[0]),
+            program_id,
+            &convert_pubkey(account_pubkey),
+            &convert_pubkey(mint_pubkey),
+            &convert_pubkey(owner),
             &[],
             42,
             2,
@@ -1056,33 +1537,149 @@ mod test {
         let message = Message::new(&[burn_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "burnChecked".to_string(),
                 info: json!({
-                   "account": keys[1].to_string(),
-                   "mint": keys[2].to_string(),
-                   "authority": keys[0].to_string(),
-                   "tokenAmount": {
-                       "uiAmount": 0.42,
-                       "decimals": 2,
-                       "amount": "42",
-                       "uiAmountString": "0.42",
-                   }
+                    "account": account_pubkey.to_string(),
+                    "mint": mint_pubkey.to_string(),
+                    "authority": owner.to_string(),
+                    "tokenAmount": {
+                        "uiAmount": 0.42,
+                        "decimals": 2,
+                        "amount": "42",
+                        "uiAmountString": "0.42",
+                    }
                 })
             }
         );
 
         // Test SyncNative
-        let sync_native_ix = sync_native(&spl_token::id(), &convert_pubkey(keys[0])).unwrap();
+        let sync_native_ix = sync_native(program_id, &convert_pubkey(account_pubkey)).unwrap();
         let message = Message::new(&[sync_native_ix], None);
         let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert_eq!(
-            parse_token(&compiled_instruction, &keys).unwrap(),
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
             ParsedInstructionEnum {
                 instruction_type: "syncNative".to_string(),
                 info: json!({
-                   "account": keys[0].to_string(),
+                   "account": account_pubkey.to_string(),
+                })
+            }
+        );
+
+        // Test InitializeImmutableOwner
+        let init_immutable_owner_ix =
+            initialize_immutable_owner(program_id, &convert_pubkey(account_pubkey)).unwrap();
+        let message = Message::new(&[init_immutable_owner_ix], None);
+        let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert_eq!(
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "initializeImmutableOwner".to_string(),
+                info: json!({
+                   "account": account_pubkey.to_string(),
+                })
+            }
+        );
+
+        // Test GetAccountDataSize
+        let get_account_data_size_ix = get_account_data_size(
+            program_id,
+            &convert_pubkey(mint_pubkey),
+            &[], // This emulates the packed data of spl_token::instruction::get_account_data_size
+        )
+        .unwrap();
+        let message = Message::new(&[get_account_data_size_ix], None);
+        let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert_eq!(
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "getAccountDataSize".to_string(),
+                info: json!({
+                   "mint": mint_pubkey.to_string(),
+                })
+            }
+        );
+
+        let get_account_data_size_ix = get_account_data_size(
+            program_id,
+            &convert_pubkey(mint_pubkey),
+            &[ExtensionType::ImmutableOwner, ExtensionType::MemoTransfer],
+        )
+        .unwrap();
+        let message = Message::new(&[get_account_data_size_ix], None);
+        let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert_eq!(
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "getAccountDataSize".to_string(),
+                info: json!({
+                    "mint": mint_pubkey.to_string(),
+                    "extensionTypes": [
+                        "immutableOwner",
+                        "memoTransfer"
+                    ]
+                })
+            }
+        );
+
+        // Test AmountToUiAmount
+        let amount_to_ui_amount_ix =
+            amount_to_ui_amount(program_id, &convert_pubkey(mint_pubkey), 4242).unwrap();
+        let message = Message::new(&[amount_to_ui_amount_ix], None);
+        let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert_eq!(
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "amountToUiAmount".to_string(),
+                info: json!({
+                   "mint": mint_pubkey.to_string(),
+                   "amount": 4242,
+                })
+            }
+        );
+
+        // Test UiAmountToAmount
+        let ui_amount_to_amount_ix =
+            ui_amount_to_amount(program_id, &convert_pubkey(mint_pubkey), "42.42").unwrap();
+        let message = Message::new(&[ui_amount_to_amount_ix], None);
+        let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert_eq!(
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "uiAmountToAmount".to_string(),
+                info: json!({
+                   "mint": mint_pubkey.to_string(),
+                   "uiAmount": "42.42",
                 })
             }
         );
@@ -1090,7 +1687,41 @@ mod test {
 
     #[test]
     #[allow(clippy::same_item_push)]
-    fn test_token_ix_not_enough_keys() {
+    fn test_parse_token_v3() {
+        test_parse_token(&spl_token::id());
+    }
+
+    #[test]
+    #[allow(clippy::same_item_push)]
+    fn test_parse_token_2022() {
+        test_parse_token(&spl_token_2022::id());
+    }
+
+    #[test]
+    fn test_create_native_mint() {
+        let payer = Pubkey::new_unique();
+        let create_native_mint_ix =
+            create_native_mint(&spl_token_2022::id(), &convert_pubkey(payer)).unwrap();
+        let message = Message::new(&[create_native_mint_ix], None);
+        let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert_eq!(
+            parse_token(
+                &compiled_instruction,
+                &AccountKeys::new(&convert_account_keys(&message), None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "createNativeMint".to_string(),
+                info: json!({
+                   "payer": payer.to_string(),
+                   "nativeMint": spl_token_2022::native_mint::id().to_string(),
+                   "systemProgram": solana_sdk::system_program::id().to_string(),
+                })
+            }
+        );
+    }
+
+    fn test_token_ix_not_enough_keys(program_id: &SplTokenPubkey) {
         let mut keys: Vec<Pubkey> = vec![];
         for _ in 0..10 {
             keys.push(solana_sdk::pubkey::new_rand());
@@ -1098,7 +1729,7 @@ mod test {
 
         // Test InitializeMint variations
         let initialize_mint_ix = initialize_mint(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[0]),
             &convert_pubkey(keys[1]),
             Some(&convert_pubkey(keys[2])),
@@ -1107,13 +1738,13 @@ mod test {
         .unwrap();
         let message = Message::new(&[initialize_mint_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..1]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..1], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         let initialize_mint_ix = initialize_mint(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[0]),
             &convert_pubkey(keys[1]),
             None,
@@ -1122,14 +1753,30 @@ mod test {
         .unwrap();
         let message = Message::new(&[initialize_mint_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..1]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..1], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
+
+        // Test InitializeMint2
+        let initialize_mint_ix = initialize_mint2(
+            program_id,
+            &convert_pubkey(keys[0]),
+            &convert_pubkey(keys[1]),
+            Some(&convert_pubkey(keys[2])),
+            2,
+        )
+        .unwrap();
+        let message = Message::new(&[initialize_mint_ix], None);
+        let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..0], None)).is_err());
+        compiled_instruction.accounts =
+            compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test InitializeAccount
         let initialize_account_ix = initialize_account(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[0]),
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
@@ -1137,14 +1784,44 @@ mod test {
         .unwrap();
         let message = Message::new(&[initialize_account_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..3]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..3], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
+
+        // Test InitializeAccount2
+        let initialize_account_ix = initialize_account2(
+            program_id,
+            &convert_pubkey(keys[0]),
+            &convert_pubkey(keys[1]),
+            &convert_pubkey(keys[3]),
+        )
+        .unwrap();
+        let message = Message::new(&[initialize_account_ix], None);
+        let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..2], None)).is_err());
+        compiled_instruction.accounts =
+            compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
+
+        // Test InitializeAccount3
+        let initialize_account_ix = initialize_account3(
+            program_id,
+            &convert_pubkey(keys[0]),
+            &convert_pubkey(keys[1]),
+            &convert_pubkey(keys[2]),
+        )
+        .unwrap();
+        let message = Message::new(&[initialize_account_ix], None);
+        let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..1], None)).is_err());
+        compiled_instruction.accounts =
+            compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test InitializeMultisig
         let initialize_multisig_ix = initialize_multisig(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[0]),
             &[
                 &convert_pubkey(keys[1]),
@@ -1156,14 +1833,34 @@ mod test {
         .unwrap();
         let message = Message::new(&[initialize_multisig_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..4]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..4], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 3].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
+
+        // Test InitializeMultisig2
+        let initialize_multisig_ix = initialize_multisig2(
+            program_id,
+            &convert_pubkey(keys[0]),
+            &[
+                &convert_pubkey(keys[1]),
+                &convert_pubkey(keys[2]),
+                &convert_pubkey(keys[3]),
+            ],
+            2,
+        )
+        .unwrap();
+        let message = Message::new(&[initialize_multisig_ix], None);
+        let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..3], None)).is_err());
+        compiled_instruction.accounts =
+            compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 3].to_vec();
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test Transfer, incl multisig
+        #[allow(deprecated)]
         let transfer_ix = transfer(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[0]),
@@ -1173,13 +1870,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[transfer_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..2]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..2], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
+        #[allow(deprecated)]
         let transfer_ix = transfer(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[3]),
             &convert_pubkey(keys[4]),
@@ -1189,14 +1887,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[transfer_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..4]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..4], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 3].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test Approve, incl multisig
         let approve_ix = approve(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[0]),
@@ -1206,13 +1904,13 @@ mod test {
         .unwrap();
         let message = Message::new(&[approve_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..2]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..2], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         let approve_ix = approve(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[3]),
             &convert_pubkey(keys[4]),
@@ -1222,14 +1920,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[approve_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..4]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..4], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 3].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test Revoke
         let revoke_ix = revoke(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[0]),
             &[],
@@ -1237,14 +1935,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[revoke_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..1]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..1], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test SetAuthority
         let set_authority_ix = set_authority(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             Some(&convert_pubkey(keys[2])),
             AuthorityType::FreezeAccount,
@@ -1254,14 +1952,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[set_authority_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..1]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..1], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test MintTo
         let mint_to_ix = mint_to(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[0]),
@@ -1271,14 +1969,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[mint_to_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..2]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..2], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test Burn
         let burn_ix = burn(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[0]),
@@ -1288,14 +1986,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[burn_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..2]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..2], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test CloseAccount
         let close_account_ix = close_account(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[0]),
@@ -1304,14 +2002,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[close_account_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..2]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..2], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test FreezeAccount
         let freeze_account_ix = freeze_account(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[0]),
@@ -1320,14 +2018,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[freeze_account_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..2]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..2], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test ThawAccount
         let thaw_account_ix = thaw_account(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[0]),
@@ -1336,14 +2034,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[thaw_account_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..2]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..2], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test TransferChecked, incl multisig
         let transfer_ix = transfer_checked(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[3]),
@@ -1355,13 +2053,13 @@ mod test {
         .unwrap();
         let message = Message::new(&[transfer_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..3]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..3], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         let transfer_ix = transfer_checked(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[3]),
             &convert_pubkey(keys[4]),
@@ -1373,14 +2071,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[transfer_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..5]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..5], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 3].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test ApproveChecked, incl multisig
         let approve_ix = approve_checked(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[3]),
@@ -1392,13 +2090,13 @@ mod test {
         .unwrap();
         let message = Message::new(&[approve_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..3]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..3], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         let approve_ix = approve_checked(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[3]),
             &convert_pubkey(keys[4]),
@@ -1410,14 +2108,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[approve_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..5]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..5], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 3].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test MintToChecked
         let mint_to_ix = mint_to_checked(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[0]),
@@ -1428,14 +2126,14 @@ mod test {
         .unwrap();
         let message = Message::new(&[mint_to_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..2]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..2], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test BurnChecked
         let burn_ix = burn_checked(
-            &spl_token::id(),
+            program_id,
             &convert_pubkey(keys[1]),
             &convert_pubkey(keys[2]),
             &convert_pubkey(keys[0]),
@@ -1446,18 +2144,70 @@ mod test {
         .unwrap();
         let message = Message::new(&[burn_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &keys[0..2]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys[0..2], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
 
         // Test SyncNative
-        let sync_native_ix = sync_native(&spl_token::id(), &convert_pubkey(keys[0])).unwrap();
+        let sync_native_ix = sync_native(program_id, &convert_pubkey(keys[0])).unwrap();
         let message = Message::new(&[sync_native_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
-        assert!(parse_token(&compiled_instruction, &[]).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&[], None)).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
-        assert!(parse_token(&compiled_instruction, &keys).is_err());
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
+
+        // Test InitializeImmutableOwner
+        let init_immutable_owner_ix =
+            initialize_immutable_owner(program_id, &convert_pubkey(keys[0])).unwrap();
+        let message = Message::new(&[init_immutable_owner_ix], None);
+        let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&[], None)).is_err());
+        compiled_instruction.accounts =
+            compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
+
+        // Test GetAccountDataSize
+        let get_account_data_size_ix =
+            get_account_data_size(program_id, &convert_pubkey(keys[0]), &[]).unwrap();
+        let message = Message::new(&[get_account_data_size_ix], None);
+        let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&[], None)).is_err());
+        compiled_instruction.accounts =
+            compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
+
+        // Test AmountToUiAmount
+        let amount_to_ui_amount_ix =
+            amount_to_ui_amount(program_id, &convert_pubkey(keys[0]), 4242).unwrap();
+        let message = Message::new(&[amount_to_ui_amount_ix], None);
+        let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&[], None)).is_err());
+        compiled_instruction.accounts =
+            compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
+
+        // Test UiAmountToAmount
+        let ui_amount_to_amount_ix =
+            ui_amount_to_amount(program_id, &convert_pubkey(keys[0]), "42.42").unwrap();
+        let message = Message::new(&[ui_amount_to_amount_ix], None);
+        let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&[], None)).is_err());
+        compiled_instruction.accounts =
+            compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
+        assert!(parse_token(&compiled_instruction, &AccountKeys::new(&keys, None)).is_err());
+    }
+
+    #[test]
+    #[allow(clippy::same_item_push)]
+    fn test_not_enough_keys_token_v3() {
+        test_token_ix_not_enough_keys(&spl_token::id());
+    }
+
+    #[test]
+    #[allow(clippy::same_item_push)]
+    fn test_not_enough_keys_token_2022() {
+        test_token_ix_not_enough_keys(&spl_token_2022::id());
     }
 }

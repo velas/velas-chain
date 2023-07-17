@@ -12,22 +12,25 @@ use std::{
     time::{Duration, Instant},
 };
 
-use solana_client::perf_utils::{sample_txs, SampleStats};
+use crate::perf_utils::{sample_txs, SampleStats};
 use solana_core::gen_keys::GenKeys;
 use solana_faucet::faucet::request_airdrop_transaction;
 use solana_measure::measure::Measure;
 use solana_metrics::{self, datapoint_info};
 use solana_sdk::{
     client::Client,
-    clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SECOND, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
+    clock::{
+        DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SECOND, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE,
+    },
     commitment_config::CommitmentConfig,
     hash::Hash,
+    instruction::{AccountMeta, Instruction},
     message::Message,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
     system_instruction,
     timing::duration_as_s,
-    transaction::Transaction, instruction::{AccountMeta, Instruction},
+    transaction::Transaction,
 };
 
 // The point at which transactions become "too old", in seconds.
@@ -48,9 +51,7 @@ pub type SharedTransactions = Arc<RwLock<VecDeque<Vec<(Transaction, u64)>>>>;
 pub fn get_recent_blockhash<T: Client>(client: &T) -> Hash {
     loop {
         match client.get_latest_blockhash_with_commitment(CommitmentConfig::processed()) {
-            Ok((blockhash, _last_valid_height)) => {
-                return blockhash
-            }
+            Ok((blockhash, _last_valid_height)) => return blockhash,
             Err(err) => {
                 info!("Couldn't get recent blockhash: {:?}", err);
                 if cfg!(not(test)) {

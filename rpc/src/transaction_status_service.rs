@@ -32,6 +32,7 @@ impl TransactionStatusService {
         enable_rpc_transaction_history: bool,
         transaction_notifier: Option<TransactionNotifierLock>,
         blockstore: Arc<Blockstore>,
+        enable_cpi_and_log_storage: bool,
         exit: &Arc<AtomicBool>,
     ) -> Self {
         let exit = exit.clone();
@@ -48,6 +49,7 @@ impl TransactionStatusService {
                     enable_rpc_transaction_history,
                     transaction_notifier.clone(),
                     &blockstore,
+                    enable_cpi_and_log_storage,
                 ) {
                     break;
                 }
@@ -62,6 +64,7 @@ impl TransactionStatusService {
         enable_rpc_transaction_history: bool,
         transaction_notifier: Option<TransactionNotifierLock>,
         blockstore: &Arc<Blockstore>,
+        enable_cpi_and_log_storage: bool,
     ) -> Result<(), RecvTimeoutError> {
         match write_transaction_status_receiver.recv_timeout(Duration::from_secs(1))? {
             TransactionStatusMessage::Batch(TransactionStatusBatch {
@@ -140,8 +143,8 @@ impl TransactionStatusService {
                                 })
                                 .collect(),
                         );
-
-                        let transaction_status_meta = TransactionStatusMeta {
+                        let loaded_addresses = transaction.get_loaded_addresses();
+                        let mut transaction_status_meta = TransactionStatusMeta {
                             status,
                             fee,
                             pre_balances,
@@ -151,6 +154,7 @@ impl TransactionStatusService {
                             pre_token_balances,
                             post_token_balances,
                             rewards,
+                            loaded_addresses,
                         };
 
                         if let Some(transaction_notifier) = transaction_notifier.as_ref() {
@@ -161,6 +165,12 @@ impl TransactionStatusService {
                                 &transaction,
                             );
                         }
+
+                        if !(enable_cpi_and_log_storage || transaction_notifier.is_some()) {
+                            transaction_status_meta.log_messages.take();
+                            transaction_status_meta.inner_instructions.take();
+                        }
+
                         if enable_rpc_transaction_history {
                             if let Some(memos) = extract_and_fmt_memos(transaction.message()) {
                                 blockstore
@@ -215,7 +225,8 @@ pub(crate) mod tests {
             signature::{Keypair, Signature, Signer},
             system_transaction,
             transaction::{
-                SanitizedTransaction, Transaction, TransactionError, VersionedTransaction,
+                MessageHash, SanitizedTransaction, SimpleAddressLoader, Transaction,
+                VersionedTransaction,
             },
         },
         solana_transaction_status::{
@@ -294,14 +305,16 @@ pub(crate) mod tests {
             Blockstore::open(&ledger_path).expect("Expected to be able to open database ledger");
         let blockstore = Arc::new(blockstore);
 
-        let message_hash = Hash::new_unique();
         let transaction = build_test_transaction_legacy();
         let transaction = VersionedTransaction::from(transaction);
-        let transaction =
-            SanitizedTransaction::try_create(transaction, message_hash, Some(true), |_| {
-                Err(TransactionError::UnsupportedVersion)
-            })
-            .unwrap();
+        let transaction = SanitizedTransaction::try_create(
+            transaction,
+            MessageHash::Compute,
+            None,
+            SimpleAddressLoader::Disabled,
+            true, // require_static_program_ids
+        )
+        .unwrap();
 
         let expected_transaction = transaction.clone();
         let pubkey = Pubkey::new_unique();
@@ -338,7 +351,8 @@ pub(crate) mod tests {
                 )
                 .unwrap(),
             )),
-            executed_units: 0u64,
+            executed_units: 0,
+            accounts_data_len_delta: 0,
         });
 
         let balances = TransactionBalancesSet {
@@ -347,11 +361,13 @@ pub(crate) mod tests {
         };
 
         let owner = Pubkey::new_unique().to_string();
+        let token_program_id = Pubkey::new_unique().to_string();
         let pre_token_balance = TransactionTokenBalance {
             account_index: 0,
             mint: Pubkey::new_unique().to_string(),
             ui_token_amount: token_amount_to_ui_amount(42, 2),
             owner: owner.clone(),
+            program_id: token_program_id.clone(),
         };
 
         let post_token_balance = TransactionTokenBalance {
@@ -359,6 +375,7 @@ pub(crate) mod tests {
             mint: Pubkey::new_unique().to_string(),
             ui_token_amount: token_amount_to_ui_amount(58, 2),
             owner,
+            program_id: token_program_id,
         };
 
         let token_balances = TransactionTokenBalancesSet {
@@ -386,6 +403,7 @@ pub(crate) mod tests {
             false,
             Some(test_notifier.clone()),
             blockstore,
+            false,
             &exit,
         );
 

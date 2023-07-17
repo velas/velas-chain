@@ -107,7 +107,9 @@ pub fn verify(
         return Err(PrecompileError::InvalidInstructionDataSize);
     }
     let count = data[0] as usize;
-    if feature_set.is_active(&libsecp256k1_fail_on_bad_count::id()) && count == 0 && data.len() > 1
+    if (feature_set.is_active(&libsecp256k1_fail_on_bad_count::id()))
+        && count == 0
+        && data.len() > 1
     {
         // count is zero but the instruction data indicates that is probably not
         // correct, fail the instruction to catch probable invalid secp256k1

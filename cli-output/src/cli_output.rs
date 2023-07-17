@@ -28,7 +28,7 @@ use {
         signature::Signature,
         stake::state::{Authorized, Lockup},
         stake_history::StakeHistoryEntry,
-        transaction::{Transaction, TransactionError},
+        transaction::{Transaction, TransactionError, VersionedTransaction},
     },
     solana_transaction_status::{
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
@@ -2249,7 +2249,7 @@ pub enum CliSignatureVerificationStatus {
 }
 
 impl CliSignatureVerificationStatus {
-    pub fn verify_transaction(tx: &Transaction) -> Vec<Self> {
+    pub fn verify_transaction(tx: &VersionedTransaction) -> Vec<Self> {
         tx.verify_with_results()
             .iter()
             .zip(&tx.signatures)
@@ -2320,6 +2320,7 @@ impl fmt::Display for CliBlock {
                 let sign = if reward.lamports < 0 { "-" } else { "" };
 
                 total_rewards += reward.lamports;
+                #[allow(clippy::format_in_format_args)]
                 writeln!(
                     f,
                     "  {:<44}  {:^15}  {:>15}  {}  {}",
@@ -2367,7 +2368,7 @@ impl fmt::Display for CliBlock {
             writeln_transaction(
                 f,
                 &transaction_with_meta.transaction.decode().unwrap(),
-                &transaction_with_meta.meta,
+                transaction_with_meta.meta.as_ref(),
                 "  ",
                 None,
                 None,
@@ -2386,7 +2387,7 @@ pub struct CliTransaction {
     #[serde(skip_serializing)]
     pub slot: Option<Slot>,
     #[serde(skip_serializing)]
-    pub decoded_transaction: Transaction,
+    pub decoded_transaction: VersionedTransaction,
     #[serde(skip_serializing)]
     pub prefix: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -2401,7 +2402,7 @@ impl fmt::Display for CliTransaction {
         writeln_transaction(
             f,
             &self.decoded_transaction,
-            &self.meta,
+            self.meta.as_ref(),
             &self.prefix,
             if !self.sigverify_status.is_empty() {
                 Some(&self.sigverify_status)
@@ -2483,6 +2484,8 @@ pub struct CliGossipNode {
     pub rpc_host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature_set: Option<u32>,
 }
 
 impl CliGossipNode {
@@ -2495,6 +2498,7 @@ impl CliGossipNode {
             tpu_port: info.tpu.map(|addr| addr.port()),
             rpc_host: info.rpc.map(|addr| addr.to_string()),
             version: info.version,
+            feature_set: info.feature_set,
         }
     }
 }
@@ -2520,7 +2524,7 @@ impl fmt::Display for CliGossipNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{:15} | {:44} | {:6} | {:5} | {:21} | {}",
+            "{:15} | {:44} | {:6} | {:5} | {:21} | {:8}| {}",
             unwrap_to_string_or_none(self.ip_address.as_ref()),
             self.identity_label
                 .as_ref()
@@ -2529,6 +2533,7 @@ impl fmt::Display for CliGossipNode {
             unwrap_to_string_or_none(self.tpu_port.as_ref()),
             unwrap_to_string_or_none(self.rpc_host.as_ref()),
             unwrap_to_string_or_default(self.version.as_ref(), "unknown"),
+            unwrap_to_string_or_default(self.feature_set.as_ref(), "unknown"),
         )
     }
 }
@@ -2543,10 +2548,10 @@ impl fmt::Display for CliGossipNodes {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(
             f,
-            "IP Address      | Node identifier                              \
-             | Gossip | TPU   | RPC Address           | Version\n\
+            "IP Address      | Identity                                     \
+             | Gossip | TPU   | RPC Address           | Version | Feature Set\n\
              ----------------+----------------------------------------------+\
-             --------+-------+-----------------------+----------------",
+             --------+-------+-----------------------+---------+----------------",
         )?;
         for node in self.0.iter() {
             writeln!(f, "{}", node)?;
@@ -2804,10 +2809,10 @@ mod tests {
 
         let expected_msg = "AwECBwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDgTl3Dqh9\
             F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5QEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\
-            BAQEBAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQUFBQUFBQUFBQUFBQUFBQUF\
-            BQUFBQUFBQUFBQUFBQUGp9UXGSxWjuCKhF9z0peIzwNcMUWyGrNE2AYuqUAAAAAAAAAAAAAA\
-            AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH\
-            BwcCBgMDBQIEBAAAAAYCAQQMAgAAACoAAAAAAAAA"
+            BAQEBAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBgYGBgYGBgYGBgYGBgYGBgYG\
+            BgYGBgYGBgYGBgYGBgYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAan1RcZLFaO\
+            4IqEX3PSl4jPA1wxRbIas0TYBi6pQAAABwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH\
+            BwcCBQMEBgIEBAAAAAUCAQMMAgAAACoAAAAAAAAA"
             .to_string();
         let config = ReturnSignersConfig {
             dump_transaction_message: true,

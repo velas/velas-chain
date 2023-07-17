@@ -1,11 +1,7 @@
 #![allow(clippy::integer_arithmetic)]
 use {
     assert_matches::assert_matches,
-    common::{
-        create_custom_leader_schedule_with_random_keys, last_vote_in_tower, ms_for_n_slots,
-        open_blockstore, purge_slots, remove_tower, restore_tower, run_cluster_partition,
-        run_kill_partition_switch_threshold, test_faulty_node, RUST_LOG_FILTER,
-    },
+    common::*,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
     log::*,
@@ -15,18 +11,18 @@ use {
         rpc_client::RpcClient,
         rpc_config::{RpcProgramAccountsConfig, RpcSignatureSubscribeConfig},
         rpc_response::RpcSignatureResult,
-        thin_client::{create_client, ThinClient},
+        thin_client::ThinClient,
     },
     solana_core::{
         broadcast_stage::BroadcastStageType,
         consensus::{Tower, SWITCH_FORK_THRESHOLD, VOTE_THRESHOLD_DEPTH},
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         replay_stage::DUPLICATE_THRESHOLD,
-        tower_storage::{FileTowerStorage, SavedTower, TowerStorage},
+        tower_storage::FileTowerStorage,
         validator::ValidatorConfig,
     },
     solana_download_utils::download_snapshot_archive,
-    solana_gossip::{cluster_info::VALIDATOR_PORT_RANGE, gossip_service::discover_cluster},
+    solana_gossip::gossip_service::discover_cluster,
     solana_ledger::{ancestor_iterator::AncestorIterator, blockstore::Blockstore},
     solana_local_cluster::{
         cluster::{Cluster, ClusterValidatorInfo},
@@ -36,7 +32,6 @@ use {
     },
     solana_runtime::{
         snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_config::SnapshotConfig,
         snapshot_package::SnapshotType,
         snapshot_utils::{self, ArchiveFormat},
     },
@@ -59,7 +54,7 @@ use {
         fs,
         io::Read,
         iter,
-        path::{Path, PathBuf},
+        path::Path,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
@@ -67,7 +62,6 @@ use {
         thread::{sleep, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tempfile::TempDir,
 };
 
 mod common;
@@ -103,48 +97,6 @@ fn test_local_cluster_start_and_exit_with_config() {
 
 #[test]
 #[serial]
-fn test_ledger_cleanup_service() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
-    error!("test_ledger_cleanup_service");
-    let num_nodes = 3;
-    let validator_config = ValidatorConfig {
-        max_ledger_shreds: Some(100),
-        ..ValidatorConfig::default_for_test()
-    };
-    let mut config = ClusterConfig {
-        cluster_lamports: 10_000,
-        poh_config: PohConfig::new_sleep(Duration::from_millis(50)),
-        node_stakes: vec![100; num_nodes],
-        validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
-        ..ClusterConfig::default()
-    };
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    // 200ms/per * 100 = 20 seconds, so sleep a little longer than that.
-    sleep(Duration::from_secs(60));
-
-    cluster_tests::spend_and_verify_all_nodes(
-        &cluster.entry_point_info,
-        &cluster.funding_keypair,
-        num_nodes,
-        HashSet::new(),
-        SocketAddrSpace::Unspecified,
-    );
-    cluster.close_preserve_ledgers();
-    //check everyone's ledgers and make sure only ~100 slots are stored
-    for info in cluster.validators.values() {
-        let mut slots = 0;
-        let blockstore = Blockstore::open(&info.info.ledger_path).unwrap();
-        blockstore
-            .slot_meta_iterator(0)
-            .unwrap()
-            .for_each(|_| slots += 1);
-        // with 3 nodes up to 3 slots can be in progress and not complete so max slots in blockstore should be up to 103
-        assert!(slots <= 103, "got {}", slots);
-    }
-}
-
-#[test]
-#[serial]
 fn test_spend_and_verify_all_nodes_1() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_spend_and_verify_all_nodes_1");
@@ -157,6 +109,7 @@ fn test_spend_and_verify_all_nodes_1() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
+        &local.connection_cache,
     );
 }
 
@@ -174,6 +127,7 @@ fn test_spend_and_verify_all_nodes_2() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
+        &local.connection_cache,
     );
 }
 
@@ -191,6 +145,7 @@ fn test_spend_and_verify_all_nodes_3() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
+        &local.connection_cache,
     );
 }
 
@@ -210,10 +165,9 @@ fn test_local_cluster_signature_subscribe() {
         .unwrap();
     let non_bootstrap_info = cluster.get_contact_info(&non_bootstrap_id).unwrap();
 
-    let tx_client = create_client(
-        non_bootstrap_info.client_facing_addr(),
-        VALIDATOR_PORT_RANGE,
-    );
+    let (rpc, tpu) = non_bootstrap_info.client_facing_addr();
+    let tx_client = ThinClient::new(rpc, tpu, cluster.connection_cache.clone());
+
     let (blockhash, _) = tx_client
         .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
         .unwrap();
@@ -285,37 +239,7 @@ fn test_spend_and_verify_all_nodes_env_num_nodes() {
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-    );
-}
-
-// Cluster needs a supermajority to remain, so the minimum size for this test is 4
-#[test]
-#[serial]
-fn test_leader_failure_4() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
-    error!("test_leader_failure_4");
-    let num_nodes = 4;
-    let validator_config = ValidatorConfig::default_for_test();
-    let mut config = ClusterConfig {
-        cluster_lamports: 10_000,
-        node_stakes: vec![100; 4],
-        validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
-        ..ClusterConfig::default()
-    };
-    let local = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-
-    cluster_tests::kill_entry_and_spend_and_verify_rest(
-        &local.entry_point_info,
-        &local
-            .validators
-            .get(&local.entry_point_info.id)
-            .unwrap()
-            .config
-            .validator_exit,
-        &local.funding_keypair,
-        num_nodes,
-        config.ticks_per_slot * config.poh_config.target_tick_duration.as_millis() as u64,
-        SocketAddrSpace::Unspecified,
+        &local.connection_cache,
     );
 }
 
@@ -330,46 +254,6 @@ fn test_cluster_partition_1_2() {
     };
     run_cluster_partition(
         &[vec![1], vec![1, 1]],
-        None,
-        (),
-        empty,
-        empty,
-        on_partition_resolved,
-        None,
-        None,
-        vec![],
-    )
-}
-
-#[test]
-#[serial]
-fn test_cluster_partition_1_1() {
-    let empty = |_: &mut LocalCluster, _: &mut ()| {};
-    let on_partition_resolved = |cluster: &mut LocalCluster, _: &mut ()| {
-        cluster.check_for_new_roots(16, "PARTITION_TEST", SocketAddrSpace::Unspecified);
-    };
-    run_cluster_partition(
-        &[vec![1], vec![1]],
-        None,
-        (),
-        empty,
-        empty,
-        on_partition_resolved,
-        None,
-        None,
-        vec![],
-    )
-}
-
-#[test]
-#[serial]
-fn test_cluster_partition_1_1_1() {
-    let empty = |_: &mut LocalCluster, _: &mut ()| {};
-    let on_partition_resolved = |cluster: &mut LocalCluster, _: &mut ()| {
-        cluster.check_for_new_roots(16, "PARTITION_TEST", SocketAddrSpace::Unspecified);
-    };
-    run_cluster_partition(
-        &[vec![1], vec![1], vec![1]],
         None,
         (),
         empty,
@@ -449,48 +333,12 @@ fn test_forwarding() {
         .unwrap();
 
     // Confirm that transactions were forwarded to and processed by the leader.
-    cluster_tests::send_many_transactions(validator_info, &cluster.funding_keypair, 10, 20);
-}
-
-#[test]
-#[serial]
-fn test_restart_node() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
-    error!("test_restart_node");
-    let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH * 2;
-    let ticks_per_slot = 16;
-    let validator_config = ValidatorConfig::default_for_test();
-    let mut cluster = LocalCluster::new(
-        &mut ClusterConfig {
-            node_stakes: vec![100; 1],
-            cluster_lamports: 100,
-            validator_configs: vec![safe_clone_config(&validator_config)],
-            ticks_per_slot,
-            slots_per_epoch,
-            stakers_slot_offset: slots_per_epoch,
-            ..ClusterConfig::default()
-        },
-        SocketAddrSpace::Unspecified,
-    );
-    let nodes = cluster.get_node_pubkeys();
-    cluster_tests::sleep_n_epochs(
-        1.0,
-        &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
-        slots_per_epoch,
-    );
-    cluster.exit_restart_node(&nodes[0], validator_config, SocketAddrSpace::Unspecified);
-    cluster_tests::sleep_n_epochs(
-        0.5,
-        &cluster.genesis_config.poh_config,
-        clock::DEFAULT_TICKS_PER_SLOT,
-        slots_per_epoch,
-    );
     cluster_tests::send_many_transactions(
-        &cluster.entry_point_info,
+        validator_info,
         &cluster.funding_keypair,
+        &cluster.connection_cache,
         10,
-        1,
+        20,
     );
 }
 
@@ -518,10 +366,8 @@ fn test_mainnet_beta_cluster_type() {
     .unwrap();
     assert_eq!(cluster_nodes.len(), 1);
 
-    let client = create_client(
-        cluster.entry_point_info.client_facing_addr(),
-        VALIDATOR_PORT_RANGE,
-    );
+    let (rpc, tpu) = cluster.entry_point_info.client_facing_addr();
+    let client = ThinClient::new(rpc, tpu, cluster.connection_cache.clone());
 
     // Programs that are available at epoch 0
     for program_id in [
@@ -558,109 +404,6 @@ fn test_mainnet_beta_cluster_type() {
             (program_id, None)
         );
     }
-}
-
-#[test]
-#[serial]
-fn test_consistency_halt() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
-    let snapshot_interval_slots = 20;
-    let num_account_paths = 1;
-
-    // Create cluster with a leader producing bad snapshot hashes.
-    let mut leader_snapshot_test_config =
-        setup_snapshot_validator_config(snapshot_interval_slots, num_account_paths);
-    leader_snapshot_test_config
-        .validator_config
-        .accounts_hash_fault_injection_slots = 40;
-
-    let validator_stake = 10_000;
-    let mut config = ClusterConfig {
-        node_stakes: vec![validator_stake],
-        cluster_lamports: 100_000,
-        validator_configs: vec![leader_snapshot_test_config.validator_config],
-        ..ClusterConfig::default()
-    };
-
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-
-    sleep(Duration::from_millis(5000));
-    let cluster_nodes = discover_cluster(
-        &cluster.entry_point_info.gossip,
-        1,
-        SocketAddrSpace::Unspecified,
-    )
-    .unwrap();
-    info!("num_nodes: {}", cluster_nodes.len());
-
-    // Add a validator with the leader as trusted, it should halt when it detects
-    // mismatch.
-    let mut validator_snapshot_test_config =
-        setup_snapshot_validator_config(snapshot_interval_slots, num_account_paths);
-
-    let mut known_validators = HashSet::new();
-    known_validators.insert(cluster_nodes[0].id);
-
-    validator_snapshot_test_config
-        .validator_config
-        .known_validators = Some(known_validators);
-    validator_snapshot_test_config
-        .validator_config
-        .halt_on_known_validators_accounts_hash_mismatch = true;
-
-    warn!("adding a validator");
-    cluster.add_validator(
-        &validator_snapshot_test_config.validator_config,
-        validator_stake as u64,
-        Arc::new(Keypair::new()),
-        None,
-        SocketAddrSpace::Unspecified,
-    );
-    let num_nodes = 2;
-    assert_eq!(
-        discover_cluster(
-            &cluster.entry_point_info.gossip,
-            num_nodes,
-            SocketAddrSpace::Unspecified
-        )
-        .unwrap()
-        .len(),
-        num_nodes
-    );
-
-    // Check for only 1 node on the network.
-    let mut encountered_error = false;
-    loop {
-        let discover = discover_cluster(
-            &cluster.entry_point_info.gossip,
-            2,
-            SocketAddrSpace::Unspecified,
-        );
-        match discover {
-            Err(_) => {
-                encountered_error = true;
-                break;
-            }
-            Ok(nodes) => {
-                if nodes.len() < 2 {
-                    encountered_error = true;
-                    break;
-                }
-                info!("checking cluster for fewer nodes.. {:?}", nodes.len());
-            }
-        }
-        let client = cluster
-            .get_validator_client(&cluster.entry_point_info.id)
-            .unwrap();
-        if let Ok(slot) = client.get_slot() {
-            if slot > 210 {
-                break;
-            }
-            info!("slot: {}", slot);
-        }
-        sleep(Duration::from_millis(1000));
-    }
-    assert!(encountered_error);
 }
 
 #[test]
@@ -1082,6 +825,22 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         }
     };
 
+    let copy_files_with_remote = |from: &Path, to: &Path| {
+        copy_files(from, to);
+        let remote_from = snapshot_utils::build_snapshot_archives_remote_dir(from);
+        let remote_to = snapshot_utils::build_snapshot_archives_remote_dir(to);
+        let _ = fs::create_dir_all(&remote_from);
+        let _ = fs::create_dir_all(&remote_to);
+        copy_files(&remote_from, &remote_to);
+    };
+
+    let delete_files_with_remote = |from: &Path| {
+        delete_files(from);
+        let remote_dir = snapshot_utils::build_snapshot_archives_remote_dir(from);
+        let _ = fs::create_dir_all(&remote_dir);
+        delete_files(&remote_dir);
+    };
+
     // After downloading the snapshots, copy them over to a backup directory.  Later we'll need to
     // restart the node and guarantee that the only snapshots present are these initial ones.  So,
     // the easiest way to do that is create a backup now, delete the ones on the node before
@@ -1091,7 +850,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         "Backing up validator snapshots to dir: {}...",
         backup_validator_snapshot_archives_dir.path().display()
     );
-    copy_files(
+    copy_files_with_remote(
         validator_snapshot_test_config.snapshot_archives_dir.path(),
         backup_validator_snapshot_archives_dir.path(),
     );
@@ -1169,8 +928,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     trace!(
         "Delete all the snapshots on the validator and restore the originals from the backup..."
     );
-    delete_files(validator_snapshot_test_config.snapshot_archives_dir.path());
-    copy_files(
+    delete_files_with_remote(validator_snapshot_test_config.snapshot_archives_dir.path());
+    copy_files_with_remote(
         backup_validator_snapshot_archives_dir.path(),
         validator_snapshot_test_config.snapshot_archives_dir.path(),
     );
@@ -1330,8 +1089,7 @@ fn test_snapshot_restart_tower() {
     let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
         validator_snapshot_test_config
             .snapshot_archives_dir
-            .path()
-            .to_path_buf(),
+            .into_path(),
         full_snapshot_archive_info.slot(),
         full_snapshot_archive_info.hash(),
         full_snapshot_archive_info.archive_format(),
@@ -1352,6 +1110,7 @@ fn test_snapshot_restart_tower() {
         1,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
+        &cluster.connection_cache,
     );
 }
 
@@ -1403,8 +1162,7 @@ fn test_snapshots_blockstore_floor() {
     let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
         validator_snapshot_test_config
             .snapshot_archives_dir
-            .path()
-            .to_path_buf(),
+            .into_path(),
         archive_info.slot(),
         archive_info.hash(),
         ArchiveFormat::TarBzip2,
@@ -1510,6 +1268,7 @@ fn test_snapshots_restart_validity() {
         let new_balances = cluster_tests::send_many_transactions(
             &cluster.entry_point_info,
             &cluster.funding_keypair,
+            &cluster.connection_cache,
             10,
             10,
         );
@@ -1536,7 +1295,11 @@ fn test_snapshots_restart_validity() {
 
         // Verify account balances on validator
         trace!("Verifying balances");
-        cluster_tests::verify_balances(expected_balances.clone(), &cluster.entry_point_info);
+        cluster_tests::verify_balances(
+            expected_balances.clone(),
+            &cluster.entry_point_info,
+            cluster.connection_cache.clone(),
+        );
 
         // Check that we can still push transactions
         trace!("Spending and verifying");
@@ -1546,6 +1309,7 @@ fn test_snapshots_restart_validity() {
             1,
             HashSet::new(),
             SocketAddrSpace::Unspecified,
+            &cluster.connection_cache,
         );
     }
 }
@@ -1772,6 +1536,7 @@ fn test_optimistic_confirmation_violation_detection() {
     cluster_tests::check_for_new_roots(
         16,
         &[cluster.get_contact_info(&entry_point_id).unwrap().clone()],
+        &cluster.connection_cache,
         "test_optimistic_confirmation_violation",
     );
 }
@@ -1911,12 +1676,6 @@ fn test_validator_saves_tower() {
     let tower4 = Tower::restore(&file_tower_storage, &validator_id).unwrap();
     trace!("tower4: {:?}", tower4);
     assert!(tower4.root() >= new_root);
-}
-
-fn save_tower(tower_path: &Path, tower: &Tower, node_keypair: &Keypair) {
-    let file_tower_storage = FileTowerStorage::new(tower_path.to_path_buf());
-    let saved_tower = SavedTower::new(tower, node_keypair).unwrap();
-    file_tower_storage.store(&saved_tower).unwrap();
 }
 
 fn root_in_tower(tower_path: &Path, node_pubkey: &Pubkey) -> Option<Slot> {
@@ -2118,6 +1877,14 @@ fn test_hard_fork_invalidates_tower() {
     validator_b_info.config.new_hard_forks = hard_fork_slots;
     validator_b_info.config.wait_for_supermajority = Some(hard_fork_slot);
     validator_b_info.config.expected_shred_version = Some(expected_shred_version);
+
+    // Clear ledger of all slots post hard fork
+    {
+        let blockstore_a = open_blockstore(&validator_a_info.info.ledger_path);
+        let blockstore_b = open_blockstore(&validator_b_info.info.ledger_path);
+        purge_slots(&blockstore_a, hard_fork_slot + 1, 100);
+        purge_slots(&blockstore_b, hard_fork_slot + 1, 100);
+    }
 
     // restart validator A first
     let cluster_for_a = cluster.clone();
@@ -2407,7 +2174,7 @@ fn test_votes_land_in_fork_during_long_partition() {
                 // Should finish faster than if the cluster were relying on replay vote
                 // refreshing to refresh the vote on blockhash expiration for the vote
                 // transaction.
-                !(start.elapsed() > Duration::from_millis(max_wait)),
+                start.elapsed() <= Duration::from_millis(max_wait),
                 "Went too long {} ms without a root",
                 max_wait,
             );
@@ -2617,94 +2384,4 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
     exit.store(true, Ordering::Relaxed);
     t_update.join().unwrap();
     t_scan.join().unwrap();
-}
-
-fn farf_dir() -> PathBuf {
-    std::env::var("FARF_DIR")
-        .unwrap_or_else(|_| "farf".to_string())
-        .into()
-}
-
-fn generate_account_paths(num_account_paths: usize) -> (Vec<TempDir>, Vec<PathBuf>) {
-    let account_storage_dirs: Vec<TempDir> = (0..num_account_paths)
-        .map(|_| tempfile::tempdir_in(farf_dir()).unwrap())
-        .collect();
-    let account_storage_paths: Vec<_> = account_storage_dirs
-        .iter()
-        .map(|a| a.path().to_path_buf())
-        .collect();
-    (account_storage_dirs, account_storage_paths)
-}
-
-struct SnapshotValidatorConfig {
-    bank_snapshots_dir: TempDir,
-    snapshot_archives_dir: TempDir,
-    account_storage_dirs: Vec<TempDir>,
-    validator_config: ValidatorConfig,
-}
-
-impl SnapshotValidatorConfig {
-    pub fn new(
-        full_snapshot_archive_interval_slots: Slot,
-        incremental_snapshot_archive_interval_slots: Slot,
-        accounts_hash_interval_slots: Slot,
-        num_account_paths: usize,
-    ) -> SnapshotValidatorConfig {
-        assert!(accounts_hash_interval_slots > 0);
-        assert!(full_snapshot_archive_interval_slots > 0);
-        assert!(full_snapshot_archive_interval_slots % accounts_hash_interval_slots == 0);
-        if incremental_snapshot_archive_interval_slots != Slot::MAX {
-            assert!(incremental_snapshot_archive_interval_slots > 0);
-            assert!(
-                incremental_snapshot_archive_interval_slots % accounts_hash_interval_slots == 0
-            );
-            assert!(
-                full_snapshot_archive_interval_slots % incremental_snapshot_archive_interval_slots
-                    == 0
-            );
-        }
-
-        // Create the snapshot config
-        let _ = fs::create_dir_all(farf_dir());
-        let bank_snapshots_dir = tempfile::tempdir_in(farf_dir()).unwrap();
-        let snapshot_archives_dir = tempfile::tempdir_in(farf_dir()).unwrap();
-        let snapshot_config = SnapshotConfig {
-            full_snapshot_archive_interval_slots,
-            incremental_snapshot_archive_interval_slots,
-            snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
-            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
-            ..SnapshotConfig::default()
-        };
-
-        // Create the account paths
-        let (account_storage_dirs, account_storage_paths) =
-            generate_account_paths(num_account_paths);
-
-        // Create the validator config
-        let validator_config = ValidatorConfig {
-            snapshot_config: Some(snapshot_config),
-            account_paths: account_storage_paths,
-            accounts_hash_interval_slots,
-            ..ValidatorConfig::default_for_test()
-        };
-
-        SnapshotValidatorConfig {
-            bank_snapshots_dir,
-            snapshot_archives_dir,
-            account_storage_dirs,
-            validator_config,
-        }
-    }
-}
-
-fn setup_snapshot_validator_config(
-    snapshot_interval_slots: Slot,
-    num_account_paths: usize,
-) -> SnapshotValidatorConfig {
-    SnapshotValidatorConfig::new(
-        snapshot_interval_slots,
-        Slot::MAX,
-        snapshot_interval_slots,
-        num_account_paths,
-    )
 }

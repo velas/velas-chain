@@ -13,9 +13,7 @@
 pub use solana_sdk::clock::Slot;
 use {
     crate::poh_service::PohService,
-    crossbeam_channel::{
-        unbounded, Receiver as CrossbeamReceiver, RecvTimeoutError, Sender as CrossbeamSender,
-    },
+    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, SendError, Sender},
     log::*,
     solana_entry::{entry::Entry, poh::Poh},
     solana_ledger::{
@@ -33,7 +31,6 @@ use {
         cmp,
         sync::{
             atomic::{AtomicBool, Ordering},
-            mpsc::{channel, Receiver, SendError, Sender, SyncSender},
             Arc, Mutex,
         },
         time::{Duration, Instant},
@@ -86,14 +83,14 @@ pub struct Record {
     pub mixin: Hash,
     pub transactions: Vec<VersionedTransaction>,
     pub slot: Slot,
-    pub sender: CrossbeamSender<Result<()>>,
+    pub sender: Sender<Result<()>>,
 }
 impl Record {
     pub fn new(
         mixin: Hash,
         transactions: Vec<VersionedTransaction>,
         slot: Slot,
-        sender: CrossbeamSender<Result<()>>,
+        sender: Sender<Result<()>>,
     ) -> Self {
         Self {
             mixin,
@@ -106,7 +103,7 @@ impl Record {
 
 pub struct TransactionRecorder {
     // shared by all users of PohRecorder
-    pub record_sender: CrossbeamSender<Record>,
+    pub record_sender: Sender<Record>,
     pub is_exited: Arc<AtomicBool>,
 }
 
@@ -117,7 +114,7 @@ impl Clone for TransactionRecorder {
 }
 
 impl TransactionRecorder {
-    pub fn new(record_sender: CrossbeamSender<Record>, is_exited: Arc<AtomicBool>) -> Self {
+    pub fn new(record_sender: Sender<Record>, is_exited: Arc<AtomicBool>) -> Self {
         Self {
             // shared
             record_sender,
@@ -204,7 +201,7 @@ pub enum PohLeaderStatus {
 pub struct PohRecorder {
     pub poh: Arc<Mutex<Poh>>,
     tick_height: u64,
-    clear_bank_signal: Option<SyncSender<bool>>,
+    clear_bank_signal: Option<Sender<bool>>,
     start_bank: Arc<Bank>,         // parent slot
     start_tick_height: u64,        // first tick_height this recorder will observe
     tick_cache: Vec<(Entry, u64)>, // cache of entry and its tick_height
@@ -229,7 +226,7 @@ pub struct PohRecorder {
     report_metrics_us: u64,
     ticks_from_record: u64,
     last_metric: Instant,
-    record_sender: CrossbeamSender<Record>,
+    record_sender: Sender<Record>,
     pub is_exited: Arc<AtomicBool>,
 }
 
@@ -706,11 +703,11 @@ impl PohRecorder {
         ticks_per_slot: u64,
         id: &Pubkey,
         blockstore: &Arc<Blockstore>,
-        clear_bank_signal: Option<SyncSender<bool>>,
+        clear_bank_signal: Option<Sender<bool>>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &Arc<PohConfig>,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, CrossbeamReceiver<Record>) {
+    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
         let tick_number = 0;
         let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
             last_entry_hash,
@@ -723,7 +720,7 @@ impl PohRecorder {
             ticks_per_slot,
             poh_config.target_tick_duration.as_nanos() as u64,
         );
-        let (sender, receiver) = channel();
+        let (sender, receiver) = unbounded();
         let (record_sender, record_receiver) = unbounded();
         let (leader_first_tick_height_including_grace_ticks, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
@@ -779,7 +776,7 @@ impl PohRecorder {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &Arc<PohConfig>,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, CrossbeamReceiver<Record>) {
+    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
         Self::new_with_clear_signal(
             tick_height,
             last_entry_hash,
@@ -872,10 +869,10 @@ mod tests {
     use {
         super::*,
         bincode::serialize,
+        crossbeam_channel::bounded,
         solana_ledger::{blockstore::Blockstore, blockstore_meta::SlotMeta, get_tmp_ledger_path},
         solana_perf::test_tx::test_tx,
         solana_sdk::{clock::DEFAULT_TICKS_PER_SLOT, hash::hash},
-        std::sync::mpsc::sync_channel,
     };
     use solana_ledger::genesis_utils::GenesisConfigInfo;
 
@@ -1479,7 +1476,7 @@ mod tests {
                 .expect("Expected to be able to open database ledger");
             let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
             let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-            let (sender, receiver) = sync_channel(1);
+            let (sender, receiver) = bounded(1);
             let (mut poh_recorder, _entry_receiver, _record_receiver) =
                 PohRecorder::new_with_clear_signal(
                     0,

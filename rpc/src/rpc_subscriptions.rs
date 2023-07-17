@@ -15,13 +15,10 @@ use {
     rayon::prelude::*,
     serde::Serialize,
     solana_account_decoder::{parse_token::is_known_spl_token_id, UiAccount, UiAccountEncoding},
-    solana_client::{
-        rpc_filter::RpcFilterType,
-        rpc_response::{
-            ProcessedSignatureResult, ReceivedSignatureResult, Response, RpcBlockUpdate,
-            RpcBlockUpdateError, RpcKeyedAccount, RpcLogsResponse, RpcResponseContext,
-            RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
-        },
+    solana_client::rpc_response::{
+        ProcessedSignatureResult, ReceivedSignatureResult, Response, RpcBlockUpdate,
+        RpcBlockUpdateError, RpcKeyedAccount, RpcLogsResponse, RpcResponseContext,
+        RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
     },
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path},
     solana_measure::measure::Measure,
@@ -30,6 +27,7 @@ use {
         bank::{Bank, TransactionLogInfo},
         bank_forks::BankForks,
         commitment::{BlockCommitmentCache, CommitmentSlots},
+        vote_transaction::VoteTransaction,
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
@@ -39,8 +37,9 @@ use {
         timing::timestamp,
         transaction,
     },
-    solana_transaction_status::{ConfirmedBlock, ConfirmedBlockWithOptionalMetadata},
-    solana_vote_program::vote_state::Vote,
+    solana_transaction_status::{
+        BlockEncodingOptions, ConfirmedBlock, EncodeError, VersionedConfirmedBlock,
+    },
     std::{
         cell::RefCell,
         collections::{HashMap, VecDeque},
@@ -101,7 +100,7 @@ pub enum EthPubSubResult {
 pub enum NotificationEntry {
     Slot(SlotInfo),
     SlotUpdate(SlotUpdate),
-    Vote((Pubkey, Vote)),
+    Vote((Pubkey, VoteTransaction, Signature)),
     Root(Slot),
     Bank(CommitmentSlots),
     Gossip(Slot),
@@ -166,10 +165,10 @@ where
             filter_results(results, params, *w_last_notified_slot, bank);
         for result in filter_results {
             notifier.notify(
-                Response {
-                    context: RpcResponseContext { slot },
+                Response::from(RpcNotificationResponse {
+                    context: RpcNotificationContext { slot },
                     value: result,
-                },
+                }),
                 subscription,
                 is_final,
             );
@@ -187,6 +186,33 @@ pub struct RpcNotification {
     pub is_final: bool,
     pub json: Weak<String>,
     pub created_at: Instant,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RpcNotificationResponse<T> {
+    context: RpcNotificationContext,
+    value: T,
+}
+
+impl<T> From<RpcNotificationResponse<T>> for Response<T> {
+    fn from(notification: RpcNotificationResponse<T>) -> Self {
+        let RpcNotificationResponse {
+            context: RpcNotificationContext { slot },
+            value,
+        } = notification;
+        Self {
+            context: RpcResponseContext {
+                slot,
+                api_version: None,
+            },
+            value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RpcNotificationContext {
+    slot: Slot,
 }
 
 const RPC_NOTIFICATIONS_METRICS_SUBMISSION_INTERVAL_MS: Duration = Duration::from_millis(2_000);
@@ -306,39 +332,48 @@ impl RpcNotifier {
 }
 
 fn filter_block_result_txs(
-    mut block: ConfirmedBlock,
+    mut block: VersionedConfirmedBlock,
     last_modified_slot: Slot,
     params: &BlockSubscriptionParams,
-) -> Option<RpcBlockUpdate> {
+) -> Result<Option<RpcBlockUpdate>, RpcBlockUpdateError> {
     block.transactions = match params.kind {
         BlockSubscriptionKind::All => block.transactions,
         BlockSubscriptionKind::MentionsAccountOrProgram(pk) => block
             .transactions
             .into_iter()
-            .filter(|tx_with_meta| tx_with_meta.transaction.message.account_keys.contains(&pk))
+            .filter(|tx| tx.account_keys().iter().any(|key| key == &pk))
             .collect(),
     };
 
     if block.transactions.is_empty() {
         if let BlockSubscriptionKind::MentionsAccountOrProgram(_) = params.kind {
-            return None;
+            return Ok(None);
         }
     }
 
-    let block = ConfirmedBlockWithOptionalMetadata::from(block).configure(
-        params.encoding,
-        params.transaction_details,
-        params.show_rewards,
-    );
+    let block = ConfirmedBlock::from(block)
+        .encode_with_options(
+            params.encoding,
+            BlockEncodingOptions {
+                transaction_details: params.transaction_details,
+                show_rewards: params.show_rewards,
+                max_supported_transaction_version: params.max_supported_transaction_version,
+            },
+        )
+        .map_err(|err| match err {
+            EncodeError::UnsupportedTransactionVersion(version) => {
+                RpcBlockUpdateError::UnsupportedTransactionVersion(version)
+            }
+        })?;
 
     // If last_modified_slot < last_notified_slot, then the last notif was for a fork.
     // That's the risk clients take when subscribing to non-finalized commitments.
     // This code lets the logic for dealing with forks live on the client side.
-    Some(RpcBlockUpdate {
+    Ok(Some(RpcBlockUpdate {
         slot: last_modified_slot,
         block: Some(block),
         err: None,
-    })
+    }))
 }
 
 fn filter_account_result(
@@ -402,10 +437,9 @@ fn filter_program_results(
     let encoding = params.encoding;
     let filters = params.filters.clone();
     let keyed_accounts = accounts.into_iter().filter(move |(_, account)| {
-        filters.iter().all(|filter_type| match filter_type {
-            RpcFilterType::DataSize(size) => account.data().len() as u64 == *size,
-            RpcFilterType::Memcmp(compare) => compare.bytes_match(account.data()),
-        })
+        filters
+            .iter()
+            .all(|filter_type| filter_type.allows(account))
     });
     let accounts: Box<dyn Iterator<Item = RpcKeyedAccount>> =
         if is_known_spl_token_id(&params.pubkey)
@@ -504,7 +538,7 @@ impl PubsubNotificationStats {
 }
 
 pub struct RpcSubscriptions {
-    notification_sender: Sender<TimestampedNotificationEntry>,
+    notification_sender: Option<Sender<TimestampedNotificationEntry>>,
     t_cleanup: Option<JoinHandle<()>>,
 
     exit: Arc<AtomicBool>,
@@ -536,6 +570,7 @@ impl RpcSubscriptions {
             block_commitment_cache,
             optimistically_confirmed_bank,
             &PubSubConfig::default(),
+            None,
         )
     }
 
@@ -550,14 +585,13 @@ impl RpcSubscriptions {
         let blockstore = Blockstore::open(&ledger_path).unwrap();
         let blockstore = Arc::new(blockstore);
 
-        Self::new_with_config(
+        Self::new_for_tests_with_blockstore(
             exit,
             max_complete_transaction_status_slot,
             blockstore,
             bank_forks,
             block_commitment_cache,
             optimistically_confirmed_bank,
-            &PubSubConfig::default_for_tests(),
         )
     }
 
@@ -569,7 +603,9 @@ impl RpcSubscriptions {
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     ) -> Self {
-        Self::new_with_config(
+        let rpc_notifier_ready = Arc::new(AtomicBool::new(false));
+
+        let rpc_subscriptions = Self::new_with_config(
             exit,
             max_complete_transaction_status_slot,
             blockstore,
@@ -577,7 +613,20 @@ impl RpcSubscriptions {
             block_commitment_cache,
             optimistically_confirmed_bank,
             &PubSubConfig::default_for_tests(),
-        )
+            Some(rpc_notifier_ready.clone()),
+        );
+
+        // Ensure RPC notifier is ready to receive notifications before proceeding
+        let start_time = Instant::now();
+        loop {
+            if rpc_notifier_ready.load(Ordering::Relaxed) {
+                break;
+            } else if (Instant::now() - start_time).as_millis() > 5000 {
+                panic!("RPC notifier thread setup took too long");
+            }
+        }
+
+        rpc_subscriptions
     }
 
     pub fn new_with_config(
@@ -588,6 +637,7 @@ impl RpcSubscriptions {
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         config: &PubSubConfig,
+        rpc_notifier_ready: Option<Arc<AtomicBool>>,
     ) -> Self {
         let (notification_sender, notification_receiver) = crossbeam_channel::unbounded();
 
@@ -603,30 +653,39 @@ impl RpcSubscriptions {
                 config.queue_capacity_bytes,
             )),
         };
-        let notification_threads = config.notification_threads;
-        let t_cleanup = Builder::new()
-            .name("solana-rpc-notifications".to_string())
-            .spawn(move || {
-                let pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(notification_threads.unwrap_or_else(get_thread_count))
-                    .thread_name(|i| format!("sol-sub-notif-{}", i))
-                    .build()
-                    .unwrap();
-                pool.install(|| {
-                    Self::process_notifications(
-                        exit_clone,
-                        max_complete_transaction_status_slot,
-                        blockstore,
-                        notifier,
-                        notification_receiver,
-                        subscriptions,
-                        bank_forks,
-                        block_commitment_cache,
-                        optimistically_confirmed_bank,
-                    )
-                });
-            })
-            .unwrap();
+        let notification_threads = config.notification_threads.unwrap_or_else(get_thread_count);
+        let t_cleanup = if notification_threads == 0 {
+            None
+        } else {
+            Some(
+                Builder::new()
+                    .name("solana-rpc-notifications".to_string())
+                    .spawn(move || {
+                        let pool = rayon::ThreadPoolBuilder::new()
+                            .num_threads(notification_threads)
+                            .thread_name(|i| format!("sol-sub-notif-{}", i))
+                            .build()
+                            .unwrap();
+                        pool.install(|| {
+                            if let Some(rpc_notifier_ready) = rpc_notifier_ready {
+                                rpc_notifier_ready.fetch_or(true, Ordering::Relaxed);
+                            }
+                            Self::process_notifications(
+                                exit_clone,
+                                max_complete_transaction_status_slot,
+                                blockstore,
+                                notifier,
+                                notification_receiver,
+                                subscriptions,
+                                bank_forks,
+                                block_commitment_cache,
+                                optimistically_confirmed_bank,
+                            )
+                        });
+                    })
+                    .unwrap(),
+            )
+        };
 
         let control = SubscriptionControl::new(
             config.max_active_subscriptions,
@@ -635,9 +694,12 @@ impl RpcSubscriptions {
         );
 
         Self {
-            notification_sender,
-            t_cleanup: Some(t_cleanup),
-
+            notification_sender: if notification_threads == 0 {
+                None
+            } else {
+                Some(notification_sender)
+            },
+            t_cleanup,
             exit: exit.clone(),
             control,
         }
@@ -696,8 +758,8 @@ impl RpcSubscriptions {
         self.enqueue_notification(NotificationEntry::SignaturesReceived(slot_signatures));
     }
 
-    pub fn notify_vote(&self, vote_pubkey: Pubkey, vote: &Vote) {
-        self.enqueue_notification(NotificationEntry::Vote((vote_pubkey, vote.clone())));
+    pub fn notify_vote(&self, vote_pubkey: Pubkey, vote: VoteTransaction, signature: Signature) {
+        self.enqueue_notification(NotificationEntry::Vote((vote_pubkey, vote, signature)));
     }
 
     pub fn notify_roots(&self, mut rooted_slots: Vec<Slot>) {
@@ -747,13 +809,15 @@ impl RpcSubscriptions {
     }
 
     fn enqueue_notification(&self, notification_entry: NotificationEntry) {
-        match self.notification_sender.send(notification_entry.into()) {
-            Ok(()) => (),
-            Err(SendError(notification)) => {
-                warn!(
-                    "Dropped RPC Notification - receiver disconnected : {:?}",
-                    notification
-                );
+        if let Some(ref notification_sender) = self.notification_sender {
+            match notification_sender.send(notification_entry.into()) {
+                Ok(()) => (),
+                Err(SendError(notification)) => {
+                    warn!(
+                        "Dropped RPC Notification - receiver disconnected : {:?}",
+                        notification
+                    );
+                }
             }
         }
     }
@@ -815,18 +879,18 @@ impl RpcSubscriptions {
                         // These notifications are only triggered by votes observed on gossip,
                         // unlike `NotificationEntry::Gossip`, which also accounts for slots seen
                         // in VoteState's from bank states built in ReplayStage.
-                        NotificationEntry::Vote((vote_pubkey, ref vote_info)) => {
-                            let rpc_vote = RpcVote {
-                                vote_pubkey: vote_pubkey.to_string(),
-                                // TODO: Remove clones
-                                slots: vote_info.slots.clone(),
-                                hash: bs58::encode(vote_info.hash).into_string(),
-                                timestamp: vote_info.timestamp,
-                            };
+                        NotificationEntry::Vote((vote_pubkey, ref vote_info, signature)) => {
                             if let Some(sub) = subscriptions
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::Vote)
                             {
+                                let rpc_vote = RpcVote {
+                                    vote_pubkey: vote_pubkey.to_string(),
+                                    slots: vote_info.slots(),
+                                    hash: bs58::encode(vote_info.hash()).into_string(),
+                                    timestamp: vote_info.timestamp(),
+                                    signature: signature.to_string(),
+                                };
                                 debug!("vote notify: {:?}", vote_info);
                                 inc_new_counter_info!("rpc-subscription-notify-vote", 1);
                                 notifier.notify(&rpc_vote, sub, false);
@@ -894,11 +958,12 @@ impl RpcSubscriptions {
                                 );
                             }
                             for (_, sink) in subscriptions.iter() {
-                                let filter = if let SubscriptionParams::EvmLogs(filter) = sink.params() {
-                                    filter
-                                } else {
-                                    panic!("Wrong param in evm log watcher")
-                                };
+                                let filter =
+                                    if let SubscriptionParams::EvmLogs(filter) = sink.params() {
+                                        filter
+                                    } else {
+                                        panic!("Wrong param in evm log watcher")
+                                    };
 
                                 inc_new_counter_info!("rpc-subscription-notify-evm-logs", 1);
                                 for log in logs.iter() {
@@ -918,12 +983,12 @@ impl RpcSubscriptions {
                                         {
                                             if params.enable_received_notification {
                                                 notifier.notify(
-                                                    Response {
-                                                        context: RpcResponseContext { slot },
+                                                    Response::from(RpcNotificationResponse {
+                                                        context: RpcNotificationContext { slot },
                                                         value: RpcSignatureResult::ReceivedSignature(
                                                             ReceivedSignatureResult::ReceivedSignature,
                                                         ),
-                                                    },
+                                                    }),
                                                     subscription,
                                                     false,
                                                 );
@@ -1040,7 +1105,10 @@ impl RpcSubscriptions {
                             let mut slots_to_notify: Vec<_> =
                                 (*w_last_unnotified_slot..slot).collect();
                             let ancestors = bank.proper_ancestors_set();
-                            slots_to_notify.retain(|slot| ancestors.contains(slot));
+                            slots_to_notify = slots_to_notify
+                                .into_iter()
+                                .filter(|slot| ancestors.contains(slot))
+                                .collect();
                             slots_to_notify.push(slot);
                             for s in slots_to_notify {
                                 // To avoid skipping a slot that fails this condition,
@@ -1050,16 +1118,23 @@ impl RpcSubscriptions {
                                 if s > max_complete_transaction_status_slot.load(Ordering::SeqCst) {
                                     break;
                                 }
-                                match blockstore.get_complete_block(s, false) {
-                                    Ok(block) => {
-                                        if let Some(block_update) =
-                                            filter_block_result_txs(block, s, params)
-                                        {
+
+                                let block_update_result = blockstore
+                                    .get_complete_block(s, false)
+                                    .map_err(|e| {
+                                        error!("get_complete_block error: {}", e);
+                                        RpcBlockUpdateError::BlockStoreError
+                                    })
+                                    .and_then(|block| filter_block_result_txs(block, s, params));
+
+                                match block_update_result {
+                                    Ok(block_update) => {
+                                        if let Some(block_update) = block_update {
                                             notifier.notify(
-                                                Response {
-                                                    context: RpcResponseContext { slot: s },
+                                                Response::from(RpcNotificationResponse {
+                                                    context: RpcNotificationContext { slot: s },
                                                     value: block_update,
-                                                },
+                                                }),
                                                 subscription,
                                                 false,
                                             );
@@ -1069,19 +1144,18 @@ impl RpcSubscriptions {
                                             *w_last_unnotified_slot = s + 1;
                                         }
                                     }
-                                    Err(e) => {
+                                    Err(err) => {
                                         // we don't advance `w_last_unnotified_slot` so that
                                         // it'll retry on the next notification trigger
-                                        error!("get_complete_block error: {}", e);
                                         notifier.notify(
-                                            Response {
-                                                context: RpcResponseContext { slot: s },
+                                            Response::from(RpcNotificationResponse {
+                                                context: RpcNotificationContext { slot: s },
                                                 value: RpcBlockUpdate {
                                                     slot,
                                                     block: None,
-                                                    err: Some(RpcBlockUpdateError::BlockStoreError),
+                                                    err: Some(err),
                                                 },
-                                            },
+                                            }),
                                             subscription,
                                             false,
                                         );
@@ -1241,7 +1315,6 @@ impl RpcSubscriptions {
         }
     }
 
-
     fn shutdown(&mut self) -> std::thread::Result<()> {
         if self.t_cleanup.is_some() {
             info!("RPC Notification thread - shutting down");
@@ -1269,14 +1342,14 @@ pub(crate) mod tests {
             optimistically_confirmed_bank_tracker::{
                 BankNotification, OptimisticallyConfirmedBank, OptimisticallyConfirmedBankTracker,
             },
-            rpc::create_test_transactions_and_populate_blockstore,
+            rpc::{create_test_transaction_entries, populate_blockstore_for_tests},
             rpc_pubsub::RpcSolPubSubInternal,
             rpc_pubsub_service,
         },
         serial_test::serial,
         solana_client::rpc_config::{
-            RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSignatureSubscribeConfig,
-            RpcTransactionLogsFilter, {RpcBlockSubscribeConfig, RpcBlockSubscribeFilter},
+            RpcAccountInfoConfig, RpcBlockSubscribeConfig, RpcBlockSubscribeFilter,
+            RpcProgramAccountsConfig, RpcSignatureSubscribeConfig, RpcTransactionLogsFilter,
         },
         solana_runtime::{
             commitment::BlockCommitment,
@@ -1389,6 +1462,7 @@ pub(crate) mod tests {
                         commitment: Some(CommitmentConfig::processed()),
                         encoding: None,
                         data_slice: None,
+                        min_context_slot: None,
                     }),
                 )
                 .unwrap();
@@ -1466,6 +1540,7 @@ pub(crate) mod tests {
             encoding: Some(UiTransactionEncoding::Json),
             transaction_details: Some(TransactionDetails::Signatures),
             show_rewards: None,
+            max_supported_transaction_version: None,
         };
         let params = BlockSubscriptionParams {
             kind: BlockSubscriptionKind::All,
@@ -1473,6 +1548,7 @@ pub(crate) mod tests {
             encoding: config.encoding.unwrap(),
             transaction_details: config.transaction_details.unwrap(),
             show_rewards: config.show_rewards.unwrap_or_default(),
+            max_supported_transaction_version: config.max_supported_transaction_version,
         };
         let sub_id = rpc.block_subscribe(filter, Some(config)).unwrap();
 
@@ -1487,9 +1563,12 @@ pub(crate) mod tests {
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
         bank.transfer(rent_exempt_amount, &mint_keypair, &keypair2.pubkey())
             .unwrap();
-        let _confirmed_block_signatures = create_test_transactions_and_populate_blockstore(
-            vec![&mint_keypair, &keypair1, &keypair2, &keypair3],
-            0,
+        populate_blockstore_for_tests(
+            create_test_transaction_entries(
+                vec![&mint_keypair, &keypair1, &keypair2, &keypair3],
+                bank.clone(),
+            )
+            .0,
             bank,
             blockstore.clone(),
             max_complete_transaction_status_slot,
@@ -1500,12 +1579,18 @@ pub(crate) mod tests {
         let actual_resp = receiver.recv();
         let actual_resp = serde_json::from_str::<serde_json::Value>(&actual_resp).unwrap();
 
-        let block = blockstore.get_complete_block(slot, false).unwrap();
-        let block = ConfirmedBlockWithOptionalMetadata::from(block).configure(
-            params.encoding,
-            params.transaction_details,
-            false,
-        );
+        let confirmed_block =
+            ConfirmedBlock::from(blockstore.get_complete_block(slot, false).unwrap());
+        let block = confirmed_block
+            .encode_with_options(
+                params.encoding,
+                BlockEncodingOptions {
+                    transaction_details: params.transaction_details,
+                    show_rewards: false,
+                    max_supported_transaction_version: None,
+                },
+            )
+            .unwrap();
         let expected_resp = RpcBlockUpdate {
             slot,
             block: Some(block),
@@ -1575,6 +1660,7 @@ pub(crate) mod tests {
             encoding: Some(UiTransactionEncoding::Json),
             transaction_details: Some(TransactionDetails::Signatures),
             show_rewards: None,
+            max_supported_transaction_version: None,
         };
         let params = BlockSubscriptionParams {
             kind: BlockSubscriptionKind::MentionsAccountOrProgram(keypair1.pubkey()),
@@ -1582,6 +1668,7 @@ pub(crate) mod tests {
             encoding: config.encoding.unwrap(),
             transaction_details: config.transaction_details.unwrap(),
             show_rewards: config.show_rewards.unwrap_or_default(),
+            max_supported_transaction_version: config.max_supported_transaction_version,
         };
         let sub_id = rpc.block_subscribe(filter, Some(config)).unwrap();
 
@@ -1595,9 +1682,12 @@ pub(crate) mod tests {
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
         bank.transfer(rent_exempt_amount, &mint_keypair, &keypair2.pubkey())
             .unwrap();
-        let _confirmed_block_signatures = create_test_transactions_and_populate_blockstore(
-            vec![&mint_keypair, &keypair1, &keypair2, &keypair3],
-            0,
+        populate_blockstore_for_tests(
+            create_test_transaction_entries(
+                vec![&mint_keypair, &keypair1, &keypair2, &keypair3],
+                bank.clone(),
+            )
+            .0,
             bank,
             blockstore.clone(),
             max_complete_transaction_status_slot,
@@ -1609,18 +1699,24 @@ pub(crate) mod tests {
         let actual_resp = serde_json::from_str::<serde_json::Value>(&actual_resp).unwrap();
 
         // make sure it filtered out the other keypairs
-        let mut block = blockstore.get_complete_block(slot, false).unwrap();
-        block.transactions.retain(|tx| {
-            tx.transaction
-                .message
-                .account_keys
-                .contains(&keypair1.pubkey())
+        let mut confirmed_block =
+            ConfirmedBlock::from(blockstore.get_complete_block(slot, false).unwrap());
+        confirmed_block.transactions.retain(|tx_with_meta| {
+            tx_with_meta
+                .account_keys()
+                .iter()
+                .any(|key| key == &keypair1.pubkey())
         });
-        let block = ConfirmedBlockWithOptionalMetadata::from(block).configure(
-            params.encoding,
-            params.transaction_details,
-            false,
-        );
+        let block = confirmed_block
+            .encode_with_options(
+                params.encoding,
+                BlockEncodingOptions {
+                    transaction_details: params.transaction_details,
+                    show_rewards: false,
+                    max_supported_transaction_version: None,
+                },
+            )
+            .unwrap();
         let expected_resp = RpcBlockUpdate {
             slot,
             block: Some(block),
@@ -1678,6 +1774,7 @@ pub(crate) mod tests {
             encoding: Some(UiTransactionEncoding::Json),
             transaction_details: Some(TransactionDetails::Signatures),
             show_rewards: None,
+            max_supported_transaction_version: None,
         };
         let params = BlockSubscriptionParams {
             kind: BlockSubscriptionKind::All,
@@ -1685,6 +1782,7 @@ pub(crate) mod tests {
             encoding: config.encoding.unwrap(),
             transaction_details: config.transaction_details.unwrap(),
             show_rewards: config.show_rewards.unwrap_or_default(),
+            max_supported_transaction_version: config.max_supported_transaction_version,
         };
         let sub_id = rpc.block_subscribe(filter, Some(config)).unwrap();
         subscriptions
@@ -1698,9 +1796,12 @@ pub(crate) mod tests {
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
         bank.transfer(rent_exempt_amount, &mint_keypair, &keypair2.pubkey())
             .unwrap();
-        let _confirmed_block_signatures = create_test_transactions_and_populate_blockstore(
-            vec![&mint_keypair, &keypair1, &keypair2, &keypair3],
-            0,
+        populate_blockstore_for_tests(
+            create_test_transaction_entries(
+                vec![&mint_keypair, &keypair1, &keypair2, &keypair3],
+                bank.clone(),
+            )
+            .0,
             bank,
             blockstore.clone(),
             max_complete_transaction_status_slot,
@@ -1716,12 +1817,18 @@ pub(crate) mod tests {
         let actual_resp = receiver.recv();
         let actual_resp = serde_json::from_str::<serde_json::Value>(&actual_resp).unwrap();
 
-        let block = blockstore.get_complete_block(slot, false).unwrap();
-        let block = ConfirmedBlockWithOptionalMetadata::from(block).configure(
-            params.encoding,
-            params.transaction_details,
-            false,
-        );
+        let confirmed_block =
+            ConfirmedBlock::from(blockstore.get_complete_block(slot, false).unwrap());
+        let block = confirmed_block
+            .encode_with_options(
+                params.encoding,
+                BlockEncodingOptions {
+                    transaction_details: params.transaction_details,
+                    show_rewards: false,
+                    max_supported_transaction_version: None,
+                },
+            )
+            .unwrap();
         let expected_resp = RpcBlockUpdate {
             slot,
             block: Some(block),
@@ -2697,6 +2804,7 @@ pub(crate) mod tests {
                     commitment: Some(CommitmentConfig::confirmed()),
                     encoding: None,
                     data_slice: None,
+                    min_context_slot: None,
                 }),
             )
             .unwrap();
@@ -2785,6 +2893,7 @@ pub(crate) mod tests {
                     commitment: Some(CommitmentConfig::confirmed()),
                     encoding: None,
                     data_slice: None,
+                    min_context_slot: None,
                 }),
             )
             .unwrap();

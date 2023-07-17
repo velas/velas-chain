@@ -1,4 +1,4 @@
-/// The `bigtable` subcommand
+//! The `bigtable` subcommand
 use {
     crate::ledger_path::canonicalize_ledger_path,
     clap::{
@@ -14,16 +14,23 @@ use {
         display::println_transaction, CliBlock, CliTransaction, CliTransactionConfirmation,
         OutputFormat,
     },
-    solana_ledger::{blockstore::Blockstore, blockstore_db::AccessType},
+    solana_ledger::{
+        bigtable_upload::ConfirmedBlockUploadConfig, blockstore::Blockstore,
+        blockstore_db::AccessType,
+    },
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Signature},
+    solana_storage_bigtable::CredentialType,
     solana_transaction_status::{
-        ConfirmedBlockWithOptionalMetadata, EncodedTransaction, UiTransactionEncoding,
+        BlockEncodingOptions, ConfirmedBlock, EncodeError, TransactionDetails,
+        UiTransactionEncoding,
     },
     std::{
+        cmp::min,
         collections::HashSet,
         path::Path,
         process::exit,
         result::Result,
+        str::FromStr,
         sync::{atomic::AtomicBool, Arc},
     },
 };
@@ -94,36 +101,60 @@ mod evm {
 
 async fn upload(
     blockstore: Blockstore,
-    starting_slot: Slot,
+    mut starting_slot: Slot,
     ending_slot: Option<Slot>,
     force_reupload: bool,
+    config: solana_storage_bigtable::LedgerStorageConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
+    let bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(config)
         .await
         .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
-    solana_ledger::bigtable_upload::upload_confirmed_blocks(
-        Arc::new(blockstore),
-        bigtable,
-        starting_slot,
-        ending_slot,
+    let config = ConfirmedBlockUploadConfig {
         force_reupload,
-        Arc::new(AtomicBool::new(false)),
-    )
-    .await
+        ..ConfirmedBlockUploadConfig::default()
+    };
+    let blockstore = Arc::new(blockstore);
+
+    let ending_slot = ending_slot.unwrap_or_else(|| blockstore.last_root());
+
+    while starting_slot <= ending_slot {
+        let current_ending_slot = min(
+            ending_slot,
+            starting_slot.saturating_add(config.max_num_slots_to_check as u64 * 2),
+        );
+        let last_slot_uploaded = solana_ledger::bigtable_upload::upload_confirmed_blocks(
+            blockstore.clone(),
+            bigtable.clone(),
+            starting_slot,
+            current_ending_slot,
+            config.clone(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await?;
+        info!("last slot uploaded: {}", last_slot_uploaded);
+        starting_slot = last_slot_uploaded.saturating_add(1);
+    }
+    info!("No more blocks to upload.");
+    Ok(())
 }
 
-async fn delete_slots(slots: Vec<Slot>, dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let read_only = dry_run;
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(read_only, None, None)
+async fn delete_slots(
+    slots: Vec<Slot>,
+    config: solana_storage_bigtable::LedgerStorageConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dry_run = config.read_only;
+    let bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(config)
         .await
         .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
     solana_ledger::bigtable_delete::delete_confirmed_blocks(bigtable, slots, dry_run).await
 }
 
-async fn first_available_block() -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(true, None, None).await?;
+async fn first_available_block(
+    config: solana_storage_bigtable::LedgerStorageConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(config).await?;
     match bigtable.get_first_available_block().await? {
         Some(block) => println!("{}", block),
         None => println!("No blocks available"),
@@ -132,23 +163,48 @@ async fn first_available_block() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn block(slot: Slot, output_format: OutputFormat) -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
+async fn block(
+    slot: Slot,
+    output_format: OutputFormat,
+    config: solana_storage_bigtable::LedgerStorageConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(config)
         .await
         .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
-    let block = bigtable.get_confirmed_block(slot).await?;
+    let confirmed_block = bigtable.get_confirmed_block(slot).await?;
+    let encoded_block = confirmed_block
+        .encode_with_options(
+            UiTransactionEncoding::Base64,
+            BlockEncodingOptions {
+                transaction_details: TransactionDetails::Full,
+                show_rewards: true,
+                max_supported_transaction_version: None,
+            },
+        )
+        .map_err(|err| match err {
+            EncodeError::UnsupportedTransactionVersion(version) => {
+                format!(
+                    "Failed to process unsupported transaction version ({}) in block",
+                    version
+                )
+            }
+        })?;
 
     let cli_block = CliBlock {
-        encoded_confirmed_block: block.encode(UiTransactionEncoding::Base64),
+        encoded_confirmed_block: encoded_block.into(),
         slot,
     };
     println!("{}", output_format.formatted_string(&cli_block));
     Ok(())
 }
 
-async fn blocks(starting_slot: Slot, limit: usize) -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
+async fn blocks(
+    starting_slot: Slot,
+    limit: usize,
+    config: solana_storage_bigtable::LedgerStorageConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(config)
         .await
         .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
@@ -162,11 +218,10 @@ async fn blocks(starting_slot: Slot, limit: usize) -> Result<(), Box<dyn std::er
 async fn compare_blocks(
     starting_slot: Slot,
     limit: usize,
-    credential_path: String,
+    config: solana_storage_bigtable::LedgerStorageConfig,
+    ref_config: solana_storage_bigtable::LedgerStorageConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    assert!(!credential_path.is_empty());
-
-    let owned_bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
+    let owned_bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(config)
         .await
         .map_err(|err| format!("failed to connect to owned bigtable: {:?}", err))?;
     let owned_bigtable_slots = owned_bigtable
@@ -176,10 +231,9 @@ async fn compare_blocks(
         "owned bigtable {} blocks found ",
         owned_bigtable_slots.len()
     );
-    let reference_bigtable =
-        solana_storage_bigtable::LedgerStorage::new(false, None, Some(credential_path))
-            .await
-            .map_err(|err| format!("failed to connect to reference bigtable: {:?}", err))?;
+    let reference_bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(ref_config)
+        .await
+        .map_err(|err| format!("failed to connect to reference bigtable: {:?}", err))?;
 
     let reference_bigtable_slots = reference_bigtable
         .get_confirmed_blocks(starting_slot, limit)
@@ -206,8 +260,9 @@ async fn confirm(
     signature: &Signature,
     verbose: bool,
     output_format: OutputFormat,
+    config: solana_storage_bigtable::LedgerStorageConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(false, None, None)
+    let bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(config)
         .await
         .map_err(|err| format!("Failed to connect to storage: {:?}", err))?;
 
@@ -217,16 +272,18 @@ async fn confirm(
     let mut get_transaction_error = None;
     if verbose {
         match bigtable.get_confirmed_transaction(signature).await {
-            Ok(Some(confirmed_transaction)) => {
+            Ok(Some(confirmed_tx)) => {
+                let decoded_tx = confirmed_tx.get_transaction();
+                let encoded_tx_with_meta = confirmed_tx
+                    .tx_with_meta
+                    .encode(UiTransactionEncoding::Json, Some(0), true)
+                    .map_err(|_| "Failed to encode transaction in block".to_string())?;
                 transaction = Some(CliTransaction {
-                    transaction: EncodedTransaction::encode(
-                        confirmed_transaction.transaction.transaction.clone(),
-                        UiTransactionEncoding::Json,
-                    ),
-                    meta: confirmed_transaction.transaction.meta.map(|m| m.into()),
-                    block_time: confirmed_transaction.block_time,
-                    slot: Some(confirmed_transaction.slot),
-                    decoded_transaction: confirmed_transaction.transaction.transaction,
+                    transaction: encoded_tx_with_meta.transaction,
+                    meta: encoded_tx_with_meta.meta,
+                    block_time: confirmed_tx.block_time,
+                    slot: Some(confirmed_tx.slot),
+                    decoded_transaction: decoded_tx,
                     prefix: "  ".to_string(),
                     sigverify_status: vec![],
                 });
@@ -255,10 +312,11 @@ pub async fn transaction_history(
     verbose: bool,
     show_transactions: bool,
     query_chunk_size: usize,
+    config: solana_storage_bigtable::LedgerStorageConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let bigtable = solana_storage_bigtable::LedgerStorage::new(true, None, None).await?;
+    let bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(config).await?;
 
-    let mut loaded_block: Option<(Slot, ConfirmedBlockWithOptionalMetadata)> = None;
+    let mut loaded_block: Option<(Slot, ConfirmedBlock)> = None;
     while limit > 0 {
         let results = bigtable
             .get_confirmed_signatures_for_address(
@@ -299,17 +357,22 @@ pub async fn transaction_history(
                 loop {
                     if let Some((slot, block)) = &loaded_block {
                         if *slot == result.slot {
-                            match block.transactions.get(index as usize) {
+                            match block.transactions.get(index as usize).map(|tx_with_meta| {
+                                (
+                                    tx_with_meta.get_transaction(),
+                                    tx_with_meta.get_status_meta(),
+                                )
+                            }) {
                                 None => {
                                     println!(
                                         "  Transaction info for {} is corrupt",
                                         result.signature
                                     );
                                 }
-                                Some(transaction_with_meta) => {
+                                Some((transaction, meta)) => {
                                     println_transaction(
-                                        &transaction_with_meta.transaction,
-                                        &transaction_with_meta.meta.clone().map(|m| m.into()),
+                                        &transaction,
+                                        meta.map(|m| m.into()).as_ref(),
                                         "  ",
                                         None,
                                         None,
@@ -324,8 +387,8 @@ pub async fn transaction_history(
                             println!("  Unable to get confirmed transaction details: {}", err);
                             break;
                         }
-                        Ok(block) => {
-                            loaded_block = Some((result.slot, block));
+                        Ok(confirmed_block) => {
+                            loaded_block = Some((result.slot, confirmed_block));
                         }
                     }
                 }
@@ -347,6 +410,24 @@ impl BigTableSubCommand for App<'_, '_> {
                 .about("Ledger data on a BigTable instance")
                 .setting(AppSettings::InferSubcommands)
                 .setting(AppSettings::SubcommandRequiredElseHelp)
+                .arg(
+                    Arg::with_name("rpc_bigtable_instance_name")
+                        .global(true)
+                        .long("rpc-bigtable-instance-name")
+                        .takes_value(true)
+                        .value_name("INSTANCE_NAME")
+                        .default_value(solana_storage_bigtable::DEFAULT_INSTANCE_NAME)
+                        .help("Name of the target Bigtable instance")
+                )
+                .arg(
+                    Arg::with_name("rpc_bigtable_app_profile_id")
+                        .global(true)
+                        .long("rpc-bigtable-app-profile-id")
+                        .takes_value(true)
+                        .value_name("APP_PROFILE_ID")
+                        .default_value(solana_storage_bigtable::DEFAULT_APP_PROFILE_ID)
+                        .help("Bigtable application profile id to use in requests")
+                )
                 .subcommand(
                     SubCommand::with_name("evm")
                     .about("Evm scope of bigtable ledger")
@@ -544,7 +625,8 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .required(true)
                                 .default_value("1000")
                                 .help("Maximum number of slots to check"),
-                        ).arg(
+                        )
+                        .arg(
                             Arg::with_name("reference_credential")
                                 .long("reference-credential")
                                 .short("c")
@@ -552,6 +634,22 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .takes_value(true)
                                 .required(true)
                                 .help("File path for a credential to a reference bigtable"),
+                        )
+                        .arg(
+                            Arg::with_name("reference_instance_name")
+                                .long("reference-instance-name")
+                                .takes_value(true)
+                                .value_name("INSTANCE_NAME")
+                                .default_value(solana_storage_bigtable::DEFAULT_INSTANCE_NAME)
+                                .help("Name of the reference Bigtable instance to compare to")
+                        )
+                        .arg(
+                            Arg::with_name("reference_app_profile_id")
+                                .long("reference-app-profile-id")
+                                .takes_value(true)
+                                .value_name("APP_PROFILE_ID")
+                                .default_value(solana_storage_bigtable::DEFAULT_APP_PROFILE_ID)
+                                .help("Reference Bigtable application profile id to use in requests")
                         ),
                 )
                 .subcommand(
@@ -642,13 +740,54 @@ impl BigTableSubCommand for App<'_, '_> {
     }
 }
 
+fn get_global_subcommand_arg<T: FromStr>(
+    matches: &ArgMatches<'_>,
+    sub_matches: Option<&clap::ArgMatches>,
+    name: &str,
+    default: &str,
+) -> T {
+    // this is kinda stupid, but there seems to be a bug in clap when a subcommand
+    // arg is marked both `global(true)` and `default_value("default_value")`.
+    // despite the "global", when the arg is specified on the subcommand, its value
+    // is not propagated down to the (sub)subcommand args, resulting in the default
+    // value when queried there. similarly, if the arg is specified on the
+    // (sub)subcommand, the value is not propagated back up to the subcommand args,
+    // again resulting in the default value. the arg having declared a
+    // `default_value()` obviates `is_present(...)` tests since they will always
+    // return true. so we consede and compare against the expected default. :/
+    let on_command = matches
+        .value_of(name)
+        .map(|v| v != default)
+        .unwrap_or(false);
+    if on_command {
+        value_t_or_exit!(matches, name, T)
+    } else {
+        let sub_matches = sub_matches.as_ref().unwrap();
+        value_t_or_exit!(sub_matches, name, T)
+    }
+}
+
 pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
     let verbose = matches.is_present("verbose");
     let output_format = OutputFormat::from_matches(matches, "output_format", verbose);
 
-    let future = match matches.subcommand() {
+    let (subcommand, sub_matches) = matches.subcommand();
+    let instance_name = get_global_subcommand_arg(
+        matches,
+        sub_matches,
+        "rpc_bigtable_instance_name",
+        solana_storage_bigtable::DEFAULT_INSTANCE_NAME,
+    );
+    let app_profile_id = get_global_subcommand_arg(
+        matches,
+        sub_matches,
+        "rpc_bigtable_app_profile_id",
+        solana_storage_bigtable::DEFAULT_APP_PROFILE_ID,
+    );
+
+    let future = match (subcommand, sub_matches) {
         ("upload", Some(arg_matches)) => {
             let starting_slot = value_t!(arg_matches, "starting_slot", Slot).unwrap_or(0);
             let ending_slot = value_t!(arg_matches, "ending_slot", Slot).ok();
@@ -658,41 +797,90 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 AccessType::TryPrimaryThenSecondary,
                 None,
             );
-
+            let config = solana_storage_bigtable::LedgerStorageConfig {
+                read_only: false,
+                instance_name,
+                app_profile_id,
+                ..solana_storage_bigtable::LedgerStorageConfig::default()
+            };
             runtime.block_on(upload(
                 blockstore,
                 starting_slot,
                 ending_slot,
                 force_reupload,
+                config,
             ))
         }
         ("delete-slots", Some(arg_matches)) => {
             let slots = values_t_or_exit!(arg_matches, "slots", Slot);
-            let dry_run = !arg_matches.is_present("force");
-            runtime.block_on(delete_slots(slots, dry_run))
+            let config = solana_storage_bigtable::LedgerStorageConfig {
+                read_only: !arg_matches.is_present("force"),
+                instance_name,
+                app_profile_id,
+                ..solana_storage_bigtable::LedgerStorageConfig::default()
+            };
+            runtime.block_on(delete_slots(slots, config))
         }
-        ("first-available-block", Some(_arg_matches)) => runtime.block_on(first_available_block()),
+        ("first-available-block", Some(_arg_matches)) => {
+            let config = solana_storage_bigtable::LedgerStorageConfig {
+                read_only: true,
+                instance_name,
+                app_profile_id,
+                ..solana_storage_bigtable::LedgerStorageConfig::default()
+            };
+            runtime.block_on(first_available_block(config))
+        }
         ("block", Some(arg_matches)) => {
             let slot = value_t_or_exit!(arg_matches, "slot", Slot);
-            runtime.block_on(block(slot, output_format))
+            let config = solana_storage_bigtable::LedgerStorageConfig {
+                read_only: false,
+                instance_name,
+                app_profile_id,
+                ..solana_storage_bigtable::LedgerStorageConfig::default()
+            };
+            runtime.block_on(block(slot, output_format, config))
         }
         ("blocks", Some(arg_matches)) => {
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             let limit = value_t_or_exit!(arg_matches, "limit", usize);
+            let config = solana_storage_bigtable::LedgerStorageConfig {
+                read_only: false,
+                instance_name,
+                app_profile_id,
+                ..solana_storage_bigtable::LedgerStorageConfig::default()
+            };
 
-            runtime.block_on(blocks(starting_slot, limit))
+            runtime.block_on(blocks(starting_slot, limit, config))
         }
         ("compare-blocks", Some(arg_matches)) => {
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             let limit = value_t_or_exit!(arg_matches, "limit", usize);
-            let reference_credential_filepath =
-                value_t_or_exit!(arg_matches, "reference_credential", String);
+            let config = solana_storage_bigtable::LedgerStorageConfig {
+                read_only: false,
+                instance_name,
+                app_profile_id,
+                ..solana_storage_bigtable::LedgerStorageConfig::default()
+            };
 
-            runtime.block_on(compare_blocks(
-                starting_slot,
-                limit,
-                reference_credential_filepath,
-            ))
+            let credential_path = Some(value_t_or_exit!(
+                arg_matches,
+                "reference_credential",
+                String
+            ));
+
+            let ref_instance_name =
+                value_t_or_exit!(arg_matches, "reference_instance_name", String);
+            let ref_app_profile_id =
+                value_t_or_exit!(arg_matches, "reference_app_profile_id", String);
+            let ref_config = solana_storage_bigtable::LedgerStorageConfig {
+                read_only: false,
+                credential_type: CredentialType::Filepath(credential_path),
+                instance_name: ref_instance_name,
+                app_profile_id: ref_app_profile_id,
+                ..solana_storage_bigtable::LedgerStorageConfig::default()
+            };
+
+            runtime.block_on(compare_blocks(starting_slot, limit, config, ref_config))
         }
         ("confirm", Some(arg_matches)) => {
             let signature = arg_matches
@@ -700,8 +888,14 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 .unwrap()
                 .parse()
                 .expect("Invalid signature");
+            let config = solana_storage_bigtable::LedgerStorageConfig {
+                read_only: false,
+                instance_name,
+                app_profile_id,
+                ..solana_storage_bigtable::LedgerStorageConfig::default()
+            };
 
-            runtime.block_on(confirm(&signature, verbose, output_format))
+            runtime.block_on(confirm(&signature, verbose, output_format, config))
         }
         ("transaction-history", Some(arg_matches)) => {
             let address = pubkey_of(arg_matches, "address").unwrap();
@@ -714,6 +908,12 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 .value_of("until")
                 .map(|signature| signature.parse().expect("Invalid signature"));
             let show_transactions = arg_matches.is_present("show_transactions");
+            let config = solana_storage_bigtable::LedgerStorageConfig {
+                read_only: true,
+                instance_name,
+                app_profile_id,
+                ..solana_storage_bigtable::LedgerStorageConfig::default()
+            };
 
             runtime.block_on(transaction_history(
                 &address,
@@ -723,6 +923,7 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 verbose,
                 show_transactions,
                 query_chunk_size,
+                config,
             ))
         }
         ("evm", Some(arg_matches)) => match arg_matches.subcommand() {

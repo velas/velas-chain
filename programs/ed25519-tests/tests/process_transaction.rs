@@ -7,7 +7,6 @@ use {
         feature_set,
         signature::Signer,
         transaction::{Transaction, TransactionError},
-        transport::TransportError,
     },
 };
 
@@ -56,7 +55,7 @@ async fn test_failure() {
 
     assert_matches!(
         client.process_transaction(transaction).await,
-        Err(TransportError::TransactionError(
+        Err(BanksClientError::TransactionError(
             TransactionError::InvalidAccountIndex
         ))
     );

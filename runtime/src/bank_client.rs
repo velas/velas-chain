@@ -1,6 +1,8 @@
+use evm_state::AccountProvider;
+
 use {
     crate::bank::Bank,
-    evm_state::AccountProvider,
+    crossbeam_channel::{unbounded, Receiver, Sender},
     solana_sdk::{
         account::Account,
         client::{AsyncClient, Client, SyncClient},
@@ -20,10 +22,7 @@ use {
     std::{
         convert::TryFrom,
         io,
-        sync::{
-            mpsc::{channel, Receiver, Sender},
-            Arc, Mutex,
-        },
+        sync::{Arc, Mutex},
         thread::{sleep, Builder},
         time::{Duration, Instant},
     },
@@ -55,6 +54,13 @@ impl AsyncClient for BankClient {
         let transaction_sender = self.transaction_sender.as_ref().unwrap().lock().unwrap();
         transaction_sender.send(transaction).unwrap();
         Ok(signature)
+    }
+
+    fn async_send_batch(&self, transactions: Vec<Transaction>) -> Result<()> {
+        for t in transactions {
+            self.async_send_transaction(t)?;
+        }
+        Ok(())
     }
 
     fn async_send_message<T: Signers>(
@@ -363,8 +369,8 @@ impl BankClient {
     }
 
     pub fn new_shared(bank: &Arc<Bank>) -> Self {
-        let (transaction_sender, transaction_receiver) = channel();
-        let transaction_sender = Some(Mutex::new(transaction_sender));
+        let (transaction_sender, transaction_receiver) = unbounded();
+        let transaction_sender = Mutex::new(transaction_sender);
         let thread_bank = bank.clone();
         let bank = bank.clone();
         let join_bg_thread = Some(
@@ -375,7 +381,7 @@ impl BankClient {
         );
         Self {
             bank,
-            transaction_sender,
+            transaction_sender: Some(transaction_sender),
             join_bg_thread,
         }
     }

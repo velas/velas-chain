@@ -8,13 +8,13 @@ use {
     log::*,
     prost::Message,
     rocksdb::{
-    self,
-    compaction_filter::CompactionFilter,
-    compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
-    ColumnFamily, ColumnFamilyDescriptor, CompactionDecision, DBIterator, DBRawIterator,
-    DBRecoveryMode, IteratorMode as RocksIteratorMode, Options, WriteBatch as RWriteBatch, DB,
+        self,
+        compaction_filter::CompactionFilter,
+        compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
+        ColumnFamily, ColumnFamilyDescriptor, CompactionDecision, DBCompactionStyle, DBIterator,
+        DBRawIterator, DBRecoveryMode, FifoCompactOptions, IteratorMode as RocksIteratorMode,
+        Options, WriteBatch as RWriteBatch, DB,
     },
-
     serde::{de::DeserializeOwned, Serialize},
     solana_runtime::hardened_unpack::UnpackError,
     solana_sdk::{
@@ -37,7 +37,23 @@ use {
     thiserror::Error,
 };
 
+// The default storage size for storing shreds when `rocksdb-shred-compaction`
+// is set to `fifo` in the validator arguments.  This amount of storage size
+// in bytes will equally allocated to both data shreds and coding shreds.
+pub const DEFAULT_ROCKS_FIFO_SHRED_STORAGE_SIZE_BYTES: u64 = 250 * 1024 * 1024 * 1024;
+
 const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
+const FIFO_WRITE_BUFFER_SIZE: u64 = 2 * MAX_WRITE_BUFFER_SIZE;
+// Maximum size of cf::DataShred.  Used when `shred_storage_type`
+// is set to ShredStorageType::RocksFifo.  The default value is set
+// to 125GB, assuming 500GB total storage for ledger and 25% is
+// used by data shreds.
+const DEFAULT_FIFO_COMPACTION_DATA_CF_SIZE: u64 = 125 * 1024 * 1024 * 1024;
+// Maximum size of cf::CodeShred.  Used when `shred_storage_type`
+// is set to ShredStorageType::RocksFifo.  The default value is set
+// to 100GB, assuming 500GB total storage for ledger and 20% is
+// used by coding shreds.
+const DEFAULT_FIFO_COMPACTION_CODING_CF_SIZE: u64 = 100 * 1024 * 1024 * 1024;
 
 // Column family for metadata about a leader slot
 const META_CF: &str = "meta";
@@ -80,6 +96,8 @@ const PERF_SAMPLES_CF: &str = "perf_samples";
 const BLOCK_HEIGHT_CF: &str = "block_height";
 /// Column family for ProgramCosts
 const PROGRAM_COSTS_CF: &str = "program_costs";
+/// Column family for optimistic slots
+const OPTIMISTIC_SLOTS_CF: &str = "optimistic_slots";
 
 // 1 day is chosen for the same reasoning of DEFAULT_COMPACTION_SLOT_INTERVAL
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
@@ -182,7 +200,7 @@ pub mod columns {
     pub struct AddressSignatures;
 
     #[derive(Debug)]
-    // The transaction memos column
+    /// The transaction memos column
     pub struct TransactionMemos;
 
     #[derive(Debug)]
@@ -206,8 +224,10 @@ pub mod columns {
     pub struct BlockHeight;
 
     #[derive(Debug)]
-    // The program costs column
+    /// The program costs column
     pub struct ProgramCosts;
+
+    #[derive(Debug)]
     /// The evm block header.
     pub struct EvmBlockHeader;
 
@@ -221,6 +241,9 @@ pub mod columns {
     #[derive(Debug)]
     /// The evm transaction with statuses.
     pub struct EvmTransactionReceipts;
+    #[derive(Debug)]
+    /// The optimistic slot column
+    pub struct OptimisticSlots;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -319,173 +342,36 @@ impl OldestBlockNum {
 struct Rocks(rocksdb::DB, ActualAccessType, OldestSlot, OldestBlockNum);
 
 impl Rocks {
-    fn open(
-        path: &Path,
-        access_type: AccessType,
-        recovery_mode: Option<BlockstoreRecoveryMode>,
-    ) -> Result<Rocks> {
-        use columns::*;
+    fn open(path: &Path, options: BlockstoreOptions) -> Result<Rocks> {
+        let access_type = &options.access_type;
+        let recovery_mode = options.recovery_mode.clone();
 
         fs::create_dir_all(path)?;
 
         // Use default database options
-        if matches!(access_type, AccessType::PrimaryOnlyForMaintenance) {
+        if should_disable_auto_compactions(access_type) {
             warn!("Disabling rocksdb's auto compaction for maintenance bulk ledger update...");
         }
-        let mut db_options = get_db_options(&access_type);
+        let mut db_options = get_db_options(access_type);
         if let Some(recovery_mode) = recovery_mode {
             db_options.set_wal_recovery_mode(recovery_mode.into());
         }
 
         let oldest_slot = OldestSlot::default();
         let oldest_block_num = OldestBlockNum::default();
-
-        // Column family names
-        let meta_cf_descriptor = ColumnFamilyDescriptor::new(
-            SlotMeta::NAME,
-            get_cf_options::<SlotMeta>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let dead_slots_cf_descriptor = ColumnFamilyDescriptor::new(
-            DeadSlots::NAME,
-            get_cf_options::<DeadSlots>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let duplicate_slots_cf_descriptor = ColumnFamilyDescriptor::new(
-            DuplicateSlots::NAME,
-            get_cf_options::<DuplicateSlots>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let erasure_meta_cf_descriptor = ColumnFamilyDescriptor::new(
-            ErasureMeta::NAME,
-            get_cf_options::<ErasureMeta>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let orphans_cf_descriptor = ColumnFamilyDescriptor::new(
-            Orphans::NAME,
-            get_cf_options::<Orphans>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let bank_hash_cf_descriptor = ColumnFamilyDescriptor::new(
-            BankHash::NAME,
-            get_cf_options::<BankHash>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let root_cf_descriptor = ColumnFamilyDescriptor::new(
-            Root::NAME,
-            get_cf_options::<Root>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let index_cf_descriptor = ColumnFamilyDescriptor::new(
-            Index::NAME,
-            get_cf_options::<Index>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let shred_data_cf_descriptor = ColumnFamilyDescriptor::new(
-            ShredData::NAME,
-            get_cf_options::<ShredData>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let shred_code_cf_descriptor = ColumnFamilyDescriptor::new(
-            ShredCode::NAME,
-            get_cf_options::<ShredCode>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let transaction_status_cf_descriptor = ColumnFamilyDescriptor::new(
-            TransactionStatus::NAME,
-            get_cf_options::<TransactionStatus>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let address_signatures_cf_descriptor = ColumnFamilyDescriptor::new(
-            AddressSignatures::NAME,
-            get_cf_options::<AddressSignatures>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let transaction_memos_cf_descriptor = ColumnFamilyDescriptor::new(
-            TransactionMemos::NAME,
-            get_cf_options::<TransactionMemos>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let transaction_status_index_cf_descriptor = ColumnFamilyDescriptor::new(
-            TransactionStatusIndex::NAME,
-            get_cf_options::<TransactionStatusIndex>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let rewards_cf_descriptor = ColumnFamilyDescriptor::new(
-            Rewards::NAME,
-            get_cf_options::<Rewards>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let blocktime_cf_descriptor = ColumnFamilyDescriptor::new(
-            Blocktime::NAME,
-            get_cf_options::<Blocktime>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let perf_samples_cf_descriptor = ColumnFamilyDescriptor::new(
-            PerfSamples::NAME,
-            get_cf_options::<PerfSamples>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let block_height_cf_descriptor = ColumnFamilyDescriptor::new(
-            BlockHeight::NAME,
-            get_cf_options::<BlockHeight>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-
-        let program_costs_cf_descriptor = ColumnFamilyDescriptor::new(
-            ProgramCosts::NAME,
-            get_cf_options::<ProgramCosts>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        // Don't forget to add to both run_purge_with_stats() and
-        // compact_storage() in ledger/src/blockstore/blockstore_purge.rs!!
-
-        let evm_headers_cf_descriptor = ColumnFamilyDescriptor::new(
-            EvmBlockHeader::NAME,
-            get_cf_options::<EvmBlockHeader>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let evm_headers_by_hash_cf_descriptor = ColumnFamilyDescriptor::new(
-            EvmHeaderIndexByHash::NAME,
-            get_cf_options::<EvmHeaderIndexByHash>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let evm_headers_by_slot_cf_descriptor = ColumnFamilyDescriptor::new(
-            EvmHeaderIndexBySlot::NAME,
-            get_cf_options::<EvmHeaderIndexBySlot>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-        let evm_transactions_cf_descriptor = ColumnFamilyDescriptor::new(
-            EvmTransactionReceipts::NAME,
-            get_cf_options::<EvmTransactionReceipts>(&access_type, &oldest_slot, &oldest_block_num),
-        );
-
-
-        let cfs = vec![
-            (SlotMeta::NAME, meta_cf_descriptor),
-            (DeadSlots::NAME, dead_slots_cf_descriptor),
-            (DuplicateSlots::NAME, duplicate_slots_cf_descriptor),
-            (ErasureMeta::NAME, erasure_meta_cf_descriptor),
-            (Orphans::NAME, orphans_cf_descriptor),
-            (BankHash::NAME, bank_hash_cf_descriptor),
-            (Root::NAME, root_cf_descriptor),
-            (Index::NAME, index_cf_descriptor),
-            (ShredData::NAME, shred_data_cf_descriptor),
-            (ShredCode::NAME, shred_code_cf_descriptor),
-            (TransactionStatus::NAME, transaction_status_cf_descriptor),
-            (AddressSignatures::NAME, address_signatures_cf_descriptor),
-            (TransactionMemos::NAME, transaction_memos_cf_descriptor),
-            (
-                TransactionStatusIndex::NAME,
-                transaction_status_index_cf_descriptor,
-            ),
-            (Rewards::NAME, rewards_cf_descriptor),
-            (Blocktime::NAME, blocktime_cf_descriptor),
-            (PerfSamples::NAME, perf_samples_cf_descriptor),
-            (BlockHeight::NAME, block_height_cf_descriptor),
-            (ProgramCosts::NAME, program_costs_cf_descriptor),
-            // EVM tail args
-            (EvmBlockHeader::NAME, evm_headers_cf_descriptor),
-            (EvmTransactionReceipts::NAME, evm_transactions_cf_descriptor),
-            (
-                EvmHeaderIndexByHash::NAME,
-                evm_headers_by_hash_cf_descriptor,
-            ),
-            (
-                EvmHeaderIndexBySlot::NAME,
-                evm_headers_by_slot_cf_descriptor,
-            ),
-        ];
-        let cf_names: Vec<_> = cfs.iter().map(|c| c.0).collect();
+        let cf_descriptors = Self::cf_descriptors(&options, &oldest_slot, &oldest_block_num);
+        let cf_names = Self::columns();
 
         // Open the database
         let db = match access_type {
             AccessType::PrimaryOnly | AccessType::PrimaryOnlyForMaintenance => Rocks(
-                DB::open_cf_descriptors(&db_options, path, cfs.into_iter().map(|c| c.1))?,
+                DB::open_cf_descriptors(&db_options, path, cf_descriptors)?,
                 ActualAccessType::Primary,
                 oldest_slot,
                 oldest_block_num,
             ),
             AccessType::TryPrimaryThenSecondary => {
-                match DB::open_cf_descriptors(&db_options, path, cfs.into_iter().map(|c| c.1)) {
+                match DB::open_cf_descriptors(&db_options, path, cf_descriptors) {
                     Ok(db) => Rocks(db, ActualAccessType::Primary, oldest_slot, oldest_block_num),
                     Err(err) => {
                         let secondary_path = path.join("solana-secondary");
@@ -493,9 +379,6 @@ impl Rocks {
                         warn!("Error when opening as primary: {}", err);
                         warn!("Trying as secondary at : {:?}", secondary_path);
                         warn!("This active secondary db use may temporarily cause the performance of another db use (like by validator) to degrade");
-
-                        // This is needed according to https://github.com/facebook/rocksdb/wiki/Secondary-instance
-                        db_options.set_max_open_files(-1);
 
                         Rocks(
                             DB::open_cf_as_secondary(
@@ -517,7 +400,7 @@ impl Rocks {
             for cf_name in cf_names {
                 // these special column families must be excluded from LedgerCleanupService's rocksdb
                 // compactions
-                if excludes_from_compaction(cf_name) {
+                if should_exclude_from_compaction(cf_name) {
                     continue;
                 }
 
@@ -542,7 +425,7 @@ impl Rocks {
                 // shorten it to a day (24 hours).
                 //
                 // As we write newer SST files over time at rather consistent rate of speed, this
-                // effectively makes each newly-created ssts be re-compacted for the filter at
+                // effectively makes each newly-created sets be re-compacted for the filter at
                 // well-dispersed different timings.
                 // As a whole, we rewrite the whole dataset at every PERIODIC_COMPACTION_SECONDS,
                 // slowly over the duration of PERIODIC_COMPACTION_SECONDS. So, this results in
@@ -572,7 +455,49 @@ impl Rocks {
         Ok(db)
     }
 
-    fn columns(&self) -> Vec<&'static str> {
+    fn cf_descriptors(
+        options: &BlockstoreOptions,
+        oldest_slot: &OldestSlot,
+        oldest_block_num: &OldestBlockNum,
+    ) -> Vec<ColumnFamilyDescriptor> {
+        use columns::*;
+
+        let (cf_descriptor_shred_data, cf_descriptor_shred_code) =
+            new_cf_descriptor_pair_shreds::<ShredData, ShredCode>(
+                options,
+                oldest_slot,
+                oldest_block_num,
+            );
+        vec![
+            new_cf_descriptor::<SlotMeta>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<DeadSlots>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<DuplicateSlots>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<ErasureMeta>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<Orphans>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<BankHash>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<Root>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<Index>(options, oldest_slot, oldest_block_num),
+            cf_descriptor_shred_data,
+            cf_descriptor_shred_code,
+            new_cf_descriptor::<TransactionStatus>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<AddressSignatures>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<TransactionMemos>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<TransactionStatusIndex>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<Rewards>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<Blocktime>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<PerfSamples>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<BlockHeight>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<ProgramCosts>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<OptimisticSlots>(options, oldest_slot, oldest_block_num),
+            // EVM scope
+            new_cf_descriptor::<EvmBlockHeader>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<EvmHeaderIndexByHash>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<EvmHeaderIndexBySlot>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<EvmTransactionReceipts>(options, oldest_slot, oldest_block_num),
+        ]
+    }
+
+    fn columns() -> Vec<&'static str> {
         use columns::*;
 
         vec![
@@ -595,6 +520,7 @@ impl Rocks {
             PerfSamples::NAME,
             BlockHeight::NAME,
             ProgramCosts::NAME,
+            OptimisticSlots::NAME,
             // EVM scope
             EvmBlockHeader::NAME,
             EvmTransactionReceipts::NAME,
@@ -663,20 +589,30 @@ impl Rocks {
         self.1 == ActualAccessType::Primary
     }
 
-    pub(crate) fn try_catch_up(&self) -> Result<bool>{
+    // Try sync secondary db with primary
+    pub(crate) fn try_catch_up(&self) -> Result<bool> {
         let res = match self.1 {
             ActualAccessType::Secondary => {
                 self.0.try_catch_up_with_primary()?;
                 true
-                
-            },
-            ActualAccessType::Primary => {
-                false
             }
+            ActualAccessType::Primary => false,
         };
 
         Ok(res)
-        
+    }
+
+    /// Retrieves the specified RocksDB integer property of the current
+    /// column family.
+    ///
+    /// Full list of properties that return int values could be found
+    /// [here](https://github.com/facebook/rocksdb/blob/08809f5e6cd9cc4bc3958dd4d59457ae78c76660/include/rocksdb/db.h#L654-L689).
+    fn get_int_property_cf(&self, cf: &ColumnFamily, name: &str) -> Result<i64> {
+        match self.0.property_int_value_cf(cf, name) {
+            Ok(Some(value)) => Ok(value.try_into().unwrap()),
+            Ok(None) => Ok(0),
+            Err(e) => Err(BlockstoreError::RocksDb(e)),
+        }
     }
 }
 
@@ -1099,6 +1035,14 @@ impl TypedColumn for columns::ErasureMeta {
     type Type = blockstore_meta::ErasureMeta;
 }
 
+impl SlotColumn for columns::OptimisticSlots {}
+impl ColumnName for columns::OptimisticSlots {
+    const NAME: &'static str = OPTIMISTIC_SLOTS_CF;
+}
+impl TypedColumn for columns::OptimisticSlots {
+    type Type = blockstore_meta::OptimisticSlotMetaVersioned;
+}
+
 // EVM blockstore
 
 impl Column for columns::EvmBlockHeader {
@@ -1305,13 +1249,99 @@ pub struct WriteBatch<'a> {
     map: HashMap<&'static str, &'a ColumnFamily>,
 }
 
+#[derive(Clone)]
+pub enum ShredStorageType {
+    // Stores shreds under RocksDB's default compaction (level).
+    RocksLevel,
+    // (Experimental) Stores shreds under RocksDB's FIFO compaction which
+    // allows ledger store to reclaim storage more efficiently with
+    // lower I/O overhead.
+    RocksFifo(BlockstoreRocksFifoOptions),
+}
+
+impl Default for ShredStorageType {
+    fn default() -> Self {
+        Self::RocksLevel
+    }
+}
+
+/// Options for LedgerColumn.
+/// Each field might also be used as a tag that supports group-by operation when
+/// reporting metrics.
+#[derive(Clone)]
+pub struct LedgerColumnOptions {
+    // Determine how to store both data and coding shreds. Default: RocksLevel.
+    pub shred_storage_type: ShredStorageType,
+}
+
+impl Default for LedgerColumnOptions {
+    fn default() -> Self {
+        Self {
+            shred_storage_type: ShredStorageType::RocksLevel,
+        }
+    }
+}
+
+pub struct BlockstoreOptions {
+    // The access type of blockstore. Default: PrimaryOnly
+    pub access_type: AccessType,
+    // Whether to open a blockstore under a recovery mode. Default: None.
+    pub recovery_mode: Option<BlockstoreRecoveryMode>,
+    // Whether to allow unlimited number of open files. Default: true.
+    pub enforce_ulimit_nofile: bool,
+    pub column_options: LedgerColumnOptions,
+}
+
+impl Default for BlockstoreOptions {
+    /// The default options are the values used by [`Blockstore::open`].
+    ///
+    /// [`Blockstore::open`]: crate::blockstore::Blockstore::open
+    fn default() -> Self {
+        Self {
+            access_type: AccessType::PrimaryOnly,
+            recovery_mode: None,
+            enforce_ulimit_nofile: true,
+            column_options: LedgerColumnOptions::default(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct BlockstoreRocksFifoOptions {
+    // The maximum storage size for storing data shreds in column family
+    // [`cf::DataShred`].  Typically, data shreds contribute around 25% of the
+    // ledger store storage size if the RPC service is enabled, or 50% if RPC
+    // service is not enabled.
+    //
+    // Note that this number must be greater than FIFO_WRITE_BUFFER_SIZE
+    // otherwise we won't be able to write any file.  If not, the blockstore
+    // will panic.
+    pub shred_data_cf_size: u64,
+    // The maximum storage size for storing coding shreds in column family
+    // [`cf::CodeShred`].  Typically, coding shreds contribute around 20% of the
+    // ledger store storage size if the RPC service is enabled, or 40% if RPC
+    // service is not enabled.
+    //
+    // Note that this number must be greater than FIFO_WRITE_BUFFER_SIZE
+    // otherwise we won't be able to write any file.  If not, the blockstore
+    // will panic.
+    pub shred_code_cf_size: u64,
+}
+
+impl Default for BlockstoreRocksFifoOptions {
+    fn default() -> Self {
+        Self {
+            // Maximum size of cf::ShredData.
+            shred_data_cf_size: DEFAULT_FIFO_COMPACTION_DATA_CF_SIZE,
+            // Maximum size of cf::ShredCode.
+            shred_code_cf_size: DEFAULT_FIFO_COMPACTION_CODING_CF_SIZE,
+        }
+    }
+}
+
 impl Database {
-    pub fn open(
-        path: &Path,
-        access_type: AccessType,
-        recovery_mode: Option<BlockstoreRecoveryMode>,
-    ) -> Result<Self> {
-        let backend = Arc::new(Rocks::open(path, access_type, recovery_mode)?);
+    pub fn open(path: &Path, options: BlockstoreOptions) -> Result<Self> {
+        let backend = Arc::new(Rocks::open(path, options)?);
 
         Ok(Database {
             backend,
@@ -1378,9 +1408,7 @@ impl Database {
 
     pub fn batch(&self) -> Result<WriteBatch> {
         let write_batch = self.backend.batch();
-        let map = self
-            .backend
-            .columns()
+        let map = Rocks::columns()
             .into_iter()
             .map(|desc| (desc, self.backend.cf_handle(desc)))
             .collect();
@@ -1419,7 +1447,7 @@ impl Database {
         self.backend.3.set(oldest_block_num);
     }
 
-    pub(crate) fn try_catch_up(&self) -> Result<bool>{
+    pub(crate) fn try_catch_up(&self) -> Result<bool> {
         self.backend.try_catch_up()
     }
 }
@@ -1503,6 +1531,15 @@ where
 
     pub fn put_bytes(&self, key: C::Index, value: &[u8]) -> Result<()> {
         self.backend.put_cf(self.handle(), &C::key(key), value)
+    }
+
+    /// Retrieves the specified RocksDB integer property of the current
+    /// column family.
+    ///
+    /// Full list of properties that return int values could be found
+    /// [here](https://github.com/facebook/rocksdb/blob/08809f5e6cd9cc4bc3958dd4d59457ae78c76660/include/rocksdb/db.h#L654-L689).
+    pub fn get_int_property(&self, name: &str) -> Result<i64> {
+        self.backend.get_int_property_cf(self.handle(), name)
     }
 }
 
@@ -1668,6 +1705,17 @@ impl<C: Column + ColumnName> CompactionFilterFactory for PurgedSlotFilterFactory
     }
 }
 
+fn new_cf_descriptor<C: 'static + Column + ColumnName>(
+    options: &BlockstoreOptions,
+    oldest_slot: &OldestSlot,
+    oldest_block_num: &OldestBlockNum,
+) -> ColumnFamilyDescriptor {
+    ColumnFamilyDescriptor::new(
+        C::NAME,
+        get_cf_options::<C>(options, oldest_slot, oldest_block_num),
+    )
+}
+
 struct PurgedEvmBlockFilter<C: Column + ColumnName> {
     oldest_block: BlockNum,
     name: CString,
@@ -1709,7 +1757,7 @@ impl<C: Column + ColumnName> CompactionFilterFactory for PurgedEvmBlockFilterFac
                 C::NAME,
                 copied_oldest_block
             ))
-                .unwrap(),
+            .unwrap(),
             _phantom: PhantomData::default(),
         }
     }
@@ -1720,61 +1768,137 @@ impl<C: Column + ColumnName> CompactionFilterFactory for PurgedEvmBlockFilterFac
 }
 
 fn get_cf_options<C: 'static + Column + ColumnName>(
-    access_type: &AccessType,
+    options: &BlockstoreOptions,
     oldest_slot: &OldestSlot,
     oldest_block_num: &OldestBlockNum,
 ) -> Options {
-    let mut options = Options::default();
+    let mut cf_options = Options::default();
     // 256 * 8 = 2GB. 6 of these columns should take at most 12GB of RAM
-    options.set_max_write_buffer_number(8);
-    options.set_write_buffer_size(MAX_WRITE_BUFFER_SIZE as usize);
+    cf_options.set_max_write_buffer_number(8);
+    cf_options.set_write_buffer_size(MAX_WRITE_BUFFER_SIZE as usize);
     let file_num_compaction_trigger = 4;
     // Recommend that this be around the size of level 0. Level 0 estimated size in stable state is
     // write_buffer_size * min_write_buffer_number_to_merge * level0_file_num_compaction_trigger
     // Source: https://docs.rs/rocksdb/0.6.0/rocksdb/struct.Options.html#method.set_level_zero_file_num_compaction_trigger
     let total_size_base = MAX_WRITE_BUFFER_SIZE * file_num_compaction_trigger;
     let file_size_base = total_size_base / 10;
-    options.set_level_zero_file_num_compaction_trigger(file_num_compaction_trigger as i32);
-    options.set_max_bytes_for_level_base(total_size_base);
-    options.set_target_file_size_base(file_size_base);
+    cf_options.set_level_zero_file_num_compaction_trigger(file_num_compaction_trigger as i32);
+    cf_options.set_max_bytes_for_level_base(total_size_base);
+    cf_options.set_target_file_size_base(file_size_base);
 
-    // TransactionStatusIndex and ProgramCosts must be excluded from LedgerCleanupService's rocksdb
-    // compactions....
-    if matches!(access_type, AccessType::PrimaryOnly) && !excludes_from_compaction(C::NAME)
-        && C::NAME != columns::EvmBlockHeader::NAME // blockheader has special compaction
-    {
-        options.set_compaction_filter_factory(PurgedSlotFilterFactory::<C> {
-            oldest_slot: oldest_slot.clone(),
-            name: CString::new(format!("purged_slot_filter_factory({})", C::NAME)).unwrap(),
-            _phantom: PhantomData::default(),
-        });
-    }
-    if matches!(access_type, AccessType::PrimaryOnly)
-        && C::NAME == columns::EvmBlockHeader::NAME
-    {
-        options.set_compaction_filter_factory(PurgedEvmBlockFilterFactory::<C> {
-            oldest_block: oldest_block_num.clone(),
-            name: CString::new(format!("purged_evm_block_filter_factory({})", C::NAME)).unwrap(),
-            _phantom: PhantomData::default(),
-        });
+    let disable_auto_compactions = should_disable_auto_compactions(&options.access_type);
+    if disable_auto_compactions {
+        cf_options.set_disable_auto_compactions(true);
     }
 
-    if matches!(access_type, AccessType::PrimaryOnlyForMaintenance) {
-        options.set_disable_auto_compactions(true);
+    if !disable_auto_compactions && !should_exclude_from_compaction(C::NAME) {
+        if C::NAME == columns::EvmBlockHeader::NAME {
+            cf_options.set_compaction_filter_factory(PurgedEvmBlockFilterFactory::<C> {
+                oldest_block: oldest_block_num.clone(),
+                name: CString::new(format!("purged_evm_block_filter_factory({})", C::NAME))
+                    .unwrap(),
+                _phantom: PhantomData::default(),
+            });
+        } else {
+            cf_options.set_compaction_filter_factory(PurgedSlotFilterFactory::<C> {
+                oldest_slot: oldest_slot.clone(),
+                name: CString::new(format!("purged_slot_filter_factory({})", C::NAME)).unwrap(),
+                _phantom: PhantomData::default(),
+            });
+        }
     }
+
+    cf_options
+}
+
+/// Creates and returns the column family descriptors for both data shreds and
+/// coding shreds column families.
+///
+/// @return a pair of ColumnFamilyDescriptor where the first / second elements
+/// are associated to the first / second template class respectively.
+fn new_cf_descriptor_pair_shreds<
+    D: 'static + Column + ColumnName, // Column Family for Data Shred
+    C: 'static + Column + ColumnName, // Column Family for Coding Shred
+>(
+    options: &BlockstoreOptions,
+    oldest_slot: &OldestSlot,
+    oldest_block_num: &OldestBlockNum,
+) -> (ColumnFamilyDescriptor, ColumnFamilyDescriptor) {
+    match &options.column_options.shred_storage_type {
+        ShredStorageType::RocksLevel => (
+            new_cf_descriptor::<D>(options, oldest_slot, oldest_block_num),
+            new_cf_descriptor::<C>(options, oldest_slot, oldest_block_num),
+        ),
+        ShredStorageType::RocksFifo(fifo_options) => (
+            new_cf_descriptor_fifo::<D>(&fifo_options.shred_data_cf_size),
+            new_cf_descriptor_fifo::<C>(&fifo_options.shred_code_cf_size),
+        ),
+    }
+}
+
+fn new_cf_descriptor_fifo<C: 'static + Column + ColumnName>(
+    max_cf_size: &u64,
+) -> ColumnFamilyDescriptor {
+    if *max_cf_size > FIFO_WRITE_BUFFER_SIZE {
+        ColumnFamilyDescriptor::new(C::NAME, get_cf_options_fifo::<C>(max_cf_size))
+    } else {
+        panic!(
+            "{} cf_size must be greater than write buffer size {} when using ShredStorageType::RocksFifo.",
+            C::NAME, FIFO_WRITE_BUFFER_SIZE
+        );
+    }
+}
+
+/// Returns the RocksDB Column Family Options which use FIFO Compaction.
+///
+/// Note that this CF options is optimized for workloads which write-keys
+/// are mostly monotonically increasing over time.  For workloads where
+/// write-keys do not follow any order in general should use get_cf_options
+/// instead.
+///
+/// - [`max_cf_size`]: the maximum allowed column family size.  Note that
+/// rocksdb will start deleting the oldest SST file when the column family
+/// size reaches `max_cf_size` - `FIFO_WRITE_BUFFER_SIZE` to strictly
+/// maintain the size limit.
+fn get_cf_options_fifo<C: 'static + Column + ColumnName>(max_cf_size: &u64) -> Options {
+    let mut options = Options::default();
+
+    options.set_max_write_buffer_number(8);
+    options.set_write_buffer_size(FIFO_WRITE_BUFFER_SIZE as usize);
+    // FIFO always has its files in L0 so we only have one level.
+    options.set_num_levels(1);
+    // Since FIFO puts all its file in L0, it is suggested to have unlimited
+    // number of open files.  The actual total number of open files will
+    // be close to max_cf_size / write_buffer_size.
+    options.set_max_open_files(-1);
+
+    let mut fifo_compact_options = FifoCompactOptions::default();
+
+    // Note that the following actually specifies size trigger for deleting
+    // the oldest SST file instead of specifying the size limit as its name
+    // might suggest.  As a result, we should trigger the file deletion when
+    // the size reaches `max_cf_size - write_buffer_size` in order to correctly
+    // maintain the storage size limit.
+    fifo_compact_options
+        .set_max_table_files_size((*max_cf_size).saturating_sub(FIFO_WRITE_BUFFER_SIZE));
+
+    options.set_compaction_style(DBCompactionStyle::Fifo);
+    options.set_fifo_compaction_options(&fifo_compact_options);
 
     options
 }
 
 fn get_db_options(access_type: &AccessType) -> Options {
     let mut options = Options::default();
+
+    // Create missing items to support a clean start
     options.create_if_missing(true);
     options.create_missing_column_families(true);
-    // A good value for this is the number of cores on the machine
+
+    // Per the docs, a good value for this is the number of cores on the machine
     options.increase_parallelism(num_cpus::get() as i32);
 
     let mut env = rocksdb::Env::new().unwrap();
-
     // While a compaction is ongoing, all the background threads
     // could be used by the compaction. This can stall writes which
     // need to flush the memtable. Add some high-priority background threads
@@ -1784,20 +1908,33 @@ fn get_db_options(access_type: &AccessType) -> Options {
 
     // Set max total wal size to 4G.
     options.set_max_total_wal_size(4 * 1024 * 1024 * 1024);
-    if matches!(access_type, AccessType::PrimaryOnlyForMaintenance) {
+
+    if should_disable_auto_compactions(access_type) {
         options.set_disable_auto_compactions(true);
     }
+
+    // Allow Rocks to open/keep open as many files as it needs for performance;
+    // however, this is also explicitly required for a secondary instance.
+    // See https://github.com/facebook/rocksdb/wiki/Secondary-instance
+    options.set_max_open_files(-1);
 
     options
 }
 
-fn excludes_from_compaction(cf_name: &str) -> bool {
-    // list of Column Families must be excluded from compaction:
+// Returns whether automatic compactions should be disabled based upon access type
+fn should_disable_auto_compactions(access_type: &AccessType) -> bool {
+    // Disable automatic compactions in maintenance mode to prevent accidental cleaning
+    matches!(access_type, AccessType::PrimaryOnlyForMaintenance)
+}
+
+// Returns whether the supplied column (name) should be excluded from compaction
+fn should_exclude_from_compaction(cf_name: &str) -> bool {
+    // List of column families to be excluded from compactions
     let no_compaction_cfs: HashSet<&'static str> = vec![
         columns::TransactionStatusIndex::NAME,
         columns::ProgramCosts::NAME,
         columns::TransactionMemos::NAME,
-	columns::EvmTransactionReceipts::NAME,
+        columns::EvmTransactionReceipts::NAME,
         columns::EvmHeaderIndexByHash::NAME,
     ]
     .into_iter()
@@ -1836,7 +1973,7 @@ pub mod tests {
             CompactionDecision::Keep
         ));
 
-        // mutating oledst_slot doen't affect existing compaction filters...
+        // mutating oldest_slot doesn't affect existing compaction filters...
         oldest_slot.set(1);
         assert!(matches!(
             compaction_filter.filter(dummy_level, &key, &dummy_value),
@@ -1859,13 +1996,29 @@ pub mod tests {
     }
 
     #[test]
-    fn test_excludes_from_compaction() {
-        // currently there are two CFs are excluded from compaction:
-        assert!(excludes_from_compaction(
+    fn test_cf_names_and_descriptors_equal_length() {
+        let options = BlockstoreOptions::default();
+        let oldest_slot = OldestSlot::default();
+        let oldest_block_num = OldestBlockNum::default();
+        // The names and descriptors don't need to be in the same order for our use cases;
+        // however, there should be the same number of each. For example, adding a new column
+        // should update both lists.
+        assert_eq!(
+            Rocks::columns().len(),
+            Rocks::cf_descriptors(&options, &oldest_slot, &oldest_block_num).len()
+        );
+    }
+
+    #[test]
+    fn test_should_exclude_from_compaction() {
+        // currently there are three CFs excluded from compaction:
+        assert!(should_exclude_from_compaction(
             columns::TransactionStatusIndex::NAME
         ));
-        assert!(excludes_from_compaction(columns::ProgramCosts::NAME));
-        assert!(excludes_from_compaction(columns::TransactionMemos::NAME));
-        assert!(!excludes_from_compaction("something else"));
+        assert!(should_exclude_from_compaction(columns::ProgramCosts::NAME));
+        assert!(should_exclude_from_compaction(
+            columns::TransactionMemos::NAME
+        ));
+        assert!(!should_exclude_from_compaction("something else"));
     }
 }

@@ -12,16 +12,17 @@ use {
         },
         rpc_health::*,
     },
-    evm_rpc::*,
+    crossbeam_channel::unbounded,
     jsonrpc_core::{futures::prelude::*, MetaIoHandler},
     jsonrpc_http_server::{
         hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
         RequestMiddlewareAction, ServerBuilder,
     },
     regex::Regex,
-    solana_client::rpc_cache::LargestAccountsCache,
+    solana_client::{connection_cache::ConnectionCache, rpc_cache::LargestAccountsCache},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
+        bigtable_upload::ConfirmedBlockUploadConfig,
         bigtable_upload_service::BigTableUploadService, blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
     },
@@ -38,13 +39,13 @@ use {
         native_token::lamports_to_sol, pubkey::Pubkey,
     },
     solana_send_transaction_service::send_transaction_service::{self, SendTransactionService},
+    solana_storage_bigtable::CredentialType,
     std::{
         collections::HashSet,
         net::SocketAddr,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            mpsc::channel,
             Arc, Mutex, RwLock,
         },
         thread::{self, Builder, JoinHandle},
@@ -52,14 +53,15 @@ use {
     tokio_util::codec::{BytesCodec, FramedRead},
 };
 
-const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
-const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
+use evm_rpc::{GeneralERPC, TraceERPC, ChainERPC};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{
     filter::{LevelFilter, Targets},
     layer::{Layer, SubscriberExt},
 };
 
+const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
+const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
 const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
 
 pub struct JsonRpcService {
@@ -163,6 +165,20 @@ impl RpcRequestMiddleware {
         tokio::fs::File::open(path).await
     }
 
+    fn find_snapshot_file<P>(&self, stem: P) -> PathBuf
+    where
+        P: AsRef<Path>,
+    {
+        let root = &self.snapshot_config.as_ref().unwrap().snapshot_archives_dir;
+        let local_path = root.join(&stem);
+        if local_path.exists() {
+            local_path
+        } else {
+            // remote snapshot archive path
+            snapshot_utils::build_snapshot_archives_remote_dir(root).join(stem)
+        }
+    }
+
     fn process_file_get(&self, path: &str) -> RequestMiddlewareAction {
         let stem = path.split_at(1).1; // Drop leading '/' from path
         let filename = {
@@ -173,11 +189,7 @@ impl RpcRequestMiddleware {
                 }
                 _ => {
                     inc_new_counter_info!("rpc-get_snapshot", 1);
-                    self.snapshot_config
-                        .as_ref()
-                        .unwrap()
-                        .snapshot_archives_dir
-                        .join(stem)
+                    self.find_snapshot_file(stem)
                 }
             }
         };
@@ -333,6 +345,7 @@ impl JsonRpcService {
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
+        connection_cache: Arc<ConnectionCache>,
         current_transaction_status_slot: Arc<AtomicU64>,
         evm_state_archive: Option<evm_state::Storage>,
         jaeger_collector_url: Option<String>,
@@ -374,24 +387,35 @@ impl JsonRpcService {
         let exit_bigtable_ledger_upload_service = Arc::new(AtomicBool::new(false));
 
         let (bigtable_ledger_storage, _bigtable_ledger_upload_service) =
-            if config.enable_bigtable_ledger_storage || config.enable_bigtable_ledger_upload {
+            if let Some(RpcBigtableConfig {
+                enable_bigtable_ledger_upload,
+                ref bigtable_instance_name,
+                ref bigtable_app_profile_id,
+                timeout,
+            }) = config.rpc_bigtable_config
+            {
+                let bigtable_config = solana_storage_bigtable::LedgerStorageConfig {
+                    read_only: !enable_bigtable_ledger_upload,
+                    timeout,
+                    credential_type: CredentialType::Filepath(None),
+                    instance_name: bigtable_instance_name.clone(),
+                    app_profile_id: bigtable_app_profile_id.clone(),
+                };
                 runtime
-                    .block_on(solana_storage_bigtable::LedgerStorage::new(
-                        !config.enable_bigtable_ledger_upload,
-                        config.rpc_bigtable_timeout,
-                        None,
+                    .block_on(solana_storage_bigtable::LedgerStorage::new_with_config(
+                        bigtable_config,
                     ))
                     .map(|bigtable_ledger_storage| {
                         info!("BigTable ledger storage initialized");
 
-                        let bigtable_ledger_upload_service = if config.enable_bigtable_ledger_upload
-                        {
-                            Some(Arc::new(BigTableUploadService::new(
+                        let bigtable_ledger_upload_service = if enable_bigtable_ledger_upload {
+                            Some(Arc::new(BigTableUploadService::new_with_config(
                                 runtime.clone(),
                                 bigtable_ledger_storage.clone(),
                                 blockstore.clone(),
                                 block_commitment_cache.clone(),
                                 current_transaction_status_slot.clone(),
+                                ConfirmedBlockUploadConfig::default(),
                                 exit_bigtable_ledger_upload_service.clone(),
                             )))
                         } else {
@@ -439,6 +463,7 @@ impl JsonRpcService {
             &bank_forks,
             leader_info,
             receiver,
+            &connection_cache,
             send_transaction_service_config,
         ));
         if let Some(collector) = jaeger_collector_url {
@@ -474,7 +499,7 @@ impl JsonRpcService {
 
         let ledger_path = ledger_path.to_path_buf();
 
-        let (close_handle_sender, close_handle_receiver) = channel();
+        let (close_handle_sender, close_handle_receiver) = unbounded();
         let thread_hdl = Builder::new()
             .name("velas-jsonrpc".to_string())
             .spawn(move || {
@@ -566,6 +591,7 @@ mod tests {
     use {
         super::*,
         crate::rpc::create_validator_exit,
+        solana_client::rpc_config::RpcContextConfig,
         solana_gossip::{
             contact_info::ContactInfo,
             crds::GossipRoute,
@@ -615,6 +641,7 @@ mod tests {
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let connection_cache = Arc::new(ConnectionCache::default());
         let mut rpc_service = JsonRpcService::new(
             rpc_addr,
             JsonRpcConfig::default(),
@@ -637,6 +664,7 @@ mod tests {
             },
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
+            connection_cache,
             Arc::new(AtomicU64::default()),
             None,
             None,
@@ -648,7 +676,8 @@ mod tests {
             10_000,
             rpc_service
                 .request_processor
-                .get_balance(&mint_keypair.pubkey(), None)
+                .get_balance(&mint_keypair.pubkey(), RpcContextConfig::default())
+                .unwrap()
                 .value
         );
         rpc_service.exit();

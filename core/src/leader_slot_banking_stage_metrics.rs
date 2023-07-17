@@ -88,6 +88,13 @@ struct LeaderSlotPacketCountMetrics {
     // queue becaus they were retryable errors
     retryable_errored_transaction_count: u64,
 
+    // The size of the unprocessed buffer at the end of the slot
+    end_of_slot_unprocessed_buffer_len: u64,
+
+    // total number of transactions that were rebuffered into the queue after not being
+    // executed on a previous pass
+    retryable_packets_count: u64,
+
     // total number of transactions that attempted execution due to some fatal error (too old, duplicate signature, etc.)
     // AND were dropped from the buffered queue
     nonretryable_errored_transactions_count: u64,
@@ -96,6 +103,16 @@ struct LeaderSlotPacketCountMetrics {
     // the block ended. Some of these may be already counted in `nonretryable_errored_transactions_count` if they
     // then hit the age limit after failing to be comitted.
     executed_transactions_failed_commit_count: u64,
+
+    // total number of transactions that were excluded from the block because there were concurrent write locks active.
+    // These transactions are added back to the buffered queue and are already counted in
+    // `self.retrayble_errored_transaction_count`.
+    account_lock_throttled_transactions_count: u64,
+
+    // total number of transactions that were excluded from the block because their write
+    // account locks exceed the limit.
+    // These transactions are not retried.
+    account_locks_limit_throttled_transactions_count: u64,
 
     // total number of transactions that were excluded from the block because they were too expensive
     // according to the cost model. These transactions are added back to the buffered queue and are
@@ -115,8 +132,9 @@ struct LeaderSlotPacketCountMetrics {
     // total number of valid unprocessed packets in the buffer that were removed after being forwarded
     cleared_from_buffer_after_forward_count: u64,
 
-    // total number of packets removed at the end of the slot due to being too old, duplicate, etc.
-    end_of_slot_filtered_invalid_count: u64,
+    // total number of forwardable batches that were attempted for forwarding. A forwardable batch
+    // is defined in `ForwardPacketBatchesByAccounts` in `forward_packet_batches_by_accounts.rs`
+    forwardable_batches_count: u64,
 }
 
 impl LeaderSlotPacketCountMetrics {
@@ -175,6 +193,11 @@ impl LeaderSlotPacketCountMetrics {
                 i64
             ),
             (
+                "retryable_packets_count",
+                self.retryable_packets_count as i64,
+                i64
+            ),
+            (
                 "nonretryable_errored_transactions_count",
                 self.nonretryable_errored_transactions_count as i64,
                 i64
@@ -182,6 +205,16 @@ impl LeaderSlotPacketCountMetrics {
             (
                 "executed_transactions_failed_commit_count",
                 self.executed_transactions_failed_commit_count as i64,
+                i64
+            ),
+            (
+                "account_lock_throttled_transactions_count",
+                self.account_lock_throttled_transactions_count as i64,
+                i64
+            ),
+            (
+                "account_locks_limit_throttled_transactions_count",
+                self.account_locks_limit_throttled_transactions_count as i64,
                 i64
             ),
             (
@@ -210,8 +243,13 @@ impl LeaderSlotPacketCountMetrics {
                 i64
             ),
             (
-                "end_of_slot_filtered_invalid_count",
-                self.end_of_slot_filtered_invalid_count as i64,
+                "forwardable_batches_count",
+                self.forwardable_batches_count as i64,
+                i64
+            ),
+            (
+                "end_of_slot_unprocessed_buffer_len",
+                self.end_of_slot_unprocessed_buffer_len as i64,
                 i64
             ),
         );
@@ -344,6 +382,7 @@ impl LeaderSlotMetricsTracker {
                 cost_model_throttled_transactions_count,
                 cost_model_us,
                 ref execute_and_commit_timings,
+                error_counters,
                 ..
             } = process_transactions_summary;
 
@@ -394,6 +433,20 @@ impl LeaderSlotMetricsTracker {
             saturating_add_assign!(
                 leader_slot_metrics
                     .packet_count_metrics
+                    .account_lock_throttled_transactions_count,
+                error_counters.account_in_use as u64
+            );
+
+            saturating_add_assign!(
+                leader_slot_metrics
+                    .packet_count_metrics
+                    .account_locks_limit_throttled_transactions_count,
+                error_counters.too_many_account_locks as u64
+            );
+
+            saturating_add_assign!(
+                leader_slot_metrics
+                    .packet_count_metrics
                     .cost_model_throttled_transactions_count,
                 *cost_model_throttled_transactions_count as u64
             );
@@ -403,7 +456,7 @@ impl LeaderSlotMetricsTracker {
                     .timing_metrics
                     .process_packets_timings
                     .cost_model_us,
-                *cost_model_us
+                *cost_model_us as u64
             );
 
             leader_slot_metrics
@@ -524,14 +577,33 @@ impl LeaderSlotMetricsTracker {
         }
     }
 
-    pub(crate) fn increment_end_of_slot_filtered_invalid_count(&mut self, count: u64) {
+    pub(crate) fn increment_forwardable_batches_count(&mut self, count: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
             saturating_add_assign!(
                 leader_slot_metrics
                     .packet_count_metrics
-                    .end_of_slot_filtered_invalid_count,
+                    .forwardable_batches_count,
                 count
             );
+        }
+    }
+
+    pub(crate) fn increment_retryable_packets_count(&mut self, count: u64) {
+        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
+            saturating_add_assign!(
+                leader_slot_metrics
+                    .packet_count_metrics
+                    .retryable_packets_count,
+                count
+            );
+        }
+    }
+
+    pub(crate) fn set_end_of_slot_unprocessed_buffer_len(&mut self, len: u64) {
+        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
+            leader_slot_metrics
+                .packet_count_metrics
+                .end_of_slot_unprocessed_buffer_len = len;
         }
     }
 
@@ -568,6 +640,13 @@ impl LeaderSlotMetricsTracker {
                     .outer_loop_timings
                     .receive_and_buffer_packets_us,
                 us
+            );
+            saturating_add_assign!(
+                leader_slot_metrics
+                    .timing_metrics
+                    .outer_loop_timings
+                    .receive_and_buffer_packets_invoked_count,
+                1
             );
         }
     }
@@ -622,18 +701,6 @@ impl LeaderSlotMetricsTracker {
     }
 
     // Consuming buffered packets timing metrics
-    pub(crate) fn increment_end_of_slot_filtering_us(&mut self, us: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .consume_buffered_packets_timings
-                    .end_of_slot_filtering_us,
-                us
-            );
-        }
-    }
-
     pub(crate) fn increment_consume_buffered_packets_poh_recorder_lock_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
             saturating_add_assign!(

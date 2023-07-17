@@ -19,9 +19,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 solana-client = { path = "../../client" }
 solana-evm-loader-program = { path = "../programs/evm_loader" }
-solana-sdk = { path = "../../sdk", version = "=1.9.29" }
-solana-storage-bigtable = { path = "../../storage-bigtable", version = "=1.9.29" }
-solana-transaction-status = { path = "../../transaction-status", version = "=1.9.29" }
+solana-sdk = { path = "../../sdk", version = "=1.10.41" }
+solana-storage-bigtable = { path = "../../storage-bigtable", version = "=1.10.41" }
+solana-transaction-status = { path = "../../transaction-status", version = "=1.10.41" }
 tokio = { version = "1", features = ["full"] }
 thiserror = "1"
 

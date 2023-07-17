@@ -3,7 +3,7 @@ use {
         accounts::Accounts,
         accounts_db::{
             AccountShrinkThreshold, AccountStorageEntry, AccountsDb, AccountsDbConfig, AppendVecId,
-            BankHashInfo, IndexGenerationInfo, SnapshotStorage,
+            AtomicAppendVecId, BankHashInfo, IndexGenerationInfo, SnapshotStorage,
         },
         accounts_index::AccountSecondaryIndexes,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -43,7 +43,7 @@ use {
         },
         thread::Builder,
     },
-    storage::SerializableStorage,
+    storage::{SerializableStorage, SerializedAppendVecId},
 };
 
 mod newer;
@@ -159,6 +159,14 @@ trait TypeContext<'a> {
     fn serialize_bank_and_storage<S: serde::ser::Serializer>(
         serializer: S,
         serializable_bank: &SerializableBankAndStorage<'a, Self>,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        Self: std::marker::Sized;
+
+    #[cfg(test)]
+    fn serialize_bank_and_storage_without_extra_fields<S: serde::ser::Serializer>(
+        serializer: S,
+        serializable_bank: &SerializableBankAndStorageNoExtra<'a, Self>,
     ) -> std::result::Result<S::Ok, S::Error>
     where
         Self: std::marker::Sized;
@@ -308,6 +316,33 @@ where
     })
 }
 
+#[cfg(test)]
+pub(crate) fn bank_to_stream_no_extra_fields<W>(
+    stream: &mut BufWriter<W>,
+    bank: &Bank,
+    snapshot_storages: &[SnapshotStorage],
+) -> Result<(), Error>
+where
+    W: Write,
+{
+    macro_rules! INTO {
+        ($style:ident) => {
+            bincode::serialize_into(
+                stream,
+                &SerializableBankAndStorageNoExtra::<$style::Context> {
+                    bank,
+                    snapshot_storages,
+                    phantom: std::marker::PhantomData::default(),
+                },
+            )
+        };
+    }
+    INTO!(newer).map_err(|err| {
+        warn!("bankrc_to_stream error: {:?}", err);
+        err
+    })
+}
+
 struct SerializableBankAndStorage<'a, C> {
     bank: &'a Bank,
     snapshot_storages: &'a [SnapshotStorage],
@@ -320,6 +355,39 @@ impl<'a, C: TypeContext<'a>> Serialize for SerializableBankAndStorage<'a, C> {
         S: serde::ser::Serializer,
     {
         C::serialize_bank_and_storage(serializer, self)
+    }
+}
+
+#[cfg(test)]
+struct SerializableBankAndStorageNoExtra<'a, C> {
+    bank: &'a Bank,
+    snapshot_storages: &'a [SnapshotStorage],
+    phantom: std::marker::PhantomData<C>,
+}
+
+#[cfg(test)]
+impl<'a, C: TypeContext<'a>> Serialize for SerializableBankAndStorageNoExtra<'a, C> {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        C::serialize_bank_and_storage_without_extra_fields(serializer, self)
+    }
+}
+
+#[cfg(test)]
+impl<'a, C> From<SerializableBankAndStorageNoExtra<'a, C>> for SerializableBankAndStorage<'a, C> {
+    fn from(s: SerializableBankAndStorageNoExtra<'a, C>) -> SerializableBankAndStorage<'a, C> {
+        let SerializableBankAndStorageNoExtra {
+            bank,
+            snapshot_storages,
+            phantom,
+        } = s;
+        SerializableBankAndStorage {
+            bank,
+            snapshot_storages,
+            phantom,
+        }
     }
 }
 
@@ -499,13 +567,12 @@ fn reconstruct_single_storage<E>(
     slot: &Slot,
     append_vec_path: &Path,
     storage_entry: &E,
-    remapped_append_vec_id: Option<AppendVecId>,
+    append_vec_id: AppendVecId,
     new_slot_storage: &mut HashMap<AppendVecId, Arc<AccountStorageEntry>>,
 ) -> Result<(), Error>
 where
     E: SerializableStorage,
 {
-    let append_vec_id = remapped_append_vec_id.unwrap_or_else(|| storage_entry.id());
     let (accounts, num_accounts) =
         AppendVec::new_from_file(append_vec_path, storage_entry.current_len())?;
     let u_storage_entry =
@@ -567,7 +634,7 @@ where
 
     // Remap the deserialized AppendVec paths to point to correct local paths
     let num_collisions = AtomicUsize::new(0);
-    let next_append_vec_id = AtomicUsize::new(0);
+    let next_append_vec_id = AtomicAppendVecId::new(0);
     let mut measure_remap = Measure::start("remap");
     let mut storage = (0..snapshot_storages.len())
         .into_par_iter()
@@ -599,7 +666,7 @@ where
                     //    rename the file to this new path.
                     //    **DEVELOPER NOTE:**  Keep this check last so that it can short-circuit if
                     //    possible.
-                    if storage_entry.id() == remapped_append_vec_id
+                    if storage_entry.id() == remapped_append_vec_id as SerializedAppendVecId
                         || std::fs::metadata(&remapped_append_vec_path).is_err()
                     {
                         break (remapped_append_vec_id, remapped_append_vec_path);
@@ -610,7 +677,7 @@ where
                     num_collisions.fetch_add(1, Ordering::Relaxed);
                 };
                 // Only rename the file if the new ID is actually different from the original.
-                if storage_entry.id() != remapped_append_vec_id {
+                if storage_entry.id() != remapped_append_vec_id as SerializedAppendVecId {
                     std::fs::rename(append_vec_path, &remapped_append_vec_path)?;
                 }
 
@@ -618,7 +685,7 @@ where
                     slot,
                     &remapped_append_vec_path,
                     storage_entry,
-                    Some(remapped_append_vec_id),
+                    remapped_append_vec_id,
                     &mut new_slot_storage,
                 )?;
             }
@@ -650,7 +717,7 @@ where
         .write()
         .unwrap()
         .insert(snapshot_slot, snapshot_bank_hash_info);
-    accounts_db.storage.0.extend(
+    accounts_db.storage.map.extend(
         storage
             .into_iter()
             .map(|(slot, slot_storage_entry)| (slot, Arc::new(RwLock::new(slot_storage_entry)))),
@@ -665,11 +732,11 @@ where
     let mut measure_notify = Measure::start("accounts_notify");
 
     let accounts_db = Arc::new(accounts_db);
-    let accoounts_db_clone = accounts_db.clone();
+    let accounts_db_clone = accounts_db.clone();
     let handle = Builder::new()
         .name("notify_account_restore_from_snapshot".to_string())
         .spawn(move || {
-            accoounts_db_clone.notify_account_restore_from_snapshot();
+            accounts_db_clone.notify_account_restore_from_snapshot();
         })
         .unwrap();
 

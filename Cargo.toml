@@ -10,20 +10,20 @@ members = [
     "bench-streamer",
     "bench-tps",
     "bench-tps-evm",
-    "bucket_map",
     "bloom",
+    "bucket_map",
     "clap-utils",
+    "cli",
     "cli-config",
     "cli-output",
     "client",
+    "client-test",
     "core",
     "dos",
     "download-utils",
     "entry",
     "faucet",
     "frozen-abi",
-    "perf",
-    "validator",
     "genesis",
     "genesis-utils",
     "geyser-plugin-interface",
@@ -34,17 +34,16 @@ members = [
     "ledger",
     "ledger-tool",
     "local-cluster",
-    "logger",
     "log-analyzer",
+    "logger",
+    "measure",
     "merkle-root-bench",
     "merkle-tree",
-    "storage-bigtable",
-    "storage-proto",
-    "streamer",
-    "measure",
     "metrics",
     "net-shaper",
+    "net-utils",
     "notifier",
+    "perf",
     "evm-utils/evm-block-recovery",
     "evm-utils/evm-bridge",
     "evm-utils/programs/evm_loader",
@@ -55,16 +54,22 @@ members = [
     "program-test",
     "programs/address-lookup-table",
     "programs/address-lookup-table-tests",
-    "programs/ed25519-tests",
     "programs/bpf_loader",
     "programs/bpf_loader/gen-syscall-list",
     "programs/compute-budget",
     "programs/config",
+    "programs/ed25519-tests",
     "programs/sleep",
     "programs/stake",
     "programs/vote",
+    "programs/zk-token-proof",
+    "rayon-threadlimit",
+    "rbpf-cli",
     "remote-wallet",
+    "replica-lib",
+    "replica-node",
     "rpc",
+    "rpc-test",
     "runtime",
     "runtime/store-tool",
     "sdk",
@@ -72,34 +77,27 @@ members = [
     "sdk/cargo-test-bpf",
     "send-transaction-service",
     "stake-accounts",
+    "storage-bigtable",
+    "storage-proto",
+    "streamer",
     "sys-tuner",
+    "test-validator",
     "tokens",
     "transaction-dos",
     "transaction-status",
     "upload-perf",
-    "net-utils",
+    "validator",
     "version",
-    "cli",
-    "rayon-threadlimit",
     "watchtower",
-    "repair-check",
-    "replica-node",
-    "replica-lib",
-    "test-validator",
-    "rpc-test",
-    "client-test",
-    "rbpf-cli"
+    "zk-token-sdk",
 ]
 
 exclude = [
     "programs/bpf",
 ]
 
-# TODO: Remove once the "simd-accel" feature from the reed-solomon-erasure
-# dependency is supported on Apple M1. v2 of the feature resolver is needed to
-# specify arch-specific features.
+# This prevents a Travis CI error when building for Windows.
 resolver = "2"
-
 [profile.dev]
 split-debuginfo = "unpacked"
 
@@ -107,7 +105,8 @@ split-debuginfo = "unpacked"
 primitive-types = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.11-with-borsh-support-nostd" }
 rlp = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.11-with-borsh-support-nostd" }
 uint = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.11-with-borsh-support-nostd" }
-spl-memo = { git = "https://github.com/velas/spl-memo", branch = "solana-1.9.29" }
+spl-memo = { path = "../spl-memo" } # , git = "https://github.com/velas/spl-memo", branch = "solana-1.9.29"
 # TODO: remove once jsonrpc-core-client 18.0.1 is released
 jsonrpc-core = { git = "https://github.com/paritytech/jsonrpc", rev = "e724d087defc0af35bc1c844049d1611588d8466", version = "18.0.0" }
 jsonrpc-core-client = { git = "https://github.com/paritytech/jsonrpc", rev = "e724d087defc0af35bc1c844049d1611588d8466", version = "18.0.0" }
+triedb = { path = "../triedb" }

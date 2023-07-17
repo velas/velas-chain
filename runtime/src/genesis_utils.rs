@@ -1,6 +1,6 @@
 use {
     solana_sdk::{
-    account::{Account, AccountSharedData},
+        account::{Account, AccountSharedData},
         feature::{self, Feature},
         feature_set::FeatureSet,
         fee_calculator::FeeRateGovernor,
@@ -22,6 +22,29 @@ const VALIDATOR_LAMPORTS: u64 = 42;
 // fun fact: rustc is very close to make this const fn.
 pub fn bootstrap_validator_stake_lamports() -> u64 {
     StakeState::get_rent_exempt_reserve(&Rent::default())
+}
+
+// Number of lamports automatically used for genesis accounts
+pub const fn genesis_sysvar_and_builtin_program_lamports() -> u64 {
+    const NUM_BUILTIN_PROGRAMS: u64 = 4;
+    const NUM_EVM_PROGRAMS: u64 = 2;
+    const FEES_SYSVAR_MIN_BALANCE: u64 = 946_560;
+    const STAKE_HISTORY_MIN_BALANCE: u64 = 114_979_200;
+    const CLOCK_SYSVAR_MIN_BALANCE: u64 = 1_169_280;
+    const RENT_SYSVAR_MIN_BALANCE: u64 = 1_009_200;
+    const EPOCH_SCHEDULE_SYSVAR_MIN_BALANCE: u64 = 1_120_560;
+    const RECENT_BLOCKHASHES_SYSVAR_MIN_BALANCE: u64 = 42706560;
+    const RECENT_EVM_BLOCKHASHES_SYSVAR_MIN_BALANCE: u64 = 57_907_200;
+
+    FEES_SYSVAR_MIN_BALANCE
+        + STAKE_HISTORY_MIN_BALANCE
+        + CLOCK_SYSVAR_MIN_BALANCE
+        + RENT_SYSVAR_MIN_BALANCE
+        + EPOCH_SCHEDULE_SYSVAR_MIN_BALANCE
+        + RECENT_BLOCKHASHES_SYSVAR_MIN_BALANCE
+        + NUM_BUILTIN_PROGRAMS
+        + NUM_EVM_PROGRAMS
+        + RECENT_EVM_BLOCKHASHES_SYSVAR_MIN_BALANCE
 }
 
 pub struct ValidatorVoteKeypairs {
@@ -182,16 +205,20 @@ pub fn activate_velas_features_on_prod(genesis_config: &mut GenesisConfig) {
 pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive {
-        genesis_config.accounts.insert(
-            feature_id,
-            Account::from(feature::create_account(
-                &Feature {
-                    activated_at: Some(0),
-                },
-                std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1),
-            )),
-        );
+        activate_feature(genesis_config, feature_id);
     }
+}
+
+pub fn activate_feature(genesis_config: &mut GenesisConfig, feature_id: Pubkey) {
+    genesis_config.accounts.insert(
+        feature_id,
+        Account::from(feature::create_account(
+            &Feature {
+                activated_at: Some(0),
+            },
+            std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1),
+        )),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

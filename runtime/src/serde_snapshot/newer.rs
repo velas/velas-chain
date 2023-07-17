@@ -203,6 +203,32 @@ impl<'a> TypeContext<'a> for Context {
     {
         let ancestors = HashMap::from(&serializable_bank.bank.ancestors);
         let fields = serializable_bank.bank.get_fields_to_serialize(&ancestors);
+        let lamports_per_signature = fields.fee_rate_governor.lamports_per_signature;
+        (
+            SerializableVersionedBank::from(fields),
+            SerializableAccountsDb::<'a, Self> {
+                accounts_db: &*serializable_bank.bank.rc.accounts.accounts_db,
+                slot: serializable_bank.bank.rc.slot,
+                account_storage_entries: serializable_bank.snapshot_storages,
+                phantom: std::marker::PhantomData::default(),
+            },
+            // Field that isn't part SerializableVersionedBank, but that we want to
+            // be able to store / read back on restart
+            lamports_per_signature,
+        )
+            .serialize(serializer)
+    }
+
+    #[cfg(test)]
+    fn serialize_bank_and_storage_without_extra_fields<S: serde::ser::Serializer>(
+        serializer: S,
+        serializable_bank: &SerializableBankAndStorageNoExtra<'a, Self>,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        Self: std::marker::Sized,
+    {
+        let ancestors = HashMap::from(&serializable_bank.bank.ancestors);
+        let fields = serializable_bank.bank.get_fields_to_serialize(&ancestors);
         (
             SerializableVersionedBank::from(fields),
             SerializableAccountsDb::<'a, Self> {
@@ -252,7 +278,21 @@ impl<'a> TypeContext<'a> for Context {
             .clone();
 
         let mut serialize_account_storage_timer = Measure::start("serialize_account_storage_ms");
-        let result = (entries, version, slot, hash).serialize(serializer);
+
+        // Serialize historical_roots and historical_roots_with_hash default data; defaults are
+        // used for the sake of being able to backport serializing lamports_per_signature while
+        // keeping snapshots produced by v1.10 and master/v1.11 clients compatible
+        let historical_roots = Vec::<Slot>::default();
+        let historical_roots_with_hash = Vec::<(Slot, Hash)>::default();
+        let result = (
+            entries,
+            version,
+            slot,
+            hash,
+            historical_roots,
+            historical_roots_with_hash,
+        )
+            .serialize(serializer);
         serialize_account_storage_timer.stop();
         datapoint_info!(
             "serialize_account_storage_ms",
@@ -268,8 +308,18 @@ impl<'a> TypeContext<'a> for Context {
     where
         R: Read,
     {
-        let bank_fields = deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?.into();
+        let mut bank_fields: BankFieldsToDeserialize =
+            deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?.into();
         let accounts_db_fields = Self::deserialize_accounts_db_fields(stream)?;
+        // Process extra fields
+        let lamports_per_signature: u64 = match deserialize_from(stream) {
+            Err(err) if err.to_string() == "io error: unexpected end of file" => Ok(0),
+            Err(err) if err.to_string() == "io error: failed to fill whole buffer" => Ok(0),
+            result => result,
+        }?;
+        bank_fields.fee_rate_governor = bank_fields
+            .fee_rate_governor
+            .clone_with_lamports_per_signature(lamports_per_signature);
         Ok((bank_fields, accounts_db_fields))
     }
 

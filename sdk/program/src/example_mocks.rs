@@ -24,10 +24,10 @@ pub mod solana_client {
     }
 
     pub mod rpc_client {
-        use super::super::solana_sdk::{
-            hash::Hash, signature::Signature, transaction::Transaction,
+        use super::{
+            super::solana_sdk::{hash::Hash, signature::Signature, transaction::Transaction},
+            client_error::Result as ClientResult,
         };
-        use super::client_error::Result as ClientResult;
 
         pub struct RpcClient;
 
@@ -63,12 +63,7 @@ pub mod solana_client {
 /// This lets examples in solana-program appear to be written as client
 /// programs.
 pub mod solana_sdk {
-    pub use crate::hash;
-    pub use crate::instruction;
-    pub use crate::message;
-    pub use crate::nonce;
-    pub use crate::pubkey;
-    pub use crate::system_instruction;
+    pub use crate::{hash, instruction, message, nonce, pubkey, system_instruction};
 
     pub mod signature {
         use crate::pubkey::Pubkey;
@@ -103,11 +98,10 @@ pub mod solana_sdk {
     }
 
     pub mod transaction {
-        use super::signers::Signers;
-        use crate::hash::Hash;
-        use crate::instruction::Instruction;
-        use crate::message::Message;
-        use crate::pubkey::Pubkey;
+        use {
+            super::signers::Signers,
+            crate::{hash::Hash, instruction::Instruction, message::Message, pubkey::Pubkey},
+        };
 
         pub struct Transaction {
             pub message: Message,
@@ -134,6 +128,16 @@ pub mod solana_sdk {
                 Transaction {
                     message: Message::new(&[], None),
                 }
+            }
+
+            pub fn new_signed_with_payer<T: Signers>(
+                instructions: &[Instruction],
+                payer: Option<&Pubkey>,
+                signing_keypairs: &T,
+                recent_blockhash: Hash,
+            ) -> Self {
+                let message = Message::new(instructions, payer);
+                Self::new(signing_keypairs, message, recent_blockhash)
             }
 
             pub fn sign<T: Signers>(&mut self, _keypairs: &T, _recent_blockhash: Hash) {}

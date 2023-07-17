@@ -17,7 +17,7 @@ use {
     },
     solana_entry::poh::compute_hashes_per_tick,
     solana_genesis::Base64Account,
-    solana_ledger::{blockstore::create_new_ledger, blockstore_db::AccessType},
+    solana_ledger::{blockstore::create_new_ledger, blockstore_db::LedgerColumnOptions},
     solana_runtime::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
@@ -25,8 +25,9 @@ use {
         epoch_schedule::EpochSchedule,
         fee_calculator::FeeRateGovernor,
         genesis_config::{
-            self, evm_genesis::{OpenEthereumAccountExtractor, GethAccountExtractor}, ClusterType,
-            GenesisConfig,
+            self,
+            evm_genesis::{GethAccountExtractor, OpenEthereumAccountExtractor},
+            ClusterType, GenesisConfig,
         },
         inflation::Inflation,
         native_token::sol_to_lamports,
@@ -573,13 +574,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let evm_state_json = match (evm_state_file, evm_state_format) {
         (Some(path), Some(format)) if format == "geth" => {
             EvmStateJson::Geth(std::path::Path::new(path))
-        },
+        }
         (Some(path), Some(format)) if format == "open-ethereum" => {
             EvmStateJson::OpenEthereum(std::path::Path::new(path))
-        },
-        (None, _) => {
-            EvmStateJson::None
-        },
+        }
+        (None, _) => EvmStateJson::None,
         _ => {
             panic!("`evm-state-format` argument value must be `open-ethereum` or `geth`")
         }
@@ -672,34 +671,24 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         EvmStateJson::OpenEthereum(path) => {
             info!("Calculating evm state lamports");
             let dump_extractor = OpenEthereumAccountExtractor::open_dump(path)
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "Unable to open dump at path: `{}`",
-                        path.display()
-                    )
-                });
-    
+                .unwrap_or_else(|_| panic!("Unable to open dump at path: `{}`", path.display()));
+
             for pair in dump_extractor {
                 evm_state_balance += pair.unwrap().account.balance;
             }
-        },
+        }
         EvmStateJson::Geth(path) => {
             info!("Calculating evm state lamports");
             let dump_extractor = GethAccountExtractor::open_dump(path)
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "Unable to open dump at path: `{}`",
-                        path.display()
-                    )
-                });
-    
+                .unwrap_or_else(|_| panic!("Unable to open dump at path: `{}`", path.display()));
+
             for pair in dump_extractor {
                 evm_state_balance += pair.unwrap().account.balance;
             }
-        },
+        }
         EvmStateJson::None => {
             info!("No evm state file provided");
-        },
+        }
     }
 
     let (mut evm_state_lamports, change) =
@@ -770,7 +759,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         evm_state_json,
         &genesis_config,
         max_genesis_archive_unpacked_size,
-        AccessType::PrimaryOnly,
+        LedgerColumnOptions::default(),
     )?;
 
     println!("{}", genesis_config);

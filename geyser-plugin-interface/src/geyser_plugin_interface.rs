@@ -9,9 +9,7 @@ use {
     thiserror::Error,
 };
 
-impl Eq for ReplicaAccountInfo<'_> {}
-
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// Information about an account being updated
 pub struct ReplicaAccountInfo<'a> {
     /// The Pubkey for the account
@@ -109,10 +107,14 @@ pub enum GeyserPluginError {
     /// Any custom error defined by the plugin.
     #[error("Plugin-defined custom error. Error message: ({0})")]
     Custom(Box<dyn error::Error + Send + Sync>),
+
+    /// Error when updating the transaction.
+    #[error("Error updating transaction. Error message: ({msg})")]
+    TransactionUpdateError { msg: String },
 }
 
 /// The current status of a slot
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotStatus {
     /// The highest slot of the heaviest fork processed by the node. Ledger state at this slot is
     /// not derived from a confirmed or finalized block, but if multiple forks are present, is from

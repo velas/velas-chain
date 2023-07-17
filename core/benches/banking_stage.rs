@@ -4,14 +4,16 @@
 extern crate test;
 
 use {
-    crossbeam_channel::unbounded,
+    crossbeam_channel::{unbounded, Receiver},
     log::*,
     rand::{thread_rng, Rng},
     rayon::prelude::*,
+    solana_client::connection_cache::ConnectionCache,
     solana_core::{
         banking_stage::{BankingStage, BankingStageStats},
         leader_slot_banking_stage_metrics::LeaderSlotMetricsTracker,
         qos_service::QosService,
+        unprocessed_packet_batches::*,
     },
     solana_entry::entry::{next_hash, Entry},
     solana_gossip::cluster_info::{ClusterInfo, Node},
@@ -23,7 +25,7 @@ use {
     },
     solana_perf::{packet::to_packet_batches, test_tx::test_tx},
     solana_poh::poh_recorder::{create_test_recorder, WorkingBankEntry},
-    solana_runtime::{bank::Bank, cost_model::CostModel},
+    solana_runtime::{bank::Bank, bank_forks::BankForks, cost_model::CostModel},
     solana_sdk::{
         genesis_config::GenesisConfig,
         hash::Hash,
@@ -36,8 +38,7 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     std::{
-        collections::VecDeque,
-        sync::{atomic::Ordering, mpsc::Receiver, Arc, RwLock},
+        sync::{atomic::Ordering, Arc, RwLock},
         time::{Duration, Instant},
     },
     test::Bencher,
@@ -76,14 +77,11 @@ fn bench_consume_buffered(bencher: &mut Bencher) {
         let recorder = poh_recorder.lock().unwrap().recorder();
 
         let tx = test_tx();
-        let len = 4096;
-        let chunk_size = 1024;
-        let batches = to_packet_batches(&vec![tx; len], chunk_size);
-        let mut packet_batches = VecDeque::new();
-        for batch in batches {
-            let batch_len = batch.packets.len();
-            packet_batches.push_back((batch, vec![0usize; batch_len], false));
-        }
+        let transactions = vec![tx; 4194304];
+        let batches = transactions_to_deserialized_packets(&transactions).unwrap();
+        let batches_len = batches.len();
+        let mut transaction_buffer =
+            UnprocessedPacketBatches::from_iter(batches.into_iter(), 2 * batches_len);
         let (s, _r) = unbounded();
         // This tests the performance of buffering packets.
         // If the packet buffers are copied, performance will be poor.
@@ -92,14 +90,15 @@ fn bench_consume_buffered(bencher: &mut Bencher) {
                 &my_pubkey,
                 std::u128::MAX,
                 &poh_recorder,
-                &mut packet_batches,
+                &mut transaction_buffer,
                 None,
                 &s,
                 None::<Box<dyn Fn()>>,
                 &BankingStageStats::default(),
                 &recorder,
-                &Arc::new(QosService::new(Arc::new(RwLock::new(CostModel::default())))),
+                &QosService::new(Arc::new(RwLock::new(CostModel::default())), 1),
                 &mut LeaderSlotMetricsTracker::new(0),
+                10,
             );
         });
 
@@ -170,8 +169,9 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
     let (vote_sender, vote_receiver) = unbounded();
     let mut bank = Bank::new_for_benches(&genesis_config);
     // Allow arbitrary transaction processing time for the purposes of this bench
-    bank.ns_per_slot = std::u128::MAX;
-    let bank = Arc::new(Bank::new_for_benches(&genesis_config));
+    bank.ns_per_slot = u128::MAX;
+    let bank_forks = Arc::new(RwLock::new(BankForks::new(bank)));
+    let bank = bank_forks.read().unwrap().get(0).unwrap();
 
     // set cost tracker limits to MAX so it will not filter out TXs
     bank.write_cost_tracker()
@@ -232,6 +232,8 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
             None,
             s,
             Arc::new(RwLock::new(CostModel::default())),
+            Arc::new(ConnectionCache::default()),
+            bank_forks,
         );
         poh_recorder.lock().unwrap().set_bank(&bank);
 
@@ -256,9 +258,9 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
                     v.len(),
                 );
                 for xv in v {
-                    sent += xv.packets.len();
+                    sent += xv.len();
                 }
-                verified_sender.send(v.to_vec()).unwrap();
+                verified_sender.send((v.to_vec(), None)).unwrap();
             }
             check_txs(&signal_receiver2, txes / CHUNKS);
 

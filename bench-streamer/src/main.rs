@@ -1,7 +1,8 @@
 #![allow(clippy::integer_arithmetic)]
 
 use {
-    clap::{crate_description, crate_name, App, Arg},
+    clap::{crate_description, crate_name, value_t, App, Arg},
+    crossbeam_channel::unbounded,
     solana_streamer::{
         packet::{Packet, PacketBatch, PacketBatchRecycler, PACKET_DATA_SIZE},
         streamer::{receiver, PacketBatchReceiver, StreamerReceiveStats},
@@ -11,7 +12,6 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
-            mpsc::channel,
             Arc,
         },
         thread::{sleep, spawn, JoinHandle, Result},
@@ -21,11 +21,12 @@ use {
 
 fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<()> {
     let send = UdpSocket::bind("0.0.0.0:0").unwrap();
-    let mut packet_batch = PacketBatch::default();
-    packet_batch.packets.resize(10, Packet::default());
-    for w in packet_batch.packets.iter_mut() {
+    let batch_size = 10;
+    let mut packet_batch = PacketBatch::with_capacity(batch_size);
+    packet_batch.resize(batch_size, Packet::default());
+    for w in packet_batch.iter_mut() {
         w.meta.size = PACKET_DATA_SIZE;
-        w.meta.set_addr(addr);
+        w.meta.set_socket_addr(addr);
     }
     let packet_batch = Arc::new(packet_batch);
     spawn(move || loop {
@@ -33,10 +34,11 @@ fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<()> {
             return;
         }
         let mut num = 0;
-        for p in &packet_batch.packets {
-            let a = p.meta.addr();
+        for p in packet_batch.iter() {
+            let a = p.meta.socket_addr();
             assert!(p.meta.size <= PACKET_DATA_SIZE);
-            send.send_to(&p.data[..p.meta.size], a).unwrap();
+            let data = p.data(..).unwrap_or_default();
+            send.send_to(data, &a).unwrap();
             num += 1;
         }
         assert_eq!(num, 10);
@@ -50,7 +52,7 @@ fn sink(exit: Arc<AtomicBool>, rvs: Arc<AtomicUsize>, r: PacketBatchReceiver) ->
         }
         let timer = Duration::new(1, 0);
         if let Ok(packet_batch) = r.recv_timeout(timer) {
-            rvs.fetch_add(packet_batch.packets.len(), Ordering::Relaxed);
+            rvs.fetch_add(packet_batch.len(), Ordering::Relaxed);
         }
     })
 }
@@ -68,13 +70,22 @@ fn main() -> Result<()> {
                 .takes_value(true)
                 .help("Use NUM receive sockets"),
         )
+        .arg(
+            Arg::with_name("num-producers")
+                .long("num-producers")
+                .value_name("NUM")
+                .takes_value(true)
+                .help("Use this many producer threads."),
+        )
         .get_matches();
 
     if let Some(n) = matches.value_of("num-recv-sockets") {
         num_sockets = max(num_sockets, n.to_string().parse().expect("integer"));
     }
 
-    let mut port = 0;
+    let num_producers = value_t!(matches, "num_producers", u64).unwrap_or(4);
+
+    let port = 0;
     let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
     let mut addr = SocketAddr::new(ip_addr, 0);
 
@@ -84,14 +95,18 @@ fn main() -> Result<()> {
     let mut read_threads = Vec::new();
     let recycler = PacketBatchRecycler::default();
     let stats = Arc::new(StreamerReceiveStats::new("bench-streamer-test"));
-    for _ in 0..num_sockets {
-        let read = solana_net_utils::bind_to(ip_addr, port, false).unwrap();
+    let (_port, read_sockets) = solana_net_utils::multi_bind_in_range(
+        ip_addr,
+        (port, port + num_sockets as u16),
+        num_sockets,
+    )
+    .unwrap();
+    let stats = Arc::new(StreamerReceiveStats::new("bench-streamer-test"));
+    for read in read_sockets {
         read.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
 
         addr = read.local_addr().unwrap();
-        port = addr.port();
-
-        let (s_reader, r_reader) = channel();
+        let (s_reader, r_reader) = unbounded();
         read_channels.push(r_reader);
         read_threads.push(receiver(
             Arc::new(read),
@@ -105,9 +120,10 @@ fn main() -> Result<()> {
         ));
     }
 
-    let t_producer1 = producer(&addr, exit.clone());
-    let t_producer2 = producer(&addr, exit.clone());
-    let t_producer3 = producer(&addr, exit.clone());
+    let producer_threads: Vec<_> = (0..num_producers)
+        .into_iter()
+        .map(|_| producer(&addr, exit.clone()))
+        .collect();
 
     let rvs = Arc::new(AtomicUsize::new(0));
     let sink_threads: Vec<_> = read_channels
@@ -127,9 +143,9 @@ fn main() -> Result<()> {
     for t_reader in read_threads {
         t_reader.join()?;
     }
-    t_producer1.join()?;
-    t_producer2.join()?;
-    t_producer3.join()?;
+    for t_producer in producer_threads {
+        t_producer.join()?;
+    }
     for t_sink in sink_threads {
         t_sink.join()?;
     }

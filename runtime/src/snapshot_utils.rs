@@ -19,6 +19,7 @@ use {
             AccountsPackage, AccountsPackageSendError, AccountsPackageSender, SnapshotPackage,
             SnapshotType,
         },
+        status_cache,
     },
     bincode::{config::Options, serialize_into},
     bzip2::bufread::BzDecoder,
@@ -28,7 +29,13 @@ use {
     rayon::prelude::*,
     regex::Regex,
     solana_measure::measure::Measure,
-    solana_sdk::{clock::Slot, genesis_config::GenesisConfig, hash::Hash, pubkey::Pubkey},
+    solana_sdk::{
+        clock::Slot,
+        genesis_config::GenesisConfig,
+        hash::Hash,
+        pubkey::Pubkey,
+        slot_history::{Check, SlotHistory},
+    },
     std::{
         cmp::{max, Ordering},
         collections::HashSet,
@@ -45,10 +52,11 @@ use {
     thiserror::Error,
 };
 
-pub const SNAPSHOT_STATUS_CACHE_FILE_NAME: &str = "status_cache";
-pub const TAR_SNAPSHOTS_DIR: &str = "snapshots";
-pub const TAR_ACCOUNTS_DIR: &str = "accounts";
-pub const TAR_VERSION_FILE: &str = "version";
+mod archive_format;
+pub use archive_format::*;
+
+pub const SNAPSHOT_STATUS_CACHE_FILENAME: &str = "status_cache";
+pub const SNAPSHOT_ARCHIVE_DOWNLOAD_DIR: &str = "remote";
 pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 25_000;
 pub const DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 100;
 pub const EVM_STATE_DIR: &str = "evm-state";
@@ -56,14 +64,13 @@ const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 const VERSION_STRING_V1_4_0: &str = "1.4.0";
 const VERSION_STRING_V1_5_0: &str = "1.5.0";
-const DEFAULT_SNAPSHOT_VERSION: SnapshotVersion = SnapshotVersion::V1_5_0;
 pub(crate) const TMP_BANK_SNAPSHOT_PREFIX: &str = "tmp-bank-snapshot-";
 pub const TMP_SNAPSHOT_ARCHIVE_PREFIX: &str = "tmp-snapshot-archive-";
 pub const MAX_BANK_SNAPSHOTS_TO_RETAIN: usize = 8; // Save some bank snapshots but not too many
 pub const DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN: usize = 2;
 pub const DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN: usize = 4;
-pub const FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^snapshot-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar|tar\.bz2|tar\.zst|tar\.gz)$";
-pub const INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^incremental-snapshot-(?P<base>[[:digit:]]+)-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar|tar\.bz2|tar\.zst|tar\.gz)$";
+pub const FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^snapshot-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar|tar\.bz2|tar\.zst|tar\.gz|tar\.lz4)$";
+pub const INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^incremental-snapshot-(?P<base>[[:digit:]]+)-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar|tar\.bz2|tar\.zst|tar\.gz|tar\.lz4)$";
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SnapshotVersion {
@@ -73,7 +80,7 @@ pub enum SnapshotVersion {
 
 impl Default for SnapshotVersion {
     fn default() -> Self {
-        DEFAULT_SNAPSHOT_VERSION
+        SnapshotVersion::V1_5_0
     }
 }
 
@@ -121,15 +128,6 @@ impl SnapshotVersion {
     fn maybe_from_string(version_string: &str) -> Option<SnapshotVersion> {
         version_string.parse::<Self>().ok()
     }
-}
-
-/// The different archive formats used for snapshots
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum ArchiveFormat {
-    TarBzip2,
-    TarGzip,
-    TarZstd,
-    Tar,
 }
 
 /// A slot and the path to its bank snapshot
@@ -221,16 +219,35 @@ pub enum SnapshotError {
 
     #[error("Error in processing EVM state bacnkup: {0}")]
     EvmStateError(anyhow::Error),
+
+    #[error("snapshot slot deltas are invalid: {0}")]
+    VerifySlotDeltas(#[from] VerifySlotDeltasError),
 }
 pub type Result<T> = std::result::Result<T, SnapshotError>;
 
-fn get_archive_ext(archive_format: ArchiveFormat) -> &'static str {
-    match archive_format {
-        ArchiveFormat::TarBzip2 => "tar.bz2",
-        ArchiveFormat::TarGzip => "tar.gz",
-        ArchiveFormat::TarZstd => "tar.zst",
-        ArchiveFormat::Tar => "tar",
-    }
+/// Errors that can happen in `verify_slot_deltas()`
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum VerifySlotDeltasError {
+    #[error("too many entries: {0} (max: {1})")]
+    TooManyEntries(usize, usize),
+
+    #[error("slot {0} is not a root")]
+    SlotIsNotRoot(Slot),
+
+    #[error("slot {0} is greater than bank slot {1}")]
+    SlotGreaterThanMaxRoot(Slot, Slot),
+
+    #[error("slot {0} has multiple entries")]
+    SlotHasMultipleEntries(Slot),
+
+    #[error("slot {0} was not found in slot history")]
+    SlotNotFoundInHistory(Slot),
+
+    #[error("slot {0} was in history but missing from slot deltas")]
+    SlotNotFoundInDeltas(Slot),
+
+    #[error("slot history is bad and cannot be used to verify slot deltas")]
+    BadSlotHistory,
 }
 
 /// If the validator halts in the middle of `archive_snapshot_package()`, the temporary staging
@@ -273,7 +290,7 @@ pub fn archive_snapshot_package(
         &snapshot_package
             .snapshot_links
             .path()
-            .join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
+            .join(SNAPSHOT_STATUS_CACHE_FILENAME),
     )?;
 
     let mut timer = Measure::start("snapshot_package-package_snapshots");
@@ -296,9 +313,9 @@ pub fn archive_snapshot_package(
         .tempdir_in(tar_dir)
         .map_err(|e| SnapshotError::IoWithSource(e, "create archive tempdir"))?;
 
-    let staging_accounts_dir = staging_dir.path().join(TAR_ACCOUNTS_DIR);
-    let staging_snapshots_dir = staging_dir.path().join(TAR_SNAPSHOTS_DIR);
-    let staging_version_file = staging_dir.path().join(TAR_VERSION_FILE);
+    let staging_accounts_dir = staging_dir.path().join("accounts");
+    let staging_snapshots_dir = staging_dir.path().join("snapshots");
+    let staging_version_file = staging_dir.path().join("version");
     fs::create_dir_all(&staging_accounts_dir)
         .map_err(|e| SnapshotError::IoWithSource(e, "create staging path"))?;
 
@@ -336,8 +353,6 @@ pub fn archive_snapshot_package(
             .map_err(|e| SnapshotError::IoWithSource(e, "write version file"))?;
     }
 
-    let file_ext = get_archive_ext(snapshot_package.archive_format());
-
     //
     // Create evm state backup
     //
@@ -366,7 +381,7 @@ pub fn archive_snapshot_package(
         "{}{}.{}",
         staging_dir_prefix,
         snapshot_package.slot(),
-        file_ext
+        snapshot_package.archive_format().extension(),
     ));
 
     {
@@ -374,13 +389,10 @@ pub fn archive_snapshot_package(
 
         let do_archive_files = |encoder: &mut dyn Write| -> Result<()> {
             let mut archive = tar::Builder::new(encoder);
-            for dir in [TAR_ACCOUNTS_DIR, TAR_SNAPSHOTS_DIR] {
+            for dir in ["snapshots", "accounts"] {
                 archive.append_dir_all(dir, staging_dir.as_ref().join(dir))?;
             }
-            archive.append_path_with_name(
-                staging_dir.as_ref().join(TAR_VERSION_FILE),
-                TAR_VERSION_FILE,
-            )?;
+            archive.append_path_with_name(staging_dir.as_ref().join("version"), "version")?;
             archive.into_inner()?;
             Ok(())
         };
@@ -402,6 +414,12 @@ pub fn archive_snapshot_package(
                 let mut encoder = zstd::stream::Encoder::new(archive_file, 0)?;
                 do_archive_files(&mut encoder)?;
                 encoder.finish()?;
+            }
+            ArchiveFormat::TarLz4 => {
+                let mut encoder = lz4::EncoderBuilder::new().level(1).build(archive_file)?;
+                do_archive_files(&mut encoder)?;
+                let (_output, result) = encoder.finish();
+                result?
             }
             ArchiveFormat::Tar => {
                 do_archive_files(&mut archive_file)?;
@@ -433,6 +451,11 @@ pub fn archive_snapshot_package(
     datapoint_info!(
         "archive-snapshot-package",
         ("slot", snapshot_package.slot(), i64),
+        (
+            "archive_format",
+            snapshot_package.archive_format().to_string(),
+            String
+        ),
         ("duration_ms", timer.as_ms(), i64),
         (
             if snapshot_package.snapshot_type.is_full_snapshot() {
@@ -860,7 +883,7 @@ pub fn bank_from_snapshot_archives(
     let mut measure_verify = Measure::start("verify");
     if !bank.verify_snapshot_bank(
         test_hash_calculation,
-        accounts_db_skip_shrink,
+        accounts_db_skip_shrink || !full_snapshot_archive_info.is_remote(),
         Some(full_snapshot_archive_info.slot()),
     ) && limit_load_slot_count_from_snapshot.is_none()
     {
@@ -904,7 +927,6 @@ pub fn bank_from_latest_snapshot_archives(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
 ) -> Result<(
     Bank,
-    BankFromArchiveTimings,
     FullSnapshotArchiveInfo,
     Option<IncrementalSnapshotArchiveInfo>,
 )> {
@@ -950,6 +972,30 @@ pub fn bank_from_latest_snapshot_archives(
         accounts_update_notifier,
     )?;
 
+    datapoint_info!(
+        "bank_from_snapshot_archives",
+        (
+            "full_snapshot_untar_us",
+            timings.full_snapshot_untar_us,
+            i64
+        ),
+        (
+            "incremental_snapshot_untar_us",
+            timings.incremental_snapshot_untar_us,
+            i64
+        ),
+        (
+            "rebuild_bank_from_snapshots_us",
+            timings.rebuild_bank_from_snapshots_us,
+            i64
+        ),
+        (
+            "verify_snapshot_bank_us",
+            timings.verify_snapshot_bank_us,
+            i64
+        ),
+    );
+
     verify_bank_against_expected_slot_hash(
         &bank,
         incremental_snapshot_archive_info.as_ref().map_or(
@@ -964,7 +1010,6 @@ pub fn bank_from_latest_snapshot_archives(
 
     Ok((
         bank,
-        timings,
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
     ))
@@ -1023,7 +1068,7 @@ where
     info!("{}", measure_untar);
 
     let unpacked_version_file = unpack_dir.path().join("version");
-    let snapshot_version = snapshot_version_from_file(unpacked_version_file)?;
+    let snapshot_version = snapshot_version_from_file(&unpacked_version_file)?;
 
     Ok(UnarchivedSnapshot {
         unpack_dir,
@@ -1088,19 +1133,25 @@ pub fn path_to_file_name_str(path: &Path) -> Result<&str> {
         .ok_or_else(|| SnapshotError::FileNameToStrError(path.to_path_buf()))
 }
 
+pub fn build_snapshot_archives_remote_dir(snapshot_archives_dir: impl AsRef<Path>) -> PathBuf {
+    snapshot_archives_dir
+        .as_ref()
+        .join(SNAPSHOT_ARCHIVE_DOWNLOAD_DIR)
+}
+
 /// Build the full snapshot archive path from its components: the snapshot archives directory, the
 /// snapshot slot, the accounts hash, and the archive format.
 pub fn build_full_snapshot_archive_path(
-    snapshot_archives_dir: PathBuf,
+    snapshot_archives_dir: impl AsRef<Path>,
     slot: Slot,
     hash: &Hash,
     archive_format: ArchiveFormat,
 ) -> PathBuf {
-    snapshot_archives_dir.join(format!(
+    snapshot_archives_dir.as_ref().join(format!(
         "snapshot-{}-{}.{}",
         slot,
         hash,
-        get_archive_ext(archive_format),
+        archive_format.extension(),
     ))
 }
 
@@ -1108,33 +1159,23 @@ pub fn build_full_snapshot_archive_path(
 /// directory, the snapshot base slot, the snapshot slot, the accounts hash, and the archive
 /// format.
 pub fn build_incremental_snapshot_archive_path(
-    snapshot_archives_dir: PathBuf,
+    snapshot_archives_dir: impl AsRef<Path>,
     base_slot: Slot,
     slot: Slot,
     hash: &Hash,
     archive_format: ArchiveFormat,
 ) -> PathBuf {
-    snapshot_archives_dir.join(format!(
+    snapshot_archives_dir.as_ref().join(format!(
         "incremental-snapshot-{}-{}-{}.{}",
         base_slot,
         slot,
         hash,
-        get_archive_ext(archive_format),
+        archive_format.extension(),
     ))
 }
 
-fn archive_format_from_str(archive_format: &str) -> Option<ArchiveFormat> {
-    match archive_format {
-        "tar.bz2" => Some(ArchiveFormat::TarBzip2),
-        "tar.gz" => Some(ArchiveFormat::TarGzip),
-        "tar.zst" => Some(ArchiveFormat::TarZstd),
-        "tar" => Some(ArchiveFormat::Tar),
-        _ => None,
-    }
-}
-
 /// Parse a full snapshot archive filename into its Slot, Hash, and Archive Format
-pub fn parse_full_snapshot_archive_filename(
+pub(crate) fn parse_full_snapshot_archive_filename(
     archive_filename: &str,
 ) -> Result<(Slot, Hash, ArchiveFormat)> {
     lazy_static! {
@@ -1153,7 +1194,8 @@ pub fn parse_full_snapshot_archive_filename(
                 .ok()?;
             let archive_format = captures
                 .name("ext")
-                .map(|x| archive_format_from_str(x.as_str()))??;
+                .map(|x| x.as_str().parse::<ArchiveFormat>())?
+                .ok()?;
 
             Some((slot, hash, archive_format))
         })
@@ -1165,7 +1207,7 @@ pub fn parse_full_snapshot_archive_filename(
 }
 
 /// Parse an incremental snapshot archive filename into its base Slot, actual Slot, Hash, and Archive Format
-pub fn parse_incremental_snapshot_archive_filename(
+pub(crate) fn parse_incremental_snapshot_archive_filename(
     archive_filename: &str,
 ) -> Result<(Slot, Slot, Hash, ArchiveFormat)> {
     lazy_static! {
@@ -1188,7 +1230,8 @@ pub fn parse_incremental_snapshot_archive_filename(
                 .ok()?;
             let archive_format = captures
                 .name("ext")
-                .map(|x| archive_format_from_str(x.as_str()))??;
+                .map(|x| x.as_str().parse::<ArchiveFormat>())?
+                .ok()?;
 
             Some((base_slot, slot, hash, archive_format))
         })
@@ -1199,54 +1242,58 @@ pub fn parse_incremental_snapshot_archive_filename(
     })
 }
 
-/// Get a list of the full snapshot archives in a directory
+/// Walk down the snapshot archive to collect snapshot archive file info
+fn get_snapshot_archives<T, F>(snapshot_archives_dir: &Path, cb: F) -> Vec<T>
+where
+    F: Fn(PathBuf) -> Result<T>,
+{
+    let walk_dir = |dir: &Path| -> Vec<T> {
+        let entry_iter = fs::read_dir(dir);
+        match entry_iter {
+            Err(err) => {
+                info!(
+                    "Unable to read snapshot archives directory: err: {}, path: {}",
+                    err,
+                    dir.display()
+                );
+                vec![]
+            }
+            Ok(entries) => entries
+                .filter_map(|entry| entry.map_or(None, |entry| cb(entry.path()).ok()))
+                .collect(),
+        }
+    };
+
+    let mut ret = walk_dir(snapshot_archives_dir);
+    let remote_dir = build_snapshot_archives_remote_dir(snapshot_archives_dir);
+    if remote_dir.exists() {
+        ret.append(&mut walk_dir(remote_dir.as_ref()));
+    }
+    ret
+}
+
+/// Get a list of the full snapshot archives from a directory
 pub fn get_full_snapshot_archives<P>(snapshot_archives_dir: P) -> Vec<FullSnapshotArchiveInfo>
 where
     P: AsRef<Path>,
 {
-    match fs::read_dir(&snapshot_archives_dir) {
-        Err(err) => {
-            info!(
-                "Unable to read snapshot archives directory: err: {}, path: {}",
-                err,
-                snapshot_archives_dir.as_ref().display()
-            );
-            vec![]
-        }
-        Ok(files) => files
-            .filter_map(|entry| {
-                entry.map_or(None, |entry| {
-                    FullSnapshotArchiveInfo::new_from_path(entry.path()).ok()
-                })
-            })
-            .collect(),
-    }
+    get_snapshot_archives(
+        snapshot_archives_dir.as_ref(),
+        FullSnapshotArchiveInfo::new_from_path,
+    )
 }
 
-/// Get a list of the incremental snapshot archives in a directory
+/// Get a list of the incremental snapshot archives from a directory
 pub fn get_incremental_snapshot_archives<P>(
     snapshot_archives_dir: P,
 ) -> Vec<IncrementalSnapshotArchiveInfo>
 where
     P: AsRef<Path>,
 {
-    match fs::read_dir(&snapshot_archives_dir) {
-        Err(err) => {
-            info!(
-                "Unable to read snapshot archives directory: err: {}, path: {}",
-                err,
-                snapshot_archives_dir.as_ref().display()
-            );
-            vec![]
-        }
-        Ok(files) => files
-            .filter_map(|entry| {
-                entry.map_or(None, |entry| {
-                    IncrementalSnapshotArchiveInfo::new_from_path(entry.path()).ok()
-                })
-            })
-            .collect(),
-    }
+    get_snapshot_archives(
+        snapshot_archives_dir.as_ref(),
+        IncrementalSnapshotArchiveInfo::new_from_path,
+    )
 }
 
 /// Get the highest slot of the full snapshot archives in a directory
@@ -1311,7 +1358,7 @@ pub fn purge_old_snapshot_archives<P>(
     P: AsRef<Path>,
 {
     info!(
-        "Purging old snapshot archives in {}, retaining {} full snapshots and {} incremental snapshots",
+        "Purging old snapshot archives in {}, retaining up to {} full snapshots and up to {} incremental snapshots",
         snapshot_archives_dir.as_ref().display(),
         maximum_full_snapshot_archives_to_retain,
         maximum_incremental_snapshot_archives_to_retain
@@ -1319,9 +1366,13 @@ pub fn purge_old_snapshot_archives<P>(
     let mut snapshot_archives = get_full_snapshot_archives(&snapshot_archives_dir);
     snapshot_archives.sort_unstable();
     snapshot_archives.reverse();
-    // Keep the oldest snapshot so we can always play the ledger from it.
-    snapshot_archives.pop();
-    let max_snaps = max(1, maximum_full_snapshot_archives_to_retain);
+    let max_snaps = max(1, maximum_full_snapshot_archives_to_retain); // Always keep at least one snapshot
+    trace!(
+        "There are {} full snapshot archives, purging {} of them",
+        snapshot_archives.len(),
+        snapshot_archives.len().saturating_sub(max_snaps)
+    );
+
     for old_archive in snapshot_archives.into_iter().skip(max_snaps) {
         trace!(
             "Purging old full snapshot archive: {}",
@@ -1361,8 +1412,20 @@ pub fn purge_old_snapshot_archives<P>(
             }
         });
 
-    incremental_snapshot_archives_with_same_base_slot.sort_unstable();
+    if !incremental_snapshot_archives_with_different_base_slot.is_empty() {
+        trace!(
+            "Purging {} incremental snapshot archives with a different base slot than the highest full snapshot slot",
+            incremental_snapshot_archives_with_different_base_slot.len()
+        );
+    }
+    trace!(
+        "There are {} incremental snapshots with same base slot as the highest full snapshot slot, purging {} of them",
+        incremental_snapshot_archives_with_same_base_slot.len(),
+        incremental_snapshot_archives_with_same_base_slot.len()
+            .saturating_sub(maximum_incremental_snapshot_archives_to_retain)
+    );
 
+    incremental_snapshot_archives_with_same_base_slot.sort_unstable();
     incremental_snapshot_archives_with_different_base_slot
         .iter()
         .chain(
@@ -1442,6 +1505,12 @@ fn untar_snapshot_in<P: AsRef<Path>>(
         )?,
         ArchiveFormat::TarZstd => unpack_snapshot_local(
             || zstd::stream::read::Decoder::new(BufReader::new(open_file())).unwrap(),
+            unpack_dir,
+            account_paths,
+            parallel_divisions,
+        )?,
+        ArchiveFormat::TarLz4 => unpack_snapshot_local(
+            || lz4::Decoder::new(BufReader::new(open_file())).unwrap(),
             unpack_dir,
             account_paths,
             parallel_divisions,
@@ -1577,7 +1646,7 @@ fn rebuild_bank_from_snapshots(
                     .as_path()
             },
         )
-        .join(SNAPSHOT_STATUS_CACHE_FILE_NAME);
+        .join(SNAPSHOT_STATUS_CACHE_FILENAME);
     let slot_deltas = deserialize_snapshot_data_file(&status_cache_path, |stream| {
         info!(
             "Rebuilding status cache from {}",
@@ -1591,10 +1660,112 @@ fn rebuild_bank_from_snapshots(
         Ok(slot_deltas)
     })?;
 
+    verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
+
     bank.src.append(&slot_deltas);
 
     info!("Loaded bank for slot: {}", bank.slot());
     Ok(bank)
+}
+
+/// Verify that the snapshot's slot deltas are not corrupt/invalid
+fn verify_slot_deltas(
+    slot_deltas: &[BankSlotDelta],
+    bank: &Bank,
+) -> std::result::Result<(), VerifySlotDeltasError> {
+    let info = verify_slot_deltas_structural(slot_deltas, bank.slot())?;
+    verify_slot_deltas_with_history(&info.slots, &bank.get_slot_history(), bank.slot())
+}
+
+/// Verify that the snapshot's slot deltas are not corrupt/invalid
+/// These checks are simple/structural
+fn verify_slot_deltas_structural(
+    slot_deltas: &[BankSlotDelta],
+    bank_slot: Slot,
+) -> std::result::Result<VerifySlotDeltasStructuralInfo, VerifySlotDeltasError> {
+    // there should not be more entries than that status cache's max
+    let num_entries = slot_deltas.len();
+    if num_entries > status_cache::MAX_CACHE_ENTRIES {
+        return Err(VerifySlotDeltasError::TooManyEntries(
+            num_entries,
+            status_cache::MAX_CACHE_ENTRIES,
+        ));
+    }
+
+    let mut slots_seen_so_far = HashSet::new();
+    for &(slot, is_root, ..) in slot_deltas {
+        // all entries should be roots
+        if !is_root {
+            return Err(VerifySlotDeltasError::SlotIsNotRoot(slot));
+        }
+
+        // all entries should be for slots less than or equal to the bank's slot
+        if slot > bank_slot {
+            return Err(VerifySlotDeltasError::SlotGreaterThanMaxRoot(
+                slot, bank_slot,
+            ));
+        }
+
+        // there should only be one entry per slot
+        let is_duplicate = !slots_seen_so_far.insert(slot);
+        if is_duplicate {
+            return Err(VerifySlotDeltasError::SlotHasMultipleEntries(slot));
+        }
+    }
+
+    // detect serious logic error for future careless changes. :)
+    assert_eq!(slots_seen_so_far.len(), slot_deltas.len());
+
+    Ok(VerifySlotDeltasStructuralInfo {
+        slots: slots_seen_so_far,
+    })
+}
+
+/// Computed information from `verify_slot_deltas_structural()`, that may be reused/useful later.
+#[derive(Debug, PartialEq, Eq)]
+struct VerifySlotDeltasStructuralInfo {
+    /// All the slots in the slot deltas
+    slots: HashSet<Slot>,
+}
+
+/// Verify that the snapshot's slot deltas are not corrupt/invalid
+/// These checks use the slot history for verification
+fn verify_slot_deltas_with_history(
+    slots_from_slot_deltas: &HashSet<Slot>,
+    slot_history: &SlotHistory,
+    bank_slot: Slot,
+) -> std::result::Result<(), VerifySlotDeltasError> {
+    // ensure the slot history is valid (as much as possible), since we're using it to verify the
+    // slot deltas
+    if slot_history.newest() != bank_slot {
+        return Err(VerifySlotDeltasError::BadSlotHistory);
+    }
+
+    // all slots in the slot deltas should be in the bank's slot history
+    let slot_missing_from_history = slots_from_slot_deltas
+        .iter()
+        .find(|slot| slot_history.check(**slot) != Check::Found);
+    if let Some(slot) = slot_missing_from_history {
+        return Err(VerifySlotDeltasError::SlotNotFoundInHistory(*slot));
+    }
+
+    // all slots in the history should be in the slot deltas (up to MAX_CACHE_ENTRIES)
+    // this ensures nothing was removed from the status cache
+    //
+    // go through the slot history and make sure there's an entry for each slot
+    // note: it's important to go highest-to-lowest since the status cache removes
+    // older entries first
+    // note: we already checked above that `bank_slot == slot_history.newest()`
+    let slot_missing_from_deltas = (slot_history.oldest()..=slot_history.newest())
+        .rev()
+        .filter(|slot| slot_history.check(*slot) == Check::Found)
+        .take(status_cache::MAX_CACHE_ENTRIES)
+        .find(|slot| !slots_from_slot_deltas.contains(slot));
+    if let Some(slot) = slot_missing_from_deltas {
+        return Err(VerifySlotDeltasError::SlotNotFoundInDeltas(slot));
+    }
+
+    Ok(())
 }
 
 fn get_snapshot_file_name(slot: Slot) -> String {
@@ -1611,10 +1782,10 @@ fn get_io_error(error: &str) -> SnapshotError {
 }
 
 mod cmp_dir {
+    use crate::snapshot_utils::EVM_STATE_DIR;
     use std::io::Read;
     use std::path::Path;
     use walkdir::{DirEntry, WalkDir};
-    use crate::snapshot_utils::EVM_STATE_DIR;
 
     pub fn is_different<A: AsRef<Path>, B: AsRef<Path>>(
         a_base: A,
@@ -1693,7 +1864,7 @@ pub fn verify_snapshot_archive<P, Q, R>(
     .unwrap();
 
     // Check snapshots are the same
-    let unpacked_snapshots = unpack_dir.join(TAR_SNAPSHOTS_DIR);
+    let unpacked_snapshots = unpack_dir.join("snapshots");
 
     // TODO: Make evm-state snapshot more consistent, currently rocksdb incremental backup is
     // not consistent (because it support more than one backup at a time)
@@ -1701,7 +1872,7 @@ pub fn verify_snapshot_archive<P, Q, R>(
     assert!(!cmp_dir::is_different(&snapshots_to_verify, unpacked_snapshots, true).unwrap());
 
     // Check the account entries are the same
-    let unpacked_accounts = unpack_dir.join(TAR_ACCOUNTS_DIR);
+    let unpacked_accounts = unpack_dir.join("accounts");
     assert!(!cmp_dir::is_different(&storages_to_verify, unpacked_accounts, false).unwrap());
 }
 
@@ -2027,12 +2198,13 @@ pub fn should_take_incremental_snapshot(
 mod tests {
     use {
         super::*,
-        crate::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        crate::{accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING, status_cache::Status},
         assert_matches::assert_matches,
         bincode::{deserialize_from, serialize_into},
         solana_sdk::{
             genesis_config::create_genesis_config,
             signature::{Keypair, Signer},
+            slot_history::SlotHistory,
             system_transaction,
             transaction::SanitizedTransaction,
         },
@@ -2174,7 +2346,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_version_from_file_under_limit() {
-        let file_content = format!("v{}", DEFAULT_SNAPSHOT_VERSION);
+        let file_content = SnapshotVersion::default().as_str();
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(file_content.as_bytes()).unwrap();
         let version_from_file = snapshot_version_from_file(file.path()).unwrap();
@@ -2215,6 +2387,14 @@ mod tests {
             parse_full_snapshot_archive_filename(&format!("snapshot-44-{}.tar", Hash::default()))
                 .unwrap(),
             (44, Hash::default(), ArchiveFormat::Tar)
+        );
+        assert_eq!(
+            parse_full_snapshot_archive_filename(&format!(
+                "snapshot-45-{}.tar.lz4",
+                Hash::default()
+            ))
+            .unwrap(),
+            (45, Hash::default(), ArchiveFormat::TarLz4)
         );
 
         assert!(parse_full_snapshot_archive_filename("invalid").is_err());
@@ -2283,6 +2463,14 @@ mod tests {
             ))
             .unwrap(),
             (44, 345, Hash::default(), ArchiveFormat::Tar)
+        );
+        assert_eq!(
+            parse_incremental_snapshot_archive_filename(&format!(
+                "incremental-snapshot-45-456-{}.tar.lz4",
+                Hash::default()
+            ))
+            .unwrap(),
+            (45, 456, Hash::default(), ArchiveFormat::TarLz4)
         );
 
         assert!(parse_incremental_snapshot_archive_filename("invalid").is_err());
@@ -2418,6 +2606,7 @@ mod tests {
         min_incremental_snapshot_slot: Slot,
         max_incremental_snapshot_slot: Slot,
     ) {
+        fs::create_dir_all(snapshot_archives_dir).unwrap();
         for full_snapshot_slot in min_full_snapshot_slot..max_full_snapshot_slot {
             for incremental_snapshot_slot in
                 min_incremental_snapshot_slot..max_incremental_snapshot_slot
@@ -2473,6 +2662,25 @@ mod tests {
     }
 
     #[test]
+    fn test_get_full_snapshot_archives_remote() {
+        solana_logger::setup();
+        let temp_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let min_slot = 123;
+        let max_slot = 456;
+        common_create_snapshot_archive_files(
+            &temp_snapshot_archives_dir.path().join("remote"),
+            min_slot,
+            max_slot,
+            0,
+            0,
+        );
+
+        let snapshot_archives = get_full_snapshot_archives(temp_snapshot_archives_dir);
+        assert_eq!(snapshot_archives.len() as Slot, max_slot - min_slot);
+        assert!(snapshot_archives.iter().all(|info| info.is_remote()));
+    }
+
+    #[test]
     fn test_get_incremental_snapshot_archives() {
         solana_logger::setup();
         let temp_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
@@ -2495,6 +2703,34 @@ mod tests {
             (max_full_snapshot_slot - min_full_snapshot_slot)
                 * (max_incremental_snapshot_slot - min_incremental_snapshot_slot)
         );
+    }
+
+    #[test]
+    fn test_get_incremental_snapshot_archives_remote() {
+        solana_logger::setup();
+        let temp_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let min_full_snapshot_slot = 12;
+        let max_full_snapshot_slot = 23;
+        let min_incremental_snapshot_slot = 34;
+        let max_incremental_snapshot_slot = 45;
+        common_create_snapshot_archive_files(
+            &temp_snapshot_archives_dir.path().join("remote"),
+            min_full_snapshot_slot,
+            max_full_snapshot_slot,
+            min_incremental_snapshot_slot,
+            max_incremental_snapshot_slot,
+        );
+
+        let incremental_snapshot_archives =
+            get_incremental_snapshot_archives(temp_snapshot_archives_dir);
+        assert_eq!(
+            incremental_snapshot_archives.len() as Slot,
+            (max_full_snapshot_slot - min_full_snapshot_slot)
+                * (max_incremental_snapshot_slot - min_incremental_snapshot_slot)
+        );
+        assert!(incremental_snapshot_archives
+            .iter()
+            .all(|info| info.is_remote()));
     }
 
     #[test]
@@ -2584,20 +2820,24 @@ mod tests {
         }
 
         for snap_name in expected_snapshots {
-            assert!(retained_snaps.contains(snap_name.as_str()));
+            assert!(
+                retained_snaps.contains(snap_name.as_str()),
+                "{} not found",
+                snap_name
+            );
         }
         assert!(retained_snaps.len() == expected_snapshots.len());
     }
 
     #[test]
     fn test_purge_old_full_snapshot_archives() {
-        // Create 3 snapshots, retaining 1,
-        // expecting the oldest 1 and the newest 1 are retained
         let snap1_name = format!("snapshot-1-{}.tar.zst", Hash::default());
         let snap2_name = format!("snapshot-3-{}.tar.zst", Hash::default());
         let snap3_name = format!("snapshot-50-{}.tar.zst", Hash::default());
         let snapshot_names = vec![&snap1_name, &snap2_name, &snap3_name];
-        let expected_snapshots = vec![&snap1_name, &snap3_name];
+
+        // expecting only the newest to be retained
+        let expected_snapshots = vec![&snap3_name];
         common_test_purge_old_snapshot_archives(
             &snapshot_names,
             1,
@@ -2605,7 +2845,7 @@ mod tests {
             &expected_snapshots,
         );
 
-        // retaining 0, the expectation is the same as for 1, as at least 1 newest is expected to be retained
+        // retaining 0, but minimum to retain is 1
         common_test_purge_old_snapshot_archives(
             &snapshot_names,
             0,
@@ -2613,11 +2853,20 @@ mod tests {
             &expected_snapshots,
         );
 
-        // retaining 2, all three should be retained
-        let expected_snapshots = vec![&snap1_name, &snap2_name, &snap3_name];
+        // retaining 2, expecting the 2 newest to be retained
+        let expected_snapshots = vec![&snap2_name, &snap3_name];
         common_test_purge_old_snapshot_archives(
             &snapshot_names,
             2,
+            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            &expected_snapshots,
+        );
+
+        // retaining 3, all three should be retained
+        let expected_snapshots = vec![&snap1_name, &snap2_name, &snap3_name];
+        common_test_purge_old_snapshot_archives(
+            &snapshot_names,
+            3,
             DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             &expected_snapshots,
         );
@@ -2657,18 +2906,9 @@ mod tests {
             );
             let mut full_snapshot_archives = get_full_snapshot_archives(&snapshot_archives_dir);
             full_snapshot_archives.sort_unstable();
-            assert_eq!(
-                full_snapshot_archives.len(),
-                maximum_snapshots_to_retain + 1
-            );
-            assert_eq!(
-                full_snapshot_archives.first().unwrap().slot(),
-                starting_slot
-            );
+            assert_eq!(full_snapshot_archives.len(), maximum_snapshots_to_retain,);
             assert_eq!(full_snapshot_archives.last().unwrap().slot(), slot);
-            for (i, full_snapshot_archive) in
-                full_snapshot_archives.iter().skip(1).rev().enumerate()
-            {
+            for (i, full_snapshot_archive) in full_snapshot_archives.iter().rev().enumerate() {
                 assert_eq!(full_snapshot_archive.slot(), slot - i as Slot);
             }
         }
@@ -2729,7 +2969,7 @@ mod tests {
             get_full_snapshot_archives(snapshot_archives_dir.path());
         assert_eq!(
             remaining_full_snapshot_archives.len(),
-            maximum_full_snapshot_archives_to_retain + 1,
+            maximum_full_snapshot_archives_to_retain,
         );
         remaining_full_snapshot_archives.sort_unstable();
 
@@ -3380,6 +3620,157 @@ mod tests {
                 .get_account_modified_slot(&key1.pubkey())
                 .is_none(),
             "Ensure Account1 has not been brought back from the dead"
+        );
+    }
+
+    #[test]
+    fn test_verify_slot_deltas_structural_good() {
+        // NOTE: slot deltas do not need to be sorted
+        let slot_deltas = vec![
+            (222, true, Status::default()),
+            (333, true, Status::default()),
+            (111, true, Status::default()),
+        ];
+
+        let bank_slot = 333;
+        let result = verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot);
+        assert_eq!(
+            result,
+            Ok(VerifySlotDeltasStructuralInfo {
+                slots: HashSet::from([111, 222, 333])
+            })
+        );
+    }
+
+    #[test]
+    fn test_verify_slot_deltas_structural_bad_too_many_entries() {
+        let bank_slot = status_cache::MAX_CACHE_ENTRIES as Slot + 1;
+        let slot_deltas: Vec<_> = (0..bank_slot)
+            .map(|slot| (slot, true, Status::default()))
+            .collect();
+
+        let result = verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot);
+        assert_eq!(
+            result,
+            Err(VerifySlotDeltasError::TooManyEntries(
+                status_cache::MAX_CACHE_ENTRIES + 1,
+                status_cache::MAX_CACHE_ENTRIES
+            )),
+        );
+    }
+
+    #[test]
+    fn test_verify_slot_deltas_structural_bad_slot_not_root() {
+        let slot_deltas = vec![
+            (111, true, Status::default()),
+            (222, false, Status::default()), // <-- slot is not a root
+            (333, true, Status::default()),
+        ];
+
+        let bank_slot = 333;
+        let result = verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot);
+        assert_eq!(result, Err(VerifySlotDeltasError::SlotIsNotRoot(222)));
+    }
+
+    #[test]
+    fn test_verify_slot_deltas_structural_bad_slot_greater_than_bank() {
+        let slot_deltas = vec![
+            (222, true, Status::default()),
+            (111, true, Status::default()),
+            (555, true, Status::default()), // <-- slot is greater than the bank slot
+        ];
+
+        let bank_slot = 444;
+        let result = verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot);
+        assert_eq!(
+            result,
+            Err(VerifySlotDeltasError::SlotGreaterThanMaxRoot(
+                555, bank_slot
+            )),
+        );
+    }
+
+    #[test]
+    fn test_verify_slot_deltas_structural_bad_slot_has_multiple_entries() {
+        let slot_deltas = vec![
+            (111, true, Status::default()),
+            (222, true, Status::default()),
+            (111, true, Status::default()), // <-- slot is a duplicate
+        ];
+
+        let bank_slot = 222;
+        let result = verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot);
+        assert_eq!(
+            result,
+            Err(VerifySlotDeltasError::SlotHasMultipleEntries(111)),
+        );
+    }
+
+    #[test]
+    fn test_verify_slot_deltas_with_history_good() {
+        let mut slots_from_slot_deltas = HashSet::default();
+        let mut slot_history = SlotHistory::default();
+        // note: slot history expects slots to be added in numeric order
+        for slot in [0, 111, 222, 333, 444] {
+            slots_from_slot_deltas.insert(slot);
+            slot_history.add(slot);
+        }
+
+        let bank_slot = 444;
+        let result =
+            verify_slot_deltas_with_history(&slots_from_slot_deltas, &slot_history, bank_slot);
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn test_verify_slot_deltas_with_history_bad_slot_history() {
+        let bank_slot = 444;
+        let result = verify_slot_deltas_with_history(
+            &HashSet::default(),
+            &SlotHistory::default(), // <-- will only have an entry for slot 0
+            bank_slot,
+        );
+        assert_eq!(result, Err(VerifySlotDeltasError::BadSlotHistory));
+    }
+
+    #[test]
+    fn test_verify_slot_deltas_with_history_bad_slot_not_in_history() {
+        let slots_from_slot_deltas = HashSet::from([
+            0, // slot history has slot 0 added by default
+            444, 222,
+        ]);
+        let mut slot_history = SlotHistory::default();
+        slot_history.add(444); // <-- slot history is missing slot 222
+
+        let bank_slot = 444;
+        let result =
+            verify_slot_deltas_with_history(&slots_from_slot_deltas, &slot_history, bank_slot);
+
+        assert_eq!(
+            result,
+            Err(VerifySlotDeltasError::SlotNotFoundInHistory(222)),
+        );
+    }
+
+    #[test]
+    fn test_verify_slot_deltas_with_history_bad_slot_not_in_deltas() {
+        let slots_from_slot_deltas = HashSet::from([
+            0, // slot history has slot 0 added by default
+            444, 222,
+            // <-- slot deltas is missing slot 333
+        ]);
+        let mut slot_history = SlotHistory::default();
+        slot_history.add(222);
+        slot_history.add(333);
+        slot_history.add(444);
+
+        let bank_slot = 444;
+        let result =
+            verify_slot_deltas_with_history(&slots_from_slot_deltas, &slot_history, bank_slot);
+
+        assert_eq!(
+            result,
+            Err(VerifySlotDeltasError::SlotNotFoundInDeltas(333)),
         );
     }
 }

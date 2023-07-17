@@ -8,7 +8,6 @@ use {
     },
     crossbeam_channel::Receiver,
     log::*,
-    serde_json,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::BankNotification,
         transaction_notifier_interface::TransactionNotifierLock,
@@ -155,11 +154,11 @@ impl GeyserPluginService {
             )));
         }
 
-        let result: serde_json::Value = match serde_json::from_str(&contents) {
+        let result: serde_json::Value = match json5::from_str(&contents) {
             Ok(value) => value,
             Err(err) => {
                 return Err(GeyserPluginServiceError::InvalidConfigFileFormat(format!(
-                    "The config file {:?} is not in a valid Json format, error: {:?}",
+                    "The config file {:?} is not in a valid Json5 format, error: {:?}",
                     geyser_plugin_config_file, err
                 )));
             }
@@ -168,13 +167,24 @@ impl GeyserPluginService {
         let libpath = result["libpath"]
             .as_str()
             .ok_or(GeyserPluginServiceError::LibPathNotSet)?;
+        let mut libpath = PathBuf::from(libpath);
+        if libpath.is_relative() {
+            let config_dir = geyser_plugin_config_file.parent().ok_or_else(|| {
+                GeyserPluginServiceError::CannotOpenConfigFile(format!(
+                    "Failed to resolve parent of {:?}",
+                    geyser_plugin_config_file,
+                ))
+            })?;
+            libpath = config_dir.join(libpath);
+        }
+
         let config_file = geyser_plugin_config_file
             .as_os_str()
             .to_str()
             .ok_or(GeyserPluginServiceError::InvalidPluginPath)?;
 
         unsafe {
-            let result = plugin_manager.load_plugin(libpath, config_file);
+            let result = plugin_manager.load_plugin(libpath.to_str().unwrap(), config_file);
             if let Err(err) = result {
                 let msg = format!(
                     "Failed to load the plugin library: {:?}, error: {:?}",

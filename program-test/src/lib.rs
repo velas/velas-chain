@@ -30,7 +30,6 @@ use {
         genesis_config::{ClusterType, GenesisConfig},
         hash::Hash,
         instruction::{Instruction, InstructionError},
-        message::{Message, SanitizedMessage},
         native_token::sol_to_lamports,
         poh_config::PohConfig,
         program_error::{ProgramError, ACCOUNT_BORROW_FAILED, UNSUPPORTED_SYSVAR},
@@ -42,7 +41,7 @@ use {
     solana_vote_program::vote_state::{VoteState, VoteStateVersions},
     std::{
         cell::RefCell,
-        collections::{HashMap, HashSet},
+        collections::HashSet,
         convert::TryFrom,
         fs::File,
         io::{self, Read},
@@ -100,61 +99,72 @@ pub fn builtin_process_instruction(
 ) -> Result<(), InstructionError> {
     set_invoke_context(invoke_context);
 
+    let transaction_context = &invoke_context.transaction_context;
+    let instruction_context = transaction_context.get_current_instruction_context()?;
+    let indices_in_instruction = instruction_context.get_number_of_program_accounts()
+        ..instruction_context.get_number_of_accounts();
+
     let log_collector = invoke_context.get_log_collector();
-    let program_id = invoke_context.get_caller()?;
+    let program_id = instruction_context.get_program_key(transaction_context)?;
     stable_log::program_invoke(
         &log_collector,
         program_id,
         invoke_context.get_stack_height(),
     );
 
-    // Skip the processor account
-    let keyed_accounts = &invoke_context.get_keyed_accounts()?[1..];
+    // Copy indices_in_instruction into a HashSet to ensure there are no duplicates
+    let deduplicated_indices: HashSet<usize> = indices_in_instruction.clone().collect();
 
-    // Copy all the accounts into a HashMap to ensure there are no duplicates
-    let mut accounts: HashMap<Pubkey, Account> = keyed_accounts
+    // Create copies of the accounts
+    let mut account_copies = deduplicated_indices
         .iter()
-        .map(|ka| {
-            (
-                *ka.unsigned_key(),
-                Account::from(ka.account.borrow().clone()),
-            )
+        .map(|index_in_instruction| {
+            let borrowed_account = instruction_context
+                .try_borrow_account(transaction_context, *index_in_instruction)?;
+            Ok((
+                *borrowed_account.get_key(),
+                *borrowed_account.get_owner(),
+                borrowed_account.get_lamports(),
+                borrowed_account.get_data().to_vec(),
+            ))
         })
-        .collect();
+        .collect::<Result<Vec<_>, InstructionError>>()?;
 
-    // Create shared references to each account's lamports/data/owner
-    let account_refs: HashMap<_, _> = accounts
+    // Create shared references to account_copies
+    let account_refs: Vec<_> = account_copies
         .iter_mut()
-        .map(|(key, account)| {
+        .map(|(key, owner, lamports, data)| {
             (
-                *key,
-                (
-                    Rc::new(RefCell::new(&mut account.lamports)),
-                    Rc::new(RefCell::new(&mut account.data[..])),
-                    &account.owner,
-                ),
+                key,
+                owner,
+                Rc::new(RefCell::new(lamports)),
+                Rc::new(RefCell::new(data.as_mut())),
             )
         })
         .collect();
 
     // Create AccountInfos
-    let account_infos: Vec<AccountInfo> = keyed_accounts
-        .iter()
-        .map(|keyed_account| {
-            let key = keyed_account.unsigned_key();
-            let (lamports, data, owner) = &account_refs[key];
-            AccountInfo {
+    let account_infos = indices_in_instruction
+        .map(|index_in_instruction| {
+            let account_copy_index = deduplicated_indices
+                .iter()
+                .position(|index| *index == index_in_instruction)
+                .unwrap();
+            let (key, owner, lamports, data) = &account_refs[account_copy_index];
+            let borrowed_account = instruction_context
+                .try_borrow_account(transaction_context, index_in_instruction)?;
+            Ok(AccountInfo {
                 key,
-                is_signer: keyed_account.signer_key().is_some(),
-                is_writable: keyed_account.is_writable(),
+                is_signer: borrowed_account.is_signer(),
+                is_writable: borrowed_account.is_writable(),
                 lamports: lamports.clone(),
                 data: data.clone(),
                 owner,
-                executable: keyed_account.executable().unwrap(),
-                rent_epoch: keyed_account.rent_epoch().unwrap(),
-            }
+                executable: borrowed_account.is_executable(),
+                rent_epoch: borrowed_account.get_rent_epoch(),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<AccountInfo>, InstructionError>>()?;
 
     // Execute the program
     process_instruction(program_id, &account_infos, input).map_err(|err| {
@@ -165,12 +175,16 @@ pub fn builtin_process_instruction(
     stable_log::program_success(&log_collector, program_id);
 
     // Commit AccountInfo changes back into KeyedAccounts
-    for keyed_account in keyed_accounts {
-        let mut account = keyed_account.account.borrow_mut();
-        let key = keyed_account.unsigned_key();
-        let (lamports, data, _owner) = &account_refs[key];
-        account.set_lamports(**lamports.borrow());
-        account.set_data(data.borrow().to_vec());
+    for (index_in_instruction, (_key, _owner, lamports, data)) in deduplicated_indices
+        .into_iter()
+        .zip(account_copies.into_iter())
+    {
+        let mut borrowed_account =
+            instruction_context.try_borrow_account(transaction_context, index_in_instruction)?;
+        if borrowed_account.is_writable() {
+            borrowed_account.set_lamports(lamports);
+            borrowed_account.set_data(&data);
+        }
     }
 
     Ok(())
@@ -234,132 +248,101 @@ impl solana_sdk::program_stubs::SyscallStubs for SyscallStubs {
         account_infos: &[AccountInfo],
         signers_seeds: &[&[&[u8]]],
     ) -> ProgramResult {
-        //
-        // TODO: Merge the business logic below with the BPF invoke path in
-        //       programs/bpf_loader/src/syscalls.rs
-        //
-
         let invoke_context = get_invoke_context();
         let log_collector = invoke_context.get_log_collector();
-
-        let caller = *invoke_context.get_caller().expect("get_caller");
-        let message = Message::new(&[instruction.clone()], None);
-        let program_id_index = message.instructions[0].program_id_index as usize;
-        let program_id = message.account_keys[program_id_index];
-        // TODO don't have the caller's keyed_accounts so can't validate writer or signer escalation or deescalation yet
-        let caller_privileges = message
-            .account_keys
-            .iter()
-            .enumerate()
-            .map(|(i, _)| message.is_writable(i))
-            .collect::<Vec<bool>>();
+        let transaction_context = &invoke_context.transaction_context;
+        let instruction_context = transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        let caller = instruction_context
+            .get_program_key(transaction_context)
+            .unwrap();
 
         stable_log::program_invoke(
             &log_collector,
-            &program_id,
+            &instruction.program_id,
             invoke_context.get_stack_height(),
         );
 
-        // Convert AccountInfos into Accounts
-        let mut account_indices = Vec::with_capacity(message.account_keys.len());
-        let mut accounts = Vec::with_capacity(message.account_keys.len());
-        for (i, account_key) in message.account_keys.iter().enumerate() {
-            let ((account_index, account), account_info) = invoke_context
-                .get_account(account_key)
-                .zip(
-                    account_infos
-                        .iter()
-                        .find(|account_info| account_info.unsigned_key() == account_key),
-                )
+        let signers = signers_seeds
+            .iter()
+            .map(|seeds| Pubkey::create_program_address(seeds, caller).unwrap())
+            .collect::<Vec<_>>();
+        let (instruction_accounts, program_indices) = invoke_context
+            .prepare_instruction(instruction, &signers)
+            .unwrap();
+
+        // Copy caller's account_info modifications into invoke_context accounts
+        let mut account_indices = Vec::with_capacity(instruction_accounts.len());
+        for instruction_account in instruction_accounts.iter() {
+            let account_key = invoke_context
+                .transaction_context
+                .get_key_of_account_at_index(instruction_account.index_in_transaction)
+                .unwrap();
+            let account_info_index = account_infos
+                .iter()
+                .position(|account_info| account_info.unsigned_key() == account_key)
                 .ok_or(InstructionError::MissingAccount)
                 .unwrap();
-            {
-                let mut account = account.borrow_mut();
-                account.copy_into_owner_from_slice(account_info.owner.as_ref());
-                account.set_data_from_slice(&account_info.try_borrow_data().unwrap());
-                account.set_lamports(account_info.lamports());
-                account.set_executable(account_info.executable);
-                account.set_rent_epoch(account_info.rent_epoch);
-            }
-            let account_info = if message.is_writable(i) {
-                Some(account_info)
-            } else {
-                None
-            };
-            account_indices.push(account_index);
-            accounts.push((account, account_info));
-        }
-        let (program_account_index, _program_account) =
-            invoke_context.get_account(&program_id).unwrap();
-        let program_indices = vec![program_account_index];
-
-        // Check Signers
-        for account_info in account_infos {
-            for instruction_account in &instruction.accounts {
-                if *account_info.unsigned_key() == instruction_account.pubkey
-                    && instruction_account.is_signer
-                    && !account_info.is_signer
-                {
-                    let mut program_signer = false;
-                    for seeds in signers_seeds.iter() {
-                        let signer = Pubkey::create_program_address(seeds, &caller).unwrap();
-                        if instruction_account.pubkey == signer {
-                            program_signer = true;
-                            break;
-                        }
-                    }
-                    assert!(
-                        program_signer,
-                        "Missing signer for {}",
-                        instruction_account.pubkey
-                    );
-                }
+            let account_info = &account_infos[account_info_index];
+            let mut account = invoke_context
+                .transaction_context
+                .get_account_at_index(instruction_account.index_in_transaction)
+                .unwrap()
+                .borrow_mut();
+            account.copy_into_owner_from_slice(account_info.owner.as_ref());
+            account.set_data_from_slice(&account_info.try_borrow_data().unwrap());
+            account.set_lamports(account_info.lamports());
+            account.set_executable(account_info.executable);
+            account.set_rent_epoch(account_info.rent_epoch);
+            if instruction_account.is_writable {
+                account_indices
+                    .push((instruction_account.index_in_transaction, account_info_index));
             }
         }
 
-        invoke_context.record_instruction(invoke_context.get_stack_height(), instruction.clone());
-
-        let message = SanitizedMessage::Legacy(message);
+        let mut compute_units_consumed = 0;
         invoke_context
             .process_instruction(
-                &message,
-                &message.instructions()[0],
+                &instruction.data,
+                &instruction_accounts,
                 &program_indices,
-                &account_indices,
-                &caller_privileges,
+                &mut compute_units_consumed,
                 &mut ExecuteTimings::default(),
             )
-            .result
             .map_err(|err| ProgramError::try_from(err).unwrap_or_else(|err| panic!("{}", err)))?;
 
-        // Copy writeable account modifications back into the caller's AccountInfos
-        for (account, account_info) in accounts.iter() {
-            if let Some(account_info) = account_info {
-                **account_info.try_borrow_mut_lamports().unwrap() = account.borrow().lamports();
-                let mut data = account_info.try_borrow_mut_data()?;
-                let account_borrow = account.borrow();
-                let new_data = account_borrow.data();
-                if account_info.owner != account.borrow().owner() {
-                    // TODO Figure out a better way to allow the System Program to set the account owner
-                    #[allow(clippy::transmute_ptr_to_ptr)]
-                    #[allow(mutable_transmutes)]
-                    let account_info_mut =
-                        unsafe { transmute::<&Pubkey, &mut Pubkey>(account_info.owner) };
-                    *account_info_mut = *account.borrow().owner();
-                }
-                // TODO: Figure out how to allow the System Program to resize the account data
-                assert!(
-                    data.len() == new_data.len(),
-                    "Account data resizing not supported yet: {} -> {}. \
-                        Consider making this test conditional on `#[cfg(feature = \"test-bpf\")]`",
-                    data.len(),
-                    new_data.len()
-                );
-                data.clone_from_slice(new_data);
+        // Copy invoke_context accounts modifications into caller's account_info
+        for (index_in_transaction, account_info_index) in account_indices.into_iter() {
+            let account = invoke_context
+                .transaction_context
+                .get_account_at_index(index_in_transaction)
+                .unwrap()
+                .borrow_mut();
+            let account_info = &account_infos[account_info_index];
+            **account_info.try_borrow_mut_lamports().unwrap() = account.lamports();
+            let mut data = account_info.try_borrow_mut_data()?;
+            let new_data = account.data();
+            if account_info.owner != account.owner() {
+                // TODO Figure out a better way to allow the System Program to set the account owner
+                #[allow(clippy::transmute_ptr_to_ptr)]
+                #[allow(mutable_transmutes)]
+                let account_info_mut =
+                    unsafe { transmute::<&Pubkey, &mut Pubkey>(account_info.owner) };
+                *account_info_mut = *account.owner();
             }
+            // TODO: Figure out how to allow the System Program to resize the account data
+            assert!(
+                data.len() == new_data.len(),
+                "Account data resizing not supported yet: {} -> {}. \
+                    Consider making this test conditional on `#[cfg(feature = \"test-bpf\")]`",
+                data.len(),
+                new_data.len()
+            );
+            data.clone_from_slice(new_data);
         }
 
-        stable_log::program_success(&log_collector, &program_id);
+        stable_log::program_success(&log_collector, &instruction.program_id);
         Ok(())
     }
 
@@ -387,14 +370,22 @@ impl solana_sdk::program_stubs::SyscallStubs for SyscallStubs {
     }
 
     fn sol_get_return_data(&self) -> Option<(Pubkey, Vec<u8>)> {
-        let (program_id, data) = &get_invoke_context().return_data;
+        let (program_id, data) = get_invoke_context().transaction_context.get_return_data();
         Some((*program_id, data.to_vec()))
     }
 
     fn sol_set_return_data(&self, data: &[u8]) {
         let invoke_context = get_invoke_context();
-        let caller = *invoke_context.get_caller().unwrap();
-        invoke_context.return_data = (caller, data.to_vec());
+        let transaction_context = &mut invoke_context.transaction_context;
+        let instruction_context = transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        let caller = *instruction_context
+            .get_program_key(transaction_context)
+            .unwrap();
+        transaction_context
+            .set_return_data(caller, data.to_vec())
+            .unwrap();
     }
 }
 
@@ -850,7 +841,7 @@ impl ProgramTest {
         bank.set_capitalization();
         if let Some(max_units) = self.compute_max_units {
             bank.set_compute_budget(Some(ComputeBudget {
-                max_units,
+                compute_unit_limit: max_units,
                 ..ComputeBudget::default()
             }));
         }
@@ -1126,26 +1117,33 @@ impl ProgramTestContext {
             bank.register_tick(&Hash::new_unique());
         }
 
-        // warp ahead to one slot *before* the desired slot because the warped
-        // bank is frozen
+        // Ensure that we are actually progressing forward
         let working_slot = bank.slot();
         if warp_slot <= working_slot {
             return Err(ProgramTestError::InvalidWarpSlot);
         }
 
+        // Warp ahead to one slot *before* the desired slot because the bank
+        // from Bank::warp_from_parent() is frozen. If the desired slot is one
+        // slot *after* the working_slot, no need to warp at all.
         let pre_warp_slot = warp_slot - 1;
-        let warp_bank = bank_forks.insert(Bank::warp_from_parent(
-            &bank,
-            &Pubkey::default(),
-            pre_warp_slot,
-        ));
+        let warp_bank = if pre_warp_slot == working_slot {
+            bank.freeze();
+            bank
+        } else {
+            bank_forks.insert(Bank::warp_from_parent(
+                &bank,
+                &Pubkey::default(),
+                pre_warp_slot,
+            ))
+        };
         bank_forks.set_root(
             pre_warp_slot,
             &solana_runtime::accounts_background_service::AbsRequestSender::default(),
             Some(pre_warp_slot),
         );
 
-        // warp bank is frozen, so go forward one slot from it
+        // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         bank_forks.insert(Bank::new_from_parent(
             &warp_bank,
             &Pubkey::default(),

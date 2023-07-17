@@ -1,4 +1,5 @@
 use log::*;
+use solana_client::connection_cache::ConnectionCache;
 use std::{process::exit, sync::Arc};
 
 use solana_bench_tps_evm::bench::generate_and_fund_keypairs;
@@ -34,13 +35,24 @@ fn main() {
     let keypair_count = *tx_count * keypair_multiplier;
 
     info!("Connecting to the cluster");
-    let nodes = discover_cluster(entrypoint_addr, *num_nodes, SocketAddrSpace::Unspecified).unwrap_or_else(|err| {
-        eprintln!("Failed to discover {} nodes: {:?}", num_nodes, err);
-        exit(1);
-    });
+    let nodes = discover_cluster(entrypoint_addr, *num_nodes, SocketAddrSpace::Unspecified)
+        .unwrap_or_else(|err| {
+            eprintln!("Failed to discover {} nodes: {:?}", num_nodes, err);
+            exit(1);
+        });
+    let use_quic = false;
+    let tpu_connection_pool_size = 4;
+    let connection_cache = match use_quic {
+        true => Arc::new(ConnectionCache::new(tpu_connection_pool_size)),
+        false => Arc::new(ConnectionCache::with_udp(tpu_connection_pool_size)),
+    };
 
     let client = if *multi_client {
-        let (client, num_clients) = get_multi_client(&nodes, &SocketAddrSpace::Unspecified);
+        let (client, num_clients) = get_multi_client(
+            &nodes,
+            &SocketAddrSpace::Unspecified,
+            connection_cache.clone(),
+        );
         if nodes.len() < num_clients {
             eprintln!(
                 "Error: Insufficient nodes discovered.  Expecting {} or more",
@@ -54,7 +66,11 @@ fn main() {
         let mut target_client = None;
         for node in nodes {
             if node.id == *target_node {
-                target_client = Some(Arc::new(get_client(&[node], &SocketAddrSpace::Unspecified)));
+                target_client = Some(Arc::new(get_client(
+                    &[node],
+                    &SocketAddrSpace::Unspecified,
+                    connection_cache.clone(),
+                )));
                 break;
             }
         }
@@ -63,7 +79,11 @@ fn main() {
             exit(1);
         })
     } else {
-        Arc::new(get_client(&nodes, &SocketAddrSpace::Unspecified))
+        Arc::new(get_client(
+            &nodes,
+            &SocketAddrSpace::Unspecified,
+            connection_cache.clone(),
+        ))
     };
 
     let keypairs = generate_and_fund_keypairs(

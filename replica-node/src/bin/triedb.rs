@@ -9,7 +9,10 @@ use std::{
     sync::Arc,
 };
 
-use solana_ledger::{blockstore::Blockstore, blockstore_db::AccessType};
+use solana_ledger::{
+    blockstore::Blockstore,
+    blockstore_db::{AccessType, BlockstoreOptions},
+};
 use solana_replica_lib::triedb::{
     error::{evm_height, RangeJsonInitError},
     server::{RunError, RunningService, StartError, UsedStorage},
@@ -205,13 +208,15 @@ fn init_solana_blockstore(
             let blockstore_path = blockstore_path.expect("blockstore_path is empty");
 
             let path = PathBuf::from_str(blockstore_path).unwrap();
-            let solana_blockstore = solana_ledger::blockstore::Blockstore::open_with_access_type(
-                path.as_ref(),
-                AccessType::TryPrimaryThenSecondary,
-                None,
-                false,
-            )
-            .map(Arc::new)?;
+            let options = BlockstoreOptions {
+                access_type: AccessType::TryPrimaryThenSecondary,
+                recovery_mode: None,
+                enforce_ulimit_nofile: false,
+                column_options: Default::default(),
+            };
+            let solana_blockstore =
+                solana_ledger::blockstore::Blockstore::open_with_options(path.as_ref(), options)
+                    .map(Arc::new)?;
             Some(solana_blockstore)
         }
         _ => None,

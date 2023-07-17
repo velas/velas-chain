@@ -2,6 +2,7 @@
 //!
 //! this account carries the Bank's most recent bank hashes for some N parents
 //!
+pub use crate::clock::Slot;
 use {
     crate::hash::Hash,
     std::{iter::FromIterator, ops::Deref},
@@ -9,7 +10,19 @@ use {
 
 pub const MAX_ENTRIES: usize = 512; // about 2.5 minutes to get your vote in
 
-pub use crate::clock::Slot;
+// This is to allow tests with custom slot hash expiry to avoid having to generate
+// 512 blocks for such tests.
+static mut NUM_ENTRIES: usize = MAX_ENTRIES;
+
+pub fn get_entries() -> usize {
+    unsafe { NUM_ENTRIES }
+}
+
+pub fn set_entries_for_tests_only(_entries: usize) {
+    unsafe {
+        NUM_ENTRIES = _entries;
+    }
+}
 
 pub type SlotHash = (Slot, Hash);
 
@@ -23,7 +36,7 @@ impl SlotHashes {
             Ok(index) => (self.0)[index] = (slot, hash),
             Err(index) => (self.0).insert(index, (slot, hash)),
         }
-        (self.0).truncate(MAX_ENTRIES);
+        (self.0).truncate(get_entries());
     }
     pub fn position(&self, slot: &Slot) -> Option<usize> {
         self.binary_search_by(|(probe, _)| slot.cmp(probe)).ok()

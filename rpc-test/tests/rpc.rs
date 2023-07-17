@@ -1,7 +1,13 @@
+use solana_client::rpc_config::RpcSendTransactionConfig;
+use solana_evm_loader_program::{free_ownership, transfer_native_to_evm_ixs};
+use solana_sdk::{commitment_config::CommitmentLevel, fee_calculator::FeeRateGovernor};
+
 use {
     bincode::serialize,
+    crossbeam_channel::unbounded,
     evm_rpc::{BlockId, Hex, RPCLogFilter, RPCTransaction},
     evm_state::TransactionInReceipt,
+    futures_util::StreamExt,
     log::*,
     primitive_types::{H256, U256},
     reqwest::{self, header::CONTENT_TYPE},
@@ -9,24 +15,22 @@ use {
     solana_account_decoder::UiAccount,
     solana_client::{
         client_error::{ClientErrorKind, Result as ClientResult},
-        pubsub_client::PubsubClient,
+        connection_cache::{ConnectionCache, DEFAULT_TPU_CONNECTION_POOL_SIZE},
+        nonblocking::pubsub_client::PubsubClient,
         rpc_client::RpcClient,
-        rpc_config::{RpcAccountInfoConfig, RpcSendTransactionConfig, RpcSignatureSubscribeConfig},
+        rpc_config::{RpcAccountInfoConfig, RpcSignatureSubscribeConfig},
         rpc_request::RpcError,
         rpc_response::{Response as RpcResponse, RpcSignatureResult, SlotUpdate},
         tpu_client::{TpuClient, TpuClientConfig},
     },
-    solana_evm_loader_program::{
-        free_ownership, instructions::FeePayerType, send_raw_tx, transfer_native_to_evm_ixs,
-    },
+    solana_evm_loader_program::{instructions::FeePayerType, send_raw_tx},
     solana_rpc::rpc::JsonRpcConfig,
     solana_sdk::{
-        commitment_config::{CommitmentConfig, CommitmentLevel},
-        fee_calculator::FeeRateGovernor,
+        commitment_config::CommitmentConfig,
         hash::Hash,
         pubkey::Pubkey,
         rent::Rent,
-        signature::{Keypair, Signer},
+        signature::{Keypair, Signature, Signer},
         system_instruction::assign,
         system_transaction,
         transaction::Transaction,
@@ -38,7 +42,10 @@ use {
         collections::HashSet,
         net::UdpSocket,
         str::FromStr,
-        sync::{mpsc::channel, Arc},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
         thread::sleep,
         time::{Duration, Instant},
     },
@@ -199,6 +206,7 @@ fn test_rpc_send_tx() {
         encoding: Some(UiAccountEncoding::Base64),
         commitment: None,
         data_slice: None,
+        min_context_slot: None,
     };
     let req = json_req!(
         "getAccountInfo",
@@ -256,7 +264,7 @@ fn test_rpc_send_transaction_with_native_fee_and_zero_gas_price() {
         value: 0.into(),
         input: vec![],
     }
-        .sign(&evm_secret_key, Some(chain_id));
+    .sign(&evm_secret_key, Some(chain_id));
     let tx_hash = evm_tx.tx_id_hash();
 
     let blockhash = get_blockhash(&rpc_url);
@@ -284,7 +292,7 @@ fn test_rpc_send_transaction_with_native_fee_and_zero_gas_price() {
         value: 0.into(),
         input: vec![],
     }
-        .sign(&evm_secret_key, Some(chain_id));
+    .sign(&evm_secret_key, Some(chain_id));
     let blockhash = get_blockhash(&rpc_url);
     let ixs = vec![
         assign(&alice.pubkey(), &solana_sdk::evm_loader::ID),
@@ -422,7 +430,7 @@ fn test_rpc_block_transaction() {
                 value: 0.into(),
                 input: vec![],
             }
-                .sign(&evm_secret_key, Some(chain_id))
+            .sign(&evm_secret_key, Some(chain_id))
         })
         .collect();
     let _tx_hashes: Vec<_> = evm_txs.iter().map(|tx| tx.tx_id_hash()).collect();
@@ -445,21 +453,49 @@ fn test_rpc_block_transaction() {
 
     let request = json_req!("eth_getBlockByNumber", json!(["0x02", true]));
     let json = post_rpc(request.clone(), &rpc_url);
-    let evm_blockhash: H256 = Hex::from_hex(json["result"]["hash"].as_str().unwrap()).unwrap().0;
+    let evm_blockhash: H256 = Hex::from_hex(json["result"]["hash"].as_str().unwrap())
+        .unwrap()
+        .0;
     let request = json_req!("eth_getBlockTransactionCountByHash", json!([evm_blockhash]));
     let json = post_rpc(request.clone(), &rpc_url);
     let num_tx: u64 = Hex::from_hex(json["result"].as_str().unwrap()).unwrap().0;
     assert_eq!(num_tx, 3u64);
 
-    let request = json_req!("eth_getTransactionByBlockHashAndIndex", json!([evm_blockhash, "0x02"]));
+    let request = json_req!(
+        "eth_getTransactionByBlockHashAndIndex",
+        json!([evm_blockhash, "0x02"])
+    );
     let json = post_rpc(request.clone(), &rpc_url);
-    assert_eq!(evm_address, Hex::from_hex(json["result"]["from"].as_str().unwrap()).unwrap().0);
-    assert_eq!(evm_address, Hex::from_hex(json["result"]["to"].as_str().unwrap()).unwrap().0);
+    assert_eq!(
+        evm_address,
+        Hex::from_hex(json["result"]["from"].as_str().unwrap())
+            .unwrap()
+            .0
+    );
+    assert_eq!(
+        evm_address,
+        Hex::from_hex(json["result"]["to"].as_str().unwrap())
+            .unwrap()
+            .0
+    );
 
-    let request = json_req!("eth_getTransactionByBlockNumberAndIndex", json!(["0x02", "0x02"]));
+    let request = json_req!(
+        "eth_getTransactionByBlockNumberAndIndex",
+        json!(["0x02", "0x02"])
+    );
     let json = post_rpc(request.clone(), &rpc_url);
-    assert_eq!(evm_address, Hex::from_hex(json["result"]["from"].as_str().unwrap()).unwrap().0);
-    assert_eq!(evm_address, Hex::from_hex(json["result"]["to"].as_str().unwrap()).unwrap().0);
+    assert_eq!(
+        evm_address,
+        Hex::from_hex(json["result"]["from"].as_str().unwrap())
+            .unwrap()
+            .0
+    );
+    assert_eq!(
+        evm_address,
+        Hex::from_hex(json["result"]["to"].as_str().unwrap())
+            .unwrap()
+            .0
+    );
 }
 
 #[test]
@@ -512,7 +548,7 @@ fn test_rpc_replay_transaction_timestamp() {
         value: 0.into(),
         input: hex::decode(TEST_CONTRACT).unwrap(),
     }
-        .sign(&evm_secret_key, Some(chain_id));
+    .sign(&evm_secret_key, Some(chain_id));
     let contract_address = tx_create.address().unwrap();
     let tx_call = evm_state::UnsignedTransaction {
         nonce: 1.into(),
@@ -522,11 +558,16 @@ fn test_rpc_replay_transaction_timestamp() {
         value: 0.into(),
         input: hex::decode("e0c6190d").unwrap(),
     }
-        .sign(&evm_secret_key, Some(chain_id));
+    .sign(&evm_secret_key, Some(chain_id));
     let tx_call_hash = tx_call.tx_id_hash();
 
     let blockhash = dbg!(get_blockhash(&rpc_url));
-    let ixs = vec![send_raw_tx(alice.pubkey(), tx_create, None, FeePayerType::Evm)];
+    let ixs = vec![send_raw_tx(
+        alice.pubkey(),
+        tx_create,
+        None,
+        FeePayerType::Evm,
+    )];
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
@@ -534,7 +575,12 @@ fn test_rpc_replay_transaction_timestamp() {
     wait_finalization(&rpc_url, &[&json["result"]]);
 
     let recent_blockhash = get_blockhash(&rpc_url);
-    let ixs = vec![send_raw_tx(alice.pubkey(), tx_call, None, FeePayerType::Evm)];
+    let ixs = vec![send_raw_tx(
+        alice.pubkey(),
+        tx_call,
+        None,
+        FeePayerType::Evm,
+    )];
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], recent_blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
@@ -545,9 +591,11 @@ fn test_rpc_replay_transaction_timestamp() {
     let json = post_rpc(request.clone(), &rpc_url);
     warn!("trace_replayTransaction: {}", dbg!(json.clone()));
     assert!(!json["result"].is_null());
-    assert!(json["result"]["trace"].as_array().unwrap().iter().all(|v| {
-        !v.as_object().unwrap().contains_key("error")
-    }));
+    assert!(json["result"]["trace"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|v| { !v.as_object().unwrap().contains_key("error") }));
 }
 
 #[test]
@@ -601,7 +649,7 @@ fn test_rpc_replay_transaction_gas_used() {
         value: 0.into(),
         input: hex::decode(TEST_CONTRACT).unwrap(),
     }
-        .sign(&evm_secret_key, Some(chain_id));
+    .sign(&evm_secret_key, Some(chain_id));
     let tx_create_2 = evm_state::UnsignedTransaction {
         nonce: 1.into(),
         gas_price: 2000000000.into(),
@@ -610,14 +658,22 @@ fn test_rpc_replay_transaction_gas_used() {
         value: 0.into(),
         input: hex::decode(TEST_CONTRACT).unwrap(),
     }
-        .sign(&evm_secret_key, Some(chain_id));
+    .sign(&evm_secret_key, Some(chain_id));
     let contract_address_1 = tx_create_1.address().unwrap();
     let contract_address_2 = tx_create_2.address().unwrap();
 
-    info!("Deploy contracts {}, {}", contract_address_1, contract_address_2);
+    info!(
+        "Deploy contracts {}, {}",
+        contract_address_1, contract_address_2
+    );
     // deploy first contract
     let blockhash = dbg!(get_blockhash(&rpc_url));
-    let ixs = vec![send_raw_tx(alice.pubkey(), tx_create_1, None, FeePayerType::Evm)];
+    let ixs = vec![send_raw_tx(
+        alice.pubkey(),
+        tx_create_1,
+        None,
+        FeePayerType::Evm,
+    )];
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
@@ -626,7 +682,12 @@ fn test_rpc_replay_transaction_gas_used() {
 
     // deploy second contract
     let blockhash = dbg!(get_blockhash(&rpc_url));
-    let ixs = vec![send_raw_tx(alice.pubkey(), tx_create_2, None, FeePayerType::Evm)];
+    let ixs = vec![send_raw_tx(
+        alice.pubkey(),
+        tx_create_2,
+        None,
+        FeePayerType::Evm,
+    )];
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
@@ -679,7 +740,9 @@ fn test_rpc_replay_transaction_gas_used() {
 
     let request = json_req!("eth_getTransactionReceipt", json!([tx_call_hashes[2]]));
     let json = post_rpc(request.clone(), &rpc_url);
-    let target_gas_limit: U256 = Hex::from_hex(json["result"]["gasUsed"].as_str().unwrap()).unwrap().0;
+    let target_gas_limit: U256 = Hex::from_hex(json["result"]["gasUsed"].as_str().unwrap())
+        .unwrap()
+        .0;
 
     // Create transaction to pass with estimate=false and fail otherwise
     let tx_with_limit = evm_state::UnsignedTransaction {
@@ -692,9 +755,16 @@ fn test_rpc_replay_transaction_gas_used() {
     }
         .sign(&evm_secret_key, Some(chain_id));
     let tx_with_limit_hash = tx_with_limit.tx_id_hash();
-    let rpc_tx = RPCTransaction::from_transaction(TransactionInReceipt::Signed(tx_with_limit.clone())).unwrap();
+    let rpc_tx =
+        RPCTransaction::from_transaction(TransactionInReceipt::Signed(tx_with_limit.clone()))
+            .unwrap();
     let recent_blockhash = get_blockhash(&rpc_url);
-    let ixs = vec![send_raw_tx(alice.pubkey(), tx_with_limit, None, FeePayerType::Evm)];
+    let ixs = vec![send_raw_tx(
+        alice.pubkey(),
+        tx_with_limit,
+        None,
+        FeePayerType::Evm,
+    )];
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], recent_blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
     let req = json_req!(
@@ -711,19 +781,32 @@ fn test_rpc_replay_transaction_gas_used() {
     wait_finalization(&rpc_url, &[&json["result"]]);
 
     // check that replayTransaction works
-    let request = json_req!("trace_replayTransaction", json!([tx_with_limit_hash, ["trace"]]));
+    let request = json_req!(
+        "trace_replayTransaction",
+        json!([tx_with_limit_hash, ["trace"]])
+    );
     let json = post_rpc(request.clone(), &rpc_url);
-    warn!(">>>>> trace_replayTransaction: {}", dbg!(&json["result"]["trace"].as_array().unwrap()[0]["result"]));
+    warn!(
+        ">>>>> trace_replayTransaction: {}",
+        dbg!(&json["result"]["trace"].as_array().unwrap()[0]["result"])
+    );
     assert!(!json["result"].is_null());
-    assert!(json["result"]["trace"].as_array().unwrap().iter().all(|v| {
-        !v.as_object().unwrap().contains_key("error")
-    }));
+    assert!(json["result"]["trace"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|v| { !v.as_object().unwrap().contains_key("error") }));
 
     // check that call fails
     let request = json_req!("trace_call", json!([rpc_tx, vec!["trace"], Some("0x04")]));
     let json = post_rpc(request.clone(), &rpc_url);
     warn!("trace_call: {}", json["result"]);
-    assert_eq!(json["result"]["trace"].as_array().unwrap()[0]["error"].as_str().unwrap(), "Out of gas");
+    assert_eq!(
+        json["result"]["trace"].as_array().unwrap()[0]["error"]
+            .as_str()
+            .unwrap(),
+        "Out of gas"
+    );
 }
 
 #[test]
@@ -776,7 +859,7 @@ fn test_rpc_get_logs() {
         value: 0.into(),
         input: hex::decode(TEST_CONTRACT).unwrap(),
     }
-        .sign(&evm_secret_key, Some(chain_id));
+    .sign(&evm_secret_key, Some(chain_id));
     let contract_address = tx_create.address().unwrap();
     let tx_call = evm_state::UnsignedTransaction {
         nonce: 1.into(),
@@ -789,7 +872,12 @@ fn test_rpc_get_logs() {
         .sign(&evm_secret_key, Some(chain_id));
 
     let blockhash = dbg!(get_blockhash(&rpc_url));
-    let ixs = vec![send_raw_tx(alice.pubkey(), tx_create, None, FeePayerType::Evm)];
+    let ixs = vec![send_raw_tx(
+        alice.pubkey(),
+        tx_create,
+        None,
+        FeePayerType::Evm,
+    )];
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
@@ -797,7 +885,12 @@ fn test_rpc_get_logs() {
     wait_finalization(&rpc_url, &[&json["result"]]);
 
     let recent_blockhash = get_blockhash(&rpc_url);
-    let ixs = vec![send_raw_tx(alice.pubkey(), tx_call, None, FeePayerType::Evm)];
+    let ixs = vec![send_raw_tx(
+        alice.pubkey(),
+        tx_call,
+        None,
+        FeePayerType::Evm,
+    )];
     let tx = Transaction::new_signed_with_payer(&ixs, None, &[&alice], recent_blockhash);
     let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
@@ -805,7 +898,9 @@ fn test_rpc_get_logs() {
     wait_finalization(&rpc_url, &[&json["result"]]);
 
     let log_filter = RPCLogFilter {
-        from_block: Some(BlockId::BlockHash { block_hash: Hex(recent_blockhash.to_bytes().into()) }),
+        from_block: Some(BlockId::BlockHash {
+            block_hash: Hex(recent_blockhash.to_bytes().into()),
+        }),
         to_block: None,
         address: None,
         topics: None,
@@ -856,18 +951,21 @@ fn test_rpc_slot_updates() {
     let test_validator =
         TestValidator::with_no_fees(Pubkey::new_unique(), None, SocketAddrSpace::Unspecified);
 
+    // Track when slot updates are ready
+    let (update_sender, update_receiver) = unbounded::<SlotUpdate>();
     // Create the pub sub runtime
     let rt = Runtime::new().unwrap();
     let rpc_pubsub_url = test_validator.rpc_pubsub_url();
-    let (update_sender, update_receiver) = channel::<SlotUpdate>();
 
-    // Subscribe to slot updates
     rt.spawn(async move {
+        let pubsub_client = PubsubClient::new(&rpc_pubsub_url).await.unwrap();
+        let (mut slot_notifications, slot_unsubscribe) =
+            pubsub_client.slot_updates_subscribe().await.unwrap();
 
-        tokio::spawn(async move {
-            let _update_sub = PubsubClient::slot_updates_subscribe(&rpc_pubsub_url, move |response| update_sender.send(response).unwrap()).unwrap();
-            loop{tokio::time::sleep(Duration::from_millis(1000)).await;} // wait subscription
-        });
+        while let Some(slot_update) = slot_notifications.next().await {
+            update_sender.send(slot_update).unwrap();
+        }
+        slot_unsubscribe().await;
     });
 
     let first_update = update_receiver
@@ -925,87 +1023,125 @@ fn test_rpc_subscriptions() {
     let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
 
     // Create transaction signatures to subscribe to
+    let transfer_amount = Rent::default().minimum_balance(0);
     let transactions: Vec<Transaction> = (0..1000)
         .map(|_| {
             system_transaction::transfer(
                 &alice,
                 &solana_sdk::pubkey::new_rand(),
-                Rent::default().minimum_balance(0),
+                transfer_amount,
                 recent_blockhash,
             )
         })
         .collect();
-    let mut signature_set: HashSet<String> = transactions
+    let mut signature_set: HashSet<Signature> =
+        transactions.iter().map(|tx| tx.signatures[0]).collect();
+    let mut account_set: HashSet<Pubkey> = transactions
         .iter()
-        .map(|tx| tx.signatures[0].to_string())
-        .collect();
-    let account_set: HashSet<String> = transactions
-        .iter()
-        .map(|tx| tx.message.account_keys[1].to_string())
+        .map(|tx| tx.message.account_keys[1])
         .collect();
 
-    // Track when subscriptions are ready
-    let (ready_sender, ready_receiver) = channel::<()>();
     // Track account notifications are received
-    let (account_sender, account_receiver) = channel::<RpcResponse<UiAccount>>();
+    let (account_sender, account_receiver) = unbounded::<(Pubkey, RpcResponse<UiAccount>)>();
     // Track when status notifications are received
-    let (status_sender, status_receiver) = channel::<(String, RpcResponse<RpcSignatureResult>)>();
+    let (status_sender, status_receiver) =
+        unbounded::<(Signature, RpcResponse<RpcSignatureResult>)>();
 
     // Create the pub sub runtime
     let rt = Runtime::new().unwrap();
     let rpc_pubsub_url = test_validator.rpc_pubsub_url();
     let signature_set_clone = signature_set.clone();
-    rt.spawn(async move {
-        // Subscribe to signature notifications
-        for sig in signature_set_clone {
-            let status_sender = status_sender.clone();
-            let sig_sub = PubsubClient::signature_subscribe(
-                    &rpc_pubsub_url,
-                    &Signature::from_str(&sig).unwrap(),
-                    Some(RpcSignatureSubscribeConfig {
-                        commitment: Some(CommitmentConfig::confirmed()),
-                        ..RpcSignatureSubscribeConfig::default()
-                    }),
-                )
-                .unwrap_or_else(|err| panic!("sig sub err: {:#?}", err));
+    let account_set_clone = account_set.clone();
+    let signature_subscription_ready = Arc::new(AtomicUsize::new(0));
+    let account_subscription_ready = Arc::new(AtomicUsize::new(0));
+    let signature_subscription_ready_clone = signature_subscription_ready.clone();
+    let account_subscription_ready_clone = account_subscription_ready.clone();
 
-            tokio::spawn(async move {
-                let response = sig_sub.1.recv().unwrap();
-                status_sender
-                    .send((sig.clone(), response))
-                    .unwrap();
+    rt.spawn(async move {
+        let pubsub_client = Arc::new(PubsubClient::new(&rpc_pubsub_url).await.unwrap());
+
+        // Subscribe to signature notifications
+        for signature in signature_set_clone {
+            let status_sender = status_sender.clone();
+            let signature_subscription_ready_clone = signature_subscription_ready_clone.clone();
+            tokio::spawn({
+                let _pubsub_client = Arc::clone(&pubsub_client);
+                async move {
+                    let (mut sig_notifications, sig_unsubscribe) = _pubsub_client
+                        .signature_subscribe(
+                            &signature,
+                            Some(RpcSignatureSubscribeConfig {
+                                commitment: Some(CommitmentConfig::confirmed()),
+                                ..RpcSignatureSubscribeConfig::default()
+                            }),
+                        )
+                        .await
+                        .unwrap();
+
+                    signature_subscription_ready_clone.fetch_add(1, Ordering::SeqCst);
+
+                    let response = sig_notifications.next().await.unwrap();
+                    status_sender.send((signature, response)).unwrap();
+                    sig_unsubscribe().await;
+                }
             });
         }
 
         // Subscribe to account notifications
-        for pubkey in account_set {
+        for pubkey in account_set_clone {
             let account_sender = account_sender.clone();
-            let client_sub = PubsubClient::account_subscribe(
-                    &rpc_pubsub_url,
-                    &Pubkey::from_str(&pubkey).unwrap(),
-                    Some(RpcAccountInfoConfig {
-                        commitment: Some(CommitmentConfig::confirmed()),
-                        ..RpcAccountInfoConfig::default()
-                    }),
-                )
-                .unwrap_or_else(|err| panic!("acct sub err: {:#?}", err));
-            tokio::spawn(async move {
-                let response = client_sub.1.recv().unwrap();
-                account_sender.send(response).unwrap();
+            let account_subscription_ready_clone = account_subscription_ready_clone.clone();
+            tokio::spawn({
+                let _pubsub_client = Arc::clone(&pubsub_client);
+                async move {
+                    let (mut account_notifications, account_unsubscribe) = _pubsub_client
+                        .account_subscribe(
+                            &pubkey,
+                            Some(RpcAccountInfoConfig {
+                                commitment: Some(CommitmentConfig::confirmed()),
+                                ..RpcAccountInfoConfig::default()
+                            }),
+                        )
+                        .await
+                        .unwrap();
+
+                    account_subscription_ready_clone.fetch_add(1, Ordering::SeqCst);
+
+                    let response = account_notifications.next().await.unwrap();
+                    account_sender.send((pubkey, response)).unwrap();
+                    account_unsubscribe().await;
+                }
             });
         }
-
-        // Signal ready after the next slot notification
-        let slot_sub = PubsubClient::slot_subscribe(&rpc_pubsub_url,)
-            .unwrap_or_else(|err| panic!("sig sub err: {:#?}", err));
-        tokio::spawn(async move {
-            let _response = slot_sub.1.recv().unwrap();
-            ready_sender.send(()).unwrap();
-        });
     });
 
-    // Wait for signature subscriptions
-    ready_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+    let now = Instant::now();
+    while (signature_subscription_ready.load(Ordering::SeqCst) != transactions.len()
+        || account_subscription_ready.load(Ordering::SeqCst) != transactions.len())
+        && now.elapsed() < Duration::from_secs(15)
+    {
+        sleep(Duration::from_millis(100))
+    }
+
+    // check signature subscription
+    let num = signature_subscription_ready.load(Ordering::SeqCst);
+    if num != transactions.len() {
+        error!(
+            "signature subscription didn't setup properly, want: {}, got: {}",
+            transactions.len(),
+            num
+        );
+    }
+
+    // check account subscription
+    let num = account_subscription_ready.load(Ordering::SeqCst);
+    if num != transactions.len() {
+        error!(
+            "account subscriptions didn't setup properly, want: {}, got: {}",
+            transactions.len(),
+            num
+        );
+    }
 
     let rpc_client = RpcClient::new(test_validator.rpc_url());
     let mut mint_balance = rpc_client
@@ -1023,7 +1159,7 @@ fn test_rpc_subscriptions() {
 
     // Track mint balance to know when transactions have completed
     let now = Instant::now();
-    let expected_mint_balance = mint_balance - transactions.len() as u64;
+    let expected_mint_balance = mint_balance - (transfer_amount * transactions.len() as u64);
     while mint_balance != expected_mint_balance && now.elapsed() < Duration::from_secs(15) {
         mint_balance = rpc_client
             .get_balance_with_commitment(&alice.pubkey(), CommitmentConfig::processed())
@@ -1059,18 +1195,17 @@ fn test_rpc_subscriptions() {
     }
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut account_notifications = transactions.len();
-    while account_notifications > 0 {
+    while !account_set.is_empty() {
         let timeout = deadline.saturating_duration_since(Instant::now());
         match account_receiver.recv_timeout(timeout) {
-            Ok(result) => {
+            Ok((pubkey, result)) => {
                 assert_eq!(result.value.lamports, Rent::default().minimum_balance(0));
-                account_notifications -= 1;
+                assert!(account_set.remove(&pubkey));
             }
             Err(_err) => {
                 panic!(
                     "recv_timeout, {}/{} accounts remaining",
-                    account_notifications,
+                    account_set.len(),
                     transactions.len()
                 );
             }
@@ -1078,8 +1213,7 @@ fn test_rpc_subscriptions() {
     }
 }
 
-#[test]
-fn test_tpu_send_transaction() {
+fn run_tpu_send_transaction(tpu_use_quic: bool) {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator =
@@ -1088,11 +1222,15 @@ fn test_tpu_send_transaction() {
         test_validator.rpc_url(),
         CommitmentConfig::processed(),
     ));
-
-    let tpu_client = TpuClient::new(
+    let connection_cache = match tpu_use_quic {
+        true => Arc::new(ConnectionCache::new(DEFAULT_TPU_CONNECTION_POOL_SIZE)),
+        false => Arc::new(ConnectionCache::with_udp(DEFAULT_TPU_CONNECTION_POOL_SIZE)),
+    };
+    let tpu_client = TpuClient::new_with_connection_cache(
         rpc_client.clone(),
         &test_validator.rpc_pubsub_url(),
         TpuClientConfig::default(),
+        connection_cache,
     )
     .unwrap();
 
@@ -1111,6 +1249,16 @@ fn test_tpu_send_transaction() {
             return;
         }
     }
+}
+
+#[test]
+fn test_tpu_send_transaction() {
+    run_tpu_send_transaction(/*tpu_use_quic*/ false)
+}
+
+#[test]
+fn test_tpu_send_transaction_with_quic() {
+    run_tpu_send_transaction(/*tpu_use_quic*/ true)
 }
 
 #[test]

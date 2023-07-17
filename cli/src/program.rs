@@ -19,6 +19,7 @@ use {
     },
     solana_client::{
         client_error::ClientErrorKind,
+        connection_cache::ConnectionCache,
         rpc_client::RpcClient,
         rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig},
         rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
@@ -42,6 +43,7 @@ use {
         system_instruction::{self, SystemError},
         system_program,
         transaction::{Transaction, TransactionError},
+        transaction_context::TransactionContext,
     },
     std::{
         fs::File,
@@ -923,25 +925,53 @@ fn process_program_deploy(
             .get_account_with_commitment(&buffer_pubkey, config.commitment)?
             .value
         {
-            if let Ok(UpgradeableLoaderState::Buffer {
-                authority_address: _,
-            }) = account.state()
-            {
-            } else {
-                return Err(format!("Buffer account {} is not initialized", buffer_pubkey).into());
+            if !bpf_loader_upgradeable::check_id(&account.owner) {
+                return Err(format!(
+                    "Buffer account {buffer_pubkey} is not owned by the BPF Upgradeable Loader",
+                )
+                .into());
             }
-            (vec![], account.data.len())
+
+            match account.state() {
+                Ok(UpgradeableLoaderState::Buffer { .. }) => {
+                    // continue if buffer is initialized
+                }
+                Ok(UpgradeableLoaderState::Program { .. }) => {
+                    return Err(
+                        format!("Cannot use program account {buffer_pubkey} as buffer").into(),
+                    );
+                }
+                Ok(UpgradeableLoaderState::ProgramData { .. }) => {
+                    return Err(format!(
+                        "Cannot use program data account {buffer_pubkey} as buffer",
+                    )
+                    .into())
+                }
+                Ok(UpgradeableLoaderState::Uninitialized) => {
+                    return Err(format!("Buffer account {buffer_pubkey} is not initialized").into());
+                }
+                Err(_) => {
+                    return Err(
+                        format!("Buffer account {buffer_pubkey} could not be deserialized").into(),
+                    )
+                }
+            };
+
+            let program_len = account
+                .data
+                .len()
+                .saturating_sub(UpgradeableLoaderState::buffer_data_offset().unwrap_or_default());
+
+            (vec![], program_len)
         } else {
             return Err(format!(
-                "Buffer account {} not found, was it already consumed?",
-                buffer_pubkey
+                "Buffer account {buffer_pubkey} not found, was it already consumed?",
             )
             .into());
         }
     } else {
         return Err("Program location required if buffer not supplied".into());
     };
-    let buffer_data_len = program_len;
     let programdata_len = if let Some(len) = max_len {
         if program_len > len {
             return Err("Max length specified not large enough".into());
@@ -953,7 +983,7 @@ fn process_program_deploy(
         program_len * 2
     };
     let minimum_balance = rpc_client.get_minimum_balance_for_rent_exemption(
-        UpgradeableLoaderState::programdata_len(buffer_data_len)?,
+        UpgradeableLoaderState::programdata_len(program_len)?,
     )?;
 
     let result = if do_deploy {
@@ -966,7 +996,7 @@ fn process_program_deploy(
             rpc_client.clone(),
             config,
             &program_data,
-            buffer_data_len,
+            program_len,
             programdata_len,
             minimum_balance,
             &bpf_loader_upgradeable::id(),
@@ -1729,7 +1759,7 @@ fn do_process_program_write_and_deploy(
     rpc_client: Arc<RpcClient>,
     config: &CliConfig,
     program_data: &[u8],
-    buffer_data_len: usize,
+    program_len: usize,
     programdata_len: usize,
     minimum_balance: u64,
     loader_id: &Pubkey,
@@ -1757,9 +1787,9 @@ fn do_process_program_write_and_deploy(
                     buffer_pubkey,
                     &account,
                     if loader_id == &bpf_loader_upgradeable::id() {
-                        UpgradeableLoaderState::buffer_len(buffer_data_len)?
+                        UpgradeableLoaderState::buffer_len(program_len)?
                     } else {
-                        buffer_data_len
+                        program_len
                     },
                     minimum_balance,
                     allow_excessive_balance,
@@ -1771,7 +1801,7 @@ fn do_process_program_write_and_deploy(
                         buffer_pubkey,
                         &buffer_authority_signer.pubkey(),
                         minimum_balance,
-                        buffer_data_len,
+                        program_len,
                     )?,
                     minimum_balance,
                 )
@@ -1781,7 +1811,7 @@ fn do_process_program_write_and_deploy(
                         &config.signers[0].pubkey(),
                         buffer_pubkey,
                         minimum_balance,
-                        buffer_data_len as u64,
+                        program_len as u64,
                         loader_id,
                     )],
                     minimum_balance,
@@ -1870,7 +1900,14 @@ fn do_process_program_write_and_deploy(
     }
 
     if !skip_fee_check {
-        check_payer(&rpc_client, config, balance_needed, &messages)?;
+        check_payer(
+            &rpc_client,
+            config,
+            balance_needed,
+            &initial_message,
+            &write_messages,
+            &final_message,
+        )?;
     }
 
     send_deploy_messages(
@@ -2004,9 +2041,17 @@ fn do_process_program_upgrade(
         &blockhash,
     );
     messages.push(&final_message);
+    let final_message = Some(final_message);
 
     if !skip_fee_check {
-        check_payer(&rpc_client, config, balance_needed, &messages)?;
+        check_payer(
+            &rpc_client,
+            config,
+            balance_needed,
+            &initial_message,
+            &write_messages,
+            &final_message,
+        )?;
     }
 
     send_deploy_messages(
@@ -2014,7 +2059,7 @@ fn do_process_program_upgrade(
         config,
         &initial_message,
         &write_messages,
-        &Some(final_message),
+        &final_message,
         buffer_signer,
         Some(upgrade_authority),
         Some(&[upgrade_authority]),
@@ -2032,7 +2077,8 @@ fn read_and_verify_elf(program_location: &str) -> Result<Vec<u8>, Box<dyn std::e
     let mut program_data = Vec::new();
     file.read_to_end(&mut program_data)
         .map_err(|err| format!("Unable to read program file: {}", err))?;
-    let mut invoke_context = InvokeContext::new_mock(&[], &[]);
+    let mut transaction_context = TransactionContext::new(Vec::new(), 1, 1);
+    let mut invoke_context = InvokeContext::new_mock(&mut transaction_context, &[]);
 
     // Verify the program
     Executable::<BpfError, ThisInstructionMeter>::from_elf(
@@ -2105,14 +2151,28 @@ fn check_payer(
     rpc_client: &RpcClient,
     config: &CliConfig,
     balance_needed: u64,
-    messages: &[&Message],
+    initial_message: &Option<Message>,
+    write_messages: &Option<Vec<Message>>,
+    final_message: &Option<Message>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Does the payer have enough?
-    check_account_for_spend_multiple_fees_with_commitment(
+    let mut fee = 0;
+    if let Some(message) = initial_message {
+        fee += rpc_client.get_fee_for_message(message)?;
+    }
+    if let Some(write_messages) = write_messages {
+        // Assume all write messages cost the same
+        if let Some(message) = write_messages.get(0) {
+            fee += rpc_client.get_fee_for_message(message)? * (write_messages.len() as u64);
+        }
+    }
+    if let Some(message) = final_message {
+        fee += rpc_client.get_fee_for_message(message)?;
+    }
+    check_account_for_spend_and_fee_with_commitment(
         rpc_client,
         &config.signers[0].pubkey(),
         balance_needed,
-        messages,
+        fee,
         config.commitment,
     )?;
     Ok(())
@@ -2156,10 +2216,12 @@ fn send_deploy_messages(
     if let Some(write_messages) = write_messages {
         if let Some(write_signer) = write_signer {
             trace!("Writing program data");
-            let tpu_client = TpuClient::new(
+            let connection_cache = Arc::new(ConnectionCache::default());
+            let tpu_client = TpuClient::new_with_connection_cache(
                 rpc_client.clone(),
                 &config.websocket_url,
                 TpuClientConfig::default(),
+                connection_cache,
             )?;
             let transaction_errors = tpu_client
                 .send_and_confirm_messages_with_spinner(
@@ -2231,7 +2293,7 @@ fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic) {
     );
     eprintln!("{}\n{}\n{}", divider, phrase, divider);
     eprintln!("To resume a deploy, pass the recovered keypair as the");
-    eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana write-buffer'.");
+    eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer'.");
     eprintln!("Or to recover the account's lamports, pass it as the");
     eprintln!(
         "[BUFFER_ACCOUNT_ADDRESS] argument to `solana program close`.\n{}",

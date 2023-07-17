@@ -49,7 +49,9 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         bpf_jit: config.bpf_jit,
         send_transaction_service_config: config.send_transaction_service_config.clone(),
         no_poh_speed_test: config.no_poh_speed_test,
+        no_os_memory_stats_reporting: config.no_os_memory_stats_reporting,
         no_os_network_stats_reporting: config.no_os_network_stats_reporting,
+        no_os_cpu_stats_reporting: config.no_os_cpu_stats_reporting,
         poh_pinned_cpu_core: config.poh_pinned_cpu_core,
         account_indexes: config.account_indexes.clone(),
         accounts_db_caching_enabled: config.accounts_db_caching_enabled,
@@ -64,6 +66,8 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         accounts_shrink_ratio: config.accounts_shrink_ratio,
         accounts_db_config: config.accounts_db_config.clone(),
         wait_to_vote_slot: config.wait_to_vote_slot,
+        ledger_column_options: config.ledger_column_options.clone(),
+        enable_quic_servers: config.enable_quic_servers,
         verify_evm_state: config.verify_evm_state,
         jaeger_collector_url: config.jaeger_collector_url.clone(),
     }

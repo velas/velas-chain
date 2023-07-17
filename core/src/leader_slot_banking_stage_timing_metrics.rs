@@ -134,6 +134,10 @@ pub(crate) struct OuterLoopTimings {
 
     // Time spent processing new incoming packets to the banking thread
     pub receive_and_buffer_packets_us: u64,
+
+    // The number of times the function to receive and buffer new packets
+    // was called
+    pub receive_and_buffer_packets_invoked_count: u64,
 }
 
 impl OuterLoopTimings {
@@ -144,6 +148,7 @@ impl OuterLoopTimings {
             process_buffered_packets_us: 0,
             slot_metrics_check_slot_boundary_us: 0,
             receive_and_buffer_packets_us: 0,
+            receive_and_buffer_packets_invoked_count: 0,
         }
     }
 
@@ -179,6 +184,11 @@ impl OuterLoopTimings {
                 self.receive_and_buffer_packets_us,
                 i64
             ),
+            (
+                "receive_and_buffer_packets_invoked_count",
+                self.receive_and_buffer_packets_invoked_count,
+                i64
+            )
         );
     }
 }
@@ -213,9 +223,6 @@ pub(crate) struct ConsumeBufferedPacketsTimings {
     // Time spent grabbing poh recorder lock
     pub poh_recorder_lock_us: u64,
 
-    // Time spent filtering invalid packets after leader slot has ended
-    pub end_of_slot_filtering_us: u64,
-
     // Time spent processing transactions
     pub process_packets_transactions_us: u64,
 }
@@ -229,11 +236,6 @@ impl ConsumeBufferedPacketsTimings {
             (
                 "poh_recorder_lock_us",
                 self.poh_recorder_lock_us as i64,
-                i64
-            ),
-            (
-                "end_of_slot_filtering_us",
-                self.end_of_slot_filtering_us as i64,
                 i64
             ),
             (

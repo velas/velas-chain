@@ -1,24 +1,20 @@
 //! The `shred_fetch_stage` pulls shreds from UDP sockets and sends it to a channel.
 
 use {
-    crate::packet_hasher::PacketHasher,
+    crate::{packet_hasher::PacketHasher, serve_repair::ServeRepair},
+    crossbeam_channel::{unbounded, Sender},
     lru::LruCache,
+    solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::shred::{get_shred_slot_index_type, ShredFetchStats},
-    solana_perf::{
-        cuda_runtime::PinnedVec,
-        packet::{Packet, PacketBatchRecycler, PacketFlags},
-        recycler::Recycler,
-    },
+    solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, PacketFlags},
     solana_runtime::bank_forks::BankForks,
     solana_sdk::clock::{Slot, DEFAULT_MS_PER_SLOT},
-    solana_streamer::streamer::{
-        self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats,
-    },
+    solana_streamer::streamer::{self, PacketBatchReceiver, StreamerReceiveStats},
     std::{
         net::UdpSocket,
-        sync::{atomic::AtomicBool, mpsc::channel, Arc, RwLock},
+        sync::{atomic::AtomicBool, Arc, RwLock},
         thread::{self, Builder, JoinHandle},
-        time::Instant,
+        time::{Duration, Instant},
     },
 };
 
@@ -66,22 +62,26 @@ impl ShredFetchStage {
     // updates packets received on a channel and sends them on another channel
     fn modify_packets<F>(
         recvr: PacketBatchReceiver,
-        sendr: PacketBatchSender,
+        sendr: Sender<Vec<PacketBatch>>,
         bank_forks: Option<Arc<RwLock<BankForks>>>,
         name: &'static str,
         modify: F,
+        repair_context: Option<(&UdpSocket, &ClusterInfo)>,
     ) where
         F: Fn(&mut Packet),
     {
+        const STATS_SUBMIT_CADENCE: Duration = Duration::from_secs(1);
         let mut shreds_received = LruCache::new(DEFAULT_LRU_SIZE);
         let mut last_updated = Instant::now();
+        let mut keypair = repair_context
+            .as_ref()
+            .map(|(_, cluster_info)| cluster_info.keypair().clone());
 
         // In the case of bank_forks=None, setup to accept any slot range
         let mut last_root = 0;
         let mut last_slot = std::u64::MAX;
         let mut slots_per_epoch = 0;
 
-        let mut last_stats = Instant::now();
         let mut stats = ShredFetchStats::default();
         let mut packet_hasher = PacketHasher::default();
 
@@ -98,9 +98,25 @@ impl ShredFetchStage {
                     let root_bank = bank_forks_r.root_bank();
                     slots_per_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
                 }
+                keypair = repair_context
+                    .as_ref()
+                    .map(|(_, cluster_info)| cluster_info.keypair().clone());
             }
-            stats.shred_count += packet_batch.packets.len();
-            packet_batch.packets.iter_mut().for_each(|packet| {
+            stats.shred_count += packet_batch.len();
+
+            if let Some((udp_socket, _)) = repair_context {
+                debug_assert!(keypair.is_some());
+                if let Some(ref keypair) = keypair {
+                    ServeRepair::handle_repair_response_pings(
+                        udp_socket,
+                        keypair,
+                        &mut packet_batch,
+                        &mut stats,
+                    );
+                }
+            }
+
+            packet_batch.iter_mut().for_each(|packet| {
                 Self::process_packet(
                     packet,
                     &mut shreds_received,
@@ -112,21 +128,8 @@ impl ShredFetchStage {
                     &packet_hasher,
                 );
             });
-            if last_stats.elapsed().as_millis() > 1000 {
-                datapoint_info!(
-                    name,
-                    ("index_overrun", stats.index_overrun, i64),
-                    ("shred_count", stats.shred_count, i64),
-                    ("slot_bad_deserialize", stats.slot_bad_deserialize, i64),
-                    ("index_bad_deserialize", stats.index_bad_deserialize, i64),
-                    ("index_out_of_bounds", stats.index_out_of_bounds, i64),
-                    ("slot_out_of_range", stats.slot_out_of_range, i64),
-                    ("duplicate_shred", stats.duplicate_shred, i64),
-                );
-                stats = ShredFetchStats::default();
-                last_stats = Instant::now();
-            }
-            if sendr.send(packet_batch).is_err() {
+            stats.maybe_submit(name, STATS_SUBMIT_CADENCE);
+            if sendr.send(vec![packet_batch]).is_err() {
                 break;
             }
         }
@@ -135,16 +138,17 @@ impl ShredFetchStage {
     fn packet_modifier<F>(
         sockets: Vec<Arc<UdpSocket>>,
         exit: &Arc<AtomicBool>,
-        sender: PacketBatchSender,
-        recycler: Recycler<PinnedVec<Packet>>,
+        sender: Sender<Vec<PacketBatch>>,
+        recycler: PacketBatchRecycler,
         bank_forks: Option<Arc<RwLock<BankForks>>>,
         name: &'static str,
         modify: F,
+        repair_context: Option<(Arc<UdpSocket>, Arc<ClusterInfo>)>,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>)
     where
         F: Fn(&mut Packet) + Send + 'static,
     {
-        let (packet_sender, packet_receiver) = channel();
+        let (packet_sender, packet_receiver) = unbounded();
         let streamers = sockets
             .into_iter()
             .map(|s| {
@@ -160,10 +164,21 @@ impl ShredFetchStage {
                 )
             })
             .collect();
-
         let modifier_hdl = Builder::new()
             .name("solana-tvu-fetch-stage-packet-modifier".to_string())
-            .spawn(move || Self::modify_packets(packet_receiver, sender, bank_forks, name, modify))
+            .spawn(move || {
+                let repair_context = repair_context
+                    .as_ref()
+                    .map(|(socket, cluster_info)| (socket.as_ref(), cluster_info.as_ref()));
+                Self::modify_packets(
+                    packet_receiver,
+                    sender,
+                    bank_forks,
+                    name,
+                    modify,
+                    repair_context,
+                )
+            })
             .unwrap();
         (streamers, modifier_hdl)
     }
@@ -172,11 +187,12 @@ impl ShredFetchStage {
         sockets: Vec<Arc<UdpSocket>>,
         forward_sockets: Vec<Arc<UdpSocket>>,
         repair_socket: Arc<UdpSocket>,
-        sender: &PacketBatchSender,
+        sender: &Sender<Vec<PacketBatch>>,
         bank_forks: Option<Arc<RwLock<BankForks>>>,
+        cluster_info: Arc<ClusterInfo>,
         exit: &Arc<AtomicBool>,
     ) -> Self {
-        let recycler: PacketBatchRecycler = Recycler::warmed(100, 1024);
+        let recycler = PacketBatchRecycler::warmed(100, 1024);
 
         let (mut tvu_threads, tvu_filter) = Self::packet_modifier(
             sockets,
@@ -186,6 +202,7 @@ impl ShredFetchStage {
             bank_forks.clone(),
             "shred_fetch",
             |_| {},
+            None, // repair_context
         );
 
         let (tvu_forwards_threads, fwd_thread_hdl) = Self::packet_modifier(
@@ -196,16 +213,18 @@ impl ShredFetchStage {
             bank_forks.clone(),
             "shred_fetch_tvu_forwards",
             |p| p.meta.flags.insert(PacketFlags::FORWARDED),
+            None, // repair_context
         );
 
         let (repair_receiver, repair_handler) = Self::packet_modifier(
-            vec![repair_socket],
+            vec![repair_socket.clone()],
             exit,
             sender.clone(),
             recycler,
             bank_forks,
             "shred_fetch_repair",
             |p| p.meta.flags.insert(PacketFlags::REPAIR),
+            Some((repair_socket, cluster_info)),
         );
 
         tvu_threads.extend(tvu_forwards_threads.into_iter());

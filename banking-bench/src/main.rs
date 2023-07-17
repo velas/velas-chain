@@ -1,10 +1,11 @@
 #![allow(clippy::integer_arithmetic)]
 use {
-    clap::{crate_description, crate_name, value_t, App, Arg},
-    crossbeam_channel::unbounded,
+    clap::{crate_description, crate_name, Arg, ArgEnum, Command},
+    crossbeam_channel::{unbounded, Receiver},
     log::*,
     rand::{thread_rng, Rng},
     rayon::prelude::*,
+    solana_client::connection_cache::{ConnectionCache, DEFAULT_TPU_CONNECTION_POOL_SIZE},
     solana_core::banking_stage::BankingStage,
     solana_gossip::cluster_info::{ClusterInfo, Node},
     solana_ledger::{
@@ -14,7 +15,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_measure::measure::Measure,
-    solana_perf::packet::to_packet_batches,
+    solana_perf::packet::{to_packet_batches, PacketBatch},
     solana_poh::poh_recorder::{create_test_recorder, PohRecorder, WorkingBankEntry},
     solana_runtime::{
         accounts_background_service::AbsRequestSender, bank::Bank, bank_forks::BankForks,
@@ -29,7 +30,7 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     std::{
-        sync::{atomic::Ordering, mpsc::Receiver, Arc, Mutex, RwLock},
+        sync::{atomic::Ordering, Arc, Mutex, RwLock},
         thread::sleep,
         time::{Duration, Instant},
     },
@@ -55,7 +56,6 @@ fn check_txs(
             break;
         }
         if poh_recorder.lock().unwrap().bank().is_none() {
-            trace!("no bank");
             no_bank = true;
             break;
         }
@@ -66,100 +66,177 @@ fn check_txs(
     no_bank
 }
 
+#[derive(ArgEnum, Clone, Copy, PartialEq)]
+enum WriteLockContention {
+    /// No transactions lock the same accounts.
+    None,
+    /// Transactions don't lock the same account, unless they belong to the same batch.
+    SameBatchOnly,
+    /// All transactions write lock the same account.
+    Full,
+}
+
+impl WriteLockContention {
+    fn possible_values<'a>() -> impl Iterator<Item = clap::PossibleValue<'a>> {
+        Self::value_variants()
+            .iter()
+            .filter_map(|v| v.to_possible_value())
+    }
+}
+
+impl std::str::FromStr for WriteLockContention {
+    type Err = String;
+    fn from_str(input: &str) -> Result<Self, String> {
+        ArgEnum::from_str(input, false)
+    }
+}
+
 fn make_accounts_txs(
     total_num_transactions: usize,
+    packets_per_batch: usize,
     hash: Hash,
-    same_payer: bool,
+    contention: WriteLockContention,
 ) -> Vec<Transaction> {
-    let to_pubkey = solana_sdk::pubkey::new_rand();
+    use solana_sdk::pubkey;
+    let to_pubkey = pubkey::new_rand();
+    let chunk_pubkeys: Vec<pubkey::Pubkey> = (0..total_num_transactions / packets_per_batch)
+        .map(|_| pubkey::new_rand())
+        .collect();
     let payer_key = Keypair::new();
     let dummy = system_transaction::transfer(&payer_key, &to_pubkey, 1, hash);
     (0..total_num_transactions)
         .into_par_iter()
-        .map(|_| {
+        .map(|i| {
             let mut new = dummy.clone();
             let sig: Vec<u8> = (0..64).map(|_| thread_rng().gen::<u8>()).collect();
-            if !same_payer {
-                new.message.account_keys[0] = solana_sdk::pubkey::new_rand();
-            }
-            new.message.account_keys[1] = solana_sdk::pubkey::new_rand();
+            new.message.account_keys[0] = pubkey::new_rand();
+            new.message.account_keys[1] = match contention {
+                WriteLockContention::None => pubkey::new_rand(),
+                WriteLockContention::SameBatchOnly => chunk_pubkeys[i / packets_per_batch],
+                WriteLockContention::Full => to_pubkey,
+            };
             new.signatures = vec![Signature::new(&sig[0..64])];
             new
         })
         .collect()
 }
 
-struct Config {
+struct PacketsPerIteration {
+    packet_batches: Vec<PacketBatch>,
+    transactions: Vec<Transaction>,
     packets_per_batch: usize,
-    chunk_len: usize,
-    num_threads: usize,
 }
 
-impl Config {
-    fn get_transactions_index(&self, chunk_index: usize) -> usize {
-        chunk_index * (self.chunk_len / self.num_threads) * self.packets_per_batch
+impl PacketsPerIteration {
+    fn new(
+        packets_per_batch: usize,
+        batches_per_iteration: usize,
+        genesis_hash: Hash,
+        write_lock_contention: WriteLockContention,
+    ) -> Self {
+        let total_num_transactions = packets_per_batch * batches_per_iteration;
+        let transactions = make_accounts_txs(
+            total_num_transactions,
+            packets_per_batch,
+            genesis_hash,
+            write_lock_contention,
+        );
+
+        let packet_batches: Vec<PacketBatch> = to_packet_batches(&transactions, packets_per_batch);
+        assert_eq!(packet_batches.len(), batches_per_iteration);
+        Self {
+            packet_batches,
+            transactions,
+            packets_per_batch,
+        }
     }
-}
 
-fn bytes_as_usize(bytes: &[u8]) -> usize {
-    bytes[0] as usize | (bytes[1] as usize) << 8
+    fn refresh_blockhash(&mut self, new_blockhash: Hash) {
+        for tx in self.transactions.iter_mut() {
+            tx.message.recent_blockhash = new_blockhash;
+            let sig: Vec<u8> = (0..64).map(|_| thread_rng().gen::<u8>()).collect();
+            tx.signatures[0] = Signature::new(&sig[0..64]);
+        }
+        self.packet_batches = to_packet_batches(&self.transactions, self.packets_per_batch);
+    }
 }
 
 #[allow(clippy::cognitive_complexity)]
 fn main() {
     solana_logger::setup();
 
-    let matches = App::new(crate_name!())
+    let matches = Command::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())
         .arg(
-            Arg::with_name("num_chunks")
+            Arg::new("iterations")
+                .long("iterations")
+                .takes_value(true)
+                .help("Number of test iterations"),
+        )
+        .arg(
+            Arg::new("num_chunks")
                 .long("num-chunks")
                 .takes_value(true)
                 .value_name("SIZE")
                 .help("Number of transaction chunks."),
         )
         .arg(
-            Arg::with_name("packets_per_chunk")
-                .long("packets-per-chunk")
+            Arg::new("packets_per_batch")
+                .long("packets-per-batch")
                 .takes_value(true)
                 .value_name("SIZE")
-                .help("Packets per chunk"),
+                .help("Packets per batch"),
         )
         .arg(
-            Arg::with_name("skip_sanity")
+            Arg::new("skip_sanity")
                 .long("skip-sanity")
                 .takes_value(false)
                 .help("Skip transaction sanity execution"),
         )
         .arg(
-            Arg::with_name("same_payer")
-                .long("same-payer")
+            Arg::new("write_lock_contention")
+                .long("write-lock-contention")
+                .takes_value(true)
+                .possible_values(WriteLockContention::possible_values())
+                .help("Accounts that test transactions write lock"),
+        )
+        .arg(
+            Arg::new("batches_per_iteration")
+                .long("batches-per-iteration")
+                .takes_value(true)
+                .help("Number of batches to send in each iteration"),
+        )
+        .arg(
+            Arg::new("num_banking_threads")
+                .long("num-banking-threads")
+                .takes_value(true)
+                .help("Number of threads to use in the banking stage"),
+        )
+        .arg(
+            Arg::new("tpu_use_quic")
+                .long("tpu-use-quic")
                 .takes_value(false)
-                .help("Use the same payer for transfers"),
-        )
-        .arg(
-            Arg::with_name("iterations")
-                .long("iterations")
-                .takes_value(true)
-                .help("Number of iterations"),
-        )
-        .arg(
-            Arg::with_name("num_threads")
-                .long("num-threads")
-                .takes_value(true)
-                .help("Number of iterations"),
+                .help("Forward messages to TPU using QUIC"),
         )
         .get_matches();
 
-    let num_threads =
-        value_t!(matches, "num_threads", usize).unwrap_or(BankingStage::num_threads() as usize);
+    let num_banking_threads = matches
+        .value_of_t::<u32>("num_banking_threads")
+        .unwrap_or_else(|_| BankingStage::num_threads());
     //   a multiple of packet chunk duplicates to avoid races
-    let num_chunks = value_t!(matches, "num_chunks", usize).unwrap_or(16);
-    let packets_per_chunk = value_t!(matches, "packets_per_chunk", usize).unwrap_or(192);
-    let iterations = value_t!(matches, "iterations", usize).unwrap_or(1000);
+    let num_chunks = matches.value_of_t::<usize>("num_chunks").unwrap_or(16);
+    let packets_per_batch = matches
+        .value_of_t::<usize>("packets_per_batch")
+        .unwrap_or(192);
+    let iterations = matches.value_of_t::<usize>("iterations").unwrap_or(1000);
+    let batches_per_iteration = matches
+        .value_of_t::<usize>("batches_per_iteration")
+        .unwrap_or(BankingStage::num_threads() as usize);
+    let write_lock_contention = matches
+        .value_of_t::<WriteLockContention>("write_lock_contention")
+        .unwrap_or(WriteLockContention::None);
 
-    let total_num_transactions = num_chunks * num_threads * packets_per_chunk;
     let mint_total = 1_000_000_000_000;
     let GenesisConfigInfo {
         genesis_config,
@@ -172,48 +249,80 @@ fn main() {
     let (tpu_vote_sender, tpu_vote_receiver) = unbounded();
     let (replay_vote_sender, _replay_vote_receiver) = unbounded();
     let bank0 = Bank::new_for_benches(&genesis_config);
-    let mut bank_forks = BankForks::new(bank0);
-    let mut bank = bank_forks.working_bank();
+    let bank_forks = Arc::new(RwLock::new(BankForks::new(bank0)));
+    let mut bank = bank_forks.read().unwrap().working_bank();
 
-    info!("threads: {} txs: {}", num_threads, total_num_transactions);
+    // set cost tracker limits to MAX so it will not filter out TXs
+    bank.write_cost_tracker()
+        .unwrap()
+        .set_limits(std::u64::MAX, std::u64::MAX, std::u64::MAX);
 
-    let same_payer = matches.is_present("same_payer");
-    let mut transactions =
-        make_accounts_txs(total_num_transactions, genesis_config.hash(), same_payer);
+    let mut all_packets: Vec<PacketsPerIteration> = std::iter::from_fn(|| {
+        Some(PacketsPerIteration::new(
+            packets_per_batch,
+            batches_per_iteration,
+            genesis_config.hash(),
+            write_lock_contention,
+        ))
+    })
+    .take(num_chunks)
+    .collect();
 
     // fund all the accounts
-    transactions.iter().for_each(|tx| {
-        let mut fund = system_transaction::transfer(
-            &mint_keypair,
-            &tx.message.account_keys[0],
-            mint_total / total_num_transactions as u64,
-            genesis_config.hash(),
-        );
-        // Ignore any pesky duplicate signature errors in the case we are using single-payer
-        let sig: Vec<u8> = (0..64).map(|_| thread_rng().gen::<u8>()).collect();
-        fund.signatures = vec![Signature::new(&sig[0..64])];
-        let x = bank.process_transaction(&fund);
-        x.unwrap();
+    let total_num_transactions: u64 = all_packets
+        .iter()
+        .map(|packets_for_single_iteration| packets_for_single_iteration.transactions.len() as u64)
+        .sum();
+    info!(
+        "threads: {} txs: {}",
+        num_banking_threads, total_num_transactions
+    );
+
+    all_packets.iter().for_each(|packets_for_single_iteration| {
+        packets_for_single_iteration
+            .transactions
+            .iter()
+            .for_each(|tx| {
+                let mut fund = system_transaction::transfer(
+                    &mint_keypair,
+                    &tx.message.account_keys[0],
+                    mint_total / total_num_transactions,
+                    genesis_config.hash(),
+                );
+                // Ignore any pesky duplicate signature errors in the case we are using single-payer
+                let sig: Vec<u8> = (0..64).map(|_| thread_rng().gen::<u8>()).collect();
+                fund.signatures = vec![Signature::new(&sig[0..64])];
+                bank.process_transaction(&fund).unwrap();
+            });
     });
 
     let skip_sanity = matches.is_present("skip_sanity");
     if !skip_sanity {
-        //sanity check, make sure all the transactions can execute sequentially
-        transactions.iter().for_each(|tx| {
-            let res = bank.process_transaction(tx);
-            assert!(res.is_ok(), "sanity test transactions error: {:?}", res);
+        all_packets.iter().for_each(|packets_for_single_iteration| {
+            //sanity check, make sure all the transactions can execute sequentially
+            packets_for_single_iteration
+                .transactions
+                .iter()
+                .for_each(|tx| {
+                    let res = bank.process_transaction(tx);
+                    assert!(res.is_ok(), "sanity test transactions error: {:?}", res);
+                });
         });
         bank.clear_signatures();
-        //sanity check, make sure all the transactions can execute in parallel
 
-        let res = bank.process_transactions(transactions.iter());
-        for r in res {
-            assert!(r.is_ok(), "sanity parallel execution error: {:?}", r);
+        if write_lock_contention == WriteLockContention::None {
+            all_packets.iter().for_each(|packets_for_single_iteration| {
+                //sanity check, make sure all the transactions can execute in parallel
+                let res =
+                    bank.process_transactions(packets_for_single_iteration.transactions.iter());
+                for r in res {
+                    assert!(r.is_ok(), "sanity parallel execution error: {:?}", r);
+                }
+                bank.clear_signatures();
+            });
         }
-        bank.clear_signatures();
     }
 
-    let mut verified: Vec<_> = to_packet_batches(&transactions, packets_per_chunk);
     let ledger_path = get_tmp_ledger_path!();
     {
         let blockstore = Arc::new(
@@ -232,20 +341,25 @@ fn main() {
             SocketAddrSpace::Unspecified,
         );
         let cluster_info = Arc::new(cluster_info);
-        let banking_stage = BankingStage::new(
+        let tpu_use_quic = matches.is_present("tpu_use_quic");
+        let connection_cache = match tpu_use_quic {
+            true => ConnectionCache::new(DEFAULT_TPU_CONNECTION_POOL_SIZE),
+            false => ConnectionCache::with_udp(DEFAULT_TPU_CONNECTION_POOL_SIZE),
+        };
+        let banking_stage = BankingStage::new_num_threads(
             &cluster_info,
             &poh_recorder,
             verified_receiver,
             tpu_vote_receiver,
             vote_receiver,
+            num_banking_threads,
             None,
             replay_vote_sender,
             Arc::new(RwLock::new(CostModel::default())),
+            Arc::new(connection_cache),
+            bank_forks.clone(),
         );
         poh_recorder.lock().unwrap().set_bank(&bank);
-
-        let chunk_len = verified.len() / num_chunks;
-        let mut start = 0;
 
         // This is so that the signal_receiver does not go out of scope after the closure.
         // If it is dropped before poh_service, then poh_service will error when
@@ -257,43 +371,28 @@ fn main() {
         let mut txs_processed = 0;
         let mut root = 1;
         let collector = solana_sdk::pubkey::new_rand();
-        let config = Config {
-            packets_per_batch: packets_per_chunk,
-            chunk_len,
-            num_threads,
-        };
         let mut total_sent = 0;
-        for _ in 0..iterations {
+        for current_iteration_index in 0..iterations {
+            trace!("RUNNING ITERATION {}", current_iteration_index);
             let now = Instant::now();
             let mut sent = 0;
 
-            for (i, v) in verified[start..start + chunk_len]
-                .chunks(chunk_len / num_threads)
-                .enumerate()
+            let packets_for_this_iteration = &all_packets[current_iteration_index % num_chunks];
+            for (packet_batch_index, packet_batch) in
+                packets_for_this_iteration.packet_batches.iter().enumerate()
             {
-                let mut byte = 0;
-                let index = config.get_transactions_index(start + i);
-                if index < transactions.len() {
-                    byte = bytes_as_usize(transactions[index].signatures[0].as_ref());
-                }
+                sent += packet_batch.len();
                 trace!(
-                    "sending... {}..{} {} v.len: {} sig: {} transactions.len: {} index: {}",
-                    start + i,
-                    start + chunk_len,
+                    "Sending PacketBatch index {}, {}",
+                    packet_batch_index,
                     timestamp(),
-                    v.len(),
-                    byte,
-                    transactions.len(),
-                    index,
                 );
-                for xv in v {
-                    sent += xv.packets.len();
-                }
-                verified_sender.send(v.to_vec()).unwrap();
+                verified_sender
+                    .send((vec![packet_batch.clone()], None))
+                    .unwrap();
             }
-            let start_tx_index = config.get_transactions_index(start);
-            let end_tx_index = config.get_transactions_index(start + chunk_len);
-            for tx in &transactions[start_tx_index..end_tx_index] {
+
+            for tx in &packets_for_this_iteration.transactions {
                 loop {
                     if bank.get_signature_status(&tx.signatures[0]).is_some() {
                         break;
@@ -306,7 +405,7 @@ fn main() {
             }
             if check_txs(
                 &signal_receiver,
-                total_num_transactions / num_chunks,
+                packets_for_this_iteration.transactions.len(),
                 &poh_recorder,
             ) {
                 debug!(
@@ -315,7 +414,6 @@ fn main() {
                     bank.transaction_count(),
                     txs_processed
                 );
-                assert!(txs_processed < bank.transaction_count());
                 txs_processed = bank.transaction_count();
                 tx_total_us += duration_as_us(&now.elapsed());
 
@@ -331,15 +429,25 @@ fn main() {
                 new_bank_time.stop();
 
                 let mut insert_time = Measure::start("insert_time");
-                bank_forks.insert(new_bank);
-                bank = bank_forks.working_bank();
+                bank_forks.write().unwrap().insert(new_bank);
+                bank = bank_forks.read().unwrap().working_bank();
                 insert_time.stop();
+
+                // set cost tracker limits to MAX so it will not filter out TXs
+                bank.write_cost_tracker().unwrap().set_limits(
+                    std::u64::MAX,
+                    std::u64::MAX,
+                    std::u64::MAX,
+                );
 
                 poh_recorder.lock().unwrap().set_bank(&bank);
                 assert!(poh_recorder.lock().unwrap().bank().is_some());
                 if bank.slot() > 32 {
                     leader_schedule_cache.set_root(&bank);
-                    bank_forks.set_root(root, &AbsRequestSender::default(), None);
+                    bank_forks
+                        .write()
+                        .unwrap()
+                        .set_root(root, &AbsRequestSender::default(), None);
                     root += 1;
                 }
                 debug!(
@@ -360,24 +468,23 @@ fn main() {
             debug!(
                 "time: {} us checked: {} sent: {}",
                 duration_as_us(&now.elapsed()),
-                total_num_transactions / num_chunks,
+                total_num_transactions / num_chunks as u64,
                 sent,
             );
             total_sent += sent;
 
-            if bank.slot() > 0 && bank.slot() % 16 == 0 {
-                for tx in transactions.iter_mut() {
-                    tx.message.recent_blockhash = bank.last_blockhash();
-                    let sig: Vec<u8> = (0..64).map(|_| thread_rng().gen::<u8>()).collect();
-                    tx.signatures[0] = Signature::new(&sig[0..64]);
+            if current_iteration_index % 16 == 0 {
+                let last_blockhash = bank.last_blockhash();
+                for packets_for_single_iteration in all_packets.iter_mut() {
+                    packets_for_single_iteration.refresh_blockhash(last_blockhash);
                 }
-                verified = to_packet_batches(&transactions.clone(), packets_per_chunk);
             }
-
-            start += chunk_len;
-            start %= verified.len();
         }
-        let txs_processed = bank_forks.working_bank().transaction_count();
+        let txs_processed = bank_forks
+            .read()
+            .unwrap()
+            .working_bank()
+            .transaction_count();
         debug!("processed: {} base: {}", txs_processed, base_tx_count);
         eprintln!(
             "{{'name': 'banking_bench_total', 'median': '{:.2}'}}",

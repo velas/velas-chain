@@ -360,7 +360,10 @@ mod tests {
         let rpc_blockhash = hash(&[1u8]);
         let rpc_fee_calc = FeeCalculator::new(42);
         let get_recent_blockhash_response = json!(Response {
-            context: RpcResponseContext { slot: 1 },
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None
+            },
             value: json!(RpcFees {
                 blockhash: rpc_blockhash.to_string(),
                 fee_calculator: rpc_fee_calc,
@@ -369,7 +372,10 @@ mod tests {
             }),
         });
         let get_fee_calculator_for_blockhash_response = json!(Response {
-            context: RpcResponseContext { slot: 1 },
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None
+            },
             value: json!(RpcFeeCalculator {
                 fee_calculator: rpc_fee_calc
             }),
@@ -438,7 +444,10 @@ mod tests {
             None,
         );
         let get_account_response = json!(Response {
-            context: RpcResponseContext { slot: 1 },
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None
+            },
             value: json!(Some(rpc_nonce_account)),
         });
 

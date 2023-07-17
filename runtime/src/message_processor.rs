@@ -3,18 +3,17 @@ use {
     solana_measure::measure::Measure,
     solana_program_runtime::{
         compute_budget::ComputeBudget,
-        instruction_recorder::InstructionRecorder,
-        invoke_context::{
-            BuiltinProgram, Executors, InvokeContext, ProcessInstructionResult,
-            TransactionAccountRefCell,
-        },
+        invoke_context::{BuiltinProgram, Executors, InvokeContext},
         log_collector::LogCollector,
         sysvar_cache::SysvarCache,
         timings::{ExecuteDetailsTimings, ExecuteTimings},
     },
     solana_sdk::{
         account::WritableAccount,
-        feature_set::{prevent_calling_precompiles_as_programs, FeatureSet},
+        feature_set::{
+            prevent_calling_precompiles_as_programs,
+            record_instruction_in_transaction_context_push, FeatureSet,
+        },
         hash::Hash,
         message::SanitizedMessage,
         precompiles::is_precompile,
@@ -22,6 +21,7 @@ use {
         saturating_add_assign,
         sysvar::instructions,
         transaction::TransactionError,
+        transaction_context::{InstructionAccount, TransactionContext},
     },
     std::{borrow::Cow, cell::RefCell, rc::Rc, sync::Arc},
 };
@@ -37,9 +37,6 @@ impl ::solana_frozen_abi::abi_example::AbiExample for MessageProcessor {
         MessageProcessor::default()
     }
 }
-
-/// Trace of all instructions attempted
-pub type InstructionTrace = Vec<InstructionRecorder>;
 
 /// Resultant information gathered from calling process_message()
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -59,11 +56,10 @@ impl MessageProcessor {
         builtin_programs: &[BuiltinProgram],
         message: &SanitizedMessage,
         program_indices: &[Vec<usize>],
-        accounts: &[TransactionAccountRefCell],
+        transaction_context: &mut TransactionContext,
         rent: Rent,
         log_collector: Option<Rc<RefCell<LogCollector>>>,
         executors: Rc<RefCell<Executors>>,
-        instruction_trace: &mut InstructionTrace,
         feature_set: Arc<FeatureSet>,
         compute_budget: ComputeBudget,
         timings: &mut ExecuteTimings,
@@ -75,8 +71,8 @@ impl MessageProcessor {
         evm_executor: Option<Rc<RefCell<evm_state::Executor>>>,
     ) -> Result<ProcessedMessageInfo, TransactionError> {
         let mut invoke_context = InvokeContext::new(
+            transaction_context,
             rent,
-            accounts,
             builtin_programs,
             Cow::Borrowed(sysvar_cache),
             log_collector,
@@ -95,16 +91,14 @@ impl MessageProcessor {
             .zip(program_indices.iter())
             .enumerate()
         {
-            invoke_context.record_top_level_instruction(
-                instruction.decompile(message).map_err(|err| {
-                    TransactionError::InstructionError(instruction_index as u8, err)
-                })?,
-            );
-
-            if invoke_context
+            let is_precompile = invoke_context
                 .feature_set
                 .is_active(&prevent_calling_precompiles_as_programs::id())
-                && is_precompile(program_id, |id| invoke_context.feature_set.is_active(id))
+                && is_precompile(program_id, |id| invoke_context.feature_set.is_active(id));
+            if is_precompile
+                && !invoke_context
+                    .feature_set
+                    .is_active(&record_instruction_in_transaction_context_push::id())
             {
                 // Precompiled programs don't have an instruction processor
                 continue;
@@ -112,53 +106,82 @@ impl MessageProcessor {
 
             // Fixup the special instructions key if present
             // before the account pre-values are taken care of
-            for (pubkey, account) in accounts.iter().take(message.account_keys_len()) {
-                if instructions::check_id(pubkey) {
-                    let mut mut_account_ref = account.borrow_mut();
-                    instructions::store_current_index(
-                        mut_account_ref.data_as_mut_slice(),
-                        instruction_index as u16,
-                    );
-                    break;
-                }
+            if let Some(account_index) = invoke_context
+                .transaction_context
+                .find_index_of_account(&instructions::id())
+            {
+                let mut mut_account_ref = invoke_context
+                    .transaction_context
+                    .get_account_at_index(account_index)
+                    .map_err(|_| TransactionError::InvalidAccountIndex)?
+                    .borrow_mut();
+                instructions::store_current_index(
+                    mut_account_ref.data_as_mut_slice(),
+                    instruction_index as u16,
+                );
             }
 
-            let mut time = Measure::start("execute_instruction");
-            let ProcessInstructionResult {
-                compute_units_consumed,
-                result,
-            } = invoke_context.process_instruction(
-                message,
-                instruction,
-                program_indices,
-                &[],
-                &[],
-                timings,
-            );
-            time.stop();
-            *accumulated_consumed_units =
-                accumulated_consumed_units.saturating_add(compute_units_consumed);
-            timings.details.accumulate_program(
-                program_id,
-                time.as_us(),
-                compute_units_consumed,
-                result.is_err(),
-            );
-            invoke_context.timings = {
-                timings.details.accumulate(&invoke_context.timings);
-                ExecuteDetailsTimings::default()
-            };
-            saturating_add_assign!(
-                timings.execute_accessories.process_instructions.total_us,
-                time.as_us()
-            );
+            let instruction_accounts = instruction
+                .accounts
+                .iter()
+                .map(|index_in_transaction| {
+                    let index_in_transaction = *index_in_transaction as usize;
+                    InstructionAccount {
+                        index_in_transaction,
+                        index_in_caller: program_indices.len().saturating_add(index_in_transaction),
+                        is_signer: message.is_signer(index_in_transaction),
+                        is_writable: message.is_writable(index_in_transaction),
+                    }
+                })
+                .collect::<Vec<_>>();
 
-            result.map_err(|err| {
-                instruction_trace.append(invoke_context.get_instruction_trace_mut());
-                TransactionError::InstructionError(instruction_index as u8, err)
-            })?;
+            let result = if is_precompile
+                && invoke_context
+                    .feature_set
+                    .is_active(&record_instruction_in_transaction_context_push::id())
+            {
+                invoke_context
+                    .transaction_context
+                    .push(
+                        program_indices,
+                        &instruction_accounts,
+                        &instruction.data,
+                        true,
+                    )
+                    .and_then(|_| invoke_context.transaction_context.pop())
+            } else {
+                let mut time = Measure::start("execute_instruction");
+                let mut compute_units_consumed = 0;
+                let result = invoke_context.process_instruction(
+                    &instruction.data,
+                    &instruction_accounts,
+                    program_indices,
+                    &mut compute_units_consumed,
+                    timings,
+                );
+                time.stop();
+                *accumulated_consumed_units =
+                    accumulated_consumed_units.saturating_add(compute_units_consumed);
+                timings.details.accumulate_program(
+                    program_id,
+                    time.as_us(),
+                    compute_units_consumed,
+                    result.is_err(),
+                );
+                invoke_context.timings = {
+                    timings.details.accumulate(&invoke_context.timings);
+                    ExecuteDetailsTimings::default()
+                };
+                saturating_add_assign!(
+                    timings.execute_accessories.process_instructions.total_us,
+                    time.as_us()
+                );
+                result
+            };
+
+            result
+                .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
         }
-        instruction_trace.append(invoke_context.get_instruction_trace_mut());
         Ok(ProcessedMessageInfo {
             accounts_data_len_delta: invoke_context.get_accounts_data_meter().delta(),
         })
@@ -173,8 +196,7 @@ mod tests {
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount},
             instruction::{AccountMeta, Instruction, InstructionError},
-            keyed_account::keyed_account_at_index,
-            message::Message,
+            message::{AccountKeys, Message},
             native_loader::{self, create_loadable_account_for_test},
             pubkey::Pubkey,
             secp256k1_instruction::new_secp256k1_instruction,
@@ -196,36 +218,33 @@ mod tests {
         #[derive(Serialize, Deserialize)]
         enum MockSystemInstruction {
             Correct,
-            AttemptCredit { lamports: u64 },
-            AttemptDataChange { data: u8 },
+            TransferLamports { lamports: u64 },
+            ChangeData { data: u8 },
         }
 
         fn mock_system_process_instruction(
-            first_instruction_account: usize,
+            _first_instruction_account: usize,
             data: &[u8],
             invoke_context: &mut InvokeContext,
         ) -> Result<(), InstructionError> {
-            let keyed_accounts = invoke_context.get_keyed_accounts()?;
+            let transaction_context = &invoke_context.transaction_context;
+            let instruction_context = transaction_context.get_current_instruction_context()?;
             if let Ok(instruction) = bincode::deserialize(data) {
                 match instruction {
                     MockSystemInstruction::Correct => Ok(()),
-                    MockSystemInstruction::AttemptCredit { lamports } => {
-                        keyed_account_at_index(keyed_accounts, first_instruction_account)?
-                            .account
-                            .borrow_mut()
+                    MockSystemInstruction::TransferLamports { lamports } => {
+                        instruction_context
+                            .try_borrow_instruction_account(transaction_context, 0)?
                             .checked_sub_lamports(lamports)?;
-                        keyed_account_at_index(keyed_accounts, first_instruction_account + 1)?
-                            .account
-                            .borrow_mut()
+                        instruction_context
+                            .try_borrow_instruction_account(transaction_context, 1)?
                             .checked_add_lamports(lamports)?;
                         Ok(())
                     }
-                    // Change data in a read-only account
-                    MockSystemInstruction::AttemptDataChange { data } => {
-                        keyed_account_at_index(keyed_accounts, first_instruction_account + 1)?
-                            .account
-                            .borrow_mut()
-                            .set_data(vec![data]);
+                    MockSystemInstruction::ChangeData { data } => {
+                        instruction_context
+                            .try_borrow_instruction_account(transaction_context, 1)?
+                            .set_data(&[data]);
                         Ok(())
                     }
                 }
@@ -234,53 +253,62 @@ mod tests {
             }
         }
 
-        let mock_system_program_id = Pubkey::new(&[2u8; 32]);
+        let writable_pubkey = Pubkey::new_unique();
+        let readonly_pubkey = Pubkey::new_unique();
+        let mock_system_program_id = Pubkey::new_unique();
+
         let rent_collector = RentCollector::default();
         let builtin_programs = &[BuiltinProgram {
             program_id: mock_system_program_id,
             process_instruction: mock_system_process_instruction,
         }];
 
-        let program_account = Rc::new(RefCell::new(create_loadable_account_for_test(
-            "mock_system_program",
-        )));
         let accounts = vec![
             (
-                solana_sdk::pubkey::new_rand(),
-                AccountSharedData::new_ref(100, 1, &mock_system_program_id),
+                writable_pubkey,
+                AccountSharedData::new(100, 1, &mock_system_program_id),
             ),
             (
-                solana_sdk::pubkey::new_rand(),
-                AccountSharedData::new_ref(0, 1, &mock_system_program_id),
+                readonly_pubkey,
+                AccountSharedData::new(0, 1, &mock_system_program_id),
             ),
-            (mock_system_program_id, program_account),
-        ];
-        let program_indices = vec![vec![2]];
-
-        let executors = Rc::new(RefCell::new(Executors::default()));
-
-        let account_metas = vec![
-            AccountMeta::new(accounts[0].0, true),
-            AccountMeta::new_readonly(accounts[1].0, false),
-        ];
-        let message = SanitizedMessage::Legacy(Message::new(
-            &[Instruction::new_with_bincode(
+            (
                 mock_system_program_id,
-                &MockSystemInstruction::Correct,
-                account_metas.clone(),
-            )],
-            Some(&accounts[0].0),
+                create_loadable_account_for_test("mock_system_program"),
+            ),
+        ];
+        let mut transaction_context = TransactionContext::new(accounts, 1, 3);
+        let program_indices = vec![vec![2]];
+        let executors = Rc::new(RefCell::new(Executors::default()));
+        let account_keys = transaction_context.get_keys_of_accounts().to_vec();
+        let account_metas = vec![
+            AccountMeta::new(writable_pubkey, true),
+            AccountMeta::new_readonly(readonly_pubkey, false),
+        ];
+
+        let message = SanitizedMessage::Legacy(Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            account_keys.clone(),
+            Hash::default(),
+            AccountKeys::new(&account_keys, None).compile_instructions(&[
+                Instruction::new_with_bincode(
+                    mock_system_program_id,
+                    &MockSystemInstruction::Correct,
+                    account_metas.clone(),
+                ),
+            ]),
         ));
         let sysvar_cache = SysvarCache::default();
         let result = MessageProcessor::process_message(
             builtin_programs,
             &message,
             &program_indices,
-            &accounts,
+            &mut transaction_context,
             rent_collector.rent,
             None,
             executors.clone(),
-            &mut Vec::new(),
             Arc::new(FeatureSet::all_enabled()),
             ComputeBudget::default(),
             &mut ExecuteTimings::default(),
@@ -292,27 +320,45 @@ mod tests {
             None,
         );
         assert!(result.is_ok());
-        assert_eq!(accounts[0].1.borrow().lamports(), 100);
-        assert_eq!(accounts[1].1.borrow().lamports(), 0);
+        assert_eq!(
+            transaction_context
+                .get_account_at_index(0)
+                .unwrap()
+                .borrow()
+                .lamports(),
+            100
+        );
+        assert_eq!(
+            transaction_context
+                .get_account_at_index(1)
+                .unwrap()
+                .borrow()
+                .lamports(),
+            0
+        );
 
-        let message = SanitizedMessage::Legacy(Message::new(
-            &[Instruction::new_with_bincode(
-                mock_system_program_id,
-                &MockSystemInstruction::AttemptCredit { lamports: 50 },
-                account_metas.clone(),
-            )],
-            Some(&accounts[0].0),
+        let message = SanitizedMessage::Legacy(Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            account_keys.clone(),
+            Hash::default(),
+            AccountKeys::new(&account_keys, None).compile_instructions(&[
+                Instruction::new_with_bincode(
+                    mock_system_program_id,
+                    &MockSystemInstruction::TransferLamports { lamports: 50 },
+                    account_metas.clone(),
+                ),
+            ]),
         ));
-
         let result = MessageProcessor::process_message(
             builtin_programs,
             &message,
             &program_indices,
-            &accounts,
+            &mut transaction_context,
             rent_collector.rent,
             None,
             executors.clone(),
-            &mut Vec::new(),
             Arc::new(FeatureSet::all_enabled()),
             ComputeBudget::default(),
             &mut ExecuteTimings::default(),
@@ -331,24 +377,28 @@ mod tests {
             ))
         );
 
-        let message = SanitizedMessage::Legacy(Message::new(
-            &[Instruction::new_with_bincode(
-                mock_system_program_id,
-                &MockSystemInstruction::AttemptDataChange { data: 50 },
-                account_metas,
-            )],
-            Some(&accounts[0].0),
+        let message = SanitizedMessage::Legacy(Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            account_keys.clone(),
+            Hash::default(),
+            AccountKeys::new(&account_keys, None).compile_instructions(&[
+                Instruction::new_with_bincode(
+                    mock_system_program_id,
+                    &MockSystemInstruction::ChangeData { data: 50 },
+                    account_metas,
+                ),
+            ]),
         ));
-
         let result = MessageProcessor::process_message(
             builtin_programs,
             &message,
             &program_indices,
-            &accounts,
+            &mut transaction_context,
             rent_collector.rent,
             None,
             executors,
-            &mut Vec::new(),
             Arc::new(FeatureSet::all_enabled()),
             ComputeBudget::default(),
             &mut ExecuteTimings::default(),
@@ -378,67 +428,49 @@ mod tests {
         }
 
         fn mock_system_process_instruction(
-            first_instruction_account: usize,
+            _first_instruction_account: usize,
             data: &[u8],
             invoke_context: &mut InvokeContext,
         ) -> Result<(), InstructionError> {
-            let keyed_accounts = invoke_context.get_keyed_accounts()?;
+            let transaction_context = &invoke_context.transaction_context;
+            let instruction_context = transaction_context.get_current_instruction_context()?;
+            let mut to_account =
+                instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
             if let Ok(instruction) = bincode::deserialize(data) {
                 match instruction {
                     MockSystemInstruction::BorrowFail => {
-                        let from_account =
-                            keyed_account_at_index(keyed_accounts, first_instruction_account)?
-                                .try_account_ref_mut()?;
-                        let dup_account =
-                            keyed_account_at_index(keyed_accounts, first_instruction_account + 2)?
-                                .try_account_ref_mut()?;
-                        if from_account.lamports() != dup_account.lamports() {
+                        let from_account = instruction_context
+                            .try_borrow_instruction_account(transaction_context, 0)?;
+                        let dup_account = instruction_context
+                            .try_borrow_instruction_account(transaction_context, 2)?;
+                        if from_account.get_lamports() != dup_account.get_lamports() {
                             return Err(InstructionError::InvalidArgument);
                         }
                         Ok(())
                     }
                     MockSystemInstruction::MultiBorrowMut => {
-                        let from_lamports = {
-                            let from_account =
-                                keyed_account_at_index(keyed_accounts, first_instruction_account)?
-                                    .try_account_ref_mut()?;
-                            from_account.lamports()
-                        };
-                        let dup_lamports = {
-                            let dup_account = keyed_account_at_index(
-                                keyed_accounts,
-                                first_instruction_account + 2,
-                            )?
-                            .try_account_ref_mut()?;
-                            dup_account.lamports()
-                        };
-                        if from_lamports != dup_lamports {
+                        let lamports_a = instruction_context
+                            .try_borrow_instruction_account(transaction_context, 0)?
+                            .get_lamports();
+                        let lamports_b = instruction_context
+                            .try_borrow_instruction_account(transaction_context, 2)?
+                            .get_lamports();
+                        if lamports_a != lamports_b {
                             return Err(InstructionError::InvalidArgument);
                         }
                         Ok(())
                     }
                     MockSystemInstruction::DoWork { lamports, data } => {
-                        {
-                            let mut to_account = keyed_account_at_index(
-                                keyed_accounts,
-                                first_instruction_account + 1,
-                            )?
-                            .try_account_ref_mut()?;
-                            let mut dup_account = keyed_account_at_index(
-                                keyed_accounts,
-                                first_instruction_account + 2,
-                            )?
-                            .try_account_ref_mut()?;
-                            dup_account.checked_sub_lamports(lamports)?;
-                            to_account.checked_add_lamports(lamports)?;
-                            dup_account.set_data(vec![data]);
-                        }
-                        keyed_account_at_index(keyed_accounts, first_instruction_account)?
-                            .try_account_ref_mut()?
-                            .checked_sub_lamports(lamports)?;
-                        keyed_account_at_index(keyed_accounts, first_instruction_account + 1)?
-                            .try_account_ref_mut()?
-                            .checked_add_lamports(lamports)?;
+                        let mut dup_account = instruction_context
+                            .try_borrow_instruction_account(transaction_context, 2)?;
+                        dup_account.checked_sub_lamports(lamports)?;
+                        to_account.checked_add_lamports(lamports)?;
+                        dup_account.set_data(&[data]);
+                        drop(dup_account);
+                        let mut from_account = instruction_context
+                            .try_borrow_instruction_account(transaction_context, 0)?;
+                        from_account.checked_sub_lamports(lamports)?;
+                        to_account.checked_add_lamports(lamports)?;
                         Ok(())
                     }
                 }
@@ -454,28 +486,36 @@ mod tests {
             process_instruction: mock_system_process_instruction,
         }];
 
-        let program_account = Rc::new(RefCell::new(create_loadable_account_for_test(
-            "mock_system_program",
-        )));
         let accounts = vec![
             (
                 solana_sdk::pubkey::new_rand(),
-                AccountSharedData::new_ref(100, 1, &mock_program_id),
+                AccountSharedData::new(100, 1, &mock_program_id),
             ),
             (
                 solana_sdk::pubkey::new_rand(),
-                AccountSharedData::new_ref(0, 1, &mock_program_id),
+                AccountSharedData::new(0, 1, &mock_program_id),
             ),
-            (mock_program_id, program_account),
+            (
+                mock_program_id,
+                create_loadable_account_for_test("mock_system_program"),
+            ),
         ];
+        let mut transaction_context = TransactionContext::new(accounts, 1, 3);
         let program_indices = vec![vec![2]];
-
         let executors = Rc::new(RefCell::new(Executors::default()));
-
         let account_metas = vec![
-            AccountMeta::new(accounts[0].0, true),
-            AccountMeta::new(accounts[1].0, false),
-            AccountMeta::new(accounts[0].0, false),
+            AccountMeta::new(
+                *transaction_context.get_key_of_account_at_index(0).unwrap(),
+                true,
+            ),
+            AccountMeta::new(
+                *transaction_context.get_key_of_account_at_index(1).unwrap(),
+                false,
+            ),
+            AccountMeta::new(
+                *transaction_context.get_key_of_account_at_index(0).unwrap(),
+                false,
+            ),
         ];
 
         // Try to borrow mut the same account
@@ -485,18 +525,17 @@ mod tests {
                 &MockSystemInstruction::BorrowFail,
                 account_metas.clone(),
             )],
-            Some(&accounts[0].0),
+            Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
         let sysvar_cache = SysvarCache::default();
         let result = MessageProcessor::process_message(
             builtin_programs,
             &message,
             &program_indices,
-            &accounts,
+            &mut transaction_context,
             rent_collector.rent,
             None,
             executors.clone(),
-            &mut Vec::new(),
             Arc::new(FeatureSet::all_enabled()),
             ComputeBudget::default(),
             &mut ExecuteTimings::default(),
@@ -522,17 +561,16 @@ mod tests {
                 &MockSystemInstruction::MultiBorrowMut,
                 account_metas.clone(),
             )],
-            Some(&accounts[0].0),
+            Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
         let result = MessageProcessor::process_message(
             builtin_programs,
             &message,
             &program_indices,
-            &accounts,
+            &mut transaction_context,
             rent_collector.rent,
             None,
             executors.clone(),
-            &mut Vec::new(),
             Arc::new(FeatureSet::all_enabled()),
             ComputeBudget::default(),
             &mut ExecuteTimings::default(),
@@ -545,7 +583,7 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        // Do work on the same account but at different location in keyed_accounts[]
+        // Do work on the same transaction account but at different instruction accounts
         let message = SanitizedMessage::Legacy(Message::new(
             &[Instruction::new_with_bincode(
                 mock_program_id,
@@ -555,17 +593,16 @@ mod tests {
                 },
                 account_metas,
             )],
-            Some(&accounts[0].0),
+            Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
         let result = MessageProcessor::process_message(
             builtin_programs,
             &message,
             &program_indices,
-            &accounts,
+            &mut transaction_context,
             rent_collector.rent,
             None,
             executors,
-            &mut Vec::new(),
             Arc::new(FeatureSet::all_enabled()),
             ComputeBudget::default(),
             &mut ExecuteTimings::default(),
@@ -577,9 +614,30 @@ mod tests {
             None,
         );
         assert!(result.is_ok());
-        assert_eq!(accounts[0].1.borrow().lamports(), 80);
-        assert_eq!(accounts[1].1.borrow().lamports(), 20);
-        assert_eq!(accounts[0].1.borrow().data(), &vec![42]);
+        assert_eq!(
+            transaction_context
+                .get_account_at_index(0)
+                .unwrap()
+                .borrow()
+                .lamports(),
+            80
+        );
+        assert_eq!(
+            transaction_context
+                .get_account_at_index(1)
+                .unwrap()
+                .borrow()
+                .lamports(),
+            20
+        );
+        assert_eq!(
+            transaction_context
+                .get_account_at_index(0)
+                .unwrap()
+                .borrow()
+                .data(),
+            &vec![42]
+        );
     }
 
     #[test]
@@ -597,14 +655,15 @@ mod tests {
             process_instruction: mock_process_instruction,
         }];
 
-        let secp256k1_account = AccountSharedData::new_ref(1, 0, &native_loader::id());
-        secp256k1_account.borrow_mut().set_executable(true);
-        let mock_program_account = AccountSharedData::new_ref(1, 0, &native_loader::id());
-        mock_program_account.borrow_mut().set_executable(true);
+        let mut secp256k1_account = AccountSharedData::new(1, 0, &native_loader::id());
+        secp256k1_account.set_executable(true);
+        let mut mock_program_account = AccountSharedData::new(1, 0, &native_loader::id());
+        mock_program_account.set_executable(true);
         let accounts = vec![
             (secp256k1_program::id(), secp256k1_account),
             (mock_program_id, mock_program_account),
         ];
+        let mut transaction_context = TransactionContext::new(accounts, 1, 2);
 
         let message = SanitizedMessage::Legacy(Message::new(
             &[
@@ -621,11 +680,10 @@ mod tests {
             builtin_programs,
             &message,
             &[vec![0], vec![1]],
-            &accounts,
+            &mut transaction_context,
             RentCollector::default().rent,
             None,
             Rc::new(RefCell::new(Executors::default())),
-            &mut Vec::new(),
             Arc::new(FeatureSet::all_enabled()),
             ComputeBudget::default(),
             &mut ExecuteTimings::default(),
@@ -644,5 +702,6 @@ mod tests {
                 InstructionError::Custom(0xbabb1e)
             ))
         );
+        assert_eq!(transaction_context.get_instruction_trace().len(), 2);
     }
 }

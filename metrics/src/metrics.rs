@@ -2,6 +2,7 @@
 
 use {
     crate::{counter::CounterPoint, datapoint::DataPoint},
+    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     gethostname::gethostname,
     lazy_static::lazy_static,
     log::*,
@@ -11,11 +12,8 @@ use {
         collections::HashMap,
         convert::Into,
         env,
-        fmt::Write as _,
-        sync::{
-            mpsc::{channel, Receiver, RecvTimeoutError, Sender},
-            Arc, Barrier, Mutex, Once, RwLock,
-        },
+        fmt::Write,
+        sync::{Arc, Barrier, Mutex, Once, RwLock},
         thread,
         time::{Duration, Instant, UNIX_EPOCH},
     },
@@ -39,11 +37,11 @@ enum MetricsCommand {
     SubmitCounter(CounterPoint, log::Level, u64),
 }
 
-struct MetricsAgent {
+pub struct MetricsAgent {
     sender: Sender<MetricsCommand>,
 }
 
-trait MetricsWriter {
+pub trait MetricsWriter {
     // Write the points and empty the vector.  Called on the internal
     // MetricsAgent worker thread.
     fn write(&self, points: Vec<DataPoint>);
@@ -80,6 +78,35 @@ impl InfluxDbMetricsWriter {
     }
 }
 
+pub fn serialize_points(points: &Vec<DataPoint>, host_id: &str) -> String {
+    const TIMESTAMP_LEN: usize = 20;
+    const HOST_ID_LEN: usize = 8; // "host_id=".len()
+    const EXTRA_LEN: usize = 2; // "=,".len()
+    let mut len = 0;
+    for point in points {
+        for (name, value) in &point.fields {
+            len += name.len() + value.len() + EXTRA_LEN;
+        }
+        len += point.name.len();
+        len += TIMESTAMP_LEN;
+        len += host_id.len() + HOST_ID_LEN;
+    }
+    let mut line = String::with_capacity(len);
+    for point in points {
+        let _ = write!(line, "{},host_id={}", &point.name, host_id);
+
+        let mut first = true;
+        for (name, value) in point.fields.iter() {
+            let _ = write!(line, "{}{}={}", if first { ' ' } else { ',' }, name, value);
+            first = false;
+        }
+        let timestamp = point.timestamp.duration_since(UNIX_EPOCH);
+        let nanos = timestamp.unwrap().as_nanos();
+        let _ = writeln!(line, " {}", nanos);
+    }
+    line
+}
+
 impl MetricsWriter for InfluxDbMetricsWriter {
     fn write(&self, points: Vec<DataPoint>) {
         if let Some(ref write_url) = self.write_url {
@@ -87,25 +114,7 @@ impl MetricsWriter for InfluxDbMetricsWriter {
 
             let host_id = HOST_ID.read().unwrap();
 
-            let mut line = String::new();
-            for point in points {
-                let _ = write!(line, "{},host_id={}", &point.name, &host_id);
-
-                let mut first = true;
-                for (name, value) in point.fields {
-                    let _ = write!(
-                        line,
-                        "{}{}={}",
-                        if first { ' ' } else { ',' },
-                        name,
-                        value
-                    );
-                    first = false;
-                }
-                let timestamp = point.timestamp.duration_since(UNIX_EPOCH);
-                let nanos = timestamp.unwrap().as_nanos();
-                let _ = writeln!(line, " {}", nanos);
-            }
+            let line = serialize_points(&points, &host_id);
 
             let client = reqwest::blocking::Client::builder()
                 .timeout(Duration::from_secs(5))
@@ -152,36 +161,24 @@ impl Default for MetricsAgent {
 }
 
 impl MetricsAgent {
-    fn new(
+    pub fn new(
         writer: Arc<dyn MetricsWriter + Send + Sync>,
         write_frequency: Duration,
         max_points_per_sec: usize,
     ) -> Self {
-        let (sender, receiver) = channel::<MetricsCommand>();
+        let (sender, receiver) = unbounded::<MetricsCommand>();
         thread::spawn(move || Self::run(&receiver, &writer, write_frequency, max_points_per_sec));
 
         Self { sender }
     }
 
-    fn collect_points(
-        points_map: &mut HashMap<log::Level, (CounterMap, Vec<DataPoint>)>,
-    ) -> Vec<DataPoint> {
-        let points: Vec<DataPoint> = [
-            Level::Error,
-            Level::Warn,
-            Level::Info,
-            Level::Debug,
-            Level::Trace,
-        ]
-        .iter()
-        .filter_map(|level| points_map.remove(level))
-        .flat_map(|(counters, points)| {
-            let counter_points = counters.into_values().map(|v| v.into());
-            points.into_iter().chain(counter_points)
-        })
-        .collect();
-        points_map.clear();
-        points
+    fn collect_points(points: &mut Vec<DataPoint>, counters: &mut CounterMap) -> Vec<DataPoint> {
+        let mut ret: Vec<DataPoint> = Vec::default();
+        std::mem::swap(&mut ret, points);
+        for (_, v) in counters.drain() {
+            ret.push(v.into());
+        }
+        ret
     }
 
     fn write(
@@ -190,6 +187,7 @@ impl MetricsAgent {
         max_points: usize,
         max_points_per_sec: usize,
         last_write_time: Instant,
+        points_buffered: usize,
     ) {
         if points.is_empty() {
             return;
@@ -212,6 +210,7 @@ impl MetricsAgent {
                 .add_field_i64("points_written", points_written as i64)
                 .add_field_i64("num_points", num_points as i64)
                 .add_field_i64("points_lost", (num_points - points_written) as i64)
+                .add_field_i64("points_buffered", points_buffered as i64)
                 .add_field_i64(
                     "secs_since_last_write",
                     now.duration_since(last_write_time).as_secs() as i64,
@@ -221,6 +220,7 @@ impl MetricsAgent {
 
         writer.write(points);
     }
+
     fn run(
         receiver: &Receiver<MetricsCommand>,
         writer: &Arc<dyn MetricsWriter + Send + Sync>,
@@ -229,7 +229,9 @@ impl MetricsAgent {
     ) {
         trace!("run: enter");
         let mut last_write_time = Instant::now();
-        let mut points_map = HashMap::<log::Level, (CounterMap, Vec<DataPoint>)>::new();
+        let mut points = Vec::<DataPoint>::new();
+        let mut counters = CounterMap::new();
+
         let max_points = write_frequency.as_secs() as usize * max_points_per_sec;
 
         loop {
@@ -239,27 +241,21 @@ impl MetricsAgent {
                         debug!("metrics_thread: flush");
                         Self::write(
                             writer,
-                            Self::collect_points(&mut points_map),
+                            Self::collect_points(&mut points, &mut counters),
                             max_points,
                             max_points_per_sec,
                             last_write_time,
+                            receiver.len(),
                         );
                         last_write_time = Instant::now();
                         barrier.wait();
                     }
                     MetricsCommand::Submit(point, level) => {
                         log!(level, "{}", point);
-                        let (_, points) = points_map
-                            .entry(level)
-                            .or_insert((HashMap::new(), Vec::new()));
                         points.push(point);
                     }
-                    MetricsCommand::SubmitCounter(counter, level, bucket) => {
+                    MetricsCommand::SubmitCounter(counter, _level, bucket) => {
                         debug!("{:?}", counter);
-                        let (counters, _) = points_map
-                            .entry(level)
-                            .or_insert((HashMap::new(), Vec::new()));
-
                         let key = (counter.name, bucket);
                         if let Some(value) = counters.get_mut(&key) {
                             value.count += counter.count;
@@ -281,10 +277,11 @@ impl MetricsAgent {
             if now.duration_since(last_write_time) >= write_frequency {
                 Self::write(
                     writer,
-                    Self::collect_points(&mut points_map),
+                    Self::collect_points(&mut points, &mut counters),
                     max_points,
                     max_points_per_sec,
                     last_write_time,
+                    receiver.len(),
                 );
                 last_write_time = now;
             }
@@ -470,22 +467,28 @@ pub fn set_panic_hook(program: &'static str, version: Option<String>) {
     });
 }
 
-#[cfg(test)]
-mod test {
+pub mod test_mocks {
     use super::*;
 
-    struct MockMetricsWriter {
-        points_written: Arc<Mutex<Vec<DataPoint>>>,
+    pub struct MockMetricsWriter {
+        pub points_written: Arc<Mutex<Vec<DataPoint>>>,
     }
     impl MockMetricsWriter {
-        fn new() -> Self {
+        #[allow(dead_code)]
+        pub fn new() -> Self {
             MockMetricsWriter {
                 points_written: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
-        fn points_written(&self) -> usize {
+        pub fn points_written(&self) -> usize {
             self.points_written.lock().unwrap().len()
+        }
+    }
+
+    impl Default for MockMetricsWriter {
+        fn default() -> Self {
+            Self::new()
         }
     }
 
@@ -506,6 +509,11 @@ mod test {
             );
         }
     }
+}
+
+#[cfg(test)]
+mod test {
+    use {super::*, test_mocks::MockMetricsWriter};
 
     #[test]
     fn test_submit() {

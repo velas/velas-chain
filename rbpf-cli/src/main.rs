@@ -1,5 +1,5 @@
 use {
-    clap::{crate_version, App, Arg},
+    clap::{crate_version, Arg, Command},
     serde::{Deserialize, Serialize},
     serde_json::Result,
     solana_bpf_loader_program::{
@@ -14,13 +14,17 @@ use {
         verifier::check,
         vm::{Config, DynamicAnalysis},
     },
-    solana_sdk::{account::AccountSharedData, bpf_loader, pubkey::Pubkey},
+    solana_sdk::{
+        account::AccountSharedData, bpf_loader, instruction::AccountMeta, pubkey::Pubkey,
+        transaction_context::TransactionContext,
+    },
     std::{
+        fmt::{Debug, Formatter},
         fs::File,
         io::{Read, Seek, SeekFrom},
         path::Path,
+        time::{Duration, Instant},
     },
-    time::Instant,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -40,16 +44,16 @@ struct Input {
 fn load_accounts(path: &Path) -> Result<Input> {
     let file = File::open(path).unwrap();
     let input: Input = serde_json::from_reader(file)?;
-    println!("Program input:");
-    println!("accounts {:?}", &input.accounts);
-    println!("instruction_data {:?}", &input.instruction_data);
-    println!("----------------------------------------");
+    eprintln!("Program input:");
+    eprintln!("accounts {:?}", &input.accounts);
+    eprintln!("instruction_data {:?}", &input.instruction_data);
+    eprintln!("----------------------------------------");
     Ok(input)
 }
 
 fn main() {
     solana_logger::setup();
-    let matches = App::new("Solana BPF CLI")
+    let matches = Command::new("Solana BPF CLI")
         .version(crate_version!())
         .author("Solana Maintainers <maintainers@solana.foundation>")
         .help(
@@ -154,6 +158,15 @@ native machine code before execting it in the virtual machine.",
                 .short('v')
                 .long("verify"),
         )
+        .arg(
+            Arg::new("output_format")
+                .help("Return information in specified output format")
+                .long("output")
+                .value_name("FORMAT")
+                .global(true)
+                .takes_value(true)
+                .possible_values(&["json", "json-compact"]),
+        )
         .get_matches();
 
     let config = Config {
@@ -162,66 +175,68 @@ native machine code before execting it in the virtual machine.",
         ..Config::default()
     };
     let loader_id = bpf_loader::id();
-    let mut keyed_accounts = vec![
+    let mut transaction_accounts = vec![
         (
-            false,
-            false,
             loader_id,
-            AccountSharedData::new_ref(0, 0, &solana_sdk::native_loader::id()),
+            AccountSharedData::new(0, 0, &solana_sdk::native_loader::id()),
         ),
         (
-            false,
-            false,
             Pubkey::new_unique(),
-            AccountSharedData::new_ref(0, 0, &loader_id),
+            AccountSharedData::new(0, 0, &loader_id),
         ),
     ];
+    let mut instruction_accounts = Vec::new();
     let instruction_data = match matches.value_of("input").unwrap().parse::<usize>() {
         Ok(allocation_size) => {
-            keyed_accounts.push((
-                false,
-                true,
-                Pubkey::new_unique(),
-                AccountSharedData::new_ref(0, allocation_size, &Pubkey::new_unique()),
+            let pubkey = Pubkey::new_unique();
+            transaction_accounts.push((
+                pubkey,
+                AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
             ));
+            instruction_accounts.push(AccountMeta {
+                pubkey,
+                is_signer: false,
+                is_writable: true,
+            });
             vec![]
         }
         Err(_) => {
             let input = load_accounts(Path::new(matches.value_of("input").unwrap())).unwrap();
-            for account in input.accounts {
-                let account_refcell = AccountSharedData::new_ref(
-                    account.lamports,
-                    account.data.len(),
-                    &account.owner,
+            for account_info in input.accounts {
+                let mut account = AccountSharedData::new(
+                    account_info.lamports,
+                    account_info.data.len(),
+                    &account_info.owner,
                 );
-                account_refcell.borrow_mut().set_data(account.data);
-                keyed_accounts.push((
-                    account.is_signer,
-                    account.is_writable,
-                    account.key,
-                    account_refcell,
-                ));
+                account.set_data(account_info.data);
+                instruction_accounts.push(AccountMeta {
+                    pubkey: account_info.key,
+                    is_signer: account_info.is_signer,
+                    is_writable: account_info.is_writable,
+                });
+                transaction_accounts.push((account_info.key, account));
             }
             input.instruction_data
         }
     };
     let program_indices = [0, 1];
-    let preparation = prepare_mock_invoke_context(&program_indices, &[], &keyed_accounts);
-    let mut invoke_context = InvokeContext::new_mock(&preparation.accounts, &[]);
+    let preparation =
+        prepare_mock_invoke_context(transaction_accounts, instruction_accounts, &program_indices);
+    let mut transaction_context = TransactionContext::new(preparation.transaction_accounts, 1, 1);
+    let mut invoke_context = InvokeContext::new_mock(&mut transaction_context, &[]);
     invoke_context
         .push(
-            &preparation.message,
-            &preparation.message.instructions()[0],
+            &preparation.instruction_accounts,
             &program_indices,
-            &preparation.account_indices,
+            &instruction_data,
         )
         .unwrap();
-    let keyed_accounts = invoke_context.get_keyed_accounts().unwrap();
     let (mut parameter_bytes, account_lengths) = serialize_parameters(
-        keyed_accounts[0].unsigned_key(),
-        keyed_accounts[1].unsigned_key(),
-        &keyed_accounts[2..],
-        &instruction_data,
+        invoke_context.transaction_context,
+        invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap(),
     )
     .unwrap();
     let compute_meter = invoke_context.get_compute_meter();
@@ -258,17 +273,20 @@ native machine code before execting it in the virtual machine.",
         check(text_bytes, &config).unwrap();
     }
     Executable::<BpfError, ThisInstructionMeter>::jit_compile(&mut executable).unwrap();
-    let analysis = Analysis::from_executable(&executable);
+    let mut analysis = LazyAnalysis::new(&executable);
 
     match matches.value_of("use") {
         Some("cfg") => {
             let mut file = File::create("cfg.dot").unwrap();
-            analysis.visualize_graphically(&mut file, None).unwrap();
+            analysis
+                .analyze()
+                .visualize_graphically(&mut file, None)
+                .unwrap();
             return;
         }
         Some("disassembler") => {
             let stdout = std::io::stdout();
-            analysis.disassemble(&mut stdout.lock()).unwrap();
+            analysis.analyze().disassemble(&mut stdout.lock()).unwrap();
             return;
         }
         _ => {}
@@ -281,7 +299,6 @@ native machine code before execting it in the virtual machine.",
         &account_lengths,
     )
     .unwrap();
-    println!("Program output:");
     let start_time = Instant::now();
     let result = if matches.value_of("use").unwrap() == "interpreter" {
         vm.execute_program_interpreted(&mut instruction_meter)
@@ -289,22 +306,80 @@ native machine code before execting it in the virtual machine.",
         vm.execute_program_jit(&mut instruction_meter)
     };
     let duration = Instant::now() - start_time;
-    println!("Result: {:?}", result);
-    println!("Instruction Count: {}", vm.get_total_instruction_count());
-    println!("Execution time: {} us", duration.whole_microseconds());
+
+    let output = Output {
+        result: format!("{:?}", result),
+        instruction_count: vm.get_total_instruction_count(),
+        execution_time: duration,
+    };
+    match matches.value_of("output_format") {
+        Some("json") => {
+            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        }
+        Some("json-compact") => {
+            println!("{}", serde_json::to_string(&output).unwrap());
+        }
+        _ => {
+            println!("Program output:");
+            println!("{:?}", output);
+        }
+    }
+
     if matches.is_present("trace") {
-        println!("Trace is saved in trace.out");
+        eprintln!("Trace is saved in trace.out");
         let mut file = File::create("trace.out").unwrap();
-        let analysis = Analysis::from_executable(&executable);
-        vm.get_tracer().write(&mut file, &analysis).unwrap();
+        vm.get_tracer()
+            .write(&mut file, analysis.analyze())
+            .unwrap();
     }
     if matches.is_present("profile") {
-        println!("Profile is saved in profile.dot");
+        eprintln!("Profile is saved in profile.dot");
         let tracer = &vm.get_tracer();
-        let dynamic_analysis = DynamicAnalysis::new(tracer, &analysis);
+        let analysis = analysis.analyze();
+        let dynamic_analysis = DynamicAnalysis::new(tracer, analysis);
         let mut file = File::create("profile.dot").unwrap();
         analysis
             .visualize_graphically(&mut file, Some(&dynamic_analysis))
             .unwrap();
+    }
+}
+
+#[derive(Serialize)]
+struct Output {
+    result: String,
+    instruction_count: u64,
+    execution_time: Duration,
+}
+
+impl Debug for Output {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Result: {}", self.result)?;
+        writeln!(f, "Instruction Count: {}", self.instruction_count)?;
+        writeln!(f, "Execution time: {} us", self.execution_time.as_micros())?;
+        Ok(())
+    }
+}
+
+// Replace with std::lazy::Lazy when stabilized.
+// https://github.com/rust-lang/rust/issues/74465
+struct LazyAnalysis<'a> {
+    analysis: Option<Analysis<'a, BpfError, ThisInstructionMeter>>,
+    executable: &'a Executable<BpfError, ThisInstructionMeter>,
+}
+
+impl<'a> LazyAnalysis<'a> {
+    fn new(executable: &'a Executable<BpfError, ThisInstructionMeter>) -> Self {
+        Self {
+            analysis: None,
+            executable,
+        }
+    }
+
+    fn analyze(&mut self) -> &Analysis<BpfError, ThisInstructionMeter> {
+        if let Some(ref analysis) = self.analysis {
+            return analysis;
+        }
+        self.analysis
+            .insert(Analysis::from_executable(self.executable))
     }
 }

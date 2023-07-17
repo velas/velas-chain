@@ -6,6 +6,8 @@
 set -e
 cd "$(dirname "$0")"/..
 source ci/_
+source ci/semver_bash/semver.sh
+source scripts/patch-crates.sh
 source scripts/read-cargo-variable.sh
 
 solana_ver=$(readCargoVariable version sdk/Cargo.toml)
@@ -17,28 +19,6 @@ cargo_test_bpf="$solana_dir"/cargo-test-bpf
 mkdir -p target/downstream-projects
 cd target/downstream-projects
 
-update_solana_dependencies() {
-  declare tomls=()
-  while IFS='' read -r line; do tomls+=("$line"); done < <(find "$1" -name Cargo.toml)
-
-  sed -i -e "s#\(solana-program = \"\)[^\"]*\(\"\)#\1=$solana_ver\2#g" "${tomls[@]}" || return $?
-  sed -i -e "s#\(solana-program-test = \"\)[^\"]*\(\"\)#\1=$solana_ver\2#g" "${tomls[@]}" || return $?
-  sed -i -e "s#\(solana-sdk = \"\).*\(\"\)#\1=$solana_ver\2#g" "${tomls[@]}" || return $?
-  sed -i -e "s#\(solana-sdk = { version = \"\)[^\"]*\(\"\)#\1=$solana_ver\2#g" "${tomls[@]}" || return $?
-  sed -i -e "s#\(solana-client = \"\)[^\"]*\(\"\)#\1=$solana_ver\2#g" "${tomls[@]}" || return $?
-  sed -i -e "s#\(solana-client = { version = \"\)[^\"]*\(\"\)#\1=$solana_ver\2#g" "${tomls[@]}" || return $?
-}
-
-patch_crates_io() {
-  cat >> "$1" <<EOF
-[patch.crates-io]
-solana-client = { path = "$solana_dir/client" }
-solana-program = { path = "$solana_dir/sdk/program" }
-solana-program-test = { path = "$solana_dir/program-test" }
-solana-sdk = { path = "$solana_dir/sdk" }
-EOF
-}
-
 example_helloworld() {
   (
     set -x
@@ -46,8 +26,8 @@ example_helloworld() {
     git clone https://github.com/solana-labs/example-helloworld.git
     cd example-helloworld
 
-    update_solana_dependencies src/program-rust
-    patch_crates_io src/program-rust/Cargo.toml
+    update_solana_dependencies src/program-rust "$solana_ver"
+    patch_crates_io_solana src/program-rust/Cargo.toml "$solana_dir"
     echo "[workspace]" >> src/program-rust/Cargo.toml
 
     $cargo_build_bpf \
@@ -59,17 +39,42 @@ example_helloworld() {
 
 spl() {
   (
+  # Mind the order!
+    PROGRAMS=(
+      token/program
+      token/program-2022
+      token/program-2022-test
+      associated-token-account/program
+      feature-proposal/program
+      governance/addin-mock/program
+      governance/program
+      memo/program
+      name-service/program
+      stake-pool/program
+    )
     set -x
     rm -rf spl
     git clone https://github.com/solana-labs/solana-program-library.git spl
     cd spl
 
+    project_used_solana_version=$(sed -nE 's/solana-sdk = \"[>=<~]*(.*)\"/\1/p' <"token/program/Cargo.toml")
+    echo "used solana version: $project_used_solana_version"
+    if semverGT "$project_used_solana_version" "$solana_ver"; then
+      echo "skip"
+      return
+    fi
+
     ./patch.crates-io.sh "$solana_dir"
 
+    for program in "${PROGRAMS[@]}"; do
+      $cargo_test_bpf --manifest-path "$program"/Cargo.toml
+    done
+
+    # TODO better: `build.rs` for spl-token-cli doesn't seem to properly build
+    # the required programs to run the tests, so instead we run the tests
+    # after we know programs have been built
     $cargo build
     $cargo test
-    $cargo_build_bpf
-    $cargo_test_bpf
   )
 }
 
@@ -80,9 +85,9 @@ serum_dex() {
     git clone https://github.com/project-serum/serum-dex.git
     cd serum-dex
 
-    update_solana_dependencies .
-    patch_crates_io Cargo.toml
-    patch_crates_io dex/Cargo.toml
+    update_solana_dependencies . "$solana_ver"
+    patch_crates_io_solana Cargo.toml "$solana_dir"
+    patch_crates_io_solana dex/Cargo.toml "$solana_dir"
     cat >> dex/Cargo.toml <<EOF
 [workspace]
 exclude = [
@@ -99,7 +104,6 @@ EOF
       --manifest-path dex/Cargo.toml --no-default-features --features program
   )
 }
-
 
 _ example_helloworld
 _ serum_dex

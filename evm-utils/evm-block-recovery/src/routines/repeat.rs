@@ -1,8 +1,7 @@
 use evm_state::Block;
 use solana_sdk::hash::Hash;
 use solana_transaction_status::{
-    ConfirmedBlock, ConfirmedBlockWithOptionalMetadata, TransactionWithMetadata,
-    TransactionWithOptionalMetadata,
+    ConfirmedBlock, VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
 };
 use tokio::sync::mpsc;
 
@@ -190,8 +189,7 @@ pub async fn repeat_native(args: RepeatNativeArgs) -> RoutineResult {
         blocks_to_repeat.len()
     );
 
-    let (sender, mut receiver) =
-        mpsc::unbounded_channel::<BlockMessage<ConfirmedBlockWithOptionalMetadata>>();
+    let (sender, mut receiver) = mpsc::unbounded_channel::<BlockMessage<ConfirmedBlock>>();
 
     let writer = tokio::spawn(async move {
         log::info!("Writer task started");
@@ -199,7 +197,7 @@ pub async fn repeat_native(args: RepeatNativeArgs) -> RoutineResult {
         let mut history = History::default();
 
         while let Some(message) = receiver.recv().await {
-            let ConfirmedBlockWithOptionalMetadata {
+            let ConfirmedBlock {
                 previous_blockhash,
                 blockhash,
                 parent_slot,
@@ -210,7 +208,8 @@ pub async fn repeat_native(args: RepeatNativeArgs) -> RoutineResult {
             } = message.block;
 
             let transactions = transactions.into_iter().map(|tx| {
-                let TransactionWithOptionalMetadata { transaction, meta } = tx;
+                let transaction = tx.get_transaction();
+                let meta = tx.get_status_meta();
 
                 let meta = meta.unwrap_or_else(|| {
                     let block_number = message.block_number;
@@ -222,11 +221,13 @@ pub async fn repeat_native(args: RepeatNativeArgs) -> RoutineResult {
 
                     Default::default()
                 });
-
-                TransactionWithMetadata { transaction, meta }
+                VersionedTransactionWithStatusMeta {
+                    meta,
+                    transaction
+                }
             }).collect::<Vec<_>>();
 
-            let block = ConfirmedBlock {
+            let block = VersionedConfirmedBlock {
                 previous_blockhash,
                 blockhash,
                 parent_slot,

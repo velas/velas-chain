@@ -3,6 +3,7 @@ use {
     crate::rpc_response::RpcSimulateTransactionResult,
     jsonrpc_core::{Error, ErrorCode},
     solana_sdk::clock::Slot,
+    solana_transaction_status::EncodeError,
     thiserror::Error,
 };
 
@@ -20,6 +21,8 @@ pub const JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE: i64 = -32011;
 pub const JSON_RPC_SCAN_ERROR: i64 = -32012;
 pub const JSON_RPC_SERVER_ERROR_TRANSACTION_SIGNATURE_LEN_MISMATCH: i64 = -32013;
 pub const JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET: i64 = -32014;
+pub const JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION: i64 = -32015;
+pub const JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED: i64 = -32016;
 pub const JSON_RPC_SERVER_ERROR_INDEX_NOT_AVALABLE: i64 = -32101; // TDB error range
 
 #[derive(Error, Debug)]
@@ -60,12 +63,32 @@ pub enum RpcCustomError {
     TransactionSignatureLenMismatch,
     #[error("BlockStatusNotAvailableYet")]
     BlockStatusNotAvailableYet { slot: Slot },
+    #[error("UnsupportedTransactionVersion")]
+    UnsupportedTransactionVersion(u8),
+    #[error("MinContextSlotNotReached")]
+    MinContextSlotNotReached { context_slot: Slot },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeUnhealthyErrorData {
     pub num_slots_behind: Option<Slot>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MinContextSlotNotReachedErrorData {
+    pub context_slot: Slot,
+}
+
+impl From<EncodeError> for RpcCustomError {
+    fn from(err: EncodeError) -> Self {
+        match err {
+            EncodeError::UnsupportedTransactionVersion(version) => {
+                Self::UnsupportedTransactionVersion(version)
+            }
+        }
+    }
 }
 
 impl From<RpcCustomError> for Error {
@@ -178,6 +201,23 @@ impl From<RpcCustomError> for Error {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET),
                 message: format!("Block status not yet available for slot {}", slot),
                 data: None,
+            },
+            RpcCustomError::UnsupportedTransactionVersion(version) => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION),
+                message: format!(
+                    "Transaction version ({0}) is not supported by the requesting client. \
+                    Please try the request again with the following configuration parameter: \
+                    \"maxSupportedTransactionVersion\": {0}",
+                    version
+                ),
+                data: None,
+            },
+            RpcCustomError::MinContextSlotNotReached { context_slot } => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED),
+                message: "Minimum context slot has not been reached".to_string(),
+                data: Some(serde_json::json!(MinContextSlotNotReachedErrorData {
+                    context_slot,
+                })),
             },
         }
     }

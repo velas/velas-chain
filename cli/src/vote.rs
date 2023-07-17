@@ -35,7 +35,8 @@ use {
         transaction::Transaction,
     },
     solana_vote_program::{
-        vote_instruction::{self, withdraw, VoteError},
+        vote_error::VoteError,
+        vote_instruction::{self, withdraw},
         vote_state::{VoteAuthorize, VoteInit, VoteState},
     },
     std::sync::Arc,
@@ -359,7 +360,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .takes_value(true)
                         .required(true)
                         .validator(is_amount_or_all)
-                        .help("The amount to withdraw, in VLX"),
+                        .help("The amount to withdraw, in VLX; accepts keyword ALL, which for this command means account balance minus rent-exempt minimum"),
                 )
                 .arg(
                     Arg::with_name("authorized_withdrawer")
@@ -867,7 +868,7 @@ pub fn process_create_vote_account(
     } else {
         tx.try_sign(&config.signers, recent_blockhash)?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
-    log_instruction_custom_error::<SystemError>(result, config)
+        log_instruction_custom_error::<SystemError>(result, config)
     }
 }
 
@@ -908,7 +909,10 @@ pub fn process_vote_authorize(
                             "Invalid vote account state; no authorized voters found".to_string(),
                         )
                     })?;
-                check_current_authority(&current_authorized_voter, &authorized.pubkey())?;
+                check_current_authority(
+                    &[current_authorized_voter, vote_state.authorized_withdrawer],
+                    &authorized.pubkey(),
+                )?;
                 if let Some(signer) = new_authorized_signer {
                     if signer.is_interactive() {
                         return Err(CliError::BadParameter(format!(
@@ -925,7 +929,7 @@ pub fn process_vote_authorize(
                 (new_authorized_pubkey, "new_authorized_pubkey".to_string()),
             )?;
             if let Some(vote_state) = vote_state {
-                check_current_authority(&vote_state.authorized_withdrawer, &authorized.pubkey())?
+                check_current_authority(&[vote_state.authorized_withdrawer], &authorized.pubkey())?
             }
         }
     }
@@ -990,7 +994,7 @@ pub fn process_vote_authorize(
             config.commitment,
         )?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
-    log_instruction_custom_error::<VoteError>(result, config)
+        log_instruction_custom_error::<VoteError>(result, config)
     }
 }
 
@@ -1064,7 +1068,7 @@ pub fn process_vote_update_validator(
             config.commitment,
         )?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
-    log_instruction_custom_error::<VoteError>(result, config)
+        log_instruction_custom_error::<VoteError>(result, config)
     }
 }
 
@@ -1131,7 +1135,7 @@ pub fn process_vote_update_commission(
             config.commitment,
         )?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
-    log_instruction_custom_error::<VoteError>(result, config)
+        log_instruction_custom_error::<VoteError>(result, config)
     }
 }
 
@@ -1416,6 +1420,7 @@ mod tests {
         let (default_keypair_file, mut tmp_file) = make_tmp_file();
         write_keypair(&default_keypair, tmp_file.as_file_mut()).unwrap();
         let default_signer = DefaultSigner::new("", &default_keypair_file);
+
         let blockhash = Hash::default();
         let blockhash_string = format!("{}", blockhash);
         let nonce_account = Pubkey::new_unique();

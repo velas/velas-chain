@@ -1,11 +1,13 @@
 use {
     crate::{
         client_error::ClientError,
-    pubsub_client::{PubsubClient, PubsubClientError, PubsubClientSubscription},
-    rpc_client::RpcClient,
+        connection_cache::ConnectionCache,
+        pubsub_client::{PubsubClient, PubsubClientError, PubsubClientSubscription},
+        rpc_client::RpcClient,
         rpc_request::MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
         rpc_response::SlotUpdate,
         spinner,
+        tpu_connection::TpuConnection,
     },
     bincode::serialize,
     log::*,
@@ -17,6 +19,7 @@ use {
         signature::SignerError,
         signers::Signers,
         transaction::{Transaction, TransactionError},
+        transport::{Result as TransportResult, TransportError},
     },
     std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -73,11 +76,12 @@ impl Default for TpuClientConfig {
 /// Client which sends transactions directly to the current leader's TPU port over UDP.
 /// The client uses RPC to determine the current leader and fetch node contact info
 pub struct TpuClient {
-    send_socket: UdpSocket,
+    _deprecated: UdpSocket, // TpuClient now uses the connection_cache to choose a send_socket
     fanout_slots: u64,
     leader_tpu_service: LeaderTpuService,
     exit: Arc<AtomicBool>,
     rpc_client: Arc<RpcClient>,
+    connection_cache: Arc<ConnectionCache>,
 }
 
 impl TpuClient {
@@ -85,25 +89,49 @@ impl TpuClient {
     /// size
     pub fn send_transaction(&self, transaction: &Transaction) -> bool {
         let wire_transaction = serialize(transaction).expect("serialization should succeed");
-        self.send_wire_transaction(&wire_transaction)
+        self.send_wire_transaction(wire_transaction)
     }
 
     /// Send a wire transaction to the current and upcoming leader TPUs according to fanout size
-    pub fn send_wire_transaction(&self, wire_transaction: &[u8]) -> bool {
-        let mut sent = false;
+    pub fn send_wire_transaction(&self, wire_transaction: Vec<u8>) -> bool {
+        self.try_send_wire_transaction(wire_transaction).is_ok()
+    }
+
+    /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
+    /// size
+    /// Returns the last error if all sends fail
+    pub fn try_send_transaction(&self, transaction: &Transaction) -> TransportResult<()> {
+        let wire_transaction = serialize(transaction).expect("serialization should succeed");
+        self.try_send_wire_transaction(wire_transaction)
+    }
+
+    /// Send a wire transaction to the current and upcoming leader TPUs according to fanout size
+    /// Returns the last error if all sends fail
+    fn try_send_wire_transaction(&self, wire_transaction: Vec<u8>) -> TransportResult<()> {
+        let mut last_error: Option<TransportError> = None;
+        let mut some_success = false;
+
         for tpu_address in self
             .leader_tpu_service
             .leader_tpu_sockets(self.fanout_slots)
         {
-            if self
-                .send_socket
-                .send_to(wire_transaction, tpu_address)
-                .is_ok()
-            {
-                sent = true;
+            let conn = self.connection_cache.get_connection(&tpu_address);
+            let result = conn.send_wire_transaction_async(wire_transaction.clone());
+            if let Err(err) = result {
+                last_error = Some(err);
+            } else {
+                some_success = true;
             }
         }
-        sent
+        if !some_success {
+            Err(if let Some(err) = last_error {
+                err
+            } else {
+                std::io::Error::new(std::io::ErrorKind::Other, "No sends attempted").into()
+            })
+        } else {
+            Ok(())
+        }
     }
 
     /// Create a new client that disconnects when dropped
@@ -112,16 +140,28 @@ impl TpuClient {
         websocket_url: &str,
         config: TpuClientConfig,
     ) -> Result<Self> {
+        let connection_cache = Arc::new(ConnectionCache::default());
+        Self::new_with_connection_cache(rpc_client, websocket_url, config, connection_cache)
+    }
+
+    /// Create a new client that disconnects when dropped
+    pub fn new_with_connection_cache(
+        rpc_client: Arc<RpcClient>,
+        websocket_url: &str,
+        config: TpuClientConfig,
+        connection_cache: Arc<ConnectionCache>,
+    ) -> Result<Self> {
         let exit = Arc::new(AtomicBool::new(false));
         let leader_tpu_service =
             LeaderTpuService::new(rpc_client.clone(), websocket_url, exit.clone())?;
 
         Ok(Self {
-            send_socket: UdpSocket::bind("0.0.0.0:0").unwrap(),
-            fanout_slots: config.fanout_slots.clamp(1, MAX_FANOUT_SLOTS),
+            _deprecated: UdpSocket::bind("0.0.0.0:0").unwrap(),
+            fanout_slots: config.fanout_slots.min(MAX_FANOUT_SLOTS).max(1),
             leader_tpu_service,
             exit,
             rpc_client,
+            connection_cache,
         })
     }
 
@@ -265,6 +305,10 @@ impl TpuClient {
             expired_blockhash_retries -= 1;
         }
         Err(TpuSenderError::Custom("Max retries exceeded".into()))
+    }
+
+    pub fn rpc_client(&self) -> &RpcClient {
+        &self.rpc_client
     }
 }
 

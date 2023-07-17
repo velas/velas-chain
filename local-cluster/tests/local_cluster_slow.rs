@@ -77,7 +77,6 @@ mod common;
 // due to blockhash expiration
 // 6) Resolve the partition so that the 2% repairs the other fork, and tries to switch,
 // stalling the network.
-
 #[ignore]
 fn test_fork_choice_refresh_old_votes() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
@@ -503,10 +502,10 @@ fn test_duplicate_shreds_broadcast_leader() {
                         // Filter out votes not from the bad leader
                         if label.pubkey() == bad_leader_id {
                             let vote = vote_parser::parse_vote_transaction(&leader_vote_tx)
-                                .map(|(_, vote, _)| vote)
+                                .map(|(_, vote, _, _)| vote)
                                 .unwrap();
                             // Filter out empty votes
-                            if !vote.slots.is_empty() {
+                            if !vote.slots().is_empty() {
                                 Some((vote, leader_vote_tx))
                             } else {
                                 None
@@ -518,11 +517,14 @@ fn test_duplicate_shreds_broadcast_leader() {
                     .collect();
 
                 parsed_vote_iter.sort_by(|(vote, _), (vote2, _)| {
-                    vote.slots.last().unwrap().cmp(vote2.slots.last().unwrap())
+                    vote.slots()
+                        .last()
+                        .unwrap()
+                        .cmp(vote2.slots().last().unwrap())
                 });
 
                 for (parsed_vote, leader_vote_tx) in &parsed_vote_iter {
-                    if let Some(latest_vote_slot) = parsed_vote.slots.last() {
+                    if let Some(latest_vote_slot) = parsed_vote.slots().last() {
                         info!("received vote for {}", latest_vote_slot);
                         // Add to EpochSlots. Mark all slots frozen between slot..=max_vote_slot.
                         if *latest_vote_slot > max_vote_slot {
@@ -539,7 +541,7 @@ fn test_duplicate_shreds_broadcast_leader() {
                         // Only vote on even slots. Note this may violate lockouts if the
                         // validator started voting on a different fork before we could exit
                         // it above.
-                        let vote_hash = parsed_vote.hash;
+                        let vote_hash = parsed_vote.hash();
                         if latest_vote_slot % 2 == 0 {
                             info!(
                                 "Simulating vote from our node on slot {}, hash {}",

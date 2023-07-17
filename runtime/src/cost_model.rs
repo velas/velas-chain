@@ -7,8 +7,10 @@
 use {
     crate::{block_cost_limits::*, execute_cost_table::ExecuteCostTable},
     log::*,
-    solana_sdk::{pubkey::Pubkey, transaction::SanitizedTransaction},
-    std::collections::HashMap,
+    solana_sdk::{
+        instruction::CompiledInstruction, program_utils::limited_deserialize, pubkey::Pubkey,
+        system_instruction::SystemInstruction, system_program, transaction::SanitizedTransaction,
+    },
 };
 
 const MAX_WRITABLE_ACCOUNTS: usize = 256;
@@ -22,6 +24,7 @@ pub struct TransactionCost {
     pub data_bytes_cost: u64,
     pub builtins_execution_cost: u64,
     pub bpf_execution_cost: u64,
+    pub account_data_size: u64,
     pub is_simple_vote: bool,
 }
 
@@ -34,6 +37,7 @@ impl Default for TransactionCost {
             data_bytes_cost: 0u64,
             builtins_execution_cost: 0u64,
             bpf_execution_cost: 0u64,
+            account_data_size: 0u64,
             is_simple_vote: false,
         }
     }
@@ -83,28 +87,8 @@ impl CostModel {
             .iter()
             .map(|(key, cost)| (key, cost))
             .for_each(|(program_id, cost)| {
-                match self
-                    .instruction_execution_cost_table
-                    .upsert(program_id, *cost)
-                {
-                    Some(c) => {
-                        debug!(
-                            "initiating cost table, instruction {:?} has cost {}",
-                            program_id, c
-                        );
-                    }
-                    None => {
-                        debug!(
-                            "initiating cost table, failed for instruction {:?}",
-                            program_id
-                        );
-                    }
-                }
+                self.upsert_instruction_cost(program_id, *cost);
             });
-        debug!(
-            "restored cost model instruction cost table from blockstore, current values: {:?}",
-            self.get_instruction_cost_table()
-        );
     }
 
     pub fn calculate_cost(&self, transaction: &SanitizedTransaction) -> TransactionCost {
@@ -113,48 +97,34 @@ impl CostModel {
         tx_cost.signature_cost = self.get_signature_cost(transaction);
         self.get_write_lock_cost(&mut tx_cost, transaction);
         tx_cost.data_bytes_cost = self.get_data_bytes_cost(transaction);
-        let (builtins_cost, bpf_cost) = self.get_transaction_cost(transaction);
-        tx_cost.builtins_execution_cost = builtins_cost;
-        tx_cost.bpf_execution_cost = bpf_cost;
+        (tx_cost.builtins_execution_cost, tx_cost.bpf_execution_cost) =
+            self.get_transaction_cost(transaction);
+        tx_cost.account_data_size = self.calculate_account_data_size(transaction);
         tx_cost.is_simple_vote = transaction.is_simple_vote_transaction();
 
         debug!("transaction {:?} has cost {:?}", transaction, tx_cost);
         tx_cost
     }
 
-    pub fn upsert_instruction_cost(
-        &mut self,
-        program_key: &Pubkey,
-        cost: u64,
-    ) -> Result<u64, &'static str> {
+    pub fn upsert_instruction_cost(&mut self, program_key: &Pubkey, cost: u64) {
         self.instruction_execution_cost_table
             .upsert(program_key, cost);
-        match self.instruction_execution_cost_table.get_cost(program_key) {
-            Some(cost) => Ok(*cost),
-            None => Err("failed to upsert to ExecuteCostTable"),
-        }
-    }
-
-    pub fn get_instruction_cost_table(&self) -> &HashMap<Pubkey, u64> {
-        self.instruction_execution_cost_table.get_cost_table()
     }
 
     pub fn find_instruction_cost(&self, program_key: &Pubkey) -> u64 {
         match self.instruction_execution_cost_table.get_cost(program_key) {
             Some(cost) => *cost,
             None => {
-                let default_value = self.instruction_execution_cost_table.get_mode();
+                let default_value = self
+                    .instruction_execution_cost_table
+                    .get_default_compute_unit_limit();
                 debug!(
-                    "Program key {:?} does not have assigned cost, using mode {}",
+                    "Program {:?} does not have aggregated cost, using default value {}",
                     program_key, default_value
                 );
                 default_value
             }
         }
-    }
-
-    pub fn get_program_keys(&self) -> Vec<&Pubkey> {
-        self.instruction_execution_cost_table.get_program_keys()
     }
 
     fn get_signature_cost(&self, transaction: &SanitizedTransaction) -> u64 {
@@ -167,14 +137,18 @@ impl CostModel {
         transaction: &SanitizedTransaction,
     ) {
         let message = transaction.message();
-        message.account_keys_iter().enumerate().for_each(|(i, k)| {
-            let is_writable = message.is_writable(i);
+        message
+            .account_keys()
+            .iter()
+            .enumerate()
+            .for_each(|(i, k)| {
+                let is_writable = message.is_writable(i);
 
-            if is_writable {
-                tx_cost.writable_accounts.push(*k);
-                tx_cost.write_lock_cost += WRITE_LOCK_UNITS;
-            }
-        });
+                if is_writable {
+                    tx_cost.writable_accounts.push(*k);
+                    tx_cost.write_lock_cost += WRITE_LOCK_UNITS;
+                }
+            });
     }
 
     fn get_data_bytes_cost(&self, transaction: &SanitizedTransaction) -> u64 {
@@ -207,6 +181,59 @@ impl CostModel {
             }
         }
         (builtin_costs, bpf_costs)
+    }
+
+    fn calculate_account_data_size_on_deserialized_system_instruction(
+        instruction: SystemInstruction,
+    ) -> u64 {
+        match instruction {
+            SystemInstruction::CreateAccount {
+                lamports: _lamports,
+                space,
+                owner: _owner,
+            } => space,
+            SystemInstruction::CreateAccountWithSeed {
+                base: _base,
+                seed: _seed,
+                lamports: _lamports,
+                space,
+                owner: _owner,
+            } => space,
+            SystemInstruction::Allocate { space } => space,
+            SystemInstruction::AllocateWithSeed {
+                base: _base,
+                seed: _seed,
+                space,
+                owner: _owner,
+            } => space,
+            _ => 0,
+        }
+    }
+
+    fn calculate_account_data_size_on_instruction(
+        program_id: &Pubkey,
+        instruction: &CompiledInstruction,
+    ) -> u64 {
+        if program_id == &system_program::id() {
+            if let Ok(instruction) = limited_deserialize(&instruction.data) {
+                return Self::calculate_account_data_size_on_deserialized_system_instruction(
+                    instruction,
+                );
+            }
+        }
+        0
+    }
+
+    /// eventually, potentially determine account data size of all writable accounts
+    /// at the moment, calculate account data size of account creation
+    fn calculate_account_data_size(&self, transaction: &SanitizedTransaction) -> u64 {
+        transaction
+            .message()
+            .program_instructions_iter()
+            .map(|(program_id, instruction)| {
+                Self::calculate_account_data_size_on_instruction(program_id, instruction)
+            })
+            .sum()
     }
 }
 
@@ -252,18 +279,18 @@ mod tests {
         let mut testee = CostModel::default();
 
         let known_key = Pubkey::from_str("known11111111111111111111111111111111111111").unwrap();
-        testee.upsert_instruction_cost(&known_key, 100).unwrap();
+        testee.upsert_instruction_cost(&known_key, 100);
         // find cost for known programs
         assert_eq!(100, testee.find_instruction_cost(&known_key));
 
-        testee
-            .upsert_instruction_cost(&bpf_loader::id(), 1999)
-            .unwrap();
+        testee.upsert_instruction_cost(&bpf_loader::id(), 1999);
         assert_eq!(1999, testee.find_instruction_cost(&bpf_loader::id()));
 
         // unknown program is assigned with default cost
         assert_eq!(
-            testee.instruction_execution_cost_table.get_mode(),
+            testee
+                .instruction_execution_cost_table
+                .get_default_compute_unit_limit(),
             testee.find_instruction_cost(
                 &Pubkey::from_str("unknown111111111111111111111111111111111111").unwrap()
             )
@@ -271,32 +298,50 @@ mod tests {
     }
 
     #[test]
-    fn test_iterating_instruction_cost_by_program_keys() {
-        solana_logger::setup();
-        let mut testee = CostModel::default();
-
-        let mut test_key_and_cost = HashMap::<Pubkey, u64>::new();
-        (0u64..10u64).for_each(|n| {
-            test_key_and_cost.insert(Pubkey::new_unique(), n);
-        });
-
-        test_key_and_cost.iter().for_each(|(key, cost)| {
-            let _ = testee.upsert_instruction_cost(key, *cost).unwrap();
-            info!("key {:?} cost {}", key, cost);
-        });
-
-        let keys = testee.get_program_keys();
-        // verify each key has pre-set value
-        keys.iter().for_each(|key| {
-            let expected_cost = test_key_and_cost.get(key).unwrap();
-            info!(
-                "check key {:?} expect {} find {}",
-                key,
-                expected_cost,
-                testee.find_instruction_cost(key)
+    fn test_cost_model_data_len_cost() {
+        let lamports = 0;
+        let owner = Pubkey::default();
+        let seed = String::default();
+        let space = 100;
+        let base = Pubkey::default();
+        for instruction in [
+            SystemInstruction::CreateAccount {
+                lamports,
+                space,
+                owner,
+            },
+            SystemInstruction::CreateAccountWithSeed {
+                base,
+                seed: seed.clone(),
+                lamports,
+                space,
+                owner,
+            },
+            SystemInstruction::Allocate { space },
+            SystemInstruction::AllocateWithSeed {
+                base,
+                seed,
+                space,
+                owner,
+            },
+        ] {
+            assert_eq!(
+                space,
+                CostModel::calculate_account_data_size_on_deserialized_system_instruction(
+                    instruction
+                )
             );
-            assert_eq!(*expected_cost, testee.find_instruction_cost(key));
-        });
+        }
+        assert_eq!(
+            0,
+            CostModel::calculate_account_data_size_on_deserialized_system_instruction(
+                SystemInstruction::TransferWithSeed {
+                    lamports,
+                    from_seed: String::default(),
+                    from_owner: Pubkey::default(),
+                }
+            )
+        );
     }
 
     #[test]
@@ -378,7 +423,10 @@ mod tests {
         let result = testee.get_transaction_cost(&tx);
 
         // expected cost for two random/unknown program is
-        let expected_cost = testee.instruction_execution_cost_table.get_mode() * 2;
+        let expected_cost = testee
+            .instruction_execution_cost_table
+            .get_default_compute_unit_limit()
+            * 2;
         assert_eq!((0, expected_cost), result);
     }
 
@@ -422,14 +470,16 @@ mod tests {
         let mut cost_model = CostModel::default();
         // Using default cost for unknown instruction
         assert_eq!(
-            cost_model.instruction_execution_cost_table.get_mode(),
+            cost_model
+                .instruction_execution_cost_table
+                .get_default_compute_unit_limit(),
             cost_model.find_instruction_cost(&key1)
         );
 
         // insert instruction cost to table
-        assert!(cost_model.upsert_instruction_cost(&key1, cost1).is_ok());
+        cost_model.upsert_instruction_cost(&key1, cost1);
 
-        // now it is known insturction with known cost
+        // now it is known instruction with known cost
         assert_eq!(cost1, cost_model.find_instruction_cost(&key1));
     }
 
@@ -465,11 +515,11 @@ mod tests {
         let mut cost_model = CostModel::default();
 
         // insert instruction cost to table
-        assert!(cost_model.upsert_instruction_cost(&key1, cost1).is_ok());
+        cost_model.upsert_instruction_cost(&key1, cost1);
         assert_eq!(cost1, cost_model.find_instruction_cost(&key1));
 
         // update instruction cost
-        assert!(cost_model.upsert_instruction_cost(&key1, cost2).is_ok());
+        cost_model.upsert_instruction_cost(&key1, cost2);
         assert_eq!(updated_cost, cost_model.find_instruction_cost(&key1));
     }
 
@@ -511,8 +561,8 @@ mod tests {
                 if i == 5 {
                     thread::spawn(move || {
                         let mut cost_model = cost_model.write().unwrap();
-                        assert!(cost_model.upsert_instruction_cost(&prog1, cost1).is_ok());
-                        assert!(cost_model.upsert_instruction_cost(&prog2, cost2).is_ok());
+                        cost_model.upsert_instruction_cost(&prog1, cost1);
+                        cost_model.upsert_instruction_cost(&prog2, cost2);
                     })
                 } else {
                     thread::spawn(move || {

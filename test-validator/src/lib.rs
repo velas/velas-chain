@@ -1,8 +1,14 @@
 #![allow(clippy::integer_arithmetic)]
+use evm_state::Storage;
+use solana_ledger::blockstore::EvmStateJson;
 use {
     log::*,
     solana_cli_output::CliAccount,
-    solana_client::rpc_client::RpcClient,
+    solana_client::{
+        connection_cache::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC},
+        nonblocking,
+        rpc_client::RpcClient,
+    },
     solana_core::{
         tower_storage::TowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress},
@@ -12,11 +18,14 @@ use {
         gossip_service::discover_cluster,
         socketaddr,
     },
-    solana_ledger::{blockstore::create_new_ledger, create_new_tmp_ledger},
+    solana_ledger::{
+        blockstore::create_new_ledger, blockstore_db::LedgerColumnOptions, create_new_tmp_ledger,
+    },
     solana_net_utils::PortRange,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_runtime::{
-        bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
+        accounts_db::AccountsDbConfig, accounts_index::AccountsIndexConfig, bank_forks::BankForks,
+        genesis_utils::create_genesis_config_with_leader_ex,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, snapshot_config::SnapshotConfig,
         snapshot_utils::EVM_STATE_DIR,
     },
@@ -45,12 +54,10 @@ use {
         path::{Path, PathBuf},
         str::FromStr,
         sync::{Arc, RwLock},
-        thread::sleep,
         time::Duration,
     },
+    tokio::time::sleep,
 };
-use evm_state::Storage;
-use solana_ledger::blockstore::EvmStateJson;
 #[derive(Clone)]
 pub struct AccountInfo<'a> {
     pub address: Pubkey,
@@ -138,7 +145,7 @@ impl Default for TestValidatorGenesis {
             geyser_plugin_config_files: Option::<Vec<PathBuf>>::default(),
             accounts_db_caching_enabled: bool::default(),
             deactivate_feature_set: HashSet::<Pubkey>::default(),
-	    evm_state_archive_enabled: false,
+            evm_state_archive_enabled: false,
         }
     }
 }
@@ -257,17 +264,26 @@ impl TestValidatorGenesis {
         self
     }
 
-    pub fn clone_accounts<T>(&mut self, addresses: T, rpc_client: &RpcClient) -> &mut Self
+    pub fn clone_accounts<T>(
+        &mut self,
+        addresses: T,
+        rpc_client: &RpcClient,
+        skip_missing: bool,
+    ) -> &mut Self
     where
         T: IntoIterator<Item = Pubkey>,
     {
         for address in addresses {
             info!("Fetching {} over RPC...", address);
-            let account = rpc_client.get_account(&address).unwrap_or_else(|err| {
-                error!("Failed to fetch {}: {}", address, err);
+            let res = rpc_client.get_account(&address);
+            if let Ok(account) = res {
+                self.add_account(address, AccountSharedData::from(account));
+            } else if skip_missing {
+                warn!("Could not find {}, skipping.", address);
+            } else {
+                error!("Failed to fetch {}: {}", address, res.unwrap_err());
                 solana_core::validator::abort();
-            });
-            self.add_account(address, AccountSharedData::from(account));
+            }
         }
         self
     }
@@ -386,7 +402,15 @@ impl TestValidatorGenesis {
         mint_address: Pubkey,
         socket_addr_space: SocketAddrSpace,
     ) -> Result<TestValidator, Box<dyn std::error::Error>> {
-        TestValidator::start(mint_address, self, socket_addr_space)
+        TestValidator::start(mint_address, self, socket_addr_space).map(|test_validator| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+                .unwrap();
+            runtime.block_on(test_validator.wait_for_nonzero_fees());
+            test_validator
+        })
     }
 
     /// Start a test validator
@@ -410,9 +434,30 @@ impl TestValidatorGenesis {
         socket_addr_space: SocketAddrSpace,
     ) -> (TestValidator, Keypair) {
         let mint_keypair = Keypair::new();
-        TestValidator::start(mint_keypair.pubkey(), self, socket_addr_space)
+        self.start_with_mint_address(mint_keypair.pubkey(), socket_addr_space)
             .map(|test_validator| (test_validator, mint_keypair))
-            .expect("Test validator failed to start")
+            .unwrap_or_else(|err| panic!("Test validator failed to start: {}", err))
+    }
+
+    pub async fn start_async(&self) -> (TestValidator, Keypair) {
+        self.start_async_with_socket_addr_space(SocketAddrSpace::new(
+            /*allow_private_addr=*/ true,
+        ))
+        .await
+    }
+
+    pub async fn start_async_with_socket_addr_space(
+        &self,
+        socket_addr_space: SocketAddrSpace,
+    ) -> (TestValidator, Keypair) {
+        let mint_keypair = Keypair::new();
+        match TestValidator::start(mint_keypair.pubkey(), self, socket_addr_space) {
+            Ok(test_validator) => {
+                test_validator.wait_for_nonzero_fees().await;
+                (test_validator, mint_keypair)
+            }
+            Err(err) => panic!("Test validator failed to start: {}", err),
+        }
     }
 }
 
@@ -559,7 +604,7 @@ impl TestValidator {
                     config
                         .max_genesis_archive_unpacked_size
                         .unwrap_or(MAX_GENESIS_ARCHIVE_UNPACKED_SIZE),
-                    solana_ledger::blockstore_db::AccessType::PrimaryOnly,
+                    LedgerColumnOptions::default(),
                 )
                 .map_err(|err| {
                     format!(
@@ -636,6 +681,14 @@ impl TestValidator {
             }
         }
 
+        let accounts_db_config = Some(AccountsDbConfig {
+            index: Some(AccountsIndexConfig {
+                started_from_validator: true,
+                ..AccountsIndexConfig::default()
+            }),
+            ..AccountsDbConfig::default()
+        });
+
         let mut validator_config = ValidatorConfig {
             geyser_plugin_config_files: config.geyser_plugin_config_files.clone(),
             accounts_db_caching_enabled: config.accounts_db_caching_enabled,
@@ -665,6 +718,7 @@ impl TestValidator {
             rocksdb_compaction_interval: Some(100), // Compact every 100 slots
             max_ledger_shreds: config.max_ledger_shreds,
             no_wait_for_vote_to_start_leader: true,
+            accounts_db_config,
             ..ValidatorConfig::default_for_test()
         };
         if let Some(ref tower_storage) = config.tower_storage {
@@ -682,8 +736,12 @@ impl TestValidator {
             &validator_config,
             true, // should_check_duplicate_instance
             config.start_progress.clone(),
-            config.evm_state_archive_enabled.then(|| Storage::create_temporary().unwrap()),
+            config
+                .evm_state_archive_enabled
+                .then(|| Storage::create_temporary().unwrap()),
             socket_addr_space,
+            DEFAULT_TPU_USE_QUIC,
+            DEFAULT_TPU_CONNECTION_POOL_SIZE,
         ));
 
         // Needed to avoid panics in `solana-responder-gossip` in tests that create a number of
@@ -691,53 +749,7 @@ impl TestValidator {
         discover_cluster(&gossip, 1, socket_addr_space)
             .map_err(|err| format!("TestValidator startup failed: {:?}", err))?;
 
-        // This is a hack to delay until the fees are non-zero for test consistency
-        // (fees from genesis are zero until the first block with a transaction in it is completed
-        //  due to a bug in the Bank)
-        {
-            let rpc_client =
-                RpcClient::new_with_commitment(rpc_url.clone(), CommitmentConfig::processed());
-            let mut message = Message::new(
-                &[Instruction::new_with_bytes(
-                    Pubkey::new_unique(),
-                    &[],
-                    vec![AccountMeta::new(Pubkey::new_unique(), true)],
-                )],
-                None,
-            );
-            const MAX_TRIES: u64 = 10;
-            let mut num_tries = 0;
-            loop {
-                num_tries += 1;
-                if num_tries > MAX_TRIES {
-                    break;
-                }
-                println!("Waiting for fees to stabilize {:?}...", num_tries);
-                match rpc_client.get_latest_blockhash() {
-                    Ok(blockhash) => {
-                        message.recent_blockhash = blockhash;
-                        match rpc_client.get_fee_for_message(&message) {
-                            Ok(fee) => {
-                                if fee != 0 {
-                                    break;
-                                }
-                            }
-                            Err(err) => {
-                                warn!("get_fee_for_message() failed: {:?}", err);
-                                break;
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        warn!("get_latest_blockhash() failed: {:?}", err);
-                        break;
-                    }
-                }
-                sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT));
-            }
-        }
-
-        Ok(TestValidator {
+        let test_validator = TestValidator {
             ledger_path,
             preserve_ledger,
             rpc_pubsub_url,
@@ -746,7 +758,56 @@ impl TestValidator {
             gossip,
             validator,
             vote_account_address,
-        })
+        };
+        Ok(test_validator)
+    }
+
+    /// This is a hack to delay until the fees are non-zero for test consistency
+    /// (fees from genesis are zero until the first block with a transaction in it is completed
+    ///  due to a bug in the Bank)
+    async fn wait_for_nonzero_fees(&self) {
+        let rpc_client = nonblocking::rpc_client::RpcClient::new_with_commitment(
+            self.rpc_url.clone(),
+            CommitmentConfig::processed(),
+        );
+        let mut message = Message::new(
+            &[Instruction::new_with_bytes(
+                Pubkey::new_unique(),
+                &[],
+                vec![AccountMeta::new(Pubkey::new_unique(), true)],
+            )],
+            None,
+        );
+        const MAX_TRIES: u64 = 10;
+        let mut num_tries = 0;
+        loop {
+            num_tries += 1;
+            if num_tries > MAX_TRIES {
+                break;
+            }
+            println!("Waiting for fees to stabilize {:?}...", num_tries);
+            match rpc_client.get_latest_blockhash().await {
+                Ok(blockhash) => {
+                    message.recent_blockhash = blockhash;
+                    match rpc_client.get_fee_for_message(&message).await {
+                        Ok(fee) => {
+                            if fee != 0 {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            warn!("get_fee_for_message() failed: {:?}", err);
+                            break;
+                        }
+                    }
+                }
+                Err(err) => {
+                    warn!("get_latest_blockhash() failed: {:?}", err);
+                    break;
+                }
+            }
+            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT)).await;
+        }
     }
 
     /// Return the validator's TPU address
@@ -793,6 +854,14 @@ impl TestValidator {
         RpcClient::new_with_commitment(self.rpc_url.clone(), CommitmentConfig::processed())
     }
 
+    /// Return a nonblocking RpcClient for the validator.
+    pub fn get_async_rpc_client(&self) -> nonblocking::rpc_client::RpcClient {
+        nonblocking::rpc_client::RpcClient::new_with_commitment(
+            self.rpc_url.clone(),
+            CommitmentConfig::processed(),
+        )
+    }
+
     pub fn join(mut self) {
         if let Some(validator) = self.validator.take() {
             validator.join();
@@ -822,5 +891,31 @@ impl Drop for TestValidator {
                 )
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn get_health() {
+        let (test_validator, _payer) = TestValidatorGenesis::default().start();
+        let rpc_client = test_validator.get_rpc_client();
+        rpc_client.get_health().expect("health");
+    }
+
+    #[tokio::test]
+    async fn nonblocking_get_health() {
+        let (test_validator, _payer) = TestValidatorGenesis::default().start_async().await;
+        let rpc_client = test_validator.get_async_rpc_client();
+        rpc_client.get_health().await.expect("health");
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn document_tokio_panic() {
+        // `start()` blows up when run within tokio
+        let (_test_validator, _payer) = TestValidatorGenesis::default().start();
     }
 }

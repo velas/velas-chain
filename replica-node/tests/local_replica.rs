@@ -255,6 +255,7 @@ fn test_replica_bootstrap() {
         &gossip_addr,
         dynamic_port_range,
         bind_address,
+        None,
     );
 
     info!("The peer id: {:?}", &contact_info.id);

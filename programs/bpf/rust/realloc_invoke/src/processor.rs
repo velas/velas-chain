@@ -3,22 +3,22 @@
 #![cfg(feature = "program")]
 
 extern crate solana_program;
-use crate::instructions::*;
-use solana_bpf_rust_realloc::instructions::*;
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint,
-    entrypoint::ProgramResult,
-    entrypoint::MAX_PERMITTED_DATA_INCREASE,
-    instruction::{AccountMeta, Instruction},
-    msg,
-    program::invoke,
-    pubkey::Pubkey,
-    system_instruction, system_program,
+use {
+    crate::instructions::*,
+    solana_bpf_rust_realloc::instructions::*,
+    solana_program::{
+        account_info::AccountInfo,
+        entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
+        instruction::{AccountMeta, Instruction},
+        msg,
+        program::invoke,
+        pubkey::Pubkey,
+        system_instruction, system_program,
+    },
+    std::convert::TryInto,
 };
-use std::convert::TryInto;
 
-entrypoint!(process_instruction);
+solana_program::entrypoint!(process_instruction);
 #[allow(clippy::unnecessary_wraps)]
 fn process_instruction(
     program_id: &Pubkey,
@@ -52,7 +52,7 @@ fn process_instruction(
                 &realloc(
                     invoke_program_id,
                     account.key,
-                    MAX_PERMITTED_DATA_INCREASE + 1,
+                    MAX_PERMITTED_DATA_INCREASE.saturating_add(1),
                     &mut bump,
                 ),
                 accounts,
@@ -69,7 +69,36 @@ fn process_instruction(
                 ),
                 accounts,
             )?;
-            assert_eq!(pre_len + MAX_PERMITTED_DATA_INCREASE, account.data_len());
+            assert_eq!(
+                pre_len.saturating_add(MAX_PERMITTED_DATA_INCREASE),
+                account.data_len()
+            );
+        }
+        INVOKE_REALLOC_TO_THEN_LOCAL_REALLOC_EXTEND => {
+            let (bytes, remaining_data) =
+                instruction_data[2..].split_at(std::mem::size_of::<usize>());
+            let new_len = usize::from_le_bytes(bytes.try_into().unwrap());
+            msg!("invoke realloc to {} byte(s)", new_len);
+            let realloc_to_ix = {
+                let mut instruction_data = vec![INVOKE_REALLOC_TO, 1];
+                instruction_data.extend_from_slice(&new_len.to_le_bytes());
+
+                Instruction::new_with_bytes(
+                    *invoke_program_id,
+                    &instruction_data,
+                    vec![
+                        AccountMeta::new(*account.key, false),
+                        AccountMeta::new_readonly(*invoke_program_id, false),
+                    ],
+                )
+            };
+            invoke(&realloc_to_ix, accounts)?;
+            assert_eq!(new_len, account.data_len());
+            let (bytes, _) = remaining_data.split_at(std::mem::size_of::<usize>());
+            let extend_len = usize::from_le_bytes(bytes.try_into().unwrap());
+            msg!("realloc extend {} byte(s)", extend_len);
+            account.realloc(new_len.saturating_add(extend_len), false)?;
+            assert_eq!(new_len.saturating_add(extend_len), account.data_len());
         }
         INVOKE_REALLOC_MAX_TWICE => {
             msg!("invoke realloc max twice");
@@ -82,10 +111,13 @@ fn process_instruction(
                 ),
                 accounts,
             )?;
-            let new_len = pre_len + MAX_PERMITTED_DATA_INCREASE;
+            let new_len = pre_len.saturating_add(MAX_PERMITTED_DATA_INCREASE);
             assert_eq!(new_len, account.data_len());
-            account.realloc(new_len + MAX_PERMITTED_DATA_INCREASE, false)?;
-            assert_eq!(new_len + MAX_PERMITTED_DATA_INCREASE, account.data_len());
+            account.realloc(new_len.saturating_add(MAX_PERMITTED_DATA_INCREASE), false)?;
+            assert_eq!(
+                new_len.saturating_add(MAX_PERMITTED_DATA_INCREASE),
+                account.data_len()
+            );
         }
         INVOKE_REALLOC_AND_ASSIGN => {
             msg!("invoke realloc and assign");
@@ -97,7 +129,10 @@ fn process_instruction(
                 ),
                 accounts,
             )?;
-            assert_eq!(pre_len + MAX_PERMITTED_DATA_INCREASE, account.data_len());
+            assert_eq!(
+                pre_len.saturating_add(MAX_PERMITTED_DATA_INCREASE),
+                account.data_len()
+            );
             assert_eq!(*account.owner, system_program::id());
         }
         INVOKE_REALLOC_AND_ASSIGN_TO_SELF_VIA_SYSTEM_PROGRAM => {
@@ -197,8 +232,8 @@ fn process_instruction(
                 accounts,
             )?;
             assert_eq!(pre_len, accounts[1].data_len());
-            accounts[1].realloc(pre_len + 1, false)?;
-            assert_eq!(pre_len + 1, accounts[1].data_len());
+            accounts[1].realloc(pre_len.saturating_add(1), false)?;
+            assert_eq!(pre_len.saturating_add(1), accounts[1].data_len());
             assert_eq!(accounts[1].owner, program_id);
             let final_len: usize = 200;
             let mut new_instruction_data = vec![];
@@ -221,7 +256,7 @@ fn process_instruction(
             msg!("realloc zerod");
             let (bytes, _) = instruction_data[2..].split_at(std::mem::size_of::<usize>());
             let pre_len = usize::from_le_bytes(bytes.try_into().unwrap());
-            let new_len = pre_len * 2;
+            let new_len = pre_len.saturating_mul(2);
             assert_eq!(pre_len, 100);
             {
                 let data = account.try_borrow_mut_data()?;

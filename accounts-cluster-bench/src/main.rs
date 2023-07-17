@@ -59,7 +59,7 @@ pub fn airdrop_lamports(
                 let mut tries = 0;
                 loop {
                     tries += 1;
-                    let result = client.send_and_confirm_transaction(&transaction);
+                    let result = client.send_and_confirm_transaction_with_spinner(&transaction);
 
                     if result.is_ok() {
                         break;
@@ -773,7 +773,7 @@ pub mod test {
             latest_blockhash,
         );
         let _sig = rpc_client
-            .send_and_confirm_transaction(&transaction)
+            .send_and_confirm_transaction_with_spinner(&transaction)
             .unwrap();
 
         let account_len = Account::get_packed_len();

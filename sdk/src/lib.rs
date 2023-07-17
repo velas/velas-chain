@@ -44,6 +44,7 @@ pub mod pubkey;
 pub mod quic;
 pub mod recent_blockhashes_account;
 pub mod recent_evm_blockhashes_account;
+pub mod reward_type;
 pub mod rpc_port;
 pub mod secp256k1_instruction;
 pub mod shred_version;
@@ -52,6 +53,7 @@ pub mod signer;
 pub mod system_transaction;
 pub mod timing;
 pub mod transaction;
+pub mod transaction_context;
 pub mod transport;
 pub mod wasm;
 
