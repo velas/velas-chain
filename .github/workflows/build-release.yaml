@@ -23,7 +23,7 @@ jobs:
           - build: linux
             os: linux
             target: x86_64-unknown-linux-gnu
-            cargo_folder: ~/.cargo
+            cargo_folder: /tmp/.cargo
             exe_ext: ""
           - build: darwin-macos
             os: osx
