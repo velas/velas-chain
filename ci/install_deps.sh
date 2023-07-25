@@ -8,7 +8,10 @@ case "$CI_OS_NAME" in
     ;;
     linux)
         apt-get -y install curl git libssl-dev libudev-dev make pkg-config zlib1g-dev llvm clang cmake openssh-client protobuf-compiler
-        apt-get -y install hub
+        wget https://github.com/mislav/hub/releases/download/v2.14.2/hub-linux-amd64-2.14.2.tgz -O hub.tgz
+        tar -xvf hub.tgz 
+        sudo mv hub-linux-amd64-2.14.2/bin/hub /usr/local/bin/hub
+        rm -rf hub.tgz hub-linux-amd64-2.14.2
     ;;
     windows)
     ;;
