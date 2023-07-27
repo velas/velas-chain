@@ -81,8 +81,8 @@ jobs:
       #     restore-keys: |
       #           ${{ matrix.os }}-cargo-release-target-
 
-      - name: Build release
-        run: ./ci/publish-tarball.sh --no-spl
+      # - name: Build release
+      #   run: ./ci/publish-tarball.sh --no-spl
 
       - name: Nightly release
         env:

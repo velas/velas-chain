@@ -16,7 +16,7 @@ our_commit=$(git rev-parse HEAD)
 if [ -z "$our_commit" ]; then
     exit 1
 fi
-
+hub release
 echo ${title} > release.md
 echo "" >> release.md
 echo ${commit_body}${our_commit} >> release.md
