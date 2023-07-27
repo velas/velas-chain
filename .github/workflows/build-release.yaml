@@ -91,7 +91,7 @@ jobs:
           TAG: nightly
           TARGET: ${{ matrix.target }}
           EXE_EXT: ${{ matrix.exe_ext }}
-        run: env GITHUB_TOKEN=${GITHUB_TOKEN_RUNNER} ./ci/github-check-nightly-release.sh
+      #   run: env GITHUB_TOKEN=${GITHUB_TOKEN_RUNNER} ./ci/github-check-nightly-release.sh
         run: ./ci/github-check-nightly-release.sh
         if:  ${{ !startsWith(github.ref, 'refs/tags/') }}
 
