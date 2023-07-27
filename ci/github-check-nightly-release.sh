@@ -17,6 +17,7 @@ if [ -z "$our_commit" ]; then
     exit 1
 fi
 hub release
+echo $GITHUB_TOKEN
 echo ${title} > release.md
 echo "" >> release.md
 echo ${commit_body}${our_commit} >> release.md
