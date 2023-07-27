@@ -16,7 +16,8 @@ our_commit=$(git rev-parse HEAD)
 if [ -z "$our_commit" ]; then
     exit 1
 fi
-hub release
+
+env HUB_VERBOSE=1 hub release
 echo $GITHUB_TOKEN
 echo ${title} > release.md
 echo "" >> release.md
