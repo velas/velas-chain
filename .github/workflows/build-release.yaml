@@ -7,11 +7,10 @@ on:
     branches:
        - develop
        - "test-release"
-
+permissions: write-all
 jobs:
   build:
     runs-on: ${{ matrix.target }}
-    permissions: write-all
     defaults:
       run:
         shell: bash -eo pipefail "{0}"
