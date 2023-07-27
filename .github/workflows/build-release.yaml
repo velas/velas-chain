@@ -86,7 +86,6 @@ jobs:
 
       - name: Nightly release
         env:
-          GITHUB_USER: ${{ secrets.GITHUB_USER }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: nightly
           TARGET: ${{ matrix.target }}
