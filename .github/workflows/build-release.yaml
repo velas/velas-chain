@@ -12,8 +12,8 @@ jobs:
   build:
     runs-on: ${{ matrix.target }}
     permissions:
-      contents: read
-      packages: write
+      contents: read/write
+      packages: read/write
     defaults:
       run:
         shell: bash -eo pipefail "{0}"
