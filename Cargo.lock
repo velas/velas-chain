@@ -231,6 +231,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "auto_impl"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a8c1df849285fbacd587de7818cc7d13be6cd2cbcd47a04fb1801b0e2706e33"
+dependencies = [
+ "proc-macro-error",
+ "proc-macro2 1.0.56",
+ "quote 1.0.26",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "autocfg"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -677,12 +689,6 @@ dependencies = [
  "byteorder",
  "iovec",
 ]
-
-[[package]]
-name = "bytes"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0dcbc35f504eb6fc275a6d20e4ebcda18cf50d40ba6fabff8c711fa16cb3b16"
 
 [[package]]
 name = "bytes"
@@ -1899,7 +1905,7 @@ name = "evm"
 version = "0.35.0"
 source = "git+https://github.com/velas/evm?tag=v0.35-with-traces#90a980bb9d7ccbb21b2897e71b889847f7beeade"
 dependencies = [
- "auto_impl",
+ "auto_impl 0.5.0",
  "environmental",
  "ethereum",
  "evm-core",
@@ -2046,7 +2052,7 @@ name = "evm-runtime"
 version = "0.35.0"
 source = "git+https://github.com/velas/evm?tag=v0.35-with-traces#90a980bb9d7ccbb21b2897e71b889847f7beeade"
 dependencies = [
- "auto_impl",
+ "auto_impl 0.5.0",
  "environmental",
  "evm-core",
  "primitive-types 0.11.1",
@@ -2061,14 +2067,16 @@ dependencies = [
  "auto_enums",
  "bincode",
  "borsh",
- "bytes 0.6.0",
+ "bytes 1.4.0",
  "criterion",
  "dashmap 4.0.2",
  "derivative",
  "derive_more",
+ "etcommon-hexutil",
  "ethabi",
  "ethbloom 0.11.1",
  "evm",
+ "fastrlp",
  "fixed-hash 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hex",
  "impl-rlp 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2140,6 +2148,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e51093e27b0797c359783294ca4f0a911c270184cb10f85783b118614a1501be"
 dependencies = [
  "instant",
+]
+
+[[package]]
+name = "fastrlp"
+version = "0.3.0"
+source = "git+https://github.com/velas/fastrlp?tag=second_release_candidate#7a967beb99c5627b90013a3ba0b4b74577797bc4"
+dependencies = [
+ "arrayvec 0.7.2",
+ "auto_impl 1.0.1",
+ "bytes 1.4.0",
+ "ethbloom 0.11.1",
+ "ethereum",
+ "fastrlp-derive",
+ "primitive-types 0.11.1",
+ "thiserror",
+]
+
+[[package]]
+name = "fastrlp-derive"
+version = "0.2.0"
+source = "git+https://github.com/velas/fastrlp?tag=second_release_candidate#7a967beb99c5627b90013a3ba0b4b74577797bc4"
+dependencies = [
+ "bytes 1.4.0",
+ "proc-macro2 1.0.56",
+ "quote 1.0.26",
+ "syn 2.0.15",
 ]
 
 [[package]]
@@ -5461,9 +5495,9 @@ dependencies = [
 
 [[package]]
 name = "scale-info"
-version = "2.5.0"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cfdffd972d76b22f3d7f81c8be34b2296afd3a25e0a547bd9abe340a4dbbe97"
+checksum = "dfdef77228a4c05dc94211441595746732131ad7f6530c6c18f045da7b7ab937"
 dependencies = [
  "bitvec 1.0.1",
  "cfg-if 1.0.0",
@@ -5474,9 +5508,9 @@ dependencies = [
 
 [[package]]
 name = "scale-info-derive"
-version = "2.5.0"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61fa974aea2d63dd18a4ec3a49d59af9f34178c73a4f56d2f18205628d00681e"
+checksum = "53012eae69e5aa5c14671942a5dd47de59d4cdcff8532a6dd0e081faf1119482"
 dependencies = [
  "proc-macro-crate 1.3.1",
  "proc-macro2 1.0.56",
@@ -7359,7 +7393,6 @@ dependencies = [
  "primitive-types 0.8.0",
  "prost 0.11.9",
  "rangemap",
- "rlp",
  "rocksdb",
  "serde",
  "serde_json",
@@ -7761,6 +7794,7 @@ dependencies = [
  "solana-sdk",
  "solana-transaction-status",
  "tonic-build 0.8.4",
+ "triedb",
 ]
 
 [[package]]
@@ -9105,13 +9139,16 @@ checksum = "0de5f738ceab88e2491a94ddc33c3feeadfa95fedc60363ef110845df12f3878"
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/velas/triedb?tag=rocksdb-v0.20.1-orth#48ad76f5c1491234840676d2721cc5287462f3d3"
+source = "git+https://github.com/velas/triedb?tag=fast_rlp#a0019f6073a081bc9f177b4b7fb41362fb5d6649"
 dependencies = [
  "anyhow",
+ "backtrace",
  "bincode",
+ "bytes 1.4.0",
  "dashmap 4.0.2",
  "derivative",
  "etcommon-hexutil",
+ "fastrlp",
  "log 0.4.17",
  "primitive-types 0.11.1",
  "rayon",

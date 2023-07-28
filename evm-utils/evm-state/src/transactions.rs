@@ -1,10 +1,12 @@
 use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
+use bytes::{BufMut, Buf, BytesMut};
 use evm::{backend::Log, ExitReason, ExitRevert};
 use primitive_types::{H160, H256, U256};
-use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+use rlp::{Decodable as DecodableOld, DecoderError, Encodable as EncodableOld, Rlp, RlpStream};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::str::FromStr;
+use triedb::rlp::{Encodable, Decodable};
 
 use crate::error::*;
 use secp256k1::{
@@ -127,6 +129,7 @@ impl Transaction {
     Serialize,
     Deserialize,
 )]
+#[derive(Decodable, Encodable)]
 pub struct UnsignedTransaction {
     pub nonce: U256,
     pub gas_price: U256,
@@ -152,7 +155,8 @@ impl UnsignedTransaction {
             s.append(&0u8);
         }
     }
-
+    
+    
     pub fn signing_hash(&self, chain_id: Option<u64>) -> H256 {
         let mut stream = RlpStream::new();
         self.signing_rlp_append(&mut stream, chain_id);
@@ -296,7 +300,7 @@ impl TransactionSignature {
     }
 }
 
-impl Encodable for TransactionAction {
+impl EncodableOld for TransactionAction {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self {
             TransactionAction::Call(address) => {
@@ -309,7 +313,7 @@ impl Encodable for TransactionAction {
     }
 }
 
-impl Decodable for TransactionAction {
+impl DecodableOld for TransactionAction {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         Ok(if rlp.is_empty() {
             if rlp.is_data() {
@@ -322,8 +326,48 @@ impl Decodable for TransactionAction {
         })
     }
 }
+impl Encodable for TransactionAction {
 
-impl Encodable for Transaction {
+    fn encode(&self,out: &mut dyn BufMut) {
+        match self {
+            TransactionAction::Create => {
+                let empty : &[u8] = &[];
+                empty.encode(out);
+            },
+            TransactionAction::Call(address) => {
+                address.encode(out);
+            },
+        }
+    }
+    fn length(&self) -> usize {
+        match self {
+            TransactionAction::Create => {
+                let empty : &[u8] = &[];
+                empty.length()
+            },
+            TransactionAction::Call(address) => {
+                address.length()
+            },
+        }
+
+    }
+}
+
+impl<'de> Decodable<'de> for TransactionAction {
+    fn decode(buf: &mut &'de [u8]) -> Result<Self, triedb::rlp::decode::DecodeError> {
+        let mut buf_view = *buf;
+        let h = fastrlp::Header::decode(&mut buf_view)?;
+        if h.payload_length == 0 {
+            let _h = fastrlp::Header::decode(buf)?;
+            return Ok(Self::Create);
+        }
+        let address : H160 = <H160 as Decodable>::decode(buf)?;
+        Ok(TransactionAction::Call(address))
+        
+    }
+}
+
+impl EncodableOld for Transaction {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.begin_list(9);
         s.append(&self.nonce);
@@ -338,7 +382,76 @@ impl Encodable for Transaction {
     }
 }
 
-impl Decodable for Transaction {
+impl Encodable for Transaction {
+    fn encode(&self,out: &mut dyn BufMut) {
+
+        let len = self.nonce.length() + self.gas_price.length() 
+            + self.gas_limit.length() + self.action.length() 
+            + self.value.length() + self.input.length() 
+            + self.signature.v.length() + self.signature.r.length() + self.signature.s.length() ;
+        fastrlp::Header {
+            list: true,
+            payload_length: len,
+        }.encode(out);
+        self.nonce.encode(out);
+        self.gas_price.encode(out);
+        self.gas_limit.encode(out);
+        self.action.encode(out);
+        self.value.encode(out);
+        self.input.encode(out);
+        self.signature.v.encode(out);
+        self.signature.r.encode(out);
+        self.signature.s.encode(out);
+    }
+
+    fn length(&self) -> usize {
+
+        let len = self.nonce.length() + self.gas_price.length() 
+            + self.gas_limit.length() + self.action.length() 
+            + self.value.length() + self.input.length() 
+            + self.signature.v.length() + self.signature.r.length() + self.signature.s.length() ;
+        fastrlp::Header {
+            list: true,
+            payload_length: len,
+        }
+        .length()
+            + len
+
+    }
+}
+
+impl<'de> Decodable<'de> for Transaction {
+    fn decode(buf: &mut &'de [u8]) -> Result<Self, fastrlp::DecodeError> {
+        let h = fastrlp::Header::decode(buf)?;
+        if !h.list {
+            return Err(fastrlp::DecodeError::UnexpectedString);
+        }
+        let payload_view = &mut &buf[..h.payload_length];
+        let cnt = fastrlp::count(payload_view)?;
+        if cnt!= 9 {
+            return Err(fastrlp::DecodeError::ListLengthMismatch { expected: 9, got: cnt });
+        }
+
+        let nonce = fastrlp::Decodable::decode(payload_view)?;
+        let gas_price = fastrlp::Decodable::decode(payload_view)?;
+        let gas_limit = fastrlp::Decodable::decode(payload_view)?;
+        let action = fastrlp::Decodable::decode(payload_view)?;
+        let value = fastrlp::Decodable::decode(payload_view)?;
+        let input= fastrlp::Decodable::decode(payload_view)?;
+        let v= fastrlp::Decodable::decode(payload_view)?;
+        let r = fastrlp::Decodable::decode(payload_view)?;
+        let s = fastrlp::Decodable::decode(payload_view)?;
+        debug_assert!(payload_view.is_empty());
+        buf.advance(h.payload_length);
+        Ok(Self {
+            nonce, gas_price, gas_limit, action, value, input,
+            signature: TransactionSignature { v, r, s},
+        })
+    }
+}
+
+#[cfg(test)]
+impl DecodableOld for Transaction {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         Ok(Self {
             nonce: rlp.val_at(0)?,
@@ -356,7 +469,8 @@ impl Decodable for Transaction {
     }
 }
 
-impl Encodable for UnsignedTransaction {
+#[cfg(test)]
+impl EncodableOld for UnsignedTransaction {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.begin_list(6);
         s.append(&self.nonce);
@@ -368,7 +482,9 @@ impl Encodable for UnsignedTransaction {
     }
 }
 
-impl Decodable for UnsignedTransaction {
+
+#[cfg(test)]
+impl DecodableOld for UnsignedTransaction {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         Ok(Self {
             nonce: rlp.val_at(0)?,
@@ -410,6 +526,78 @@ impl TransactionInReceipt {
 }
 
 impl Encodable for TransactionInReceipt {
+
+    fn encode(&self,out: &mut dyn BufMut) {
+        match self {
+            TransactionInReceipt::Signed(tx) => {
+                tx.encode(out);
+            },
+            TransactionInReceipt::Unsigned(tx) => {
+                tx.encode(out);
+            },
+        }
+    }
+    fn length(&self) -> usize {
+        match self {
+            TransactionInReceipt::Signed(tx) => {
+                tx.length()
+            },
+            TransactionInReceipt::Unsigned(tx) => {
+                tx.length()
+            },
+        }
+    }
+}
+
+pub fn consume(buf: &mut &[u8]) -> Result<(), triedb::rlp::decode::DecodeError> {
+    let h = fastrlp::Header::decode(buf)?;
+
+    buf.advance(h.payload_length);
+    Ok(())
+
+    
+}
+impl<'de> Decodable<'de> for TransactionInReceipt {
+    fn decode(buf: &mut &'de [u8]) -> Result<Self, triedb::rlp::decode::DecodeError> {
+        let mut count_view = *buf;
+        let h = fastrlp::Header::decode(&mut count_view)?;
+        if !h.list {
+            return Err(fastrlp::DecodeError::UnexpectedString);
+        }
+        let count_view = &mut &count_view[..h.payload_length];
+        let cnt = fastrlp::count(count_view)?;
+
+        let res = match cnt {
+            8 => {
+                TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode(buf, false)?)
+            },
+            9 => {
+                for _repeat in 0..8 {
+                    consume(count_view)?;
+                }
+                let res: Result<u8,_> = fastrlp::Decodable::decode(count_view);
+                match (count_view.is_empty(), res) {
+                    (true, Ok(UNSIGNED_TX_MARKER)) => {
+                        TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode(buf, true)?)
+                    },
+                    _ => {
+                        TransactionInReceipt::Signed(<Transaction as Decodable>::decode(buf)?)
+                    }
+                    
+                }
+                
+            },
+            _ => return Err(fastrlp::DecodeError::Custom(
+                "list len must be either 8 or 9 for TransactionInReceipt"
+            ) ),
+            
+        };
+        Ok(res)
+    }
+}
+
+#[cfg(test)]
+impl EncodableOld for TransactionInReceipt {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self {
             TransactionInReceipt::Signed(tx) => {
@@ -434,18 +622,19 @@ impl From<UnsignedTransactionWithCaller> for TransactionInReceipt {
     }
 }
 
-impl Decodable for TransactionInReceipt {
+#[cfg(test)]
+impl DecodableOld for TransactionInReceipt {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         let items = rlp.item_count()?;
         Ok(match items {
-            8 => TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode(rlp, false)?),
+            8 => TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode_old(rlp, false)?),
             9 => {
                 if rlp.val_at::<u8>(8) == Ok(0x1u8) {
-                    TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode(
+                    TransactionInReceipt::Unsigned(UnsignedTransactionWithCaller::decode_old(
                         rlp, true,
                     )?)
                 } else {
-                    TransactionInReceipt::Signed(Transaction::decode(rlp)?)
+                    TransactionInReceipt::Signed(<Transaction as DecodableOld>::decode(rlp)?)
                 }
             }
             _ => return Err(DecoderError::RlpInvalidLength),
@@ -463,7 +652,8 @@ pub struct UnsignedTransactionWithCaller {
     pub signed_compatible: bool,
 }
 
-impl Encodable for UnsignedTransactionWithCaller {
+#[cfg(test)]
+impl EncodableOld for UnsignedTransactionWithCaller {
     fn rlp_append(&self, s: &mut RlpStream) {
         let chain_id = self.chain_id;
         if self.signed_compatible {
@@ -491,8 +681,100 @@ impl Encodable for UnsignedTransactionWithCaller {
     }
 }
 
+impl Encodable for UnsignedTransactionWithCaller {
+
+    fn encode(&self,out: &mut dyn BufMut) {
+        let chain_id = self.chain_id;
+        if self.signed_compatible {
+            let len = self.unsigned_tx.nonce.length() + 
+                self.unsigned_tx.gas_price.length() + 
+                self.unsigned_tx.gas_limit.length() + 
+                self.unsigned_tx.action.length()+ 
+                self.unsigned_tx.value.length()+ 
+                self.unsigned_tx.input.length()+ 
+                chain_id.length() +
+                self.caller.length() +
+                UNSIGNED_TX_MARKER.length();
+            fastrlp::Header {
+                list: true,
+                payload_length: len,
+            }.encode(out);
+            self.unsigned_tx.nonce.encode(out);
+            self.unsigned_tx.gas_price.encode(out);
+            self.unsigned_tx.gas_limit.encode(out);
+            self.unsigned_tx.action.encode(out);
+            self.unsigned_tx.value.encode(out);
+            self.unsigned_tx.input.encode(out);
+            chain_id.encode(out);
+            self.caller.encode(out);
+            UNSIGNED_TX_MARKER.encode(out);
+        } else {
+            let len = self.unsigned_tx.nonce.length() + 
+                self.unsigned_tx.gas_price.length() + 
+                self.unsigned_tx.gas_limit.length() + 
+                self.unsigned_tx.action.length()+ 
+                self.unsigned_tx.value.length()+ 
+                self.unsigned_tx.input.length()+ 
+                self.caller.length() +
+                chain_id.length();
+            fastrlp::Header {
+                list: true,
+                payload_length: len,
+            }.encode(out);
+            self.unsigned_tx.nonce.encode(out);
+            self.unsigned_tx.gas_price.encode(out);
+            self.unsigned_tx.gas_limit.encode(out);
+            self.unsigned_tx.action.encode(out);
+            self.unsigned_tx.value.encode(out);
+            self.unsigned_tx.input.encode(out);
+            self.caller.encode(out);
+            chain_id.encode(out);
+            
+        }
+
+    }
+    fn length(&self) -> usize {
+        let chain_id = self.chain_id;
+        if self.signed_compatible {
+            let len = self.unsigned_tx.nonce.length() + 
+                self.unsigned_tx.gas_price.length() + 
+                self.unsigned_tx.gas_limit.length() + 
+                self.unsigned_tx.action.length()+ 
+                self.unsigned_tx.value.length()+ 
+                self.unsigned_tx.input.length()+ 
+                chain_id.length() +
+                self.caller.length() +
+                UNSIGNED_TX_MARKER.length();
+            fastrlp::Header {
+                list: true,
+                payload_length: len,
+            }
+            .length()
+                + len
+        } else {
+            let len = self.unsigned_tx.nonce.length() + 
+                self.unsigned_tx.gas_price.length() + 
+                self.unsigned_tx.gas_limit.length() + 
+                self.unsigned_tx.action.length()+ 
+                self.unsigned_tx.value.length()+ 
+                self.unsigned_tx.input.length()+ 
+                self.caller.length() +
+                chain_id.length();
+            fastrlp::Header {
+                list: true,
+                payload_length: len,
+            }
+            .length()
+                + len
+            
+        }
+    }
+}
+
 impl UnsignedTransactionWithCaller {
-    pub fn tx_id_hash(&self) -> H256 {
+
+    #[cfg(test)]
+    pub fn tx_id_hash_old(&self) -> H256 {
         // old transaction hash was calculated with different rlp structure, use signing_hash to be compatible
         if !self.signed_compatible {
             return self.unsigned_tx.signing_hash(Some(self.chain_id));
@@ -501,7 +783,19 @@ impl UnsignedTransactionWithCaller {
         self.rlp_append(&mut stream);
         H256::from_slice(Keccak256::digest(stream.as_raw()).as_slice())
     }
-    fn decode(rlp: &Rlp<'_>, signed_compatible: bool) -> Result<Self, DecoderError> {
+    pub fn tx_id_hash(&self) -> H256 {
+
+        if !self.signed_compatible {
+            return self.unsigned_tx.signing_hash(Some(self.chain_id));
+        }
+        let mut buf = BytesMut::with_capacity(1024);
+        self.encode(&mut buf);
+        
+        H256::from_slice(Keccak256::digest(buf.as_ref()).as_slice())
+
+    }
+    #[cfg(test)]
+    pub(super) fn decode_old(rlp: &Rlp<'_>, signed_compatible: bool) -> Result<Self, DecoderError> {
         let nonce = rlp.val_at(0)?;
         let gas_price = rlp.val_at(1)?;
         let gas_limit = rlp.val_at(2)?;
@@ -539,6 +833,58 @@ impl UnsignedTransactionWithCaller {
                 signed_compatible,
             })
         }
+    }
+
+    pub(super) fn decode(buf: &mut &[u8], signed_compatible: bool) -> Result<Self, triedb::rlp::decode::DecodeError> {
+        let h = fastrlp::Header::decode(buf)?;
+        if !h.list {
+            return Err(fastrlp::DecodeError::UnexpectedString);
+        }
+        let payload_view = &mut &buf[..h.payload_length];
+        let cnt = fastrlp::count(payload_view)?;
+        let expected_cnt = if signed_compatible {
+            9
+        } else {
+            8
+        };
+
+        if cnt!= expected_cnt {
+            return Err(fastrlp::DecodeError::ListLengthMismatch { expected: expected_cnt, got: cnt });
+        }
+        let nonce = fastrlp::Decodable::decode(payload_view)?;
+        let gas_price = fastrlp::Decodable::decode(payload_view)?;
+        let gas_limit = fastrlp::Decodable::decode(payload_view)?;
+        let action = fastrlp::Decodable::decode(payload_view)?;
+        let value = fastrlp::Decodable::decode(payload_view)?;
+        let input = fastrlp::Decodable::decode(payload_view)?;
+        let (chain_id, caller) = if signed_compatible {
+            let chain_id = fastrlp::Decodable::decode(payload_view)?;
+            let caller = fastrlp::Decodable::decode(payload_view)?;
+            let _marker: u8 = fastrlp::Decodable::decode(payload_view)?;
+            debug_assert_eq!(_marker, UNSIGNED_TX_MARKER);
+            (chain_id, caller)
+        } else {
+            let caller = fastrlp::Decodable::decode(payload_view)?;
+            let chain_id = fastrlp::Decodable::decode(payload_view)?;
+            (chain_id, caller)
+            
+        };
+        debug_assert!(payload_view.is_empty());
+        buf.advance(h.payload_length);
+
+        Ok(Self {
+            unsigned_tx: UnsignedTransaction {
+                nonce,
+                gas_price,
+                gas_limit,
+                action,
+                value,
+                input,
+            },
+            caller,
+            chain_id,
+            signed_compatible,
+        })
     }
 }
 

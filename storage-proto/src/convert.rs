@@ -1097,9 +1097,9 @@ impl TryFrom<generated_evm::TransactionInReceipt> for evm_state::TransactionInRe
 
 impl From<evm_state::Transaction> for generated_evm::Transaction {
     fn from(tx: evm_state::Transaction) -> Self {
-        let bytes = rlp::encode(&tx);
+        let bytes = triedb::rlp::encode(&tx);
         Self {
-            rlp_encoded_body: bytes.to_vec(),
+            rlp_encoded_body: bytes,
         }
     }
 }
@@ -1107,7 +1107,7 @@ impl From<evm_state::Transaction> for generated_evm::Transaction {
 impl TryFrom<generated_evm::Transaction> for evm_state::Transaction {
     type Error = &'static str;
     fn try_from(tx: generated_evm::Transaction) -> Result<Self, Self::Error> {
-        rlp::decode(&tx.rlp_encoded_body).map_err(|_| "Failed to deserialize rlp tx body")
+        triedb::rlp::decode(&tx.rlp_encoded_body).map_err(|_| "Failed to deserialize rlp tx body")
     }
 }
 
@@ -1115,9 +1115,9 @@ impl From<evm_state::UnsignedTransactionWithCaller>
     for generated_evm::UnsignedTransactionWithCaller
 {
     fn from(unsigned: evm_state::UnsignedTransactionWithCaller) -> Self {
-        let bytes = rlp::encode(&unsigned.unsigned_tx);
+        let bytes = triedb::rlp::encode(&unsigned.unsigned_tx);
         Self {
-            rlp_encoded_body: bytes.to_vec(),
+            rlp_encoded_body: bytes,
             chain_id: unsigned.chain_id,
             caller: unsigned.caller.into_vec(),
             signed_compatible: unsigned.signed_compatible,
@@ -1136,7 +1136,7 @@ impl TryFrom<generated_evm::UnsignedTransactionWithCaller>
             chain_id: unsigned.chain_id,
             signed_compatible: unsigned.signed_compatible,
             caller: convert_from_bytes(unsigned.caller)?,
-            unsigned_tx: rlp::decode(&unsigned.rlp_encoded_body)
+            unsigned_tx: triedb::rlp::decode(&unsigned.rlp_encoded_body)
                 .map_err(|_| "Failed to deserialize rlp tx body")?,
         })
     }

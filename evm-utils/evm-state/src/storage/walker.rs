@@ -1,7 +1,6 @@
 use std::{borrow::Borrow, sync::Arc};
 
 use primitive_types::H256;
-use rlp::Rlp;
 use triedb::merkle::{MerkleNode, MerkleValue, Leaf, Extension, Branch};
 
 use anyhow::{anyhow, Result};
@@ -58,9 +57,7 @@ where
                 .ok_or_else(|| anyhow!("hash {:?} not found in database", hash))?;
             trace!("raw bytes: {:?}", bytes);
 
-            let rlp = Rlp::new(bytes.as_slice());
-            trace!("rlp: {:?}", rlp);
-            let node = MerkleNode::decode(&rlp)?;
+            let node = triedb::rlp::decode(&bytes)?;
             debug!("node: {:?}", node);
 
             self.process_node(nibble, &node)?;

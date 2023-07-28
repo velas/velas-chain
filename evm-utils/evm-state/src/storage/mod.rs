@@ -14,7 +14,7 @@ use derive_more::{AsRef, Deref};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::*;
-use rlp::{Decodable, Encodable};
+use rlp::{Decodable as DecodableOld, Encodable as EncodableOld};
 use rocksdb::{
     backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
     ColumnFamily, ColumnFamilyDescriptor, Env, IteratorMode, OptimisticTransactionDB,
@@ -33,6 +33,7 @@ use triedb::{
     gc::{DatabaseTrieMut, DbCounter, TrieCollection},
     rocksdb::{RocksDatabaseHandle, RocksDatabaseHandleGC, RocksHandle, SyncRocksHandle},
     FixedSecureTrieMut,
+    rlp::{Encodable, Decodable},
 };
 
 pub mod inspectors;
@@ -391,7 +392,7 @@ impl Storage<OptimisticTransactionDB> {
         }
     }
 
-    pub fn typed_for<K: AsRef<[u8]>, V: Encodable + Decodable>(
+    pub fn typed_for<K: AsRef<[u8]>, V: Encodable + for<'r> Decodable<'r>>(
         &self,
         root: H256,
     ) -> FixedSecureTrieMut<DatabaseTrieMut<RocksHandle<&DB>>, K, V> {
@@ -477,7 +478,7 @@ impl Storage<OptimisticTransactionDB> {
             {
                 let mut account: Account = accounts
                     .get(address.as_bytes())
-                    .and_then(|accounts| rlp::decode(&accounts).ok())
+                    .and_then(|accounts| triedb::rlp::decode(&accounts).ok())
                     .unwrap_or_default();
 
                 account.nonce = nonce;
@@ -506,7 +507,7 @@ impl Storage<OptimisticTransactionDB> {
                         .apply_increase(storage_patch, |_| vec![])
                         .leak_root()
                 }
-                accounts.insert(address.as_bytes(), &rlp::encode(&account));
+                accounts.insert(address.as_bytes(), &triedb::rlp::encode(&account));
             } else {
                 accounts.delete(address.as_bytes());
             }
@@ -752,7 +753,7 @@ impl Storage<OptimisticTransactionDB> {
 static SECONDARY_MODE_PATH_SUFFIX: &str = "velas-secondary";
 
 pub fn account_extractor(data: &[u8]) -> Vec<H256> {
-    if let Ok(account) = rlp::decode::<Account>(data) {
+    if let Ok(account) = triedb::rlp::decode::<Account>(data) {
         vec![account.storage_root]
     } else {
         vec![] // this trie is mixed collection, and can contain storage values among with accounts
@@ -957,7 +958,7 @@ impl<D: VelasDBCommon> std::fmt::Debug for DbWithClose<D> {
 }
 pub trait SubStorage {
     const COLUMN_NAME: &'static str;
-    type Key: Encodable + Decodable;
+    type Key: EncodableOld + DecodableOld;
     type Value: Serialize + DeserializeOwned;
 }
 

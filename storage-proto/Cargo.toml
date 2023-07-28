@@ -19,6 +19,7 @@ solana-sdk = { path = "../sdk", version = "=1.9.29" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.9.29" }
 
 rlp = "0.5.0"
+triedb = { git = "https://github.com/velas/triedb", tag = "fast_rlp", features = ["rocksdb"] }
 evm-state = { path = "../evm-utils/evm-state" }
 [dev-dependencies]
 enum-iterator = "0.7.0"
