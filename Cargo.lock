@@ -1983,10 +1983,13 @@ dependencies = [
  "solana-rpc",
  "solana-runtime",
  "solana-sdk",
+ "solana-streamer",
+ "solana-test-validator",
  "solana-transaction-status",
  "solana-version",
  "structopt",
  "tokio",
+ "tokio-test",
  "tracing",
  "tracing-attributes",
  "tracing-opentelemetry 0.16.0",
@@ -2037,6 +2040,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "sha3 0.10.7",
  "snafu",
  "uint",
 ]
@@ -8785,6 +8789,19 @@ dependencies = [
  "mio 0.6.23",
  "tokio-io",
  "tokio-reactor",
+]
+
+[[package]]
+name = "tokio-test"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53474327ae5e166530d17f2d956afcb4f8a004de581b3cae10f12006bc8163e3"
+dependencies = [
+ "async-stream",
+ "bytes 1.4.0",
+ "futures-core",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
