@@ -51,12 +51,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             FeatureSet::new_with_all_enabled(),
         );
 
-        let exit_reason = executor.with_executor(
-            OwnedPrecompile::new(),
-            |executor| {
-                executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
-            },
-        );
+        let exit_reason = executor.with_executor(OwnedPrecompile::new(), |executor| {
+            executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
+        });
         assert!(matches!(
             exit_reason,
             (ExitReason::Succeed(ExitSucceed::Returned), _)
@@ -65,9 +62,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         let contract_address = TransactionAction::Create.address(contract, U256::zero());
         let mut idx = 0;
         b.iter(|| {
-            let exit_reason = black_box(executor.with_executor(
-                OwnedPrecompile::new(),
-                |executor| {
+            let exit_reason =
+                black_box(executor.with_executor(OwnedPrecompile::new(), |executor| {
                     executor.transact_call(
                         accounts[idx % accounts.len()],
                         contract_address,
@@ -76,8 +72,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                         u64::MAX,
                         vec![],
                     )
-                },
-            ));
+                }));
 
             //hack: Avoid gas limit
             executor.evm_backend.state.used_gas = 0;
@@ -106,12 +101,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             FeatureSet::new_with_all_enabled(),
         );
 
-        let exit_reason = executor.with_executor(
-            OwnedPrecompile::new(),
-            |executor| {
-                executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
-            },
-        );
+        let exit_reason = executor.with_executor(OwnedPrecompile::new(), |executor| {
+            executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
+        });
         assert!(matches!(
             exit_reason,
             (ExitReason::Succeed(ExitSucceed::Returned), _)
@@ -132,9 +124,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                 FeatureSet::new_with_all_enabled(),
             );
 
-            let exit_reason = black_box(executor.with_executor(
-                OwnedPrecompile::new(),
-                |executor| {
+            let exit_reason =
+                black_box(executor.with_executor(OwnedPrecompile::new(), |executor| {
                     executor.transact_call(
                         accounts[idx % accounts.len()],
                         contract_address,
@@ -143,8 +134,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                         u64::MAX,
                         vec![],
                     )
-                },
-            ));
+                }));
 
             assert!(matches!(
                 exit_reason.0,
@@ -164,12 +154,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             FeatureSet::new_with_all_enabled(),
         );
 
-        let exit_reason = executor.with_executor(
-            OwnedPrecompile::new(),
-            |executor| {
-                executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
-            },
-        );
+        let exit_reason = executor.with_executor(OwnedPrecompile::new(), |executor| {
+            executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
+        });
         assert!(matches!(
             exit_reason,
             (ExitReason::Succeed(ExitSucceed::Returned), _)
@@ -228,12 +215,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             FeatureSet::new_with_all_enabled(),
         );
 
-        let exit_reason = executor.with_executor(
-            OwnedPrecompile::new(),
-            |executor| {
-                executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
-            },
-        );
+        let exit_reason = executor.with_executor(OwnedPrecompile::new(), |executor| {
+            executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
+        });
         assert!(matches!(
             exit_reason,
             (ExitReason::Succeed(ExitSucceed::Returned), _)
@@ -304,12 +288,9 @@ fn criterion_benchmark(c: &mut Criterion) {
                 FeatureSet::new_with_all_enabled(),
             );
 
-            let exit_reason = executor.with_executor(
-                OwnedPrecompile::new(),
-                |executor| {
-                    executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
-                },
-            );
+            let exit_reason = executor.with_executor(OwnedPrecompile::new(), |executor| {
+                executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
+            });
             assert!(matches!(
                 exit_reason,
                 (ExitReason::Succeed(ExitSucceed::Returned), _)
@@ -365,9 +346,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     let removed_root = block.kvs().purge_slot(slot).unwrap().unwrap();
                     assert_eq!(removed_root, root_before);
 
-                    let (mut direct, mut indirect) = (
-                        vec![removed_root], vec![]
-                    );
+                    let (mut direct, mut indirect) = (vec![removed_root], vec![]);
                     while !direct.is_empty() {
                         let childs = block.kvs().gc_try_cleanup_account_hashes(&direct);
 
@@ -411,12 +390,9 @@ fn criterion_benchmark(c: &mut Criterion) {
                 FeatureSet::new_with_all_enabled(),
             );
 
-            let exit_reason = executor.with_executor(
-                OwnedPrecompile::new(),
-                |executor| {
-                    executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
-                },
-            );
+            let exit_reason = executor.with_executor(OwnedPrecompile::new(), |executor| {
+                executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
+            });
             assert!(matches!(
                 exit_reason,
                 (ExitReason::Succeed(ExitSucceed::Returned), _)
@@ -489,12 +465,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             FeatureSet::new_with_all_enabled(),
         );
 
-        let exit_reason = executor.with_executor(
-            OwnedPrecompile::new(),
-            |executor| {
-                executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
-            },
-        );
+        let exit_reason = executor.with_executor(OwnedPrecompile::new(), |executor| {
+            executor.transact_create(contract, U256::zero(), code.clone(), u64::MAX, vec![])
+        });
 
         assert!(matches!(
             exit_reason,

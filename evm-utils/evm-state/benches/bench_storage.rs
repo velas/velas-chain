@@ -80,11 +80,12 @@ fn add_some_and_advance(state: &mut EvmBackend<Incomming>, params: &Params) {
                 for remove_slot in (slot - params.squash_each)..slot {
                     let (mut direct, mut indirect): (Vec<_>, Vec<_>) = (
                         state
-                        .kvs()
-                        .purge_slot(remove_slot)
-                        .unwrap()
-                        .into_iter()
-                        .collect(), vec![]
+                            .kvs()
+                            .purge_slot(remove_slot)
+                            .unwrap()
+                            .into_iter()
+                            .collect(),
+                        vec![],
                     );
                     while !direct.is_empty() {
                         let childs = state.kvs().gc_try_cleanup_account_hashes(&direct);

@@ -5,8 +5,8 @@ pub(crate) mod completion;
 pub(crate) mod find;
 pub(crate) mod repeat;
 pub(crate) mod restore_chain;
-pub(crate) mod upload;
 pub(crate) mod scan_evm_state_roots;
+pub(crate) mod upload;
 // a tmp placeholder to test out various new commands or approaches
 // it's convenient, as all potentially required dependencies have been imported
 pub(crate) mod scratchpad;

@@ -72,8 +72,8 @@ use tx_filter::TxFilter;
 
 use rlp::Encodable;
 use secp256k1::Message;
-use std::result::Result as StdResult;
 use solana_rpc::rpc::{BatchId, BatchStateMap};
+use std::result::Result as StdResult;
 
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
 
@@ -249,8 +249,7 @@ impl EvmBridge {
     pub fn check_batch_timeout(&self, id: BatchId) -> Result<()> {
         let current = self.batch_state_map.get_duration(&id);
         debug!("Current batch ({}) duration {:?}", id, current);
-        if matches!(self.get_max_batch_duration(), Some(max_duration) if current > max_duration )
-        {
+        if matches!(self.get_max_batch_duration(), Some(max_duration) if current > max_duration ) {
             let mut error = jsonrpc_core::Error::internal_error();
             error.message = "Batch is taking too long".to_string();
             return Err(error);

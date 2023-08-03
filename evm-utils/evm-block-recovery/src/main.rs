@@ -61,7 +61,7 @@ async fn main() {
         Err(error) => {
             eprintln!("error {:?}", error);
             error.exit_code()
-        },
+        }
     };
 
     std::process::exit(exit_code);

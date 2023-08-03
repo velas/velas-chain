@@ -2,7 +2,7 @@ use std::{borrow::Borrow, sync::Arc};
 
 use primitive_types::H256;
 use rlp::Rlp;
-use triedb::merkle::{MerkleNode, MerkleValue, Leaf, Extension, Branch};
+use triedb::merkle::{Branch, Extension, Leaf, MerkleNode, MerkleValue};
 
 use anyhow::{anyhow, Result};
 use log::*;

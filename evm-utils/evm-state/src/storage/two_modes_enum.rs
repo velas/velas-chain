@@ -28,7 +28,6 @@ impl Storage {
 
     pub fn check_node(&self, key: H256) -> Result<bool, Error> {
         let maybe_bytes = match self {
-            
             Self::Primary(ref storage) => storage.db().get(key),
 
             Self::Secondary(ref storage) => storage.db().get(key),
@@ -38,4 +37,3 @@ impl Storage {
         Ok(bytes)
     }
 }
-

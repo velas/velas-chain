@@ -55,7 +55,6 @@ pub async fn fetch_one_retry_backoff(
         .await
 }
 
-
 struct ChunkedRange {
     range: std::ops::Range<BlockNum>,
     chunk_size: BlockNum,
