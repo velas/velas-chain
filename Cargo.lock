@@ -1950,6 +1950,7 @@ dependencies = [
  "borsh",
  "derivative",
  "env_logger 0.8.4",
+ "evm-gas-station",
  "evm-rpc",
  "evm-state",
  "hex",
@@ -1986,6 +1987,7 @@ dependencies = [
  "solana-transaction-status",
  "solana-version",
  "structopt",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-attributes",
@@ -2003,6 +2005,24 @@ dependencies = [
  "primitive-types 0.11.1",
  "scale-info",
  "serde",
+]
+
+[[package]]
+name = "evm-gas-station"
+version = "0.1.0"
+dependencies = [
+ "arrayref",
+ "borsh",
+ "num-derive",
+ "num-traits",
+ "primitive-types",
+ "serde",
+ "solana-evm-loader-program",
+ "solana-program 1.9.29",
+ "solana-program-test",
+ "solana-sdk",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -6326,6 +6346,7 @@ dependencies = [
  "const_format",
  "criterion-stats",
  "ctrlc",
+ "evm-gas-station",
  "evm-rpc",
  "evm-state",
  "hex",

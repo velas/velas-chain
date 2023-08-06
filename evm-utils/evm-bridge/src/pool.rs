@@ -594,7 +594,41 @@ async fn process_tx(
         }
     }
 
-    let instructions = bridge.make_send_tx_instructions(&tx, &meta_keys);
+    let instructions = if let Some(val) = bridge
+        .redirect_to_proxy_filters
+        .iter()
+        .find(|val| matches!(tx.action, TransactionAction::Call(addr) if addr == val.contract))
+    {
+        info!("Bridge filters matched. Sending transaction {} to gas station {}",
+            tx.tx_id_hash(), bridge.gas_station_program_id.unwrap());
+        let tx = evm_gas_station::evm_types::Transaction {
+            nonce: tx.nonce,
+            gas_price: tx.gas_price,
+            gas_limit: tx.gas_limit,
+            action: match tx.action {
+                TransactionAction::Create => evm_gas_station::evm_types::TransactionAction::Create,
+                TransactionAction::Call(addr) => {
+                    evm_gas_station::evm_types::TransactionAction::Call(addr)
+                }
+            },
+            value: tx.value,
+            signature: evm_gas_station::evm_types::TransactionSignature {
+                v: tx.signature.v,
+                r: tx.signature.r,
+                s: tx.signature.s,
+            },
+            input: tx.input.clone(),
+        };
+        vec![evm_gas_station::execute_tx_with_payer(
+            tx,
+            bridge.gas_station_program_id.unwrap(),
+            bridge.key.pubkey(),
+            val.storage_acc,
+            val.gas_station_payer,
+        )]
+    } else {
+        bridge.make_send_tx_instructions(&tx, &meta_keys)
+    };
     let message = Message::new(&instructions, Some(&bridge.key.pubkey()));
     let mut send_raw_tx: solana::Transaction = solana::Transaction::new_unsigned(message);
 

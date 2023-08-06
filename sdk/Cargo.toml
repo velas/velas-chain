@@ -34,6 +34,8 @@ full = [
     "libsecp256k1",
     "sha3",
     "digest",
+    "evm-state",
+    "evm-rpc",
 ]
 
 [dependencies]
@@ -80,8 +82,8 @@ thiserror = "1.0"
 
 uriparse = "0.6.3"
 wasm-bindgen = "0.2"
-evm-state = { path = "../evm-utils/evm-state", version = "0.1" }
-evm-rpc = { path = "../evm-utils/evm-rpc", version = "0.1" }
+evm-state = { path = "../evm-utils/evm-state", version = "0.1", optional = true }
+evm-rpc = { path = "../evm-utils/evm-rpc", version = "0.1", optional = true }
 rlp = "0.5"
 tempfile = "3.2"
 once_cell = "1.7.2"

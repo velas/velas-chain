@@ -30,6 +30,7 @@ hex = "0.4.2"
 primitive-types = "0.11.0"
 secp256k1 = { version = "0.19.0", features = ["recovery", "global-context"] }
 evm-state = { path = "../evm-state" }
+evm-gas-station = { path = "../programs/gas_station" }
 log = "0.4.11"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = { version = "18.0.0", features = ["ws"] }
@@ -39,6 +40,7 @@ jsonrpc-pubsub = "18.0.0"
 jsonrpc-ws-server = "18.0.0"
 snafu = "0.7"
 anyhow = "1.0"
+thiserror = "1.0"
 tokio = "1"
 txpool = { git = "https://github.com/velas/transaction-pool", tag = "v1.0.0-alpha" }
 regex = "1.5.4"
