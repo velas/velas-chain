@@ -1,12 +1,14 @@
-use std::{collections::HashSet, iter, time::Instant};
-
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-
-use evm::{ExitReason, ExitSucceed};
-use evm_state::executor::{FeatureSet, OwnedPrecompile};
-use evm_state::*;
-use primitive_types::{H160 as Address, H256, U256};
-use sha3::{Digest, Keccak256};
+use {
+    criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
+    evm::{ExitReason, ExitSucceed},
+    evm_state::{
+        executor::{FeatureSet, OwnedPrecompile},
+        *,
+    },
+    primitive_types::{H160 as Address, H256, U256},
+    sha3::{Digest, Keccak256},
+    std::{collections::HashSet, iter, time::Instant},
+};
 
 fn name_to_key<S: AsRef<str>>(name: S) -> H160 {
     H256::from_slice(Keccak256::digest(name.as_ref().as_bytes()).as_slice()).into()

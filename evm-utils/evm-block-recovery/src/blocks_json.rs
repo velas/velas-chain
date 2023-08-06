@@ -1,10 +1,10 @@
-use std::{collections::HashMap, path::Path};
-
-use chrono::{DateTime, Utc};
-use evm_state::BlockNum;
-use serde::{Deserialize, Serialize};
-
-use crate::error::AppError;
+use {
+    crate::error::AppError,
+    chrono::{DateTime, Utc},
+    evm_state::BlockNum,
+    serde::{Deserialize, Serialize},
+    std::{collections::HashMap, path::Path},
+};
 
 #[derive(Serialize, Deserialize)]
 struct BlockDto {

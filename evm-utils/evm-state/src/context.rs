@@ -1,13 +1,12 @@
-use evm::backend::{Apply, Backend, Basic};
-use primitive_types::{H160, H256, U256};
-use std::fmt;
-use std::{collections::HashMap, iter::FromIterator};
-
-use log::*;
-use serde::{Deserialize, Serialize};
-
-use super::state::{AccountProvider, EvmBackend, Incomming};
-use crate::types::*;
+use {
+    super::state::{AccountProvider, EvmBackend, Incomming},
+    crate::types::*,
+    evm::backend::{Apply, Backend, Basic},
+    log::*,
+    primitive_types::{H160, H256, U256},
+    serde::{Deserialize, Serialize},
+    std::{collections::HashMap, fmt, iter::FromIterator},
+};
 
 /// Transaction information.
 /// This information will be propagated to solidity.

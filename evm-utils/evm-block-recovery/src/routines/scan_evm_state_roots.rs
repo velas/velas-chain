@@ -1,9 +1,10 @@
 mod bigtable_fetcha;
 mod range_map;
 
-use evm_state::storage::two_modes_enum::Storage;
-
-use crate::{cli::ScanEvmStateRootsArgs, error::AppError};
+use {
+    crate::{cli::ScanEvmStateRootsArgs, error::AppError},
+    evm_state::storage::two_modes_enum::Storage,
+};
 
 pub async fn command(args: &ScanEvmStateRootsArgs) -> Result<(), AppError> {
     let ScanEvmStateRootsArgs {

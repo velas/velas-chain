@@ -1,23 +1,22 @@
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    fs,
-    path::{Path, PathBuf},
-    sync::Arc,
+use {
+    crate::{
+        storage::{Codes, Storage as KVS},
+        transactions::TransactionReceipt,
+        types::*,
+    },
+    evm::ExitReason,
+    log::*,
+    primitive_types::H256,
+    serde::{Deserialize, Serialize},
+    std::{
+        collections::HashMap,
+        fmt::Debug,
+        fs,
+        path::{Path, PathBuf},
+        sync::Arc,
+    },
+    triedb::empty_trie_hash,
 };
-
-use log::*;
-
-use evm::ExitReason;
-use primitive_types::H256;
-use triedb::empty_trie_hash;
-
-use crate::{
-    storage::{Codes, Storage as KVS},
-    transactions::TransactionReceipt,
-    types::*,
-};
-use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_GAS_LIMIT: u64 = 300_000_000;
 
@@ -768,16 +767,15 @@ impl From<EvmBackend<Committed>> for EvmState {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{BTreeMap, BTreeSet},
-        str::FromStr,
+    use {
+        super::*,
+        primitive_types::{H160, H256, U256},
+        rand::{rngs::mock::StepRng, Rng},
+        std::{
+            collections::{BTreeMap, BTreeSet},
+            str::FromStr,
+        },
     };
-
-    use primitive_types::{H160, H256, U256};
-    use rand::rngs::mock::StepRng;
-    use rand::Rng;
-
-    use super::*;
 
     const RANDOM_INCR: u64 = 1; // TODO: replace by rand::SeedableRng implementor
     const MAX_SIZE: usize = 32; // Max size of test collections.

@@ -1,6 +1,4 @@
-use std::path::PathBuf;
-
-use evm_state::BlockNum;
+use {evm_state::BlockNum, std::path::PathBuf};
 
 const DEFAULT_INSTANCE: &str = "solana-ledger";
 const DEFAULT_BIGTABLE_LIMIT: &str = "150000";

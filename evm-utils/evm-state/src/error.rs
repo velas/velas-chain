@@ -1,8 +1,9 @@
-use snafu::{Backtrace, Snafu};
-
-use derivative::Derivative;
-use evm::ExitFatal;
-use primitive_types::{H256, U256};
+use {
+    derivative::Derivative,
+    evm::ExitFatal,
+    primitive_types::{H256, U256},
+    snafu::{Backtrace, Snafu},
+};
 
 #[derive(Derivative, Debug, Snafu)]
 #[derivative(PartialEq)]

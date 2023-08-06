@@ -1,13 +1,15 @@
-use std::fmt::{self, LowerHex};
-use std::marker::PhantomData;
-use std::str::FromStr;
-
-use super::error::*;
-
-use derive_more::Deref;
-use primitive_types::{H160, H256, H512, U128, U256, U512};
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
-use snafu::ResultExt;
+use {
+    super::error::*,
+    derive_more::Deref,
+    primitive_types::{H160, H256, H512, U128, U256, U512},
+    serde::{de, Deserialize, Deserializer, Serialize, Serializer},
+    snafu::ResultExt,
+    std::{
+        fmt::{self, LowerHex},
+        marker::PhantomData,
+        str::FromStr,
+    },
+};
 
 #[derive(Debug, Default, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deref)]
 pub struct Hex<T>(pub T);
@@ -300,11 +302,11 @@ impl<T: FormatHex + FromStr> From<T> for Hex<T> {
 // The starting of removing Hex type in favour of #[serde(with)] atribute
 // Currently used only for nonce, because its u64, but should be serialized as HASH
 pub mod hex_serde {
-    use super::FormatHex;
-    use serde::de;
-    use serde::{de::Deserializer, ser::Serializer};
-    use std::fmt;
-    use std::marker::PhantomData;
+    use {
+        super::FormatHex,
+        serde::{de, de::Deserializer, ser::Serializer},
+        std::{fmt, marker::PhantomData},
+    };
 
     struct HexVisitor<T> {
         _marker: PhantomData<T>,
@@ -354,8 +356,7 @@ pub mod hex_serde {
 }
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use primitive_types::U256;
+    use {super::*, primitive_types::U256};
 
     //TODO: WTF? Is Ethereum hex remove in-byte zero? Why it expect 0x1 not 0x01?
     #[test]

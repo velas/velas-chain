@@ -1,11 +1,11 @@
-use std::sync::{Arc, Mutex};
-
-use backon::{ExponentialBuilder, Retryable};
-use evm_state::{Block, BlockNum};
-use solana_storage_bigtable::LedgerStorage;
-use tokio::sync::mpsc;
-
-use crate::error::AppError;
+use {
+    crate::error::AppError,
+    backon::{ExponentialBuilder, Retryable},
+    evm_state::{Block, BlockNum},
+    solana_storage_bigtable::LedgerStorage,
+    std::sync::{Arc, Mutex},
+    tokio::sync::mpsc,
+};
 
 pub async fn fetch_one(
     bigtable: &LedgerStorage,
@@ -54,7 +54,6 @@ pub async fn fetch_one_retry_backoff(
         )
         .await
 }
-
 
 struct ChunkedRange {
     range: std::ops::Range<BlockNum>,

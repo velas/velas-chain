@@ -1,24 +1,25 @@
 #![allow(clippy::upper_case_acronyms)]
 
-use std::collections::HashMap;
-use std::fmt;
-
-use jsonrpc_core::BoxFuture;
-use jsonrpc_derive::rpc;
-use primitive_types::{H256, U256};
-use serde::{Deserialize, Serialize};
-use snafu::ResultExt;
+use {
+    jsonrpc_core::BoxFuture,
+    jsonrpc_derive::rpc,
+    primitive_types::{H256, U256},
+    serde::{Deserialize, Serialize},
+    snafu::ResultExt,
+    std::{collections::HashMap, fmt},
+};
 
 mod serialize;
-use self::error::EvmStateError;
-use evm_state::{
-    Address, Block, BlockHeader, ExitSucceed, Gas, LogFilterTopicEntry, LogWithLocation,
-    TransactionInReceipt,
+use {
+    self::error::EvmStateError,
+    evm_state::{
+        Address, Block, BlockHeader, ExitSucceed, Gas, LogFilterTopicEntry, LogWithLocation,
+        TransactionInReceipt,
+    },
 };
 
 pub mod error;
-pub use self::error::Error;
-pub use self::serialize::*;
+pub use self::{error::Error, serialize::*};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
@@ -648,10 +649,7 @@ pub mod trace {
     }
 }
 
-pub use bridge::BridgeERPC;
-pub use chain::ChainERPC;
-pub use general::GeneralERPC;
-pub use trace::TraceERPC;
+pub use {bridge::BridgeERPC, chain::ChainERPC, general::GeneralERPC, trace::TraceERPC};
 
 pub mod general {
     use super::*;

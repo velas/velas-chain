@@ -1,41 +1,40 @@
 mod listener;
 
-use std::{
-    collections::{HashMap, HashSet},
-    ops::Deref,
-    sync::{Arc, Mutex},
-    time::Duration,
+use {
+    crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult},
+    ::tokio::sync::mpsc,
+    borsh::BorshSerialize,
+    evm_rpc::{error::into_native_error, Bytes, Hex, RPCTransaction},
+    evm_state::{Address, TransactionAction, H160, H256, U256},
+    listener::PoolListener,
+    log::*,
+    once_cell::sync::Lazy,
+    serde_json::json,
+    solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest},
+    solana_evm_loader_program::{
+        scope::{evm, solana},
+        tx_chunks::TxChunks,
+    },
+    solana_sdk::{
+        commitment_config::{CommitmentConfig, CommitmentLevel},
+        message::Message,
+        pubkey::Pubkey,
+        signature::Signature,
+        signer::Signer,
+        system_instruction,
+    },
+    std::{
+        collections::{HashMap, HashSet},
+        ops::Deref,
+        sync::{Arc, Mutex},
+        time::Duration,
+    },
+    tokio::sync::mpsc::error::SendError,
+    tracing_attributes::instrument,
+    txpool::{
+        scoring::Choice, Pool, Readiness, Ready, Scoring, ShouldReplace, VerifiedTransaction,
+    },
 };
-
-use ::tokio::sync::mpsc;
-use borsh::BorshSerialize;
-use evm_rpc::{error::into_native_error, Bytes, Hex, RPCTransaction};
-use evm_state::{Address, TransactionAction, H160, H256, U256};
-use listener::PoolListener;
-use log::*;
-use once_cell::sync::Lazy;
-use serde_json::json;
-use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
-use solana_evm_loader_program::{
-    scope::{evm, solana},
-    tx_chunks::TxChunks,
-};
-use solana_sdk::{
-    commitment_config::{CommitmentConfig, CommitmentLevel},
-    message::Message,
-    pubkey::Pubkey,
-    signature::Signature,
-    signer::Signer,
-    system_instruction,
-};
-use tokio::sync::mpsc::error::SendError;
-use txpool::{
-    scoring::Choice, Pool, Readiness, Ready, Scoring, ShouldReplace, VerifiedTransaction,
-};
-
-use tracing_attributes::instrument;
-
-use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult};
 
 type UnixTimeMs = u64;
 

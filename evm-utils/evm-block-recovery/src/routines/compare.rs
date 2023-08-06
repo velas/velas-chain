@@ -1,9 +1,10 @@
-use std::collections::HashSet;
-
-use crate::{
-    cli::CompareNativeArgs,
-    error::{AppError, RoutineResult},
-    ledger,
+use {
+    crate::{
+        cli::CompareNativeArgs,
+        error::{AppError, RoutineResult},
+        ledger,
+    },
+    std::collections::HashSet,
 };
 
 pub async fn compare_native(args: CompareNativeArgs) -> RoutineResult {

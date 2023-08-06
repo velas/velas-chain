@@ -1,14 +1,12 @@
-use std::{borrow::Borrow, sync::Arc};
-
-use primitive_types::H256;
-use rlp::Rlp;
-use triedb::merkle::{MerkleNode, MerkleValue, Leaf, Extension, Branch};
-
-use anyhow::{anyhow, Result};
-use log::*;
-use triedb::merkle::nibble::NibbleVec;
-
-use super::inspectors::{encoding, TrieDataInsectorRaw, TrieInspector};
+use {
+    super::inspectors::{encoding, TrieDataInsectorRaw, TrieInspector},
+    anyhow::{anyhow, Result},
+    log::*,
+    primitive_types::H256,
+    rlp::Rlp,
+    std::{borrow::Borrow, sync::Arc},
+    triedb::merkle::{nibble::NibbleVec, Branch, Extension, Leaf, MerkleNode, MerkleValue},
+};
 
 pub struct Walker<DB, TI, DI> {
     db: DB,

@@ -1,7 +1,7 @@
-use evm_state::Block;
-use solana_transaction_status::ConfirmedBlock;
-
-use crate::routines::repeat::BlockMessage;
+use {
+    crate::routines::repeat::BlockMessage, evm_state::Block,
+    solana_transaction_status::ConfirmedBlock,
+};
 
 pub type RoutineResult = std::result::Result<(), AppError>;
 
