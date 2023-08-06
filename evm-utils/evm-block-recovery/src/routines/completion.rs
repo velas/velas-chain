@@ -1,8 +1,9 @@
-use clap::CommandFactory;
-
-use crate::{
-    cli::{Cli, CompletionArgs},
-    error::RoutineResult,
+use {
+    crate::{
+        cli::{Cli, CompletionArgs},
+        error::RoutineResult,
+    },
+    clap::CommandFactory,
 };
 
 pub fn completion(args: CompletionArgs) -> RoutineResult {

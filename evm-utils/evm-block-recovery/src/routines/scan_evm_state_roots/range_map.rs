@@ -1,7 +1,8 @@
-use std::path::{Path, PathBuf};
-
-use evm_state::BlockNum;
-use rangemap::RangeMap;
+use {
+    evm_state::BlockNum,
+    rangemap::RangeMap,
+    std::path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone)]
 pub struct MasterRange {

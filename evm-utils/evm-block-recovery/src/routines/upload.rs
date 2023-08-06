@@ -1,12 +1,12 @@
-use evm_state::Block;
-
-use crate::{
-    cli::UploadArgs,
-    error::{AppError, RoutineResult},
-    ledger,
+use {
+    super::write_blocks_collection,
+    crate::{
+        cli::UploadArgs,
+        error::{AppError, RoutineResult},
+        ledger,
+    },
+    evm_state::Block,
 };
-
-use super::write_blocks_collection;
 
 pub async fn upload(creds: Option<String>, instance: String, args: UploadArgs) -> RoutineResult {
     let UploadArgs { collection } = args;

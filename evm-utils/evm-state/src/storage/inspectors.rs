@@ -1,14 +1,11 @@
-use std::borrow::Borrow;
-
-use std::sync::Arc;
-
-use anyhow::{bail, ensure, Result};
-use log::*;
-use primitive_types::H256;
-
-use super::walker::Walker;
-use super::{Codes, Storage};
-use crate::types::{Account, Code};
+use {
+    super::{walker::Walker, Codes, Storage},
+    crate::types::{Account, Code},
+    anyhow::{bail, ensure, Result},
+    log::*,
+    primitive_types::H256,
+    std::{borrow::Borrow, sync::Arc},
+};
 
 pub trait TrieInspector {
     fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> Result<bool>;
@@ -27,8 +24,7 @@ pub struct NoopInspector;
 // secure-triedb specific encoding.
 // key - H256, data is rlp decodable
 pub mod encoding {
-    use super::*;
-    use std::marker::PhantomData;
+    use {super::*, std::marker::PhantomData};
 
     #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
     pub struct SecTrie<T, K, V> {
@@ -103,11 +99,13 @@ pub mod encoding {
 }
 
 pub mod memorizer {
-    use super::*;
-    use dashmap::DashSet;
-    use std::{
-        fmt::Display,
-        sync::atomic::{AtomicUsize, Ordering},
+    use {
+        super::*,
+        dashmap::DashSet,
+        std::{
+            fmt::Display,
+            sync::atomic::{AtomicUsize, Ordering},
+        },
     };
 
     #[derive(Default)]
@@ -282,10 +280,11 @@ impl<T: TrieDataInsectorRaw> TrieDataInsectorRaw for Arc<T> {
 }
 
 pub mod verifier {
-    use super::*;
-
-    use dashmap::DashSet;
-    use sha3::{Digest, Keccak256};
+    use {
+        super::*,
+        dashmap::DashSet,
+        sha3::{Digest, Keccak256},
+    };
 
     pub struct AccountsVerifier {
         storage: Storage,
@@ -344,10 +343,12 @@ pub mod verifier {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use quickcheck::{Arbitrary, Gen};
-    use quickcheck_macros::quickcheck;
-    use std::convert::TryFrom;
+    use {
+        super::*,
+        quickcheck::{Arbitrary, Gen},
+        quickcheck_macros::quickcheck,
+        std::convert::TryFrom,
+    };
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct Hash(H256);

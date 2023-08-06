@@ -19,8 +19,7 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use {super::*, bincode::deserialize};
-    use serde::Serialize;
+    use {super::*, bincode::deserialize, serde::Serialize};
 
     #[test]
     fn test_default_on_eof() {

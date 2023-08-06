@@ -1,12 +1,11 @@
-use std::fs;
-
-use derive_more::Display;
-use rand::Rng;
-use tempfile::tempdir;
-
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-
-use evm_state::{types::BlockNum, AccountProvider, EvmBackend, EvmState, Incomming, Storage};
+use {
+    criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion},
+    derive_more::Display,
+    evm_state::{types::BlockNum, AccountProvider, EvmBackend, EvmState, Incomming, Storage},
+    rand::Rng,
+    std::fs,
+    tempfile::tempdir,
+};
 
 mod utils;
 
@@ -80,11 +79,12 @@ fn add_some_and_advance(state: &mut EvmBackend<Incomming>, params: &Params) {
                 for remove_slot in (slot - params.squash_each)..slot {
                     let (mut direct, mut indirect): (Vec<_>, Vec<_>) = (
                         state
-                        .kvs()
-                        .purge_slot(remove_slot)
-                        .unwrap()
-                        .into_iter()
-                        .collect(), vec![]
+                            .kvs()
+                            .purge_slot(remove_slot)
+                            .unwrap()
+                            .into_iter()
+                            .collect(),
+                        vec![],
                     );
                     while !direct.is_empty() {
                         let childs = state.kvs().gc_try_cleanup_account_hashes(&direct);

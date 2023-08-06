@@ -1,43 +1,43 @@
-use std::{
-    array::TryFromSliceError,
-    borrow::Borrow,
-    collections::{BTreeSet, HashMap},
-    convert::TryInto,
-    fs,
-    io::Error as IoError,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-
-use bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian};
-use derive_more::{AsRef, Deref};
-use itertools::Itertools;
-use lazy_static::lazy_static;
-use log::*;
-use rlp::{Decodable, Encodable};
-use rocksdb::{
-    backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
-    ColumnFamily, ColumnFamilyDescriptor, Env, IteratorMode, OptimisticTransactionDB,
-    DBWithThreadMode,
-    Options, ReadOptions, AsColumnFamilyRef, DBIteratorWithThreadMode, DBAccess, DBPinnableSlice,
-};
-use serde::{de::DeserializeOwned, Serialize};
-use tempfile::TempDir;
-
-use crate::{
-    transactions::{Transaction, TransactionReceipt},
-    types::*,
-};
-use triedb::{
-    empty_trie_hash,
-    gc::{DatabaseTrieMut, DbCounter, TrieCollection},
-    rocksdb::{RocksDatabaseHandle, RocksDatabaseHandleGC, RocksHandle, SyncRocksHandle},
-    FixedSecureTrieMut,
+use {
+    crate::{
+        transactions::{Transaction, TransactionReceipt},
+        types::*,
+    },
+    bincode::config::{BigEndian, DefaultOptions, Options as _, WithOtherEndian},
+    derive_more::{AsRef, Deref},
+    itertools::Itertools,
+    lazy_static::lazy_static,
+    log::*,
+    rlp::{Decodable, Encodable},
+    rocksdb::{
+        backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
+        AsColumnFamilyRef, ColumnFamily, ColumnFamilyDescriptor, DBAccess,
+        DBIteratorWithThreadMode, DBPinnableSlice, DBWithThreadMode, Env, IteratorMode,
+        OptimisticTransactionDB, Options, ReadOptions,
+    },
+    serde::{de::DeserializeOwned, Serialize},
+    std::{
+        array::TryFromSliceError,
+        borrow::Borrow,
+        collections::{BTreeSet, HashMap},
+        convert::TryInto,
+        fs,
+        io::Error as IoError,
+        path::{Path, PathBuf},
+        sync::Arc,
+    },
+    tempfile::TempDir,
+    triedb::{
+        empty_trie_hash,
+        gc::{DatabaseTrieMut, DbCounter, TrieCollection},
+        rocksdb::{RocksDatabaseHandle, RocksDatabaseHandleGC, RocksHandle, SyncRocksHandle},
+        FixedSecureTrieMut,
+    },
 };
 
 pub mod inspectors;
-pub mod walker;
 pub mod two_modes_enum;
+pub mod walker;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub use rocksdb; // avoid mess with dependencies for another crates
@@ -95,7 +95,7 @@ impl AsRef<Path> for Location {
     }
 }
 
-pub struct Storage<D=OptimisticTransactionDB>
+pub struct Storage<D = OptimisticTransactionDB>
 where
     D: VelasDBCommon,
 {
@@ -256,10 +256,9 @@ where
 
 type RocksWithThreadMode = DBWithThreadMode<rocksdb::SingleThreaded>;
 
-pub type StorageSecondary = Storage<RocksWithThreadMode >;
+pub type StorageSecondary = Storage<RocksWithThreadMode>;
 
 impl StorageSecondary {
-
     pub fn open_secondary_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
     }
@@ -269,9 +268,7 @@ impl StorageSecondary {
         Ok(())
     }
 
-    pub fn rocksdb_trie_handle(
-        &self,
-    ) -> SyncRocksHandle<RocksWithThreadMode> {
+    pub fn rocksdb_trie_handle(&self) -> SyncRocksHandle<RocksWithThreadMode> {
         SyncRocksHandle::new(RocksDatabaseHandle::new(self.db()))
     }
 
@@ -311,8 +308,6 @@ impl StorageSecondary {
 }
 
 impl Storage<OptimisticTransactionDB> {
-
-
     pub fn open_persistent<P: AsRef<Path>>(path: P, gc_enabled: bool) -> Result<Self> {
         Self::open(Location::Persisent(path.as_ref().to_owned()), gc_enabled)
     }
@@ -738,11 +733,12 @@ impl Storage<OptimisticTransactionDB> {
                 .entry(address)
                 .or_insert((Maybe::Nothing, HashMap::new()))
                 .0 = Maybe::Just(account_state);
-            
+
             state_updates
                 .entry(address)
                 .or_insert_with(|| (Maybe::Just(AccountState::default()), HashMap::new()))
-                .1.extend(storage);
+                .1
+                .extend(storage);
         }
 
         self.flush_changes_hashed(state_root, state_updates)
@@ -825,33 +821,35 @@ impl Borrow<DB> for Storage<OptimisticTransactionDB> {
 }
 
 pub trait VelasDBCommon: DBAccess + std::fmt::Debug + Sized {
-
-    fn flush(&self) -> Result<(), rocksdb::Error> ;    
-    fn cancel_all_background_work(&self, wait: bool) ;
+    fn flush(&self) -> Result<(), rocksdb::Error>;
+    fn cancel_all_background_work(&self, wait: bool);
 
     fn iterator_cf<'a: 'b, 'b>(
         &'a self,
         cf_handle: &impl AsColumnFamilyRef,
         mode: IteratorMode,
-    ) -> DBIteratorWithThreadMode<'b, Self> ;
+    ) -> DBIteratorWithThreadMode<'b, Self>;
 
     fn get_pinned_cf<K: AsRef<[u8]>>(
         &self,
         cf: &impl AsColumnFamilyRef,
         key: K,
-    ) -> Result<Option<DBPinnableSlice>, rocksdb::Error> ;
+    ) -> Result<Option<DBPinnableSlice>, rocksdb::Error>;
 
-    fn put_cf<K, V>(&self, cf: &impl AsColumnFamilyRef, key: K, value: V) -> Result<(), rocksdb::Error>
+    fn put_cf<K, V>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+        value: V,
+    ) -> Result<(), rocksdb::Error>
     where
         K: AsRef<[u8]>,
         V: AsRef<[u8]>;
 
-    fn cf_handle(&self, name: &str) -> Option<&ColumnFamily> ;
-        
+    fn cf_handle(&self, name: &str) -> Option<&ColumnFamily>;
 }
 
 impl VelasDBCommon for rocksdb::DBWithThreadMode<rocksdb::SingleThreaded> {
-
     fn flush(&self) -> Result<(), rocksdb::Error> {
         self.flush()
     }
@@ -873,21 +871,24 @@ impl VelasDBCommon for rocksdb::DBWithThreadMode<rocksdb::SingleThreaded> {
         key: K,
     ) -> Result<Option<DBPinnableSlice>, rocksdb::Error> {
         self.get_pinned_cf(cf, key)
-        
     }
 
-    fn put_cf<K, V>(&self, cf: &impl AsColumnFamilyRef, key: K, value: V) -> Result<(), rocksdb::Error>
+    fn put_cf<K, V>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+        value: V,
+    ) -> Result<(), rocksdb::Error>
     where
         K: AsRef<[u8]>,
-        V: AsRef<[u8]> {
+        V: AsRef<[u8]>,
+    {
         self.put_cf(cf, key, value)
-        
     }
 
     fn cf_handle(&self, name: &str) -> Option<&ColumnFamily> {
         self.cf_handle(name)
     }
-    
 }
 
 impl VelasDBCommon for OptimisticTransactionDB {
@@ -913,23 +914,24 @@ impl VelasDBCommon for OptimisticTransactionDB {
         key: K,
     ) -> Result<Option<DBPinnableSlice>, rocksdb::Error> {
         self.get_pinned_cf(cf, key)
-        
     }
 
-    fn put_cf<K, V>(&self, cf: &impl AsColumnFamilyRef, key: K, value: V) -> Result<(), rocksdb::Error>
+    fn put_cf<K, V>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+        value: V,
+    ) -> Result<(), rocksdb::Error>
     where
         K: AsRef<[u8]>,
-        V: AsRef<[u8]> {
+        V: AsRef<[u8]>,
+    {
         self.put_cf(cf, key, value)
-        
     }
 
     fn cf_handle(&self, name: &str) -> Option<&ColumnFamily> {
         self.cf_handle(name)
     }
-
-
-    
 }
 
 #[derive(AsRef, Deref)]
@@ -1070,17 +1072,14 @@ pub fn default_db_opts() -> Result<Options> {
 }
 
 pub mod cleaner {
-    use crate::storage::ReferenceCounter;
-
-    use super::inspectors::memorizer;
-    use std::borrow::Borrow;
-
-    use primitive_types::H256;
-
-    use anyhow::{anyhow, Result};
-    use log::*;
-
-    use super::{Codes, SubStorage};
+    use {
+        super::{inspectors::memorizer, Codes, SubStorage},
+        crate::storage::ReferenceCounter,
+        anyhow::{anyhow, Result},
+        log::*,
+        primitive_types::H256,
+        std::borrow::Borrow,
+    };
 
     pub struct Cleaner<DB, T> {
         db: DB,

@@ -1,13 +1,13 @@
-use std::time::Duration;
-
-use crate::{
-    cli::{FindEvmArgs, FindNativeArgs},
-    error::AppError,
-    ledger,
-    routines::BlockRange,
+use {
+    super::find_uncommitted_ranges,
+    crate::{
+        cli::{FindEvmArgs, FindNativeArgs},
+        error::AppError,
+        ledger,
+        routines::BlockRange,
+    },
+    std::time::Duration,
 };
-
-use super::find_uncommitted_ranges;
 
 pub type FindResult = Result<WhatFound, AppError>;
 
@@ -17,7 +17,7 @@ pub enum WhatFound {
 }
 
 /// Pause calculator for Nth retry
-/// 
+///
 /// * `n` - number of retry
 fn retry_pause(n: u64) -> Duration {
     let ms = n * n * 1300; // Approx. ~22min total for 15 retries
@@ -198,15 +198,15 @@ pub async fn find_native(
                     log::warn!("Found missing {}", range);
                     missing_ranges.push(range.clone())
                 }
-            },
+            }
             (BlockNotFound, _) => {
                 log::warn!("Block {slot_prev} not found in table");
                 missing_ranges.push(range.clone())
-            },
+            }
             (_, BlockNotFound) => {
                 log::warn!("Block {slot_curr} not found in table");
                 missing_ranges.push(range.clone())
-            },
+            }
         }
     }
 

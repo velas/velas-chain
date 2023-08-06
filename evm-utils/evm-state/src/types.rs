@@ -1,21 +1,22 @@
-use derive_more::{AsRef, From, Into};
-use itertools::Itertools;
-use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
-
-use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
-
-use triedb::empty_trie_hash;
-
-use crate::TransactionReceipt;
-use auto_enums::auto_enum;
-use ethbloom::{Bloom, Input};
-use evm::backend::Log;
-pub use evm::backend::MemoryAccount;
-use fixed_hash::construct_fixed_hash;
-use impl_rlp::impl_fixed_hash_rlp;
-pub use primitive_types::{H160, H256, U256};
-use std::convert::TryFrom;
+use {
+    crate::TransactionReceipt,
+    auto_enums::auto_enum,
+    derive_more::{AsRef, From, Into},
+    ethbloom::{Bloom, Input},
+    evm::backend::Log,
+    fixed_hash::construct_fixed_hash,
+    impl_rlp::impl_fixed_hash_rlp,
+    itertools::Itertools,
+    rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
+    serde::{Deserialize, Serialize},
+    sha3::{Digest, Keccak256},
+    std::convert::TryFrom,
+    triedb::empty_trie_hash,
+};
+pub use {
+    evm::backend::MemoryAccount,
+    primitive_types::{H160, H256, U256},
+};
 
 pub type BlockNum = u64; // TODO: re-use existing one from sdk package
 
@@ -479,11 +480,15 @@ impl<T> From<Maybe<T>> for Option<T> {
 
 mod transaction_roots {
 
-    use crate::{Log, TransactionReceipt, H256, U256};
-    use ethbloom::Bloom;
-    use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
-    use triedb::gc::{MapWithCounterCached, TrieCollection};
-    use triedb::FixedTrieMut;
+    use {
+        crate::{Log, TransactionReceipt, H256, U256},
+        ethbloom::Bloom,
+        rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
+        triedb::{
+            gc::{MapWithCounterCached, TrieCollection},
+            FixedTrieMut,
+        },
+    };
 
     #[derive(Clone, Debug)]
     pub struct EthereumReceipt {
@@ -609,13 +614,14 @@ pub fn empty_ommers_hash() -> H256 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use ethabi::ethereum_types;
-    use std::str::FromStr;
-
-    use crate::{Address, Gas};
-    use quickcheck::{Arbitrary, Gen};
-    use quickcheck_macros::quickcheck;
+    use {
+        super::*,
+        crate::{Address, Gas},
+        ethabi::ethereum_types,
+        quickcheck::{Arbitrary, Gen},
+        quickcheck_macros::quickcheck,
+        std::str::FromStr,
+    };
 
     // Ethereum header type for tests
     #[derive(Clone, Debug, PartialEq, Eq)]

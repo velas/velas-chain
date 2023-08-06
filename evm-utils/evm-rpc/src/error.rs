@@ -1,15 +1,14 @@
-use ethabi::StateMutability;
-use std::num::ParseIntError;
-
-use crate::BlockId;
-use evm_state::{ExitError, ExitFatal, ExitRevert, U256};
-use jsonrpc_core::Error as JRpcError;
-use rlp::DecoderError;
-use rustc_hex::FromHexError;
-use serde_json::json;
-use snafu::Snafu;
-
-use crate::Bytes;
+use {
+    crate::{BlockId, Bytes},
+    ethabi::StateMutability,
+    evm_state::{ExitError, ExitFatal, ExitRevert, U256},
+    jsonrpc_core::Error as JRpcError,
+    rlp::DecoderError,
+    rustc_hex::FromHexError,
+    serde_json::json,
+    snafu::Snafu,
+    std::num::ParseIntError,
+};
 
 #[derive(Debug, Snafu)]
 #[snafu(context(suffix(false)))]
@@ -308,9 +307,7 @@ where
 #[cfg(test)]
 mod test {
 
-    use std::str::FromStr;
-
-    use super::*;
+    use {super::*, std::str::FromStr};
     #[test]
     fn test_decode_revert() {
         let bytes = Bytes::from_str("0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000d4552525f4e4f545f424f554e4400000000000000000000000000000000000000").unwrap();

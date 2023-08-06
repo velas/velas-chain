@@ -1,8 +1,8 @@
-use std::{collections::HashSet, iter};
-
-use rand::{prelude::IteratorRandom, random, Rng};
-
-use evm_state::types::{AccountState, H160 as Address, U256};
+use {
+    evm_state::types::{AccountState, H160 as Address, U256},
+    rand::{prelude::IteratorRandom, random, Rng},
+    std::{collections::HashSet, iter},
+};
 
 const AVERAGE_DATA_SIZE: usize = 2 * 1024;
 

@@ -1,30 +1,36 @@
-pub use evm::{
-    backend::{Apply, ApplyBackend, Backend, Log, MemoryAccount, MemoryVicinity},
-    executor::stack::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
-    executor::traces::*,
-    Config, Context, Handler, Transfer,
-    {ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed},
-};
-use std::collections::BTreeMap;
-use std::fmt;
-
-use log::*;
-pub use primitive_types::{H256, U256};
-pub use secp256k1::rand;
-use snafu::ensure;
-
-use crate::types::H160;
-use crate::{
-    context::{ChainContext, EvmConfig, ExecutorContext, TransactionContext},
-    state::{AccountProvider, EvmBackend, Incomming},
-    transactions::{
-        Transaction, TransactionAction, TransactionInReceipt, TransactionReceipt,
-        UnsignedTransaction, UnsignedTransactionWithCaller,
+use {
+    crate::{
+        context::{ChainContext, EvmConfig, ExecutorContext, TransactionContext},
+        error::*,
+        state::{AccountProvider, EvmBackend, Incomming},
+        transactions::{
+            Transaction, TransactionAction, TransactionInReceipt, TransactionReceipt,
+            UnsignedTransaction, UnsignedTransactionWithCaller,
+        },
+        types::H160,
+        BlockVersion, CallScheme,
     },
+    log::*,
+    snafu::ensure,
+    std::{collections::BTreeMap, fmt},
 };
-use crate::{error::*, BlockVersion, CallScheme};
-pub use evm::executor::stack::{Precompile, PrecompileFailure, PrecompileOutput, PrecompileResult};
-pub use triedb::empty_trie_hash;
+pub use {
+    evm::{
+        backend::{Apply, ApplyBackend, Backend, Log, MemoryAccount, MemoryVicinity},
+        executor::{
+            stack::{
+                MemoryStackState, Precompile, PrecompileFailure, PrecompileOutput,
+                PrecompileResult, StackExecutor, StackState, StackSubstateMetadata,
+            },
+            traces::*,
+        },
+        Config, Context, ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Handler,
+        Transfer,
+    },
+    primitive_types::{H256, U256},
+    secp256k1::rand,
+    triedb::empty_trie_hash,
+};
 
 pub const MAX_TX_LEN: u64 = 3 * 1024 * 1024; // Limit size to 3 MB
 pub const TX_MTU: usize = 908;
@@ -86,19 +92,19 @@ impl<'precompile> PrecompileSet for OwnedPrecompile<'precompile> {
 
 impl<'precompile> std::ops::Deref for OwnedPrecompile<'precompile> {
     type Target = BTreeMap<
-    H160,
-    Box<
-        dyn Fn(
-                &[u8],
-                Option<u64>,
-                Option<CallScheme>,
-                &Context,
-                bool,
-            ) -> Result<(PrecompileOutput, u64, LogEntry), PrecompileFailure>
-            + 'precompile,
-    >,
->;
-    
+        H160,
+        Box<
+            dyn Fn(
+                    &[u8],
+                    Option<u64>,
+                    Option<CallScheme>,
+                    &Context,
+                    bool,
+                ) -> Result<(PrecompileOutput, u64, LogEntry), PrecompileFailure>
+                + 'precompile,
+        >,
+    >;
+
     fn deref(&self) -> &Self::Target {
         &self.precompiles
     }
@@ -682,25 +688,28 @@ pub const HELLO_WORLD_CODE_SAVED:&str = "6080604052348015600f57600080fd5b5060043
 
 #[cfg(test)]
 mod tests {
-    use ethabi::Token;
-    use evm::backend::MemoryBackend;
-    use evm::executor::stack::{MemoryStackState, StackSubstateMetadata};
-    use evm::{Capture, CreateScheme, ExitReason, ExitSucceed, Handler};
-    use log::LevelFilter;
-    use primitive_types::{H160, H256, U256};
-    use sha3::{Digest, Keccak256};
-    use std::collections::BTreeMap;
-    use std::str::FromStr;
-
-    use super::{
-        ExecutionResult, Executor, HELLO_WORLD_ABI, HELLO_WORLD_CODE, HELLO_WORLD_CODE_SAVED,
-        HELLO_WORLD_RESULT,
+    use {
+        super::{
+            ExecutionResult, Executor, HELLO_WORLD_ABI, HELLO_WORLD_CODE, HELLO_WORLD_CODE_SAVED,
+            HELLO_WORLD_RESULT,
+        },
+        crate::{
+            context::EvmConfig,
+            executor::{FeatureSet, OwnedPrecompile},
+            *,
+        },
+        error::*,
+        ethabi::Token,
+        evm::{
+            backend::MemoryBackend,
+            executor::stack::{MemoryStackState, StackSubstateMetadata},
+            Capture, CreateScheme, ExitReason, ExitSucceed, Handler,
+        },
+        log::LevelFilter,
+        primitive_types::{H160, H256, U256},
+        sha3::{Digest, Keccak256},
+        std::{collections::BTreeMap, str::FromStr},
     };
-    use crate::context::EvmConfig;
-    use crate::executor::FeatureSet;
-    use crate::executor::OwnedPrecompile;
-    use crate::*;
-    use error::*;
 
     fn name_to_key(name: &str) -> H160 {
         let hash = H256::from_slice(Keccak256::digest(name.as_bytes()).as_slice());
@@ -757,8 +766,10 @@ mod tests {
     }
 
     mod metacoin {
-        use ethabi::{Function, Param, ParamType, StateMutability};
-        use once_cell::sync::Lazy;
+        use {
+            ethabi::{Function, Param, ParamType, StateMutability},
+            once_cell::sync::Lazy,
+        };
 
         #[allow(deprecated)]
         pub static GET_BALANCE: Lazy<Function> = Lazy::new(|| Function {
@@ -976,10 +987,8 @@ mod tests {
             assert!(backend.kvs().check_root_exist(first_root));
             if gc {
                 let hash = backend.kvs().purge_slot(slot).unwrap().unwrap();
-                backend
-                    .kvs()
-                    .gc_try_cleanup_account_hashes(&[hash]);
-                               // on gc it will be removed
+                backend.kvs().gc_try_cleanup_account_hashes(&[hash]);
+                // on gc it will be removed
                 assert!(!backend.kvs().check_root_exist(first_root));
             } else {
                 assert!(backend.kvs().check_root_exist(first_root));

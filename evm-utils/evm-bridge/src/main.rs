@@ -3,77 +3,67 @@ mod pool;
 mod rpc_client;
 mod tx_filter;
 
-use log::*;
-use std::fs::File;
-use std::future::ready;
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
+use {
+    ::tokio::{self, sync::mpsc, time::sleep},
+    derivative::*,
+    evm_rpc::{
+        bridge::BridgeERPC,
+        chain::ChainERPC,
+        error::{Error, *},
+        general::GeneralERPC,
+        *,
+    },
+    evm_state::*,
+    jsonrpc_core::BoxFuture,
+    jsonrpc_http_server::{jsonrpc_core::*, *},
+    log::*,
+    middleware::ProxyMiddleware,
+    pool::{
+        worker_cleaner, worker_deploy, worker_signature_checker, EthPool, PooledTransaction,
+        SystemClock,
+    },
+    rlp::Encodable,
+    rpc_client::AsyncRpcClient,
+    secp256k1::Message,
+    sha3::{Digest, Keccak256},
+    snafu::ResultExt,
+    solana_client::{
+        client_error::{ClientError, ClientErrorKind},
+        rpc_config::*,
+        rpc_request::RpcResponseErrorData,
+        rpc_response::{Response as RpcResponse, *},
+    },
+    solana_evm_loader_program::{instructions::FeePayerType, scope::*},
+    solana_rpc::rpc::{BatchId, BatchStateMap},
+    solana_sdk::{
+        clock::MS_PER_TICK,
+        fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE,
+        instruction::{AccountMeta, Instruction},
+        pubkey::Pubkey,
+        signer::Signer,
+        signers::Signers,
+        system_instruction,
+        transaction::TransactionError,
+    },
+    std::{
+        collections::{HashMap, HashSet},
+        fs::File,
+        future::ready,
+        net::SocketAddr,
+        path::PathBuf,
+        result::Result as StdResult,
+        str::FromStr,
+        sync::Arc,
+        time::Duration,
+    },
+    tracing_attributes::instrument,
+    tracing_subscriber::{
+        filter::{LevelFilter, Targets},
+        layer::{Layer, SubscriberExt},
+        prelude::*,
+    },
+    tx_filter::TxFilter,
 };
-
-use evm_rpc::bridge::BridgeERPC;
-use evm_rpc::chain::ChainERPC;
-use evm_rpc::error::{Error, *};
-use evm_rpc::general::GeneralERPC;
-use evm_rpc::*;
-use evm_state::*;
-use sha3::{Digest, Keccak256};
-
-use jsonrpc_core::BoxFuture;
-use jsonrpc_http_server::jsonrpc_core::*;
-use jsonrpc_http_server::*;
-
-use snafu::ResultExt;
-
-use derivative::*;
-use solana_evm_loader_program::instructions::FeePayerType;
-use solana_evm_loader_program::scope::*;
-use solana_sdk::{
-    clock::MS_PER_TICK,
-    fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE,
-    instruction::{AccountMeta, Instruction},
-    pubkey::Pubkey,
-    signer::Signer,
-    signers::Signers,
-    system_instruction,
-    transaction::TransactionError,
-};
-
-use solana_client::{
-    client_error::{ClientError, ClientErrorKind},
-    rpc_config::*,
-    rpc_request::RpcResponseErrorData,
-    rpc_response::Response as RpcResponse,
-    rpc_response::*,
-};
-
-use tracing_attributes::instrument;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::{
-    filter::{LevelFilter, Targets},
-    layer::{Layer, SubscriberExt},
-};
-
-use ::tokio;
-use ::tokio::sync::mpsc;
-use ::tokio::time::sleep;
-
-use middleware::ProxyMiddleware;
-use pool::{
-    worker_cleaner, worker_deploy, worker_signature_checker, EthPool, PooledTransaction,
-    SystemClock,
-};
-use rpc_client::AsyncRpcClient;
-use tx_filter::TxFilter;
-
-use rlp::Encodable;
-use secp256k1::Message;
-use std::result::Result as StdResult;
-use solana_rpc::rpc::{BatchId, BatchStateMap};
 
 type EvmResult<T> = StdResult<T, evm_rpc::Error>;
 
@@ -81,9 +71,11 @@ const MAX_NUM_BLOCKS_IN_BATCH: u64 = 2000; // should be less or equal to const c
 
 // A compatibility layer, to make software more fluently.
 mod compatibility {
-    use evm_rpc::Hex;
-    use evm_state::{Gas, TransactionAction, H256, U256};
-    use rlp::{Decodable, DecoderError, Rlp};
+    use {
+        evm_rpc::Hex,
+        evm_state::{Gas, TransactionAction, H256, U256},
+        rlp::{Decodable, DecoderError, Rlp},
+    };
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
     pub struct TransactionSignature {
@@ -249,8 +241,7 @@ impl EvmBridge {
     pub fn check_batch_timeout(&self, id: BatchId) -> Result<()> {
         let current = self.batch_state_map.get_duration(&id);
         debug!("Current batch ({}) duration {:?}", id, current);
-        if matches!(self.get_max_batch_duration(), Some(max_duration) if current > max_duration )
-        {
+        if matches!(self.get_max_batch_duration(), Some(max_duration) if current > max_duration ) {
             let mut error = jsonrpc_core::Error::internal_error();
             error.message = "Batch is taking too long".to_string();
             return Err(error);
@@ -1288,14 +1279,14 @@ async fn send_and_confirm_transactions<T: Signers>(
 
 #[cfg(test)]
 mod tests {
-    use crate::AsyncRpcClient;
-    use crate::{BridgeErpcImpl, EthPool, EvmBridge, SystemClock};
-    use evm_rpc::{BridgeERPC, Hex};
-    use evm_state::Address;
-    use secp256k1::SecretKey;
-    use solana_sdk::signature::Keypair;
-    use std::str::FromStr;
-    use std::sync::Arc;
+    use {
+        crate::{AsyncRpcClient, BridgeErpcImpl, EthPool, EvmBridge, SystemClock},
+        evm_rpc::{BridgeERPC, Hex},
+        evm_state::Address,
+        secp256k1::SecretKey,
+        solana_sdk::signature::Keypair,
+        std::{str::FromStr, sync::Arc},
+    };
 
     #[test]
     fn test_eth_sign() {

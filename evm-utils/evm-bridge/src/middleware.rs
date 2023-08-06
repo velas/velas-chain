@@ -1,15 +1,20 @@
-use std::future::ready;
-use std::sync::Arc;
-use std::time::Instant;
-
-use jsonrpc_core::{futures_util::future::{Either, FutureExt}, Call, Error, ErrorCode, Failure, FutureOutput, FutureResponse, Id, Middleware, Output, Success, Version, Version::V2, Request, Response};
-use log::{debug, error};
-use serde_json::Value;
-use evm_state::rand::{thread_rng, Rng};
-use solana_rpc::middleware::{patch_calls, restore_original_call};
-use solana_rpc::rpc::BatchId;
-
-use crate::EvmBridge;
+use {
+    crate::EvmBridge,
+    evm_state::rand::{thread_rng, Rng},
+    jsonrpc_core::{
+        futures_util::future::{Either, FutureExt},
+        Call, Error, ErrorCode, Failure, FutureOutput, FutureResponse, Id, Middleware, Output,
+        Request, Response, Success,
+        Version::{self, V2},
+    },
+    log::{debug, error},
+    serde_json::Value,
+    solana_rpc::{
+        middleware::{patch_calls, restore_original_call},
+        rpc::BatchId,
+    },
+    std::{future::ready, sync::Arc, time::Instant},
+};
 
 async fn redirect(
     meta: Arc<EvmBridge>,
@@ -64,9 +69,9 @@ impl Middleware<Arc<EvmBridge>> for ProxyMiddleware {
         meta: Arc<EvmBridge>,
         next: F,
     ) -> Either<Self::Future, X>
-        where
-            F: Fn(Request, Arc<EvmBridge>) -> X + Send + Sync,
-            X: std::future::Future<Output = Option<Response>> + Send + 'static,
+    where
+        F: Fn(Request, Arc<EvmBridge>) -> X + Send + Sync,
+        X: std::future::Future<Output = Option<Response>> + Send + 'static,
     {
         if let Request::Batch(calls) = request {
             let mut rng = thread_rng();
@@ -108,17 +113,20 @@ impl Middleware<Arc<EvmBridge>> for ProxyMiddleware {
         };
         let (original_call, batch_id) = match restore_original_call(call) {
             Ok((original_call, batch_id)) => (original_call, batch_id),
-            Err(call) => return Either::Left(Box::pin(next(call, meta.clone())
-                .then(move |res| async move {
-                    match res {
-                        Some(Output::Failure(Failure { jsonrpc, error, id }))
-                        if error.code == ErrorCode::MethodNotFound =>
+            Err(call) => {
+                return Either::Left(Box::pin(next(call, meta.clone()).then(
+                    move |res| async move {
+                        match res {
+                            Some(Output::Failure(Failure { jsonrpc, error, id }))
+                                if error.code == ErrorCode::MethodNotFound =>
                             {
                                 redirect(meta, call_json, jsonrpc, id).await
                             }
-                        _ => res,
-                    }
-                }))),
+                            _ => res,
+                        }
+                    },
+                )))
+            }
         };
         let next_future = next(Call::MethodCall(original_call.clone()), meta.clone());
         Either::Left(Box::pin(async move {
@@ -135,10 +143,10 @@ impl Middleware<Arc<EvmBridge>> for ProxyMiddleware {
                 .then(move |res| async move {
                     match res {
                         Some(Output::Failure(Failure { jsonrpc, error, id }))
-                        if error.code == ErrorCode::MethodNotFound =>
-                            {
-                                redirect(meta_cloned, call_json, jsonrpc, id).await
-                            }
+                            if error.code == ErrorCode::MethodNotFound =>
+                        {
+                            redirect(meta_cloned, call_json, jsonrpc, id).await
+                        }
                         _ => res,
                     }
                 })

@@ -1,10 +1,13 @@
-use log::*;
-use std::fmt::{Debug, LowerHex};
-use std::sync::Arc;
-use tokio::runtime::Handle;
-use txpool::Listener;
-
-use super::PooledTransaction;
+use {
+    super::PooledTransaction,
+    log::*,
+    std::{
+        fmt::{Debug, LowerHex},
+        sync::Arc,
+    },
+    tokio::runtime::Handle,
+    txpool::Listener,
+};
 
 #[derive(Debug)]
 pub struct PoolListener;

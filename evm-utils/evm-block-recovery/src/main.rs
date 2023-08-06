@@ -5,12 +5,14 @@ pub mod extensions;
 pub mod ledger;
 pub mod routines;
 
-use clap::Parser;
-use cli::{Cli, Command::*};
-use env_logger::{Builder, Target};
-use error::AppError;
-use routines::{find::WhatFound, *};
-use serde_json::json;
+use {
+    clap::Parser,
+    cli::{Cli, Command::*},
+    env_logger::{Builder, Target},
+    error::AppError,
+    routines::{find::WhatFound, *},
+    serde_json::json,
+};
 
 #[tokio::main]
 async fn main() {
@@ -61,7 +63,7 @@ async fn main() {
         Err(error) => {
             eprintln!("error {:?}", error);
             error.exit_code()
-        },
+        }
     };
 
     std::process::exit(exit_code);
