@@ -1099,9 +1099,9 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
             })
             .unwrap_or_else(|| Targets::default().with_default(LevelFilter::WARN));
 
-        let tracer = opentelemetry_jaeger::new_pipeline()
+        let tracer = opentelemetry_jaeger::new_collector_pipeline()
             .with_service_name("evm-bridge-tracer")
-            .with_collector_endpoint(collector)
+            .with_endpoint(collector)
             .install_batch(opentelemetry::runtime::Tokio)
             .unwrap();
         let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
