@@ -423,14 +423,14 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
 
                     if is_recoverable_error(&e) {
                         debug!(
-                            "Found recoverable error, for tx = {:?}. Error = {:?}",
+                            "Found recoverable error, for tx = {:?}. Error = {}",
                             &hash, &e
                         );
                         continue;
                     }
 
                     warn!(
-                        "Something went wrong in transaction {}. Error = {:?}",
+                        "Something went wrong in transaction {:?}. Error = {}",
                         &hash, &e
                     );
                     let _result = pooled_tx.send(Err(e)).await;
@@ -508,7 +508,7 @@ pub async fn worker_signature_checker(bridge: Arc<EvmBridge>) {
                                         }
                                         Err(err) => {
                                             warn!(
-                                                "Transaction can not be reimported to the pool: {:?}",
+                                                "Transaction can not be reimported to the pool: {}",
                                                 err
                                             )
                                         }
@@ -615,7 +615,7 @@ async fn process_tx(
     debug!("Sending tx = {:?}", send_raw_tx);
 
     debug!(
-        "Sending tx raw = {:?}",
+        "Sending tx raw = {}",
         BASE64.encode(send_raw_tx.message_data())
     );
 
@@ -731,7 +731,7 @@ async fn deploy_big_tx(
             );
         }
         Err(e) => {
-            error!("Error create and allocate {} tx: {:?}", storage_pubkey, e);
+            error!("Error create and allocate {} tx: {}", storage_pubkey, e);
             return Err(into_native_error(e, bridge.verbose_errors));
         }
     }
@@ -777,7 +777,7 @@ async fn deploy_big_tx(
         .await
         .map(|_| debug!("All write txs for storage {} was done", storage_pubkey))
         .map_err(|e| {
-            error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
+            error!("Error on write data to storage {}: {}", storage_pubkey, e);
             into_native_error(e, bridge.verbose_errors)
         })?;
 
@@ -813,7 +813,7 @@ async fn deploy_big_tx(
             warn!("Executing EVM tx return AlreadyExist error, handle as executed.");
         }
         Err(e) => {
-            error!("Execute EVM tx at {} failed: {:?}", storage_pubkey, e);
+            error!("Execute EVM tx at {} failed: {}", storage_pubkey, e);
             return Err(from_client_error(e));
         }
     }

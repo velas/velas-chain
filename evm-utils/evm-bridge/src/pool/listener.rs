@@ -18,14 +18,14 @@ impl PoolListener {
             handle.spawn(async move {
                 if let Err(e) = tx.send(Err(evm_rpc::Error::TransactionRemoved {})).await {
                     warn!(
-                        "PoolListener failed to async notify tx sender about transaction, error:{:?}",
+                        "PoolListener failed to async notify tx sender about transaction, error: {}",
                         e
                     )
                 }
             });
         } else if let Err(e) = tx.blocking_send(Err(evm_rpc::Error::TransactionRemoved {})) {
             warn!(
-                "PoolListener failed to sync notify tx sender about transaction, error:{:?}",
+                "PoolListener failed to sync notify tx sender about transaction, error: {}",
                 e
             )
         }
@@ -50,10 +50,7 @@ impl Listener<PooledTransaction> for PoolListener {
         tx: &Arc<PooledTransaction>,
         reason: &txpool::Error<H>,
     ) {
-        debug!(
-            "PoolListener::rejected: tx = {:?}, reason = {:?}",
-            tx, reason
-        );
+        debug!("PoolListener::rejected: tx = {:?}, reason = {}", tx, reason);
         self.notify_tx_removed(tx)
     }
 
