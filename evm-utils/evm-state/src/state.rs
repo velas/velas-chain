@@ -156,7 +156,7 @@ impl EvmBackend<Incomming> {
     /// because it clear pending state, and is_active_changes cannot detect any state changes.
     fn flush_changes(&mut self) {
         //todo: do in one tx
-        let mut state = &mut self.state;
+        let state = &mut self.state;
         let new_root = self
             .kvs
             .flush_changes(state.state_root, std::mem::take(&mut state.state_updates));
