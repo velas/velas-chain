@@ -1000,7 +1000,7 @@ pub(crate) fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
             }
         }
         _ => evm_rpc::Error::NativeRpcError {
-            details: format!("{:?}", client_error),
+            details: format!("{}", client_error),
             source: client_error.into(),
             verbose: false, // don't verbose native errors.
         },
@@ -1093,7 +1093,7 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
             .and_then(|rust_log| match rust_log.parse::<Targets>() {
                 Ok(targets) => Some(targets),
                 Err(e) => {
-                    eprintln!("failed to parse `RUST_LOG={:?}`: {}", rust_log, e);
+                    eprintln!("failed to parse `RUST_LOG={}`: {}", rust_log, e);
                     None
                 }
             })
@@ -1224,7 +1224,7 @@ async fn send_and_confirm_transactions<T: Signers>(
                     },
                 )
                 .await
-                .map_err(|e| error!("Send transaction error: {:?}", e))
+                .map_err(|e| error!("Send transaction error: {}", e))
                 .ok();
 
             transactions_signatures.push((transaction, signature));

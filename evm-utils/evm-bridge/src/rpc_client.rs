@@ -88,7 +88,7 @@ impl AsyncRpcClient {
                                     match serde_json::from_value::<RpcSimulateTransactionResult>(json["error"]["data"].clone()) {
                                         Ok(data) => RpcResponseErrorData::SendTransactionPreflightFailure(data),
                                         Err(err) => {
-                                            debug!("Failed to deserialize RpcSimulateTransactionResult: {:?}", err);
+                                            debug!("Failed to deserialize RpcSimulateTransactionResult: {}", err);
                                             RpcResponseErrorData::Empty
                                         }
                                     }
@@ -606,11 +606,7 @@ impl AsyncRpcClient {
 
         let minimum_balance: u64 = serde_json::from_value(minimum_balance_json)
             .map_err(|err| ClientError::new_with_request(err.into(), request))?;
-        trace!(
-            "Response minimum balance {:?} {:?}",
-            data_len,
-            minimum_balance
-        );
+        trace!("Response minimum balance {} {}", data_len, minimum_balance);
         Ok(minimum_balance)
     }
 
