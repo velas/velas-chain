@@ -3,6 +3,7 @@ mod listener;
 use {
     crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult},
     ::tokio::sync::mpsc,
+    base64::{engine::general_purpose::STANDARD as BASE64, Engine},
     borsh::BorshSerialize,
     evm_rpc::{error::into_native_error, Bytes, Hex, RPCTransaction},
     evm_state::{Address, TransactionAction, H160, H256, U256},
@@ -615,7 +616,7 @@ async fn process_tx(
 
     debug!(
         "Sending tx raw = {:?}",
-        base64::encode(send_raw_tx.message_data())
+        BASE64.encode(send_raw_tx.message_data())
     );
 
     let signature = bridge
