@@ -1,3 +1,4 @@
+mod cli;
 mod middleware;
 mod pool;
 mod rpc_client;
@@ -5,6 +6,8 @@ mod tx_filter;
 
 use {
     ::tokio::{self, sync::mpsc, time::sleep},
+    clap::Parser,
+    cli::BridgeCli,
     derivative::*,
     evm_rpc::{
         bridge::BridgeERPC,
@@ -37,7 +40,6 @@ use {
     solana_rpc::rpc::{BatchId, BatchStateMap},
     solana_sdk::{
         clock::MS_PER_TICK,
-        fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE,
         instruction::{AccountMeta, Instruction},
         pubkey::Pubkey,
         signer::Signer,
@@ -49,8 +51,6 @@ use {
         collections::{HashMap, HashSet},
         fs::File,
         future::ready,
-        net::SocketAddr,
-        path::PathBuf,
         result::Result as StdResult,
         str::FromStr,
         sync::Arc,
@@ -257,8 +257,8 @@ impl EvmBridge {
         self.max_batch_duration
     }
 
-    fn set_max_batch_duration(&mut self, max_duration: Duration) {
-        self.max_batch_duration = Some(max_duration);
+    fn set_max_batch_duration(&mut self, max_duration: Option<Duration>) {
+        self.max_batch_duration = max_duration;
     }
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
@@ -1007,82 +1007,17 @@ pub(crate) fn from_client_error(client_error: ClientError) -> evm_rpc::Error {
     }
 }
 
-#[derive(Debug, structopt::StructOpt)]
-struct Args {
-    keyfile: Option<String>,
-    #[structopt(default_value = "http://127.0.0.1:8899")]
-    rpc_address: String,
-    #[structopt(default_value = "127.0.0.1:8545")]
-    binding_address: SocketAddr,
-    #[structopt(default_value = "57005")] // 0xdead
-    evm_chain_id: u64,
-    #[structopt(long = "min-gas-price")]
-    min_gas_price: Option<String>,
-    #[structopt(long = "verbose-errors")]
-    verbose_errors: bool,
-    #[structopt(long = "borsh-encoding")]
-    borsh_encoding: bool,
-    #[structopt(long = "no-simulate")]
-    no_simulate: bool, // parse inverted to keep false default
-    /// Maximum number of blocks to return in eth_getLogs rpc.
-    #[structopt(long = "max-logs-block-count", default_value = "500")]
-    max_logs_blocks: u64,
-
-    #[structopt(long = "jaeger-collector-url", short = "j")]
-    jaeger_collector_url: Option<String>,
-
-    #[structopt(long = "whitelist-path")]
-    whitelist_path: Option<String>,
-
-    /// Maximum number of seconds to process batched jsonrpc requests.
-    #[structopt(long = "rpc-max-batch-time")]
-    max_batch_duration: Option<u64>,
-}
-
-impl Args {
-    fn min_gas_price_or_default(&self) -> U256 {
-        let gwei: U256 = 1_000_000_000.into();
-        fn min_gas_price() -> U256 {
-            //TODO: Add gas logic
-            (21000 * solana_evm_loader_program::scope::evm::LAMPORTS_TO_GWEI_PRICE
-                / DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE)
-                .into() // 21000 is smallest call in evm
-        }
-
-        let mut gas_price = match self
-            .min_gas_price
-            .as_ref()
-            .and_then(|gas_price| U256::from_dec_str(gas_price).ok())
-        {
-            Some(gas_price) => {
-                info!(r#"--min-gas-price is set to {}"#, &gas_price);
-                gas_price
-            }
-            None => {
-                let default_price = min_gas_price();
-                warn!(
-                    r#"Value of "--min-gas-price" is not set or unable to parse. Default value is: {}"#,
-                    default_price
-                );
-                default_price
-            }
-        };
-        // ceil to gwei for metamask
-        gas_price += gwei - 1;
-        gas_price - gas_price % gwei
-    }
-}
-
 const SECRET_KEY_DUMMY: [u8; 32] = [1; 32];
 
-#[paw::main]
 #[tokio::main]
-async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
+async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
     env_logger::init();
-    let min_gas_price = args.min_gas_price_or_default();
-    let keyfile_path = args
-        .keyfile
-        .unwrap_or_else(|| solana_cli_config::Config::default().keypair_path);
+
+    let args = BridgeCli::parse();
+
+    trace!("Bridge is starting with args: {args:?}");
+
+    let min_gas_price = args.min_gas_price;
     let server_path = args.rpc_address;
     let binding_address = args.binding_address;
 
@@ -1113,7 +1048,7 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
     }
 
     let mut whitelist = vec![];
-    if let Some(path) = args.whitelist_path.map(PathBuf::from) {
+    if let Some(path) = args.whitelist_path {
         let file = File::open(path).unwrap();
         whitelist = serde_json::from_reader(file).unwrap();
         info!("Got whitelist: {:?}", whitelist);
@@ -1121,19 +1056,18 @@ async fn main(args: Args) -> StdResult<(), Box<dyn std::error::Error>> {
 
     let mut meta = EvmBridge::new(
         args.evm_chain_id,
-        &keyfile_path,
+        &args.keyfile,
         vec![evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap()],
         server_path,
         args.verbose_errors,
         args.borsh_encoding,
-        !args.no_simulate, // invert argument
-        args.max_logs_blocks,
+        !args.no_simulate,
+        args.max_logs_block_count,
         min_gas_price,
     );
     meta.set_whitelist(whitelist);
-    if let Some(max_duration) = args.max_batch_duration.map(Duration::from_secs) {
-        meta.set_max_batch_duration(max_duration);
-    }
+    meta.set_max_batch_duration(args.rpc_max_batch_time);
+
     let meta = Arc::new(meta);
 
     let mut io = MetaIoHandler::with_middleware(ProxyMiddleware {});
