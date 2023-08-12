@@ -53,6 +53,7 @@ tracing-subscriber = { version = "0.3.17", default-features = false, features = 
     "fmt",
     "ansi",
     "std",
+    "env-filter"
 ] }
 tracing-attributes = "0.1.26"
 tracing-opentelemetry  =  "0.20.0"
