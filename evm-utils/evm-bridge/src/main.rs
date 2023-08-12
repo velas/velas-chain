@@ -57,11 +57,7 @@ use {
         time::Duration,
     },
     tracing_attributes::instrument,
-    tracing_subscriber::{
-        filter::{LevelFilter, Targets},
-        layer::{Layer, SubscriberExt},
-        prelude::*,
-    },
+    tracing_subscriber::{filter::LevelFilter, prelude::*, EnvFilter},
     tx_filter::TxFilter,
 };
 
@@ -1023,28 +1019,23 @@ async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
 
     if let Some(collector) = args.jaeger_collector_url {
         // init tracer
-        let fmt_filter = std::env::var("RUST_LOG")
-            .ok()
-            .and_then(|rust_log| match rust_log.parse::<Targets>() {
-                Ok(targets) => Some(targets),
-                Err(e) => {
-                    eprintln!("failed to parse `RUST_LOG={}`: {}", rust_log, e);
-                    None
-                }
-            })
-            .unwrap_or_else(|| Targets::default().with_default(LevelFilter::WARN));
+        let fmt_filter = EnvFilter::builder()
+            .with_default_directive(LevelFilter::WARN.into())
+            .from_env_lossy();
 
         let tracer = opentelemetry_jaeger::new_collector_pipeline()
             .with_service_name("evm-bridge-tracer")
             .with_endpoint(collector)
             .install_batch(opentelemetry::runtime::Tokio)
             .unwrap();
+
         let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
         let registry = tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_filter(fmt_filter))
             .with(opentelemetry);
 
-        registry.try_init().unwrap();
+        registry.init();
     }
 
     let mut whitelist = vec![];
