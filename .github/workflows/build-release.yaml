@@ -18,8 +18,7 @@ jobs:
 
     strategy:
       matrix:
-        build: ["linux"]
-        #, "darwin-macos"]
+        build: ["linux", "darwin-macos"]
 
         include:
           - build: linux
@@ -27,11 +26,11 @@ jobs:
             target: x86_64-unknown-linux-gnu
             cargo_folder: ~/.cargo
             exe_ext: ""
-          # - build: darwin-macos
-          #   os: osx
-          #   target: x86_64-apple-darwin
-          #   cargo_folder: ~/.cargo
-          #   exe_ext: ""
+          - build: darwin-macos
+            os: osx
+            target: x86_64-apple-darwin
+            cargo_folder: ~/.cargo
+            exe_ext: ""
 
             
     steps:
