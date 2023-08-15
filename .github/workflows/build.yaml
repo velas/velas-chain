@@ -26,6 +26,7 @@ jobs:
           REPOSITORY: ${{ env.APP_REPO }}
           IMAGE_TAG: ${{github.sha}}
         run: |
+          docker pull ubuntu:20.04
           DOCKER_BUILDKIT=1 docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG --no-cache  .
           docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
       # - uses: actions/checkout@v2
