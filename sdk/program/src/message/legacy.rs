@@ -423,58 +423,6 @@ impl Message {
         Self::new(&instructions, payer)
     }
 
-    /// use solana_client::rpc_client::RpcClient;
-    /// use solana_sdk::{
-    ///      instruction::Instruction,
-    ///      message::Message,
-    ///      pubkey::Pubkey,
-    ///      signature::Keypair,
-    ///      transaction::Transaction,
-    /// };
-    ///
-    /// // A custom program instruction. This would typically be defined in
-    /// // another crate so it can be shared between the on-chain program and
-    /// // the client.
-    /// #[derive(BorshSerialize, BorshDeserialize)]
-    /// enum BankInstruction {
-    ///     Initialize,
-    ///     Deposit { lamports: u64 },
-    ///     Withdraw { lamports: u64 },
-    /// }
-    ///
-    /// fn send_initialize_tx(
-    ///     client: &RpcClient,
-    ///     program_id: Pubkey,
-    ///     payer: &Keypair
-    /// ) -> Result<()> {
-    ///
-    ///     let bank_instruction = BankInstruction::Initialize;
-    ///
-    ///     let instruction = Instruction::new_with_borsh(
-    ///         program_id,
-    ///         &bank_instruction,
-    ///         vec![],
-    ///     );
-    ///
-    ///     let message = Message::new(
-    ///         &[instruction],
-    ///         Some(&payer.pubkey()),
-    ///     );
-    ///
-    ///     let blockhash = client.get_latest_blockhash()?;
-    ///     let mut tx = Transaction::new(&[payer], message, blockhash);
-    ///     client.send_and_confirm_transaction(&tx)?;
-    ///
-    ///     Ok(())
-    /// }
-    /// #
-    /// # let client = RpcClient::new(String::new());
-    /// # let program_id = Pubkey::new_unique();
-    /// # let payer = Keypair::new();
-    /// # send_initialize_tx(&client, program_id, &payer)?;
-    /// #
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
     /// Create a new message while setting the blockhash.
     ///
     /// # Examples

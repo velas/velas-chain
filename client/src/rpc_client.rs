@@ -626,6 +626,12 @@ impl RpcClient {
     ) -> ClientResult<Signature> {
         self.invoke(self.rpc_client.send_and_confirm_transaction(transaction))
     }
+    pub fn send_and_confirm_transaction(
+        &self,
+        transaction: &Transaction,
+    ) -> ClientResult<Signature> {
+        self.invoke(self.rpc_client.send_and_confirm_transaction(transaction))
+    }
 
     pub fn send_and_confirm_transaction_with_spinner(
         &self,

@@ -3,6 +3,7 @@
 
 // Export tokio for test clients
 pub use tokio;
+use tokio::task::JoinError;
 use {
     async_trait::async_trait,
     chrono_humanize::{Accuracy, HumanTime, Tense},
@@ -992,11 +993,20 @@ impl ProgramTestBanksClientExt for BanksClient {
     }
 }
 
-struct DroppableTask<T>(Arc<AtomicBool>, JoinHandle<T>);
+struct DroppableTask<T>(Arc<AtomicBool>, Option<JoinHandle<T>>);
 
 impl<T> Drop for DroppableTask<T> {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Relaxed);
+    }
+}
+impl<T> DroppableTask<T> {
+    // while async drop does not exist - use this method to wait for bank tasks.
+    // if not wait, rocksdb will sigabort (drop outside of main thread)
+    pub async fn async_drop(mut self) -> Result<T, JoinError> {
+        let join = self.1.take().unwrap();
+        drop(self);
+        join.await
     }
 }
 
@@ -1029,7 +1039,7 @@ impl ProgramTestContext {
         let exit = Arc::new(AtomicBool::new(false));
         let bank_task = DroppableTask(
             exit.clone(),
-            tokio::spawn(async move {
+            Some(tokio::spawn(async move {
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         break;
@@ -1041,7 +1051,7 @@ impl ProgramTestContext {
                         .register_tick(&Hash::new_unique());
                     tokio::time::sleep(target_tick_duration).await;
                 }
-            }),
+            })),
         );
 
         Self {
@@ -1057,6 +1067,10 @@ impl ProgramTestContext {
 
     pub fn genesis_config(&self) -> &GenesisConfig {
         &self.genesis_config
+    }
+
+    pub async fn join(self) -> Result<(), JoinError> {
+        self._bank_task.async_drop().await
     }
 
     /// Manually increment vote credits for the current epoch in the specified vote account to simulate validator voting activity
