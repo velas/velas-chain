@@ -26,7 +26,7 @@ jobs:
           REPOSITORY: ${{ env.APP_REPO }}
           IMAGE_TAG: ${{github.sha}}
         run: |
-          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG --no-cache  .
+          DOCKER_BUILDKIT=1 docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG --no-cache  .
           docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
       # - uses: actions/checkout@v2
       # - uses: webfactory/ssh-agent@v0.5.4
