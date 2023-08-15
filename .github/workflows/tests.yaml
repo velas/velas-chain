@@ -1,70 +1,70 @@
-# name: Tests
+name: Tests
 
-# on: 
-#   pull_request:
-#     branches: [develop]
-#   schedule:
-#     - cron: "0 10 * * *"
+on: 
+  pull_request:
+    branches: [develop]
+  schedule:
+    - cron: "0 10 * * *"
 
-# jobs:  
-#   checks:
-#     name: check
-#     container:
-#       image: ubuntu:20.04
-#     runs-on: build-dedicated
-#     steps:
-#       - uses: actions/checkout@v2
-#       - name: install dependencies
-#         run: |
-#           apt-get update
-#           DEBIAN_FRONTEND=noninteractive  apt-get -q -y install curl git libssl-dev libudev-dev make cmake pkg-config zlib1g-dev llvm clang protobuf-compiler
-#       - name: Install stable toolchain
-#         uses: actions-rs/toolchain@v1
-#         with:
-#           profile: minimal
-#           toolchain: 1.62.1
-#           components: clippy
-#       - name: Run cargo clippy
-#         uses: actions-rs/cargo@v1
-#         with:
-#           command: clippy
-#           args: -- -Dwarnings -A clippy::derive-partial-eq-without-eq
-#   test:
-#     name: test
-#     runs-on: build-dedicated
-#     steps:
-#       - uses: actions/checkout@v2
-#       - name: install dependencies
-#         run: |
-#           sudo apt-get update
-#           DEBIAN_FRONTEND=noninteractive sudo apt-get -q -y install curl git libssl-dev libudev-dev make cmake pkg-config zlib1g-dev llvm clang protobuf-compiler
-#       - name: Install stable toolchain
-#         uses: actions-rs/toolchain@v1
-#         with:
-#           profile: minimal
-#           toolchain: 1.62.1
-#       - name: Setting limits
-#         run: |
-#           sudo sysctl -w fs.file-max=5000000
-#           sudo sysctl -w vm.max_map_count=5000000
-#       - name: Run cargo test
-#         uses: actions-rs/cargo@v1
-#         with:
-#           command: test
-#           args: --workspace --exclude solana-local-cluster -j 16 --no-fail-fast
-#       - name: Run Local cluster tests
-#         uses: actions-rs/cargo@v1
-#         with:
-#           command: test
-#           args: -p solana-local-cluster --test local_cluster -j 16 --no-fail-fast
-#       - name: Run Local cluster flakey tests
-#         uses: actions-rs/cargo@v1
-#         with:
-#           command: test
-#           args: -p solana-local-cluster --test local_cluster_flakey -j 16 --no-fail-fast
-#       - name: Run Local cluster slow tests
-#         uses: actions-rs/cargo@v1
-#         with:
-#           command: test
-#           args: -p solana-local-cluster --test local_cluster_slow -j 16 --no-fail-fast
+jobs:  
+  checks:
+    name: check
+    container:
+      image: ubuntu:20.04
+    runs-on: build-dedicated
+    steps:
+      - uses: actions/checkout@v2
+      - name: install dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive  apt-get -q -y install curl git libssl-dev libudev-dev make cmake pkg-config zlib1g-dev llvm clang protobuf-compiler
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: 1.62.1
+          components: clippy
+      - name: Run cargo clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: -- -Dwarnings -A clippy::derive-partial-eq-without-eq
+  test:
+    name: test
+    runs-on: build-dedicated
+    steps:
+      - uses: actions/checkout@v2
+      - name: install dependencies
+        run: |
+          sudo apt-get update
+          DEBIAN_FRONTEND=noninteractive sudo apt-get -q -y install curl git libssl-dev libudev-dev make cmake pkg-config zlib1g-dev llvm clang protobuf-compiler
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: 1.62.1
+      - name: Setting limits
+        run: |
+          sudo sysctl -w fs.file-max=5000000
+          sudo sysctl -w vm.max_map_count=5000000
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --workspace --exclude solana-local-cluster -j 16 --no-fail-fast
+      - name: Run Local cluster tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: -p solana-local-cluster --test local_cluster -j 16 --no-fail-fast
+      - name: Run Local cluster flakey tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: -p solana-local-cluster --test local_cluster_flakey -j 16 --no-fail-fast
+      - name: Run Local cluster slow tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: -p solana-local-cluster --test local_cluster_slow -j 16 --no-fail-fast
 
