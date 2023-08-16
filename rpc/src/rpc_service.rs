@@ -53,12 +53,8 @@ use {
     tokio_util::codec::{BytesCodec, FramedRead},
 };
 
-use evm_rpc::{GeneralERPC, TraceERPC, ChainERPC};
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::{
-    filter::{LevelFilter, Targets},
-    layer::{Layer, SubscriberExt},
-};
+use evm_rpc::{ChainERPC, GeneralERPC, TraceERPC};
+use tracing_subscriber::{filter::LevelFilter, prelude::*, EnvFilter};
 
 const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
 const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
@@ -469,28 +465,23 @@ impl JsonRpcService {
         if let Some(collector) = jaeger_collector_url {
             // init tracer
             runtime.block_on(async {
-                let fmt_filter = std::env::var("RUST_LOG")
-                    .ok()
-                    .and_then(|rust_log| match rust_log.parse::<Targets>() {
-                        Ok(targets) => Some(targets),
-                        Err(e) => {
-                            eprintln!("failed to parse `RUST_LOG={:?}`: {}", rust_log, e);
-                            None
-                        }
-                    })
-                    .unwrap_or_else(|| Targets::default().with_default(LevelFilter::WARN));
+                let fmt_filter = EnvFilter::builder()
+                    .with_default_directive(LevelFilter::WARN.into())
+                    .from_env_lossy();
 
-                let tracer = opentelemetry_jaeger::new_pipeline()
+                let tracer = opentelemetry_jaeger::new_collector_pipeline()
                     .with_service_name("velas-jsonrpc-tracer")
-                    .with_collector_endpoint(collector)
+                    .with_endpoint(collector)
                     .install_batch(opentelemetry::runtime::Tokio)
                     .unwrap();
+
                 let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
                 let registry = tracing_subscriber::registry()
                     .with(tracing_subscriber::fmt::layer().with_filter(fmt_filter))
                     .with(opentelemetry);
 
-                registry.try_init().unwrap();
+                registry.init();
             });
         }
 

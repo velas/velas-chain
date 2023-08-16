@@ -63,16 +63,17 @@ sha3 = "0.10"
 velas-account-program = { path = "../programs/velas-account-program" }
 velas-relying-party-program = { path = "../programs/velas-relying-party-program" }
 tracing = "0.1.29"
-tracing-subscriber = { version = "0.3", default-features = false, features = [
+tracing-subscriber = { version = "0.3.17", default-features = false, features = [
     "smallvec",
     "fmt",
     "ansi",
     "std",
+    "env-filter"
 ] }
-tracing-attributes = "0.1.18"
-tracing-opentelemetry  =  "0.16"
-opentelemetry = { version = "0.16", default-features = false, features = ["trace"] }
-opentelemetry-jaeger = { version = "0.15", features = [ "reqwest_collector_client", "rt-tokio" ] }
+tracing-attributes = "0.1.26"
+tracing-opentelemetry  =  "0.20"
+opentelemetry = { version = "0.20", default-features = false, features = ["trace"] }
+opentelemetry-jaeger = { version = "0.19", features = [ "reqwest_collector_client", "rt-tokio" ] }
 
 
 
