@@ -8877,7 +8877,7 @@ dependencies = [
 [[package]]
 name = "substrate-bn"
 version = "0.6.0"
-source = "git+https://github.com/paritytech/bn.git#63f8c587356a67b33c7396af98e065b66fca5dda"
+source = "git+https://github.com/paritytech/bn.git?rev=63f8c58#63f8c587356a67b33c7396af98e065b66fca5dda"
 dependencies = [
  "byteorder",
  "crunchy",
