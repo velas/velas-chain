@@ -59,7 +59,6 @@ members = [
     "programs/compute-budget",
     "programs/config",
     "programs/ed25519-tests",
-    "programs/sleep",
     "programs/stake",
     "programs/vote",
     "programs/zk-token-proof",

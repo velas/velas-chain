@@ -8338,17 +8338,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-sleep-program"
-version = "1.5.14"
-dependencies = [
- "byteorder",
- "log 0.4.19",
- "solana-logger 1.10.41",
- "solana-program-runtime",
- "solana-sdk 1.10.41",
-]
-
-[[package]]
 name = "solana-stake-accounts"
 version = "1.10.41"
 dependencies = [
