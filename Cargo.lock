@@ -2158,7 +2158,7 @@ dependencies = [
  "log 0.4.19",
  "once_cell",
  "opentelemetry 0.20.0",
- "opentelemetry-jaeger 0.19.0",
+ "opentelemetry-jaeger",
  "primitive-types 0.11.1",
  "regex",
  "reqwest",
@@ -3241,12 +3241,6 @@ dependencies = [
 
 [[package]]
 name = "integer-encoding"
-version = "1.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48dc51180a9b377fd75814d0cc02199c20f8e99433d6762f650d39cdbbd3b56f"
-
-[[package]]
-name = "integer-encoding"
 version = "3.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
@@ -4289,8 +4283,6 @@ dependencies = [
  "pin-project",
  "rand 0.8.5",
  "thiserror",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
@@ -4301,20 +4293,6 @@ checksum = "9591d937bc0e6d2feb6f71a559540ab300ea49955229c347a517a28d27784c54"
 dependencies = [
  "opentelemetry_api",
  "opentelemetry_sdk",
-]
-
-[[package]]
-name = "opentelemetry-http"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d50ceb0b0e8b75cb3e388a2571a807c8228dabc5d6670f317b6eb21301095373"
-dependencies = [
- "async-trait",
- "bytes 1.4.0",
- "futures-util",
- "http",
- "opentelemetry 0.16.0",
- "reqwest",
 ]
 
 [[package]]
@@ -4332,25 +4310,6 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-jaeger"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db22f492873ea037bc267b35a0e8e4fb846340058cb7c864efe3d0bf23684593"
-dependencies = [
- "async-trait",
- "headers",
- "http",
- "lazy_static",
- "opentelemetry 0.16.0",
- "opentelemetry-http 0.5.0",
- "opentelemetry-semantic-conventions 0.8.0",
- "reqwest",
- "thiserror",
- "thrift 0.13.0",
- "tokio",
-]
-
-[[package]]
-name = "opentelemetry-jaeger"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "876958ba9084f390f913fcf04ddf7bbbb822898867bb0a51cc28f2b9e5c1b515"
@@ -4361,20 +4320,11 @@ dependencies = [
  "headers",
  "http",
  "opentelemetry 0.20.0",
- "opentelemetry-http 0.9.0",
- "opentelemetry-semantic-conventions 0.12.0",
+ "opentelemetry-http",
+ "opentelemetry-semantic-conventions",
  "reqwest",
- "thrift 0.17.0",
+ "thrift",
  "tokio",
-]
-
-[[package]]
-name = "opentelemetry-semantic-conventions"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffeac823339e8b0f27b961f4385057bf9f97f2863bc745bd015fd6091f2270e9"
-dependencies = [
- "opentelemetry 0.16.0",
 ]
 
 [[package]]
@@ -4422,15 +4372,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-stream",
-]
-
-[[package]]
-name = "ordered-float"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3305af35278dd29f46fcdd139e0b1fbfae2153f0e5928b39b035542dd31e37b7"
-dependencies = [
- "num-traits",
 ]
 
 [[package]]
@@ -8041,8 +7982,8 @@ dependencies = [
  "jsonrpc-pubsub 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc",
  "log 0.4.19",
- "opentelemetry 0.16.0",
- "opentelemetry-jaeger 0.15.0",
+ "opentelemetry 0.20.0",
+ "opentelemetry-jaeger",
  "rand 0.7.3",
  "rayon",
  "regex",
@@ -8085,7 +8026,7 @@ dependencies = [
  "tokio-util 0.6.10",
  "tracing",
  "tracing-attributes",
- "tracing-opentelemetry 0.16.0",
+ "tracing-opentelemetry 0.20.0",
  "tracing-subscriber 0.3.17",
  "velas-account-program",
  "velas-relying-party-program",
@@ -9218,25 +9159,12 @@ dependencies = [
 
 [[package]]
 name = "thrift"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c6d965454947cc7266d22716ebfd07b18d84ebaf35eec558586bbb2a8cb6b5b"
-dependencies = [
- "byteorder",
- "integer-encoding 1.1.7",
- "log 0.4.19",
- "ordered-float 1.1.1",
- "threadpool",
-]
-
-[[package]]
-name = "thrift"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e54bc85fc7faa8bc175c4bab5b92ba8d9a3ce893d0e9f42cc455c8ab16a9e09"
 dependencies = [
  "byteorder",
- "integer-encoding 3.0.4",
+ "integer-encoding",
  "log 0.4.19",
  "ordered-float 2.10.0",
  "threadpool",
@@ -9863,19 +9791,6 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-subscriber 0.2.25",
-]
-
-[[package]]
-name = "tracing-opentelemetry"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ffbf13a0f8b054a4e59df3a173b818e9c6177c02789871f2073977fd0062076"
-dependencies = [
- "opentelemetry 0.16.0",
- "tracing",
- "tracing-core",
- "tracing-log",
- "tracing-subscriber 0.3.17",
 ]
 
 [[package]]
