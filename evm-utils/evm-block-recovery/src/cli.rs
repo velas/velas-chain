@@ -1,6 +1,5 @@
-use {evm_state::BlockNum, std::path::PathBuf};
+use {evm_state::BlockNum, solana_storage_bigtable::DEFAULT_INSTANCE_NAME, std::path::PathBuf};
 
-const DEFAULT_INSTANCE: &str = "solana-ledger";
 const DEFAULT_BIGTABLE_LIMIT: &str = "150000";
 
 #[derive(clap::Parser)]
@@ -13,7 +12,7 @@ pub struct Cli {
     pub creds: Option<String>,
 
     /// Bigtable Instance
-    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
+    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE_NAME)]
     pub instance: String,
 
     /// Enables additional structured output to stdout for use in embedded environment
@@ -161,7 +160,7 @@ pub struct CompareNativeArgs {
     pub credible_ledger_creds: String,
 
     /// "Credible Ledger" Instance
-    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
+    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE_NAME)]
     pub credible_ledger_instance: String,
 
     /// Google credentials JSON filepath of the "Deceptive Ledger"
@@ -169,7 +168,7 @@ pub struct CompareNativeArgs {
     pub dubious_ledger_creds: String,
 
     /// "Deceptive Ledger" Instance
-    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
+    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE_NAME)]
     pub dubious_ledger_instance: String,
 }
 
@@ -195,7 +194,7 @@ pub struct RepeatEvmArgs {
     pub src_creds: String,
 
     /// Source Ledger Instance
-    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
+    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE_NAME)]
     pub src_instance: String,
 
     /// Google credentials JSON filepath of the Destination Ledger
@@ -203,7 +202,7 @@ pub struct RepeatEvmArgs {
     pub dst_creds: String,
 
     /// Destination Ledger Instance
-    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
+    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE_NAME)]
     pub dst_instance: String,
 }
 
@@ -222,7 +221,7 @@ pub struct RepeatNativeArgs {
     pub src_creds: String,
 
     /// Source Ledger Instance
-    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
+    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE_NAME)]
     pub src_instance: String,
 
     /// Google credentials JSON filepath of the Destination Ledger
@@ -230,7 +229,7 @@ pub struct RepeatNativeArgs {
     pub dst_creds: String,
 
     /// Destination Ledger Instance
-    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE)]
+    #[clap(long, value_name = "STRING", default_value = DEFAULT_INSTANCE_NAME)]
     pub dst_instance: String,
 }
 
