@@ -101,11 +101,11 @@ resolver = "2"
 split-debuginfo = "unpacked"
 
 [patch.crates-io]
-primitive-types = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.11-with-borsh-support-nostd" }
-rlp = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.11-with-borsh-support-nostd" }
-uint = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.11-with-borsh-support-nostd" }
+primitive-types = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.12-with-borsh-support-nostd" }
+rlp = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.12-with-borsh-support-nostd" }
+uint = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.12-with-borsh-support-nostd" }
 spl-memo = {  git = "https://github.com/velas/spl-memo", branch = "solana-v1.10"}
 # TODO: remove once jsonrpc-core-client 18.0.1 is released
 jsonrpc-core = { git = "https://github.com/paritytech/jsonrpc", rev = "e724d087defc0af35bc1c844049d1611588d8466", version = "18.0.0" }
 jsonrpc-core-client = { git = "https://github.com/paritytech/jsonrpc", rev = "e724d087defc0af35bc1c844049d1611588d8466", version = "18.0.0" }
-triedb = { git = "https://github.com/velas/triedb", branch = "bump-rocksdb-v0.21", features = ["rocksdb"] }
+triedb = { git = "https://github.com/velas/triedb", tag = "primitive-types-v0.12", features = ["rocksdb"] }

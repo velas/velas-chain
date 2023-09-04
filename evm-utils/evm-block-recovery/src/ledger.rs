@@ -17,7 +17,7 @@ pub async fn with_params(
     let config = LedgerStorageConfig {
         read_only: false,
         timeout: None,
-        credential_type: solana_storage_bigtable::CredentialType::Filepath(creds_path),
+        credential_type: solana_storage_bigtable::CredentialType::Filepath(creds_path.clone()),
         instance_name: instance.clone(),
         app_profile_id: DEFAULT_APP_PROFILE_ID.to_string(),
     };
