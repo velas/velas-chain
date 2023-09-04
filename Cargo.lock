@@ -194,12 +194,6 @@ checksum = "6b4930d2cb77ce62f89ee5d5289b4ac049559b1c45539271f5ed4fdc7db34545"
 
 [[package]]
 name = "arrayvec"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
-
-[[package]]
-name = "arrayvec"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
@@ -373,9 +367,9 @@ dependencies = [
 
 [[package]]
 name = "auto_impl"
-version = "0.5.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7862e21c893d65a1650125d157eaeec691439379a1cee17ee49031b79236ada4"
+checksum = "fee3da8ef1276b0bee5dd1c7258010d8fffd31801447323115a25560e1327b89"
 dependencies = [
  "proc-macro-error",
  "proc-macro2 1.0.63",
@@ -591,22 +585,12 @@ dependencies = [
 
 [[package]]
 name = "bitvec"
-version = "0.17.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41262f11d771fd4a61aa3ce019fca363b4b6c282fca9da2a31186d3965a47a5c"
-dependencies = [
- "either",
- "radium 0.3.0",
-]
-
-[[package]]
-name = "bitvec"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"
 dependencies = [
  "funty",
- "radium 0.7.0",
+ "radium",
  "tap",
  "wyz",
 ]
@@ -618,7 +602,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "729b71f35bd3fa1a4c86b85d32c8b9069ea7fe14f7a53cfabb65f62d4265b888"
 dependencies = [
  "arrayref",
- "arrayvec 0.7.4",
+ "arrayvec",
  "cc",
  "cfg-if 1.0.0",
  "constant_time_eq",
@@ -770,12 +754,6 @@ dependencies = [
  "feature-probe",
  "serde",
 ]
-
-[[package]]
-name = "byte-slice-cast"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0a5e3906bcbf133e33c1d4d95afc664ad37fbdb9f6568d8043e7ea8c27d93d3"
 
 [[package]]
 name = "byte-slice-cast"
@@ -2005,9 +1983,9 @@ checksum = "20b4d1933bf88b806ba2d9189880b1b4ef205e42df9573b65716f2a50818024c"
 
 [[package]]
 name = "ethabi"
-version = "17.2.0"
+version = "18.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4966fba78396ff92db3b817ee71143eccd98acf0f876b8d600e585a670c5d1b"
+checksum = "7413c5f74cc903ea37386a8965a936cbeb334bd270862fdece542c1b2dcbc898"
 dependencies = [
  "ethereum-types",
  "hex",
@@ -2022,45 +2000,31 @@ dependencies = [
 
 [[package]]
 name = "ethbloom"
-version = "0.11.1"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfb684ac8fa8f6c5759f788862bb22ec6fe3cb392f6bfd08e3c64b603661e3f8"
+checksum = "c22d4b5885b6aa2fe5e8b9329fb8d232bf739e434e6b87347c63bdd00c120f60"
 dependencies = [
  "crunchy",
- "fixed-hash 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "impl-rlp 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "impl-serde 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "tiny-keccak",
-]
-
-[[package]]
-name = "ethbloom"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11da94e443c60508eb62cf256243a64da87304c2802ac2528847f79d750007ef"
-dependencies = [
- "crunchy",
- "fixed-hash 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fixed-hash 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "impl-codec 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "impl-rlp 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "impl-serde 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "impl-serde 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "scale-info",
  "tiny-keccak",
 ]
 
 [[package]]
 name = "ethereum"
-version = "0.12.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23750149fe8834c0e24bb9adcbacbe06c45b9861f15df53e09f26cb7c4ab91ef"
+checksum = "6a89fb87a9e103f71b903b80b670200b54cc67a07578f070681f1fffb7396fb7"
 dependencies = [
  "bytes 1.4.0",
  "ethereum-types",
  "hash-db",
  "hash256-std-hasher",
- "parity-scale-codec 3.6.1",
+ "parity-scale-codec",
  "rlp",
- "rlp-derive",
  "scale-info",
  "serde",
  "sha3 0.10.8",
@@ -2069,16 +2033,16 @@ dependencies = [
 
 [[package]]
 name = "ethereum-types"
-version = "0.13.1"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2827b94c556145446fcce834ca86b7abf0c39a805883fe20e72c5bfdb5a0dc6"
+checksum = "02d215cbf040552efcbe99a38372fe80ab9d00268e20012b79fcd0f073edd8ee"
 dependencies = [
- "ethbloom 0.12.1",
- "fixed-hash 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ethbloom",
+ "fixed-hash 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "impl-codec 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "impl-rlp 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "impl-serde 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "primitive-types 0.11.1",
+ "impl-serde 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "primitive-types",
  "scale-info",
  "uint",
 ]
@@ -2091,8 +2055,8 @@ checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 
 [[package]]
 name = "evm"
-version = "0.35.0"
-source = "git+https://github.com/velas/evm?tag=v0.35-with-traces#90a980bb9d7ccbb21b2897e71b889847f7beeade"
+version = "0.37.0"
+source = "git+https://github.com/velas/evm?tag=v0.37-with-traces#de1bb17bf460caea1203df4c053ceb65d24301b0"
 dependencies = [
  "auto_impl",
  "environmental",
@@ -2101,8 +2065,8 @@ dependencies = [
  "evm-gasometer",
  "evm-runtime",
  "log 0.4.19",
- "parity-scale-codec 3.6.1",
- "primitive-types 0.11.1",
+ "parity-scale-codec",
+ "primitive-types",
  "rlp",
  "scale-info",
  "serde",
@@ -2159,7 +2123,7 @@ dependencies = [
  "once_cell",
  "opentelemetry 0.20.0",
  "opentelemetry-jaeger",
- "primitive-types 0.11.1",
+ "primitive-types",
  "regex",
  "reqwest",
  "rlp",
@@ -2190,24 +2154,24 @@ dependencies = [
 
 [[package]]
 name = "evm-core"
-version = "0.35.0"
-source = "git+https://github.com/velas/evm?tag=v0.35-with-traces#90a980bb9d7ccbb21b2897e71b889847f7beeade"
+version = "0.37.0"
+source = "git+https://github.com/velas/evm?tag=v0.37-with-traces#de1bb17bf460caea1203df4c053ceb65d24301b0"
 dependencies = [
- "parity-scale-codec 3.6.1",
- "primitive-types 0.11.1",
+ "parity-scale-codec",
+ "primitive-types",
  "scale-info",
  "serde",
 ]
 
 [[package]]
 name = "evm-gasometer"
-version = "0.35.0"
-source = "git+https://github.com/velas/evm?tag=v0.35-with-traces#90a980bb9d7ccbb21b2897e71b889847f7beeade"
+version = "0.37.0"
+source = "git+https://github.com/velas/evm?tag=v0.37-with-traces#de1bb17bf460caea1203df4c053ceb65d24301b0"
 dependencies = [
  "environmental",
  "evm-core",
  "evm-runtime",
- "primitive-types 0.11.1",
+ "primitive-types",
 ]
 
 [[package]]
@@ -2217,7 +2181,7 @@ dependencies = [
  "anyhow",
  "derive_more",
  "ethabi",
- "ethbloom 0.11.1",
+ "ethbloom",
  "evm-state",
  "hex",
  "jsonrpc-core",
@@ -2225,7 +2189,7 @@ dependencies = [
  "jsonrpc-derive",
  "jsonrpc-http-server",
  "jsonrpc-pubsub 18.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "primitive-types 0.11.1",
+ "primitive-types",
  "rlp",
  "rustc-hex",
  "secp256k1",
@@ -2237,13 +2201,13 @@ dependencies = [
 
 [[package]]
 name = "evm-runtime"
-version = "0.35.0"
-source = "git+https://github.com/velas/evm?tag=v0.35-with-traces#90a980bb9d7ccbb21b2897e71b889847f7beeade"
+version = "0.37.0"
+source = "git+https://github.com/velas/evm?tag=v0.37-with-traces#de1bb17bf460caea1203df4c053ceb65d24301b0"
 dependencies = [
  "auto_impl",
  "environmental",
  "evm-core",
- "primitive-types 0.11.1",
+ "primitive-types",
  "sha3 0.10.8",
 ]
 
@@ -2261,9 +2225,9 @@ dependencies = [
  "derivative",
  "derive_more",
  "ethabi",
- "ethbloom 0.11.1",
+ "ethbloom",
  "evm",
- "fixed-hash 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fixed-hash 0.7.0",
  "hex",
  "impl-rlp 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools",
@@ -2272,7 +2236,7 @@ dependencies = [
  "log 0.4.19",
  "once_cell",
  "paste",
- "primitive-types 0.11.1",
+ "primitive-types",
  "quickcheck 0.9.2",
  "quickcheck_macros 0.9.1",
  "rand 0.6.1",
@@ -2368,8 +2332,20 @@ dependencies = [
 
 [[package]]
 name = "fixed-hash"
-version = "0.7.0"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "835c052cb0c08c1acf6ffd71c022172e18723949c8282f2b9f27efbc51e64534"
+dependencies = [
+ "byteorder",
+ "rand 0.8.5",
+ "rustc-hex",
+ "static_assertions",
+]
+
+[[package]]
+name = "fixed-hash"
+version = "0.8.0"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd#8a510feaa31c6748387024b5f2436ac0b6cf3040"
 dependencies = [
  "byteorder",
  "rand 0.8.5",
@@ -3094,18 +3070,9 @@ dependencies = [
 [[package]]
 name = "impl-borsh"
 version = "0.1.0"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd#8a510feaa31c6748387024b5f2436ac0b6cf3040"
 dependencies = [
  "borsh",
-]
-
-[[package]]
-name = "impl-codec"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1be51a921b067b0eaca2fad532d9400041561aa922221cc65f95a85641c6bf53"
-dependencies = [
- "parity-scale-codec 1.3.7",
 ]
 
 [[package]]
@@ -3114,15 +3081,15 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba6a270039626615617f3f36d15fc827041df3b78c439da2cadfa47455a77f2f"
 dependencies = [
- "parity-scale-codec 3.6.1",
+ "parity-scale-codec",
 ]
 
 [[package]]
 name = "impl-codec"
 version = "0.6.0"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd#8a510feaa31c6748387024b5f2436ac0b6cf3040"
 dependencies = [
- "parity-scale-codec 3.6.1",
+ "parity-scale-codec",
 ]
 
 [[package]]
@@ -3137,24 +3104,24 @@ dependencies = [
 [[package]]
 name = "impl-rlp"
 version = "0.3.0"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd#8a510feaa31c6748387024b5f2436ac0b6cf3040"
 dependencies = [
  "rlp",
 ]
 
 [[package]]
 name = "impl-serde"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4551f042f3438e64dbd6226b20527fc84a6e1fe65688b58746a2f53623f25f5c"
+checksum = "ebc88fc67028ae3db0c853baa36269d398d5f45b6982f95549ff5def78c935cd"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "impl-serde"
-version = "0.3.2"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
+version = "0.4.0"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd#8a510feaa31c6748387024b5f2436ac0b6cf3040"
 dependencies = [
  "serde",
 ]
@@ -3501,11 +3468,11 @@ dependencies = [
 
 [[package]]
 name = "keccak-hash"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82bc5d5ca345b067619615f62ac6f93e7daa67eb82d080bc380ed480708ec9e3"
+checksum = "4b286e6b663fb926e1eeb68528e69cb70ed46c6d65871a21b2215ae8154c6d3c"
 dependencies = [
- "primitive-types 0.11.1",
+ "primitive-types",
  "tiny-keccak",
 ]
 
@@ -4430,25 +4397,13 @@ checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 
 [[package]]
 name = "parity-scale-codec"
-version = "1.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4b26b16c7687c3075982af47719e481815df30bc544f7a6690763a25ca16e9d"
-dependencies = [
- "arrayvec 0.5.2",
- "bitvec 0.17.4",
- "byte-slice-cast 0.3.5",
- "serde",
-]
-
-[[package]]
-name = "parity-scale-codec"
 version = "3.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2287753623c76f953acd29d15d8100bcab84d29db78fb6f352adb3c53e83b967"
 dependencies = [
- "arrayvec 0.7.4",
- "bitvec 1.0.1",
- "byte-slice-cast 1.2.2",
+ "arrayvec",
+ "bitvec",
+ "byte-slice-cast",
  "impl-trait-for-tuples",
  "parity-scale-codec-derive",
  "serde",
@@ -4880,25 +4835,14 @@ dependencies = [
 
 [[package]]
 name = "primitive-types"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3824ae2c5e27160113b9e029a10ec9e3f0237bad8029f69c7724393c9fdefd8"
+version = "0.12.1"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd#8a510feaa31c6748387024b5f2436ac0b6cf3040"
 dependencies = [
- "fixed-hash 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "impl-codec 0.4.2",
- "uint",
-]
-
-[[package]]
-name = "primitive-types"
-version = "0.11.1"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
-dependencies = [
- "fixed-hash 0.7.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd)",
+ "fixed-hash 0.8.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd)",
  "impl-borsh",
- "impl-codec 0.6.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd)",
- "impl-rlp 0.3.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd)",
- "impl-serde 0.3.2 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd)",
+ "impl-codec 0.6.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd)",
+ "impl-rlp 0.3.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd)",
+ "impl-serde 0.4.0 (git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd)",
  "scale-info",
  "uint",
 ]
@@ -5282,12 +5226,6 @@ checksum = "1b9ab9c7eadfd8df19006f1cf1a4aed13540ed5cbc047010ece5826e10825488"
 dependencies = [
  "proc-macro2 1.0.63",
 ]
-
-[[package]]
-name = "radium"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "def50a86306165861203e7f84ecffbbdfdea79f0e51039b33de1e952358c47ac"
 
 [[package]]
 name = "radium"
@@ -5713,18 +5651,18 @@ dependencies = [
 
 [[package]]
 name = "rlp"
-version = "0.5.1"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
+version = "0.5.2"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd#8a510feaa31c6748387024b5f2436ac0b6cf3040"
 dependencies = [
  "bytes 1.4.0",
+ "rlp-derive",
  "rustc-hex",
 ]
 
 [[package]]
 name = "rlp-derive"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e33d7b2abe0c340d8797fe2907d3f20d3b5ea5908683618bfe80df7f621f672a"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd#8a510feaa31c6748387024b5f2436ac0b6cf3040"
 dependencies = [
  "proc-macro2 1.0.63",
  "quote 1.0.28",
@@ -5918,10 +5856,10 @@ version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad560913365790f17cbf12479491169f01b9d46d29cfc7422bf8c64bdc61b731"
 dependencies = [
- "bitvec 1.0.1",
+ "bitvec",
  "cfg-if 1.0.0",
  "derive_more",
- "parity-scale-codec 3.6.1",
+ "parity-scale-codec",
  "scale-info-derive",
 ]
 
@@ -7043,7 +6981,7 @@ dependencies = [
  "lru",
  "matches",
  "min-max-heap",
- "primitive-types 0.11.1",
+ "primitive-types",
  "rand 0.7.3",
  "rand_chacha 0.2.2",
  "raptorq",
@@ -7184,7 +7122,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "once_cell",
- "primitive-types 0.11.1",
+ "primitive-types",
  "quickcheck 1.0.3",
  "quickcheck_macros 1.0.0",
  "ripemd160",
@@ -7903,7 +7841,7 @@ dependencies = [
  "evm-state",
  "futures-util",
  "log 0.4.19",
- "primitive-types 0.8.0",
+ "primitive-types",
  "prost 0.11.9",
  "rangemap",
  "rlp",
@@ -8044,7 +7982,7 @@ dependencies = [
  "futures-util",
  "hex",
  "log 0.4.19",
- "primitive-types 0.11.1",
+ "primitive-types",
  "reqwest",
  "serde",
  "serde_json",
@@ -9839,7 +9777,7 @@ checksum = "0de5f738ceab88e2491a94ddc33c3feeadfa95fedc60363ef110845df12f3878"
 [[package]]
 name = "triedb"
 version = "0.5.0"
-source = "git+https://github.com/velas/triedb?branch=bump-rocksdb-v0.21#a9c61e39a1fba63b030f307ada63daa157fb0640"
+source = "git+https://github.com/velas/triedb?tag=primitive-types-v0.12#eca530a181956983ee53ae1c06f74a14116d647f"
 dependencies = [
  "anyhow",
  "bincode",
@@ -9847,7 +9785,7 @@ dependencies = [
  "derivative",
  "etcommon-hexutil",
  "log 0.4.19",
- "primitive-types 0.11.1",
+ "primitive-types",
  "rayon",
  "rlp",
  "rocksdb",
@@ -9925,8 +9863,8 @@ checksum = "9e79c4d996edb816c91e4308506774452e55e95c3c9de07b6729e17e15a5ef81"
 
 [[package]]
 name = "uint"
-version = "0.9.3"
-source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.11-with-borsh-support-nostd#55f2602045ea3088d0484b15f617bd0cd230501c"
+version = "0.9.5"
+source = "git+https://github.com/velas/parity-common?tag=primitive-types-v0.12-with-borsh-support-nostd#8a510feaa31c6748387024b5f2436ac0b6cf3040"
 dependencies = [
  "byteorder",
  "crunchy",

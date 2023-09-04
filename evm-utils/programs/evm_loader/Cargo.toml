@@ -16,11 +16,11 @@ assert_matches = "1.4"
 bincode = "1.3.1"
 borsh = "0.9.3"
 serde = "1.0"
-primitive-types = { version = "0.11.0", features = ["borsh"] }
+primitive-types = { version = "0.12", features = ["borsh"] }
 hex = "0.4.2"
 simple_logger = "2.2.0"
 sha3 = "0.9.1"
-ethabi = "17.0"
+ethabi = "18.0.0"
 once_cell = "1.5.2"
 snafu = "0.7"
 crc32fast = "1.2.1"

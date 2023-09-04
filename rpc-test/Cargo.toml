@@ -31,7 +31,7 @@ solana-evm-loader-program = { path = "../evm-utils/programs/evm_loader" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }
 evm-state = { path = "../evm-utils/evm-state" }
 hex = "0.4"
-primitive-types = "0.11.0"
+primitive-types = "0.12"
 
 [dev-dependencies]
 solana-logger = { path = "../logger", version = "=1.10.41" }
