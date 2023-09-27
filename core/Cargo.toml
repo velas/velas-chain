@@ -57,7 +57,7 @@ solana-sdk = { path = "../sdk", version = "=1.10.41" }
 solana-send-transaction-service = { path = "../send-transaction-service", version = "=1.10.41" }
 solana-streamer = { path = "../streamer", version = "=1.10.41" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.10.41" }
-solana-version = { path = "../version", version = "=0.6.3" }
+solana-version = { path = "../version", version = "=0.7.0" }
 solana-vote-program = { path = "../programs/vote", version = "=1.10.41" }
 sys-info = "0.9.1"
 tempfile = "3.3.0"

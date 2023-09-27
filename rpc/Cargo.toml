@@ -47,7 +47,7 @@ solana-send-transaction-service = { path = "../send-transaction-service", versio
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=1.10.41" }
 solana-streamer = { path = "../streamer", version = "=1.10.41" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.10.41" }
-solana-version = { path = "../version", version = "=0.6.3" }
+solana-version = { path = "../version", version = "=0.7.0" }
 solana-vote-program = { path = "../programs/vote", version = "=1.10.41" }
 spl-token = { version = "=3.5.0", features = ["no-entrypoint"] }
 spl-token-2022 = { version = "=0.4.2", features = ["no-entrypoint"] }

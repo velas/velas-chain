@@ -252,7 +252,6 @@ pub trait RpcSolPubSub {
         id: PubSubSubscriptionId,
     ) -> Result<bool>;
 
-
     // Get notification when a new heads is set
     #[pubsub(subscription = "eth_subscription", subscribe, name = "eth_subscribe")]
     fn eth_subscribe(
@@ -269,7 +268,11 @@ pub trait RpcSolPubSub {
         unsubscribe,
         name = "eth_unsubscribe"
     )]
-    fn eth_unsubscribe(&self, meta: Option<Self::Metadata>, id: PubSubSubscriptionId) -> Result<bool>;
+    fn eth_unsubscribe(
+        &self,
+        meta: Option<Self::Metadata>,
+        id: PubSubSubscriptionId,
+    ) -> Result<bool>;
 }
 
 pub use internal::RpcSolPubSubInternal;
@@ -620,31 +623,26 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
         &self,
         topic: String,
         anydata: Option<jsonrpc_core::Value>,
-    )  -> Result<SubscriptionId> {
+    ) -> Result<SubscriptionId> {
         info!("eth_subscribe");
         match topic.as_ref() {
-            "newHeads" => {
-                self.subscribe(SubscriptionParams::EvmBlockHeader)
-            }
+            "newHeads" => self.subscribe(SubscriptionParams::EvmBlockHeader),
             "logs" => {
                 let log_filter: evm_rpc::RPCLogFilter = match anydata.map(serde_json::from_value) {
                     Some(Ok(filter)) => filter,
                     Some(Err(e)) => {
-                            return Err(Error {
-                                code: ErrorCode::InvalidParams,
-                                message: format!(
-                                    "Invalid Request: Serde cannot parse request {}",
-                                    e
-                                ),
-                                data: None,
-                            });
+                        return Err(Error {
+                            code: ErrorCode::InvalidParams,
+                            message: format!("Invalid Request: Serde cannot parse request {}", e),
+                            data: None,
+                        });
                     }
                     None => {
                         return Err(Error {
-                                code: ErrorCode::InvalidParams,
-                                message: "Invalid Request: No filter provded for get logs".into(),
-                                data: None,
-                            });
+                            code: ErrorCode::InvalidParams,
+                            message: "Invalid Request: No filter provded for get logs".into(),
+                            data: None,
+                        });
                     }
                 };
                 // TODO: Make more clever way to convert blockid to filter block.
@@ -662,8 +660,8 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
                     address: log_filter
                         .address
                         .map(|k| match k {
-                            evm_rpc::Either::Left(v) => v.into_iter().map(|k| k.0).collect(),
-                            evm_rpc::Either::Right(k) => vec![k.0],
+                            evm_rpc::Either::Left(v) => v,
+                            evm_rpc::Either::Right(k) => vec![k],
                         })
                         .unwrap_or_default(),
                     topics: log_filter

@@ -5351,24 +5351,16 @@ impl RpcClient {
         &self,
         address: &evm_state::Address,
     ) -> ClientResult<evm_state::U256> {
-        self.send::<evm_rpc::Hex<_>>(
-            RpcRequest::EthGetTransactionCount,
-            json!([evm_rpc::Hex(*address)]),
-        )
-        .await
-        .map(|h| h.0)
+        self.send(RpcRequest::EthGetTransactionCount, json!([*address]))
+            .await
     }
 
     pub async fn get_evm_balance(
         &self,
         address: &evm_state::Address,
     ) -> ClientResult<evm_state::U256> {
-        self.send::<evm_rpc::Hex<_>>(
-            RpcRequest::EthGetBalance,
-            json!([evm_rpc::Hex(*address), "latest"]),
-        )
-        .await
-        .map(|h| h.0)
+        self.send(RpcRequest::EthGetBalance, json!([*address, "latest"]))
+            .await
     }
 
     pub async fn get_evm_transaction_receipt(
@@ -5377,7 +5369,7 @@ impl RpcClient {
     ) -> ClientResult<Option<evm_rpc::RPCReceipt>> {
         self.send::<Option<evm_rpc::RPCReceipt>>(
             RpcRequest::EthGetTransactionReceipt,
-            json!([evm_rpc::Hex(*hash)]),
+            json!([*hash]),
         )
         .await
     }

@@ -5,7 +5,7 @@ use {
     ::tokio::sync::mpsc,
     base64::{engine::general_purpose::STANDARD as BASE64, Engine},
     borsh::BorshSerialize,
-    evm_rpc::{error::into_native_error, Bytes, Hex, RPCTransaction},
+    evm_rpc::{error::into_native_error, Bytes, RPCTransaction},
     evm_state::{Address, TransactionAction, H160, H256, U256},
     listener::PoolListener,
     log::*,
@@ -180,9 +180,9 @@ impl<C: Clock> EthPool<C> {
     }
 
     /// Gets transaction from the pool by specified hash
-    pub fn transaction_by_hash(&self, tx_hash: Hex<H256>) -> Option<Arc<PooledTransaction>> {
+    pub fn transaction_by_hash(&self, tx_hash: H256) -> Option<Arc<PooledTransaction>> {
         let pool = self.pool.lock().unwrap();
-        pool.find(&tx_hash.0)
+        pool.find(&tx_hash)
     }
 
     /// Strips outdated timestamps and returns the number of
@@ -260,14 +260,14 @@ pub struct PooledTransaction {
     pub meta_keys: HashSet<Pubkey>,
     sender: Address,
     hash: H256,
-    hash_sender: Option<mpsc::Sender<EvmResult<Hex<H256>>>>,
+    hash_sender: Option<mpsc::Sender<EvmResult<H256>>>,
 }
 
 impl PooledTransaction {
     pub fn new(
         transaction: evm::Transaction,
         meta_keys: HashSet<Pubkey>,
-        hash_sender: mpsc::Sender<EvmResult<Hex<H256>>>,
+        hash_sender: mpsc::Sender<EvmResult<H256>>,
     ) -> Result<Self, evm_state::error::Error> {
         let hash = transaction.tx_id_hash();
         let sender = transaction.caller()?;
@@ -297,10 +297,7 @@ impl PooledTransaction {
         })
     }
 
-    async fn send(
-        &self,
-        hash: EvmResult<Hex<H256>>,
-    ) -> Result<(), SendError<EvmResult<Hex<H256>>>> {
+    async fn send(&self, hash: EvmResult<H256>) -> Result<(), SendError<EvmResult<H256>>> {
         if let Some(hash_sender) = &self.hash_sender {
             hash_sender.send(hash).await
         } else {
@@ -308,10 +305,7 @@ impl PooledTransaction {
         }
     }
 
-    fn blocking_send(
-        &self,
-        hash: EvmResult<Hex<H256>>,
-    ) -> Result<(), SendError<EvmResult<Hex<H256>>>> {
+    fn blocking_send(&self, hash: EvmResult<H256>) -> Result<(), SendError<EvmResult<H256>>> {
         if let Some(hash_sender) = &self.hash_sender {
             hash_sender.blocking_send(hash)
         } else {
@@ -540,7 +534,7 @@ async fn process_tx(
     hash: H256,
     sender: H160,
     mut meta_keys: HashSet<Pubkey>,
-) -> EvmResult<Hex<H256>> {
+) -> EvmResult<H256> {
     let mut bytes = vec![];
     BorshSerialize::serialize(&tx, &mut bytes).unwrap();
 
@@ -559,7 +553,7 @@ async fn process_tx(
         debug!("Sending tx = {}, by chunks", hash);
         match deploy_big_tx(&bridge, &bridge.key, &tx).await {
             Ok(_tx) => {
-                return Ok(Hex(hash));
+                return Ok(hash);
             }
             Err(e) => {
                 error!("Error creating big tx = {}", e);
@@ -636,7 +630,7 @@ async fn process_tx(
         .pool
         .schedule_after_deploy_check(hash, signature, meta_keys, tx);
 
-    Ok(Hex(hash))
+    Ok(hash)
 }
 
 #[instrument]

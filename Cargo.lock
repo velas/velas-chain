@@ -1083,9 +1083,9 @@ dependencies = [
 
 [[package]]
 name = "clap_complete"
-version = "4.0.7"
+version = "4.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10861370d2ba66b0f5989f83ebf35db6421713fd92351790e7fdd6c36774c56b"
+checksum = "5fc443334c81a804575546c5a8a79b4913b50e28d69232903604cada1de817ce"
 dependencies = [
  "clap 4.3.21",
 ]
@@ -2227,7 +2227,7 @@ dependencies = [
  "ethabi",
  "ethbloom",
  "evm",
- "fixed-hash 0.7.0",
+ "fixed-hash 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hex",
  "impl-rlp 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools",
@@ -2316,18 +2316,6 @@ dependencies = [
  "libc",
  "redox_syscall 0.2.16",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "fixed-hash"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfcf0ed7fe52a17a03854ec54a9f76d6d84508d1c0e66bc1793301c73fc8493c"
-dependencies = [
- "byteorder",
- "rand 0.8.5",
- "rustc-hex",
- "static_assertions",
 ]
 
 [[package]]
@@ -8478,7 +8466,7 @@ dependencies = [
 
 [[package]]
 name = "solana-version"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "log 0.4.19",
  "rustc_version 0.4.0",

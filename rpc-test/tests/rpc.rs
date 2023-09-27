@@ -899,7 +899,7 @@ fn test_rpc_get_logs() {
 
     let log_filter = RPCLogFilter {
         from_block: Some(BlockId::BlockHash {
-            block_hash: Hex(recent_blockhash.to_bytes().into()),
+            block_hash: recent_blockhash.to_bytes().into(),
         }),
         to_block: None,
         address: None,

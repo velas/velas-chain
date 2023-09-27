@@ -68,7 +68,6 @@ const MAX_NUM_BLOCKS_IN_BATCH: u64 = 2000; // should be less or equal to const c
 // A compatibility layer, to make software more fluently.
 mod compatibility {
     use {
-        evm_rpc::Hex,
         evm_state::{Gas, TransactionAction, H256, U256},
         rlp::{Decodable, DecoderError, Rlp},
     };
@@ -131,11 +130,11 @@ mod compatibility {
     }
 
     pub fn patch_tx(mut tx: evm_rpc::RPCTransaction) -> evm_rpc::RPCTransaction {
-        if tx.r.unwrap_or_default() == Hex(U256::zero()) {
-            tx.r = Some(Hex(0x1.into()))
+        if tx.r.unwrap_or_default() == U256::zero() {
+            tx.r = Some(0x1.into())
         }
-        if tx.s.unwrap_or_default() == Hex(U256::zero()) {
-            tx.s = Some(Hex(0x1.into()))
+        if tx.s.unwrap_or_default() == U256::zero() {
+            tx.s = Some(0x1.into())
         }
         tx
     }
@@ -146,10 +145,10 @@ mod compatibility {
             evm_rpc::Either::Right(txs) => txs.is_empty(),
         };
         // if no tx, and its root == zero, return empty trie hash, to avoid panics in go client.
-        if txs_empty && block.transactions_root.0 == H256::zero() {
+        if txs_empty && block.transactions_root == H256::zero() {
             evm_rpc::RPCBlock {
-                transactions_root: Hex(evm_state::empty_trie_hash()),
-                receipts_root: Hex(evm_state::empty_trie_hash()),
+                transactions_root: evm_state::empty_trie_hash(),
+                receipts_root: evm_state::empty_trie_hash(),
                 ..block
             }
         } else {
@@ -258,12 +257,8 @@ impl EvmBridge {
     }
 
     /// Wrap evm tx into solana, optionally add meta keys, to solana signature.
-    async fn send_tx(
-        &self,
-        tx: evm::Transaction,
-        meta_keys: HashSet<Pubkey>,
-    ) -> EvmResult<Hex<H256>> {
-        let (sender, mut receiver) = mpsc::channel::<EvmResult<Hex<H256>>>(1);
+    async fn send_tx(&self, tx: evm::Transaction, meta_keys: HashSet<Pubkey>) -> EvmResult<H256> {
+        let (sender, mut receiver) = mpsc::channel::<EvmResult<H256>>(1);
 
         if tx.gas_price < self.min_gas_price {
             return Err(Error::GasPriceTooLow {
@@ -275,7 +270,7 @@ impl EvmBridge {
             .map_err(|source| evm_rpc::Error::EvmStateError { source })?;
         let tx = match self.pool.import(tx) {
             // tx was already processed on this bridge, return hash.
-            Err(txpool::Error::AlreadyImported(h)) => return Ok(Hex(h)),
+            Err(txpool::Error::AlreadyImported(h)) => return Ok(h),
             Ok(tx) => tx,
             Err(source) => {
                 let details = format!("{source}");
@@ -287,7 +282,7 @@ impl EvmBridge {
         if self.simulate {
             receiver.recv().await.unwrap()
         } else {
-            Ok(tx.inner.tx_id_hash().into())
+            Ok(tx.inner.tx_id_hash())
         }
     }
 
@@ -420,16 +415,16 @@ impl BridgeERPC for BridgeErpcImpl {
     type Metadata = Arc<EvmBridge>;
 
     #[instrument]
-    fn accounts(&self, meta: Self::Metadata) -> EvmResult<Vec<Hex<Address>>> {
-        Ok(meta.accounts.keys().map(|k| Hex(*k)).collect())
+    fn accounts(&self, meta: Self::Metadata) -> EvmResult<Vec<Address>> {
+        Ok(meta.accounts.keys().map(|k: &H160| *k).collect())
     }
 
     #[instrument]
-    fn sign(&self, meta: Self::Metadata, address: Hex<Address>, data: Bytes) -> EvmResult<Bytes> {
+    fn sign(&self, meta: Self::Metadata, address: Address, data: Bytes) -> EvmResult<Bytes> {
         let secret_key = meta
             .accounts
-            .get(&address.0)
-            .ok_or(Error::KeyNotFound { account: address.0 })?;
+            .get(&address)
+            .ok_or(Error::KeyNotFound { account: address })?;
         let mut message_data =
             format!("\x19Ethereum Signed Message:\n{}", data.0.len()).into_bytes();
         message_data.extend_from_slice(&data.0);
@@ -451,20 +446,16 @@ impl BridgeERPC for BridgeErpcImpl {
         tx: RPCTransaction,
     ) -> BoxFuture<EvmResult<Bytes>> {
         let future = async move {
-            let address = tx.from.map(|a| a.0).unwrap_or_default();
+            let address = tx.from.unwrap_or_default();
 
-            debug!("sign_transaction from = {}", address);
+            debug!("sign_transaction from = {:?}", address);
 
             let secret_key = meta
                 .accounts
                 .get(&address)
                 .ok_or(Error::KeyNotFound { account: address })?;
 
-            let nonce = match tx
-                .nonce
-                .map(|a| a.0)
-                .or_else(|| meta.pool.transaction_count(&address))
-            {
+            let nonce = match tx.nonce.or_else(|| meta.pool.transaction_count(&address)) {
                 Some(n) => n,
                 None => meta
                     .rpc_client
@@ -475,16 +466,13 @@ impl BridgeERPC for BridgeErpcImpl {
 
             let tx = UnsignedTransaction {
                 nonce,
-                gas_price: tx
-                    .gas_price
-                    .map(|a| a.0)
-                    .unwrap_or_else(|| meta.min_gas_price),
-                gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 30000000.into()),
+                gas_price: tx.gas_price.unwrap_or_else(|| meta.min_gas_price),
+                gas_limit: tx.gas.unwrap_or_else(|| 30000000.into()),
                 action: tx
                     .to
-                    .map(|a| TransactionAction::Call(a.0))
+                    .map(|a| TransactionAction::Call(a))
                     .unwrap_or(TransactionAction::Create),
-                value: tx.value.map(|a| a.0).unwrap_or_else(|| 0.into()),
+                value: tx.value.unwrap_or_else(|| 0.into()),
                 input: tx.input.map(|a| a.0).unwrap_or_default(),
             };
 
@@ -500,11 +488,11 @@ impl BridgeERPC for BridgeErpcImpl {
         meta: Self::Metadata,
         tx: RPCTransaction,
         meta_keys: Option<Vec<String>>,
-    ) -> BoxFuture<EvmResult<Hex<H256>>> {
+    ) -> BoxFuture<EvmResult<H256>> {
         let future = async move {
-            let address = tx.from.map(|a| a.0).unwrap_or_default();
+            let address = tx.from.unwrap_or_default();
 
-            debug!("send_transaction from = {}", address);
+            debug!("send_transaction from = {:?}", address);
 
             let meta_keys = meta_keys
                 .into_iter()
@@ -518,11 +506,7 @@ impl BridgeERPC for BridgeErpcImpl {
                 .get(&address)
                 .ok_or(Error::KeyNotFound { account: address })?;
 
-            let nonce = match tx
-                .nonce
-                .map(|a| a.0)
-                .or_else(|| meta.pool.transaction_count(&address))
-            {
+            let nonce = match tx.nonce.or_else(|| meta.pool.transaction_count(&address)) {
                 Some(n) => n,
                 None => meta
                     .rpc_client
@@ -533,16 +517,13 @@ impl BridgeERPC for BridgeErpcImpl {
 
             let tx_create = evm::UnsignedTransaction {
                 nonce,
-                gas_price: tx
-                    .gas_price
-                    .map(|a| a.0)
-                    .unwrap_or_else(|| meta.min_gas_price),
-                gas_limit: tx.gas.map(|a| a.0).unwrap_or_else(|| 30000000i32.into()),
+                gas_price: tx.gas_price.unwrap_or_else(|| meta.min_gas_price),
+                gas_limit: tx.gas.unwrap_or_else(|| 30000000i32.into()),
                 action: tx
                     .to
-                    .map(|a| evm::TransactionAction::Call(a.0))
+                    .map(|a| evm::TransactionAction::Call(a))
                     .unwrap_or(evm::TransactionAction::Create),
-                value: tx.value.map(|a| a.0).unwrap_or_else(|| 0i32.into()),
+                value: tx.value.unwrap_or_else(|| 0i32.into()),
                 input: tx.input.map(|a| a.0).unwrap_or_default(),
             };
 
@@ -560,7 +541,7 @@ impl BridgeERPC for BridgeErpcImpl {
         meta: Self::Metadata,
         bytes: Bytes,
         meta_keys: Option<Vec<String>>,
-    ) -> BoxFuture<EvmResult<Hex<H256>>> {
+    ) -> BoxFuture<EvmResult<H256>> {
         let future = async move {
             debug!("send_raw_transaction");
             let meta_keys = meta_keys
@@ -582,7 +563,7 @@ impl BridgeERPC for BridgeErpcImpl {
 
             let unsigned_tx: evm::UnsignedTransaction = tx.clone().into();
             let hash = unsigned_tx.signing_hash(Some(meta.evm_chain_id));
-            debug!("loaded tx_hash = {}", hash);
+            debug!("loaded tx_hash = {:?}", hash);
 
             meta.send_tx(tx, meta_keys).await
         };
@@ -624,15 +605,19 @@ impl GeneralERPC for GeneralErpcProxy {
     }
 
     #[instrument]
-    fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> EvmResult<Hex<H256>> {
-        Ok(Hex(H256::from_slice(
+    fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> EvmResult<H256> {
+        Ok(H256::from_slice(
             Keccak256::digest(bytes.0.as_slice()).as_slice(),
-        )))
+        ))
     }
 
     #[instrument]
     fn client_version(&self, _meta: Self::Metadata) -> EvmResult<String> {
-        Ok(String::from("VelasEvm/v0.5.0"))
+        // same as `version` at /version/Cargo.toml
+        Ok(format!(
+            "VelasEvm/v{}",
+            solana_version::semver!().to_string()
+        ))
     }
 
     #[instrument]
@@ -646,8 +631,8 @@ impl GeneralERPC for GeneralErpcProxy {
     }
 
     #[instrument]
-    fn coinbase(&self, _meta: Self::Metadata) -> EvmResult<Hex<Address>> {
-        Ok(Hex(Address::from_low_u64_be(0)))
+    fn coinbase(&self, _meta: Self::Metadata) -> EvmResult<Address> {
+        Ok(Address::from_low_u64_be(0))
     }
 
     #[instrument]
@@ -656,13 +641,13 @@ impl GeneralERPC for GeneralErpcProxy {
     }
 
     #[instrument]
-    fn hashrate(&self, _meta: Self::Metadata) -> EvmResult<Hex<U256>> {
-        Ok(Hex(U256::zero()))
+    fn hashrate(&self, _meta: Self::Metadata) -> EvmResult<U256> {
+        Ok(U256::zero())
     }
 
     #[instrument]
-    fn gas_price(&self, meta: Self::Metadata) -> EvmResult<Hex<Gas>> {
-        Ok(Hex(meta.min_gas_price))
+    fn gas_price(&self, meta: Self::Metadata) -> EvmResult<Gas> {
+        Ok(meta.min_gas_price)
     }
 }
 
@@ -681,9 +666,9 @@ impl ChainERPC for ChainErpcProxy {
     fn balance(
         &self,
         _meta: Self::Metadata,
-        _address: Hex<Address>,
+        _address: Address,
         _block: Option<BlockId>,
-    ) -> BoxFuture<EvmResult<Hex<U256>>> {
+    ) -> BoxFuture<EvmResult<U256>> {
         Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
@@ -691,10 +676,10 @@ impl ChainERPC for ChainErpcProxy {
     fn storage_at(
         &self,
         _meta: Self::Metadata,
-        _address: Hex<Address>,
-        _data: Hex<U256>,
+        _address: Address,
+        _data: U256,
         _block: Option<BlockId>,
-    ) -> BoxFuture<EvmResult<Hex<H256>>> {
+    ) -> BoxFuture<EvmResult<H256>> {
         Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
@@ -702,12 +687,12 @@ impl ChainERPC for ChainErpcProxy {
     fn transaction_count(
         &self,
         meta: Self::Metadata,
-        address: Hex<Address>,
+        address: Address,
         block: Option<BlockId>,
-    ) -> BoxFuture<EvmResult<Hex<U256>>> {
+    ) -> BoxFuture<EvmResult<U256>> {
         if matches!(block, Some(BlockId::RelativeId(BlockRelId::Pending))) {
-            if let Some(tx_count) = meta.pool.transaction_count(&address.0) {
-                return Box::pin(ready(Ok(Hex(tx_count))));
+            if let Some(tx_count) = meta.pool.transaction_count(&address) {
+                return Box::pin(ready(Ok(tx_count)));
             }
         }
 
@@ -717,8 +702,8 @@ impl ChainERPC for ChainErpcProxy {
     #[instrument]
     fn block_transaction_count_by_number(
         &self,
-        meta: Self::Metadata,
-        block: BlockId,
+        _meta: Self::Metadata,
+        _block: BlockId,
     ) -> BoxFuture<EvmResult<Hex<usize>>> {
         Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
@@ -726,8 +711,8 @@ impl ChainERPC for ChainErpcProxy {
     #[instrument]
     fn block_transaction_count_by_hash(
         &self,
-        meta: Self::Metadata,
-        block_hash: Hex<H256>,
+        _meta: Self::Metadata,
+        _block_hash: H256,
     ) -> BoxFuture<EvmResult<Hex<usize>>> {
         Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
@@ -736,7 +721,7 @@ impl ChainERPC for ChainErpcProxy {
     fn code(
         &self,
         _meta: Self::Metadata,
-        _address: Hex<Address>,
+        _address: Address,
         _block: Option<BlockId>,
     ) -> BoxFuture<EvmResult<Bytes>> {
         Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
@@ -746,10 +731,10 @@ impl ChainERPC for ChainErpcProxy {
     fn block_by_hash(
         &self,
         meta: Self::Metadata,
-        block_hash: Hex<H256>,
+        block_hash: H256,
         full: bool,
     ) -> BoxFuture<EvmResult<Option<RPCBlock>>> {
-        if block_hash == Hex(H256::zero()) {
+        if block_hash == H256::zero() {
             Box::pin(ready(Ok(Some(RPCBlock::default()))))
         } else {
             Box::pin(async move {
@@ -786,7 +771,7 @@ impl ChainERPC for ChainErpcProxy {
     fn transaction_by_hash(
         &self,
         meta: Self::Metadata,
-        tx_hash: Hex<H256>,
+        tx_hash: H256,
     ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
         // TODO: chain all possible outcomes properly
         if let Some(tx) = meta.pool.transaction_by_hash(tx_hash) {
@@ -807,9 +792,9 @@ impl ChainERPC for ChainErpcProxy {
     #[instrument]
     fn transaction_by_block_hash_and_index(
         &self,
-        meta: Self::Metadata,
-        block_hash: Hex<H256>,
-        tx_id: Hex<usize>,
+        _meta: Self::Metadata,
+        _block_hash: H256,
+        _tx_id: Hex<usize>,
     ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
         Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
@@ -817,9 +802,9 @@ impl ChainERPC for ChainErpcProxy {
     #[instrument]
     fn transaction_by_block_number_and_index(
         &self,
-        meta: Self::Metadata,
-        block: BlockId,
-        tx_id: Hex<usize>,
+        _meta: Self::Metadata,
+        _block: BlockId,
+        _tx_id: Hex<usize>,
     ) -> BoxFuture<EvmResult<Option<RPCTransaction>>> {
         Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
@@ -828,7 +813,7 @@ impl ChainERPC for ChainErpcProxy {
     fn transaction_receipt(
         &self,
         _meta: Self::Metadata,
-        _tx_hash: Hex<H256>,
+        _tx_hash: H256,
     ) -> BoxFuture<EvmResult<Option<RPCReceipt>>> {
         Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
@@ -851,7 +836,7 @@ impl ChainERPC for ChainErpcProxy {
         _tx: RPCTransaction,
         _block: Option<BlockId>,
         _meta_keys: Option<Vec<String>>,
-    ) -> BoxFuture<EvmResult<Hex<Gas>>> {
+    ) -> BoxFuture<EvmResult<Gas>> {
         Box::pin(ready(Err(evm_rpc::Error::ProxyRequest)))
     }
 
@@ -921,8 +906,8 @@ impl ChainERPC for ChainErpcProxy {
     fn uncle_by_block_hash_and_index(
         &self,
         _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-        _uncle_id: Hex<U256>,
+        _block_hash: H256,
+        _uncle_id: U256,
     ) -> EvmResult<Option<RPCBlock>> {
         Ok(None)
     }
@@ -932,7 +917,7 @@ impl ChainERPC for ChainErpcProxy {
         &self,
         _meta: Self::Metadata,
         _block: String,
-        _uncle_id: Hex<U256>,
+        _uncle_id: U256,
     ) -> EvmResult<Option<RPCBlock>> {
         Ok(None)
     }
@@ -941,7 +926,7 @@ impl ChainERPC for ChainErpcProxy {
     fn block_uncles_count_by_hash(
         &self,
         _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
+        _block_hash: H256,
     ) -> EvmResult<Hex<usize>> {
         Ok(Hex(0))
     }
@@ -1206,7 +1191,7 @@ async fn send_and_confirm_transactions<T: Signers>(
 mod tests {
     use {
         crate::{AsyncRpcClient, BridgeErpcImpl, EthPool, EvmBridge, SystemClock},
-        evm_rpc::{BridgeERPC, Hex},
+        evm_rpc::BridgeERPC,
         evm_state::Address,
         secp256k1::SecretKey,
         solana_sdk::signature::Keypair,
@@ -1239,7 +1224,7 @@ mod tests {
         let rpc = BridgeErpcImpl {};
         let address = Address::from_str("0x141a4802f84bb64c0320917672ef7D92658e964e").unwrap();
         let data = "qwe".as_bytes().to_vec();
-        let res = rpc.sign(bridge, Hex(address), data.into()).unwrap();
+        let res = rpc.sign(bridge, address, data.into()).unwrap();
         assert_eq!(res.to_string(), "0xb734e224f0f92d89825f3f69bf03924d7d2f609159d6ce856d37a58d7fcbc8eb6d224fd73f05217025ed015283133c92888211b238272d87ec48347f05ab42a000");
     }
 }

@@ -181,7 +181,7 @@ impl AsyncRpcClient {
 
     pub async fn get_evm_block_by_hash(
         &self,
-        block_hash: Hex<H256>,
+        block_hash: H256,
         full: bool,
     ) -> ClientResult<Option<RPCBlock>> {
         self.send(RpcRequest::EthGetBlockByHash, json!([block_hash, full]))
@@ -209,19 +209,18 @@ impl AsyncRpcClient {
 
     pub async fn get_evm_transaction_by_hash(
         &self,
-        tx_hash: Hex<H256>,
+        tx_hash: H256,
     ) -> ClientResult<Option<RPCTransaction>> {
         self.send(RpcRequest::EthGetTransactionByHash, json!([tx_hash]))
             .await
     }
 
     pub async fn get_evm_transaction_count(&self, address: &Address) -> ClientResult<U256> {
-        self.send::<Hex<_>>(
+        self.send(
             RpcRequest::EthGetTransactionCount,
             json!([evm_rpc::Hex(*address)]),
         )
         .await
-        .map(|h| h.0)
     }
 
     pub async fn get_evm_transaction_receipt(

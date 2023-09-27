@@ -248,16 +248,20 @@ impl GenesisConfig {
 
                 loop {
                     match iter.next() {
-                        Some(Ok(AccountPair { encoded_key, account })) => {
+                        Some(Ok(AccountPair {
+                            encoded_key,
+                            account,
+                        })) => {
                             // Heap size calculation is rough
-                            chunk_heap_bytes += account.code.capacity() + account.storage.len() * 64;
+                            chunk_heap_bytes +=
+                                account.code.capacity() + account.storage.len() * 64;
                             chunk.push((encoded_key, account));
                             if chunk_heap_bytes > MAX_IN_HEAP_EVM_ACCOUNTS_BYTES {
                                 break;
                             }
-                        },
+                        }
                         Some(Err(err)) => return Some(Err(err)),
-                        None => break
+                        None => break,
                     }
                 }
 
@@ -418,7 +422,7 @@ impl fmt::Display for GenesisConfig {
 }
 
 pub mod evm_genesis {
-    use evm_rpc::{Bytes, Hex};
+    use evm_rpc::Bytes;
     use evm_state::{MemoryAccount, H160, H256, U256};
 
     use serde::{de, Deserialize, Serialize};
@@ -539,13 +543,13 @@ pub mod evm_genesis {
             #[serde(deserialize_with = "deserialize_skip_hex_prefix")]
             pub balance: U256,
             /// Full account storage.
-            pub storage: Option<BTreeMap<Hex<H256>, Hex<H256>>>,
+            pub storage: Option<BTreeMap<H256, H256>>,
             /// Account code.
             #[serde(deserialize_with = "deserialize_skip_hex_prefix_bytes")]
             #[serde(default)]
             pub code: Option<Bytes>,
-            pub code_hash: Option<Hex<H256>>,
-            pub storage_root: Option<Hex<H256>>,
+            pub code_hash: Option<H256>,
+            pub storage_root: Option<H256>,
         }
 
         fn deserialize_skip_hex_prefix<'de, D>(deserializer: D) -> Result<U256, D::Error>
@@ -576,12 +580,7 @@ pub mod evm_genesis {
                 MemoryAccount {
                     nonce: extended.nonce,
                     balance: extended.balance,
-                    storage: extended
-                        .storage
-                        .into_iter()
-                        .flatten()
-                        .map(|(k, v)| (k.0, v.0))
-                        .collect(),
+                    storage: extended.storage.into_iter().flatten().collect(),
                     code: extended.code.unwrap_or_else(|| Bytes(Vec::new())).0,
                 }
             }
@@ -719,7 +718,7 @@ pub mod evm_genesis {
                 if self.end_brackets()? {
                     return Ok(None);
                 }
-                let key: Hex<H160> = self.read_token()?;
+                let key: H160 = self.read_token()?;
                 self.skip_colon()?;
 
                 let value: ExtendedMemoryAccount = self.read_token()?;
@@ -730,12 +729,12 @@ pub mod evm_genesis {
                     (Some(expected_storage), Some(storage)) => {
                         let storage_root =
                             triehash::sec_trie_root::<keccak_hasher::KeccakHasher, _, _, _>(
-                                storage.iter().map(|(k, v)| {
-                                    (&k.0, rlp::encode(&U256::from_big_endian(&v.0[..])))
-                                }),
+                                storage
+                                    .iter()
+                                    .map(|(k, v)| (k, rlp::encode(&U256::from_big_endian(&v[..])))),
                             );
                         let storage_root = H256::from_slice(&storage_root);
-                        assert_eq!(storage_root, expected_storage.0, "Storage hash mismatched")
+                        assert_eq!(storage_root, *expected_storage, "Storage hash mismatched")
                     }
                     (None, None) => {}
                     _ => panic!(
@@ -746,7 +745,7 @@ pub mod evm_genesis {
                 match (&value.code_hash, &value.code) {
                     (Some(expected_code), Some(code)) => {
                         let code_hash = H256::from_slice(Keccak256::digest(&code.0).as_slice());
-                        assert_eq!(code_hash, expected_code.0, "Code hash mismatched")
+                        assert_eq!(code_hash, *expected_code, "Code hash mismatched")
                     }
                     (None, None) => {}
                     _ => panic!(
@@ -755,7 +754,7 @@ pub mod evm_genesis {
                     ),
                 }
 
-                let account_pair = AccountPair::new(self.encode_key(key.0), value.into());
+                let account_pair = AccountPair::new(self.encode_key(key), value.into());
                 Ok(Some(account_pair))
             }
         }

@@ -31,18 +31,16 @@ pub enum Either<T, U> {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum RPCTopicFilter {
-    Single(Hex<H256>),
-    Or(Vec<Hex<H256>>),
+    Single(H256),
+    Or(Vec<H256>),
 }
 
 impl RPCTopicFilter {
     #[allow(clippy::wrong_self_convention)]
     pub fn into_topics(value: Option<RPCTopicFilter>) -> LogFilterTopicEntry {
         match value {
-            Some(RPCTopicFilter::Single(t)) => LogFilterTopicEntry::One(t.0),
-            Some(RPCTopicFilter::Or(t)) => {
-                LogFilterTopicEntry::Or(t.into_iter().map(|h| h.0).collect())
-            }
+            Some(RPCTopicFilter::Single(t)) => LogFilterTopicEntry::One(t),
+            Some(RPCTopicFilter::Or(t)) => LogFilterTopicEntry::Or(t),
             None => LogFilterTopicEntry::Any,
         }
     }
@@ -53,7 +51,7 @@ impl RPCTopicFilter {
 pub struct RPCLogFilter {
     pub from_block: Option<BlockId>,
     pub to_block: Option<BlockId>,
-    pub address: Option<Either<Vec<Hex<Address>>, Hex<Address>>>,
+    pub address: Option<Either<Vec<Address>, Address>>,
     pub topics: Option<Vec<Option<RPCTopicFilter>>>,
 }
 
@@ -63,19 +61,19 @@ pub struct RPCLog {
     pub removed: bool,
     pub log_index: Hex<usize>,
     pub transaction_index: Hex<usize>,
-    pub transaction_hash: Hex<H256>,
-    pub block_hash: Hex<H256>,
-    pub block_number: Hex<U256>,
-    pub address: Hex<Address>,
+    pub transaction_hash: H256,
+    pub block_hash: H256,
+    pub block_number: U256,
+    pub address: Address,
     pub data: Bytes,
-    pub topics: Vec<Hex<H256>>,
+    pub topics: Vec<H256>,
 }
 impl From<RPCLog> for evm_state::Log {
     fn from(rpc: RPCLog) -> evm_state::Log {
         evm_state::Log {
             data: rpc.data.0,
-            topics: rpc.topics.iter().map(|e| e.0).collect(),
-            address: rpc.address.0,
+            topics: rpc.topics,
+            address: rpc.address,
         }
     }
 }
@@ -83,32 +81,32 @@ impl From<RPCLog> for evm_state::Log {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCBlock {
-    pub number: Hex<U256>,
-    pub hash: Hex<H256>,
-    pub parent_hash: Hex<H256>,
+    pub number: U256,
+    pub hash: H256,
+    pub parent_hash: H256,
 
     pub size: Hex<usize>,
-    pub gas_limit: Hex<Gas>,
-    pub gas_used: Hex<Gas>,
+    pub gas_limit: Gas,
+    pub gas_used: Gas,
     pub timestamp: Hex<u64>,
-    pub transactions: Either<Vec<Hex<H256>>, Vec<RPCTransaction>>,
+    pub transactions: Either<Vec<H256>, Vec<RPCTransaction>>,
     pub is_finalized: bool,
 
-    pub transactions_root: Hex<H256>,
-    pub state_root: Hex<H256>,
-    pub receipts_root: Hex<H256>,
+    pub transactions_root: H256,
+    pub state_root: H256,
+    pub receipts_root: H256,
     #[serde(with = "serialize::hex_serde::padded")]
     pub nonce: u64,
-    pub mix_hash: Hex<H256>,
+    pub mix_hash: H256,
 
-    pub sha3_uncles: Hex<H256>,
+    pub sha3_uncles: H256,
     pub logs_bloom: ethbloom::Bloom, // H2048
 
-    pub miner: Hex<Address>,
-    pub difficulty: Hex<U256>,
-    pub total_difficulty: Hex<U256>,
+    pub miner: Address,
+    pub difficulty: U256,
+    pub total_difficulty: U256,
     pub extra_data: Bytes,
-    pub uncles: Vec<Hex<H256>>,
+    pub uncles: Vec<H256>,
 }
 impl Default for RPCBlock {
     fn default() -> Self {
@@ -116,27 +114,27 @@ impl Default for RPCBlock {
             H256::from_hex("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")
                 .unwrap();
         RPCBlock {
-            number: U256::zero().into(),
-            hash: H256::zero().into(),
-            parent_hash: H256::repeat_byte(0xff).into(),
+            number: U256::zero(),
+            hash: H256::zero(),
+            parent_hash: H256::repeat_byte(0xff),
             size: 0x100.into(),
-            gas_limit: U256::one().into(), // avoid divide by zero on explorer, if it calculate percent used.
-            gas_used: U256::zero().into(),
+            gas_limit: U256::one(), // avoid divide by zero on explorer, if it calculate percent used.
+            gas_used: U256::zero(),
             timestamp: 0.into(),
             transactions: Either::Left(vec![]),
             nonce: 0,
-            mix_hash: H256::zero().into(),
+            mix_hash: H256::zero(),
             logs_bloom: ethbloom::Bloom::zero(), // H2048
-            transactions_root: H256::zero().into(),
-            state_root: H256::zero().into(),
-            receipts_root: H256::zero().into(),
+            transactions_root: H256::zero(),
+            state_root: H256::zero(),
+            receipts_root: H256::zero(),
             is_finalized: true,
-            miner: Address::zero().into(),
-            difficulty: U256::zero().into(),
-            total_difficulty: U256::zero().into(),
+            miner: Address::zero(),
+            difficulty: U256::zero(),
+            total_difficulty: U256::zero(),
             uncles: vec![],
             extra_data: b"Velas EVM compatibility layer...".to_vec().into(),
-            sha3_uncles: Hex(empty_uncle),
+            sha3_uncles: empty_uncle,
         }
     }
 }
@@ -145,7 +143,7 @@ impl RPCBlock {
     pub fn new_from_head(
         header: evm_state::BlockHeader,
         confirmed: bool,
-        transactions: Either<Vec<Hex<H256>>, Vec<RPCTransaction>>,
+        transactions: Either<Vec<H256>, Vec<RPCTransaction>>,
     ) -> Self {
         let empty_uncle = evm_state::empty_ommers_hash();
         let block_hash = header.hash();
@@ -158,43 +156,43 @@ impl RPCBlock {
             }
         };
         RPCBlock {
-            number: U256::from(header.block_number).into(),
-            hash: block_hash.into(),
-            parent_hash: header.parent_hash.into(),
-            gas_limit: Hex(header.gas_limit.into()),
-            gas_used: Hex(header.gas_used.into()),
+            number: U256::from(header.block_number),
+            hash: block_hash,
+            parent_hash: header.parent_hash,
+            gas_limit: header.gas_limit.into(),
+            gas_used: header.gas_used.into(),
             timestamp: Hex(header.timestamp),
             transactions,
             nonce: header.native_chain_slot,
-            mix_hash: header.native_chain_hash.into(),
+            mix_hash: header.native_chain_hash,
             logs_bloom: header.logs_bloom, // H2048
-            transactions_root: Hex(header.transactions_root),
-            state_root: Hex(header.state_root),
-            receipts_root: Hex(header.receipts_root),
+            transactions_root: header.transactions_root,
+            state_root: header.state_root,
+            receipts_root: header.receipts_root,
             extra_data,
             is_finalized: confirmed,
             size: 0x100.into(),
-            miner: Address::zero().into(),
-            difficulty: U256::zero().into(),
-            total_difficulty: U256::zero().into(),
-            sha3_uncles: Hex(empty_uncle),
+            miner: Address::zero(),
+            difficulty: U256::zero(),
+            total_difficulty: U256::zero(),
+            sha3_uncles: empty_uncle,
             uncles: vec![],
         }
     }
 
     pub fn to_native_block(&self, version: evm_state::BlockVersion) -> evm_state::BlockHeader {
         evm_state::BlockHeader {
-            state_root: self.state_root.0,
-            transactions_root: self.transactions_root.0,
-            receipts_root: self.receipts_root.0,
-            native_chain_hash: self.mix_hash.0,
+            state_root: self.state_root,
+            transactions_root: self.transactions_root,
+            receipts_root: self.receipts_root,
+            native_chain_hash: self.mix_hash,
             native_chain_slot: self.nonce,
-            parent_hash: self.parent_hash.0,
+            parent_hash: self.parent_hash,
             transactions: vec![],
             logs_bloom: self.logs_bloom,
-            block_number: self.number.0.as_u64(),
-            gas_limit: self.gas_limit.0.as_u64(),
-            gas_used: self.gas_used.0.as_u64(),
+            block_number: self.number.as_u64(),
+            gas_limit: self.gas_limit.as_u64(),
+            gas_used: self.gas_used.as_u64(),
             timestamp: self.timestamp.0,
             version,
         }
@@ -204,41 +202,41 @@ impl RPCBlock {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCTransaction {
-    pub from: Option<Hex<Address>>,
-    pub to: Option<Hex<Address>>,
-    pub creates: Option<Hex<Address>>,
-    pub gas: Option<Hex<Gas>>,
-    pub gas_price: Option<Hex<Gas>>,
-    pub value: Option<Hex<U256>>,
+    pub from: Option<Address>,
+    pub to: Option<Address>,
+    pub creates: Option<Address>,
+    pub gas: Option<Gas>,
+    pub gas_price: Option<Gas>,
+    pub value: Option<U256>,
     #[serde(alias = "data")]
     pub input: Option<Bytes>,
-    pub nonce: Option<Hex<U256>>,
+    pub nonce: Option<U256>,
 
-    pub hash: Option<Hex<H256>>,
-    pub block_hash: Option<Hex<H256>>,
-    pub block_number: Option<Hex<U256>>,
+    pub hash: Option<H256>,
+    pub block_hash: Option<H256>,
+    pub block_number: Option<U256>,
     pub transaction_index: Option<Hex<usize>>,
     #[serde(alias = "V")]
     pub v: Option<Hex<u64>>,
     #[serde(alias = "R")]
-    pub r: Option<Hex<U256>>,
+    pub r: Option<U256>,
     #[serde(alias = "S")]
-    pub s: Option<Hex<U256>>,
+    pub s: Option<U256>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCReceipt {
-    pub transaction_hash: Hex<H256>,
+    pub transaction_hash: H256,
     pub transaction_index: Hex<usize>,
-    pub block_hash: Hex<H256>,
-    pub block_number: Hex<U256>,
-    pub cumulative_gas_used: Hex<Gas>,
-    pub gas_used: Hex<Gas>,
-    pub contract_address: Option<Hex<Address>>,
+    pub block_hash: H256,
+    pub block_number: U256,
+    pub cumulative_gas_used: Gas,
+    pub gas_used: Gas,
+    pub contract_address: Option<Address>,
     pub logs_bloom: ethbloom::Bloom, // H2048
-    pub to: Option<Hex<Address>>,
-    pub from: Option<Hex<Address>>,
+    pub to: Option<Address>,
+    pub from: Option<Address>,
     pub logs: Vec<RPCLog>,
     pub status: Hex<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -247,7 +245,7 @@ pub struct RPCReceipt {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCTrace {
-    pub gas: Hex<Gas>,
+    pub gas: Gas,
     pub return_value: Bytes,
     pub struct_logs: Vec<RPCStep>,
 }
@@ -268,7 +266,7 @@ pub struct RPCTraceConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCBreakpointConfig {
-    pub source_map: HashMap<Hex<H256>, RPCSourceMapConfig>,
+    pub source_map: HashMap<H256, RPCSourceMapConfig>,
     pub breakpoints: String,
 }
 
@@ -290,36 +288,36 @@ pub struct RPCBlockTrace {
 pub struct RPCStep {
     pub depth: usize,
     pub error: String,
-    pub gas: Hex<Gas>,
-    pub gas_cost: Hex<Gas>,
+    pub gas: Gas,
+    pub gas_cost: Gas,
     pub op: u8,
     pub pc: usize,
     pub opcode_pc: usize,
-    pub code_hash: Hex<H256>,
-    pub address: Hex<Address>,
+    pub code_hash: H256,
+    pub address: Address,
     pub breakpoint_index: Option<usize>,
     pub breakpoint: Option<String>,
     pub memory: Option<Vec<Bytes>>,
-    pub stack: Option<Vec<Hex<U256>>>,
-    pub storage: Option<HashMap<Hex<U256>, Hex<U256>>>,
+    pub stack: Option<Vec<U256>>,
+    pub storage: Option<HashMap<U256, U256>>,
 }
 
 // #[derive(Serialize, Deserialize, Debug, Clone)]
 // #[serde(rename_all = "camelCase")]
 // pub struct RPCDump {
-//     pub accounts: HashMap<Hex<Address>, RPCDumpAccount>,
-//     pub root: Hex<H256>,
+//     pub accounts: HashMap<Address, RPCDumpAccount>,
+//     pub root: H256,
 // }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RPCDumpAccountBasic {
-    pub balance: Hex<U256>,
+    pub balance: U256,
     // pub code: Bytes,
-    // pub code_hash: Hex<H256>,
-    pub nonce: Hex<U256>,
-    // pub root: Hex<H256>,
-    // pub storage: HashMap<Hex<U256>, Hex<U256>>,
+    // pub code_hash: H256,
+    pub nonce: U256,
+    // pub root: H256,
+    // pub storage: HashMap<U256, U256>,
 }
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Debug, Clone, Copy)]
@@ -328,7 +326,7 @@ pub enum BlockId {
     Num(Hex<u64>),
     BlockHash {
         #[serde(rename = "blockHash")]
-        block_hash: Hex<H256>,
+        block_hash: H256,
     },
     RelativeId(BlockRelId),
 }
@@ -381,7 +379,7 @@ pub mod trace {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Res {
-        gas_used: Hex<U256>,
+        gas_used: U256,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(rename = "address")]
         contract: Option<Address>,
@@ -396,10 +394,10 @@ pub mod trace {
     #[serde(rename_all = "snake_case")]
     pub enum Action {
         Call {
-            from: Hex<Address>,
-            to: Hex<Address>,
-            value: Hex<U256>,
-            gas: Hex<U256>,
+            from: Address,
+            to: Address,
+            value: U256,
+            gas: U256,
             input: Bytes,
             // #[serde(skip_serializing_if = "Option::is_none")]
             #[serde(rename = "callType")]
@@ -407,9 +405,9 @@ pub mod trace {
         },
         Create {
             #[serde(rename = "from")]
-            caller: Hex<Address>,
-            value: Hex<U256>,
-            gas: Hex<U256>,
+            caller: Address,
+            value: U256,
+            gas: U256,
             #[serde(rename = "init")]
             init_code: Bytes,
             #[serde(rename = "creationMethod")]
@@ -441,11 +439,11 @@ pub mod trace {
         pub output: Bytes,
         pub trace: Vec<Trace>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        pub block_hash: Option<Hex<H256>>,
+        pub block_hash: Option<H256>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        pub block_number: Option<Hex<U256>>,
+        pub block_number: Option<U256>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        pub transaction_hash: Option<Hex<H256>>,
+        pub transaction_hash: Option<H256>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub transaction_index: Option<Hex<usize>>,
     }
@@ -494,7 +492,7 @@ pub mod trace {
                 result,
                 error,
                 subtraces: trace.subtraces.into(),
-                trace_address: trace.trace_address.into_iter().map(From::from).collect(),
+                trace_address: trace.trace_address,
             }
         }
     }
@@ -509,10 +507,10 @@ pub mod trace {
                     call_type,
                 } => Self::Call {
                     input: input.into(),
-                    from: context.caller.into(),
-                    to: code.into(),
-                    gas: gas.into(),
-                    value: context.apparent_value.into(),
+                    from: context.caller,
+                    to: code,
+                    gas,
+                    value: context.apparent_value,
                     call_type: call_type.map(From::from).unwrap_or(CallScheme::Call),
                 },
                 evm_state::executor::Action::Create {
@@ -522,9 +520,9 @@ pub mod trace {
                     init_code,
                     creation_method,
                 } => Self::Create {
-                    caller: caller.into(),
-                    value: value.into(),
-                    gas: gas.into(),
+                    caller,
+                    value,
+                    gas,
                     init_code: init_code.into(),
                     creation_method: creation_method.into(),
                 },
@@ -572,7 +570,7 @@ pub mod trace {
             };
             (
                 Res {
-                    gas_used: result.gas_used.into(),
+                    gas_used: result.gas_used,
                     contract: result.contract,
                     code,
                     output,
@@ -617,7 +615,7 @@ pub mod trace {
         fn trace_replay_transaction(
             &self,
             meta: Self::Metadata,
-            tx_hash: Hex<H256>,
+            tx_hash: H256,
             traces: Vec<String>,
             meta_info: Option<TraceMeta>,
         ) -> BoxFuture<Result<Option<TraceResultsWithTransactionHash>, Error>>;
@@ -645,7 +643,7 @@ pub mod trace {
             clear_logs_on_error: bool,
             accept_zero_gas_price_with_native_fee: bool,
             burn_gas_price: u64,
-        ) -> BoxFuture<Result<(Block, Vec<Hex<H256>>), Error>>;
+        ) -> BoxFuture<Result<(Block, Vec<H256>), Error>>;
     }
 }
 
@@ -662,7 +660,7 @@ pub mod general {
         fn client_version(&self, meta: Self::Metadata) -> Result<String, Error>;
 
         #[rpc(meta, name = "web3_sha3")]
-        fn sha3(&self, meta: Self::Metadata, bytes: Bytes) -> Result<Hex<H256>, Error>;
+        fn sha3(&self, meta: Self::Metadata, bytes: Bytes) -> Result<H256, Error>;
 
         #[rpc(meta, name = "net_version")]
         fn network_id(&self, meta: Self::Metadata) -> Result<String, Error>;
@@ -683,16 +681,16 @@ pub mod general {
         fn is_syncing(&self, meta: Self::Metadata) -> Result<bool, Error>;
 
         #[rpc(meta, name = "eth_coinbase")]
-        fn coinbase(&self, meta: Self::Metadata) -> Result<Hex<Address>, Error>;
+        fn coinbase(&self, meta: Self::Metadata) -> Result<Address, Error>;
 
         #[rpc(meta, name = "eth_mining")]
         fn is_mining(&self, meta: Self::Metadata) -> Result<bool, Error>;
 
         #[rpc(meta, name = "eth_hashrate")]
-        fn hashrate(&self, meta: Self::Metadata) -> Result<Hex<U256>, Error>;
+        fn hashrate(&self, meta: Self::Metadata) -> Result<U256, Error>;
 
         #[rpc(meta, name = "eth_gasPrice")]
-        fn gas_price(&self, meta: Self::Metadata) -> Result<Hex<Gas>, Error>;
+        fn gas_price(&self, meta: Self::Metadata) -> Result<Gas, Error>;
     }
 }
 
@@ -710,32 +708,32 @@ pub mod chain {
         fn balance(
             &self,
             meta: Self::Metadata,
-            address: Hex<Address>,
+            address: Address,
             block: Option<BlockId>,
-        ) -> BoxFuture<Result<Hex<U256>, Error>>;
+        ) -> BoxFuture<Result<U256, Error>>;
 
         #[rpc(meta, name = "eth_getStorageAt")]
         fn storage_at(
             &self,
             meta: Self::Metadata,
-            address: Hex<Address>,
-            data: Hex<U256>,
+            address: Address,
+            data: U256,
             block: Option<BlockId>,
-        ) -> BoxFuture<Result<Hex<H256>, Error>>;
+        ) -> BoxFuture<Result<H256, Error>>;
 
         #[rpc(meta, name = "eth_getTransactionCount")]
         fn transaction_count(
             &self,
             meta: Self::Metadata,
-            address: Hex<Address>,
+            address: Address,
             block: Option<BlockId>,
-        ) -> BoxFuture<Result<Hex<U256>, Error>>;
+        ) -> BoxFuture<Result<U256, Error>>;
 
         #[rpc(meta, name = "eth_getBlockTransactionCountByHash")]
         fn block_transaction_count_by_hash(
             &self,
             meta: Self::Metadata,
-            block_hash: Hex<H256>,
+            block_hash: H256,
         ) -> BoxFuture<Result<Hex<usize>, Error>>;
 
         #[rpc(meta, name = "eth_getBlockTransactionCountByNumber")]
@@ -749,7 +747,7 @@ pub mod chain {
         fn code(
             &self,
             meta: Self::Metadata,
-            address: Hex<Address>,
+            address: Address,
             block: Option<BlockId>,
         ) -> BoxFuture<Result<Bytes, Error>>;
 
@@ -757,7 +755,7 @@ pub mod chain {
         fn block_by_hash(
             &self,
             meta: Self::Metadata,
-            block_hash: Hex<H256>,
+            block_hash: H256,
             full: bool,
         ) -> BoxFuture<Result<Option<RPCBlock>, Error>>;
 
@@ -773,14 +771,14 @@ pub mod chain {
         fn transaction_by_hash(
             &self,
             meta: Self::Metadata,
-            tx_hash: Hex<H256>,
+            tx_hash: H256,
         ) -> BoxFuture<Result<Option<RPCTransaction>, Error>>;
 
         #[rpc(meta, name = "eth_getTransactionByBlockHashAndIndex")]
         fn transaction_by_block_hash_and_index(
             &self,
             meta: Self::Metadata,
-            block_hash: Hex<H256>,
+            block_hash: H256,
             tx_id: Hex<usize>,
         ) -> BoxFuture<Result<Option<RPCTransaction>, Error>>;
 
@@ -796,7 +794,7 @@ pub mod chain {
         fn transaction_receipt(
             &self,
             meta: Self::Metadata,
-            tx_hash: Hex<H256>,
+            tx_hash: H256,
         ) -> BoxFuture<Result<Option<RPCReceipt>, Error>>;
 
         #[rpc(meta, name = "eth_call")]
@@ -815,7 +813,7 @@ pub mod chain {
             tx: RPCTransaction,
             block: Option<BlockId>,
             meta_keys: Option<Vec<String>>,
-        ) -> BoxFuture<Result<Hex<Gas>, Error>>;
+        ) -> BoxFuture<Result<Gas, Error>>;
 
         #[rpc(meta, name = "eth_getLogs")]
         fn logs(
@@ -828,8 +826,8 @@ pub mod chain {
         fn uncle_by_block_hash_and_index(
             &self,
             meta: Self::Metadata,
-            block_hash: Hex<H256>,
-            uncle_id: Hex<U256>,
+            block_hash: H256,
+            uncle_id: U256,
         ) -> Result<Option<RPCBlock>, Error>;
 
         #[rpc(meta, name = "eth_getUncleByBlockNumberAndIndex")]
@@ -837,14 +835,14 @@ pub mod chain {
             &self,
             meta: Self::Metadata,
             block: String,
-            uncle_id: Hex<U256>,
+            uncle_id: U256,
         ) -> Result<Option<RPCBlock>, Error>;
 
         #[rpc(meta, name = "eth_getUncleCountByBlockHash")]
         fn block_uncles_count_by_hash(
             &self,
             meta: Self::Metadata,
-            block_hash: Hex<H256>,
+            block_hash: H256,
         ) -> Result<Hex<usize>, Error>;
 
         #[rpc(meta, name = "eth_getUncleCountByBlockNumber")]
@@ -864,15 +862,11 @@ pub mod bridge {
         type Metadata;
 
         #[rpc(meta, name = "eth_accounts")]
-        fn accounts(&self, meta: Self::Metadata) -> Result<Vec<Hex<Address>>, Error>;
+        fn accounts(&self, meta: Self::Metadata) -> Result<Vec<Address>, Error>;
 
         #[rpc(meta, name = "eth_sign")]
-        fn sign(
-            &self,
-            meta: Self::Metadata,
-            address: Hex<Address>,
-            data: Bytes,
-        ) -> Result<Bytes, Error>;
+        fn sign(&self, meta: Self::Metadata, address: Address, data: Bytes)
+            -> Result<Bytes, Error>;
 
         #[rpc(meta, name = "eth_signTransaction")]
         fn sign_transaction(
@@ -887,7 +881,7 @@ pub mod bridge {
             meta: Self::Metadata,
             tx: RPCTransaction,
             meta_keys: Option<Vec<String>>,
-        ) -> BoxFuture<Result<Hex<H256>, Error>>;
+        ) -> BoxFuture<Result<H256, Error>>;
 
         #[rpc(meta, name = "eth_sendRawTransaction")]
         fn send_raw_transaction(
@@ -895,7 +889,7 @@ pub mod bridge {
             meta: Self::Metadata,
             tx: Bytes,
             meta_keys: Option<Vec<String>>,
-        ) -> BoxFuture<Result<Hex<H256>, Error>>;
+        ) -> BoxFuture<Result<H256, Error>>;
 
         #[rpc(meta, name = "eth_getCompilers")]
         fn compilers(&self, meta: Self::Metadata) -> Result<Vec<String>, Error>;
@@ -924,7 +918,7 @@ pub mod bridge {
 //     #[rpc(name = "debug_getBlockRlp")]
 //     fn block_rlp(&self, usize) -> Result<Bytes, Error>;
 //     #[rpc(name = "debug_traceTransaction")]
-//     fn trace_transaction(&self, Hex<H256>, Option<RPCTraceConfig>)
+//     fn trace_transaction(&self, H256, Option<RPCTraceConfig>)
 //                             -> Result<RPCTrace, Error>;
 //     #[rpc(name = "debug_traceBlock")]
 //     fn trace_block(&self, Bytes, Option<RPCTraceConfig>)
@@ -933,7 +927,7 @@ pub mod bridge {
 //     fn trace_block_by_number(&self, usize, Option<RPCTraceConfig>)
 //                                 -> Result<RPCBlockTrace, Error>;
 //     #[rpc(name = "debug_traceBlockByHash")]
-//     fn trace_block_by_hash(&self, Hex<H256>, Option<RPCTraceConfig>)
+//     fn trace_block_by_hash(&self, H256, Option<RPCTraceConfig>)
 //                             -> Result<RPCBlockTrace, Error>;
 //     #[rpc(name = "debug_traceBlockFromFile")]
 //     fn trace_block_from_file(&self, String, Option<RPCTraceConfig>)
@@ -975,9 +969,9 @@ impl RPCTransaction {
     ) -> Result<Self, crate::Error> {
         Ok(RPCTransaction {
             transaction_index: Some((receipt.index as usize).into()),
-            block_hash: Some(block_hash.into()),
-            block_number: Some(Hex(receipt.block_number.into())),
-            hash: Some(tx_hash.into()),
+            block_hash: Some(block_hash),
+            block_number: Some(receipt.block_number.into()),
+            hash: Some(tx_hash),
             ..RPCTransaction::from_transaction(receipt.transaction)?
         })
     }
@@ -1058,21 +1052,21 @@ impl RPCTransaction {
             }
         };
         Ok(RPCTransaction {
-            from: Some(from.into()),
-            to: to.map(Hex),
-            creates: creates.map(Hex),
-            gas: Some(gas_limit.into()),
-            gas_price: Some(gas_price.into()),
-            value: Some(value.into()),
+            from: Some(from),
+            to,
+            creates,
+            gas: Some(gas_limit),
+            gas_price: Some(gas_price),
+            value: Some(value),
             input: Some(input.into()),
-            nonce: Some(nonce.into()),
-            hash: Some(hash.into()),
+            nonce: Some(nonce),
+            hash: Some(hash),
             transaction_index: None,
             block_hash: None,
             block_number: None,
             v: Some(Hex(v)),
-            r: Some(Hex(r)),
-            s: Some(Hex(s)),
+            r: Some(r),
+            s: Some(s),
         })
     }
 }
@@ -1121,7 +1115,7 @@ impl RPCReceipt {
         };
 
         let tx_index: Hex<_> = (receipt.index as usize).into();
-        let block_number = Hex(U256::from(receipt.block_number));
+        let block_number = U256::from(receipt.block_number);
 
         let logs = receipt
             .logs
@@ -1130,13 +1124,13 @@ impl RPCReceipt {
             .map(|(id, log)| RPCLog {
                 removed: false,
                 log_index: Hex(id),
-                transaction_hash: tx_hash.into(),
+                transaction_hash: tx_hash,
                 transaction_index: tx_index,
-                block_hash: block_hash.into(),
+                block_hash,
                 block_number,
                 data: log.data.into(),
-                topics: log.topics.into_iter().map(Hex).collect(),
-                address: Hex(log.address),
+                topics: log.topics,
+                address: log.address,
             })
             .collect();
 
@@ -1148,14 +1142,14 @@ impl RPCReceipt {
             };
 
         Ok(RPCReceipt {
-            from: Hex(from).into(),
-            to: to.map(Hex),
-            contract_address: contract_address.map(Hex),
-            gas_used: Hex(receipt.used_gas.into()),
-            cumulative_gas_used: Hex(receipt.used_gas.into()),
-            transaction_hash: tx_hash.into(),
+            from: from.into(),
+            to,
+            contract_address,
+            gas_used: receipt.used_gas.into(),
+            cumulative_gas_used: receipt.used_gas.into(),
+            transaction_hash: tx_hash,
             transaction_index: tx_index,
-            block_hash: block_hash.into(),
+            block_hash,
             block_number,
             logs_bloom: receipt.logs_bloom,
             logs,
@@ -1169,13 +1163,13 @@ impl From<LogWithLocation> for RPCLog {
     fn from(log: LogWithLocation) -> Self {
         RPCLog {
             removed: false,
-            transaction_hash: log.transaction_hash.into(),
+            transaction_hash: log.transaction_hash,
             transaction_index: (log.transaction_id as usize).into(),
-            block_number: Hex(log.block_num.into()),
-            block_hash: Hex(log.block_hash),
+            block_number: log.block_num.into(),
+            block_hash: log.block_hash,
             log_index: Hex(log.log_index),
-            address: Hex(log.address),
-            topics: log.topics.into_iter().map(Hex).collect(),
+            address: log.address,
+            topics: log.topics,
             data: Bytes(log.data),
         }
     }
@@ -1224,7 +1218,7 @@ mod test {
         println!(
             "{}",
             serde_json::to_string(&BlockId::BlockHash {
-                block_hash: Hex(H256::repeat_byte(0xde))
+                block_hash: H256::repeat_byte(0xde)
             })
             .unwrap()
         );
@@ -1239,7 +1233,7 @@ mod test {
         assert!(matches!(block, BlockId::RelativeId(BlockRelId::Earliest)));
         let block : BlockId = serde_json::from_str("{\"blockHash\":\"0xdededededededededededededededededededededededededededededededede\"}").unwrap();
         assert!(
-            matches!(block, BlockId::BlockHash{block_hash} if block_hash == Hex(H256::repeat_byte(0xde)))
+            matches!(block, BlockId::BlockHash{block_hash} if block_hash == H256::repeat_byte(0xde))
         );
     }
 
@@ -1265,7 +1259,7 @@ mod test {
         assert_eq!(BlockId::Num(0xab.into()).to_string(), "0xab");
         assert_eq!(
             BlockId::BlockHash {
-                block_hash: Hex(H256::repeat_byte(0xde))
+                block_hash: H256::repeat_byte(0xde)
             }
             .to_string(),
             r"{ block_hash:0xdededededededededededededededededededededededededededededededede }"

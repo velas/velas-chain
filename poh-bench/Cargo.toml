@@ -19,7 +19,7 @@ solana-logger = { path = "../logger", version = "=1.10.41" }
 solana-measure = { path = "../measure", version = "=1.10.41" }
 solana-perf = { path = "../perf", version = "=1.10.41" }
 solana-sdk = { path = "../sdk", version = "=1.10.41" }
-solana-version = { path = "../version", version = "=0.6.3" }
+solana-version = { path = "../version", version = "=0.7.0" }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

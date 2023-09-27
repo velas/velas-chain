@@ -9,7 +9,7 @@ use {
     bincode::{config::Options, serialize},
     crossbeam_channel::{unbounded, Receiver, Sender},
     dashmap::DashMap,
-    jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Metadata, Result},
+    jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Result},
     jsonrpc_derive::rpc,
     serde::{Deserialize, Serialize},
     solana_account_decoder::{

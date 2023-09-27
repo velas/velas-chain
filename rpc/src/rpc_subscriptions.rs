@@ -778,7 +778,7 @@ impl RpcSubscriptions {
             .transactions
             .iter()
             .map(|(k, _)| *k)
-            .map(evm_rpc::Hex)
+            // .map(evm_rpc::Hex)
             .collect();
         let block_number = new_head.header.block_number;
         let block_hash = new_head.header.hash();
@@ -790,12 +790,12 @@ impl RpcSubscriptions {
                     removed: false,
                     log_index: log_index.into(),
                     transaction_index: transaction_index.into(),
-                    transaction_hash: (*transaction_hash).into(),
+                    transaction_hash: *transaction_hash,
                     block_hash: block_hash.into(),
-                    block_number: evm_state::U256::from(block_number).into(),
+                    block_number: evm_state::U256::from(block_number),
                     address: log.address.into(),
                     data: log.data.clone().into(),
-                    topics: log.topics.iter().copied().map(From::from).collect(),
+                    topics: log.topics.clone(),
                 })
             }
         }
