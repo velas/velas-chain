@@ -274,9 +274,7 @@ fn get_evm_balance(rpc_client: &RpcClient, address: evm::H160) -> anyhow::Result
 
     println!(
         "EVM address: {:?}, balance {} ({} in hex)",
-        address,
-        vlx,
-        Hex(balance)
+        address, vlx, balance
     );
     Ok(())
 }
@@ -326,10 +324,7 @@ fn transfer(
                 Default::default(),
             )?
         };
-        Ok(format!(
-            "Transaction signature = {}",
-            signature
-        ))
+        Ok(format!("Transaction signature = {}", signature))
     }
 }
 

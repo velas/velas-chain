@@ -129,8 +129,8 @@ async fn block_to_state_root(
         }
         BlockId::Num(num) => num.0,
         BlockId::BlockHash { block_hash } => {
-            found_block_hash = Some(block_hash.0);
-            if let Some(num) = meta.get_evm_block_id_by_hash(block_hash.0).await {
+            found_block_hash = Some(block_hash);
+            if let Some(num) = meta.get_evm_block_id_by_hash(block_hash).await {
                 num
             } else {
                 return StateRootWithBank {
@@ -191,13 +191,18 @@ impl GeneralERPC for GeneralErpcImpl {
     type Metadata = Arc<JsonRpcRequestProcessor>;
 
     fn client_version(&self, _meta: Self::Metadata) -> Result<String, Error> {
-        Ok(String::from("velas-chain/v0.5.0"))
+        // same as `version` at /version/Cargo.toml
+        Ok(format!(
+            "velas-chain/v{}",
+            solana_version::semver!().to_string()
+        ))
     }
 
-    fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> Result<Hex<H256>, Error> {
-        Ok(Hex(H256::from_slice(
+    fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> Result<H256, Error> {
+        // TODO: try `Ok(H256(Keccak256::digest(&bytes.0).try_into().unwrap()))`
+        Ok(H256::from_slice(
             Keccak256::digest(bytes.0.as_slice()).as_slice(),
-        )))
+        ))
     }
 
     fn network_id(&self, meta: Self::Metadata) -> Result<String, Error> {
@@ -227,21 +232,21 @@ impl GeneralERPC for GeneralErpcImpl {
         Ok(!matches!(meta.get_health(), RpcHealthStatus::Ok))
     }
 
-    fn coinbase(&self, _meta: Self::Metadata) -> Result<Hex<Address>, Error> {
-        Ok(Hex(Address::from_low_u64_be(0)))
+    fn coinbase(&self, _meta: Self::Metadata) -> Result<Address, Error> {
+        Ok(Address::from_low_u64_be(0))
     }
 
     fn is_mining(&self, _meta: Self::Metadata) -> Result<bool, Error> {
         Ok(false)
     }
 
-    fn hashrate(&self, _meta: Self::Metadata) -> Result<Hex<U256>, Error> {
-        Ok(Hex(0.into()))
+    fn hashrate(&self, _meta: Self::Metadata) -> Result<U256, Error> {
+        Ok(0.into())
     }
 
-    fn gas_price(&self, _meta: Self::Metadata) -> Result<Hex<Gas>, Error> {
-        Ok(Hex(
-            solana_evm_loader_program::scope::evm::lamports_to_gwei(GAS_PRICE),
+    fn gas_price(&self, _meta: Self::Metadata) -> Result<Gas, Error> {
+        Ok(solana_evm_loader_program::scope::evm::lamports_to_gwei(
+            GAS_PRICE,
         ))
     }
 }
@@ -262,16 +267,16 @@ impl ChainERPC for ChainErpcImpl {
     fn balance(
         &self,
         meta: Self::Metadata,
-        address: Hex<Address>,
+        address: Address,
         block: Option<BlockId>,
-    ) -> BoxFuture<Result<Hex<U256>, Error>> {
+    ) -> BoxFuture<Result<U256, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
 
             let account = state
-                .get_account_state_at(&meta, address.0)?
+                .get_account_state_at(&meta, address)?
                 .unwrap_or_default();
-            Ok(Hex(account.balance))
+            Ok(account.balance)
         })
     }
 
@@ -279,18 +284,18 @@ impl ChainERPC for ChainErpcImpl {
     fn storage_at(
         &self,
         meta: Self::Metadata,
-        address: Hex<Address>,
-        data: Hex<U256>,
+        address: Address,
+        data: U256,
         block: Option<BlockId>,
-    ) -> BoxFuture<Result<Hex<H256>, Error>> {
+    ) -> BoxFuture<Result<H256, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
             let mut bytes = [0u8; 32];
-            data.0.to_big_endian(&mut bytes);
+            data.to_big_endian(&mut bytes);
             let storage = state
-                .get_storage_at(&meta, address.0, H256::from_slice(&bytes))?
+                .get_storage_at(&meta, address, H256::from_slice(&bytes))?
                 .unwrap_or_default();
-            Ok(Hex(storage))
+            Ok(storage)
         })
     }
 
@@ -298,16 +303,16 @@ impl ChainERPC for ChainErpcImpl {
     fn transaction_count(
         &self,
         meta: Self::Metadata,
-        address: Hex<Address>,
+        address: Address,
         block: Option<BlockId>,
-    ) -> BoxFuture<Result<Hex<U256>, Error>> {
+    ) -> BoxFuture<Result<U256, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
 
             let account = state
-                .get_account_state_at(&meta, address.0)?
+                .get_account_state_at(&meta, address)?
                 .unwrap_or_default();
-            Ok(Hex(account.nonce))
+            Ok(account.nonce)
         })
     }
 
@@ -331,10 +336,10 @@ impl ChainERPC for ChainErpcImpl {
     fn block_transaction_count_by_hash(
         &self,
         meta: Self::Metadata,
-        block_hash: Hex<H256>,
+        block_hash: H256,
     ) -> BoxFuture<Result<Hex<usize>, Error>> {
         Box::pin(async move {
-            let (evm_block, _) = match meta.get_evm_block_id_by_hash(block_hash.0).await {
+            let (evm_block, _) = match meta.get_evm_block_id_by_hash(block_hash).await {
                 Some(num) => meta.get_evm_block_by_id(num).await,
                 None => None,
             }
@@ -349,14 +354,14 @@ impl ChainERPC for ChainErpcImpl {
     fn code(
         &self,
         meta: Self::Metadata,
-        address: Hex<Address>,
+        address: Address,
         block: Option<BlockId>,
     ) -> BoxFuture<Result<Bytes, Error>> {
         Box::pin(async move {
             let state = block_to_state_root(block, &meta).await;
 
             let account = state
-                .get_account_state_at(&meta, address.0)?
+                .get_account_state_at(&meta, address)?
                 .unwrap_or_default();
             Ok(Bytes(account.code.into()))
         })
@@ -366,19 +371,19 @@ impl ChainERPC for ChainErpcImpl {
     fn block_by_hash(
         &self,
         meta: Self::Metadata,
-        block_hash: Hex<H256>,
+        block_hash: H256,
         full: bool,
     ) -> BoxFuture<Result<Option<RPCBlock>, Error>> {
-        debug!("Requested hash = {:?}", block_hash.0);
+        debug!("Requested hash = {:?}", block_hash);
         Box::pin(async move {
-            let block = match meta.get_evm_block_id_by_hash(block_hash.0).await {
+            let block = match meta.get_evm_block_id_by_hash(block_hash).await {
                 None => {
                     error!("Not found block for hash:{}", block_hash);
                     return Ok(None);
                 }
                 Some(b) => match meta.get_evm_block_by_id(b).await {
                     // check that found block only in valid fork.
-                    Some(block) if block.0.header.hash() == block_hash.0 => b,
+                    Some((block, _above_our_chain)) if block.header.hash() == block_hash => b,
                     _ => return Ok(None),
                 },
             };
@@ -402,7 +407,7 @@ impl ChainERPC for ChainErpcImpl {
     fn transaction_by_hash(
         &self,
         meta: Self::Metadata,
-        tx_hash: Hex<H256>,
+        tx_hash: H256,
     ) -> BoxFuture<Result<Option<RPCTransaction>, Error>> {
         Box::pin(transaction_by_hash(meta, tx_hash))
     }
@@ -411,13 +416,13 @@ impl ChainERPC for ChainErpcImpl {
     fn transaction_by_block_hash_and_index(
         &self,
         meta: Self::Metadata,
-        block_hash: Hex<H256>,
+        block_hash: H256,
         tx_id: Hex<usize>,
     ) -> BoxFuture<Result<Option<RPCTransaction>, Error>> {
         let bank = meta.bank(None);
         let chain_id = bank.evm_chain_id;
         Box::pin(async move {
-            let (evm_block, _) = match meta.get_evm_block_id_by_hash(block_hash.0).await {
+            let (evm_block, _) = match meta.get_evm_block_id_by_hash(block_hash).await {
                 Some(num) => meta.get_evm_block_by_id(num).await,
                 None => None,
             }
@@ -467,10 +472,10 @@ impl ChainERPC for ChainErpcImpl {
     fn transaction_receipt(
         &self,
         meta: Self::Metadata,
-        tx_hash: Hex<H256>,
+        tx_hash: H256,
     ) -> BoxFuture<Result<Option<RPCReceipt>, Error>> {
         Box::pin(async move {
-            Ok(match meta.get_evm_receipt_by_hash(tx_hash.0).await {
+            Ok(match meta.get_evm_receipt_by_hash(tx_hash).await {
                 Some(receipt) => {
                     let (block, _) =
                         meta.get_evm_block_by_id(receipt.block_number)
@@ -482,7 +487,7 @@ impl ChainERPC for ChainErpcImpl {
                             })?;
                     let block_hash = block.header.hash();
                     Some(RPCReceipt::new_from_receipt(
-                        receipt, tx_hash.0, block_hash, None,
+                        receipt, tx_hash, block_hash, None,
                     )?)
                 }
                 None => None,
@@ -523,7 +528,7 @@ impl ChainERPC for ChainErpcImpl {
         tx: RPCTransaction,
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
-    ) -> BoxFuture<Result<Hex<Gas>, Error>> {
+    ) -> BoxFuture<Result<Gas, Error>> {
         Box::pin(async move {
             let meta_keys = meta_keys
                 .into_iter()
@@ -533,7 +538,7 @@ impl ChainERPC for ChainErpcImpl {
                 .map_err(|e| into_native_error(e, false))?;
             let saved_state = block_to_state_root(block, &meta).await;
             let result = call(meta, tx, saved_state, meta_keys)?;
-            Ok(Hex(result.used_gas.into()))
+            Ok(result.used_gas.into())
         })
     }
 
@@ -570,8 +575,8 @@ impl ChainERPC for ChainErpcImpl {
                 address: log_filter
                     .address
                     .map(|k| match k {
-                        Either::Left(v) => v.into_iter().map(|k| k.0).collect(),
-                        Either::Right(k) => vec![k.0],
+                        Either::Left(v) => v,
+                        Either::Right(k) => vec![k],
                     })
                     .unwrap_or_default(),
                 topics: log_filter
@@ -596,8 +601,8 @@ impl ChainERPC for ChainErpcImpl {
     fn uncle_by_block_hash_and_index(
         &self,
         _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
-        _uncle_id: Hex<U256>,
+        _block_hash: H256,
+        _uncle_id: U256,
     ) -> Result<Option<RPCBlock>, Error> {
         Ok(None)
     }
@@ -606,7 +611,7 @@ impl ChainERPC for ChainErpcImpl {
         &self,
         _meta: Self::Metadata,
         _block: String,
-        _uncle_id: Hex<U256>,
+        _uncle_id: U256,
     ) -> Result<Option<RPCBlock>, Error> {
         Ok(None)
     }
@@ -614,7 +619,7 @@ impl ChainERPC for ChainErpcImpl {
     fn block_uncles_count_by_hash(
         &self,
         _meta: Self::Metadata,
-        _block_hash: Hex<H256>,
+        _block_hash: H256,
     ) -> Result<Hex<usize>, Error> {
         Ok(Hex(0))
     }
@@ -666,7 +671,7 @@ impl TraceERPC for TraceErpcImpl {
     fn trace_replay_transaction(
         &self,
         meta: Self::Metadata,
-        tx_hash: Hex<H256>,
+        tx_hash: H256,
         traces: Vec<String>,
         meta_info: Option<TraceMeta>,
     ) -> BoxFuture<Result<Option<evm_rpc::trace::TraceResultsWithTransactionHash>, Error>> {
@@ -675,7 +680,7 @@ impl TraceERPC for TraceErpcImpl {
             match transaction_by_hash(meta.clone(), tx_hash).await {
                 Ok(Some(tx)) => {
                     let (tx_block, tx_index) = match (tx.block_number, tx.transaction_index) {
-                        (Some(block), Some(index)) => (block.0.as_u64(), index.0),
+                        (Some(block), Some(index)) => (block.as_u64(), index.0),
                         _ => return Ok(None),
                     };
                     let base_block = tx_block.saturating_sub(1).into();
@@ -693,10 +698,10 @@ impl TraceERPC for TraceErpcImpl {
                                     )
                                     .ok()?;
                                     let mut meta_info = meta_info.clone();
-                                    meta_info.transaction_hash = tx.hash.map(|v| v.0);
+                                    meta_info.transaction_hash = tx.hash;
                                     meta_info.transaction_index = tx.transaction_index.map(|v| v.0);
-                                    meta_info.block_number = tx.block_number.map(|v| v.0);
-                                    meta_info.block_hash = tx.block_hash.map(|v| v.0);
+                                    meta_info.block_number = tx.block_number;
+                                    meta_info.block_hash = tx.block_hash;
                                     Some((tx, traces.clone(), Some(meta_info)))
                                 })
                                 .collect()
@@ -736,10 +741,10 @@ impl TraceERPC for TraceErpcImpl {
                 .into_iter()
                 .map(|tx| {
                     let mut meta_info = meta_info.clone();
-                    meta_info.transaction_hash = tx.hash.map(|v| v.0);
+                    meta_info.transaction_hash = tx.hash;
                     meta_info.transaction_index = tx.transaction_index.map(|v| v.0);
-                    meta_info.block_number = tx.block_number.map(|v| v.0);
-                    meta_info.block_hash = tx.block_hash.map(|v| v.0);
+                    meta_info.block_number = tx.block_number;
+                    meta_info.block_hash = tx.block_hash;
                     (tx, traces.clone(), Some(meta_info))
                 })
                 .collect();
@@ -765,7 +770,7 @@ impl TraceERPC for TraceErpcImpl {
         clear_logs_on_error: bool,
         accept_zero_gas_price_with_native_fee: bool,
         burn_gas_price: u64,
-    ) -> BoxFuture<Result<(Block, Vec<Hex<H256>>), Error>> {
+    ) -> BoxFuture<Result<(Block, Vec<H256>), Error>> {
         fn simulate_transaction(
             executor: &mut evm_state::Executor,
             tx: RPCTransaction,
@@ -774,7 +779,7 @@ impl TraceERPC for TraceErpcImpl {
             use solana_evm_loader_program::precompiles::*;
             macro_rules! unwrap_or_default {
                 ($tx:ident . $name: ident) => {
-                    $tx.$name.map(|a| a.0).unwrap_or_else(|| {
+                    $tx.$name.unwrap_or_else(|| {
                         log::warn!("Unable to find {} in tx, using default", stringify!($name));
                         Default::default()
                     })
@@ -783,7 +788,7 @@ impl TraceERPC for TraceErpcImpl {
             let caller = unwrap_or_default!(tx.from);
 
             let value = unwrap_or_default!(tx.value);
-            let input = unwrap_or_default!(tx.input);
+            let input = unwrap_or_default!(tx.input).0;
             let gas_limit = unwrap_or_default!(tx.gas);
             let gas_price = unwrap_or_default!(tx.gas_price);
 
@@ -794,7 +799,6 @@ impl TraceERPC for TraceErpcImpl {
             let evm_state_balance = u64::MAX - 1;
 
             let (user_accounts, action) = if let Some(address) = tx.to {
-                let address = address.0;
                 debug!(
                     "Trying to execute tx = {:?}",
                     (caller, address, value, &input, gas_limit)
@@ -839,7 +843,7 @@ impl TraceERPC for TraceErpcImpl {
 
             // system transfers always set s = 0x1
             let mut is_native_tx = false;
-            if Some(Hex(U256::from(0x1))) == tx.s {
+            if Some(U256::from(0x1)) == tx.s {
                 // check if it native swap, then predeposit, amount, to pass transaction
                 if caller == *ETH_TO_VLX_ADDR {
                     let amount = value + gas_limit * gas_price;
@@ -880,11 +884,9 @@ impl TraceERPC for TraceErpcImpl {
 
             let mut bytes: [u8; 32] = [0; 32];
             tx.r.ok_or(Error::InvalidParams {})?
-                .0
                 .to_big_endian(&mut bytes);
             let r = H256::from_slice(&bytes);
             tx.s.ok_or(Error::InvalidParams {})?
-                .0
                 .to_big_endian(&mut bytes);
             let s = H256::from_slice(&bytes);
             let transaction = Transaction {
@@ -978,7 +980,11 @@ impl TraceERPC for TraceErpcImpl {
                     evm_state.clone(),
                     evm_state::ChainContext::new(last_hashes),
                     evm_config,
-                    evm_state::executor::FeatureSet::new(unsigned_tx_fix, clear_logs_on_error, accept_zero_gas_price_with_native_fee),
+                    evm_state::executor::FeatureSet::new(
+                        unsigned_tx_fix,
+                        clear_logs_on_error,
+                        accept_zero_gas_price_with_native_fee,
+                    ),
                 );
                 debug!("running on executor = {:?}", executor);
                 let meta_keys = meta_keys
@@ -1131,20 +1137,17 @@ fn call_inner(
     bank: &Bank,
 ) -> Result<TxOutput, Error> {
     use solana_evm_loader_program::precompiles::*;
-    let caller = tx.from.map(|a| a.0).unwrap_or_default();
+    let caller = tx.from.unwrap_or_default();
 
-    let value = tx.value.map(|a| a.0).unwrap_or_else(|| 0.into());
+    let value = tx.value.unwrap_or_else(|| 0.into());
     let input = tx.input.map(|a| a.0).unwrap_or_else(Vec::new);
-    let gas_limit = tx.gas.map(|a| a.0).unwrap_or_else(|| u64::MAX.into());
+    let gas_limit = tx.gas.unwrap_or_else(|| u64::MAX.into());
     // On estimate set gas price to zero, to avoid out of funds errors.
     let gas_price = u64::MIN.into();
 
-    let nonce = tx
-        .nonce
-        .map(|a| a.0)
-        .unwrap_or_else(|| executor.nonce(caller));
+    let nonce = tx.nonce.unwrap_or_else(|| executor.nonce(caller));
     let tx_chain_id = executor.chain_id();
-    let tx_hash = tx.hash.map(|a| a.0).unwrap_or_else(H256::random);
+    let tx_hash = tx.hash.unwrap_or_else(H256::random);
 
     let evm_state_balance = bank
         .get_account(&solana_sdk::evm_state::id())
@@ -1152,7 +1155,7 @@ fn call_inner(
         .lamports();
 
     let (user_accounts, action) = if let Some(address) = tx.to {
-        let address = address.0;
+        let address = address;
         debug!(
             "Trying to execute tx = {:?}",
             (caller, address, value, &input, gas_limit)
@@ -1188,7 +1191,7 @@ fn call_inner(
     };
 
     // system transfers always set s = 0x1
-    if Some(Hex(U256::from(0x1))) == tx.s {
+    if Some(U256::from(0x1)) == tx.s {
         // check if it native swap, then predeposit, amount, to pass transaction
         if caller == *ETH_TO_VLX_ADDR {
             let amount = value + gas_limit * gas_price;
@@ -1275,11 +1278,7 @@ async fn block_by_number(
             .collect();
         Either::Right(txs)
     } else {
-        let txs = block
-            .transactions
-            .into_iter()
-            .map(|(k, _v)| Hex(k))
-            .collect();
+        let txs = block.transactions.into_iter().map(|(k, _v)| k).collect();
         Either::Left(txs)
     };
 
@@ -1293,11 +1292,11 @@ async fn block_by_number(
 #[instrument(skip(meta))]
 async fn transaction_by_hash(
     meta: Arc<JsonRpcRequestProcessor>,
-    tx_hash: Hex<H256>,
+    tx_hash: H256,
 ) -> Result<Option<RPCTransaction>, Error> {
     let bank = meta.bank(None);
     let chain_id = bank.evm_chain_id;
-    Ok(match meta.get_evm_receipt_by_hash(tx_hash.0).await {
+    Ok(match meta.get_evm_receipt_by_hash(tx_hash).await {
         Some(receipt) => {
             let (block, _) = meta
                 .get_evm_block_by_id(receipt.block_number)
@@ -1309,7 +1308,7 @@ async fn transaction_by_hash(
                 })?;
             let block_hash = block.header.hash();
             Some(RPCTransaction::new_from_receipt(
-                receipt, tx_hash.0, block_hash, chain_id,
+                receipt, tx_hash, block_hash, chain_id,
             )?)
         }
         None => None,
@@ -1350,10 +1349,10 @@ async fn trace_call_many(
         result.push(evm_rpc::trace::TraceResultsWithTransactionHash {
             trace: output.traces.into_iter().map(From::from).collect(),
             output: output.exit_data.into(),
-            transaction_hash: meta_tx.transaction_hash.map(Hex),
+            transaction_hash: meta_tx.transaction_hash,
             transaction_index: meta_tx.transaction_index.map(Hex),
-            block_hash: meta_tx.block_hash.map(Hex),
-            block_number: meta_tx.block_number.map(Hex),
+            block_hash: meta_tx.block_hash,
+            block_number: meta_tx.block_number,
         })
     }
     Ok(result)

@@ -6,7 +6,7 @@ use {
         extensions::NativeBlockExt,
         ledger,
     },
-    evm_rpc::{Hex, RPCTransaction},
+    evm_rpc::RPCTransaction,
     evm_state::{Block, BlockHeader, TransactionInReceipt, H256},
     serde_json::json,
     solana_client::{rpc_client::RpcClient, rpc_request::RpcRequest},
@@ -297,7 +297,7 @@ async fn request_restored_block(
     last_hashes: Vec<H256>,
     block_header: BlockHeader,
     state_root: H256,
-) -> Result<(Block, Vec<Hex<H256>>), AppError> {
+) -> Result<(Block, Vec<H256>), AppError> {
     let unsigned_tx_fix = true;
     let clear_logs_on_error = true;
     let accept_zero_gas_price_with_native_fee = true;

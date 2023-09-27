@@ -1049,6 +1049,7 @@ impl LedgerStorage {
         block_hash: evm_state::H256,
     ) -> Result<evm_state::BlockNum> {
         let mut bigtable = self.connection.client();
+        // NOTE: rpc-serde, remove Hex
         let block = bigtable
             .get_bincode_cell::<u64>("evm-blocks-by-hash", evm_rpc::Hex(block_hash).to_string())
             .await?;
@@ -1168,6 +1169,7 @@ impl LedgerStorage {
     ) -> Result<Option<evm_state::TransactionReceipt>> {
         let mut bigtable = self.connection.client();
 
+        // NOTE: rpc-serde, remove Hex
         // Figure out which block the transaction is located in
         let tx_cell = bigtable
             .get_protobuf_or_bincode_cell::<evm_state::TransactionReceipt, generated_evm::TransactionReceipt>(
@@ -1186,6 +1188,7 @@ impl LedgerStorage {
             return Ok(None);
         };
 
+        // NOTE: rpc-serde, remove Hex
         Ok(Some(match tx_cell {
             bigtable::CellData::Bincode(tx) => tx,
             bigtable::CellData::Protobuf(tx) => tx.try_into().map_err(|_err| {
@@ -1204,6 +1207,7 @@ impl LedgerStorage {
 
         let mut tx_cells = vec![];
         for (hash, tx) in full_block.transactions.iter() {
+            // NOTE: rpc-serde, remove Hex
             tx_cells.push((evm_rpc::Hex(*hash).to_string(), tx.clone().into()));
         }
 
@@ -1217,6 +1221,7 @@ impl LedgerStorage {
         }
 
         let num_transactions = full_block.transactions.len();
+        // NOTE: rpc-serde, remove Hex
         let block_by_hash_cells = [(
             evm_rpc::Hex(full_block.header.hash()).to_string(),
             full_block.header.block_number,
