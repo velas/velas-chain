@@ -191,10 +191,15 @@ impl GeneralERPC for GeneralErpcImpl {
     type Metadata = Arc<JsonRpcRequestProcessor>;
 
     fn client_version(&self, _meta: Self::Metadata) -> Result<String, Error> {
-        Ok(String::from("velas-chain/v0.5.0"))
+        // same as `version` at /version/Cargo.toml
+        Ok(format!(
+            "velas-chain/v{}",
+            solana_version::semver!().to_string()
+        ))
     }
 
     fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> Result<H256, Error> {
+        // TODO: try `Ok(H256(Keccak256::digest(&bytes.0).try_into().unwrap()))`
         Ok(H256::from_slice(
             Keccak256::digest(bytes.0.as_slice()).as_slice(),
         ))

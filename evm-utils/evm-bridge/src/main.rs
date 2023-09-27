@@ -606,6 +606,7 @@ impl GeneralERPC for GeneralErpcProxy {
 
     #[instrument]
     fn sha3(&self, _meta: Self::Metadata, bytes: Bytes) -> EvmResult<H256> {
+        // TODO: try `Ok(H256(Keccak256::digest(&bytes.0).try_into().unwrap()))`
         Ok(H256::from_slice(
             Keccak256::digest(bytes.0.as_slice()).as_slice(),
         ))
