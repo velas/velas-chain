@@ -216,22 +216,16 @@ impl AsyncRpcClient {
     }
 
     pub async fn get_evm_transaction_count(&self, address: &Address) -> ClientResult<U256> {
-        self.send(
-            RpcRequest::EthGetTransactionCount,
-            json!([evm_rpc::Hex(*address)]),
-        )
-        .await
+        self.send(RpcRequest::EthGetTransactionCount, json!([*address]))
+            .await
     }
 
     pub async fn get_evm_transaction_receipt(
         &self,
         hash: &H256,
     ) -> ClientResult<Option<RPCReceipt>> {
-        self.send::<Option<RPCReceipt>>(
-            RpcRequest::EthGetTransactionReceipt,
-            json!([evm_rpc::Hex(*hash)]),
-        )
-        .await
+        self.send::<Option<RPCReceipt>>(RpcRequest::EthGetTransactionReceipt, json!([*hash]))
+            .await
     }
 
     pub async fn get_version(&self) -> ClientResult<RpcVersionInfo> {

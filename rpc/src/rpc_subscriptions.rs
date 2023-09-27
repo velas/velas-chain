@@ -774,12 +774,7 @@ impl RpcSubscriptions {
     }
 
     pub fn notify_evm_block(&self, new_head: evm_state::Block) {
-        let transactions = new_head
-            .transactions
-            .iter()
-            .map(|(k, _)| *k)
-            // .map(evm_rpc::Hex)
-            .collect();
+        let transactions = new_head.transactions.iter().map(|(k, _)| *k).collect();
         let block_number = new_head.header.block_number;
         let block_hash = new_head.header.hash();
         let mut logs = Vec::new();
