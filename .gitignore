@@ -35,5 +35,5 @@ justfile
 **/cargo-*-bpf-child-script-*.sh
 
 
-/dos/farf/
+/*/farf/
 repair-check/
