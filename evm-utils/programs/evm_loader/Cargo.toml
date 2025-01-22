@@ -32,6 +32,7 @@ num = "0.2"
 substrate-bn = { git = "https://github.com/paritytech/bn.git", rev = "63f8c58", default-features = false }
 byteorder = "1.4.3"
 eip-152 = "0.1.0"
+lazy_static = "1.5.0"
 
 [lib]
 crate-type = ["lib", "cdylib"]

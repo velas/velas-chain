@@ -7061,6 +7061,7 @@ dependencies = [
  "evm-state",
  "hex",
  "hex-literal 0.3.4",
+ "lazy_static",
  "log 0.4.19",
  "num",
  "num-derive",

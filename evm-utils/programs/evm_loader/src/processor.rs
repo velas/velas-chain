@@ -29,7 +29,7 @@ use {
         program_utils::limited_deserialize,
         system_instruction,
     },
-    std::{cell::RefMut, fmt::Write, ops::DerefMut, sync::OnceLock},
+    std::{cell::RefMut, fmt::Write, ops::DerefMut},
 };
 
 pub const BURN_ADDR: evm_state::H160 = evm_state::H160::zero();
@@ -1295,32 +1295,33 @@ impl EvmProcessor {
         const MINT_BURN_CONTRACT: H160 = H160::zero();
 
         fn transfer_event() -> &'static H256 {
-            static TRANSFER_EVENT: OnceLock<H256> = OnceLock::new();
-
-            TRANSFER_EVENT.get_or_init(|| {
-                ethabi::Event {
-                    name: "Transfer".into(),
-                    inputs: vec![
-                        ethabi::EventParam {
-                            name: "from".into(),
-                            kind: ethabi::ParamType::Address,
-                            indexed: true,
-                        },
-                        ethabi::EventParam {
-                            name: "to".into(),
-                            kind: ethabi::ParamType::Address,
-                            indexed: true,
-                        },
-                        ethabi::EventParam {
-                            name: "value".into(),
-                            kind: ethabi::ParamType::Uint(256),
-                            indexed: false,
-                        },
-                    ],
-                    anonymous: false,
-                }
-                .signature()
-            })
+            lazy_static::lazy_static! {
+                static ref TRANSFER_EVENT: H256 = {
+                    ethabi::Event {
+                        name: "Transfer".into(),
+                        inputs: vec![
+                            ethabi::EventParam {
+                                name: "from".into(),
+                                kind: ethabi::ParamType::Address,
+                                indexed: true,
+                            },
+                            ethabi::EventParam {
+                                name: "to".into(),
+                                kind: ethabi::ParamType::Address,
+                                indexed: true,
+                            },
+                            ethabi::EventParam {
+                                name: "value".into(),
+                                kind: ethabi::ParamType::Uint(256),
+                                indexed: false,
+                            },
+                        ],
+                        anonymous: false,
+                    }
+                    .signature()
+                };
+            }
+            &TRANSFER_EVENT
         }
 
         for log in receipt.logs.iter() {
@@ -1411,8 +1412,6 @@ pub fn dummy_call_with_chain_id(
 
 #[cfg(test)]
 mod test {
-    use evm_state::BURN_GAS_PRICE_IN_SUBCHAIN;
-
     use {
         super::*,
         crate::instructions::AllocAccount,
@@ -1420,6 +1419,7 @@ mod test {
         evm_state::{
             transactions::{TransactionAction, TransactionSignature},
             AccountProvider, AccountState, ExitReason, ExitSucceed, FromKey, BURN_GAS_PRICE,
+            BURN_GAS_PRICE_IN_SUBCHAIN,
         },
         hex_literal::hex,
         num_traits::Zero,
