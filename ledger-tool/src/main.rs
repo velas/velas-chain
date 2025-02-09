@@ -90,9 +90,10 @@ mod bigtable;
 mod ledger_path;
 
 mod evm_blockstore;
-use evm_blockstore::*;
-use solana_ledger::blockstore::EvmStateJson;
-use solana_runtime::snapshot_utils::EVM_STATE_DIR;
+use {
+    evm_blockstore::*, solana_ledger::blockstore::EvmStateJson,
+    solana_runtime::snapshot_utils::EVM_STATE_DIR,
+};
 
 mod evm_state;
 use crate::evm_state::*;
@@ -837,6 +838,7 @@ fn load_bank_forks(
     };
 
     let (accounts_package_sender, _) = unbounded();
+    let (evm_recorder_sender, _) = unbounded();
     let evm_genesis_path = blockstore
         .ledger_path()
         .join(solana_sdk::genesis_config::EVM_GENESIS);
@@ -851,8 +853,7 @@ fn load_bank_forks(
         snapshot_config.as_ref(),
         process_options,
         None,
-        None,
-        None,
+        evm_recorder_sender,
         None,
         verify_evm_state,
         None,

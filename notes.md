@@ -22,3 +22,5 @@
 2.  geth --follow
 3.  new eip tx format
 4.  new evm version
+
+fix cleanup old blocks for subchain (search todo!())

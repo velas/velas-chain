@@ -1,4 +1,5 @@
 use {
+    crossbeam_channel::unbounded,
     jsonrpc_core::{MetaIoHandler, Metadata, Result},
     jsonrpc_core_client::{transports::ipc, RpcError},
     jsonrpc_derive::rpc,
@@ -10,6 +11,7 @@ use {
         consensus::Tower, tower_storage::TowerStorage, validator::ValidatorStartProgress,
     },
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+    solana_ledger::evm::recoreder::{EvmArchiveManagerRequest, EvmArchiveManagerSender},
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{
         exit::Exit,
@@ -42,7 +44,7 @@ pub struct AdminRpcRequestMetadata {
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub tower_storage: Arc<dyn TowerStorage>,
     pub post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
-    pub archive_evm_state: Option<evm_state::Storage>,
+    pub evm_archive_recorder_sender: EvmArchiveManagerSender,
 }
 impl Metadata for AdminRpcRequestMetadata {}
 
@@ -314,9 +316,19 @@ impl AdminRpc for AdminRpcImpl {
         backup: bool,
     ) -> Result<()> {
         info!("Merging evm state: {}, backup: {}", path, backup);
-        let archive_evm_state = if let Some(archive_evm_state) = &meta.archive_evm_state {
-            archive_evm_state
-        } else {
+        let (tx, rx) = unbounded();
+        let evm_archive_state = 'try_send: {
+            if meta
+                .evm_archive_recorder_sender
+                .send(EvmArchiveManagerRequest::SystemRequestArchiveStorage(tx))
+                .is_err()
+            {
+                break 'try_send None;
+            }
+            rx.recv().ok()
+        };
+
+        let Some(archive_evm_state) = evm_archive_state else {
             error!("Archive storage not found, but merge evm state request received.");
             return Err(jsonrpc_core::Error::invalid_params(
                 "Archive storage not found",

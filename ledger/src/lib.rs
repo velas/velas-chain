@@ -16,6 +16,7 @@ pub mod blockstore_meta;
 pub mod blockstore_processor;
 pub mod builtins;
 pub mod erasure;
+pub mod evm;
 pub mod genesis_utils;
 pub mod leader_schedule;
 pub mod leader_schedule_cache;

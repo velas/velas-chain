@@ -1,7 +1,3 @@
-use solana_client::rpc_config::RpcSendTransactionConfig;
-use solana_evm_loader_program::{free_ownership, transfer_native_to_evm_ixs};
-use solana_sdk::{commitment_config::CommitmentLevel, fee_calculator::FeeRateGovernor};
-
 use {
     bincode::serialize,
     crossbeam_channel::unbounded,
@@ -18,15 +14,18 @@ use {
         connection_cache::{ConnectionCache, DEFAULT_TPU_CONNECTION_POOL_SIZE},
         nonblocking::pubsub_client::PubsubClient,
         rpc_client::RpcClient,
-        rpc_config::{RpcAccountInfoConfig, RpcSignatureSubscribeConfig},
+        rpc_config::{RpcAccountInfoConfig, RpcSendTransactionConfig, RpcSignatureSubscribeConfig},
         rpc_request::RpcError,
         rpc_response::{Response as RpcResponse, RpcSignatureResult, SlotUpdate},
         tpu_client::{TpuClient, TpuClientConfig},
     },
-    solana_evm_loader_program::{instructions::FeePayerType, send_raw_tx},
+    solana_evm_loader_program::{
+        free_ownership, instructions::FeePayerType, send_raw_tx, transfer_native_to_evm_ixs,
+    },
     solana_rpc::rpc::JsonRpcConfig,
     solana_sdk::{
-        commitment_config::CommitmentConfig,
+        commitment_config::{CommitmentConfig, CommitmentLevel},
+        fee_calculator::FeeRateGovernor,
         hash::Hash,
         pubkey::Pubkey,
         rent::Rent,
@@ -120,7 +119,7 @@ fn test_batch_request() {
             max_batch_duration: Some(Duration::from_secs(0)),
             ..JsonRpcConfig::default_for_test()
         })
-        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified)
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified, unbounded())
         .expect("validator start failed");
     let rpc_url = test_validator.rpc_url();
 
@@ -239,7 +238,7 @@ fn test_rpc_send_transaction_with_native_fee_and_zero_gas_price() {
             enable_rpc_transaction_history: true,
             ..JsonRpcConfig::default_for_test()
         })
-        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified)
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified, unbounded())
         .expect("validator start failed");
     let rpc_url = test_validator.rpc_url();
 
@@ -335,7 +334,7 @@ fn test_rpc_replay_transaction() {
             enable_rpc_transaction_history: true,
             ..JsonRpcConfig::default_for_test()
         })
-        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified)
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified, unbounded())
         .expect("validator start failed");
     let rpc_url = test_validator.rpc_url();
 
@@ -403,7 +402,7 @@ fn test_rpc_block_transaction() {
             enable_rpc_transaction_history: true,
             ..JsonRpcConfig::default_for_test()
         })
-        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified)
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified, unbounded())
         .expect("validator start failed");
     let rpc_url = test_validator.rpc_url();
 
@@ -521,7 +520,7 @@ fn test_rpc_replay_transaction_timestamp() {
             enable_rpc_transaction_history: true,
             ..JsonRpcConfig::default_for_test()
         })
-        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified)
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified, unbounded())
         .expect("validator start failed");
     let rpc_url = test_validator.rpc_url();
 
@@ -621,7 +620,7 @@ fn test_rpc_replay_transaction_gas_used() {
             enable_rpc_transaction_history: true,
             ..JsonRpcConfig::default_for_test()
         })
-        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified)
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified, unbounded())
         .expect("validator start failed");
     let rpc_url = test_validator.rpc_url();
 
@@ -832,7 +831,7 @@ fn test_rpc_get_logs() {
             enable_rpc_transaction_history: true,
             ..JsonRpcConfig::default_for_test()
         })
-        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified)
+        .start_with_mint_address(alice.pubkey(), SocketAddrSpace::Unspecified, unbounded())
         .expect("validator start failed");
     let rpc_url = test_validator.rpc_url();
 

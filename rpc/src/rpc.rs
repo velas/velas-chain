@@ -8,7 +8,8 @@ use {
     bincode::{config::Options, serialize},
     crossbeam_channel::{unbounded, Receiver, Sender},
     dashmap::DashMap,
-    evm_rpc::ChainID,
+    evm_rpc::{ChainID, EvmChain},
+    evm_state::H256,
     jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Result},
     jsonrpc_derive::rpc,
     serde::{Deserialize, Serialize},
@@ -38,6 +39,7 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, SignatureInfosForAddress},
         blockstore_db::BlockstoreError,
+        evm::EvmArchive,
         get_tmp_ledger_path,
         leader_schedule_cache::LeaderScheduleCache,
     },
@@ -258,7 +260,7 @@ pub struct JsonRpcRequestProcessor {
     max_slots: Arc<MaxSlots>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
-    evm_state_archive: Option<evm_state::Storage>,
+    evm_archive: Option<EvmArchive>,
     pub batch_state_map: BatchStateMap,
 }
 
@@ -370,7 +372,7 @@ impl JsonRpcRequestProcessor {
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        evm_state_archive: Option<evm_state::Storage>,
+        evm_archive: Option<EvmArchive>,
     ) -> (Self, Receiver<TransactionInfo>) {
         let (sender, receiver) = unbounded();
         (
@@ -391,7 +393,7 @@ impl JsonRpcRequestProcessor {
                 max_slots,
                 leader_schedule_cache,
                 max_complete_transaction_status_slot,
-                evm_state_archive,
+                evm_archive,
                 batch_state_map: Default::default(),
             },
             receiver,
@@ -451,7 +453,7 @@ impl JsonRpcRequestProcessor {
             max_slots: Arc::new(MaxSlots::default()),
             leader_schedule_cache: Arc::new(LeaderScheduleCache::new_from_bank(bank)),
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
-            evm_state_archive: None,
+            evm_archive: None,
             batch_state_map: Default::default(),
         }
     }
@@ -475,26 +477,15 @@ impl JsonRpcRequestProcessor {
         self.health.check()
     }
 
-    pub fn evm_state_archive_storage(&self) -> &Option<evm_state::Storage> {
-        &self.evm_state_archive
-    }
-
     pub fn evm_state_archive(
         &self,
+        chain: EvmChain,
         timestamp: Option<u64>,
     ) -> Option<evm_state::EvmBackend<evm_state::Incomming>> {
-        // TODO(L): block_hashes history
-        let archive = self.evm_state_archive.clone()?;
-        let bank = self.bank(Some(CommitmentConfig::processed()));
-        let state_ref = bank.evm().main_chain().state();
-        let timestamp = timestamp.unwrap_or(bank.clock().unix_timestamp as u64);
-        match state_ref.new_from_parent(timestamp, true) {
-            evm_state::EvmState::Incomming(mut i) => {
-                i.kvs = archive;
-                Some(i)
-            }
-            _ => unreachable!(),
-        }
+        let mocked_bank = self.bank(None);
+        self.evm_archive
+            .as_ref()?
+            .get_state(chain, H256::zero(), &mocked_bank, timestamp)
     }
 
     pub fn get_account_info(
@@ -5217,6 +5208,7 @@ pub mod tests {
         solana_ledger::{
             blockstore_meta::PerfSample,
             blockstore_processor::fill_blockstore_slot_with_ticks,
+            evm::EvmArchiveInner,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
         solana_runtime::{
@@ -5342,6 +5334,7 @@ pub mod tests {
             // note that this means that slot 0 will always be considered complete
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(0));
 
+            let evm_archive = Arc::new(EvmArchiveInner::testing(ledger_path, blockstore.clone()));
             let meta = JsonRpcRequestProcessor::new(
                 JsonRpcConfig {
                     enable_rpc_transaction_history: true,
@@ -5361,7 +5354,7 @@ pub mod tests {
                 max_slots.clone(),
                 Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
                 max_complete_transaction_status_slot.clone(),
-                None,
+                Some(evm_archive),
             )
             .0;
 
@@ -6940,6 +6933,8 @@ pub mod tests {
             SocketAddrSpace::Unspecified,
         ));
         let tpu_address = cluster_info.my_contact_info().tpu;
+        let evm_archive = Arc::new(EvmArchiveInner::testing(ledger_path, blockstore.clone()));
+
         let (meta, receiver) = JsonRpcRequestProcessor::new(
             JsonRpcConfig::default(),
             None,
@@ -6956,7 +6951,7 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
-            None,
+            Some(evm_archive),
         );
         let meta = Arc::new(meta);
         let connection_cache = Arc::new(ConnectionCache::default());
@@ -7210,6 +7205,8 @@ pub mod tests {
             SocketAddrSpace::Unspecified,
         ));
         let tpu_address = cluster_info.my_contact_info().tpu;
+        let evm_archive = Arc::new(EvmArchiveInner::testing(ledger_path, blockstore.clone()));
+
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             JsonRpcConfig::default(),
             None,
@@ -7226,7 +7223,7 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
-            None,
+            Some(evm_archive),
         );
         let connection_cache = Arc::new(ConnectionCache::default());
         SendTransactionService::new::<NullTpuInfo>(
@@ -8925,6 +8922,7 @@ pub mod tests {
             block_commitment_cache.clone(),
             optimistically_confirmed_bank.clone(),
         ));
+        let evm_archive = Arc::new(EvmArchiveInner::testing(ledger_path, blockstore.clone()));
 
         let (meta, _receiver) = JsonRpcRequestProcessor::new(
             JsonRpcConfig::default(),
@@ -8942,7 +8940,7 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
-            None,
+            Some(evm_archive),
         );
         let meta = Arc::new(meta);
 

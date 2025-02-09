@@ -8,9 +8,6 @@ use {
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
         consensus::{reconcile_blockstore_roots_with_tower, Tower},
-        evm_services::{
-            EvmRecorderSender, EvmRecorderService, EvmStateRecorderSender, EvmStateRecorderService,
-        },
         rewards_recorder_service::{RewardsRecorderSender, RewardsRecorderService},
         sample_performance_service::SamplePerformanceService,
         serve_repair::ServeRepair,
@@ -44,6 +41,12 @@ use {
         },
         blockstore_db::{BlockstoreOptions, BlockstoreRecoveryMode, LedgerColumnOptions},
         blockstore_processor::{self, TransactionStatusSender},
+        evm::{
+            recoreder::{
+                EvmArchiveManagerReceiver, EvmArchiveManagerSender, EvmArchiveManagerService,
+            },
+            EvmArchive, EvmArchiveInner, EvmArchiveType,
+        },
         leader_schedule::FixedSchedule,
         leader_schedule_cache::LeaderScheduleCache,
     },
@@ -329,10 +332,8 @@ struct TransactionHistoryServices {
     rewards_recorder_service: Option<RewardsRecorderService>,
     cache_block_meta_sender: Option<CacheBlockMetaSender>,
     cache_block_meta_service: Option<CacheBlockMetaService>,
-    evm_block_recorder_sender: Option<EvmRecorderSender>,
-    evm_block_recorder_service: Option<EvmRecorderService>,
-    evm_state_recorder_sender: Option<EvmStateRecorderSender>,
-    evm_state_recorder_service: Option<EvmStateRecorderService>,
+
+    evm_archive_manager_service: Option<EvmArchiveManagerService>,
 }
 
 pub struct Validator {
@@ -346,8 +347,7 @@ pub struct Validator {
     cache_block_meta_service: Option<CacheBlockMetaService>,
     system_monitor_service: Option<SystemMonitorService>,
     sample_performance_service: Option<SamplePerformanceService>,
-    evm_block_recorder_service: Option<EvmRecorderService>,
-    evm_state_recorder_service: Option<EvmStateRecorderService>,
+    evm_archive_manager: Option<EvmArchiveManagerService>,
     stats_reporter_service: StatsReporterService,
     gossip_service: GossipService,
     serve_repair_service: ServeRepairService,
@@ -393,7 +393,9 @@ impl Validator {
         config: &ValidatorConfig,
         should_check_duplicate_instance: bool,
         start_progress: Arc<RwLock<ValidatorStartProgress>>,
-        evm_state_archive: Option<evm_state::Storage>,
+        evm_state_archive_params: EvmArchiveType,
+        evm_recorder_sender: EvmArchiveManagerSender,
+        evm_recorder_receiver: EvmArchiveManagerReceiver,
         socket_addr_space: SocketAddrSpace,
         use_quic: bool,
         tpu_connection_pool_size: usize,
@@ -530,21 +532,20 @@ impl Validator {
                 rewards_recorder_service,
                 cache_block_meta_sender,
                 cache_block_meta_service,
-                evm_block_recorder_sender,
-                evm_block_recorder_service,
-                evm_state_recorder_sender,
-                evm_state_recorder_service,
+                evm_archive_manager_service,
             },
             blockstore_process_options,
             blockstore_root_scan,
             pruned_banks_receiver,
+            evm_archive,
         ) = load_blockstore(
             config,
             ledger_path,
             evm_state_path,
             &exit,
             &start_progress,
-            evm_state_archive.clone(),
+            evm_state_archive_params,
+            evm_recorder_receiver,
             accounts_update_notifier,
             transaction_notifier,
         );
@@ -555,8 +556,7 @@ impl Validator {
             &leader_schedule_cache,
             &blockstore_process_options,
             transaction_status_sender.as_ref(),
-            evm_block_recorder_sender.as_ref(),
-            evm_state_recorder_sender.as_ref(),
+            evm_recorder_sender.clone(),
             cache_block_meta_sender.as_ref(),
             config.snapshot_config.as_ref(),
             accounts_package_channel.0.clone(),
@@ -765,7 +765,7 @@ impl Validator {
                     leader_schedule_cache.clone(),
                     connection_cache.clone(),
                     max_complete_transaction_status_slot,
-                    evm_state_archive.clone(),
+                    Some(evm_archive.clone()),
                     config.jaeger_collector_url.clone(),
                 )),
                 if !config.rpc_config.full_api {
@@ -802,9 +802,9 @@ impl Validator {
         let evm_state_rpc_service = match (
             config.evm_state_rpc_addr.as_ref(),
             config.evm_state_rpc_config.as_ref(),
-            evm_state_archive,
+            evm_archive.is_gc(),
         ) {
-            (Some(addr), Some(config), Some(archive)) => {
+            (Some(addr), Some(config), true) => {
                 let runtime = tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(30)
                     .thread_name("velas-evm-state-rpc-worker")
@@ -814,7 +814,7 @@ impl Validator {
                     Ok(runtime) => {
                         let used_storage =
                             solana_replica_lib::triedb::server::UsedStorage::WritableWithGC(
-                                archive,
+                                evm_archive.get_storage(),
                             );
 
                         match solana_replica_lib::triedb::server::RunningService::start(
@@ -1004,8 +1004,7 @@ impl Validator {
             transaction_status_sender.clone(),
             rewards_recorder_sender,
             cache_block_meta_sender,
-            evm_block_recorder_sender,
-            evm_state_recorder_sender,
+            evm_recorder_sender,
             snapshot_config_and_pending_package,
             vote_tracker.clone(),
             retransmit_slots_sender,
@@ -1098,8 +1097,7 @@ impl Validator {
             sample_performance_service,
             snapshot_packager_service,
             completed_data_sets_service,
-            evm_block_recorder_service,
-            evm_state_recorder_service,
+            evm_archive_manager: evm_archive_manager_service,
             tpu,
             tvu,
             poh_recorder,
@@ -1210,16 +1208,10 @@ impl Validator {
                 .expect("sample_performance_service");
         }
 
-        if let Some(evm_block_recorder_service) = self.evm_block_recorder_service {
-            evm_block_recorder_service
+        if let Some(evm_archive_manager) = self.evm_archive_manager {
+            evm_archive_manager
                 .join()
-                .expect("evm_block_recorder_service");
-        }
-
-        if let Some(evm_state_recorder_service) = self.evm_state_recorder_service {
-            evm_state_recorder_service
-                .join()
-                .expect("evm_state_recorder_service");
+                .expect("evm_archive_manager_service");
         }
 
         if let Some(s) = self.snapshot_packager_service {
@@ -1392,7 +1384,8 @@ fn load_blockstore(
     evm_state_path: &Path,
     exit: &Arc<AtomicBool>,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
-    evm_archive: Option<evm_state::Storage>,
+    evm_state_archive_params: EvmArchiveType,
+    evm_recorder_receiver: EvmArchiveManagerReceiver,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierLock>,
 ) -> (
@@ -1407,6 +1400,7 @@ fn load_blockstore(
     blockstore_processor::ProcessOptions,
     BlockstoreRootScan,
     DroppedSlotsReceiver,
+    EvmArchive,
 ) {
     info!("loading ledger from {:?}...", ledger_path);
     *start_progress.write().unwrap() = ValidatorStartProgress::LoadingLedger;
@@ -1472,19 +1466,30 @@ fn load_blockstore(
     let enable_rpc_transaction_history =
         config.rpc_addrs.is_some() && config.rpc_config.enable_rpc_transaction_history;
     let is_plugin_transaction_history_required = transaction_notifier.as_ref().is_some();
-    let transaction_history_services =
+    let mut transaction_history_services =
         if enable_rpc_transaction_history || is_plugin_transaction_history_required {
             initialize_rpc_transaction_history_services(
                 blockstore.clone(),
                 exit,
                 enable_rpc_transaction_history,
                 config.rpc_config.enable_cpi_and_log_storage,
-                evm_archive.clone(),
                 transaction_notifier,
             )
         } else {
             TransactionHistoryServices::default()
         };
+
+    let evm_archive = Arc::new(EvmArchiveInner::new(
+        evm_state_archive_params,
+        ledger_path,
+        blockstore.clone(),
+    ));
+
+    // init evm archive manager service independently from other transaction history services
+    let evm_recorder_service =
+        EvmArchiveManagerService::new(evm_recorder_receiver, evm_archive.clone(), &exit);
+
+    transaction_history_services.evm_archive_manager_service = Some(evm_recorder_service);
 
     let evm_genesis_path = ledger_path.join(solana_sdk::genesis_config::EVM_GENESIS);
 
@@ -1506,7 +1511,9 @@ fn load_blockstore(
             .cache_block_meta_sender
             .as_ref(),
         config.verify_evm_state,
-        evm_archive,
+        // FIXME: we use storage from evm_archive to copy initial state, but it's better to have api
+        // to do the same without providing underlying storage.
+        Some(evm_archive.get_storage()),
         accounts_update_notifier,
     );
 
@@ -1531,6 +1538,7 @@ fn load_blockstore(
         process_options,
         blockstore_root_scan,
         pruned_banks_receiver,
+        evm_archive,
     )
 }
 
@@ -1541,8 +1549,7 @@ fn process_blockstore(
     leader_schedule_cache: &LeaderScheduleCache,
     process_options: &blockstore_processor::ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    evm_block_recorder_sender: Option<&EvmRecorderSender>,
-    evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
+    evm_recorder_sender: EvmArchiveManagerSender,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     snapshot_config: Option<&SnapshotConfig>,
     accounts_package_sender: AccountsPackageSender,
@@ -1555,8 +1562,7 @@ fn process_blockstore(
         leader_schedule_cache,
         process_options,
         transaction_status_sender,
-        evm_block_recorder_sender,
-        evm_state_recorder_sender,
+        evm_recorder_sender,
         cache_block_meta_sender,
         snapshot_config,
         accounts_package_sender,
@@ -1720,7 +1726,6 @@ fn initialize_rpc_transaction_history_services(
     exit: &Arc<AtomicBool>,
     enable_rpc_transaction_history: bool,
     enable_cpi_and_log_storage: bool,
-    archive_evm_state: Option<evm_state::Storage>,
     transaction_notifier: Option<TransactionNotifierLock>,
 ) -> TransactionHistoryServices {
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
@@ -1754,30 +1759,6 @@ fn initialize_rpc_transaction_history_services(
         exit,
     ));
 
-    let (evm_block_recorder_sender, evm_block_recorder_receiver) = unbounded();
-    let evm_block_recorder_sender = Some(evm_block_recorder_sender);
-    let evm_block_recorder_service = Some(EvmRecorderService::new(
-        evm_block_recorder_receiver,
-        blockstore,
-        exit,
-    ));
-
-    let (evm_state_recorder_service, evm_state_recorder_sender) =
-        if let Some(archive) = archive_evm_state {
-            let (evm_state_recorder_sender, evm_state_recorder_receiver) = unbounded();
-            let evm_state_recorder_sender = Some(evm_state_recorder_sender);
-            (
-                Some(EvmStateRecorderService::new(
-                    evm_state_recorder_receiver,
-                    archive,
-                    exit,
-                )),
-                evm_state_recorder_sender,
-            )
-        } else {
-            (None, None)
-        };
-
     TransactionHistoryServices {
         transaction_status_sender,
         transaction_status_service,
@@ -1786,13 +1767,10 @@ fn initialize_rpc_transaction_history_services(
         rewards_recorder_service,
         cache_block_meta_sender,
         cache_block_meta_service,
-        evm_block_recorder_sender,
-        evm_block_recorder_service,
-        evm_state_recorder_sender,
-        evm_state_recorder_service,
+        // it is initialized independently from other transaction history services
+        evm_archive_manager_service: None,
     }
 }
-
 #[derive(Debug, PartialEq)]
 enum ValidatorError {
     BadExpectedBankHash,
@@ -2033,6 +2011,7 @@ mod tests {
             ..ValidatorConfig::default_for_test()
         };
         let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
+        let (evm_tx, evm_rx) = unbounded();
         let validator = Validator::new(
             validator_node,
             Arc::new(validator_keypair),
@@ -2044,7 +2023,9 @@ mod tests {
             &config,
             true, // should_check_duplicate_instance
             start_progress.clone(),
-            None,
+            EvmArchiveType::default_gc(),
+            evm_tx,
+            evm_rx,
             SocketAddrSpace::Unspecified,
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
@@ -2132,6 +2113,8 @@ mod tests {
                     rpc_addrs: Some((validator_node.info.rpc, validator_node.info.rpc_pubsub)),
                     ..ValidatorConfig::default_for_test()
                 };
+                let (evm_tx, evm_rx) = unbounded();
+
                 Validator::new(
                     validator_node,
                     Arc::new(validator_keypair),
@@ -2143,7 +2126,9 @@ mod tests {
                     &config,
                     true, // should_check_duplicate_instance
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
-                    None,
+                    EvmArchiveType::default_gc(),
+                    evm_tx,
+                    evm_rx,
                     SocketAddrSpace::Unspecified,
                     DEFAULT_TPU_USE_QUIC,
                     DEFAULT_TPU_CONNECTION_POOL_SIZE,

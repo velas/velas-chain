@@ -29,6 +29,7 @@ solana-sdk = { path = "../sdk", version = "=1.10.41" }
 solana-streamer = { path = "../streamer", version = "=1.10.41" }
 tokio = { version = "1", features = ["full"] }
 evm-state = { path = "../evm-utils/evm-state" }
+crossbeam-channel = "0.5"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

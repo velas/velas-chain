@@ -29,10 +29,6 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::*,
-    velas_validator::{
-        admin_rpc_service, dashboard::Dashboard, ledger_lockfile, lock_ledger, println_name_value,
-        redirect_stderr_to_file,
-    },
     std::{
         collections::HashSet,
         fs, io,
@@ -41,6 +37,10 @@ use {
         process::exit,
         sync::{Arc, RwLock},
         time::{Duration, SystemTime, UNIX_EPOCH},
+    },
+    velas_validator::{
+        admin_rpc_service, dashboard::Dashboard, ledger_lockfile, lock_ledger, println_name_value,
+        redirect_stderr_to_file,
     },
 };
 
@@ -644,6 +644,7 @@ fn main() {
     let tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
 
     let admin_service_post_init = Arc::new(RwLock::new(None));
+    let (evm_archive_sender, evm_archive_receiver) = unbounded();
     admin_rpc_service::run(
         &ledger_path,
         admin_rpc_service::AdminRpcRequestMetadata {
@@ -657,7 +658,7 @@ fn main() {
             authorized_voter_keypairs: genesis.authorized_voter_keypairs.clone(),
             post_init: admin_service_post_init.clone(),
             tower_storage: tower_storage.clone(),
-            archive_evm_state: None,
+            evm_archive_recorder_sender: evm_archive_sender.clone(),
         },
     );
     let dashboard = if output == Output::Dashboard {
@@ -775,7 +776,11 @@ fn main() {
         );
     }
 
-    match genesis.start_with_mint_address(mint_address, socket_addr_space) {
+    match genesis.start_with_mint_address(
+        mint_address,
+        socket_addr_space,
+        (evm_archive_sender, evm_archive_receiver),
+    ) {
         Ok(test_validator) => {
             *admin_service_post_init.write().unwrap() =
                 Some(admin_rpc_service::AdminRpcRequestMetadataPostInit {
