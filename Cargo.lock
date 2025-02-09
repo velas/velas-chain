@@ -7353,6 +7353,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "trees",
+ "triedb",
 ]
 
 [[package]]
@@ -8225,6 +8226,7 @@ name = "solana-test-validator"
 version = "1.10.41"
 dependencies = [
  "base64 0.13.1",
+ "crossbeam-channel",
  "evm-state",
  "log 0.4.19",
  "serde_derive",

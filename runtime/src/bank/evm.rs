@@ -23,6 +23,16 @@ impl Bank {
     pub fn evm(&self) -> &EvmBank {
         &self.evm
     }
+    pub fn evm_changes(
+        &self,
+    ) -> Vec<(
+        Chain,
+        evm_state::Block,
+        evm_state::H256,
+        evm_state::ChangedState,
+    )> {
+        todo!()
+    }
 
     pub fn evm_blocks(&self) -> Vec<(Chain, evm_state::Block)> {
         self.evm

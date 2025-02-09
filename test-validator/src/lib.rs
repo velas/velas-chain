@@ -1,7 +1,7 @@
 #![allow(clippy::integer_arithmetic)]
-use evm_state::Storage;
-use solana_ledger::blockstore::EvmStateJson;
 use {
+    crossbeam_channel::unbounded,
+    evm_state::Storage,
     log::*,
     solana_cli_output::CliAccount,
     solana_client::{
@@ -19,7 +19,10 @@ use {
         socketaddr,
     },
     solana_ledger::{
-        blockstore::create_new_ledger, blockstore_db::LedgerColumnOptions, create_new_tmp_ledger,
+        blockstore::{create_new_ledger, EvmStateJson},
+        blockstore_db::LedgerColumnOptions,
+        create_new_tmp_ledger,
+        evm::recoreder::{EvmArchiveManagerReceiver, EvmArchiveManagerSender},
     },
     solana_net_utils::PortRange,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -401,16 +404,19 @@ impl TestValidatorGenesis {
         &self,
         mint_address: Pubkey,
         socket_addr_space: SocketAddrSpace,
+        evm_tx_rx: (EvmArchiveManagerSender, EvmArchiveManagerReceiver),
     ) -> Result<TestValidator, Box<dyn std::error::Error>> {
-        TestValidator::start(mint_address, self, socket_addr_space).map(|test_validator| {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .enable_time()
-                .build()
-                .unwrap();
-            runtime.block_on(test_validator.wait_for_nonzero_fees());
-            test_validator
-        })
+        TestValidator::start(mint_address, self, socket_addr_space, Some(evm_tx_rx)).map(
+            |test_validator| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
+                    .enable_time()
+                    .build()
+                    .unwrap();
+                runtime.block_on(test_validator.wait_for_nonzero_fees());
+                test_validator
+            },
+        )
     }
 
     /// Start a test validator
@@ -434,7 +440,7 @@ impl TestValidatorGenesis {
         socket_addr_space: SocketAddrSpace,
     ) -> (TestValidator, Keypair) {
         let mint_keypair = Keypair::new();
-        self.start_with_mint_address(mint_keypair.pubkey(), socket_addr_space)
+        self.start_with_mint_address(mint_keypair.pubkey(), socket_addr_space, unbounded())
             .map(|test_validator| (test_validator, mint_keypair))
             .unwrap_or_else(|err| panic!("Test validator failed to start: {}", err))
     }
@@ -451,7 +457,7 @@ impl TestValidatorGenesis {
         socket_addr_space: SocketAddrSpace,
     ) -> (TestValidator, Keypair) {
         let mint_keypair = Keypair::new();
-        match TestValidator::start(mint_keypair.pubkey(), self, socket_addr_space) {
+        match TestValidator::start(mint_keypair.pubkey(), self, socket_addr_space, None) {
             Ok(test_validator) => {
                 test_validator.wait_for_nonzero_fees().await;
                 (test_validator, mint_keypair)
@@ -490,7 +496,7 @@ impl TestValidator {
                 ..Rent::default()
             })
             .faucet_addr(faucet_addr)
-            .start_with_mint_address(mint_address, socket_addr_space)
+            .start_with_mint_address(mint_address, socket_addr_space, unbounded())
             .expect("validator start failed")
     }
 
@@ -512,7 +518,7 @@ impl TestValidator {
                 ..Rent::default()
             })
             .faucet_addr(faucet_addr)
-            .start_with_mint_address(mint_address, socket_addr_space)
+            .start_with_mint_address(mint_address, socket_addr_space, unbounded())
             .expect("validator start failed")
     }
 
@@ -641,6 +647,7 @@ impl TestValidator {
         mint_address: Pubkey,
         config: &TestValidatorGenesis,
         socket_addr_space: SocketAddrSpace,
+        tx_rx: Option<(EvmArchiveManagerSender, EvmArchiveManagerReceiver)>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let preserve_ledger = config.ledger_path.is_some();
         let ledger_path = TestValidator::initialize_ledger(mint_address, config)?;
@@ -724,6 +731,7 @@ impl TestValidator {
         if let Some(ref tower_storage) = config.tower_storage {
             validator_config.tower_storage = tower_storage.clone();
         }
+        let (evm_tx, evm_rx) = tx_rx.unwrap_or_else(|| unbounded());
 
         let validator = Some(Validator::new(
             node,
@@ -736,9 +744,9 @@ impl TestValidator {
             &validator_config,
             true, // should_check_duplicate_instance
             config.start_progress.clone(),
-            config
-                .evm_state_archive_enabled
-                .then(|| Storage::create_temporary().unwrap()),
+            solana_ledger::evm::EvmArchiveType::default_gc(),
+            evm_tx,
+            evm_rx,
             socket_addr_space,
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,

@@ -5,11 +5,11 @@ use {
             self, BlockstoreProcessorError, CacheBlockMetaSender, ProcessOptions,
             TransactionStatusSender,
         },
+        evm::recoreder::EvmArchiveManagerSender,
         leader_schedule_cache::LeaderScheduleCache,
     },
     crossbeam_channel::unbounded,
     log::*,
-    solana_program_runtime::evm_executor_context::Chain,
     solana_runtime::{
         accounts_background_service::DroppedSlotsReceiver,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -21,7 +21,11 @@ use {
         snapshot_utils,
     },
     solana_sdk::genesis_config::GenesisConfig,
-    std::{fs, path::PathBuf, process, result},
+    std::{
+        fs,
+        path::{Path, PathBuf},
+        process, result,
+    },
 };
 
 pub type LoadResult = result::Result<
@@ -32,14 +36,6 @@ pub type LoadResult = result::Result<
     ),
     BlockstoreProcessorError,
 >;
-
-use {
-    evm_state::{ChangedState, H256},
-    std::path::Path,
-};
-
-pub type EvmStateRecorderSender = crossbeam_channel::Sender<(H256, ChangedState)>;
-pub type EvmRecorderSender = crossbeam_channel::Sender<(Chain, evm_state::Block)>;
 
 /// Load the banks via genesis or a snapshot then processes all full blocks in blockstore
 ///
@@ -56,8 +52,7 @@ pub fn load(
     snapshot_config: Option<&SnapshotConfig>,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    evm_block_recorder_sender: Option<&EvmRecorderSender>,
-    evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
+    evm_recorder_sender: EvmArchiveManagerSender,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     verify_evm_state: bool,
     evm_archive: Option<evm_state::Storage>,
@@ -86,8 +81,7 @@ pub fn load(
         &leader_schedule_cache,
         &process_options,
         transaction_status_sender,
-        evm_block_recorder_sender,
-        evm_state_recorder_sender,
+        evm_recorder_sender,
         cache_block_meta_sender,
         snapshot_config,
         accounts_package_sender,
@@ -108,7 +102,7 @@ pub fn load_bank_forks(
     process_options: &ProcessOptions,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     verify_evm_state: bool,
-    evm_archive: Option<evm_state::Storage>,
+    evm_archive_storage: Option<evm_state::Storage>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
 ) -> (
     BankForks,
@@ -144,7 +138,7 @@ pub fn load_bank_forks(
         bank_forks_from_snapshot(
             genesis_config,
             evm_state_path,
-            evm_archive,
+            evm_archive_storage,
             verify_evm_state,
             account_paths,
             shrink_paths,

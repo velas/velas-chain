@@ -1,10 +1,10 @@
 use {
     crate::{
-        bank_forks_utils::{EvmRecorderSender, EvmStateRecorderSender},
         block_error::BlockError,
         blockstore::Blockstore,
         blockstore_db::BlockstoreError,
         blockstore_meta::SlotMeta,
+        evm::recoreder::{EvmArchiveManagerRequest, EvmArchiveManagerSender, RecorderEntry},
         leader_schedule_cache::LeaderScheduleCache,
         token_balances::collect_token_balances,
     },
@@ -607,14 +607,14 @@ pub fn test_process_blockstore(
             None,
         );
     let (accounts_package_sender, _) = unbounded();
+    let (evm_recorder_sender, _) = unbounded();
     process_blockstore_from_root(
         blockstore,
         &mut bank_forks,
         &leader_schedule_cache,
         &opts,
         None,
-        None,
-        None,
+        evm_recorder_sender,
         None,
         None,
         accounts_package_sender,
@@ -669,8 +669,7 @@ pub fn process_blockstore_from_root(
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    evm_block_recorder_sender: Option<&EvmRecorderSender>,
-    evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
+    evm_recorder_sender: EvmArchiveManagerSender,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     snapshot_config: Option<&SnapshotConfig>,
     accounts_package_sender: AccountsPackageSender,
@@ -728,8 +727,7 @@ pub fn process_blockstore_from_root(
             leader_schedule_cache,
             opts,
             transaction_status_sender,
-            evm_block_recorder_sender,
-            evm_state_recorder_sender,
+            evm_recorder_sender,
             cache_block_meta_sender,
             snapshot_config,
             accounts_package_sender,
@@ -1153,8 +1151,7 @@ fn load_frozen_forks(
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    evm_block_recorder_sender: Option<&EvmRecorderSender>,
-    evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
+    evm_recorder_sender: EvmArchiveManagerSender,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     snapshot_config: Option<&SnapshotConfig>,
     accounts_package_sender: AccountsPackageSender,
@@ -1220,8 +1217,7 @@ fn load_frozen_forks(
                 &recyclers,
                 &mut progress,
                 transaction_status_sender,
-                evm_block_recorder_sender,
-                evm_state_recorder_sender,
+                evm_recorder_sender.clone(),
                 cache_block_meta_sender,
                 None,
                 timing,
@@ -1449,8 +1445,7 @@ fn process_single_slot(
     recyclers: &VerifyRecyclers,
     progress: &mut ConfirmationProgress,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    evm_block_recorder_sender: Option<&EvmRecorderSender>,
-    evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
+    evm_recorder_sender: EvmArchiveManagerSender,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut ExecuteTimings,
@@ -1474,38 +1469,28 @@ fn process_single_slot(
     blockstore.insert_bank_hash(bank.slot(), bank.hash(), false);
     cache_block_meta(bank, cache_block_meta_sender);
 
-    record_evm_block(
-        bank,
-        evm_block_recorder_sender,
-        evm_state_recorder_sender,
-        |_, _| {},
-    );
+    record_evm_block(bank, &evm_recorder_sender, |_, _| {});
 
     Ok(())
 }
 
 pub fn record_evm_block(
     bank: &Bank,
-    evm_block_recorder_sender: Option<&EvmRecorderSender>,
-    evm_state_recorder_sender: Option<&EvmStateRecorderSender>,
+    evm_recorder_sender: &EvmArchiveManagerSender,
     handle_block: impl Fn(&Chain, &evm_state::Block),
 ) {
-    if let Some(evm_block_recorder_sender) = evm_block_recorder_sender {
-        for (chain, block) in bank.evm_blocks() {
-            handle_block(&chain, &block);
-            evm_block_recorder_sender
-                .send((chain, block))
-                .unwrap_or_else(|err| warn!("evm_block_recorder_sender failed: {:?}", err));
-        }
-    }
-
-    if let Some(evm_state_recorder_sender) = evm_state_recorder_sender {
-        let state = bank.evm_state_change();
-        if let Some(state) = state {
-            evm_state_recorder_sender
-                .send(state)
-                .unwrap_or_else(|err| warn!("evm_state_recorder_sender failed: {:?}", err));
-        }
+    for (chain, block, state_root, state_updates) in bank.evm_changes() {
+        handle_block(&chain, &block);
+        let record = RecorderEntry {
+            chain,
+            block,
+            state_root,
+            state_updates,
+        };
+        let request = EvmArchiveManagerRequest::RecordEntry(record);
+        evm_recorder_sender
+            .send(request)
+            .unwrap_or_else(|err| warn!("evm_block_recorder_sender failed: {:?}", err));
     }
 }
 
@@ -3531,6 +3516,7 @@ pub mod tests {
 
         // Test process_blockstore_from_root() from slot 1 onwards
         let (accounts_package_sender, _) = unbounded();
+        let (evm_recorder_sender, _) = unbounded();
         let (_pruned_banks_sender, pruned_banks_receiver) = unbounded();
         process_blockstore_from_root(
             &blockstore,
@@ -3538,8 +3524,7 @@ pub mod tests {
             &leader_schedule_cache,
             &opts,
             None,
-            None,
-            None,
+            evm_recorder_sender,
             None,
             None,
             accounts_package_sender,
@@ -3644,6 +3629,7 @@ pub mod tests {
         let (accounts_package_sender, accounts_package_receiver) = unbounded();
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
 
+        let (evm_recorder_sender, _) = unbounded();
         let (_pruned_banks_sender, pruned_banks_receiver) = unbounded();
         process_blockstore_from_root(
             &blockstore,
@@ -3651,8 +3637,7 @@ pub mod tests {
             &leader_schedule_cache,
             &opts,
             None,
-            None,
-            None,
+            evm_recorder_sender,
             None,
             Some(&snapshot_config),
             accounts_package_sender.clone(),

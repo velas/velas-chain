@@ -1,6 +1,8 @@
 #![allow(clippy::integer_arithmetic)]
+use crossbeam_channel::unbounded;
 #[cfg(not(target_env = "msvc"))]
 use jemallocator::Jemalloc;
+use solana_ledger::evm::{EvmArchive, EvmArchiveType};
 use {
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, App,
@@ -2260,13 +2262,11 @@ pub fn main() {
     } else {
         ledger_path.join(EVM_STATE_DIR)
     };
-    let evm_state_archive = matches.value_of("evm_state_archive_path").map(|path| {
-        info!("Opening evm archive storage");
-        evm_state::Storage::open_persistent(
-            path, false, // gc disabled
-        )
-        .expect("Cannot open evm archive folder")
-    });
+    let evm_state_archive_params = match matches.value_of("evm_state_archive_path") {
+        Some(path) => EvmArchiveType::NoCleanup(path.to_owned()),
+        _ => EvmArchiveType::default_gc(), // TODO: config block count
+    };
+       
 
     let authorized_voter_keypairs = keypairs_of(&matches, "authorized_voter_keypairs")
         .map(|keypairs| keypairs.into_iter().map(Arc::new).collect())
@@ -2356,8 +2356,8 @@ pub fn main() {
     let (evm_state_rpc_addr, evm_state_rpc_config): (
         Option<SocketAddr>,
         Option<solana_replica_lib::triedb::Config>,
-    ) = match evm_state_archive {
-        Some(..) => {
+    ) = match evm_state_archive_params {
+        EvmArchiveType::NoCleanup(_) => {
             let addr = value_t!(matches, "evm_state_rpc_port", u16)
                 .ok()
                 .map(|rpc_port| SocketAddr::new(rpc_bind_address, rpc_port));
@@ -2371,7 +2371,7 @@ pub fn main() {
             };
             (addr, config)
         }
-        None => (None, None),
+        _ => (None, None),
     };
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
@@ -2962,6 +2962,7 @@ pub fn main() {
     let mut ledger_lock = ledger_lockfile(&ledger_path);
     let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
 
+    let (evm_archive_recorder_sender, evm_archive_recorder_receiver) = unbounded();
     let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
     let admin_service_post_init = Arc::new(RwLock::new(None));
     admin_rpc_service::run(
@@ -2974,7 +2975,7 @@ pub fn main() {
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             post_init: admin_service_post_init.clone(),
             tower_storage: validator_config.tower_storage.clone(),
-            archive_evm_state: evm_state_archive.clone(),
+            evm_archive_recorder_sender: evm_archive_recorder_sender.clone(),
         },
     );
 
@@ -3125,7 +3126,9 @@ pub fn main() {
         &validator_config,
         should_check_duplicate_instance,
         start_progress,
-        evm_state_archive,
+        evm_state_archive_params,
+        evm_archive_recorder_sender,
+        evm_archive_recorder_receiver,
         socket_addr_space,
         tpu_use_quic,
         tpu_connection_pool_size,

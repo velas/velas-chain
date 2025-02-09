@@ -7,14 +7,12 @@ use {
         broadcast_stage::RetransmitSlotsSender,
         cache_block_meta_service::CacheBlockMetaSender,
         cluster_info_vote_listener::{
-        GossipDuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
-        VerifiedVoteReceiver, VoteTracker,
-    },
+            GossipDuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
+            VerifiedVoteReceiver, VoteTracker,
+        },
         cluster_slots::ClusterSlots,
         completed_data_sets_service::CompletedDataSetsSender,
         consensus::Tower,
-        evm_services::EvmRecorderSender,
-        evm_services::EvmStateRecorderSender,
         cost_update_service::CostUpdateService,
         drop_bank_service::DropBankService,
         ledger_cleanup_service::LedgerCleanupService,
@@ -35,7 +33,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
-        leader_schedule_cache::LeaderScheduleCache,
+        evm::recoreder::EvmArchiveManagerSender, leader_schedule_cache::LeaderScheduleCache,
     },
     solana_poh::poh_recorder::PohRecorder,
     solana_rpc::{
@@ -141,8 +139,7 @@ impl Tvu {
         transaction_status_sender: Option<TransactionStatusSender>,
         rewards_recorder_sender: Option<RewardsRecorderSender>,
         cache_block_meta_sender: Option<CacheBlockMetaSender>,
-        evm_block_recorder_sender: Option<EvmRecorderSender>,
-        evm_state_recorder_sender: Option<EvmStateRecorderSender>,
+        evm_recorder_sender: EvmArchiveManagerSender,
         snapshot_config_and_pending_package: Option<(SnapshotConfig, PendingSnapshotPackage)>,
         vote_tracker: Arc<VoteTracker>,
         retransmit_slots_sender: RetransmitSlotsSender,
@@ -285,8 +282,7 @@ impl Tvu {
             transaction_status_sender,
             rewards_recorder_sender,
             cache_block_meta_sender,
-            evm_block_recorder_sender,
-            evm_state_recorder_sender,
+            evm_recorder_sender,
             bank_notification_sender,
             wait_for_vote_to_start_leader: tvu_config.wait_for_vote_to_start_leader,
             ancestor_hashes_replay_update_sender,
@@ -499,6 +495,7 @@ pub mod tests {
         let accounts_package_channel = unbounded();
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let (_pruned_banks_sender, pruned_banks_receiver) = unbounded();
+        let (evm_recorder_sender, _) = unbounded();
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
             Arc::new(RwLock::new(vec![Arc::new(vote_keypair)])),
@@ -532,8 +529,7 @@ pub mod tests {
             None,
             None,
             None,
-            None,
-            None,
+            evm_recorder_sender,
             None,
             Arc::<VoteTracker>::default(),
             retransmit_slots_sender,

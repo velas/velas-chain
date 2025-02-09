@@ -60,7 +60,7 @@ impl StateRootWithBank {
             });
         }
         let archive_evm_state = meta
-            .evm_state_archive(self.block_timestamp)
+            .evm_state_archive(self.chain, self.block_timestamp)
             .ok_or(Error::ArchiveNotSupported)?;
         ensure!(
             archive_evm_state.kvs().check_root_exist(root),
@@ -103,7 +103,7 @@ impl StateRootWithBank {
             });
         }
         let archive_evm_state = meta
-            .evm_state_archive(self.block_timestamp)
+            .evm_state_archive(self.chain, self.block_timestamp)
             .ok_or(Error::ArchiveNotSupported)?;
         ensure!(
             archive_evm_state.kvs().check_root_exist(root),
@@ -1293,7 +1293,7 @@ impl TraceERPC for TraceErpcImpl {
 
         Box::pin(async move {
             let mut evm_state = meta
-                .evm_state_archive(Some(block_header.timestamp))
+                .evm_state_archive(None, Some(block_header.timestamp))
                 .ok_or(Error::ArchiveNotSupported)?
                 .new_incomming_for_root(state_root)
                 .ok_or(Error::StateNotFoundForBlock {
@@ -1434,7 +1434,7 @@ fn call_many(
         }
     } else {
         let root = saved_state.state_root.unwrap();
-        meta.evm_state_archive(saved_state.block_timestamp)
+        meta.evm_state_archive(chain, saved_state.block_timestamp)
             .ok_or(Error::ArchiveNotSupported)?
             .new_incomming_for_root(root)
             .ok_or(Error::StateNotFoundForBlock {

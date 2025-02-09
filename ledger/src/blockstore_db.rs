@@ -1692,6 +1692,9 @@ where
         value.encode(&mut buf)?;
         self.backend.put_cf(self.handle(), &C::key(key), &buf)
     }
+    pub fn remove(&self, key: C::Index) -> Result<()> {
+        self.backend.delete_cf(self.handle(), &C::key(key))
+    }
 
     pub fn deserialize_protobuf_or_bincode<T>(&self, serialized_value: &[u8]) -> Result<C::Type>
     where

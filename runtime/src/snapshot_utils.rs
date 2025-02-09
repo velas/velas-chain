@@ -1,5 +1,3 @@
-use evm_state::AccountProvider;
-
 use {
     crate::{
         accounts_db::{
@@ -23,6 +21,7 @@ use {
     },
     bincode::{config::Options, serialize_into},
     bzip2::bufread::BzDecoder,
+    evm_state::AccountProvider,
     flate2::read::GzDecoder,
     lazy_static::lazy_static,
     log::*,
@@ -1782,10 +1781,11 @@ fn get_io_error(error: &str) -> SnapshotError {
 }
 
 mod cmp_dir {
-    use crate::snapshot_utils::EVM_STATE_DIR;
-    use std::io::Read;
-    use std::path::Path;
-    use walkdir::{DirEntry, WalkDir};
+    use {
+        crate::snapshot_utils::EVM_STATE_DIR,
+        std::{io::Read, path::Path},
+        walkdir::{DirEntry, WalkDir},
+    };
 
     pub fn is_different<A: AsRef<Path>, B: AsRef<Path>>(
         a_base: A,

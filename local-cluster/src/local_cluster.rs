@@ -4,6 +4,7 @@ use {
         cluster_tests,
         validator_configs::*,
     },
+    crossbeam_channel::unbounded,
     itertools::izip,
     log::*,
     solana_client::{
@@ -19,12 +20,14 @@ use {
     solana_gossip::{
         cluster_info::Node, contact_info::ContactInfo, gossip_service::discover_cluster,
     },
-    solana_ledger::create_new_tmp_ledger,
-    solana_runtime::genesis_utils::{
-        create_genesis_config_with_vote_accounts_and_cluster_type, GenesisConfigInfo,
-        ValidatorVoteKeypairs,
+    solana_ledger::{create_new_tmp_ledger, evm::EvmArchiveGc},
+    solana_runtime::{
+        genesis_utils::{
+            create_genesis_config_with_vote_accounts_and_cluster_type, GenesisConfigInfo,
+            ValidatorVoteKeypairs,
+        },
+        snapshot_utils::EVM_STATE_DIR,
     },
-    solana_runtime::snapshot_utils::EVM_STATE_DIR,
     solana_sdk::{
         account::{Account, AccountSharedData},
         client::SyncClient,
@@ -248,6 +251,7 @@ impl LocalCluster {
         let leader_keypair = Arc::new(Keypair::from_bytes(&leader_keypair.to_bytes()).unwrap());
         let leader_vote_keypair =
             Arc::new(Keypair::from_bytes(&leader_vote_keypair.to_bytes()).unwrap());
+        let (evm_tx, evm_rx) = unbounded();
 
         let leader_server = Validator::new(
             leader_node,
@@ -260,7 +264,9 @@ impl LocalCluster {
             &leader_config,
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
-            None,
+            solana_ledger::evm::EvmArchiveType::default_gc(),
+            evm_tx,
+            evm_rx,
             socket_addr_space,
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
@@ -451,6 +457,7 @@ impl LocalCluster {
         config.account_paths = vec![ledger_path.join("accounts")];
         config.tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
         let voting_keypair = voting_keypair.unwrap();
+        let (evm_tx, evm_rx) = unbounded();
         let validator_server = Validator::new(
             validator_node,
             validator_keypair.clone(),
@@ -462,7 +469,9 @@ impl LocalCluster {
             &config,
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
-            None,
+            solana_ledger::evm::EvmArchiveType::default_gc(),
+            evm_tx,
+            evm_rx,
             socket_addr_space,
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
@@ -799,6 +808,7 @@ impl Cluster for LocalCluster {
             vec![validator_info.ledger_path.join("accounts")];
         cluster_validator_info.config.tower_storage =
             Arc::new(FileTowerStorage::new(validator_info.ledger_path.clone()));
+        let (evm_tx, evm_rx) = unbounded();
         let restarted_node = Validator::new(
             node,
             validator_info.keypair.clone(),
@@ -812,7 +822,9 @@ impl Cluster for LocalCluster {
             &safe_clone_config(&cluster_validator_info.config),
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
-            None,
+            solana_ledger::evm::EvmArchiveType::default_gc(),
+            evm_tx,
+            evm_rx,
             socket_addr_space,
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,

@@ -3447,6 +3447,52 @@ impl Blockstore {
         self.write_evm_block_id_by_slot(chain, block.native_chain_slot, block.block_number)
     }
 
+    pub fn remove_evm_block(&self, chain: &Chain, block: &evm::BlockHeader) -> Result<()> {
+        for tx in &block.transactions {
+            self.evm_transactions_cf
+                .remove(EvmTransactionReceiptsIndex {
+                    index: 0,
+                    hash: *tx,
+                    block_num: block.block_number,
+                    slot: Some(block.native_chain_slot),
+                })?;
+            self.evm_transactions_cf
+                .remove(EvmTransactionReceiptsIndex {
+                    index: 1,
+                    hash: *tx,
+                    block_num: block.block_number,
+                    slot: Some(block.native_chain_slot),
+                })?;
+        }
+
+        self.remove_evm_block_id_by_hash(block.hash())?;
+        self.remove_evm_block_id_by_slot(chain, block.native_chain_slot)?;
+        if let Some(chain_id) = chain {
+            self.evm_subchain_blocks_cf.remove((
+                *chain_id,
+                block.block_number,
+                block.native_chain_slot,
+            ))?;
+        } else {
+            self.evm_blocks_cf
+                .remove((block.block_number, Some(block.native_chain_slot)))?;
+        }
+        Ok(())
+    }
+
+    pub fn remove_evm_block_id_by_hash(&self, hash: H256) -> Result<()> {
+        self.evm_blocks_by_hash_cf.remove((0, hash))?;
+        self.evm_blocks_by_hash_cf.remove((1, hash))
+    }
+
+    pub fn remove_evm_block_id_by_slot(&self, chain: &Chain, slot: Slot) -> Result<()> {
+        if let Some(chain) = chain {
+            self.evm_subchain_blocks_by_slot_cf.remove((slot, *chain))
+        } else {
+            self.evm_blocks_by_slot_cf.remove(slot)
+        }
+    }
+
     ///
     /// Returns iterator over evm blocks.
     /// If more than one evm block have been found on same block_num, this function return multiple items.
@@ -3476,6 +3522,7 @@ impl Blockstore {
         self.evm_blocks_by_hash_cf
             .put_protobuf((primary_index, hash), &id)
     }
+
     pub fn read_evm_block_id_by_hash(&self, hash: H256) -> Result<Option<evm_state::BlockNum>> {
         let result = self
             .evm_blocks_by_hash_cf

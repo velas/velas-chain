@@ -24,7 +24,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         bigtable_upload::ConfirmedBlockUploadConfig,
-        bigtable_upload_service::BigTableUploadService, blockstore::Blockstore,
+        bigtable_upload_service::BigTableUploadService, blockstore::Blockstore, evm::EvmArchive,
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_metrics::inc_new_counter_info,
@@ -342,7 +342,7 @@ impl JsonRpcService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         connection_cache: Arc<ConnectionCache>,
         current_transaction_status_slot: Arc<AtomicU64>,
-        evm_state_archive: Option<evm_state::Storage>,
+        evm_archive: Option<EvmArchive>,
         jaeger_collector_url: Option<String>,
     ) -> Self {
         info!("rpc bound to {:?}", rpc_addr);
@@ -448,7 +448,7 @@ impl JsonRpcService {
             max_slots,
             leader_schedule_cache,
             current_transaction_status_slot,
-            evm_state_archive,
+            evm_archive,
         );
 
         let leader_info =
