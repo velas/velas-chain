@@ -273,7 +273,7 @@ impl StorageSecondary {
     }
 
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {
-        log::warn!("gc_enabled {}", gc_enabled);
+        log::debug!("gc_enabled {}", gc_enabled);
         let db_opts = default_db_opts()?;
 
         let descriptors = Descriptors::secondary_descriptors(gc_enabled);
@@ -321,7 +321,7 @@ impl Storage<OptimisticTransactionDB> {
     }
 
     fn open(location: Location, gc_enabled: bool) -> Result<Self> {
-        log::warn!("gc_enabled {}", gc_enabled);
+        log::debug!("gc_enabled {}", gc_enabled);
         log::info!("location is {:?}", location);
         let db_opts = default_db_opts()?;
 
@@ -332,7 +332,7 @@ impl Storage<OptimisticTransactionDB> {
 
         let descriptors = Descriptors::compute(exist_cfs, &db_opts, gc_enabled);
         let db = {
-            warn!("Trying as primary at : {:?}", &location);
+            info!("Trying as primary at : {:?}", &location);
             let mut db = DB::open_cf_descriptors(&db_opts, &location, descriptors.all)?;
 
             for removed_cf in descriptors.cleanup_cfs {
@@ -888,6 +888,8 @@ pub struct RootCleanup<'a> {
 }
 
 impl<'a> RootCleanup<'a> {
+    // cleanup nodes from trie,
+    // remove only nodes that already has zero parents.
     pub fn new(storage: &'a Storage, roots: Vec<H256>) -> Self {
         Self {
             elems: roots,

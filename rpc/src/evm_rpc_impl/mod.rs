@@ -121,32 +121,23 @@ async fn block_to_state_root(
     block: Option<BlockId>,
     meta: &JsonRpcRequestProcessor,
 ) -> Result<StateRootWithBank, Error> {
-    let main_chain = chain.is_none();
+    if let Some(chain_id) = chain {
+        if chain_id == meta.get_main_chain_id() {
+            return Err(Error::WrongChainId {
+                chain_id: meta.get_main_chain_id(),
+                tx_chain_id: None,
+            });
+        }
+    };
 
     let block_id = block.unwrap_or_default();
 
     let mut found_block_hash = None;
 
-    match block_id {
-        BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {}
-        _ => {
-            //TODO(H): Add support of block_by_num state on subchain
-            if !main_chain {
-                return Err(Error::InvalidParams {});
-            }
-        }
-    }
-
     let block_num = match block_id {
         BlockId::RelativeId(BlockRelId::Pending) | BlockId::RelativeId(BlockRelId::Latest) => {
             let bank = meta.bank(Some(CommitmentConfig::processed()));
             let last_root = if let Some(chain_id) = chain {
-                if chain_id == meta.get_main_chain_id() {
-                    return Err(Error::WrongChainId {
-                        chain_id: meta.get_main_chain_id(),
-                        tx_chain_id: None,
-                    });
-                }
                 bank.evm().chain_state(chain_id).evm_state.last_root()
             } else {
                 let evm = bank.evm().main_chain().state();

@@ -2475,7 +2475,7 @@ impl JsonRpcRequestProcessor {
         id: evm_state::BlockNum,
     ) -> Option<(evm_state::Block, bool)> {
         let block = self.blockstore.get_evm_block(chain, id).ok();
-        if block.is_some() || chain.is_none() {
+        if block.is_some() {
             return block;
         }
 

@@ -33,7 +33,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
-        evm::recoreder::EvmArchiveManagerSender, leader_schedule_cache::LeaderScheduleCache,
+        evm::recorder::EvmArchiveManagerSender, leader_schedule_cache::LeaderScheduleCache,
     },
     solana_poh::poh_recorder::PohRecorder,
     solana_rpc::{

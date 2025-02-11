@@ -24,3 +24,4 @@
 4.  new evm version
 
 fix cleanup old blocks for subchain (search todo!())
+test lock_root in rpc (get state, and remove in recorder thread).

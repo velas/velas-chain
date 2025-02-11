@@ -13,6 +13,7 @@ use {
     },
 };
 
+#[derive(Clone)]
 pub struct RecorderEntry {
     pub chain: Option<ChainID>,
     pub state_root: H256,

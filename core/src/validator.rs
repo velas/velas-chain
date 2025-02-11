@@ -42,7 +42,7 @@ use {
         blockstore_db::{BlockstoreOptions, BlockstoreRecoveryMode, LedgerColumnOptions},
         blockstore_processor::{self, TransactionStatusSender},
         evm::{
-            recoreder::{
+            recorder::{
                 EvmArchiveManagerReceiver, EvmArchiveManagerSender, EvmArchiveManagerService,
             },
             EvmArchive, EvmArchiveInner, EvmArchiveType,

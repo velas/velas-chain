@@ -11,7 +11,7 @@ use {
         consensus::Tower, tower_storage::TowerStorage, validator::ValidatorStartProgress,
     },
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
-    solana_ledger::evm::recoreder::{EvmArchiveManagerRequest, EvmArchiveManagerSender},
+    solana_ledger::evm::recorder::{EvmArchiveManagerRequest, EvmArchiveManagerSender},
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{
         exit::Exit,
@@ -316,6 +316,7 @@ impl AdminRpc for AdminRpcImpl {
         backup: bool,
     ) -> Result<()> {
         info!("Merging evm state: {}, backup: {}", path, backup);
+        //todo: oneshot
         let (tx, rx) = unbounded();
         let evm_archive_state = 'try_send: {
             if meta

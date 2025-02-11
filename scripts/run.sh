@@ -125,7 +125,8 @@ args=(
     --account-index velas-accounts-storages
     --account-index velas-accounts-owners
     --account-index velas-accounts-operationals
-    --evm-state-archive "$ledgerDir"/archive-evm
+    --evm-save-blocks 1000
+    # --evm-state-archive "$ledgerDir"/archive-evm
 )
 # shellcheck disable=SC2086
 velas-validator "${args[@]}" $SOLANA_RUN_SH_VALIDATOR_ARGS &

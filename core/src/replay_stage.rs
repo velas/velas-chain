@@ -35,7 +35,7 @@ use {
         block_error::BlockError,
         blockstore::Blockstore,
         blockstore_processor::{self, BlockstoreProcessorError, TransactionStatusSender},
-        evm::recoreder::EvmArchiveManagerSender,
+        evm::recorder::EvmArchiveManagerSender,
         leader_schedule_cache::LeaderScheduleCache,
         leader_schedule_utils::first_of_consecutive_leader_slots,
     },
