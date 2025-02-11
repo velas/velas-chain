@@ -35,7 +35,7 @@ use {
 pub const BURN_ADDR: evm_state::H160 = evm_state::H160::zero();
 
 pub const SUBCHAIN_CREATION_DEPOSIT_VLX: u64 = 1_000_000;
-const SUBCHAIN_MINT_ADDRESS: H160 = H160::repeat_byte(0x11);
+const SUBCHAIN_MINT_ADDRESS: H160 = BURN_ADDR;
 
 /// Return the next AccountInfo or a NotEnoughAccountKeys error
 pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
@@ -1199,7 +1199,9 @@ impl EvmProcessor {
         let executor = get_executor!(rc, refmut => invoke_context, subchain_id);
 
         // Load pre-seed
-        executor.evm_backend.set_initial(alloc.clone());
+        executor
+            .evm_backend
+            .init_accounts_without_commit(alloc.clone());
 
         for (evm_address, account) in alloc {
             executor.register_swap_tx_in_evm(SUBCHAIN_MINT_ADDRESS, evm_address, account.balance);
@@ -1417,9 +1419,10 @@ mod test {
         crate::instructions::AllocAccount,
         evm::lamports_to_wei,
         evm_state::{
+            empty_trie_hash,
             transactions::{TransactionAction, TransactionSignature},
-            AccountProvider, AccountState, ExitReason, ExitSucceed, FromKey, BURN_GAS_PRICE,
-            BURN_GAS_PRICE_IN_SUBCHAIN,
+            AccountProvider, AccountState, ExitReason, ExitSucceed, FromKey, UnsignedTransaction,
+            BURN_GAS_PRICE, BURN_GAS_PRICE_IN_SUBCHAIN,
         },
         hex_literal::hex,
         num_traits::Zero,
@@ -4053,6 +4056,8 @@ mod test {
         tx_hash
     }
 
+    // test that will deplo mint_burn mock contract and check if minting and burning work, and cannot be broken.
+
     // 1. test that sequence of transactions will set hash after successfull processing tx
     #[test]
     fn subchain_finalize() {
@@ -4074,9 +4079,14 @@ mod test {
 
         let chain_id = 0x561;
         setup_chain(&mut evm_context, user_id, chain_id, config, 840000 * 3);
-
+        let root_before_init = evm_context.subchains.get(&chain_id).unwrap().last_root();
+        assert_eq!(root_before_init, empty_trie_hash());
         // multiple finalize should not create multiple blocks
         evm_context.commit_state();
+
+        let root_after_init = evm_context.subchains.get(&chain_id).unwrap().last_root();
+
+        assert_ne!(root_after_init, empty_trie_hash());
         evm_context.commit_state();
 
         let subchain_evm = evm_context.subchains.get(&chain_id).unwrap();
