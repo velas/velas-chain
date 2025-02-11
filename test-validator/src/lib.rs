@@ -22,7 +22,7 @@ use {
         blockstore::{create_new_ledger, EvmStateJson},
         blockstore_db::LedgerColumnOptions,
         create_new_tmp_ledger,
-        evm::recoreder::{EvmArchiveManagerReceiver, EvmArchiveManagerSender},
+        evm::recorder::{EvmArchiveManagerReceiver, EvmArchiveManagerSender},
     },
     solana_net_utils::PortRange,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},

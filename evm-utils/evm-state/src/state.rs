@@ -275,7 +275,7 @@ impl EvmBackend<Incomming> {
         }
     }
 
-    pub fn set_initial(
+    pub fn init_accounts_without_commit(
         &mut self,
         accounts: impl IntoIterator<Item = (H160, evm::backend::MemoryAccount)>,
     ) {
@@ -298,7 +298,6 @@ impl EvmBackend<Incomming> {
             self.set_account_state(address, account_state);
             self.ext_storage(address, storage);
         }
-        self.flush_changes()
     }
 
     pub fn new_incomming_for_root(mut self, root: H256) -> Option<Self> {

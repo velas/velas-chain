@@ -75,7 +75,8 @@ impl genesis_json::GenesisConfig {
         let simulation = client.simulate_transaction(&transaction)?;
         if let Some(err) = simulation.value.err {
             return Err(color_eyre::eyre::Error::msg(format!(
-                "Simulation error: {err}"
+                "Simulation error: {err}, logs: {:?}",
+                simulation.value.logs
             )));
         }
 

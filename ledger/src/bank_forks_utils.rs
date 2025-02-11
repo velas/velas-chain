@@ -5,7 +5,7 @@ use {
             self, BlockstoreProcessorError, CacheBlockMetaSender, ProcessOptions,
             TransactionStatusSender,
         },
-        evm::recoreder::EvmArchiveManagerSender,
+        evm::recorder::EvmArchiveManagerSender,
         leader_schedule_cache::LeaderScheduleCache,
     },
     crossbeam_channel::unbounded,

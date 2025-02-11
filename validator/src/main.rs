@@ -2,7 +2,7 @@
 use crossbeam_channel::unbounded;
 #[cfg(not(target_env = "msvc"))]
 use jemallocator::Jemalloc;
-use solana_ledger::evm::{EvmArchive, EvmArchiveType};
+use solana_ledger::evm::{EvmArchive, EvmArchiveGc, EvmArchiveType, EVM_ARCHIVE_LIMIT_BLOCKS};
 use {
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, App,
@@ -538,7 +538,16 @@ pub fn main() {
                 .long("evm-state-archive")
                 .value_name("DIR")
                 .takes_value(true)
+                .conflicts_with("evm_save_blocks")
                 .help("Use DIR as evm-state archive location"),
+        )
+        .arg(
+            Arg::with_name("evm_save_blocks")
+                .long("evm-save-blocks")
+                .value_name("NUM")
+                .takes_value(true)
+                .conflicts_with("evm_state_archive_path")
+                .help("Specify amount of evm blocks to store in archive"),
         )
         .arg(
             Arg::with_name("evm_state_rpc_port")
@@ -2264,7 +2273,10 @@ pub fn main() {
     };
     let evm_state_archive_params = match matches.value_of("evm_state_archive_path") {
         Some(path) => EvmArchiveType::NoCleanup(path.to_owned()),
-        _ => EvmArchiveType::default_gc(), // TODO: config block count
+        _ => {
+            let num_blocks = matches.value_of("evm_save_blocks").and_then(|v|v.parse::<u64>().ok()).unwrap_or(EVM_ARCHIVE_LIMIT_BLOCKS);
+            EvmArchiveType::WithGc(EvmArchiveGc::new(num_blocks))
+        }
     };
        
 

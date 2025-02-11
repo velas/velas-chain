@@ -4,7 +4,7 @@ use {
         blockstore::Blockstore,
         blockstore_db::BlockstoreError,
         blockstore_meta::SlotMeta,
-        evm::recoreder::{EvmArchiveManagerRequest, EvmArchiveManagerSender, RecorderEntry},
+        evm::recorder::{EvmArchiveManagerRequest, EvmArchiveManagerSender, RecorderEntry},
         leader_schedule_cache::LeaderScheduleCache,
         token_balances::collect_token_balances,
     },
