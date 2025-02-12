@@ -246,6 +246,10 @@ where
         Ok(location)
     }
 
+    pub fn storage_size(&self) -> Result<u64, fs_extra::error::Error> {
+        Ok(fs_extra::dir::get_size(&self.location)?)
+    }
+
     pub fn counters_cf(&self) -> Option<&ColumnFamily> {
         if !self.gc_enabled {
             return None;

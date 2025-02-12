@@ -1,9 +1,14 @@
 use {
     crate::blockstore::{Blockstore, BlockstoreError},
-    evm_state::{storage::RootCleanup, ChangedState, Storage, H256},
+    evm_state::{
+        storage::{self, RootCleanup},
+        ChangedState, Storage, H256,
+    },
+    parking_lot::Mutex,
     solana_program_runtime::evm_executor_context::{ChainID, StateExt},
     solana_runtime::bank::Bank,
     std::{
+        collections::BTreeMap,
         path::{Path, PathBuf},
         sync::Arc,
     },
@@ -11,6 +16,26 @@ use {
 };
 pub mod recorder;
 
+impl From<storage::Error> for BlockstoreError {
+    fn from(e: storage::Error) -> Self {
+        match e {
+            storage::Error::Internal(i) => BlockstoreError::Io(i),
+            storage::Error::Database(d) => BlockstoreError::RocksDb(d),
+            _ => BlockstoreError::Other("Unkown evm storage error"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct EvmArchiveMetrics {
+    pub main_blocks: u64,
+    pub main_purged_blocks: u64,
+    pub total_purged_blocks: u64,
+    pub total_blocks: u64,
+    pub total_state_db_size: u64,
+    pub num_blocks_per_chain: BTreeMap<ChainID, u64>,
+    pub num_purged_blocks_per_chain: BTreeMap<ChainID, u64>,
+}
 //TODO Fix cleanup of blocks for subchain todo!()
 
 pub struct EvmArchiveGc {
@@ -47,8 +72,9 @@ pub struct EvmArchiveInner {
     archive_type: EvmArchiveType,
     storage: Storage,
     blockstore: Arc<Blockstore>,
+    purdged_blocks: Mutex<BTreeMap<Option<ChainID>, u64>>,
 }
-pub const EVM_ARCHIVE_PATH: &str = "evm_archive_state";
+pub const EVM_ARCHIVE_PATH: &str = "evm-archive-state-gc";
 pub const EVM_ARCHIVE_LIMIT_BLOCKS: u64 = 3000;
 pub const EVM_ARCHIVE_LIMIT_BLOCKS_ON_SUBCHAIN: u64 = 1000;
 // priv api
@@ -84,6 +110,7 @@ impl EvmArchiveInner {
             archive_type,
             storage,
             blockstore,
+            purdged_blocks: Default::default(),
         }
     }
     fn register_state(storage: &Storage, state_root: H256, state_updates: ChangedState) {
@@ -167,18 +194,108 @@ impl EvmArchiveInner {
             Ok(0)
         }
     }
-    // Get num_blocks/states per subchain
-    // get accumulated purged blocks per subchain
-    // get total size (in blocks, mbs) of db
 
-    // fn collect_metrics(&self)  {
-    //     for chain in chain_list {
+    fn get_all_chains(blockstore: &Blockstore) -> Result<Vec<ChainID>, BlockstoreError> {
+        blockstore.collect_all_evm_chains()
+    }
 
-    //         let first = self.blockstore.get_first_available_evm_block(chain)?;
-    //         let last = self.blockstore.get_last_available_evm_block(chain)?;
-    //         let num_blocks = (last - first);
-    //     }
-    // }
+    fn get_num_purged_blocks(&self, chain: Option<ChainID>) -> u64 {
+        self.purdged_blocks.lock().get(&chain).copied().unwrap_or(0)
+    }
+    fn chain_name_cached(chain_id: ChainID) -> &'static str {
+        use std::cell::RefCell;
+        thread_local! {
+            pub static CHAIN_NAME: RefCell<BTreeMap<ChainID, &'static str>> = RefCell::new(BTreeMap::new());
+        }
+        let val = CHAIN_NAME.with_borrow_mut(|m| {
+            if !m.contains_key(&chain_id) {
+                let val = format!("evm_archive_subchain_{}", chain_id);
+                m.insert(chain_id, val.leak());
+            }
+            *m.get(&chain_id).expect("Chain should be inserted")
+        });
+        val
+    }
+    /// Collects metrics about the evm archive, including the number of blocks and purged blocks
+    /// per subchain, the total number of purged blocks, the total number of blocks, and the
+    /// total size of the db in bytes.
+    ///
+    /// Args:
+    ///
+    /// * `blockstore`: The blockstore to collect metrics from.
+    ///
+    /// Returns:
+    ///
+    /// * `Result<EvmArchiveMetrics, BlockstoreError>`: Ok if the metrics are collected successfully,
+    ///   or an error if the metrics cannot be collected.
+    pub fn collect_metrics(&self) -> Result<EvmArchiveMetrics, BlockstoreError> {
+        let mut num_blocks_per_chain: BTreeMap<ChainID, u64> = BTreeMap::new();
+        let mut num_purged_blocks_per_chain: BTreeMap<ChainID, u64> = BTreeMap::new();
+        let main_blocks = Self::count_evm_blocks(&self.blockstore, None)?;
+        let main_purged_blocks = self.get_num_purged_blocks(None);
+        let mut total_purged_blocks: u64 = main_purged_blocks;
+        let mut total_blocks: u64 = main_blocks;
+        let total_state_db_size: u64;
+
+        let all_chains = Self::get_all_chains(&self.blockstore)?;
+        for chain_id in &all_chains {
+            let chain = Some(*chain_id);
+            let num_blocks = Self::count_evm_blocks(&self.blockstore, chain)?;
+            num_blocks_per_chain.insert(*chain_id, num_blocks);
+            let num_purged_blocks = self.get_num_purged_blocks(chain);
+            num_purged_blocks_per_chain.insert(*chain_id, num_purged_blocks);
+            total_purged_blocks += num_purged_blocks;
+            total_blocks += num_blocks;
+        }
+        total_state_db_size = self.storage.storage_size()?;
+
+        Ok(EvmArchiveMetrics {
+            total_purged_blocks,
+            total_blocks,
+            total_state_db_size,
+            main_blocks,
+            main_purged_blocks,
+            num_blocks_per_chain,
+            num_purged_blocks_per_chain,
+        })
+    }
+    pub fn try_report_metrics(&self) {
+        match self.collect_metrics() {
+            Ok(EvmArchiveMetrics {
+                total_purged_blocks,
+                total_blocks,
+                total_state_db_size,
+                main_blocks,
+                main_purged_blocks,
+                num_blocks_per_chain,
+                num_purged_blocks_per_chain,
+            }) => {
+                datapoint_info!(
+                    "evm_archive",
+                    ("total_purged_blocks", total_purged_blocks, i64),
+                    ("total_blocks", total_blocks, i64),
+                    ("total_state_db_size", total_state_db_size, i64),
+                    ("blocks", main_blocks, i64),
+                    ("purged_blocks", main_purged_blocks, i64),
+                );
+                for chain_id in num_blocks_per_chain.keys() {
+                    let chain_name = Self::chain_name_cached(*chain_id);
+                    datapoint_info!(
+                        chain_name,
+                        (
+                            "num_purged_blocks",
+                            num_purged_blocks_per_chain[chain_id],
+                            i64
+                        ),
+                        ("num_blocks", num_blocks_per_chain[chain_id], i64),
+                    );
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to collect all evm chains, error:{}", e);
+            }
+        };
+    }
 
     fn write_evm_record(&self, record: recorder::RecorderEntry) {
         Self::write_evm_block(&self.blockstore, record.chain, record.block.clone());
@@ -209,6 +326,9 @@ impl EvmArchiveInner {
             assert!(first_block_num <= block_num);
             let block_to_purge = block_num.saturating_sub(num_states_to_persist - 1);
 
+            let mut purged_lock = self.purdged_blocks.lock();
+            let purged_blocks = purged_lock.entry(record.chain).or_default();
+            *purged_blocks += block_to_purge.saturating_sub(first_block_num);
             // cleanup old blocks
             for block_num in first_block_num..block_to_purge {
                 match Self::cleanup_block(&self.storage, &self.blockstore, record.chain, block_num)
@@ -309,6 +429,29 @@ mod test {
             state_updates: changes,
         }
     }
+
+    fn empty_record(chain: Option<ChainID>) -> recorder::RecorderEntry {
+        recorder::RecorderEntry {
+            chain,
+            block: Block {
+                header: BlockHeader::new(
+                    Default::default(),
+                    0,
+                    empty_trie_hash(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    H256::zero(),
+                    vec![].into_iter(),
+                    evm_state::BlockVersion::VersionConsistentHashes,
+                ),
+                transactions: Default::default(),
+            },
+            state_root: empty_trie_hash(),
+            state_updates: Default::default(),
+        }
+    }
     // create archive with gc and num_blocks = 1
     // push blocks to archive
     // get state with root of first state to purge
@@ -329,26 +472,7 @@ mod test {
 
         assert!(new_archive.is_gc());
         let chain = None;
-        let mut record = recorder::RecorderEntry {
-            chain,
-            block: Block {
-                header: BlockHeader::new(
-                    Default::default(),
-                    0,
-                    empty_trie_hash(),
-                    0,
-                    0,
-                    0,
-                    0,
-                    H256::zero(),
-                    vec![].into_iter(),
-                    evm_state::BlockVersion::VersionConsistentHashes,
-                ),
-                transactions: Default::default(),
-            },
-            state_root: empty_trie_hash(),
-            state_updates: Default::default(),
-        }; // first update without changes in state
+        let mut record = empty_record(chain);
 
         new_archive.write_evm_record(record.clone());
         let mut states = vec![];
@@ -385,11 +509,63 @@ mod test {
             .storage
             .check_root_exist(states[0].block.header.state_root))
     }
+
+    // check that metrics work correctly
+    // publish n records, and check collect_metrics()
+    #[test]
+    fn test_metrics() {
+        solana_logger::setup_with_default("trace,triedb=warn");
+        let ledger_path = tempdir().unwrap();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let new_archive = EvmArchiveInner::new(
+            EvmArchiveType::WithGc(EvmArchiveGc::new(3, 3)),
+            ledger_path.path(),
+            blockstore,
+        );
+
+        let mut record = empty_record(None);
+
+        let tmp_storage = Storage::create_temporary().unwrap();
+        for _ in 0..4 {
+            new_archive.write_evm_record(record.clone());
+            record = next(&tmp_storage, &record);
+        }
+
+        let metrics = new_archive.collect_metrics().unwrap();
+
+        assert_eq!(metrics.total_blocks, 3);
+        assert_eq!(metrics.main_blocks, 3);
+        assert_eq!(metrics.total_purged_blocks, 1);
+        assert_eq!(metrics.main_purged_blocks, 1);
+
+        assert_eq!(metrics.num_blocks_per_chain.len(), 0);
+        assert_eq!(metrics.num_purged_blocks_per_chain.len(), 0);
+
+        assert!(metrics.total_state_db_size > 0);
+        let size = metrics.total_state_db_size;
+
+        let mut record = empty_record(Some(123));
+
+        let tmp_storage = Storage::create_temporary().unwrap();
+        for _ in 0..4 {
+            new_archive.write_evm_record(record.clone());
+            record = next(&tmp_storage, &record);
+        }
+
+        let metrics = new_archive.collect_metrics().unwrap();
+
+        assert_eq!(metrics.total_blocks, 6);
+        assert_eq!(metrics.main_blocks, 3);
+        assert_eq!(metrics.total_purged_blocks, 2);
+        assert_eq!(metrics.main_purged_blocks, 1);
+
+        assert_eq!(metrics.num_blocks_per_chain.len(), 1);
+        assert_eq!(metrics.num_purged_blocks_per_chain.len(), 1);
+        assert_eq!(metrics.num_blocks_per_chain[&123], 3);
+        assert_eq!(metrics.num_purged_blocks_per_chain[&123], 1);
+        assert!(metrics.total_state_db_size > size);
+    }
 }
 
-// 1. todo remove
-// 2. lock_state - unit test
-// 3. start node
-// 4. metrics
 // 5. lock_state fix
 // 6. rpc test

@@ -16,7 +16,7 @@ rocksdb = { package = "rocksdb", version = "0.21", default-features = false }
 triedb = { git = "https://github.com/velas/triedb", tag = "primitive-types-v0.12", features = [
     "rocksdb",
 ] }
-
+fs_extra = "1.2.0"
 primitive-types = { version = "0.12", features = ["borsh"] }
 keccak-hash = "0.10.0"
 log = "0.4.11"
