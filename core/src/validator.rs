@@ -1444,6 +1444,8 @@ fn load_blockstore(
     )
     .expect("Failed to open ledger database");
     blockstore.set_no_compaction(config.no_rocksdb_compaction);
+    // use classic purging if gc is disabled.
+    blockstore.set_enable_evm_purging(!evm_state_archive_params.is_gc());
 
     let blockstore = Arc::new(blockstore);
     let blockstore_root_scan = BlockstoreRootScan::new(config, &blockstore, exit);

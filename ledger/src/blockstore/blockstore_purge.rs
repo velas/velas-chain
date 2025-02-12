@@ -143,6 +143,9 @@ impl Blockstore {
     ) -> Result<bool> {
         self.run_purge_with_stats(from_slot, to_slot, purge_type, &mut PurgeStats::default())
     }
+    pub fn is_evm_purging_enabled(&self) -> bool {
+        self.evm_purging_enabled
+    }
 
     /// A helper function to `purge_slots` that executes the ledger clean up
     /// from `from_slot` to `to_slot`.
@@ -253,7 +256,8 @@ impl Blockstore {
         let last_slot_block = self.evm_block_by_slot_reverse_iterator(to_slot)?.next();
         // Get evm blocks with slots in range [from_slot; to_slot] and
         // use block_number of those blocks to clear respective records from EvmBlockHeader column
-        if matches!((&first_slot_block, &last_slot_block),
+        if self.is_evm_purging_enabled()
+            && matches!((&first_slot_block, &last_slot_block),
             (Some(first_slot), Some(last_slot)) if first_slot.0 <= to_slot && last_slot.0 >= from_slot)
         {
             let first_block_num = first_slot_block.unwrap().1;

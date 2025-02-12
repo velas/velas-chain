@@ -1421,8 +1421,8 @@ mod test {
         evm_state::{
             empty_trie_hash,
             transactions::{TransactionAction, TransactionSignature},
-            AccountProvider, AccountState, ExitReason, ExitSucceed, FromKey, UnsignedTransaction,
-            BURN_GAS_PRICE, BURN_GAS_PRICE_IN_SUBCHAIN,
+            AccountProvider, AccountState, ExitReason, ExitSucceed, FromKey, BURN_GAS_PRICE,
+            BURN_GAS_PRICE_IN_SUBCHAIN,
         },
         hex_literal::hex,
         num_traits::Zero,

@@ -185,6 +185,7 @@ pub struct Blockstore {
     completed_slots_senders: Mutex<Vec<CompletedSlotsSender>>,
     pub lowest_cleanup_slot: parking_lot::RwLock<Slot>,
     no_compaction: bool,
+    evm_purging_enabled: bool,
     column_options: LedgerColumnOptions,
     pub slots_stats: SlotsStats,
     // EVM scope
@@ -662,6 +663,7 @@ impl Blockstore {
             last_root,
             lowest_cleanup_slot: parking_lot::RwLock::<Slot>::default(),
             no_compaction: false,
+            evm_purging_enabled: true,
             column_options,
             slots_stats: SlotsStats::default(),
             evm_blocks_cf,
@@ -754,6 +756,14 @@ impl Blockstore {
         self.no_compaction = no_compaction;
     }
 
+    /// Whether to disable evm purging, which is used
+    /// by the ledger purging service and `solana_core::validator::backup_and_clear_blockstore`.
+    ///
+    /// Note that this setting is not related to the RocksDB's background
+    /// compaction and with solana default compaction mechanism.
+    pub fn set_enable_evm_purging(&mut self, enable: bool) {
+        self.evm_purging_enabled = enable;
+    }
     /// Deletes the blockstore at the specified path.
     ///
     /// Note that if the `ledger_path` has multiple rocksdb instances, this
