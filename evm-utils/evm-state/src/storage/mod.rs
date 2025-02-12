@@ -642,10 +642,14 @@ impl Storage<OptimisticTransactionDB> {
 
     pub fn cleanup_slots(
         &self,
-        keep_slot: u64,
-        keep_root: H256,
-        subchain_roots: Vec<H256>,
+        // slot, main_root, subchain_roots
+        keep_slot_root: Option<(u64, H256, Vec<H256>)>,
     ) -> Result<()> {
+        let (keep_slot, keep_root, subchain_roots) = match keep_slot_root {
+            Some(v) => v,
+            None => (u64::MAX, H256::zero(), vec![]),
+        };
+
         if !self.check_root_exist(keep_root) {
             return Err(Error::RootNotFound(keep_root));
         }

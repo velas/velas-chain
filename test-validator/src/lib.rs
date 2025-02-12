@@ -1,7 +1,6 @@
 #![allow(clippy::integer_arithmetic)]
 use {
     crossbeam_channel::unbounded,
-    evm_state::Storage,
     log::*,
     solana_cli_output::CliAccount,
     solana_client::{

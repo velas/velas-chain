@@ -1283,13 +1283,15 @@ impl TraceERPC for TraceErpcImpl {
         }
 
         Box::pin(async move {
-            let mut evm_state = meta
+            let guard = meta
                 .evm_state_archive(None, Some(block_header.timestamp))
-                .ok_or(Error::ArchiveNotSupported)?
-                .new_incomming_for_root(state_root)
-                .ok_or(Error::StateNotFoundForBlock {
+                .ok_or(Error::ArchiveNotSupported)?;
+
+            let mut evm_state = (*guard).clone().new_incomming_for_root(state_root).ok_or(
+                Error::StateNotFoundForBlock {
                     block: BlockId::Num(Hex(block_header.block_number)),
-                })?;
+                },
+            )?;
             evm_state.state.block_number = block_header.block_number;
             evm_state.state.timestamp = block_header.timestamp;
             evm_state.state.last_block_hash = block_header.parent_hash;
@@ -1425,8 +1427,11 @@ fn call_many(
         }
     } else {
         let root = saved_state.state_root.unwrap();
-        meta.evm_state_archive(chain, saved_state.block_timestamp)
-            .ok_or(Error::ArchiveNotSupported)?
+        let guard = meta
+            .evm_state_archive(chain, saved_state.block_timestamp)
+            .ok_or(Error::ArchiveNotSupported)?;
+        (*guard)
+            .clone()
             .new_incomming_for_root(root)
             .ok_or(Error::StateNotFoundForBlock {
                 block: saved_state.block,
