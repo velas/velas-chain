@@ -575,11 +575,11 @@ where
 
     evm_state
         .kvs()
-        .cleanup_slots(
+        .cleanup_slots(Some((
             bank_fields.slot,
             bank_fields.evm_persist_fields.last_root(),
             subchain_roots,
-        )
+        )))
         .map_err(|e| Error::custom(format!("Unable to register slot for evm root {}", e)))?;
 
     // if limit_load_slot_count_from_snapshot is set, then we need to side-step some correctness checks beneath this call

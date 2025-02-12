@@ -9,8 +9,9 @@ use {
     solana_runtime::bank::Bank,
     std::{
         collections::BTreeMap,
+        ops::Deref,
         path::{Path, PathBuf},
-        sync::Arc,
+        sync::{atomic::AtomicU64, Arc},
     },
     triedb::gc::DbCounter,
 };
@@ -73,6 +74,7 @@ pub struct EvmArchiveInner {
     storage: Storage,
     blockstore: Arc<Blockstore>,
     purdged_blocks: Mutex<BTreeMap<Option<ChainID>, u64>>,
+    slot_lock: AtomicU64,
 }
 pub const EVM_ARCHIVE_PATH: &str = "evm-archive-state-gc";
 pub const EVM_ARCHIVE_LIMIT_BLOCKS: u64 = 3000;
@@ -104,6 +106,11 @@ impl EvmArchiveInner {
                 Storage::open_persistent(path, false).expect("Cannot open evm archive folder")
             }
         };
+        if storage.gc_enabled() {
+            if let Err(e) = storage.cleanup_slots(None) {
+                error!("Unable to cleanup slots on start {}", e);
+            }
+        }
 
         assert_eq!(storage.gc_enabled(), archive_type.is_gc());
         Self {
@@ -111,6 +118,7 @@ impl EvmArchiveInner {
             storage,
             blockstore,
             purdged_blocks: Default::default(),
+            slot_lock: AtomicU64::new(0),
         }
     }
     fn register_state(storage: &Storage, state_root: H256, state_updates: ChangedState) {
@@ -219,10 +227,6 @@ impl EvmArchiveInner {
     /// Collects metrics about the evm archive, including the number of blocks and purged blocks
     /// per subchain, the total number of purged blocks, the total number of blocks, and the
     /// total size of the db in bytes.
-    ///
-    /// Args:
-    ///
-    /// * `blockstore`: The blockstore to collect metrics from.
     ///
     /// Returns:
     ///
@@ -352,7 +356,7 @@ impl EvmArchiveInner {
 
         mocked_bank: &Bank,
         timestamp: Option<u64>,
-    ) -> Option<evm_state::EvmBackend<evm_state::Incomming>> {
+    ) -> Option<StateGuard<'_>> {
         let state = match chain_id {
             Some(subchain_id) => mocked_bank
                 .evm()
@@ -364,14 +368,15 @@ impl EvmArchiveInner {
         };
         // TODO(L): block_hashes history
         let timestamp = timestamp.unwrap_or(mocked_bank.clock().unix_timestamp as u64);
-        match state.new_from_parent(timestamp, true) {
+        let state = match state.new_from_parent(timestamp, true) {
             evm_state::EvmState::Incomming(mut i) => {
                 i.kvs = self.storage.clone();
                 // TODO: Fix root??
                 Some(i)
             }
             _ => unreachable!(),
-        }
+        };
+        StateGuard::new(&self.storage, state?, _root, &self.slot_lock).ok()
     }
     pub fn get_storage(&self) -> Storage {
         self.storage.clone()
@@ -384,6 +389,56 @@ impl EvmArchiveInner {
 
 pub type EvmArchive = Arc<EvmArchiveInner>;
 
+pub struct StateGuard<'a> {
+    pub state: evm_state::EvmBackend<evm_state::Incomming>,
+    pub state_root: H256,
+    pub num_lock_slot: u64,
+    storage: &'a Storage,
+}
+
+impl<'a> StateGuard<'a> {
+    pub fn new(
+        storage: &'a Storage,
+        state: evm_state::EvmBackend<evm_state::Incomming>,
+        state_root: H256,
+        lock_slot: &AtomicU64,
+    ) -> evm_state::storage::Result<Self> {
+        let num_lock = lock_slot.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if storage.gc_enabled() {
+            storage.register_slot(num_lock, state_root, vec![], false)?;
+        }
+        Ok(StateGuard {
+            state,
+            state_root,
+            num_lock_slot: num_lock,
+            storage,
+        })
+    }
+    fn try_drop(&mut self) -> evm_state::storage::Result<()> {
+        if self.storage.gc_enabled() {
+            let hashes = self.storage.purge_slot(self.num_lock_slot)?;
+            RootCleanup::new(self.storage, hashes).cleanup()?;
+        }
+        Ok(())
+    }
+}
+
+impl Deref for StateGuard<'_> {
+    type Target = evm_state::EvmBackend<evm_state::Incomming>;
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl Drop for StateGuard<'_> {
+    fn drop(&mut self) {
+        if self.storage.gc_enabled() {
+            if let Err(e) = self.try_drop() {
+                error!("Error during cleanup: {:?}", e);
+            }
+        }
+    }
+}
 #[cfg(test)]
 mod test {
     use {

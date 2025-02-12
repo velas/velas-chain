@@ -39,7 +39,7 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, SignatureInfosForAddress},
         blockstore_db::BlockstoreError,
-        evm::EvmArchive,
+        evm::{EvmArchive, StateGuard},
         get_tmp_ledger_path,
         leader_schedule_cache::LeaderScheduleCache,
     },
@@ -481,7 +481,7 @@ impl JsonRpcRequestProcessor {
         &self,
         chain: EvmChain,
         timestamp: Option<u64>,
-    ) -> Option<evm_state::EvmBackend<evm_state::Incomming>> {
+    ) -> Option<StateGuard<'_>> {
         let mocked_bank = self.bank(None);
         self.evm_archive
             .as_ref()?
