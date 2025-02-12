@@ -15,10 +15,14 @@ pub mod recorder;
 
 pub struct EvmArchiveGc {
     states_per_chain: u64,
+    states_on_main_chain: u64,
 }
 impl EvmArchiveGc {
-    pub fn new(states_per_chain: u64) -> Self {
-        Self { states_per_chain }
+    pub fn new(states_per_chain: u64, states_on_main_chain: u64) -> Self {
+        Self {
+            states_per_chain,
+            states_on_main_chain,
+        }
     }
 }
 
@@ -29,7 +33,10 @@ pub enum EvmArchiveType {
 
 impl EvmArchiveType {
     pub fn default_gc() -> Self {
-        EvmArchiveType::WithGc(EvmArchiveGc::new(EVM_ARCHIVE_LIMIT_BLOCKS))
+        EvmArchiveType::WithGc(EvmArchiveGc::new(
+            EVM_ARCHIVE_LIMIT_BLOCKS_ON_SUBCHAIN,
+            EVM_ARCHIVE_LIMIT_BLOCKS,
+        ))
     }
     pub fn is_gc(&self) -> bool {
         matches!(self, EvmArchiveType::WithGc(_))
@@ -42,11 +49,12 @@ pub struct EvmArchiveInner {
     blockstore: Arc<Blockstore>,
 }
 pub const EVM_ARCHIVE_PATH: &str = "evm_archive_state";
-pub const EVM_ARCHIVE_LIMIT_BLOCKS: u64 = 100;
+pub const EVM_ARCHIVE_LIMIT_BLOCKS: u64 = 3000;
+pub const EVM_ARCHIVE_LIMIT_BLOCKS_ON_SUBCHAIN: u64 = 1000;
 // priv api
 impl EvmArchiveInner {
     pub fn testing(ledger_path: impl AsRef<Path>, blockstore: Arc<Blockstore>) -> Self {
-        let archive_type = EvmArchiveType::WithGc(EvmArchiveGc::new(10));
+        let archive_type = EvmArchiveType::WithGc(EvmArchiveGc::new(10, 10));
         Self::new(archive_type, ledger_path, blockstore)
     }
     pub fn new(
@@ -57,8 +65,8 @@ impl EvmArchiveInner {
         let storage = match &archive_type {
             EvmArchiveType::WithGc(p) => {
                 info!(
-                    "Opening temporary evm archive storage, persist_last_slots={}",
-                    p.states_per_chain
+                    "Opening temporary evm archive storage, persist_last_slots={}, on main chain={}",
+                    p.states_per_chain, p.states_on_main_chain
                 );
                 let evm_state_path = PathBuf::from(ledger_path.as_ref()).join(EVM_ARCHIVE_PATH);
                 Storage::open_persistent(evm_state_path, true)
@@ -193,8 +201,13 @@ impl EvmArchiveInner {
 
             debug_assert!(first_block_num <= block_num);
 
+            let num_states_to_persist = if record.chain.is_some() {
+                gc.states_per_chain
+            } else {
+                gc.states_on_main_chain
+            };
             assert!(first_block_num <= block_num);
-            let block_to_purge = block_num.saturating_sub(gc.states_per_chain - 1);
+            let block_to_purge = block_num.saturating_sub(num_states_to_persist - 1);
 
             // cleanup old blocks
             for block_num in first_block_num..block_to_purge {
@@ -309,7 +322,7 @@ mod test {
         let num_blocks = 3;
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let new_archive = EvmArchiveInner::new(
-            EvmArchiveType::WithGc(EvmArchiveGc::new(num_blocks)),
+            EvmArchiveType::WithGc(EvmArchiveGc::new(num_blocks, num_blocks)),
             ledger_path.path(),
             blockstore.clone(),
         );

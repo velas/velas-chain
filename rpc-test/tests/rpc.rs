@@ -29,7 +29,7 @@ use {
         hash::Hash,
         pubkey::Pubkey,
         rent::Rent,
-        signature::{Keypair, Signature, Signer},
+        signature::{Keypair, Signer},
         system_instruction::assign,
         system_transaction,
         transaction::Transaction,
@@ -40,7 +40,6 @@ use {
     std::{
         collections::HashSet,
         net::UdpSocket,
-        str::FromStr,
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc,

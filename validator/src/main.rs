@@ -2,7 +2,7 @@
 use crossbeam_channel::unbounded;
 #[cfg(not(target_env = "msvc"))]
 use jemallocator::Jemalloc;
-use solana_ledger::evm::{EvmArchive, EvmArchiveGc, EvmArchiveType, EVM_ARCHIVE_LIMIT_BLOCKS};
+use solana_ledger::evm::{EvmArchiveGc, EvmArchiveType, EVM_ARCHIVE_LIMIT_BLOCKS, EVM_ARCHIVE_LIMIT_BLOCKS_ON_SUBCHAIN};
 use {
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, App,
@@ -547,7 +547,17 @@ pub fn main() {
                 .value_name("NUM")
                 .takes_value(true)
                 .conflicts_with("evm_state_archive_path")
+                .requires("evm_save_blocks_on_subchain")
                 .help("Specify amount of evm blocks to store in archive"),
+        )
+        .arg(
+            Arg::with_name("evm_save_blocks_on_subchain")
+                .long("evm-save-blocks-on-subchain")
+                .value_name("NUM")
+                .takes_value(true)
+                .conflicts_with("evm_state_archive_path")
+                .requires("evm_save_blocks")
+                .help("Specify amount of evm blocks to store in archive for subchain"),
         )
         .arg(
             Arg::with_name("evm_state_rpc_port")
@@ -2274,12 +2284,11 @@ pub fn main() {
     let evm_state_archive_params = match matches.value_of("evm_state_archive_path") {
         Some(path) => EvmArchiveType::NoCleanup(path.to_owned()),
         _ => {
-            let num_blocks = matches.value_of("evm_save_blocks").and_then(|v|v.parse::<u64>().ok()).unwrap_or(EVM_ARCHIVE_LIMIT_BLOCKS);
-            EvmArchiveType::WithGc(EvmArchiveGc::new(num_blocks))
+            let main_chain_blocks = matches.value_of("evm_save_blocks").and_then(|v|v.parse::<u64>().ok()).unwrap_or(EVM_ARCHIVE_LIMIT_BLOCKS);
+            let evm_save_blocks_on_subchain = matches.value_of("evm_save_blocks_on_subchain").and_then(|v|v.parse::<u64>().ok()).unwrap_or(EVM_ARCHIVE_LIMIT_BLOCKS_ON_SUBCHAIN);
+            EvmArchiveType::WithGc(EvmArchiveGc::new(evm_save_blocks_on_subchain, main_chain_blocks))
         }
     };
-       
-
     let authorized_voter_keypairs = keypairs_of(&matches, "authorized_voter_keypairs")
         .map(|keypairs| keypairs.into_iter().map(Arc::new).collect())
         .unwrap_or_else(|| vec![identity_keypair.clone()]);

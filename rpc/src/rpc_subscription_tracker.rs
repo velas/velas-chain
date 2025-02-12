@@ -621,6 +621,9 @@ impl SubscriptionToken {
     pub fn params(&self) -> &SubscriptionParams {
         &self.0.params
     }
+    pub fn _token(&self) -> &CounterToken {
+        &self.1
+    }
 }
 
 #[cfg(test)]
