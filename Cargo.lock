@@ -2308,6 +2308,7 @@ dependencies = [
  "ethbloom",
  "evm",
  "fixed-hash 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fs_extra",
  "hex",
  "impl-rlp 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools",

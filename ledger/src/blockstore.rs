@@ -31,7 +31,7 @@ use {
     solana_entry::entry::{create_ticks, Entry},
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_debug, datapoint_error},
-    solana_program_runtime::evm_executor_context::Chain,
+    solana_program_runtime::evm_executor_context::{Chain, ChainID},
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::hardened_unpack::{unpack_genesis_archive, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
     solana_sdk::{
@@ -2487,6 +2487,27 @@ impl Blockstore {
                         }),
                 )
             }))
+    }
+    // set subchain_id to min_value
+    // get iterator of (subchain_id,0,0)
+    // retrieve first key and recover subchain_id from it.
+    // increment subchain_id and repeat iteration.
+    // return vector when iterator is exhausted
+    pub fn collect_all_evm_chains(&self) -> Result<Vec<ChainID>> {
+        let mut result = vec![];
+        let mut subchain_id = 0;
+        loop {
+            let mut iter = self.evm_subchain_blocks_cf.iter(IteratorMode::From(
+                (subchain_id, 0, 0),
+                IteratorDirection::Forward,
+            ))?;
+            let Some(((chain_id, _, _), _)) = iter.next() else {
+                break;
+            };
+            result.push(chain_id);
+            subchain_id = chain_id + 1;
+        }
+        Ok(result)
     }
 
     pub fn evm_block_by_slot_reverse_iterator(
