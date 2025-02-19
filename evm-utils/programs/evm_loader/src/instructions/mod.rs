@@ -200,6 +200,7 @@ pub enum Hardfork {
     // BorshSchema,
     Clone,
     Debug,
+    Default,
     PartialEq,
     Eq,
     Ord,
@@ -217,10 +218,8 @@ pub struct AllocAccount {
 impl AllocAccount {
     pub fn new_with_balance(wei: U256) -> Self {
         Self {
-            code: vec![],
-            storage: BTreeMap::new(),
             balance: wei,
-            nonce: 0,
+            ..Default::default()
         }
     }
 }

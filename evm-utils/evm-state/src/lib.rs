@@ -38,6 +38,8 @@ mod context;
 pub mod executor;
 mod state;
 
+// TODO(L): Current versions of `pritimive_types` already support serialization
+
 // Cannot link to solana-sdk, because solana_sdk already linked to evm-state
 // Used in BlockHeader
 #[path = "../../../sdk/src/deserialize_utils.rs"]

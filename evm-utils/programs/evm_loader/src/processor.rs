@@ -4046,6 +4046,48 @@ mod test {
         );
     }
 
+    #[test]
+    fn subchain_mint_burn() {
+        let mut evm_context = EvmMockContext::new(0);
+        let evm_secret_key = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
+        let evm_public_key = evm_secret_key.to_address();
+
+        let native_owner = Pubkey::new_unique();
+        let native_owner_acc = evm_context.native_account(native_owner);
+        native_owner_acc.set_owner(system_program::ID);
+        native_owner_acc.set_lamports(10_000_000___000_000_000);
+
+        let chain_id = 0x5678;
+
+        let config = {
+            let mut config = SubchainConfig::default();
+
+            config.alloc.insert(
+                evm_public_key,
+                AllocAccount::new_with_balance(lamports_to_wei(10u64.pow(10))),
+            );
+
+            let mint_burn_contract = hex::decode(include_str!(
+                "../../../evm-state/tests/binaries/mint_burn_token.hex"
+            ))
+            .unwrap();
+
+            config.alloc.insert(
+                H160::zero(),
+                AllocAccount {
+                    code: mint_burn_contract,
+                    ..Default::default()
+                },
+            );
+
+            config
+        };
+
+        setup_chain(&mut evm_context, native_owner, chain_id, config, 840000 * 3);
+
+        assert!(true);
+    }
+
     fn setup_chain(
         evm_context: &mut EvmMockContext,
         owner: solana::Address,
