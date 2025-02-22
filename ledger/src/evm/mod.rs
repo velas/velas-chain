@@ -11,6 +11,7 @@ use {
         collections::BTreeMap,
         ops::Deref,
         path::{Path, PathBuf},
+        str,
         sync::{atomic::AtomicU64, Arc},
     },
     triedb::gc::DbCounter,
@@ -215,10 +216,11 @@ impl EvmArchiveInner {
         thread_local! {
             pub static CHAIN_NAME: RefCell<BTreeMap<ChainID, &'static str>> = RefCell::new(BTreeMap::new());
         }
-        let val = CHAIN_NAME.with_borrow_mut(|m| {
+        let val = CHAIN_NAME.with(|cell| {
+            let mut m = cell.borrow_mut();
             if !m.contains_key(&chain_id) {
                 let val = format!("evm_archive_subchain_{}", chain_id);
-                m.insert(chain_id, val.leak());
+                m.insert(chain_id, Box::leak(val.into_boxed_str()));
             }
             *m.get(&chain_id).expect("Chain should be inserted")
         });
