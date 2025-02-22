@@ -352,8 +352,7 @@ impl EvmArchiveInner {
     pub fn get_state(
         &self,
         chain_id: Option<ChainID>,
-        _root: H256,
-
+        root: H256,
         mocked_bank: &Bank,
         timestamp: Option<u64>,
     ) -> Option<StateGuard<'_>> {
@@ -376,7 +375,7 @@ impl EvmArchiveInner {
             }
             _ => unreachable!(),
         };
-        StateGuard::new(&self.storage, state?, _root, &self.slot_lock).ok()
+        StateGuard::new(&self.storage, state?, root, &self.slot_lock).ok()
     }
     pub fn get_storage(&self) -> Storage {
         self.storage.clone()
@@ -622,5 +621,4 @@ mod test {
     }
 }
 
-// 5. lock_state fix
 // 6. rpc test
