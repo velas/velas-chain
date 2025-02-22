@@ -282,10 +282,13 @@ impl EvmBank {
     }
 
     pub fn subchain_roots(&self) -> Vec<evm_state::H256> {
-        self.side_chains
+        let mut subchains_roots: Vec<_> = self
+            .side_chains
             .iter()
             .map(|c| c.evm_state.last_root())
-            .collect()
+            .collect();
+        subchains_roots.sort();
+        subchains_roots
     }
 
     // Return state of subchain, if not exist, creates new default

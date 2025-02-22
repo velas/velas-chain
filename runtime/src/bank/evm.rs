@@ -50,26 +50,6 @@ impl Bank {
         results
     }
 
-    pub fn evm_blocks(&self) -> Vec<(Chain, evm_state::Block)> {
-        self.evm
-            .main_chain()
-            .state()
-            .get_block()
-            .map(|block| (None, block))
-            .into_iter()
-            .chain(
-                self.evm
-                    .side_chains()
-                    .iter()
-                    .filter_map(|s| s.value().evm_state.get_block().map(|b| (Some(*s.key()), b))),
-            )
-            .collect()
-    }
-
-    pub fn evm_state_change(&self) -> Option<(evm_state::H256, evm_state::ChangedState)> {
-        self.evm.main_chain().changed_list().clone()
-    }
-
     pub fn evm_burn_fee_activated(&self) -> bool {
         self.feature_set
             .is_active(&feature_set::velas::burn_fee::id())
@@ -128,6 +108,7 @@ impl Bank {
         let mut changed_subchain = false;
         // TODO(H): cleanup default subchains?
         // TODO(L): assert empty if !feature_subchain
+        // subchain order is not important during commit
         for mut chain in self.evm.side_chains().iter_mut() {
             let subchain_old_root = chain.evm_state.last_root();
 
