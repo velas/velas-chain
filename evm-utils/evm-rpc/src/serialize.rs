@@ -12,6 +12,11 @@ use {
 };
 #[derive(Debug, Default, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deref)]
 pub struct Hex<T>(pub T);
+impl<T> Hex<T> {
+    pub fn into(self) -> T {
+        self.0
+    }
+}
 
 #[derive(PartialEq, Eq, Debug, Clone, Default)]
 pub struct Bytes(pub Vec<u8>);
