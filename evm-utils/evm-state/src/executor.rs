@@ -212,6 +212,14 @@ impl Executor {
             FeatureSet::new_with_all_enabled(),
         )
     }
+    pub fn with_state(state: EvmBackend<Incomming>) -> Self {
+        Self::with_config(
+            state,
+            Default::default(),
+            Default::default(),
+            FeatureSet::new_with_all_enabled(),
+        )
+    }
 
     pub fn with_config(
         evm_backend: EvmBackend<Incomming>,
