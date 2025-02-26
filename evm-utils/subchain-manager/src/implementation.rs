@@ -46,7 +46,7 @@ impl genesis_json::GenesisConfig {
                         balance: v.balance,
                         code: v.code.0.clone(),
                         storage: v.storage.clone(),
-                        nonce: v.nonce,
+                        nonce: v.nonce.into(),
                     }
                 })
             })

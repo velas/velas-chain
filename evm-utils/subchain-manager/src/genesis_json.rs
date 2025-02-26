@@ -1,6 +1,6 @@
 use {
     crate::Hardfork,
-    evm_rpc::Bytes,
+    evm_rpc::{Bytes, Hex},
     evm_state::{H160, H256, U256},
     serde::{Deserialize, Serialize},
     solana_sdk::pubkey::Pubkey,
@@ -13,10 +13,8 @@ use {
 };
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
-    #[serde(skip_serializing_if = "Bytes::is_empty")]
     #[serde(default)]
     pub code: Bytes,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     #[serde(default)]
     pub storage: BTreeMap<H256, H256>,
     #[serde(
@@ -24,14 +22,10 @@ pub struct Account {
         serialize_with = "HexOrNum::seralize_with"
     )]
     pub balance: U256,
-    #[serde(skip_serializing_if = "is_zero")]
     #[serde(default)]
-    pub nonce: u64,
+    pub nonce: Hex<u64>,
 }
 
-fn is_zero(v: &u64) -> bool {
-    *v == 0
-}
 // Genesis config used in geth.
 // Order preserved.
 // Commented out fields that is not used in the current implementation.
@@ -321,7 +315,7 @@ mod tests {
                 start_hardfork: Hardfork::Istanbul,
                 network_name: "".to_string(),
                 token_name: "".to_string(),
-                gas_price: 15.into(),
+                gas_price: 0.into(),
                 whitelisted: [].into()
             },
             alloc: GenesisAlloc(
@@ -333,7 +327,7 @@ mod tests {
                             storage: vec![(H256::from(hex!("0000000000000000000000000000000000000000000000000000000000000002")),
                             H256::from(hex!("0000000000000000000000000000000000000000000000000000000000000003")))].into_iter().collect(),
                             balance: U256::from_dec_str("1000000000000000000000000").unwrap(),
-                            nonce: 0,
+                            nonce: 0.into(),
                         },
                     ),
                     (
@@ -343,7 +337,7 @@ mod tests {
                             storage: vec![(H256::from(hex!("0000000000000000000000000000000000000000000000000000000000000001")),
                             H256::from(hex!("0000000000000000000000000000000000000000000000000000000000000001")))].into_iter().collect(),
                             balance: U256::from_dec_str("500000000000000000000000").unwrap(),
-                            nonce: 0,
+                            nonce: 0.into(),
                         },
                     ),
                 ]
@@ -363,8 +357,8 @@ mod tests {
                 "startHardfork": "Istanbul",
                 "networkName": "",
                 "tokenName": "",
-                "whitelisted": [[15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15]],
-                "gasPrice": "0xf"
+                "gasPrice": "0x0",
+                "whitelisted": []
             },
             "alloc": {
                 "0x2222222222222222222222222222222222222222": {
@@ -372,14 +366,16 @@ mod tests {
                     "storage": {
                         "0x0000000000000000000000000000000000000000000000000000000000000001": "0x0000000000000000000000000000000000000000000000000000000000000001"
                     },
-                    "balance": "500000000000000000000000"
+                    "balance": "500000000000000000000000",
+                    "nonce": "0x0"
                 },
                 "0x3333333333333333333333333333333333333333": {
                     "code": "0x60606040",
                     "storage": {
                         "0x0000000000000000000000000000000000000000000000000000000000000002": "0x0000000000000000000000000000000000000000000000000000000000000003"
                     },
-                    "balance": "1000000000000000000000000"
+                    "balance": "1000000000000000000000000",
+                    "nonce": "0x0"
                 }
             },
             "auxiliary":{}

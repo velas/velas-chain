@@ -544,7 +544,7 @@ impl From<Config> for genesis_json::GenesisConfig {
                 addr.0,
                 genesis_json::Account {
                     balance: balance.0,
-                    nonce: 0,
+                    nonce: 0.into(),
                     code: Bytes::default(),
                     storage: BTreeMap::new(),
                 },
