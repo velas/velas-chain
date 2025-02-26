@@ -11,6 +11,7 @@ use {
         scope::*,
         tx_chunks::TxChunks,
     },
+    crate::{instructions::ExtendedConfig, EVM_SUBCHAIN_STORAGE_INDEX},
     borsh::BorshDeserialize,
     evm::{wei_to_lamports, Executor, ExitReason},
     evm_state::{ExecutionResult, MemoryAccount, TransactionReceipt, H160, H256, U256},
@@ -127,6 +128,13 @@ macro_rules! get_executor
         }
     };
 
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum StorageType {
+    Transaction,
+    SubchainTransaction,
+    SubchainAlloc,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -317,9 +325,12 @@ impl EvmProcessor {
         // they should appear after storage and subchain_evm_state.
         let mut start_idx = if is_big { 1 } else { 0 };
 
-        if is_subchain {
+        let storage_type = if is_subchain {
             start_idx += 1;
-        }
+            StorageType::SubchainTransaction
+        } else {
+            StorageType::Transaction
+        };
 
         // TODO(L): Add logic for fee collector
         let (sender, _fee_collector) = (
@@ -427,7 +438,7 @@ impl EvmProcessor {
                         invoke_context,
                         accounts,
                         borsh_used,
-                        is_subchain,
+                        storage_type,
                     )?,
                 };
                 ic_msg!(
@@ -487,7 +498,7 @@ impl EvmProcessor {
                         invoke_context,
                         accounts,
                         borsh_used,
-                        is_subchain,
+                        storage_type,
                     )?,
                 };
                 ic_msg!(
@@ -532,7 +543,7 @@ impl EvmProcessor {
 
         if executor.feature_set.is_unsigned_tx_fix_enabled() && is_big {
             let storage =
-                Self::get_big_transaction_storage(invoke_context, &accounts, is_subchain)?;
+                Self::get_big_transaction_storage(invoke_context, &accounts, storage_type)?;
             self.cleanup_storage(invoke_context, storage, sender.unwrap_or(accounts.evm))?;
         }
         if executor
@@ -672,11 +683,8 @@ impl EvmProcessor {
     ) -> Result<(), EvmError> {
         debug!("executing big_tx = {:?}", big_tx);
 
-        let mut storage = Self::get_big_transaction_storage(
-            invoke_context,
-            &accounts,
-            false, /* is_subchain */
-        )?;
+        let mut storage =
+            Self::get_big_transaction_storage(invoke_context, &accounts, StorageType::Transaction)?;
         let mut tx_chunks = TxChunks::new(storage.data_as_mut_slice());
 
         match big_tx {
@@ -714,6 +722,8 @@ impl EvmProcessor {
         }
     }
 
+    // Remove storage by setting lamports = 0
+    // Transfer lamports to user account
     pub fn cleanup_storage<'a>(
         &self,
         invoke_context: &InvokeContext,
@@ -787,12 +797,13 @@ impl EvmProcessor {
         invoke_context: &InvokeContext,
         accounts: AccountStructure,
         deserialize_chunks_with_borsh: bool,
-        subchain: bool,
+        storage_type: StorageType,
     ) -> Result<T, EvmError>
     where
         T: BorshDeserialize + DeserializeOwned,
     {
-        let mut storage = Self::get_big_transaction_storage(invoke_context, &accounts, subchain)?;
+        let mut storage =
+            Self::get_big_transaction_storage(invoke_context, &accounts, storage_type)?;
         let tx_chunks = TxChunks::new(storage.data_mut().as_mut_slice());
         debug!("Tx chunks crc = {:#x}", tx_chunks.crc());
 
@@ -814,13 +825,19 @@ impl EvmProcessor {
     fn get_big_transaction_storage<'a>(
         invoke_context: &InvokeContext,
         accounts: &'a AccountStructure,
-        subchain: bool,
+        storage_type: StorageType,
     ) -> Result<RefMut<'a, AccountSharedData>, EvmError> {
-        let idx = if subchain { 1 } else { 0 };
+        // constants specific for each instruction type:
+        // subchain_init, subchain_execute_tx, execute_tx
+        let idx = match storage_type {
+            StorageType::SubchainAlloc => 2,
+            StorageType::SubchainTransaction => 1,
+            StorageType::Transaction => 0,
+        };
         let storage_account = accounts.users.get(idx).ok_or_else(|| {
             ic_msg!(
                 invoke_context,
-                "EvmBigTransaction: No storage account found."
+                "EvmTransactionStorage: No storage account found."
             );
             EvmError::MissingAccount
         })?;
@@ -828,7 +845,7 @@ impl EvmProcessor {
         if storage_account.signer_key().is_none() {
             ic_msg!(
                 invoke_context,
-                "EvmBigTransaction: Storage should sign instruction."
+                "EvmTransactionStorage: Storage should sign instruction."
             );
             return Err(EvmError::MissingRequiredSignature);
         }
@@ -1068,7 +1085,7 @@ impl EvmProcessor {
         invoke_context: &mut InvokeContext,
         first_keyed_account: usize,
         subchain_id: u64,
-        config: SubchainConfig,
+        mut config: SubchainConfig,
     ) -> Result<(), EvmError> {
         let main_chain_id = invoke_context.get_main_chain_id();
         if main_chain_id.is_none()
@@ -1081,6 +1098,7 @@ impl EvmProcessor {
             );
             return Err(EvmError::InvalidSubchainId);
         }
+
         if config.network_name.len() > 32 {
             ic_msg!(
                 invoke_context,
@@ -1099,7 +1117,7 @@ impl EvmProcessor {
         let evm_subchain_state_pda = evm_state_subchain_account(subchain_id);
 
         let accounts = Self::build_account_structure(first_keyed_account, invoke_context).unwrap();
-
+        dbg!(&accounts);
         // Check if `evm_subchain_state` is in `keyed_accounts`
         let evm_subchain_state = accounts.users.get(0).ok_or_else(|| {
             ic_msg!(
@@ -1154,11 +1172,23 @@ impl EvmProcessor {
             );
             Err(EvmError::EvmSubchainDepositRequired)?
         }
-
         let whale_pubkey = *whale.unsigned_key();
         let evm_subchain_state_pubkey = *evm_subchain_state.unsigned_key();
 
         drop(evm_subchain_state_borrow);
+
+        if accounts.users.len() > EVM_SUBCHAIN_STORAGE_INDEX {
+            let storage = Self::get_big_transaction_storage(
+                invoke_context,
+                &accounts,
+                StorageType::SubchainAlloc,
+            )?;
+
+            let extended_config: ExtendedConfig =
+                BorshDeserialize::deserialize(&mut &*storage.data())
+                    .map_err(|_| EvmError::DeserializationError)?;
+            config.extend(extended_config.clone());
+        }
 
         let alloc: Vec<(H160, MemoryAccount)> = config
             .alloc
@@ -1209,7 +1239,21 @@ impl EvmProcessor {
 
         let accounts = Self::build_account_structure(first_keyed_account, invoke_context).unwrap();
         // serialize data into account.
-        state.save(accounts)
+        state.save(accounts)?;
+        if accounts.users.len() > 3 {
+            let whale = accounts.users.get(1).ok_or_else(|| {
+                ic_msg!(invoke_context, "Signer is required");
+                EvmError::MissingRequiredSignature
+            })?;
+            // cleanup after native_invoke
+            let storage = Self::get_big_transaction_storage(
+                invoke_context,
+                &accounts,
+                StorageType::SubchainAlloc,
+            )?;
+            self.cleanup_storage(invoke_context, storage, whale)?;
+        }
+        Ok(())
     }
 
     // Accounts:
@@ -3760,6 +3804,7 @@ mod test {
                 user_id,
                 chain_id,
                 SubchainConfig::default(),
+                None,
             ))
             .unwrap_err();
         assert_eq!(err, InstructionError::Custom(16)); // InstructionNotSupportedYet
@@ -3772,6 +3817,7 @@ mod test {
                 user_id,
                 TEST_CHAIN_ID,
                 SubchainConfig::default(),
+                None,
             ))
             .unwrap_err();
         assert_eq!(err, InstructionError::Custom(24)); // InvalidCustomChainId
@@ -3798,10 +3844,74 @@ mod test {
                 user_id,
                 chain_id,
                 SubchainConfig::default(),
+                None,
             ))
             .unwrap_err();
 
         assert_eq!(err, InstructionError::Custom(20));
+    }
+
+    // Create subchain evm with extended config
+    #[test]
+    fn subchain_create_extended() {
+        let mut evm_context = EvmMockContext::new(0);
+        let user_id = Pubkey::new_unique();
+        let user_acc = evm_context.native_account(user_id);
+        let chain_id = 0x561;
+        user_acc.set_owner(system_program::ID);
+        user_acc.set_lamports(10000000000000000);
+
+        let config = SubchainConfig::default();
+        let mut extended = ExtendedConfig::default();
+
+        extended.alloc.insert(
+            crate::evm_address_for_program(user_id),
+            AllocAccount::new_with_balance(lamports_to_wei(10000)),
+        );
+        let data = BorshSerialize::try_to_vec(&extended).unwrap();
+
+        let storage = Pubkey::new_unique();
+        let acc = evm_context.native_account(storage);
+
+        acc.set_lamports(1000);
+        acc.set_data(vec![0; data.len()]);
+        acc.set_owner(crate::ID);
+
+        let big_tx_alloc = crate::big_tx_allocate(storage, data.len());
+        evm_context.process_instruction(big_tx_alloc).unwrap();
+
+        let big_tx_write = crate::big_tx_write(storage, 0, data);
+
+        evm_context.process_instruction(big_tx_write).unwrap();
+
+        evm_context
+            .process_instruction(crate::create_evm_subchain_account(
+                user_id,
+                chain_id,
+                config,
+                Some(storage),
+            ))
+            .unwrap();
+
+        let storage_account = evm_context.native_account(storage);
+        assert_eq!(storage_account.lamports(), 0);
+
+        let user_account = evm_context.native_account(user_id);
+
+        assert_eq!(
+            user_account.lamports(),
+            10000000000000000 + 1000 - SUBCHAIN_CREATION_DEPOSIT_VLX * LAMPORTS_PER_VLX
+        );
+        let subchain_evm = evm_context.subchains.get(&chain_id).unwrap();
+
+        assert_eq!(
+            subchain_evm.get_executed_transactions().len(),
+            extended.alloc.len()
+        );
+        for (evm_address, account) in extended.alloc {
+            let evm_acc_on_sub = subchain_evm.get_account_state(evm_address).unwrap();
+            assert_eq!(evm_acc_on_sub.balance, account.balance);
+        }
     }
 
     #[test]
@@ -3952,6 +4062,7 @@ mod test {
                 owner,
                 chain_id,
                 config.clone(),
+                None,
             ))
             .unwrap();
 
