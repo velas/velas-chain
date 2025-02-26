@@ -115,18 +115,26 @@ pub fn evm_state_subchain_account(chain_id: ChainID) -> solana::Address {
     );
     evm_subchain_state_pda
 }
+const EVM_SUBCHAIN_STORAGE_INDEX: usize = 3;
 pub fn create_evm_subchain_account(
     owner: solana::Address,
     chain_id: ChainID,
     config: SubchainConfig,
+    extended_config_storage: Option<solana::Address>,
 ) -> solana::Instruction {
     let evm_subchain_state_pda = evm_state_subchain_account(chain_id);
-    let account_metas = vec![
+    let mut account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
         AccountMeta::new(evm_subchain_state_pda, false),
         AccountMeta::new(owner, true),
         AccountMeta::new(solana_sdk::system_program::ID, false),
     ];
+    if let Some(extended_config_storage) = extended_config_storage {
+        account_metas.insert(
+            EVM_SUBCHAIN_STORAGE_INDEX,
+            AccountMeta::new(extended_config_storage, true),
+        )
+    }
 
     create_evm_instruction_with_borsh(
         crate::ID,

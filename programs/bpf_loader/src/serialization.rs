@@ -390,7 +390,7 @@ mod tests {
         },
     };
 
-    #[test]
+    #[test] // note: test not work on modern rust due to unaligned pointer dereference
     fn test_serialize_parameters() {
         let program_id = solana_sdk::pubkey::new_rand();
         let transaction_accounts = vec![

@@ -236,6 +236,26 @@ impl From<AllocAccount> for MemoryAccount {
     }
 }
 
+// Part of config that is stored in seperate account (storage).
+// if Extended and regular config is provided - they will be merged by rewriting overlapping accounts.
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    // BorshSchema,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    Default,
+)]
+pub struct ExtendedConfig {
+    pub alloc: BTreeMap<evm::Address, AllocAccount>,
+}
+
 #[derive(
     BorshSerialize,
     BorshDeserialize,
@@ -256,6 +276,11 @@ pub struct SubchainConfig {
     pub network_name: String,
     pub token_name: String,
     pub min_gas_price: U256,
+}
+impl SubchainConfig {
+    pub fn extend(&mut self, extended: ExtendedConfig) {
+        self.alloc.extend(extended.alloc);
+    }
 }
 impl Default for SubchainConfig {
     fn default() -> Self {
@@ -293,7 +318,7 @@ pub enum EvmSubChain {
     ///     account_key[0] - Evm state
     ///     account_key[1] - Custom evm state
     ///     account_key[2] - Signer (owner of subchain)
-    ///     account_key[3] - pre-seed data account [Optional]
+    ///     account_key[3] - additional allocs vector stored as storage account
     CreateAccount {
         chain_id: ChainID,
         config: SubchainConfig,
@@ -304,7 +329,7 @@ pub enum EvmSubChain {
     /// Outer args:
     ///     account_key[0] - evm state
     ///     account_key[1] - custom evm state
-    ///     account_key[2] - bridge account
+    ///     account_key[2] - big tx [Optional]
     ExecuteTransaction {
         chain_id: ChainID,
         tx: ExecuteTransaction,

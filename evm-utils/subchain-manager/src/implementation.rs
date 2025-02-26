@@ -65,7 +65,8 @@ impl genesis_json::GenesisConfig {
             min_gas_price: self.config.gas_price,
         };
         let owner = keypair.pubkey();
-        let ix = solana_evm_loader_program::create_evm_subchain_account(owner, chain_id, config);
+        let ix =
+            solana_evm_loader_program::create_evm_subchain_account(owner, chain_id, config, None);
         let transaction = solana_sdk::transaction::Transaction::new_signed_with_payer(
             &[ix],
             Some(&owner),
