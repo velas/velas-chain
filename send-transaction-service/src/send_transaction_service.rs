@@ -1352,7 +1352,7 @@ mod test {
         );
         // Advance nonce, simulate the transaction was again last sent 4 seconds ago.
         // This time the transaction should have been dropped.
-        for mut transaction in transactions.values_mut() {
+        for transaction in transactions.values_mut() {
             transaction.last_sent_time = Some(Instant::now().sub(Duration::from_millis(4000)));
         }
         let new_durable_nonce =

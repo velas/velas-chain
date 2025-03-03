@@ -8598,6 +8598,7 @@ dependencies = [
 name = "subchain-manager"
 version = "0.1.0"
 dependencies = [
+ "borsh",
  "clap 4.3.21",
  "color-eyre",
  "evm-rpc",
@@ -8605,6 +8606,7 @@ dependencies = [
  "hex-literal 0.2.2",
  "inquire",
  "interactive-clap",
+ "log 0.4.19",
  "serde",
  "serde_json",
  "shell-words",

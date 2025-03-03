@@ -126,6 +126,7 @@ args=(
     --account-index velas-accounts-owners
     --account-index velas-accounts-operationals
     --evm-save-blocks 1000
+    --evm-save-blocks-on-subchain 1000
     # --evm-state-archive "$ledgerDir"/archive-evm
 )
 # shellcheck disable=SC2086
