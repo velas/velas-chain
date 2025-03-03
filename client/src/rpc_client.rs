@@ -6,10 +6,9 @@
 //!
 //! [JSON-RPC]: https://www.jsonrpc.org/specification
 
-pub use crate::mock_sender::Mocks;
-pub use crate::nonblocking::rpc_client::serialize_and_encode;
 #[allow(deprecated)]
 use crate::rpc_deprecated_config::{RpcConfirmedBlockConfig, RpcConfirmedTransactionConfig};
+pub use crate::{mock_sender::Mocks, nonblocking::rpc_client::serialize_and_encode};
 use {
     crate::{
         client_error::Result as ClientResult,

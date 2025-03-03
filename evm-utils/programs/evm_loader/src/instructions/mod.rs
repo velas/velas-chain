@@ -255,6 +255,14 @@ impl From<AllocAccount> for MemoryAccount {
 pub struct ExtendedConfig {
     pub alloc: BTreeMap<evm::Address, AllocAccount>,
 }
+impl ExtendedConfig {
+    pub fn split(mut config: SubchainConfig) -> (Self, SubchainConfig) {
+        let extended = ExtendedConfig {
+            alloc: std::mem::take(&mut config.alloc),
+        };
+        (extended, config)
+    }
+}
 
 #[derive(
     BorshSerialize,

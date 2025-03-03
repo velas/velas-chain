@@ -994,8 +994,12 @@ mod evmtests {
             AllocAccount::new_with_balance(lamports_to_wei(lamports)),
         );
         let from_pubkey = from_keypair.pubkey();
-        let instruction =
-            solana_evm_loader_program::create_evm_subchain_account(from_pubkey, chain_id, config);
+        let instruction = solana_evm_loader_program::create_evm_subchain_account(
+            from_pubkey,
+            chain_id,
+            config,
+            None,
+        );
         let message = Message::new(&[instruction], Some(&from_pubkey));
         Transaction::new(&[from_keypair], message, hash)
     }
