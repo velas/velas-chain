@@ -1117,7 +1117,6 @@ impl EvmProcessor {
         let evm_subchain_state_pda = evm_state_subchain_account(subchain_id);
 
         let accounts = Self::build_account_structure(first_keyed_account, invoke_context).unwrap();
-        dbg!(&accounts);
         // Check if `evm_subchain_state` is in `keyed_accounts`
         let evm_subchain_state = accounts.users.get(0).ok_or_else(|| {
             ic_msg!(
@@ -1240,7 +1239,7 @@ impl EvmProcessor {
         let accounts = Self::build_account_structure(first_keyed_account, invoke_context).unwrap();
         // serialize data into account.
         state.save(accounts)?;
-        if accounts.users.len() > 3 {
+        if accounts.users.len() > EVM_SUBCHAIN_STORAGE_INDEX {
             let whale = accounts.users.get(1).ok_or_else(|| {
                 ic_msg!(invoke_context, "Signer is required");
                 EvmError::MissingRequiredSignature
@@ -1272,7 +1271,10 @@ impl EvmProcessor {
         let (rc, mut refmut);
         let accounts = Self::build_account_structure(first_keyed_account, invoke_context).unwrap();
         let sender_idx = if tx.is_big() { 2 } else { 1 };
-        let sender = &accounts.users[sender_idx];
+        let sender = accounts.users.get(sender_idx).ok_or_else(|| {
+            ic_msg!(invoke_context, "Signer is required");
+            EvmError::MissingRequiredSignature
+        })?;
         let mut state = crate::subchain::SubchainState::load(accounts)?;
 
         if !state.whitelisted.is_empty() && !state.whitelisted.contains(sender.unsigned_key()) {
@@ -2653,8 +2655,7 @@ mod test {
                 .collect::<Vec<_>>()
         );
 
-        let mut ix =
-            crate::send_raw_tx_subchain(subchain_owner, swap_within_subchain, None, subchain_id);
+        let mut ix = crate::send_raw_tx_subchain(subchain_owner, swap_within_subchain, subchain_id);
 
         ix.accounts.push(AccountMeta {
             pubkey: alice,
@@ -4002,7 +4003,6 @@ mod test {
             evm_context.process_instruction(crate::send_raw_tx_subchain(
                 owner_pub,
                 tx_transfer.clone(),
-                None,
                 chain_id,
             ))
         };
@@ -4130,7 +4130,6 @@ mod test {
             .process_instruction(crate::send_raw_tx_subchain(
                 bridge,
                 tx_transfer.clone(),
-                None,
                 chain_id,
             ))
             .unwrap();

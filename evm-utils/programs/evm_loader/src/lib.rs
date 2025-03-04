@@ -146,18 +146,14 @@ pub fn create_evm_subchain_account(
 pub fn send_raw_tx_subchain(
     signer: solana::Address,
     evm_tx: evm::Transaction,
-    gas_collector: Option<solana::Address>,
     chain_id: ChainID,
 ) -> solana::Instruction {
     let evm_subchain_state_pda = evm_state_subchain_account(chain_id);
-    let mut account_metas = vec![
+    let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
         AccountMeta::new(evm_subchain_state_pda, false),
         AccountMeta::new(signer, true),
     ];
-    if let Some(gas_collector) = gas_collector {
-        account_metas.push(AccountMeta::new(gas_collector, false))
-    }
 
     create_evm_instruction_with_borsh(
         crate::ID,
@@ -255,20 +251,18 @@ pub fn big_tx_execute(
     )
 }
 pub fn big_tx_execute_subchain(
+    signer: solana::Address,
     storage: solana::Address,
-    gas_collector: Option<solana::Address>,
     chain_id: ChainID,
 ) -> solana::Instruction {
     let evm_subchain_state_pda = evm_state_subchain_account(chain_id);
 
-    let mut account_metas = vec![
+    let account_metas = vec![
         AccountMeta::new(solana::evm_state::ID, false),
         AccountMeta::new(evm_subchain_state_pda, false),
         AccountMeta::new(storage, true),
+        AccountMeta::new(signer, true),
     ];
-    if let Some(gas_collector) = gas_collector {
-        account_metas.push(AccountMeta::new(gas_collector, false))
-    }
 
     create_evm_instruction_with_borsh(
         crate::ID,
