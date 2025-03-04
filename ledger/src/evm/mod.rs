@@ -38,8 +38,6 @@ pub struct EvmArchiveMetrics {
     pub num_blocks_per_chain: BTreeMap<ChainID, u64>,
     pub num_purged_blocks_per_chain: BTreeMap<ChainID, u64>,
 }
-//TODO Fix cleanup of blocks for subchain todo!()
-
 pub struct EvmArchiveGc {
     states_per_chain: u64,
     states_on_main_chain: u64,
@@ -148,7 +146,6 @@ impl EvmArchiveInner {
     }
 
     fn write_evm_block(blockstore: &Blockstore, chain: Option<ChainID>, block: evm_state::Block) {
-        // let (chain, block) = evm_records_receiver.recv_timeout(Duration::from_secs(1))?;
         let block_header = block.header;
         info!(
             "Writing evm block num = {} for chain = {:?}",
@@ -288,12 +285,8 @@ impl EvmArchiveInner {
                     let chain_name = Self::chain_name_cached(*chain_id);
                     datapoint_info!(
                         chain_name,
-                        (
-                            "num_purged_blocks",
-                            num_purged_blocks_per_chain[chain_id],
-                            i64
-                        ),
-                        ("num_blocks", num_blocks_per_chain[chain_id], i64),
+                        ("purged_blocks", num_purged_blocks_per_chain[chain_id], i64),
+                        ("blocks", num_blocks_per_chain[chain_id], i64),
                     );
                 }
             }

@@ -194,6 +194,10 @@ impl genesis_json::GenesisConfig {
                 keypair.pubkey(),
             )?;
         }
+        if !tx_chunks.is_empty() {
+            println!("Failed to deploy config {} tx chunks left", tx_chunks.len());
+            println!("Storage secret key = {}", storage.to_base58_string());
+        }
 
         Ok((storage, blockhash))
     }

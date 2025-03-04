@@ -363,7 +363,6 @@ impl EvmBridge {
                 solana_evm_loader_program::send_raw_tx_subchain(
                     self.key.pubkey(),
                     tx.clone(),
-                    Some(self.key.pubkey()),
                     self.evm_chain_id,
                 )
             } else {
@@ -417,8 +416,8 @@ impl EvmBridge {
             }
             if self.subchain {
                 solana_evm_loader_program::big_tx_execute_subchain(
+                    payer_pubkey,
                     storage_pubkey,
-                    Some(payer_pubkey),
                     self.evm_chain_id,
                 )
             } else {
