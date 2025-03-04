@@ -647,7 +647,7 @@ impl Storage<OptimisticTransactionDB> {
     ) -> Result<()> {
         let (keep_slot, keep_root, subchain_roots) = match keep_slot_root {
             Some(v) => v,
-            None => (u64::MAX, H256::zero(), vec![]),
+            None => (u64::MAX, empty_trie_hash(), vec![]),
         };
 
         if !self.check_root_exist(keep_root) {
