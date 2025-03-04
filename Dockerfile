@@ -9,7 +9,8 @@ RUN rustup component add rustfmt && rustup update
 
 COPY . /solana
 WORKDIR /solana
-RUN --mount=type=ssh cargo build --release
+RUN rustup toolchain install
+RUN --mount=type=ssh cargo build --locked --release
 RUN rm /solana/target/release/deps -rf
 RUN rm /solana/target/release/build -rf
 
