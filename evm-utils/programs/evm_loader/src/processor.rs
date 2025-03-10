@@ -36,7 +36,7 @@ use {
 pub const BURN_ADDR: evm_state::H160 = evm_state::H160::zero();
 
 pub const SUBCHAIN_CREATION_DEPOSIT_VLX: u64 = 1_000_000;
-const SUBCHAIN_MINT_ADDRESS: H160 = H160::zero();
+const SUBCHAIN_MINT_BURN_ADDRESS: H160 = H160::zero();
 
 /// Return the next AccountInfo or a NotEnoughAccountKeys error
 pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a KeyedAccount<'b>>>(
@@ -867,7 +867,11 @@ impl EvmProcessor {
         if matches!(tx_result.exit_reason, ExitReason::Succeed(_)) {
             let (fee, _) = wei_to_lamports(fee);
 
-            trace!("Charging account for fee {}", fee);
+            trace!(
+                "Charging native account {} for {} lamports in fees",
+                native_account.unsigned_key(),
+                fee
+            );
             let mut account_data = native_account
                 .try_account_ref_mut()
                 .map_err(|_| EvmError::BorrowingFailed)?;
@@ -935,7 +939,7 @@ impl EvmProcessor {
         let return_to_zero_addr = full_fee;
         ic_msg!(
                 invoke_context,
-                "Transaction executed with fee: in vlx {charge_from_native}, in subchain currency {return_to_zero_addr}",
+                "Transaction executed with fee: in velas wei {charge_from_native}, in subchain wei {return_to_zero_addr}",
         );
         // on subchain logic is different,
         // Burn_fee is charged from the deposit address, and full_fee is burned in evm_account.
@@ -1232,7 +1236,11 @@ impl EvmProcessor {
             .init_accounts_without_commit(alloc.clone());
 
         for (evm_address, account) in alloc {
-            executor.register_swap_tx_in_evm(SUBCHAIN_MINT_ADDRESS, evm_address, account.balance);
+            executor.register_swap_tx_in_evm(
+                SUBCHAIN_MINT_BURN_ADDRESS,
+                evm_address,
+                account.balance,
+            );
         }
 
         let accounts = Self::build_account_structure(first_keyed_account, invoke_context).unwrap();
@@ -1370,7 +1378,7 @@ impl EvmProcessor {
         }
 
         for log in receipt.logs.iter() {
-            if log.address == SUBCHAIN_MINT_ADDRESS {
+            if log.address == SUBCHAIN_MINT_BURN_ADDRESS {
                 // skip non-transfer events
                 if log.topics.first() != Some(&transfer_event()) {
                     continue;
@@ -4065,15 +4073,29 @@ mod test {
         let config = {
             let mut config = SubchainConfig::default();
 
-            let mint_burn_contract = hex::decode(include_str!(
-                "../../../evm-state/tests/binaries/mint_burn_token.hex"
+            let mint_burn_bytecode = serde_json::from_str::<serde_json::Value>(include_str!(
+                "../../../evm-state/tests/binaries/mint_burn_token_compData.json"
             ))
             .unwrap();
+
+            let mint_burn_bytecode = mint_burn_bytecode
+                .as_object()
+                .unwrap()
+                .get("Runtime Bytecode")
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .get("object")
+                .unwrap()
+                .as_str()
+                .unwrap();
+
+            let mint_burn_bytecode = hex::decode(mint_burn_bytecode).unwrap();
 
             config.alloc.insert(
                 H160::zero(),
                 AllocAccount {
-                    code: mint_burn_contract,
+                    code: mint_burn_bytecode,
                     ..Default::default()
                 },
             );
@@ -4102,6 +4124,7 @@ mod test {
 
         assert_eq!(bobs_subchain_acc.balance, one_veth);
 
+        #[allow(deprecated)]
         let mint_twenty_veth_in_subchain_tx = {
             let mint_abi = Function {
                 name: "mint".to_string(),
@@ -4126,9 +4149,9 @@ mod test {
 
             evm::UnsignedTransaction {
                 nonce: 0u32.into(),
-                gas_price: 1u32.into(),
+                gas_price: 0u32.into(),
                 gas_limit: 300000u32.into(),
-                action: TransactionAction::Call(SUBCHAIN_MINT_ADDRESS),
+                action: TransactionAction::Call(SUBCHAIN_MINT_BURN_ADDRESS),
                 value: 0u32.into(),
                 input: mint_abi.to_vec(),
             }
@@ -4151,10 +4174,10 @@ mod test {
             .get_account_state(bob)
             .unwrap();
 
-        let fee = 23754;
-        let balance_after_mint = one_veth + twenty_veth - fee;
+        let balance_after_mint = one_veth + twenty_veth;
         assert_eq!(bobs_subchain_acc.balance, balance_after_mint);
 
+        #[allow(deprecated)]
         let burn_five_veth_in_subchain_tx = {
             let burn_abi = Function {
                 name: "burn".to_string(),
@@ -4172,9 +4195,9 @@ mod test {
 
             evm::UnsignedTransaction {
                 nonce: 1u32.into(),
-                gas_price: 1u32.into(),
+                gas_price: 0u32.into(),
                 gas_limit: 300000u32.into(),
-                action: TransactionAction::Call(SUBCHAIN_MINT_ADDRESS),
+                action: TransactionAction::Call(SUBCHAIN_MINT_BURN_ADDRESS),
                 value: 0u32.into(),
                 input: burn_abi.to_vec(),
             }
@@ -4197,9 +4220,163 @@ mod test {
             .get_account_state(bob)
             .unwrap();
 
-        let fee = 23355;
-        let balance_after_burn = balance_after_mint - five_veth - fee;
+        let balance_after_burn = balance_after_mint - five_veth;
         assert_eq!(bobs_subchain_acc.balance, balance_after_burn);
+    }
+
+    #[test]
+    fn subchain_try_illegal_mint_burn() {
+        use ethabi::{Function, Param, ParamType, Token};
+
+        let mut evm_context = EvmMockContext::new(10_000_000_000);
+        let alice_secret = evm::SecretKey::from_slice(&[2; 32]).unwrap();
+        let alice = alice_secret.to_address();
+        let bob_secret = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
+        let bob = bob_secret.to_address();
+
+        let native_owner = Pubkey::new_unique();
+        let native_owner_acc = evm_context.native_account(native_owner);
+        native_owner_acc.set_owner(system_program::ID);
+        native_owner_acc.set_lamports(10_000_000___000_000_000);
+
+        let one_veth: U256 = U256::exp10(18);
+        let ten_veth: U256 = one_veth * 10;
+
+        let chain_id = 0x5678;
+
+        let config = {
+            let mut config = SubchainConfig::default();
+
+            let mint_burn_bytecode = serde_json::from_str::<serde_json::Value>(include_str!(
+                "../../../evm-state/tests/binaries/mint_burn_token_compData.json"
+            ))
+            .unwrap();
+
+            let mint_burn_bytecode = mint_burn_bytecode
+                .as_object()
+                .unwrap()
+                .get("Runtime Bytecode")
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .get("object")
+                .unwrap()
+                .as_str()
+                .unwrap();
+
+            let mint_burn_bytecode = hex::decode(mint_burn_bytecode).unwrap();
+
+            config.alloc.insert(
+                H160::zero(),
+                AllocAccount {
+                    code: mint_burn_bytecode,
+                    ..Default::default()
+                },
+            );
+
+            config
+                .alloc
+                .insert(alice, AllocAccount::new_with_balance(ten_veth));
+
+            config
+                .alloc
+                .insert(bob, AllocAccount::new_with_balance(ten_veth));
+
+            config
+        };
+
+        setup_chain(
+            &mut evm_context,
+            native_owner,
+            chain_id,
+            config,
+            10_000_000_000,
+        );
+        let alices_subchain_acc = evm_context
+            .subchains
+            .get(&chain_id)
+            .unwrap()
+            .get_account_state(alice)
+            .unwrap();
+
+        let bobs_subchain_acc = evm_context
+            .subchains
+            .get(&chain_id)
+            .unwrap()
+            .get_account_state(bob)
+            .unwrap();
+
+        assert_eq!(alices_subchain_acc.balance, ten_veth);
+        assert_eq!(bobs_subchain_acc.balance, ten_veth);
+
+        #[allow(deprecated)]
+        let illegal_mint_in_subchain_tx = {
+            let illegal_transfer_abi = Function {
+                name: "debugTransfer".to_string(),
+                inputs: vec![
+                    Param {
+                        name: "from".to_string(),
+                        kind: ParamType::Address,
+                        internal_type: Some("address".to_string()),
+                    },
+                    Param {
+                        name: "to".to_string(),
+                        kind: ParamType::Address,
+                        internal_type: Some("address".to_string()),
+                    },
+                    Param {
+                        name: "amount".to_string(),
+                        kind: ParamType::Uint(256),
+                        internal_type: Some("uint256".to_string()),
+                    },
+                ],
+                outputs: vec![],
+                constant: None,
+                state_mutability: ethabi::StateMutability::Payable,
+            }
+            .encode_input(&[
+                Token::Address(alice),
+                Token::Address(bob),
+                Token::Uint(one_veth),
+            ])
+            .unwrap();
+
+            evm::UnsignedTransaction {
+                nonce: 0u32.into(),
+                gas_price: 0u32.into(),
+                gas_limit: 300000u32.into(),
+                action: TransactionAction::Call(SUBCHAIN_MINT_BURN_ADDRESS),
+                value: 0u32.into(),
+                input: illegal_transfer_abi.to_vec(),
+            }
+            .sign(&bob_secret, Some(chain_id))
+        };
+
+        let illegal_tx_result = evm_context.process_instruction(crate::send_raw_tx_subchain(
+            native_owner,
+            illegal_mint_in_subchain_tx,
+            None,
+            chain_id,
+        ));
+
+        assert!(illegal_tx_result.is_ok());
+
+        let alices_subchain_acc = evm_context
+            .subchains
+            .get(&chain_id)
+            .unwrap()
+            .get_account_state(alice)
+            .unwrap();
+
+        let bobs_subchain_acc = evm_context
+            .subchains
+            .get(&chain_id)
+            .unwrap()
+            .get_account_state(bob)
+            .unwrap();
+
+        assert_eq!(alices_subchain_acc.balance, ten_veth);
+        assert_eq!(bobs_subchain_acc.balance, ten_veth);
     }
 
     /// Activates EVM Subchain Feature and creates subchain account
