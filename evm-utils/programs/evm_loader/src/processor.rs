@@ -4242,7 +4242,7 @@ mod test {
         assert_eq!(alices_subchain_acc.balance, ten_veth);
         assert_eq!(bobs_subchain_acc.balance, ten_veth);
 
-        // both addresses in Transfter event are non-zero
+        // both addresses in Transfer Event are non-zero
         #[allow(deprecated)]
         let illegal_mint_in_subchain_tx = {
             let illegal_transfer_abi = Function {
@@ -4312,7 +4312,7 @@ mod test {
         assert_eq!(alices_subchain_acc.balance, ten_veth);
         assert_eq!(bobs_subchain_acc.balance, ten_veth);
 
-        // both addresses in Transfter event are set to zero
+        // both addresses in Transfer Event are set to zero
         #[allow(deprecated)]
         let illegal_mint_in_subchain_tx = {
             let illegal_transfer_abi = Function {
