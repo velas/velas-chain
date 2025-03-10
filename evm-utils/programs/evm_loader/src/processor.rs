@@ -4129,7 +4129,6 @@ mod test {
             .process_instruction(crate::send_raw_tx_subchain(
                 native_owner,
                 mint_twenty_veth_in_subchain_tx,
-                None,
                 chain_id,
             ))
             .unwrap();
@@ -4175,7 +4174,6 @@ mod test {
             .process_instruction(crate::send_raw_tx_subchain(
                 native_owner,
                 burn_five_veth_in_subchain_tx,
-                None,
                 chain_id,
             ))
             .unwrap();
@@ -4289,7 +4287,6 @@ mod test {
         let illegal_tx_result = evm_context.process_instruction(crate::send_raw_tx_subchain(
             native_owner,
             illegal_mint_in_subchain_tx,
-            None,
             chain_id,
         ));
 
@@ -4359,7 +4356,6 @@ mod test {
         let illegal_tx_result = evm_context.process_instruction(crate::send_raw_tx_subchain(
             native_owner,
             illegal_mint_in_subchain_tx,
-            None,
             chain_id,
         ));
 
@@ -4451,7 +4447,6 @@ mod test {
         let burn_result = evm_context.process_instruction(crate::send_raw_tx_subchain(
             native_owner,
             burn_five_veth_in_subchain_tx,
-            None,
             chain_id,
         ));
 
