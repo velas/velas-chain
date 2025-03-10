@@ -1468,6 +1468,7 @@ mod test {
     use {
         super::*,
         crate::instructions::AllocAccount,
+        ethabi::{Function, Param, ParamType, Token},
         evm::lamports_to_wei,
         evm_state::{
             empty_trie_hash,
@@ -4053,8 +4054,6 @@ mod test {
 
     #[test]
     fn subchain_mint_burn() {
-        use ethabi::{Function, Param, ParamType, Token};
-
         let mut evm_context = EvmMockContext::new(10_000_000_000);
         let bob_secret = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
         let bob = bob_secret.to_address();
@@ -4226,8 +4225,6 @@ mod test {
 
     #[test]
     fn subchain_try_illegal_mint_burn() {
-        use ethabi::{Function, Param, ParamType, Token};
-
         let mut evm_context = EvmMockContext::new(10_000_000_000);
         let alice_secret = evm::SecretKey::from_slice(&[2; 32]).unwrap();
         let alice = alice_secret.to_address();
@@ -4292,6 +4289,7 @@ mod test {
             config,
             10_000_000_000,
         );
+
         let alices_subchain_acc = evm_context
             .subchains
             .get(&chain_id)
@@ -4450,7 +4448,115 @@ mod test {
         assert_eq!(bobs_subchain_acc.balance, ten_veth);
     }
 
-    /// Activates EVM Subchain Feature and creates subchain account
+    #[test]
+    fn subchain_try_burn_more_than_available() {
+        let mut evm_context = EvmMockContext::new(10_000_000_000);
+        let bob_secret = evm::SecretKey::from_slice(&SECRET_KEY_DUMMY).unwrap();
+        let bob = bob_secret.to_address();
+
+        let native_owner = Pubkey::new_unique();
+        let native_owner_acc = evm_context.native_account(native_owner);
+        native_owner_acc.set_owner(system_program::ID);
+        native_owner_acc.set_lamports(10_000_000___000_000_000);
+
+        let one_veth: U256 = U256::exp10(18);
+        let five_veth: U256 = one_veth * 5;
+
+        let chain_id = 0x5678;
+
+        let config = {
+            let mut config = SubchainConfig::default();
+
+            let mint_burn_bytecode = serde_json::from_str::<serde_json::Value>(include_str!(
+                "../../../evm-state/tests/binaries/mint_burn_token_compData.json"
+            ))
+            .unwrap();
+
+            let mint_burn_bytecode = mint_burn_bytecode
+                .as_object()
+                .unwrap()
+                .get("Runtime Bytecode")
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .get("object")
+                .unwrap()
+                .as_str()
+                .unwrap();
+
+            let mint_burn_bytecode = hex::decode(mint_burn_bytecode).unwrap();
+
+            config.alloc.insert(
+                H160::zero(),
+                AllocAccount {
+                    code: mint_burn_bytecode,
+                    ..Default::default()
+                },
+            );
+
+            config
+                .alloc
+                .insert(bob, AllocAccount::new_with_balance(one_veth));
+
+            config
+        };
+
+        setup_chain(
+            &mut evm_context,
+            native_owner,
+            chain_id,
+            config,
+            10_000_000_000,
+        );
+
+        let bobs_subchain_acc = evm_context
+            .subchains
+            .get(&chain_id)
+            .unwrap()
+            .get_account_state(bob)
+            .unwrap();
+
+        assert_eq!(bobs_subchain_acc.balance, one_veth);
+
+        #[allow(deprecated)]
+        let burn_five_veth_in_subchain_tx = {
+            let burn_abi = Function {
+                name: "burn".to_string(),
+                inputs: vec![Param {
+                    name: "amount".to_string(),
+                    kind: ParamType::Uint(256),
+                    internal_type: Some("uint256".to_string()),
+                }],
+                outputs: vec![],
+                constant: None,
+                state_mutability: ethabi::StateMutability::Payable,
+            }
+            .encode_input(&[Token::Uint(five_veth)])
+            .unwrap();
+
+            evm::UnsignedTransaction {
+                nonce: 0u32.into(),
+                gas_price: 0u32.into(),
+                gas_limit: 300000u32.into(),
+                action: TransactionAction::Call(SUBCHAIN_MINT_BURN_ADDRESS),
+                value: 0u32.into(),
+                input: burn_abi.to_vec(),
+            }
+            .sign(&bob_secret, Some(chain_id))
+        };
+
+        let burn_result = evm_context.process_instruction(crate::send_raw_tx_subchain(
+            native_owner,
+            burn_five_veth_in_subchain_tx,
+            None,
+            chain_id,
+        ));
+
+        assert!(burn_result.is_err());
+        assert_eq!(burn_result.unwrap_err(), InstructionError::Custom(27)); // EvmError::MintBurnInSubchainFailed
+    }
+
+    /// Activates EVM Subchain Feature and creates Subchain Account
     fn setup_chain(
         evm_context: &mut EvmMockContext,
         owner: solana::Address,
