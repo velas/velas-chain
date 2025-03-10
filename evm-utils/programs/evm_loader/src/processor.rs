@@ -4309,6 +4309,7 @@ mod test {
         assert_eq!(alices_subchain_acc.balance, ten_veth);
         assert_eq!(bobs_subchain_acc.balance, ten_veth);
 
+        // both addresses in Transfter event are non-zero
         #[allow(deprecated)]
         let illegal_mint_in_subchain_tx = {
             let illegal_transfer_abi = Function {
@@ -4343,6 +4344,76 @@ mod test {
 
             evm::UnsignedTransaction {
                 nonce: 0u32.into(),
+                gas_price: 0u32.into(),
+                gas_limit: 300000u32.into(),
+                action: TransactionAction::Call(SUBCHAIN_MINT_BURN_ADDRESS),
+                value: 0u32.into(),
+                input: illegal_transfer_abi.to_vec(),
+            }
+            .sign(&bob_secret, Some(chain_id))
+        };
+
+        let illegal_tx_result = evm_context.process_instruction(crate::send_raw_tx_subchain(
+            native_owner,
+            illegal_mint_in_subchain_tx,
+            None,
+            chain_id,
+        ));
+
+        assert!(illegal_tx_result.is_ok());
+
+        let alices_subchain_acc = evm_context
+            .subchains
+            .get(&chain_id)
+            .unwrap()
+            .get_account_state(alice)
+            .unwrap();
+
+        let bobs_subchain_acc = evm_context
+            .subchains
+            .get(&chain_id)
+            .unwrap()
+            .get_account_state(bob)
+            .unwrap();
+
+        assert_eq!(alices_subchain_acc.balance, ten_veth);
+        assert_eq!(bobs_subchain_acc.balance, ten_veth);
+
+        // both addresses in Transfter event are set to zero
+        #[allow(deprecated)]
+        let illegal_mint_in_subchain_tx = {
+            let illegal_transfer_abi = Function {
+                name: "debugTransfer".to_string(),
+                inputs: vec![
+                    Param {
+                        name: "from".to_string(),
+                        kind: ParamType::Address,
+                        internal_type: Some("address".to_string()),
+                    },
+                    Param {
+                        name: "to".to_string(),
+                        kind: ParamType::Address,
+                        internal_type: Some("address".to_string()),
+                    },
+                    Param {
+                        name: "amount".to_string(),
+                        kind: ParamType::Uint(256),
+                        internal_type: Some("uint256".to_string()),
+                    },
+                ],
+                outputs: vec![],
+                constant: None,
+                state_mutability: ethabi::StateMutability::Payable,
+            }
+            .encode_input(&[
+                Token::Address(H160::zero()),
+                Token::Address(H160::zero()),
+                Token::Uint(one_veth),
+            ])
+            .unwrap();
+
+            evm::UnsignedTransaction {
+                nonce: 1u32.into(),
                 gas_price: 0u32.into(),
                 gas_limit: 300000u32.into(),
                 action: TransactionAction::Call(SUBCHAIN_MINT_BURN_ADDRESS),
