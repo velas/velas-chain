@@ -4069,42 +4069,10 @@ mod test {
 
         let chain_id = 0x5678;
 
-        let config = {
-            let mut config = SubchainConfig::default();
-
-            let mint_burn_bytecode = serde_json::from_str::<serde_json::Value>(include_str!(
-                "../../../evm-state/tests/binaries/mint_burn_token_compData.json"
-            ))
-            .unwrap();
-
-            let mint_burn_bytecode = mint_burn_bytecode
-                .as_object()
-                .unwrap()
-                .get("Runtime Bytecode")
-                .unwrap()
-                .as_object()
-                .unwrap()
-                .get("object")
-                .unwrap()
-                .as_str()
-                .unwrap();
-
-            let mint_burn_bytecode = hex::decode(mint_burn_bytecode).unwrap();
-
-            config.alloc.insert(
-                H160::zero(),
-                AllocAccount {
-                    code: mint_burn_bytecode,
-                    ..Default::default()
-                },
-            );
-
-            config
-                .alloc
-                .insert(bob, AllocAccount::new_with_balance(one_veth));
-
-            config
-        };
+        let mut config = subchain_config_with_mint_burn();
+        config
+            .alloc
+            .insert(bob, AllocAccount::new_with_balance(one_veth));
 
         setup_chain(
             &mut evm_context,
@@ -4241,46 +4209,13 @@ mod test {
 
         let chain_id = 0x5678;
 
-        let config = {
-            let mut config = SubchainConfig::default();
-
-            let mint_burn_bytecode = serde_json::from_str::<serde_json::Value>(include_str!(
-                "../../../evm-state/tests/binaries/mint_burn_token_compData.json"
-            ))
-            .unwrap();
-
-            let mint_burn_bytecode = mint_burn_bytecode
-                .as_object()
-                .unwrap()
-                .get("Runtime Bytecode")
-                .unwrap()
-                .as_object()
-                .unwrap()
-                .get("object")
-                .unwrap()
-                .as_str()
-                .unwrap();
-
-            let mint_burn_bytecode = hex::decode(mint_burn_bytecode).unwrap();
-
-            config.alloc.insert(
-                H160::zero(),
-                AllocAccount {
-                    code: mint_burn_bytecode,
-                    ..Default::default()
-                },
-            );
-
-            config
-                .alloc
-                .insert(alice, AllocAccount::new_with_balance(ten_veth));
-
-            config
-                .alloc
-                .insert(bob, AllocAccount::new_with_balance(ten_veth));
-
-            config
-        };
+        let mut config = subchain_config_with_mint_burn();
+        config
+            .alloc
+            .insert(alice, AllocAccount::new_with_balance(ten_veth));
+        config
+            .alloc
+            .insert(bob, AllocAccount::new_with_balance(ten_veth));
 
         setup_chain(
             &mut evm_context,
@@ -4464,42 +4399,10 @@ mod test {
 
         let chain_id = 0x5678;
 
-        let config = {
-            let mut config = SubchainConfig::default();
-
-            let mint_burn_bytecode = serde_json::from_str::<serde_json::Value>(include_str!(
-                "../../../evm-state/tests/binaries/mint_burn_token_compData.json"
-            ))
-            .unwrap();
-
-            let mint_burn_bytecode = mint_burn_bytecode
-                .as_object()
-                .unwrap()
-                .get("Runtime Bytecode")
-                .unwrap()
-                .as_object()
-                .unwrap()
-                .get("object")
-                .unwrap()
-                .as_str()
-                .unwrap();
-
-            let mint_burn_bytecode = hex::decode(mint_burn_bytecode).unwrap();
-
-            config.alloc.insert(
-                H160::zero(),
-                AllocAccount {
-                    code: mint_burn_bytecode,
-                    ..Default::default()
-                },
-            );
-
-            config
-                .alloc
-                .insert(bob, AllocAccount::new_with_balance(one_veth));
-
-            config
-        };
+        let mut config = subchain_config_with_mint_burn();
+        config
+            .alloc
+            .insert(bob, AllocAccount::new_with_balance(one_veth));
 
         setup_chain(
             &mut evm_context,
@@ -4554,6 +4457,39 @@ mod test {
 
         assert!(burn_result.is_err());
         assert_eq!(burn_result.unwrap_err(), InstructionError::Custom(27)); // EvmError::MintBurnInSubchainFailed
+    }
+
+    fn subchain_config_with_mint_burn() -> SubchainConfig {
+        let mut config = SubchainConfig::default();
+
+        let mint_burn_bytecode = serde_json::from_str::<serde_json::Value>(include_str!(
+            "../../../evm-state/tests/binaries/mint_burn_token_compData.json"
+        ))
+        .unwrap();
+
+        let mint_burn_bytecode = mint_burn_bytecode
+            .as_object()
+            .unwrap()
+            .get("Runtime Bytecode")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .get("object")
+            .unwrap()
+            .as_str()
+            .unwrap();
+
+        let mint_burn_bytecode = hex::decode(mint_burn_bytecode).unwrap();
+
+        config.alloc.insert(
+            H160::zero(),
+            AllocAccount {
+                code: mint_burn_bytecode,
+                ..Default::default()
+            },
+        );
+
+        config
     }
 
     /// Activates EVM Subchain Feature and creates Subchain Account
