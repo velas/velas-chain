@@ -121,6 +121,9 @@ pub enum Error {
     MempoolImport { details: String },
     #[snafu(display("Invalid rpc params"))]
     InvalidParams {},
+
+    #[snafu(display("Field input and data are both set and not equal"))]
+    DuplicateInput {},
     // InvalidParams {},
     // UnsupportedTrieQuery,
     // NotFound,
@@ -190,6 +193,7 @@ const GAS_PRICE_TOO_LOW: i64 = 2005;
 const TRANSACTION_REPLACED: i64 = 2006;
 const ARCHIVE_NOT_SUPPORTED_ERROR: i64 = 2007;
 const MEMPOOL_IMPORT: i64 = 2008;
+const DUPLICATE_INPUT: i64 = 2009;
 
 const EVM_EXECUTION_ERROR: i64 = 3; // from geth docs
 const ERROR_EVM_BASE_SUBCODE: i64 = 100; //reserved place for evm errors range: 100 - 200
@@ -288,6 +292,7 @@ impl From<Error> for JRpcError {
             Error::GasPriceTooLow { .. } => internal_error(GAS_PRICE_TOO_LOW, &err),
             Error::TransactionRemoved {} => internal_error(TRANSACTION_REPLACED, &err),
             Error::MempoolImport { .. } => internal_error(MEMPOOL_IMPORT, &err),
+            Error::DuplicateInput {} => internal_error(DUPLICATE_INPUT, &err),
         }
     }
 }

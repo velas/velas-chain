@@ -289,7 +289,7 @@ mod subchain_methods_collector {
             &self,
             _meta: Self::Metadata,
             _chain: evm_rpc::EvmChain,
-            _tx: evm_rpc::RPCTransaction,
+            _tx: evm_rpc::RPCTransactionCall,
             _block: Option<evm_rpc::BlockId>,
             _meta_keys: Option<Vec<String>>,
         ) -> jsonrpc_core::BoxFuture<Result<evm_rpc::Bytes, evm_rpc::Error>> {
@@ -308,7 +308,7 @@ mod subchain_methods_collector {
             &self,
             _meta: Self::Metadata,
             _chain: evm_rpc::EvmChain,
-            _tx: evm_rpc::RPCTransaction,
+            _tx: evm_rpc::RPCTransactionCall,
             _block: Option<evm_rpc::BlockId>,
             _meta_keys: Option<Vec<String>>,
         ) -> jsonrpc_core::BoxFuture<Result<evm_state::Gas, evm_rpc::Error>> {
