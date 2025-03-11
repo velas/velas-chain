@@ -1,5 +1,7 @@
 #![allow(clippy::upper_case_acronyms)]
 
+use std::convert::TryFrom;
+
 use {
     jsonrpc_core::BoxFuture,
     jsonrpc_derive::rpc,
@@ -222,6 +224,64 @@ pub struct RPCTransaction {
     pub r: Option<U256>,
     #[serde(alias = "S")]
     pub s: Option<U256>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RPCTransactionCall {
+    pub from: Option<Address>,
+    pub to: Option<Address>,
+    pub creates: Option<Address>,
+    pub gas: Option<Gas>,
+    pub gas_price: Option<Gas>,
+    pub value: Option<U256>,
+    pub input: Option<Bytes>,
+    // allow duplicate of data field
+    pub data: Option<Bytes>,
+    pub nonce: Option<U256>,
+
+    pub hash: Option<H256>,
+    pub block_hash: Option<H256>,
+    pub block_number: Option<U256>,
+    pub transaction_index: Option<Hex<usize>>,
+    #[serde(alias = "V")]
+    pub v: Option<Hex<u64>>,
+    #[serde(alias = "R")]
+    pub r: Option<U256>,
+    #[serde(alias = "S")]
+    pub s: Option<U256>,
+}
+
+impl TryFrom<RPCTransactionCall> for RPCTransaction {
+    type Error = Error;
+    fn try_from(value: RPCTransactionCall) -> Result<Self, Self::Error> {
+        let input = match (value.input, value.data) {
+            (Some(input), Some(data)) if input != data => {
+                return Err(Error::DuplicateInput {});
+            }
+            (Some(input), _) => Some(input),
+            (_, Some(data)) => Some(data),
+            _ => None,
+        };
+
+        Ok(RPCTransaction {
+            from: value.from,
+            to: value.to,
+            creates: value.creates,
+            gas: value.gas,
+            gas_price: value.gas_price,
+            value: value.value,
+            input: input,
+            nonce: value.nonce,
+            hash: value.hash,
+            block_hash: value.block_hash,
+            block_number: value.block_number,
+            transaction_index: value.transaction_index,
+            v: value.v,
+            r: value.r,
+            s: value.s,
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -803,7 +863,7 @@ pub mod chain {
         fn call(
             &self,
             meta: Self::Metadata,
-            tx: RPCTransaction,
+            tx: RPCTransactionCall,
             block: Option<BlockId>,
             meta_keys: Option<Vec<String>>,
         ) -> BoxFuture<Result<Bytes, Error>>;
@@ -812,7 +872,7 @@ pub mod chain {
         fn estimate_gas(
             &self,
             meta: Self::Metadata,
-            tx: RPCTransaction,
+            tx: RPCTransactionCall,
             block: Option<BlockId>,
             meta_keys: Option<Vec<String>>,
         ) -> BoxFuture<Result<Gas, Error>>;
@@ -980,7 +1040,7 @@ pub mod chain_id_rpc {
             &self,
             meta: Self::Metadata,
             chain: EvmChain,
-            tx: RPCTransaction,
+            tx: RPCTransactionCall,
             block: Option<BlockId>,
             meta_keys: Option<Vec<String>>,
         ) -> BoxFuture<Result<Bytes, Error>>;
@@ -990,7 +1050,7 @@ pub mod chain_id_rpc {
             &self,
             meta: Self::Metadata,
             chain: EvmChain,
-            tx: RPCTransaction,
+            tx: RPCTransactionCall,
             block: Option<BlockId>,
             meta_keys: Option<Vec<String>>,
         ) -> BoxFuture<Result<Gas, Error>>;

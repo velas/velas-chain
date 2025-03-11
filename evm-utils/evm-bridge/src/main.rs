@@ -877,7 +877,7 @@ impl ChainERPC for ChainErpcProxy {
     fn call(
         &self,
         _meta: Self::Metadata,
-        _tx: RPCTransaction,
+        _tx: RPCTransactionCall,
         _block: Option<BlockId>,
         _meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<EvmResult<Bytes>> {
@@ -888,7 +888,7 @@ impl ChainERPC for ChainErpcProxy {
     fn estimate_gas(
         &self,
         _meta: Self::Metadata,
-        _tx: RPCTransaction,
+        _tx: RPCTransactionCall,
         _block: Option<BlockId>,
         _meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<EvmResult<Gas>> {

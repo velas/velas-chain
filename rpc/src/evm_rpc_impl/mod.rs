@@ -7,7 +7,7 @@ use {
         general::GeneralERPC,
         trace::{TraceERPC, TraceMeta},
         BlockId, BlockRelId, Bytes, ChainID, Either, EvmChain, Hex, RPCBlock, RPCLog, RPCLogFilter,
-        RPCReceipt, RPCTopicFilter, RPCTransaction,
+        RPCReceipt, RPCTopicFilter, RPCTransaction, RPCTransactionCall,
     },
     evm_state::{
         AccountProvider, AccountState, Address, Block, BlockHeader, Committed, ExecutionResult,
@@ -464,7 +464,7 @@ impl ChainERPC for ChainErpcImpl {
     fn call(
         &self,
         meta: Self::Metadata,
-        tx: RPCTransaction,
+        tx: RPCTransactionCall,
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<Result<Bytes, Error>> {
@@ -475,7 +475,7 @@ impl ChainERPC for ChainErpcImpl {
     fn estimate_gas(
         &self,
         meta: Self::Metadata,
-        tx: RPCTransaction,
+        tx: RPCTransactionCall,
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<Result<Gas, Error>> {
@@ -851,7 +851,7 @@ impl ChainIDERPC for ChainIDErpcImpl {
         &self,
         meta: Self::Metadata,
         chain: EvmChain,
-        tx: RPCTransaction,
+        tx: RPCTransactionCall,
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<Result<Bytes, Error>> {
@@ -870,6 +870,7 @@ impl ChainIDERPC for ChainIDErpcImpl {
         Box::pin(async move {
             let saved_state = block_to_state_root(chain, block, &meta).await;
 
+            let tx = tx.try_into()?;
             let result = call(meta, chain, tx, saved_state.unwrap(), meta_keys)?;
             Ok(Bytes(result.exit_data))
         })
@@ -880,7 +881,7 @@ impl ChainIDERPC for ChainIDErpcImpl {
         &self,
         meta: Self::Metadata,
         chain: EvmChain,
-        tx: RPCTransaction,
+        tx: RPCTransactionCall,
         block: Option<BlockId>,
         meta_keys: Option<Vec<String>>,
     ) -> BoxFuture<Result<Gas, Error>> {
@@ -897,6 +898,8 @@ impl ChainIDERPC for ChainIDErpcImpl {
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| into_native_error(e, false))?;
             let saved_state = block_to_state_root(chain, block, &meta).await;
+
+            let tx = tx.try_into()?;
             let result = call(meta, chain, tx, saved_state.unwrap(), meta_keys)?;
             Ok(result.used_gas.into())
         })
