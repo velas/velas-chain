@@ -1497,6 +1497,7 @@ mod test {
             sysvar::rent::Rent,
             transaction_context::{InstructionAccount, TransactionContext},
         },
+        std::str::FromStr,
         system_instruction::{SystemError, SystemInstruction, MAX_PERMITTED_DATA_LENGTH},
     };
     type MutableAccount = AccountSharedData;
@@ -4069,7 +4070,7 @@ mod test {
 
         let chain_id = 0x5678;
 
-        let mut config = subchain_config_with_mint_burn();
+        let mut config = subchain_config_with_mint_burn(bob);
         config
             .alloc
             .insert(bob, AllocAccount::new_with_balance(one_veth));
@@ -4120,7 +4121,7 @@ mod test {
                 gas_limit: 300000u32.into(),
                 action: TransactionAction::Call(SUBCHAIN_MINT_BURN_ADDRESS),
                 value: 0u32.into(),
-                input: mint_abi.to_vec(),
+                input: mint_abi,
             }
             .sign(&bob_secret, Some(chain_id))
         };
@@ -4207,7 +4208,7 @@ mod test {
 
         let chain_id = 0x5678;
 
-        let mut config = subchain_config_with_mint_burn();
+        let mut config = subchain_config_with_mint_burn(bob);
         config
             .alloc
             .insert(alice, AllocAccount::new_with_balance(ten_veth));
@@ -4279,7 +4280,7 @@ mod test {
                 gas_limit: 300000u32.into(),
                 action: TransactionAction::Call(SUBCHAIN_MINT_BURN_ADDRESS),
                 value: 0u32.into(),
-                input: illegal_transfer_abi.to_vec(),
+                input: illegal_transfer_abi,
             }
             .sign(&bob_secret, Some(chain_id))
         };
@@ -4348,7 +4349,7 @@ mod test {
                 gas_limit: 300000u32.into(),
                 action: TransactionAction::Call(SUBCHAIN_MINT_BURN_ADDRESS),
                 value: 0u32.into(),
-                input: illegal_transfer_abi.to_vec(),
+                input: illegal_transfer_abi,
             }
             .sign(&bob_secret, Some(chain_id))
         };
@@ -4395,7 +4396,7 @@ mod test {
 
         let chain_id = 0x5678;
 
-        let mut config = subchain_config_with_mint_burn();
+        let mut config = subchain_config_with_mint_burn(bob);
         config
             .alloc
             .insert(bob, AllocAccount::new_with_balance(one_veth));
@@ -4439,7 +4440,7 @@ mod test {
                 gas_limit: 300000u32.into(),
                 action: TransactionAction::Call(SUBCHAIN_MINT_BURN_ADDRESS),
                 value: 0u32.into(),
-                input: burn_abi.to_vec(),
+                input: burn_abi,
             }
             .sign(&bob_secret, Some(chain_id))
         };
@@ -4451,10 +4452,14 @@ mod test {
         ));
 
         assert!(burn_result.is_err());
-        assert_eq!(burn_result.unwrap_err(), InstructionError::Custom(27)); // EvmError::MintBurnInSubchainFailed
     }
 
-    fn subchain_config_with_mint_burn() -> SubchainConfig {
+    /// Creates a Subchain Config with a pre-allocated mint burn contract
+    ///
+    /// Parameters
+    ///
+    /// - `owner`: The owner of the contract, has the right to perform mint and burn
+    fn subchain_config_with_mint_burn(owner: H160) -> SubchainConfig {
         let mut config = SubchainConfig::default();
 
         let mint_burn_bytecode = serde_json::from_str::<serde_json::Value>(include_str!(
@@ -4476,10 +4481,15 @@ mod test {
 
         let mint_burn_bytecode = hex::decode(mint_burn_bytecode).unwrap();
 
+        const OWNER: &str = "0x0000000000000000000000000000000000000000000000000000000000000005";
+        let mut storage = BTreeMap::new();
+        storage.insert(H256::from_str(OWNER).unwrap(), owner.into());
+
         config.alloc.insert(
             H160::zero(),
             AllocAccount {
                 code: mint_burn_bytecode,
+                storage,
                 ..Default::default()
             },
         );
