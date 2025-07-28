@@ -42,9 +42,9 @@ COPY --from=builder /velas-chain/target/release/evm-bridge /velas-chain
 
 WORKDIR /velas-chain
 
-# TODO: cp keypair.json /velas-chain
+ENV KEYPAIR="/opt/bridge/keypair.json"
 ENV VELAS_RPC_URL="http://api.devnet.velas.com"
-ENV BRIDGE_BIND_ADDRESS="0.0.0.1:8545"
+ENV BRIDGE_BIND_ADDRESS="0.0.0.0:8545"
 ENV SUBCHAIN_ID="57005"
 
-CMD ["sh", "-c", "./evm-bridge ./keypair.json $VELAS_RPC_URL $BRIDGE_BIND_ADDRESS $SUBCHAIN_ID --subchain --no-simulate --borsh-encoding"]
+CMD ["sh", "-c", "./evm-bridge $KEYPAIR $VELAS_RPC_URL $BRIDGE_BIND_ADDRESS $SUBCHAIN_ID --subchain --no-simulate --borsh-encoding"]
