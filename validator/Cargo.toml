@@ -20,7 +20,7 @@ jsonrpc-core = "18.0.0"
 jsonrpc-core-client = { version = "18.0.0", features = ["ipc", "ws"] }
 jsonrpc-derive = "18.0.0"
 jsonrpc-ipc-server = "18.0.0"
-jsonrpc-server-utils= "18.0.0"
+jsonrpc-server-utils = "18.0.0"
 log = "0.4.14"
 num_cpus = "1.13.0"
 rand = "0.7.0"
@@ -49,11 +49,14 @@ solana-test-validator = { path = "../test-validator", version = "=1.9.29" }
 solana-version = { path = "../version", version = "=0.6.3" }
 solana-vote-program = { path = "../programs/vote", version = "=1.9.29" }
 symlink = "0.1.0"
+bindgen = "=0.60.0"
 
 evm-state = { path = "../evm-utils/evm-state" }
 tempfile = "3"
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
-jemallocator = {package = "tikv-jemallocator", version = "0.4.1", features = ["unprefixed_malloc_on_supported_platforms"]}
+jemallocator = { package = "tikv-jemallocator", version = "0.4.1", features = [
+    "unprefixed_malloc_on_supported_platforms",
+] }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.108"

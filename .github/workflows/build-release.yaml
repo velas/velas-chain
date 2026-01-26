@@ -51,6 +51,11 @@ jobs:
         run: echo RUSTFLAGS="-C target-cpu=skylake" >> $GITHUB_ENV
         if: matrix.os == 'linux'
 
+      # set clang v20+ flags to avoid issues with rocksdb build:
+      - name: Set up rust flag
+        run: echo CXXFLAGS="$CXXFLAGS -include cstdint" >> $GITHUB_ENV
+        if: matrix.os == 'linux'
+
       - name: Install deps
         run: |
           ./ci/install_deps.sh

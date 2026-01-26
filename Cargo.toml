@@ -87,12 +87,10 @@ members = [
     "test-validator",
     "rpc-test",
     "client-test",
-    "rbpf-cli"
+    "rbpf-cli",
 ]
 
-exclude = [
-    "programs/bpf",
-]
+exclude = ["programs/bpf"]
 
 # TODO: Remove once the "simd-accel" feature from the reed-solomon-erasure
 # dependency is supported on Apple M1. v2 of the feature resolver is needed to
@@ -109,3 +107,6 @@ spl-memo = { git = "https://github.com/velas/spl-memo", branch = "solana-1.9.29"
 # TODO: remove once jsonrpc-core-client 18.0.1 is released
 jsonrpc-core = { git = "https://github.com/paritytech/jsonrpc", rev = "e724d087defc0af35bc1c844049d1611588d8466", version = "18.0.0" }
 jsonrpc-core-client = { git = "https://github.com/paritytech/jsonrpc", rev = "e724d087defc0af35bc1c844049d1611588d8466", version = "18.0.0" }
+
+# rocksdb = { path = "../rust-rocksdb" }
+bindgen = { git = "https://github.com/velas/rust-bindgen", rev = "28147d005da83caf008382e8c2dcf6804bcfbc07" }
