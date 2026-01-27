@@ -56,6 +56,7 @@ use {
         stake::{self, state::StakeState},
         system_program,
         transaction::{SanitizedTransaction, TransactionError},
+        vote,
     },
     solana_stake_program::stake_state::{self, PointValue},
     solana_vote_program::{
@@ -1303,7 +1304,17 @@ fn main() {
                     .takes_value(true)
                     .help("Output file"),
             )
-        ).subcommand(
+        )
+        .subcommand(
+            SubCommand::with_name("show-stakes")
+            .about("Show the stakes of validators in the ledger")
+            .arg(&max_genesis_archive_unpacked_size_arg)
+            .arg(Arg::with_name("details")
+                    .long("details")
+                    .help("Print all stake accounts"),
+            )
+        )
+        .subcommand(
             SubCommand::with_name("create-snapshot")
             .about("Create a new ledger snapshot")
             .arg(&no_snapshot_arg)
@@ -2164,6 +2175,105 @@ fn main() {
                     }
                 }
             }
+            ("show-stakes", Some(arg_matches)) => {
+                let process_options = ProcessOptions {
+                    poh_verify: false,
+                    ..ProcessOptions::default()
+                };
+
+                let blockstore = open_blockstore(
+                    &ledger_path,
+                    AccessType::TryPrimaryThenSecondary,
+                    wal_recovery_mode,
+                );
+                match load_bank_forks(
+                    arg_matches,
+                    &open_genesis_config_by(&ledger_path, arg_matches),
+                    &blockstore,
+                    process_options,
+                    snapshot_archive_path,
+                    &evm_state_path,
+                    true,
+                ) {
+                    Ok((bank_forks, ..)) => {
+                        let bank = bank_forks.working_bank();
+                        println!("Bank slot: {}", bank.slot());
+                        // build last_rooted_slot
+                        let mut validator_root_slot = HashMap::new();
+                        // build identity keys
+                        let mut validators_identity = HashMap::new();
+                        for (address, account) in bank
+                            .get_program_accounts(&vote::program::id(), &ScanConfig::default())
+                            .unwrap()
+                            .into_iter()
+                        {
+                            let vote_state: VoteState =
+                                VoteState::deserialize(&account.data()).unwrap();
+                            validators_identity.insert(address, vote_state.node_pubkey);
+                            validator_root_slot
+                                .insert(address, vote_state.root_slot.unwrap_or_default());
+                        }
+                        // build a map of `validators -> stake_num`
+                        let mut validators = HashMap::new();
+                        for (address, account) in bank
+                            .get_program_accounts(&stake::program::id(), &ScanConfig::default())
+                            .unwrap()
+                            .into_iter()
+                        {
+                            if let Ok(StakeState::Stake(meta, stake)) = account.state() {
+                                validators
+                                    .entry(stake.delegation.voter_pubkey)
+                                    .or_insert_with(Vec::new)
+                                    .push((address, meta, stake));
+                            }
+                        }
+                        // sum stakes per validator
+                        let mut stakes: Vec<(_, u64)> = validators
+                            .iter()
+                            .map(|(v, stakes)| {
+                                let total_stake: u64 = stakes
+                                    .iter()
+                                    .map(|(_address, _meta, stake)| stake.delegation.stake)
+                                    .sum();
+                                (*v, total_stake)
+                            })
+                            .collect();
+                        // sort by stake amount
+                        stakes.sort_by(|a, b| b.1.cmp(&a.1));
+                        // print results
+                        println!("Identity - Vote account - root slot - Total Stake");
+                        for (validator, total_stake) in stakes {
+                            println!(
+                                "{}, {}, {},  {}",
+                                validators_identity
+                                    .get(&validator)
+                                    .copied()
+                                    .unwrap_or_default(),
+                                validator,
+                                validator_root_slot
+                                    .get(&validator)
+                                    .copied()
+                                    .unwrap_or_default(),
+                                total_stake
+                            );
+                            if arg_matches.is_present("detailed") {
+                                if let Some(stakes) = validators.get(&validator) {
+                                    for (address, meta, stake) in stakes {
+                                        println!("  Stake Account: {}", address);
+                                        println!("    Lockup: {:?}", meta.lockup);
+                                        println!("    Delegation: {:?}", stake.delegation);
+                                    }
+                                }
+                            }
+                        }
+                        exit(0);
+                    }
+                    Err(err) => {
+                        eprintln!("Failed to load ledger: {:?}", err);
+                        exit(1);
+                    }
+                }
+            }
             ("create-snapshot", Some(arg_matches)) => {
                 let output_directory = value_t!(arg_matches, "output_directory", PathBuf)
                     .unwrap_or_else(|_| match &snapshot_archive_path {
@@ -2344,6 +2454,26 @@ fn main() {
                                         bank.store_account(&address, &account);
                                     }
                                 }
+                            }
+
+                            // Warp ahead at least two epochs to ensure that the leader schedule will be
+                            // updated to reflect the new bootstrap validator(s)
+                            let minimum_warp_slot =
+                                genesis_config.epoch_schedule.get_first_slot_in_epoch(
+                                    genesis_config.epoch_schedule.get_epoch(snapshot_slot) + 2,
+                                );
+
+                            if let Some(warp_slot) = warp_slot {
+                                if warp_slot < minimum_warp_slot {
+                                    eprintln!(
+                                        "Error: --warp-slot too close.  Must be >= {}",
+                                        minimum_warp_slot
+                                    );
+                                    exit(1);
+                                }
+                            } else {
+                                warn!("Warping to slot {}", minimum_warp_slot);
+                                warp_slot = Some(minimum_warp_slot);
                             }
                         }
 
