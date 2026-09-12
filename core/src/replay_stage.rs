@@ -123,8 +123,94 @@ struct SkippedSlotsInfo {
     last_skipped_slot: u64,
 }
 
+/// An additional vote account that mirrors the primary tower's votes.
+///
+/// A node may vote with several vote accounts that all name it as their
+/// validator identity. Fork choice, rooting and commitment are driven by the
+/// primary vote account alone; every mirror simply votes for whatever the
+/// primary voted for. Each mirror still keeps its own tower so that its
+/// lockouts are tracked and persisted independently, which lets a mirror that
+/// is behind sit out a slot instead of voting through its own lockouts.
+struct MirrorVoter {
+    vote_account: Pubkey,
+    tower: Tower,
+    vote_signatures: Vec<Signature>,
+    last_vote_refresh_time: LastVoteRefreshTime,
+}
+
+impl MirrorVoter {
+    fn new(
+        vote_account: Pubkey,
+        node_pubkey: &Pubkey,
+        tower_storage: &dyn TowerStorage,
+        bank_forks: &RwLock<BankForks>,
+        vote_account_index: usize,
+    ) -> Self {
+        let tower = Self::load_tower(vote_account, node_pubkey, tower_storage, bank_forks);
+        info!(
+            "Mirror vote account {} ({}): tower restored at root {:?}, last vote {:?}",
+            vote_account_index,
+            vote_account,
+            tower.root(),
+            tower.last_voted_slot(),
+        );
+        Self {
+            vote_account,
+            tower,
+            vote_signatures: Vec::new(),
+            last_vote_refresh_time: LastVoteRefreshTime {
+                last_refresh_time: Instant::now(),
+                last_print_time: Instant::now(),
+            },
+        }
+    }
+
+    fn load_tower(
+        vote_account: Pubkey,
+        node_pubkey: &Pubkey,
+        tower_storage: &dyn TowerStorage,
+        bank_forks: &RwLock<BankForks>,
+    ) -> Tower {
+        Tower::restore_for_vote_account(tower_storage, node_pubkey, Some(&vote_account))
+            .and_then(|restored_tower| {
+                let root_bank = bank_forks.read().unwrap().root_bank();
+                let slot_history = root_bank.get_slot_history();
+                restored_tower.adjust_lockouts_after_replay(root_bank.slot(), &slot_history)
+            })
+            .unwrap_or_else(|err| {
+                if !err.is_file_missing() {
+                    // Same stance as the primary tower: a tower that exists but
+                    // cannot be trusted is a slashing risk, not something to
+                    // paper over by rebuilding from bank forks.
+                    error!(
+                        "Failed to load tower for mirror vote account {}: {}",
+                        vote_account, err
+                    );
+                    std::process::exit(1);
+                }
+                Tower::new_from_bankforks(&bank_forks.read().unwrap(), node_pubkey, &vote_account)
+            })
+    }
+
+    /// Reload every mirror tower under a new validator identity.
+    fn reload_all(
+        mirror_voters: &mut [MirrorVoter],
+        node_pubkey: &Pubkey,
+        tower_storage: &dyn TowerStorage,
+        bank_forks: &RwLock<BankForks>,
+    ) {
+        for voter in mirror_voters.iter_mut() {
+            voter.tower = Self::load_tower(voter.vote_account, node_pubkey, tower_storage, bank_forks);
+            voter.vote_signatures.clear();
+        }
+    }
+}
+
 pub struct ReplayStageConfig {
     pub vote_account: Pubkey,
+    /// Additional vote accounts that mirror `vote_account`'s votes. Every one of
+    /// them must name this node as its validator identity.
+    pub mirror_vote_accounts: Vec<Pubkey>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub exit: Arc<AtomicBool>,
     pub rpc_subscriptions: Arc<RpcSubscriptions>,
@@ -366,6 +452,7 @@ impl ReplayStage {
     ) -> Self {
         let ReplayStageConfig {
             vote_account,
+            mirror_vote_accounts,
             authorized_voter_keypairs,
             exit,
             rpc_subscriptions,
@@ -426,6 +513,19 @@ impl ReplayStage {
                     last_refresh_time: Instant::now(),
                     last_print_time: Instant::now(),
                 };
+                let mut mirror_voters: Vec<MirrorVoter> = mirror_vote_accounts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, mirror_vote_account)| {
+                        MirrorVoter::new(
+                            *mirror_vote_account,
+                            &my_pubkey,
+                            tower_storage.as_ref(),
+                            &bank_forks,
+                            index,
+                        )
+                    })
+                    .collect();
                 let in_vote_only_mode = bank_forks.read().unwrap().get_vote_only_mode_signal();
 
                 loop {
@@ -611,7 +711,33 @@ impl ReplayStage {
                                                     last_vote_refresh_time,
                                                     &voting_sender,
                                                     wait_to_vote_slot,
+                                                    None,
                                                     );
+                            for voter in mirror_voters.iter_mut() {
+                                let mirror_vote_account = voter.vote_account;
+                                // `my_latest_landed_vote` above is tracked for the primary
+                                // vote account only, so read each mirror's own landed vote
+                                // off the bank; using the primary's would hide a mirror
+                                // whose votes have stopped landing.
+                                let mirror_latest_landed_vote = Tower::last_voted_slot_in_bank(
+                                    heaviest_bank_on_same_voted_fork,
+                                    &mirror_vote_account,
+                                )
+                                .unwrap_or(0);
+                                Self::refresh_last_vote(&mut voter.tower,
+                                                        heaviest_bank_on_same_voted_fork,
+                                                        mirror_latest_landed_vote,
+                                                        &mirror_vote_account,
+                                                        &identity_keypair,
+                                                        &authorized_voter_keypairs.read().unwrap(),
+                                                        &mut voter.vote_signatures,
+                                                        has_new_vote_been_rooted,
+                                                        &mut voter.last_vote_refresh_time,
+                                                        &voting_sender,
+                                                        wait_to_vote_slot,
+                                                        Some(mirror_vote_account),
+                                                        );
+                            }
                         }
                     }
 
@@ -695,6 +821,8 @@ impl ReplayStage {
                             &mut epoch_slots_frozen_slots,
                             &drop_bank_sender,
                             wait_to_vote_slot,
+                            &ancestors,
+                            &mut mirror_voters,
                         );
                     };
                     voting_time.stop();
@@ -751,6 +879,13 @@ impl ReplayStage {
 
                                 // Ensure the validator can land votes with the new identity before
                                 // becoming leader
+                                MirrorVoter::reload_all(
+                                    &mut mirror_voters,
+                                    &my_pubkey,
+                                    tower_storage.as_ref(),
+                                    &bank_forks,
+                                );
+
                                 has_new_vote_been_rooted = !wait_for_vote_to_start_leader;
                                 warn!("Identity changed from {} to {}", my_old_pubkey, my_pubkey);
                             }
@@ -1707,6 +1842,8 @@ impl ReplayStage {
         epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
         bank_drop_sender: &Sender<Vec<Arc<Bank>>>,
         wait_to_vote_slot: Option<Slot>,
+        ancestors: &HashMap<Slot, HashSet<Slot>>,
+        mirror_voters: &mut [MirrorVoter],
     ) {
         if bank.is_empty() {
             inc_new_counter_info!("replay_stage-voted_empty_bank", 1);
@@ -1795,7 +1932,84 @@ impl ReplayStage {
             replay_timing,
             voting_sender,
             wait_to_vote_slot,
+            None,
         );
+
+        Self::push_mirror_votes(
+            bank,
+            switch_fork_decision,
+            ancestors,
+            mirror_voters,
+            identity_keypair,
+            authorized_voter_keypairs,
+            *has_new_vote_been_rooted,
+            replay_timing,
+            voting_sender,
+            wait_to_vote_slot,
+        );
+    }
+
+    /// Vote for `bank` with every mirror vote account, mirroring the decision
+    /// the primary tower has already made.
+    #[allow(clippy::too_many_arguments)]
+    fn push_mirror_votes(
+        bank: &Arc<Bank>,
+        switch_fork_decision: &SwitchForkDecision,
+        ancestors: &HashMap<Slot, HashSet<Slot>>,
+        mirror_voters: &mut [MirrorVoter],
+        identity_keypair: &Keypair,
+        authorized_voter_keypairs: &[Arc<Keypair>],
+        has_new_vote_been_rooted: bool,
+        replay_timing: &mut ReplayTiming,
+        voting_sender: &Sender<VoteOp>,
+        wait_to_vote_slot: Option<Slot>,
+    ) {
+        for voter in mirror_voters.iter_mut() {
+            // The primary tower has cleared this slot, but a mirror that is still
+            // catching up can have lockouts the primary does not. Voting through
+            // them would be a lockout violation for that vote account, so sit the
+            // slot out; the mirror converges once its lockouts expire.
+            if let Some(bank_ancestors) = ancestors.get(&bank.slot()) {
+                if voter.tower.is_locked_out_for_mirror(bank.slot(), bank_ancestors) {
+                    datapoint_info!(
+                        "replay_stage-mirror_vote_locked_out",
+                        ("vote_account", voter.vote_account.to_string(), String),
+                        ("slot", bank.slot(), i64),
+                    );
+                    continue;
+                }
+            }
+
+            voter.tower.record_bank_vote(bank, &voter.vote_account);
+
+            let saved_tower = match SavedTower::new(&voter.tower, identity_keypair) {
+                Ok(saved_tower) => saved_tower,
+                Err(err) => {
+                    error!(
+                        "Unable to create saved tower for mirror vote account {}: {:?}",
+                        voter.vote_account, err
+                    );
+                    continue;
+                }
+            };
+
+            let mirror_vote_account = voter.vote_account;
+            Self::push_vote(
+                bank,
+                &mirror_vote_account,
+                identity_keypair,
+                authorized_voter_keypairs,
+                &mut voter.tower,
+                saved_tower,
+                switch_fork_decision,
+                &mut voter.vote_signatures,
+                has_new_vote_been_rooted,
+                replay_timing,
+                voting_sender,
+                wait_to_vote_slot,
+                Some(mirror_vote_account),
+            );
+        }
     }
 
     fn generate_vote_tx(
@@ -1912,6 +2126,9 @@ impl ReplayStage {
         last_vote_refresh_time: &mut LastVoteRefreshTime,
         voting_sender: &Sender<VoteOp>,
         wait_to_vote_slot: Option<Slot>,
+        // `None` for the primary vote account; a mirror's refresh must not reach
+        // the gossip vote table. See `VotingService::handle_vote`.
+        tower_vote_account: Option<Pubkey>,
     ) {
         let last_voted_slot = tower.last_voted_slot();
         if last_voted_slot.is_none() {
@@ -1973,6 +2190,7 @@ impl ReplayStage {
                 .send(VoteOp::RefreshVote {
                     tx: vote_tx,
                     last_voted_slot,
+                    vote_account: tower_vote_account,
                 })
                 .unwrap_or_else(|err| warn!("Error: {:?}", err));
             last_vote_refresh_time.last_refresh_time = Instant::now();
@@ -1993,6 +2211,9 @@ impl ReplayStage {
         replay_timing: &mut ReplayTiming,
         voting_sender: &Sender<VoteOp>,
         wait_to_vote_slot: Option<Slot>,
+        // Which tower file this vote's tower belongs to: `None` for the node's
+        // primary vote account, `Some(vote_account)` for a mirror.
+        tower_vote_account: Option<Pubkey>,
     ) {
         let mut generate_time = Measure::start("generate_vote");
         let vote_tx = Self::generate_vote_tx(
@@ -2017,6 +2238,7 @@ impl ReplayStage {
                     tx: vote_tx,
                     tower_slots,
                     saved_tower,
+                    vote_account: tower_vote_account,
                 })
                 .unwrap_or_else(|err| warn!("Error: {:?}", err));
         }
@@ -5753,6 +5975,102 @@ pub mod tests {
     }
 
     #[test]
+    fn test_mirror_votes_stay_out_of_the_gossip_vote_table() {
+        // The gossip vote table is indexed by (vote_index, node_pubkey) with only
+        // MAX_LOCKOUT_HISTORY slots per identity. If a mirror's votes went in
+        // there they would exhaust that shared index space and `push_vote` would
+        // panic with "invalid vote index" within ~15 slots. Mirrors reach the
+        // cluster through the leader's TPU instead.
+        let ReplayBlockstoreComponents {
+            cluster_info,
+            poh_recorder,
+            mut tower,
+            my_pubkey,
+            vote_simulator,
+            ..
+        } = replay_blockstore_components(None, 10, None::<GenerateVotes>);
+        let tower_storage = crate::tower_storage::NullTowerStorage::default();
+
+        let VoteSimulator {
+            mut validator_keypairs,
+            bank_forks,
+            ..
+        } = vote_simulator;
+
+        let identity_keypair = cluster_info.keypair().clone();
+        let my_vote_keypair = vec![Arc::new(
+            validator_keypairs.remove(&my_pubkey).unwrap().vote_keypair,
+        )];
+        let my_vote_pubkey = my_vote_keypair[0].pubkey();
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        let mirror_vote_pubkey = solana_sdk::pubkey::new_rand();
+
+        let (voting_sender, voting_receiver) = channel();
+        let mut voted_signatures = vec![];
+        tower.record_bank_vote(&bank0, &my_vote_pubkey);
+
+        // The primary vote account publishes to gossip...
+        ReplayStage::push_vote(
+            &bank0,
+            &my_vote_pubkey,
+            &identity_keypair,
+            &my_vote_keypair,
+            &mut tower,
+            SavedTower::default(),
+            &SwitchForkDecision::SameFork,
+            &mut voted_signatures,
+            false,
+            &mut ReplayTiming::default(),
+            &voting_sender,
+            None,
+            None,
+        );
+        crate::voting_service::VotingService::handle_vote(
+            &cluster_info,
+            &poh_recorder,
+            &tower_storage,
+            voting_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap(),
+            false,
+        );
+
+        let mut cursor = Cursor::default();
+        assert_eq!(cluster_info.get_votes(&mut cursor).len(), 1);
+
+        // ...a mirror vote account does not.
+        ReplayStage::push_vote(
+            &bank0,
+            &my_vote_pubkey,
+            &identity_keypair,
+            &my_vote_keypair,
+            &mut tower,
+            SavedTower::default(),
+            &SwitchForkDecision::SameFork,
+            &mut voted_signatures,
+            false,
+            &mut ReplayTiming::default(),
+            &voting_sender,
+            None,
+            Some(mirror_vote_pubkey),
+        );
+        crate::voting_service::VotingService::handle_vote(
+            &cluster_info,
+            &poh_recorder,
+            &tower_storage,
+            voting_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap(),
+            false,
+        );
+
+        assert!(
+            cluster_info.get_votes(&mut cursor).is_empty(),
+            "a mirror vote account must not consume the identity's gossip vote index space"
+        );
+    }
+
+    #[test]
     fn test_replay_stage_refresh_last_vote() {
         let ReplayBlockstoreComponents {
             cluster_info,
@@ -5803,6 +6121,7 @@ pub mod tests {
             &mut ReplayTiming::default(),
             &voting_sender,
             None,
+            None,
         );
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
@@ -5843,6 +6162,7 @@ pub mod tests {
                 &mut last_vote_refresh_time,
                 &voting_sender,
                 None,
+                None,
             );
 
             // No new votes have been submitted to gossip
@@ -5868,6 +6188,7 @@ pub mod tests {
             has_new_vote_been_rooted,
             &mut ReplayTiming::default(),
             &voting_sender,
+            None,
             None,
         );
         let vote_info = voting_receiver
@@ -5900,6 +6221,7 @@ pub mod tests {
             has_new_vote_been_rooted,
             &mut last_vote_refresh_time,
             &voting_sender,
+            None,
             None,
         );
 
@@ -5938,6 +6260,7 @@ pub mod tests {
             has_new_vote_been_rooted,
             &mut last_vote_refresh_time,
             &voting_sender,
+            None,
             None,
         );
         let vote_info = voting_receiver
@@ -6006,6 +6329,7 @@ pub mod tests {
             has_new_vote_been_rooted,
             &mut last_vote_refresh_time,
             &voting_sender,
+            None,
             None,
         );
 

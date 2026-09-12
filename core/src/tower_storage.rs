@@ -63,23 +63,34 @@ impl SavedTower {
     }
 }
 
+/// Storage for a validator's tower(s).
+///
+/// A node that votes with more than one vote account keeps one tower per vote
+/// account. `vote_account` selects which one: `None` is the node's primary vote
+/// account, whose tower keeps the historical un-suffixed name so that upgrading
+/// a running validator does not lose it. `Some(vote_account)` is a mirror vote
+/// account, stored alongside it under its own name.
 pub trait TowerStorage: Sync + Send {
-    fn load(&self, node_pubkey: &Pubkey) -> Result<SavedTower>;
-    fn store(&self, saved_tower: &SavedTower) -> Result<()>;
+    fn load(&self, node_pubkey: &Pubkey, vote_account: Option<&Pubkey>) -> Result<SavedTower>;
+    fn store(&self, saved_tower: &SavedTower, vote_account: Option<&Pubkey>) -> Result<()>;
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct NullTowerStorage {}
 
 impl TowerStorage for NullTowerStorage {
-    fn load(&self, _node_pubkey: &Pubkey) -> Result<SavedTower> {
+    fn load(&self, _node_pubkey: &Pubkey, _vote_account: Option<&Pubkey>) -> Result<SavedTower> {
         Err(TowerError::IoError(io::Error::new(
             io::ErrorKind::Other,
             "NullTowerStorage::load() not available",
         )))
     }
 
-    fn store(&self, _saved_tower: &SavedTower) -> Result<()> {
+    fn store(
+        &self,
+        _saved_tower: &SavedTower,
+        _vote_account: Option<&Pubkey>,
+    ) -> Result<()> {
         Ok(())
     }
 }
@@ -99,11 +110,26 @@ impl FileTowerStorage {
             .join(format!("tower-{}", node_pubkey))
             .with_extension("bin")
     }
+
+    /// Tower file for a mirror vote account. The primary vote account keeps
+    /// `filename()` so that existing towers survive an upgrade.
+    pub fn mirror_filename(&self, node_pubkey: &Pubkey, vote_account: &Pubkey) -> PathBuf {
+        self.tower_path
+            .join(format!("tower-{}-{}", node_pubkey, vote_account))
+            .with_extension("bin")
+    }
+
+    fn tower_filename(&self, node_pubkey: &Pubkey, vote_account: Option<&Pubkey>) -> PathBuf {
+        match vote_account {
+            None => self.filename(node_pubkey),
+            Some(vote_account) => self.mirror_filename(node_pubkey, vote_account),
+        }
+    }
 }
 
 impl TowerStorage for FileTowerStorage {
-    fn load(&self, node_pubkey: &Pubkey) -> Result<SavedTower> {
-        let filename = self.filename(node_pubkey);
+    fn load(&self, node_pubkey: &Pubkey, vote_account: Option<&Pubkey>) -> Result<SavedTower> {
+        let filename = self.tower_filename(node_pubkey, vote_account);
         trace!("load {}", filename.display());
 
         // Ensure to create parent dir here, because restore() precedes save() always
@@ -114,8 +140,8 @@ impl TowerStorage for FileTowerStorage {
         bincode::deserialize_from(&mut stream).map_err(|e| e.into())
     }
 
-    fn store(&self, saved_tower: &SavedTower) -> Result<()> {
-        let filename = self.filename(&saved_tower.node_pubkey);
+    fn store(&self, saved_tower: &SavedTower, vote_account: Option<&Pubkey>) -> Result<()> {
+        let filename = self.tower_filename(&saved_tower.node_pubkey, vote_account);
         trace!("store: {}", filename.display());
         let new_filename = filename.with_extension("bin.new");
 
@@ -184,9 +210,13 @@ impl EtcdTowerStorage {
         })
     }
 
-    fn get_keys(node_pubkey: &Pubkey) -> (String, String) {
+    fn get_keys(node_pubkey: &Pubkey, vote_account: Option<&Pubkey>) -> (String, String) {
+        // The instance lock is per node, not per vote account.
         let instance_key = format!("{}/instance", node_pubkey);
-        let tower_key = format!("{}/tower", node_pubkey);
+        let tower_key = match vote_account {
+            None => format!("{}/tower", node_pubkey),
+            Some(vote_account) => format!("{}/tower-{}", node_pubkey, vote_account),
+        };
         (instance_key, tower_key)
     }
 
@@ -196,8 +226,8 @@ impl EtcdTowerStorage {
 }
 
 impl TowerStorage for EtcdTowerStorage {
-    fn load(&self, node_pubkey: &Pubkey) -> Result<SavedTower> {
-        let (instance_key, tower_key) = Self::get_keys(node_pubkey);
+    fn load(&self, node_pubkey: &Pubkey, vote_account: Option<&Pubkey>) -> Result<SavedTower> {
+        let (instance_key, tower_key) = Self::get_keys(node_pubkey, vote_account);
         let mut client = self.client.write().unwrap();
 
         let txn = etcd_client::Txn::new().and_then(vec![etcd_client::TxnOp::put(
@@ -250,8 +280,8 @@ impl TowerStorage for EtcdTowerStorage {
         )))
     }
 
-    fn store(&self, saved_tower: &SavedTower) -> Result<()> {
-        let (instance_key, tower_key) = Self::get_keys(&saved_tower.node_pubkey);
+    fn store(&self, saved_tower: &SavedTower, vote_account: Option<&Pubkey>) -> Result<()> {
+        let (instance_key, tower_key) = Self::get_keys(&saved_tower.node_pubkey, vote_account);
         let mut client = self.client.write().unwrap();
 
         let txn = etcd_client::Txn::new()
@@ -282,5 +312,81 @@ impl TowerStorage for EtcdTowerStorage {
             )));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use {
+        super::*,
+        crate::consensus::Tower,
+        solana_sdk::{
+            hash::Hash,
+            signature::{Keypair, Signer},
+        },
+        tempfile::TempDir,
+    };
+
+    #[test]
+    fn test_mirror_tower_is_stored_separately_from_primary() {
+        let tower_path = TempDir::new().unwrap();
+        let identity_keypair = Keypair::new();
+        let node_pubkey = identity_keypair.pubkey();
+        let mirror_vote_account = solana_sdk::pubkey::new_rand();
+        let tower_storage = FileTowerStorage::new(tower_path.path().to_path_buf());
+
+        let mut primary_tower = Tower::default();
+        primary_tower.node_pubkey = node_pubkey;
+        primary_tower.record_vote(7, Hash::default());
+
+        let mut mirror_tower = Tower::default();
+        mirror_tower.node_pubkey = node_pubkey;
+        mirror_tower.record_vote(9, Hash::default());
+
+        primary_tower
+            .save(&tower_storage, &identity_keypair)
+            .unwrap();
+        mirror_tower
+            .save_for_vote_account(&tower_storage, &identity_keypair, Some(&mirror_vote_account))
+            .unwrap();
+
+        assert_ne!(
+            tower_storage.filename(&node_pubkey),
+            tower_storage.mirror_filename(&node_pubkey, &mirror_vote_account)
+        );
+
+        let loaded_primary = Tower::restore(&tower_storage, &node_pubkey).unwrap();
+        let loaded_mirror = Tower::restore_for_vote_account(
+            &tower_storage,
+            &node_pubkey,
+            Some(&mirror_vote_account),
+        )
+        .unwrap();
+        assert_eq!(loaded_primary.last_voted_slot(), Some(7));
+        assert_eq!(loaded_mirror.last_voted_slot(), Some(9));
+    }
+
+    #[test]
+    fn test_missing_mirror_tower_does_not_fall_back_to_primary() {
+        let tower_path = TempDir::new().unwrap();
+        let identity_keypair = Keypair::new();
+        let node_pubkey = identity_keypair.pubkey();
+        let mirror_vote_account = solana_sdk::pubkey::new_rand();
+        let tower_storage = FileTowerStorage::new(tower_path.path().to_path_buf());
+
+        let mut primary_tower = Tower::default();
+        primary_tower.node_pubkey = node_pubkey;
+        primary_tower.record_vote(7, Hash::default());
+        primary_tower
+            .save(&tower_storage, &identity_keypair)
+            .unwrap();
+
+        let err = Tower::restore_for_vote_account(
+            &tower_storage,
+            &node_pubkey,
+            Some(&mirror_vote_account),
+        )
+        .unwrap_err();
+        assert!(err.is_file_missing(), "unexpected error: {:?}", err);
     }
 }

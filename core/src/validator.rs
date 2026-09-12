@@ -113,6 +113,11 @@ const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
 
 pub struct ValidatorConfig {
+    /// Additional vote accounts this node votes with, on top of the vote account
+    /// passed to `Validator::new`. Every one of them must name this node's
+    /// identity as its validator identity, otherwise its votes are rejected.
+    /// Their stake is summed onto this node's identity in the leader schedule.
+    pub mirror_vote_accounts: Vec<Pubkey>,
     pub dev_halt_at_slot: Option<Slot>,
     pub expected_genesis_hash: Option<Hash>,
     pub expected_bank_hash: Option<Hash>,
@@ -175,6 +180,7 @@ pub struct ValidatorConfig {
 impl Default for ValidatorConfig {
     fn default() -> Self {
         Self {
+            mirror_vote_accounts: Vec::new(),
             dev_halt_at_slot: None,
             expected_genesis_hash: None,
             expected_bank_hash: None,
@@ -349,6 +355,9 @@ impl Validator {
 
         warn!("identity: {}", id);
         warn!("vote account: {}", vote_account);
+        for mirror_vote_account in &config.mirror_vote_accounts {
+            warn!("mirror vote account: {}", mirror_vote_account);
+        }
 
         let mut bank_notification_senders = Vec::new();
 
@@ -498,6 +507,15 @@ impl Validator {
             accounts_update_notifier,
             transaction_notifier,
         );
+
+        if !config.voting_disabled {
+            check_mirror_vote_accounts(
+                &bank_forks.working_bank(),
+                &id,
+                &config.mirror_vote_accounts,
+                &authorized_voter_keypairs.read().unwrap(),
+            );
+        }
 
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
 
@@ -833,6 +851,7 @@ impl Validator {
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
         let tvu = Tvu::new(
             vote_account,
+            &config.mirror_vote_accounts,
             authorized_voter_keypairs,
             &bank_forks,
             &cluster_info,
@@ -1109,6 +1128,79 @@ impl Validator {
         if let Some(geyser_plugin_service) = self.geyser_plugin_service {
             geyser_plugin_service.join().expect("geyser_plugin_service");
         }
+    }
+}
+
+/// Validate every mirror vote account before the validator starts voting.
+///
+/// Each of these is a configuration mistake that would otherwise show up only as
+/// a `warn!` once per slot from `generate_vote_tx`, with the vote account
+/// silently never voting. They are all knowable at startup, so fail here instead
+/// of leaving an operator to discover months later that one account never voted.
+///
+/// The one case this cannot catch is an authorized voter rotated on-chain while
+/// the node runs; that is not a configuration error and belongs to monitoring.
+fn check_mirror_vote_accounts(
+    bank: &Bank,
+    node_pubkey: &Pubkey,
+    mirror_vote_accounts: &[Pubkey],
+    authorized_voter_keypairs: &[Arc<Keypair>],
+) {
+    let mut problems = Vec::new();
+
+    for mirror_vote_account in mirror_vote_accounts {
+        match bank.get_vote_account(mirror_vote_account) {
+            None => problems.push(format!(
+                "--mirror-vote-account {}: no such vote account",
+                mirror_vote_account
+            )),
+            Some((_stake, vote_account)) => match vote_account.vote_state().as_ref() {
+                Err(_) => problems.push(format!(
+                    "--mirror-vote-account {}: not a readable vote account",
+                    mirror_vote_account
+                )),
+                Ok(vote_state) => {
+                    if vote_state.node_pubkey != *node_pubkey {
+                        problems.push(format!(
+                            "--mirror-vote-account {}: names {} as its validator identity, not {}. \
+                             Repoint it with `vote-update-validator` first",
+                            mirror_vote_account, vote_state.node_pubkey, node_pubkey
+                        ));
+                    }
+                    match vote_state.get_authorized_voter(bank.epoch()) {
+                        None => problems.push(format!(
+                            "--mirror-vote-account {}: has no authorized voter for epoch {}",
+                            mirror_vote_account,
+                            bank.epoch()
+                        )),
+                        Some(authorized_voter) => {
+                            if !authorized_voter_keypairs
+                                .iter()
+                                .any(|keypair| keypair.pubkey() == authorized_voter)
+                            {
+                                problems.push(format!(
+                                    "--mirror-vote-account {}: its authorized voter {} was not \
+                                     supplied; pass it with --authorized-voter",
+                                    mirror_vote_account, authorized_voter
+                                ));
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    if !problems.is_empty() {
+        for problem in &problems {
+            error!("{}", problem);
+        }
+        error!(
+            "{} mirror vote account(s) cannot vote with this identity. \
+             Fix the configuration, or drop the flag for those accounts.",
+            problems.len()
+        );
+        abort();
     }
 }
 

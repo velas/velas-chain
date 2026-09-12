@@ -10,7 +10,7 @@ use {
     log::*,
     rand::{seq::SliceRandom, thread_rng},
     solana_clap_utils::{
-        input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of},
+        input_parsers::{keypair_of, keypairs_of, pubkey_of, pubkeys_of, value_of},
         input_validators::{
             is_keypair, is_keypair_or_ask_keyword, is_niceness_adjustment_valid, is_parsable,
             is_pow2, is_pubkey, is_pubkey_or_keypair, is_slot, is_valid_percentage,
@@ -572,6 +572,23 @@ pub fn main() {
                        If unspecified voting will be disabled. \
                        The authorized voter for the account must either be the \
                        --identity keypair or with the --authorized-voter argument")
+        )
+        .arg(
+            Arg::with_name("mirror_vote_accounts")
+                .long("mirror-vote-account")
+                .value_name("ADDRESS")
+                .takes_value(true)
+                .validator(is_pubkey_or_keypair)
+                .multiple(true)
+                .requires("vote_account")
+                .help("Additional vote account to vote with, on top of --vote-account. \
+                       May be specified multiple times. \
+                       Each account must name this validator's --identity as its \
+                       validator identity (see `vote-update-validator`), and its \
+                       authorized voter must be reachable via --authorized-voter. \
+                       Their stake is summed onto this identity in the leader schedule, \
+                       which is what lets one node take over the slots that several \
+                       separate validators used to produce."),
         )
         .arg(
             Arg::with_name("init_complete_file")
@@ -2446,6 +2463,26 @@ pub fn main() {
         }
         Keypair::new().pubkey()
     });
+
+    validator_config.mirror_vote_accounts =
+        pubkeys_of(&matches, "mirror_vote_accounts").unwrap_or_default();
+    {
+        let mut seen = std::collections::HashSet::new();
+        seen.insert(vote_account);
+        for mirror_vote_account in &validator_config.mirror_vote_accounts {
+            if !seen.insert(*mirror_vote_account) {
+                eprintln!(
+                    "Error: vote account {} is specified more than once",
+                    mirror_vote_account
+                );
+                exit(1);
+            }
+        }
+    }
+    if !validator_config.mirror_vote_accounts.is_empty() && validator_config.voting_disabled {
+        eprintln!("Error: --mirror-vote-account requires voting to be enabled");
+        exit(1);
+    }
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
