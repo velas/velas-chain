@@ -517,6 +517,6 @@ pub fn save_tower(tower_path: &Path, tower: &Tower, node_keypair: &Keypair) {
     let file_tower_storage = FileTowerStorage::new(tower_path.to_path_buf());
     let saved_tower = SavedTower::new(tower, node_keypair).unwrap();
     file_tower_storage
-        .store(&SavedTowerVersions::from(saved_tower))
+        .store(&SavedTowerVersions::from(saved_tower), None)
         .unwrap();
 }
