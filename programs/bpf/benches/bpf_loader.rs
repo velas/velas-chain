@@ -5,34 +5,36 @@ extern crate test;
 #[macro_use]
 extern crate solana_bpf_loader_program;
 
-use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
-use solana_bpf_loader_program::{
-    create_vm, serialization::serialize_parameters, syscalls::register_syscalls, BpfError,
-    ThisInstructionMeter,
+use {
+    byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
+    solana_bpf_loader_program::{
+        create_vm, serialization::serialize_parameters, syscalls::register_syscalls, BpfError,
+        ThisInstructionMeter,
+    },
+    solana_measure::measure::Measure,
+    solana_program_runtime::invoke_context::with_mock_invoke_context,
+    solana_rbpf::{
+        elf::Executable,
+        vm::{Config, InstructionMeter, SyscallRegistry},
+    },
+    solana_runtime::{
+        bank::Bank,
+        bank_client::BankClient,
+        genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        loader_utils::load_program,
+    },
+    solana_sdk::{
+        bpf_loader,
+        client::SyncClient,
+        entrypoint::SUCCESS,
+        instruction::{AccountMeta, Instruction},
+        message::Message,
+        pubkey::Pubkey,
+        signature::{Keypair, Signer},
+    },
+    std::{env, fs::File, io::Read, mem, path::PathBuf, sync::Arc},
+    test::Bencher,
 };
-use solana_measure::measure::Measure;
-use solana_program_runtime::invoke_context::with_mock_invoke_context;
-use solana_rbpf::{
-    elf::Executable,
-    vm::{Config, InstructionMeter, SyscallRegistry},
-};
-use solana_runtime::{
-    bank::Bank,
-    bank_client::BankClient,
-    genesis_utils::{create_genesis_config, GenesisConfigInfo},
-    loader_utils::load_program,
-};
-use solana_sdk::{
-    bpf_loader,
-    client::SyncClient,
-    entrypoint::SUCCESS,
-    instruction::{AccountMeta, Instruction},
-    message::Message,
-    pubkey::Pubkey,
-    signature::{Keypair, Signer},
-};
-use std::{env, fs::File, io::Read, mem, path::PathBuf, sync::Arc};
-use test::Bencher;
 
 /// BPF program file extension
 const PLATFORM_FILE_EXTENSION_BPF: &str = "so";
@@ -209,12 +211,12 @@ fn bench_create_vm(bencher: &mut Bencher) {
             .mock_set_remaining(BUDGET);
 
         // Serialize account data
-        let keyed_accounts = invoke_context.get_keyed_accounts().unwrap();
         let (mut serialized, account_lengths) = serialize_parameters(
-            &keyed_accounts[0].unsigned_key(),
-            &keyed_accounts[1].unsigned_key(),
-            &keyed_accounts[2..],
-            &[],
+            invoke_context.transaction_context,
+            invoke_context
+                .transaction_context
+                .get_current_instruction_context()
+                .unwrap(),
         )
         .unwrap();
 
@@ -250,12 +252,12 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
             .mock_set_remaining(BUDGET);
 
         // Serialize account data
-        let keyed_accounts = invoke_context.get_keyed_accounts().unwrap();
         let (mut serialized, account_lengths) = serialize_parameters(
-            &keyed_accounts[0].unsigned_key(),
-            &keyed_accounts[1].unsigned_key(),
-            &keyed_accounts[2..],
-            &[],
+            invoke_context.transaction_context,
+            invoke_context
+                .transaction_context
+                .get_current_instruction_context()
+                .unwrap(),
         )
         .unwrap();
 

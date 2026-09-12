@@ -205,8 +205,7 @@ pub fn evm_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'
         ("modify-block", Some(arg_matches)) => {
             let block_number = value_t_or_exit!(arg_matches, "block_number", Slot);
             let native_slot = value_t_or_exit!(arg_matches, "native_slot", Slot);
-            let native_hash =
-                value_t_or_exit!(arg_matches, "native_hash", evm_rpc::Hex<evm_state::H256>);
+            let native_hash = value_t_or_exit!(arg_matches, "native_hash", evm_state::H256);
             let timestamp = value_t!(arg_matches, "timestamp", u64).ok();
             let skip_consistency_check = arg_matches.is_present("skip_consistency_check");
 
@@ -214,7 +213,7 @@ pub fn evm_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'
                 blockstore,
                 block_number,
                 native_slot,
-                native_hash.0,
+                native_hash,
                 timestamp,
                 skip_consistency_check,
             )

@@ -7,14 +7,20 @@ current_folder="$(dirname "$0")"
 BASE=$(cat $current_folder/solana-base)
 echo "Solana base version is $BASE"
 
-LOCAL=$(cat $current_folder/../.git/ORIG_HEAD)
+if [ -z "$GIT_MERGE_REMOTE" ];
+then
+    LOCAL=$(cat $current_folder/../.git/ORIG_HEAD)
+    REMOTE=$(cat $current_folder/../.git/MERGE_HEAD)
+else
+    
+    echo "Using GIT_MERGE_REMOTE variable to get merge head"
+    REMOTE=$GIT_MERGE_REMOTE
+    LOCAL=$(git rev-parse HEAD)
+fi
 
 echo "Velas commit is $LOCAL"
-REMOTE=$(cat $current_folder/../.git/MERGE_HEAD)
-
 echo "Solana merging commit is $REMOTE"
 
-# LOCAL=$(git rev-parse HEAD)
 
 velas_changes="$current_folder/velas-changes-$BASE-$LOCAL.txt"
 
@@ -51,10 +57,10 @@ git rm -rf explorer web3.js docs
 
 for file in $(comm -23 $remote_changes $velas_changes)
 do
-echo "Adding file $file from remote"
-# its okay that this commands can not find some files, because its can be marked as already fixed
-git checkout --theirs -- $file
-git add $file
+    echo "Adding file $file from remote"
+    # its okay that this commands can not find some files, because its can be marked as already fixed
+    git checkout --theirs -- $file
+    git add $file
 done
 
 # Old version with git pathspecs
@@ -62,16 +68,16 @@ done
 
 # if git checkout --theirs --pathspec-from-file $pathspec_file; then
 #     # If command succeed then no removed files found in remote branch
-# else 
+# else
 #     # if fails
 #     # 1. Collect list of failed files
 
 #     git checkout --theirs --pathspec-from-file $pathspec_file |& awk '{ print $3 }' | sed "s/[«|»]/'/g"  > "$current_folder/remote-removed.txt"
-    
+
 #     # 2. Explicitly remove files that was already removed.
 #     cat "$current_folder/remote-removed.txt" | xargs git rm
-#     # 3. Repeat checkout of remaining files 
-#     git checkout --theirs --pathspec-from-file $pathspec_file cat 
+#     # 3. Repeat checkout of remaining files
+#     git checkout --theirs --pathspec-from-file $pathspec_file cat
 # fi
 
 # git add --pathspec-from-file $pathspec_file

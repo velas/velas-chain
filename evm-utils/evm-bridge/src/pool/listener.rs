@@ -1,10 +1,13 @@
-use log::*;
-use std::fmt::{Debug, LowerHex};
-use std::sync::Arc;
-use tokio::runtime::Handle;
-use txpool::Listener;
-
-use super::PooledTransaction;
+use {
+    super::PooledTransaction,
+    log::*,
+    std::{
+        fmt::{Debug, LowerHex},
+        sync::Arc,
+    },
+    tokio::runtime::Handle,
+    txpool::Listener,
+};
 
 #[derive(Debug)]
 pub struct PoolListener;
@@ -15,14 +18,14 @@ impl PoolListener {
             handle.spawn(async move {
                 if let Err(e) = tx.send(Err(evm_rpc::Error::TransactionRemoved {})).await {
                     warn!(
-                        "PoolListener failed to async notify tx sender about transaction, error:{:?}",
+                        "PoolListener failed to async notify tx sender about transaction, error: {}",
                         e
                     )
                 }
             });
         } else if let Err(e) = tx.blocking_send(Err(evm_rpc::Error::TransactionRemoved {})) {
             warn!(
-                "PoolListener failed to sync notify tx sender about transaction, error:{:?}",
+                "PoolListener failed to sync notify tx sender about transaction, error: {}",
                 e
             )
         }
@@ -47,10 +50,7 @@ impl Listener<PooledTransaction> for PoolListener {
         tx: &Arc<PooledTransaction>,
         reason: &txpool::Error<H>,
     ) {
-        debug!(
-            "PoolListener::rejected: tx = {:?}, reason = {:?}",
-            tx, reason
-        );
+        debug!("PoolListener::rejected: tx = {:?}, reason = {}", tx, reason);
         self.notify_tx_removed(tx)
     }
 

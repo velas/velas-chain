@@ -34,7 +34,7 @@ pub fn new_secp256k1_instruction(
     let secp_pubkey = libsecp256k1::PublicKey::from_secret_key(priv_key);
     let eth_pubkey = construct_eth_pubkey(&secp_pubkey);
     let mut hasher = sha3::Keccak256::new();
-    hasher.update(&message_arr);
+    hasher.update(message_arr);
     let message_hash = hasher.finalize();
     let mut message_hash_arr = [0u8; 32];
     message_hash_arr.copy_from_slice(message_hash.as_slice());
@@ -107,7 +107,9 @@ pub fn verify(
         return Err(PrecompileError::InvalidInstructionDataSize);
     }
     let count = data[0] as usize;
-    if feature_set.is_active(&libsecp256k1_fail_on_bad_count::id()) && count == 0 && data.len() > 1
+    if (feature_set.is_active(&libsecp256k1_fail_on_bad_count::id()))
+        && count == 0
+        && data.len() > 1
     {
         // count is zero but the instruction data indicates that is probably not
         // correct, fail the instruction to catch probable invalid secp256k1

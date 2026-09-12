@@ -67,17 +67,6 @@ async fn main() {
                     recipient address will be used to check request limits instead",
                 ),
         )
-        .arg(
-            Arg::with_name("allowed_ip")
-                .long("allow-ip")
-                .value_name("IP_ADDRESS")
-                .takes_value(true)
-                .multiple(true)
-                .help(
-                    "Allow requests from a particular IP address without request limit; \
-                    recipient address will be used to check request limits instead",
-                ),
-        )
         .get_matches();
 
     let faucet_keypair = read_keypair_file(matches.value_of("keypair").unwrap())

@@ -76,7 +76,8 @@ fn simulate_fuzz_with_context() {
             context.last_blockhash,
             &program_id,
         )
-        .await
+        .await;
+        context.join().await.unwrap();
     });
 }
 

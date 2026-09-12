@@ -1,0 +1,62 @@
+syntax = "proto3";
+package triedb_repl;
+
+import "google/protobuf/empty.proto";
+
+service Backend {
+  rpc ping (google.protobuf.Empty) returns (PingReply);
+  rpc getArrayOfNodes (GetArrayOfNodesRequest) returns (GetArrayOfNodesReply);
+  rpc prefetchHeight (PrefetchHeightRequest) returns (PrefetchHeightReply);
+  rpc getStateDiff (GetStateDiffRequest) returns (GetStateDiffReply);
+  rpc prefetchRange (PrefetchRangeRequest) returns (google.protobuf.Empty);
+  rpc getBlockRange (google.protobuf.Empty) returns (GetBlockRangeReply);
+}
+
+message PingReply {
+  string message = 1;
+}
+
+message Hash {
+  string value = 1;
+}
+
+message GetArrayOfNodesRequest {
+  repeated Hash hashes = 1;
+}
+
+message PrefetchHeightRequest {
+  uint64 height = 1;
+}
+
+message PrefetchHeightReply {
+  Hash hash = 1;
+}
+
+message GetArrayOfNodesReply {
+  repeated bytes nodes = 1;
+}
+
+message GetBlockRangeReply {
+  uint64 start = 1;
+  uint64 end = 2;
+}
+
+message PrefetchRangeRequest {
+  uint64 start = 1;
+  uint64 end = 2;
+}
+message GetStateDiffRequest {
+  uint64 from = 1;
+  uint64 to = 2;
+  Hash first_root = 3;
+  Hash second_root = 4;
+}
+
+message Insert {
+  Hash hash = 1;
+  bytes data = 2;
+}
+
+message GetStateDiffReply {
+  repeated Insert changeset = 1;
+}

@@ -1,14 +1,12 @@
-use std::{borrow::Borrow, sync::Arc};
-
-use primitive_types::H256;
-use rlp::Rlp;
-use triedb::merkle::{MerkleNode, MerkleValue};
-
-use anyhow::{anyhow, Result};
-use log::*;
-use triedb::merkle::nibble::NibbleVec;
-
-use super::inspectors::{encoding, TrieDataInsectorRaw, TrieInspector};
+use {
+    super::inspectors::{encoding, TrieDataInsectorRaw, TrieInspector},
+    anyhow::{anyhow, Result},
+    log::*,
+    primitive_types::H256,
+    rlp::Rlp,
+    std::{borrow::Borrow, sync::Arc},
+    triedb::merkle::{nibble::NibbleVec, Branch, Extension, Leaf, MerkleNode, MerkleValue},
+};
 
 pub struct Walker<DB, TI, DI> {
     db: DB,
@@ -76,16 +74,19 @@ where
 
     fn process_node(&self, mut nibble: NibbleVec, node: &MerkleNode) -> Result<()> {
         match node {
-            MerkleNode::Leaf(nibbles, data) => {
+            MerkleNode::Leaf(Leaf { nibbles, data }) => {
                 nibble.extend_from_slice(nibbles);
                 let key = triedb::merkle::nibble::into_key(&nibble);
                 self.data_inspector.inspect_data_raw(key, data)
             }
-            MerkleNode::Extension(nibbles, value) => {
+            MerkleNode::Extension(Extension { nibbles, value }) => {
                 nibble.extend_from_slice(nibbles);
                 self.process_value(nibble, value)
             }
-            MerkleNode::Branch(values, mb_data) => {
+            MerkleNode::Branch(Branch {
+                childs: values,
+                data: maybe_data,
+            }) => {
                 // lack of copy on result, forces setting array manually
                 let mut values_result = [
                     None, None, None, None, None, None, None, None, None, None, None, None, None,
@@ -101,7 +102,7 @@ where
                             *result = Some(self.process_value(cloned_nibble, value))
                         });
                     }
-                    if let Some(data) = mb_data {
+                    if let Some(data) = maybe_data {
                         let key = triedb::merkle::nibble::into_key(&nibble);
                         self.data_inspector.inspect_data_raw(key, data)
                     } else {

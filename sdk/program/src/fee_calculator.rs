@@ -116,8 +116,7 @@ impl FeeRateGovernor {
                     .min(me.min_lamports_per_signature.max(
                         me.target_lamports_per_signature
                             * std::cmp::min(latest_signatures_per_slot, std::u32::MAX as u64)
-                                as u64
-                            / me.target_signatures_per_slot as u64,
+                            / me.target_signatures_per_slot,
                     ));
 
             trace!(
@@ -159,6 +158,13 @@ impl FeeRateGovernor {
             me.lamports_per_signature
         );
         me
+    }
+
+    pub fn clone_with_lamports_per_signature(&self, lamports_per_signature: u64) -> Self {
+        Self {
+            lamports_per_signature,
+            ..*self
+        }
     }
 
     /// calculate unburned fee from a fee total, returns (unburned, burned)

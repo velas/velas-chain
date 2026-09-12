@@ -8,19 +8,19 @@ pub const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/velas/velas-
 lazy_static! {
     pub static ref CONFIG_PATH: Option<String> = {
         dirs_next::home_dir().map(|mut path| {
-            path.extend(&[".config", "velas", "install", "config.yml"]);
+            path.extend([".config", "velas", "install", "config.yml"]);
             path.to_str().unwrap().to_string()
         })
     };
     pub static ref USER_KEYPAIR: Option<String> = {
         dirs_next::home_dir().map(|mut path| {
-            path.extend(&[".config", "velas", "id.json"]);
+            path.extend([".config", "velas", "id.json"]);
             path.to_str().unwrap().to_string()
         })
     };
     pub static ref DATA_DIR: Option<String> = {
         dirs_next::home_dir().map(|mut path| {
-            path.extend(&[".local", "share", "velas", "install"]);
+            path.extend([".local", "share", "velas", "install"]);
             path.to_str().unwrap().to_string()
         })
     };

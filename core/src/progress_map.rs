@@ -6,11 +6,14 @@ use {
         replay_stage::SUPERMINORITY_THRESHOLD,
     },
     solana_ledger::blockstore_processor::{ConfirmationProgress, ConfirmationTiming},
+    solana_program_runtime::timings::ExecuteTimingType,
     solana_runtime::{bank::Bank, bank_forks::BankForks, vote_account::VoteAccount},
     solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
     std::{
         collections::{BTreeMap, HashMap, HashSet},
+        ops::Index,
         sync::{Arc, RwLock},
+        time::Instant,
     },
 };
 
@@ -33,7 +36,13 @@ impl std::ops::DerefMut for ReplaySlotStats {
 }
 
 impl ReplaySlotStats {
-    pub fn report_stats(&self, slot: Slot, num_entries: usize, num_shreds: u64) {
+    pub fn report_stats(
+        &self,
+        slot: Slot,
+        num_entries: usize,
+        num_shreds: u64,
+        bank_complete_time_us: u64,
+    ) {
         datapoint_info!(
             "replay-slot-stats",
             ("slot", slot as i64, i64),
@@ -61,23 +70,61 @@ impl ReplaySlotStats {
             ),
             ("total_entries", num_entries as i64, i64),
             ("total_shreds", num_shreds as i64, i64),
-            ("check_us", self.execute_timings.check_us, i64),
-            ("load_us", self.execute_timings.load_us, i64),
-            ("execute_us", self.execute_timings.execute_us, i64),
-            ("store_us", self.execute_timings.store_us, i64),
             (
-                "update_stakes_cache_us",
-                self.execute_timings.update_stakes_cache_us,
+                "check_us",
+                *self
+                    .execute_timings
+                    .metrics
+                    .index(ExecuteTimingType::CheckUs),
                 i64
             ),
             (
+                "load_us",
+                *self
+                    .execute_timings
+                    .metrics
+                    .index(ExecuteTimingType::LoadUs),
+                i64
+            ),
+            (
+                "execute_us",
+                *self
+                    .execute_timings
+                    .metrics
+                    .index(ExecuteTimingType::ExecuteUs),
+                i64
+            ),
+            (
+                "store_us",
+                *self
+                    .execute_timings
+                    .metrics
+                    .index(ExecuteTimingType::StoreUs),
+                i64
+            ),
+            (
+                "update_stakes_cache_us",
+                *self
+                    .execute_timings
+                    .metrics
+                    .index(ExecuteTimingType::UpdateStakesCacheUs),
+                i64
+            ),
+            ("bank_complete_time_us", bank_complete_time_us, i64),
+            (
                 "total_batches_len",
-                self.execute_timings.total_batches_len,
+                *self
+                    .execute_timings
+                    .metrics
+                    .index(ExecuteTimingType::TotalBatchesLen),
                 i64
             ),
             (
                 "num_execute_batches",
-                self.execute_timings.num_execute_batches,
+                *self
+                    .execute_timings
+                    .metrics
+                    .index(ExecuteTimingType::NumExecuteBatches),
                 i64
             ),
             (
@@ -88,11 +135,6 @@ impl ReplaySlotStats {
             (
                 "execute_details_create_vm_us",
                 self.execute_timings.details.create_vm_us,
-                i64
-            ),
-            (
-                "create_evm_executor_us",
-                self.execute_timings.details.create_evm_executor_us,
                 i64
             ),
             (
@@ -292,12 +334,39 @@ impl ValidatorStakeInfo {
     }
 }
 
+pub const RETRANSMIT_BASE_DELAY_MS: u64 = 5_000;
+pub const RETRANSMIT_BACKOFF_CAP: u32 = 6;
+
+#[derive(Debug, Default)]
+pub struct RetransmitInfo {
+    pub retry_time: Option<Instant>,
+    pub retry_iteration: u32,
+}
+
+impl RetransmitInfo {
+    pub fn reached_retransmit_threshold(&self) -> bool {
+        let backoff = std::cmp::min(self.retry_iteration, RETRANSMIT_BACKOFF_CAP);
+        let backoff_duration_ms = (1_u64 << backoff) * RETRANSMIT_BASE_DELAY_MS;
+        self.retry_time
+            .map(|time| time.elapsed().as_millis() > backoff_duration_ms.into())
+            .unwrap_or(true)
+    }
+
+    pub fn increment_retry_iteration(&mut self) {
+        if self.retry_time.is_some() {
+            self.retry_iteration += 1;
+        }
+        self.retry_time = Some(Instant::now());
+    }
+}
+
 pub struct ForkProgress {
     pub is_dead: bool,
     pub fork_stats: ForkStats,
     pub propagated_stats: PropagatedStats,
     pub replay_stats: ReplaySlotStats,
     pub replay_progress: ConfirmationProgress,
+    pub retransmit_info: RetransmitInfo,
     // Note `num_blocks_on_fork` and `num_dropped_blocks_on_fork` only
     // count new blocks replayed since last restart, which won't include
     // blocks already existing in the ledger/before snapshot at start,
@@ -355,6 +424,7 @@ impl ForkProgress {
                 total_epoch_stake,
                 ..PropagatedStats::default()
             },
+            retransmit_info: RetransmitInfo::default(),
         }
     }
 
@@ -501,6 +571,11 @@ impl ProgressMap {
             .map(|fork_progress| &mut fork_progress.propagated_stats)
     }
 
+    pub fn get_propagated_stats_must_exist(&self, slot: Slot) -> &PropagatedStats {
+        self.get_propagated_stats(slot)
+            .unwrap_or_else(|| panic!("slot={} must exist in ProgressMap", slot))
+    }
+
     pub fn get_fork_stats(&self, slot: Slot) -> Option<&ForkStats> {
         self.progress_map
             .get(&slot)
@@ -511,6 +586,18 @@ impl ProgressMap {
         self.progress_map
             .get_mut(&slot)
             .map(|fork_progress| &mut fork_progress.fork_stats)
+    }
+
+    pub fn get_retransmit_info(&self, slot: Slot) -> Option<&RetransmitInfo> {
+        self.progress_map
+            .get(&slot)
+            .map(|fork_progress| &fork_progress.retransmit_info)
+    }
+
+    pub fn get_retransmit_info_mut(&mut self, slot: Slot) -> Option<&mut RetransmitInfo> {
+        self.progress_map
+            .get_mut(&slot)
+            .map(|fork_progress| &mut fork_progress.retransmit_info)
     }
 
     pub fn is_dead(&self, slot: Slot) -> Option<bool> {
@@ -525,34 +612,35 @@ impl ProgressMap {
             .and_then(|fork_progress| fork_progress.fork_stats.bank_hash)
     }
 
-    pub fn is_propagated(&self, slot: Slot) -> bool {
-        let leader_slot_to_check = self.get_latest_leader_slot(slot);
-
-        // prev_leader_slot doesn't exist because already rooted
-        // or this validator hasn't been scheduled as a leader
-        // yet. In both cases the latest leader is vacuously
-        // confirmed
-        leader_slot_to_check
-            .map(|leader_slot_to_check| {
-                // If the leader's stats are None (isn't in the
-                // progress map), this means that prev_leader slot is
-                // rooted, so return true
-                self.get_propagated_stats(leader_slot_to_check)
-                    .map(|stats| stats.is_propagated)
-                    .unwrap_or(true)
-            })
-            .unwrap_or(true)
+    pub fn is_propagated(&self, slot: Slot) -> Option<bool> {
+        self.get_propagated_stats(slot)
+            .map(|stats| stats.is_propagated)
     }
 
-    pub fn get_latest_leader_slot(&self, slot: Slot) -> Option<Slot> {
-        let propagated_stats = self
-            .get_propagated_stats(slot)
-            .expect("All frozen banks must exist in the Progress map");
-
+    pub fn get_latest_leader_slot_must_exist(&self, slot: Slot) -> Option<Slot> {
+        let propagated_stats = self.get_propagated_stats_must_exist(slot);
         if propagated_stats.is_leader_slot {
             Some(slot)
         } else {
             propagated_stats.prev_leader_slot
+        }
+    }
+
+    pub fn get_leader_propagation_slot_must_exist(&self, slot: Slot) -> (bool, Option<Slot>) {
+        if let Some(leader_slot) = self.get_latest_leader_slot_must_exist(slot) {
+            // If the leader's stats are None (isn't in the
+            // progress map), this means that prev_leader slot is
+            // rooted, so return true
+            (
+                self.is_propagated(leader_slot).unwrap_or(true),
+                Some(leader_slot),
+            )
+        } else {
+            // prev_leader_slot doesn't exist because already rooted
+            // or this validator hasn't been scheduled as a leader
+            // yet. In both cases the latest leader is vacuously
+            // confirmed
+            (true, None)
         }
     }
 
@@ -781,27 +869,27 @@ mod test {
         );
 
         // None of these slot have parents which are confirmed
-        assert!(!progress_map.is_propagated(9));
-        assert!(!progress_map.is_propagated(10));
+        assert!(!progress_map.get_leader_propagation_slot_must_exist(9).0);
+        assert!(!progress_map.get_leader_propagation_slot_must_exist(10).0);
 
         // Insert new ForkProgress for slot 8 with no previous leader.
         // The previous leader before 8, slot 7, does not exist in
         // progress map, so is_propagated(8) should return true as
         // this implies the parent is rooted
         progress_map.insert(8, ForkProgress::new(Hash::default(), Some(7), None, 0, 0));
-        assert!(progress_map.is_propagated(8));
+        assert!(progress_map.get_leader_propagation_slot_must_exist(8).0);
 
         // If we set the is_propagated = true, is_propagated should return true
         progress_map
             .get_propagated_stats_mut(9)
             .unwrap()
             .is_propagated = true;
-        assert!(progress_map.is_propagated(9));
+        assert!(progress_map.get_leader_propagation_slot_must_exist(9).0);
         assert!(progress_map.get(&9).unwrap().propagated_stats.is_propagated);
 
         // Because slot 9 is now confirmed, then slot 10 is also confirmed b/c 9
         // is the last leader slot before 10
-        assert!(progress_map.is_propagated(10));
+        assert!(progress_map.get_leader_propagation_slot_must_exist(10).0);
 
         // If we make slot 10 a leader slot though, even though its previous
         // leader slot 9 has been confirmed, slot 10 itself is not confirmed
@@ -809,6 +897,6 @@ mod test {
             .get_propagated_stats_mut(10)
             .unwrap()
             .is_leader_slot = true;
-        assert!(!progress_map.is_propagated(10));
+        assert!(!progress_map.get_leader_propagation_slot_must_exist(10).0);
     }
 }

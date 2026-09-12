@@ -5,7 +5,7 @@ use {
         ser::{Serialize, Serializer},
     },
     solana_sdk::{
-        account::{Account, AccountSharedData},
+        account::{Account, AccountSharedData, ReadableAccount},
         instruction::InstructionError,
         pubkey::Pubkey,
     },
@@ -52,24 +52,20 @@ pub struct VoteAccounts {
 }
 
 impl VoteAccount {
-    pub fn account(&self) -> &Account {
-        &self.0.account
-    }
-
     pub(crate) fn lamports(&self) -> u64 {
-        self.account().lamports
+        self.0.account.lamports()
     }
 
     pub fn vote_state(&self) -> RwLockReadGuard<Result<VoteState, InstructionError>> {
         let inner = &self.0;
         inner.vote_state_once.call_once(|| {
-            let vote_state = VoteState::deserialize(&inner.account.data);
+            let vote_state = VoteState::deserialize(inner.account.data());
             *inner.vote_state.write().unwrap() = vote_state;
         });
         inner.vote_state.read().unwrap()
     }
 
-    pub fn is_deserialized(&self) -> bool {
+    pub(crate) fn is_deserialized(&self) -> bool {
         self.0.vote_state_once.is_completed()
     }
 
@@ -196,25 +192,13 @@ impl<'de> Deserialize<'de> for VoteAccount {
 
 impl From<AccountSharedData> for VoteAccount {
     fn from(account: AccountSharedData) -> Self {
-        Self(Arc::new(VoteAccountInner::from(account)))
+        Self::from(Account::from(account))
     }
 }
 
 impl From<Account> for VoteAccount {
     fn from(account: Account) -> Self {
         Self(Arc::new(VoteAccountInner::from(account)))
-    }
-}
-
-impl AsRef<VoteAccountInner> for VoteAccount {
-    fn as_ref(&self) -> &VoteAccountInner {
-        &self.0
-    }
-}
-
-impl From<AccountSharedData> for VoteAccountInner {
-    fn from(account: AccountSharedData) -> Self {
-        Self::from(Account::from(account))
     }
 }
 
@@ -405,7 +389,7 @@ mod tests {
     fn test_vote_account() {
         let mut rng = rand::thread_rng();
         let (account, vote_state) = new_rand_vote_account(&mut rng, None);
-        let lamports = account.lamports;
+        let lamports = account.lamports();
         let vote_account = VoteAccount::from(account);
         assert_eq!(lamports, vote_account.lamports());
         assert_eq!(vote_state, *vote_account.vote_state().as_ref().unwrap());

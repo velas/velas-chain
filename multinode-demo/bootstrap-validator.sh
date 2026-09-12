@@ -14,9 +14,9 @@ if [[ "$SOLANA_GPU_MISSING" -eq 1 ]]; then
 fi
 
 if [[ -n $SOLANA_CUDA ]]; then
-  program=$solana_validator_cuda
+  program=$velas_validator_cuda
 else
-  program=$solana_validator
+  program=$velas_validator
 fi
 
 no_restart=0
@@ -58,6 +58,15 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --enable-rpc-bigtable-ledger-storage ]]; then
       args+=("$1")
       shift
+    elif [[ $1 = --tpu-use-quic ]]; then
+      args+=("$1")
+      shift
+    elif [[ $1 = --rpc-send-batch-ms ]]; then
+      args+=("$1" "$2")
+      shift 2
+    elif [[ $1 = --rpc-send-batch-size ]]; then
+      args+=("$1" "$2")
+      shift 2
     elif [[ $1 = --skip-poh-verify ]]; then
       args+=("$1")
       shift
@@ -123,6 +132,7 @@ args+=(
   --ledger "$ledger_dir"
   --rpc-port 8899
   --snapshot-interval-slots 200
+  --no-incremental-snapshots
   --identity "$identity"
   --vote-account "$vote_account"
   --rpc-faucet-address 127.0.0.1:9900

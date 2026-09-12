@@ -1,8 +1,6 @@
 use {
     bzip2::bufread::BzDecoder,
-    clap::{
-        crate_description, crate_name, crate_version, value_t, value_t_or_exit, values_t, App, Arg,
-    },
+    clap::{crate_description, crate_name, crate_version, Arg},
     regex::Regex,
     solana_download_utils::download_file,
     solana_sdk::signature::{write_keypair_file, Keypair},
@@ -19,15 +17,18 @@ use {
     tar::Archive,
 };
 
+#[derive(Debug)]
 struct Config<'a> {
     cargo_args: Option<Vec<&'a str>>,
     bpf_out_dir: Option<PathBuf>,
     bpf_sdk: PathBuf,
+    bpf_tools_version: &'a str,
     dump: bool,
     features: Vec<String>,
     generate_child_script_on_failure: bool,
     no_default_features: bool,
     offline: bool,
+    remap_cwd: bool,
     verbose: bool,
     workspace: bool,
 }
@@ -44,11 +45,13 @@ impl Default for Config<'_> {
                 .join("sdk")
                 .join("bpf"),
             bpf_out_dir: None,
+            bpf_tools_version: "(unknown)",
             dump: false,
             features: vec![],
             generate_child_script_on_failure: false,
             no_default_features: false,
             offline: false,
+            remap_cwd: true,
             verbose: false,
             workspace: false,
         }
@@ -115,7 +118,6 @@ where
 fn install_if_missing(
     config: &Config,
     package: &str,
-    version: &str,
     url: &str,
     download_file_name: &str,
     target_path: &Path,
@@ -148,7 +150,7 @@ fn install_if_missing(
         fs::create_dir_all(&target_path).map_err(|err| err.to_string())?;
         let mut url = String::from(url);
         url.push('/');
-        url.push_str(version);
+        url.push_str(config.bpf_tools_version);
         url.push('/');
         url.push_str(download_file_name);
         let download_file_path = target_path.join(download_file_name);
@@ -474,20 +476,15 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
         eprintln!("Can't get home directory path: {}", err);
         exit(1);
     }));
-
-    // The following line is scanned by CI configuration script to
-    // separate cargo caches according to the version of sbf-tools.
-    let bpf_tools_version = "v1.25";
     let package = "bpf-tools";
     let target_path = home_dir
         .join(".cache")
         .join("solana")
-        .join(bpf_tools_version)
+        .join(config.bpf_tools_version)
         .join(package);
     install_if_missing(
         config,
         package,
-        bpf_tools_version,
         "https://github.com/solana-labs/bpf-tools/releases/download",
         bpf_tools_download_file_name,
         &target_path,
@@ -519,25 +516,28 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
     env::set_var("AR", llvm_bin.join("llvm-ar"));
     env::set_var("OBJDUMP", llvm_bin.join("llvm-objdump"));
     env::set_var("OBJCOPY", llvm_bin.join("llvm-objcopy"));
-    const RF_LTO: &str = "-C lto=no";
-    let mut rustflags = match env::var("RUSTFLAGS") {
-        Ok(rf) => {
-            if rf.contains(&RF_LTO) {
-                rf
-            } else {
-                format!("{} {}", rf, RF_LTO)
-            }
-        }
-        _ => RF_LTO.to_string(),
-    };
-    if cfg!(windows) && !rustflags.contains("-C linker=") {
-        let ld_path = llvm_bin.join("ld.lld");
-        rustflags = format!("{} -C linker={}", rustflags, ld_path.display());
+
+    let rustflags = env::var("RUSTFLAGS").ok();
+    let rustflags = rustflags.as_deref().unwrap_or_default();
+    if config.remap_cwd {
+        let rustflags = format!("{} -Zremap-cwd-prefix=", &rustflags);
+        env::set_var("RUSTFLAGS", &rustflags);
     }
     if config.verbose {
-        println!("RUSTFLAGS={}", rustflags);
+        println!(
+            "RUSTFLAGS=\"{}\"",
+            env::var("RUSTFLAGS").ok().unwrap_or_default()
+        );
     }
-    env::set_var("RUSTFLAGS", rustflags);
+
+    // RUSTC variable overrides cargo +<toolchain> mechanism of
+    // selecting the rust compiler and makes cargo run a rust compiler
+    // other than the one linked in BPF toolchain. We have to prevent
+    // this by removing RUSTC from the child process environment.
+    if env::var("RUSTC").is_ok() {
+        env::remove_var("RUSTC")
+    }
+
     let cargo_build = PathBuf::from("cargo");
     let mut cargo_build_args = vec![
         "+bpf",
@@ -725,11 +725,15 @@ fn main() {
         }
     }
 
-    let matches = App::new(crate_name!())
+    // The following line is scanned by CI configuration script to
+    // separate cargo caches according to the version of sbf-tools.
+    let bpf_tools_version = "v1.27";
+    let version = format!("{}\nbpf-tools {}", crate_version!(), bpf_tools_version);
+    let matches = clap::Command::new(crate_name!())
         .about(crate_description!())
-        .version(crate_version!())
+        .version(version.as_str())
         .arg(
-            Arg::with_name("bpf_out_dir")
+            Arg::new("bpf_out_dir")
                 .env("BPF_OUT_PATH")
                 .long("bpf-out-dir")
                 .value_name("DIRECTORY")
@@ -737,7 +741,7 @@ fn main() {
                 .help("Place final BPF build artifacts in this directory"),
         )
         .arg(
-            Arg::with_name("bpf_sdk")
+            Arg::new("bpf_sdk")
                 .env("BPF_SDK_PATH")
                 .long("bpf-sdk")
                 .value_name("PATH")
@@ -746,59 +750,67 @@ fn main() {
                 .help("Path to the Solana BPF SDK"),
         )
         .arg(
-            Arg::with_name("cargo_args")
+            Arg::new("cargo_args")
                 .help("Arguments passed directly to `cargo build`")
-                .multiple(true)
+                .multiple_occurrences(true)
+                .multiple_values(true)
                 .last(true),
         )
         .arg(
-            Arg::with_name("dump")
+            Arg::new("remap_cwd")
+                .long("disable-remap-cwd")
+                .takes_value(false)
+                .help("Disable remap of cwd prefix and preserve full path strings in binaries"),
+        )
+        .arg(
+            Arg::new("dump")
                 .long("dump")
                 .takes_value(false)
                 .help("Dump ELF information to a text file on success"),
         )
         .arg(
-            Arg::with_name("features")
+            Arg::new("features")
                 .long("features")
                 .value_name("FEATURES")
                 .takes_value(true)
-                .multiple(true)
+                .multiple_occurrences(true)
+                .multiple_values(true)
                 .help("Space-separated list of features to activate"),
         )
         .arg(
-            Arg::with_name("generate_child_script_on_failure")
+            Arg::new("generate_child_script_on_failure")
                 .long("generate-child-script-on-failure")
                 .takes_value(false)
                 .help("Generate a shell script to rerun a failed subcommand"),
         )
         .arg(
-            Arg::with_name("manifest_path")
+            Arg::new("manifest_path")
                 .long("manifest-path")
                 .value_name("PATH")
                 .takes_value(true)
                 .help("Path to Cargo.toml"),
         )
         .arg(
-            Arg::with_name("no_default_features")
+            Arg::new("no_default_features")
                 .long("no-default-features")
                 .takes_value(false)
                 .help("Do not activate the `default` feature"),
         )
         .arg(
-            Arg::with_name("offline")
+            Arg::new("offline")
                 .long("offline")
                 .takes_value(false)
                 .help("Run without accessing the network"),
         )
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
+            Arg::new("verbose")
+                .short('v')
                 .long("verbose")
                 .takes_value(false)
                 .help("Use verbose output"),
         )
         .arg(
-            Arg::with_name("workspace")
+            Arg::new("workspace")
                 .long("workspace")
                 .takes_value(false)
                 .alias("all")
@@ -806,8 +818,8 @@ fn main() {
         )
         .get_matches_from(args);
 
-    let bpf_sdk = value_t_or_exit!(matches, "bpf_sdk", PathBuf);
-    let bpf_out_dir = value_t!(matches, "bpf_out_dir", PathBuf).ok();
+    let bpf_sdk: PathBuf = matches.value_of_t_or_exit("bpf_sdk");
+    let bpf_out_dir: Option<PathBuf> = matches.value_of_t("bpf_out_dir").ok();
 
     let config = Config {
         cargo_args: matches
@@ -830,16 +842,20 @@ fn main() {
                     .join(bpf_out_dir)
             }
         }),
+        bpf_tools_version,
         dump: matches.is_present("dump"),
-        features: values_t!(matches, "features", String)
-            .ok()
-            .unwrap_or_default(),
+        features: matches.values_of_t("features").ok().unwrap_or_default(),
         generate_child_script_on_failure: matches.is_present("generate_child_script_on_failure"),
         no_default_features: matches.is_present("no_default_features"),
         offline: matches.is_present("offline"),
+        remap_cwd: !matches.is_present("remap_cwd"),
         verbose: matches.is_present("verbose"),
         workspace: matches.is_present("workspace"),
     };
-    let manifest_path = value_t!(matches, "manifest_path", PathBuf).ok();
+    let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
+    if config.verbose {
+        println!("{:?}", config);
+        println!("manifest_path: {:?}", manifest_path);
+    }
     build_bpf(config, manifest_path);
 }

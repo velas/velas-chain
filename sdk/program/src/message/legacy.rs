@@ -15,14 +15,14 @@ use {
     crate::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
         hash::Hash,
-        instruction::{AccountMeta, CompiledInstruction, Instruction},
-        message::MessageHeader,
+        instruction::{CompiledInstruction, Instruction},
+        message::{CompiledKeys, MessageHeader},
         pubkey::Pubkey,
         sanitize::{Sanitize, SanitizeError},
         short_vec, system_instruction, system_program, sysvar, wasm_bindgen,
     },
     lazy_static::lazy_static,
-    std::{collections::BTreeSet, convert::TryFrom, str::FromStr},
+    std::{convert::TryFrom, str::FromStr},
 };
 
 lazy_static! {
@@ -64,113 +64,6 @@ fn compile_instruction(ix: &Instruction, keys: &[Pubkey]) -> CompiledInstruction
 
 fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledInstruction> {
     ixs.iter().map(|ix| compile_instruction(ix, keys)).collect()
-}
-
-/// A helper struct to collect pubkeys referenced by a set of instructions and read-only counts
-#[derive(Debug, PartialEq, Eq)]
-struct InstructionKeys {
-    pub signed_keys: Vec<Pubkey>,
-    pub unsigned_keys: Vec<Pubkey>,
-    pub num_readonly_signed_accounts: u8,
-    pub num_readonly_unsigned_accounts: u8,
-}
-
-impl InstructionKeys {
-    fn new(
-        signed_keys: Vec<Pubkey>,
-        unsigned_keys: Vec<Pubkey>,
-        num_readonly_signed_accounts: u8,
-        num_readonly_unsigned_accounts: u8,
-    ) -> Self {
-        Self {
-            signed_keys,
-            unsigned_keys,
-            num_readonly_signed_accounts,
-            num_readonly_unsigned_accounts,
-        }
-    }
-}
-
-/// Return pubkeys referenced by all instructions, with the ones needing signatures first. If the
-/// payer key is provided, it is always placed first in the list of signed keys. Read-only signed
-/// accounts are placed last in the set of signed accounts. Read-only unsigned accounts,
-/// including program ids, are placed last in the set. No duplicates and order is preserved.
-fn get_keys(instructions: &[Instruction], payer: Option<&Pubkey>) -> InstructionKeys {
-    let programs: Vec<_> = get_program_ids(instructions)
-        .iter()
-        .map(|program_id| AccountMeta {
-            pubkey: *program_id,
-            is_signer: false,
-            is_writable: false,
-        })
-        .collect();
-    let mut keys_and_signed: Vec<_> = instructions
-        .iter()
-        .flat_map(|ix| ix.accounts.iter())
-        .collect();
-    keys_and_signed.extend(&programs);
-    keys_and_signed.sort_by(|x, y| {
-        y.is_signer
-            .cmp(&x.is_signer)
-            .then(y.is_writable.cmp(&x.is_writable))
-    });
-
-    let payer_account_meta;
-    if let Some(payer) = payer {
-        payer_account_meta = AccountMeta {
-            pubkey: *payer,
-            is_signer: true,
-            is_writable: true,
-        };
-        keys_and_signed.insert(0, &payer_account_meta);
-    }
-
-    let mut unique_metas: Vec<AccountMeta> = vec![];
-    for account_meta in keys_and_signed {
-        // Promote to writable if a later AccountMeta requires it
-        if let Some(x) = unique_metas
-            .iter_mut()
-            .find(|x| x.pubkey == account_meta.pubkey)
-        {
-            x.is_writable |= account_meta.is_writable;
-            continue;
-        }
-        unique_metas.push(account_meta.clone());
-    }
-
-    let mut signed_keys = vec![];
-    let mut unsigned_keys = vec![];
-    let mut num_readonly_signed_accounts = 0;
-    let mut num_readonly_unsigned_accounts = 0;
-    for account_meta in unique_metas {
-        if account_meta.is_signer {
-            signed_keys.push(account_meta.pubkey);
-            if !account_meta.is_writable {
-                num_readonly_signed_accounts += 1;
-            }
-        } else {
-            unsigned_keys.push(account_meta.pubkey);
-            if !account_meta.is_writable {
-                num_readonly_unsigned_accounts += 1;
-            }
-        }
-    }
-    InstructionKeys::new(
-        signed_keys,
-        unsigned_keys,
-        num_readonly_signed_accounts,
-        num_readonly_unsigned_accounts,
-    )
-}
-
-/// Return program ids referenced by all instructions.  No duplicates and order is preserved.
-fn get_program_ids(instructions: &[Instruction]) -> Vec<Pubkey> {
-    let mut set = BTreeSet::new();
-    instructions
-        .iter()
-        .map(|ix| ix.program_id)
-        .filter(|&program_id| set.insert(program_id))
-        .collect()
 }
 
 /// A Solana transaction message (legacy).
@@ -268,11 +161,11 @@ impl Message {
     /// use borsh::{BorshSerialize, BorshDeserialize};
     /// use solana_client::rpc_client::RpcClient;
     /// use solana_sdk::{
-    ///      instruction::Instruction,
-    ///      message::Message,
-    ///      pubkey::Pubkey,
-    ///      signature::Keypair,
-    ///      transaction::Transaction,
+    ///     instruction::Instruction,
+    ///     message::Message,
+    ///     pubkey::Pubkey,
+    ///     signature::Keypair,
+    ///     transaction::Transaction,
     /// };
     ///
     /// // A custom program instruction. This would typically be defined in
@@ -320,6 +213,214 @@ impl Message {
     /// ```
     pub fn new(instructions: &[Instruction], payer: Option<&Pubkey>) -> Self {
         Self::new_with_blockhash(instructions, payer, &Hash::default())
+    }
+
+    /// Create a new message while setting the blockhash.
+    ///
+    /// # Examples
+    ///
+    /// This example uses the [`solana_sdk`], [`solana_client`] and [`anyhow`] crates.
+    ///
+    /// [`solana_sdk`]: https://docs.rs/solana-sdk
+    /// [`solana_client`]: https://docs.rs/solana-client
+    /// [`anyhow`]: https://docs.rs/anyhow
+    ///
+    /// ```
+    /// # use solana_program::example_mocks::solana_sdk;
+    /// # use solana_program::example_mocks::solana_client;
+    /// use anyhow::Result;
+    /// use borsh::{BorshSerialize, BorshDeserialize};
+    /// use solana_client::rpc_client::RpcClient;
+    /// use solana_sdk::{
+    ///     instruction::Instruction,
+    ///     message::Message,
+    ///     pubkey::Pubkey,
+    ///     signature::Keypair,
+    ///     transaction::Transaction,
+    /// };
+    ///
+    /// // A custom program instruction. This would typically be defined in
+    /// // another crate so it can be shared between the on-chain program and
+    /// // the client.
+    /// #[derive(BorshSerialize, BorshDeserialize)]
+    /// enum BankInstruction {
+    ///     Initialize,
+    ///     Deposit { lamports: u64 },
+    ///     Withdraw { lamports: u64 },
+    /// }
+    ///
+    /// fn send_initialize_tx(
+    ///     client: &RpcClient,
+    ///     program_id: Pubkey,
+    ///     payer: &Keypair
+    /// ) -> Result<()> {
+    ///
+    ///     let bank_instruction = BankInstruction::Initialize;
+    ///
+    ///     let instruction = Instruction::new_with_borsh(
+    ///         program_id,
+    ///         &bank_instruction,
+    ///         vec![],
+    ///     );
+    ///
+    ///     let blockhash = client.get_latest_blockhash()?;
+    ///
+    ///     let message = Message::new_with_blockhash(
+    ///         &[instruction],
+    ///         Some(&payer.pubkey()),
+    ///         &blockhash,
+    ///     );
+    ///
+    ///     let mut tx = Transaction::new_unsigned(message);
+    ///     tx.sign(&[payer], tx.message.recent_blockhash);
+    ///     client.send_and_confirm_transaction(&tx)?;
+    ///
+    ///     Ok(())
+    /// }
+    /// #
+    /// # let client = RpcClient::new(String::new());
+    /// # let program_id = Pubkey::new_unique();
+    /// # let payer = Keypair::new();
+    /// # send_initialize_tx(&client, program_id, &payer)?;
+    /// #
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn new_with_blockhash(
+        instructions: &[Instruction],
+        payer: Option<&Pubkey>,
+        blockhash: &Hash,
+    ) -> Self {
+        let compiled_keys = CompiledKeys::compile(instructions, payer.cloned());
+        let (header, account_keys) = compiled_keys
+            .try_into_message_components()
+            .expect("overflow when compiling message keys");
+        let instructions = compile_instructions(instructions, &account_keys);
+        Self::new_with_compiled_instructions(
+            header.num_required_signatures,
+            header.num_readonly_signed_accounts,
+            header.num_readonly_unsigned_accounts,
+            account_keys,
+            *blockhash,
+            instructions,
+        )
+    }
+
+    /// Create a new message for a [nonced transaction].
+    ///
+    /// [nonced transaction]: https://docs.solana.com/implemented-proposals/durable-tx-nonces
+    ///
+    /// In this type of transaction, the blockhash is replaced with a _durable
+    /// transaction nonce_, allowing for extended time to pass between the
+    /// transaction's signing and submission to the blockchain.
+    ///
+    /// # Examples
+    ///
+    /// This example uses the [`solana_sdk`], [`solana_client`] and [`anyhow`] crates.
+    ///
+    /// [`solana_sdk`]: https://docs.rs/solana-sdk
+    /// [`solana_client`]: https://docs.rs/solana-client
+    /// [`anyhow`]: https://docs.rs/anyhow
+    ///
+    /// ```
+    /// # use solana_program::example_mocks::solana_sdk;
+    /// # use solana_program::example_mocks::solana_client;
+    /// use anyhow::Result;
+    /// use borsh::{BorshSerialize, BorshDeserialize};
+    /// use solana_client::rpc_client::RpcClient;
+    /// use solana_sdk::{
+    ///     hash::Hash,
+    ///     instruction::Instruction,
+    ///     message::Message,
+    ///     nonce,
+    ///     pubkey::Pubkey,
+    ///     signature::Keypair,
+    ///     system_instruction,
+    ///     transaction::Transaction,
+    /// };
+    ///
+    /// // A custom program instruction. This would typically be defined in
+    /// // another crate so it can be shared between the on-chain program and
+    /// // the client.
+    /// #[derive(BorshSerialize, BorshDeserialize)]
+    /// enum BankInstruction {
+    ///     Initialize,
+    ///     Deposit { lamports: u64 },
+    ///     Withdraw { lamports: u64 },
+    /// }
+    ///
+    /// // Create a nonced transaction for later signing and submission,
+    /// // returning it and the nonce account's pubkey.
+    /// fn create_offline_initialize_tx(
+    ///     client: &RpcClient,
+    ///     program_id: Pubkey,
+    ///     payer: &Keypair
+    /// ) -> Result<(Transaction, Pubkey)> {
+    ///
+    ///     let bank_instruction = BankInstruction::Initialize;
+    ///     let bank_instruction = Instruction::new_with_borsh(
+    ///         program_id,
+    ///         &bank_instruction,
+    ///         vec![],
+    ///     );
+    ///
+    ///     // This will create a nonce account and assign authority to the
+    ///     // payer so they can sign to advance the nonce and withdraw its rent.
+    ///     let nonce_account = make_nonce_account(client, payer)?;
+    ///
+    ///     let mut message = Message::new_with_nonce(
+    ///         vec![bank_instruction],
+    ///         Some(&payer.pubkey()),
+    ///         &nonce_account,
+    ///         &payer.pubkey()
+    ///     );
+    ///
+    ///     // This transaction will need to be signed later, using the blockhash
+    ///     // stored in the nonce account.
+    ///     let tx = Transaction::new_unsigned(message);
+    ///
+    ///     Ok((tx, nonce_account))
+    /// }
+    ///
+    /// fn make_nonce_account(client: &RpcClient, payer: &Keypair)
+    ///     -> Result<Pubkey>
+    /// {
+    ///     let nonce_account_address = Keypair::new();
+    ///     let nonce_account_size = nonce::State::size();
+    ///     let nonce_rent = client.get_minimum_balance_for_rent_exemption(nonce_account_size)?;
+    ///
+    ///     // Assigning the nonce authority to the payer so they can sign for the withdrawal,
+    ///     // and we can throw away the nonce address secret key.
+    ///     let create_nonce_instr = system_instruction::create_nonce_account(
+    ///         &payer.pubkey(),
+    ///         &nonce_account_address.pubkey(),
+    ///         &payer.pubkey(),
+    ///         nonce_rent,
+    ///     );
+    ///
+    ///     let mut nonce_tx = Transaction::new_with_payer(&create_nonce_instr, Some(&payer.pubkey()));
+    ///     let blockhash = client.get_latest_blockhash()?;
+    ///     nonce_tx.sign(&[&payer, &nonce_account_address], blockhash);
+    ///     client.send_and_confirm_transaction(&nonce_tx)?;
+    ///
+    ///     Ok(nonce_account_address.pubkey())
+    /// }
+    /// #
+    /// # let client = RpcClient::new(String::new());
+    /// # let program_id = Pubkey::new_unique();
+    /// # let payer = Keypair::new();
+    /// # create_offline_initialize_tx(&client, program_id, &payer)?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn new_with_nonce(
+        mut instructions: Vec<Instruction>,
+        payer: Option<&Pubkey>,
+        nonce_account_pubkey: &Pubkey,
+        nonce_authority_pubkey: &Pubkey,
+    ) -> Self {
+        let nonce_ix =
+            system_instruction::advance_nonce_account(nonce_account_pubkey, nonce_authority_pubkey);
+        instructions.insert(0, nonce_ix);
+        Self::new(&instructions, payer)
     }
 
     /// Create a new message while setting the blockhash.
@@ -392,30 +493,6 @@ impl Message {
     /// #
     /// # Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn new_with_blockhash(
-        instructions: &[Instruction],
-        payer: Option<&Pubkey>,
-        blockhash: &Hash,
-    ) -> Self {
-        let InstructionKeys {
-            mut signed_keys,
-            unsigned_keys,
-            num_readonly_signed_accounts,
-            num_readonly_unsigned_accounts,
-        } = get_keys(instructions, payer);
-        let num_required_signatures = signed_keys.len() as u8;
-        signed_keys.extend(&unsigned_keys);
-        let instructions = compile_instructions(instructions, &signed_keys);
-        Self::new_with_compiled_instructions(
-            num_required_signatures,
-            num_readonly_signed_accounts,
-            num_readonly_unsigned_accounts,
-            signed_keys,
-            *blockhash,
-            instructions,
-        )
-    }
-
     /// Create a new message for a [nonced transaction].
     ///
     /// [nonced transaction]: https://docs.solana.com/implemented-proposals/durable-tx-nonces
@@ -522,18 +599,6 @@ impl Message {
     /// # create_offline_initialize_tx(&client, program_id, &payer)?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn new_with_nonce(
-        mut instructions: Vec<Instruction>,
-        payer: Option<&Pubkey>,
-        nonce_account_pubkey: &Pubkey,
-        nonce_authority_pubkey: &Pubkey,
-    ) -> Self {
-        let nonce_ix =
-            system_instruction::advance_nonce_account(nonce_account_pubkey, nonce_authority_pubkey);
-        instructions.insert(0, nonce_ix);
-        Self::new(&instructions, payer)
-    }
-
     pub fn new_with_compiled_instructions(
         num_required_signatures: u8,
         num_readonly_signed_accounts: u8,
@@ -722,16 +787,6 @@ mod tests {
     };
 
     #[test]
-    fn test_message_unique_program_ids() {
-        let program_id0 = Pubkey::default();
-        let program_ids = get_program_ids(&[
-            Instruction::new_with_bincode(program_id0, &0, vec![]),
-            Instruction::new_with_bincode(program_id0, &0, vec![]),
-        ]);
-        assert_eq!(program_ids, vec![program_id0]);
-    }
-
-    #[test]
     fn test_builtin_program_keys() {
         let keys: HashSet<Pubkey> = BUILTIN_PROGRAMS_KEYS.iter().copied().collect();
         assert_eq!(keys.len(), 10);
@@ -753,174 +808,6 @@ mod tests {
     }
 
     #[test]
-    fn test_message_unique_program_ids_not_adjacent() {
-        let program_id0 = Pubkey::default();
-        let program_id1 = Pubkey::new_unique();
-        let program_ids = get_program_ids(&[
-            Instruction::new_with_bincode(program_id0, &0, vec![]),
-            Instruction::new_with_bincode(program_id1, &0, vec![]),
-            Instruction::new_with_bincode(program_id0, &0, vec![]),
-        ]);
-        assert_eq!(program_ids, vec![program_id0, program_id1]);
-    }
-
-    #[test]
-    fn test_message_unique_program_ids_order_preserved() {
-        let program_id0 = Pubkey::new_unique();
-        let program_id1 = Pubkey::default(); // Key less than program_id0
-        let program_ids = get_program_ids(&[
-            Instruction::new_with_bincode(program_id0, &0, vec![]),
-            Instruction::new_with_bincode(program_id1, &0, vec![]),
-            Instruction::new_with_bincode(program_id0, &0, vec![]),
-        ]);
-        assert_eq!(program_ids, vec![program_id0, program_id1]);
-    }
-
-    #[test]
-    fn test_message_unique_keys_both_signed() {
-        let program_id = Pubkey::default();
-        let id0 = Pubkey::default();
-        let keys = get_keys(
-            &[
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]),
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]),
-            ],
-            None,
-        );
-        assert_eq!(keys, InstructionKeys::new(vec![id0], vec![], 0, 0));
-    }
-
-    #[test]
-    fn test_message_unique_keys_signed_and_payer() {
-        let program_id = Pubkey::default();
-        let id0 = Pubkey::default();
-        let keys = get_keys(
-            &[Instruction::new_with_bincode(
-                program_id,
-                &0,
-                vec![AccountMeta::new(id0, true)],
-            )],
-            Some(&id0),
-        );
-        assert_eq!(keys, InstructionKeys::new(vec![id0], vec![], 0, 0));
-    }
-
-    #[test]
-    fn test_message_unique_keys_unsigned_and_payer() {
-        let program_id = Pubkey::default();
-        let id0 = Pubkey::default();
-        let keys = get_keys(
-            &[Instruction::new_with_bincode(
-                program_id,
-                &0,
-                vec![AccountMeta::new(id0, false)],
-            )],
-            Some(&id0),
-        );
-        assert_eq!(keys, InstructionKeys::new(vec![id0], vec![], 0, 0));
-    }
-
-    #[test]
-    fn test_message_unique_keys_one_signed() {
-        let program_id = Pubkey::default();
-        let id0 = Pubkey::default();
-        let keys = get_keys(
-            &[
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]),
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]),
-            ],
-            None,
-        );
-        assert_eq!(keys, InstructionKeys::new(vec![id0], vec![], 0, 0));
-    }
-
-    #[test]
-    fn test_message_unique_keys_one_readonly_signed() {
-        let program_id = Pubkey::default();
-        let id0 = Pubkey::default();
-        let keys = get_keys(
-            &[
-                Instruction::new_with_bincode(
-                    program_id,
-                    &0,
-                    vec![AccountMeta::new_readonly(id0, true)],
-                ),
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]),
-            ],
-            None,
-        );
-
-        // Ensure the key is no longer readonly
-        assert_eq!(keys, InstructionKeys::new(vec![id0], vec![], 0, 0));
-    }
-
-    #[test]
-    fn test_message_unique_keys_one_readonly_unsigned() {
-        let program_id = Pubkey::default();
-        let id0 = Pubkey::default();
-        let keys = get_keys(
-            &[
-                Instruction::new_with_bincode(
-                    program_id,
-                    &0,
-                    vec![AccountMeta::new_readonly(id0, false)],
-                ),
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]),
-            ],
-            None,
-        );
-
-        // Ensure the key is no longer readonly
-        assert_eq!(keys, InstructionKeys::new(vec![], vec![id0], 0, 0));
-    }
-
-    #[test]
-    fn test_message_unique_keys_order_preserved() {
-        let program_id = Pubkey::default();
-        let id0 = Pubkey::new_unique();
-        let id1 = Pubkey::default(); // Key less than id0
-        let keys = get_keys(
-            &[
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]),
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id1, false)]),
-            ],
-            None,
-        );
-        assert_eq!(keys, InstructionKeys::new(vec![], vec![id0, id1], 0, 0));
-    }
-
-    #[test]
-    fn test_message_unique_keys_not_adjacent() {
-        let program_id = Pubkey::default();
-        let id0 = Pubkey::default();
-        let id1 = Pubkey::new_unique();
-        let keys = get_keys(
-            &[
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]),
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id1, false)]),
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]),
-            ],
-            None,
-        );
-        assert_eq!(keys, InstructionKeys::new(vec![id0], vec![id1], 0, 0));
-    }
-
-    #[test]
-    fn test_message_signed_keys_first() {
-        let program_id = Pubkey::default();
-        let id0 = Pubkey::default();
-        let id1 = Pubkey::new_unique();
-        let keys = get_keys(
-            &[
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, false)]),
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id1, true)]),
-            ],
-            None,
-        );
-        assert_eq!(keys, InstructionKeys::new(vec![id1], vec![id0], 0, 0));
-    }
-
-    #[test]
     // Ensure there's a way to calculate the number of required signatures.
     fn test_message_signed_keys_len() {
         let program_id = Pubkey::default();
@@ -932,36 +819,6 @@ mod tests {
         let ix = Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id0, true)]);
         let message = Message::new(&[ix], Some(&id0));
         assert_eq!(message.header.num_required_signatures, 1);
-    }
-
-    #[test]
-    fn test_message_readonly_keys_last() {
-        let program_id = Pubkey::default();
-        let id0 = Pubkey::default(); // Identical key/program_id should be de-duped
-        let id1 = Pubkey::new_unique();
-        let id2 = Pubkey::new_unique();
-        let id3 = Pubkey::new_unique();
-        let keys = get_keys(
-            &[
-                Instruction::new_with_bincode(
-                    program_id,
-                    &0,
-                    vec![AccountMeta::new_readonly(id0, false)],
-                ),
-                Instruction::new_with_bincode(
-                    program_id,
-                    &0,
-                    vec![AccountMeta::new_readonly(id1, true)],
-                ),
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id2, false)]),
-                Instruction::new_with_bincode(program_id, &0, vec![AccountMeta::new(id3, true)]),
-            ],
-            None,
-        );
-        assert_eq!(
-            keys,
-            InstructionKeys::new(vec![id3, id1], vec![id2, id0], 1, 1)
-        );
     }
 
     #[test]
@@ -1013,32 +870,6 @@ mod tests {
         );
         let message = Message::new(&[ix], Some(&payer));
         assert_eq!(message.header.num_required_signatures, 2);
-    }
-
-    #[test]
-    fn test_message_program_last() {
-        let program_id = Pubkey::default();
-        let id0 = Pubkey::new_unique();
-        let id1 = Pubkey::new_unique();
-        let keys = get_keys(
-            &[
-                Instruction::new_with_bincode(
-                    program_id,
-                    &0,
-                    vec![AccountMeta::new_readonly(id0, false)],
-                ),
-                Instruction::new_with_bincode(
-                    program_id,
-                    &0,
-                    vec![AccountMeta::new_readonly(id1, true)],
-                ),
-            ],
-            None,
-        );
-        assert_eq!(
-            keys,
-            InstructionKeys::new(vec![id1], vec![id0, program_id], 1, 2)
-        );
     }
 
     #[test]
@@ -1112,7 +943,7 @@ mod tests {
         );
         assert_eq!(
             message.get_account_keys_by_lock_type(),
-            (vec![&id1, &id0], vec![&id3, &id2, &program_id])
+            (vec![&id1, &id0], vec![&id3, &program_id, &id2])
         );
     }
 
@@ -1208,7 +1039,7 @@ mod tests {
         let message = Message::new(&instructions, Some(&id1));
         assert_eq!(
             message.hash(),
-            Hash::from_str("CXRH7GHLieaQZRUjH1mpnNnUZQtU4V4RpJpAFgy77i3z").unwrap()
+            Hash::from_str("7VWCF4quo2CcWQFNUayZiorxpiR5ix8YzLebrXKf3fMF").unwrap()
         )
     }
 }

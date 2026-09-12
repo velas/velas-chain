@@ -1,19 +1,19 @@
-use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
-use evm::{backend::Log, ExitReason, ExitRevert};
-use primitive_types::{H160, H256, U256};
-use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
-use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
-use std::str::FromStr;
-
-use crate::error::*;
-use secp256k1::{
-    recovery::{RecoverableSignature, RecoveryId},
-    Message,
-};
-use snafu::ResultExt;
-
 pub use secp256k1::{PublicKey, SecretKey, SECP256K1};
+use {
+    crate::error::*,
+    borsh::{BorshDeserialize, BorshSchema, BorshSerialize},
+    evm::{backend::Log, ExitReason, ExitRevert},
+    primitive_types::{H160, H256, U256},
+    rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
+    secp256k1::{
+        recovery::{RecoverableSignature, RecoveryId},
+        Message,
+    },
+    serde::{Deserialize, Serialize},
+    sha3::{Digest, Keccak256},
+    snafu::ResultExt,
+    std::str::FromStr,
+};
 
 pub type Address = H160;
 pub type Gas = U256;
@@ -612,8 +612,10 @@ pub fn addr_from_public_key(key: &PublicKey) -> H160 {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use secp256k1::{PublicKey, SecretKey, SECP256K1};
+    use {
+        super::*,
+        secp256k1::{PublicKey, SecretKey, SECP256K1},
+    };
 
     #[test]
     fn test_valid_addr() {

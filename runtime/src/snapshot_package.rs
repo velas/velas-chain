@@ -8,15 +8,13 @@ use {
             TMP_BANK_SNAPSHOT_PREFIX,
         },
     },
+    crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
     solana_sdk::{clock::Slot, genesis_config::ClusterType, hash::Hash},
     std::{
         fs,
         path::{Path, PathBuf},
-        sync::{
-            mpsc::{Receiver, SendError, Sender},
-            Arc, Mutex,
-        },
+        sync::{Arc, Mutex},
     },
     tempfile::TempDir,
 };
@@ -50,7 +48,7 @@ pub struct AccountsPackage {
     pub cluster_type: ClusterType,
     pub snapshot_type: Option<SnapshotType>,
     pub evm_root: evm_state::H256,
-    pub evm_db: evm_state::storage::Storage,
+    pub evm_db: evm_state::Storage,
     // TODO: Replace root/db/bank by root-guard.
     pub bank: Arc<Bank>,
 }
@@ -70,7 +68,7 @@ impl AccountsPackage {
         hash_for_testing: Option<Hash>,
         snapshot_type: Option<SnapshotType>,
         evm_root: evm_state::H256,
-        evm_db: evm_state::storage::Storage,
+        evm_db: evm_state::Storage,
     ) -> Result<Self> {
         info!(
             "Package snapshot for bank {} has {} account storage entries (snapshot type: {:?})",
@@ -105,7 +103,7 @@ impl AccountsPackage {
             fs::create_dir_all(&snapshot_hardlink_dir)?;
             fs::hard_link(
                 &bank_snapshot_info.snapshot_path,
-                &snapshot_hardlink_dir.join(bank_snapshot_info.slot.to_string()),
+                snapshot_hardlink_dir.join(bank_snapshot_info.slot.to_string()),
             )?;
         }
 
@@ -139,7 +137,7 @@ pub struct SnapshotPackage {
     pub snapshot_version: SnapshotVersion,
     pub snapshot_type: SnapshotType,
     pub evm_root: evm_state::H256,
-    pub evm_db: evm_state::storage::Storage,
+    pub evm_db: evm_state::Storage,
     pub bank: Arc<Bank>,
 }
 

@@ -1,4 +1,4 @@
-//! The standard [`RpcSender`] over HTTP.
+//! Nonblocking [`RpcSender`] over HTTP.
 
 use {
     crate::{
@@ -8,10 +8,11 @@ use {
         rpc_response::RpcSimulateTransactionResult,
         rpc_sender::*,
     },
+    async_trait::async_trait,
     log::*,
     reqwest::{
         self,
-        header::{CONTENT_TYPE, RETRY_AFTER},
+        header::{self, CONTENT_TYPE, RETRY_AFTER},
         StatusCode,
     },
     std::{
@@ -19,19 +20,19 @@ use {
             atomic::{AtomicU64, Ordering},
             Arc, RwLock,
         },
-        thread::sleep,
         time::{Duration, Instant},
     },
+    tokio::time::sleep,
 };
 
 pub struct HttpSender {
-    client: Arc<reqwest::blocking::Client>,
+    client: Arc<reqwest::Client>,
     url: String,
     request_id: AtomicU64,
     stats: RwLock<RpcTransportStats>,
 }
 
-/// The standard [`RpcSender`] over HTTP.
+/// Nonblocking [`RpcSender`] over HTTP.
 impl HttpSender {
     /// Create an HTTP RPC sender.
     ///
@@ -45,15 +46,21 @@ impl HttpSender {
     ///
     /// The URL is an HTTP URL, usually for port 8899.
     pub fn new_with_timeout<U: ToString>(url: U, timeout: Duration) -> Self {
-        // `reqwest::blocking::Client` panics if run in a tokio async context.  Shuttle the
-        // request to a different tokio thread to avoid this
+        let mut default_headers = header::HeaderMap::new();
+        default_headers.append(
+            header::HeaderName::from_static("solana-client"),
+            header::HeaderValue::from_str(
+                format!("rust/{}", solana_version::Version::default()).as_str(),
+            )
+            .unwrap(),
+        );
+
         let client = Arc::new(
-            tokio::task::block_in_place(move || {
-                reqwest::blocking::Client::builder()
-                    .timeout(timeout)
-                    .build()
-            })
-            .expect("build rpc client"),
+            reqwest::Client::builder()
+                .default_headers(default_headers)
+                .timeout(timeout)
+                .build()
+                .expect("build rpc client"),
         );
 
         Self {
@@ -66,9 +73,9 @@ impl HttpSender {
 }
 
 #[derive(Deserialize, Debug)]
-struct RpcErrorObject {
-    code: i64,
-    message: String,
+pub(crate) struct RpcErrorObject {
+    pub code: i64,
+    pub message: String,
 }
 
 struct StatsUpdater<'a> {
@@ -100,12 +107,17 @@ impl<'a> Drop for StatsUpdater<'a> {
     }
 }
 
+#[async_trait]
 impl RpcSender for HttpSender {
     fn get_transport_stats(&self) -> RpcTransportStats {
         self.stats.read().unwrap().clone()
     }
 
-    fn send(&self, request: RpcRequest, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn send(
+        &self,
+        request: RpcRequest,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         let mut stats_updater = StatsUpdater::new(&self.stats);
 
         let request_id = self.request_id.fetch_add(1, Ordering::Relaxed);
@@ -113,18 +125,15 @@ impl RpcSender for HttpSender {
 
         let mut too_many_requests_retries = 5;
         loop {
-            // `reqwest::blocking::Client` panics if run in a tokio async context.  Shuttle the
-            // request to a different tokio thread to avoid this
             let response = {
                 let client = self.client.clone();
                 let request_json = request_json.clone();
-                tokio::task::block_in_place(move || {
-                    client
-                        .post(&self.url)
-                        .header(CONTENT_TYPE, "application/json")
-                        .body(request_json)
-                        .send()
-                })
+                client
+                    .post(&self.url)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(request_json)
+                    .send()
+                    .await
             }?;
 
             if !response.status().is_success() {
@@ -148,15 +157,14 @@ impl RpcSender for HttpSender {
                                 response, too_many_requests_retries, duration
                             );
 
-                    sleep(duration);
+                    sleep(duration).await;
                     stats_updater.add_rate_limited_time(duration);
                     continue;
                 }
                 return Err(response.error_for_status().unwrap_err().into());
             }
 
-            let mut json =
-                tokio::task::block_in_place(move || response.json::<serde_json::Value>())?;
+            let mut json = response.json::<serde_json::Value>().await?;
             if json["error"].is_object() {
                 return match serde_json::from_value::<RpcErrorObject>(json["error"].clone()) {
                     Ok(rpc_error_object) => {
@@ -200,6 +208,10 @@ impl RpcSender for HttpSender {
             return Ok(json["result"].take());
         }
     }
+
+    fn url(&self) -> String {
+        self.url.clone()
+    }
 }
 
 #[cfg(test)]
@@ -209,14 +221,16 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn http_sender_on_tokio_multi_thread() {
         let http_sender = HttpSender::new("http://localhost:1234".to_string());
-        let _ = http_sender.send(RpcRequest::GetVersion, serde_json::Value::Null);
+        let _ = http_sender
+            .send(RpcRequest::GetVersion, serde_json::Value::Null)
+            .await;
     }
 
     #[tokio::test(flavor = "current_thread")]
-    #[should_panic(expected = "can call blocking only when running on the multi-threaded runtime")]
-    async fn http_sender_ontokio_current_thread_should_panic() {
-        // RpcClient::new() will panic in the tokio current-thread runtime due to `tokio::task::block_in_place()` usage, and there
-        // doesn't seem to be a way to detect whether the tokio runtime is multi_thread or current_thread...
-        let _ = HttpSender::new("http://localhost:1234".to_string());
+    async fn http_sender_on_tokio_current_thread() {
+        let http_sender = HttpSender::new("http://localhost:1234".to_string());
+        let _ = http_sender
+            .send(RpcRequest::GetVersion, serde_json::Value::Null)
+            .await;
     }
 }

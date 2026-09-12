@@ -144,6 +144,15 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --skip-poh-verify ]]; then
       args+=("$1")
       shift
+    elif [[ $1 = --tpu-use-quic ]]; then
+      args+=("$1")
+      shift
+    elif [[ $1 = --rpc-send-batch-ms ]]; then
+      args+=("$1" "$2")
+      shift 2
+    elif [[ $1 = --rpc-send-batch-size ]]; then
+      args+=("$1" "$2")
+      shift 2
     elif [[ $1 = --log ]]; then
       args+=("$1" "$2")
       shift 2
@@ -249,6 +258,7 @@ default_arg --vote-account "$vote_account"
 default_arg --ledger "$ledger_dir"
 default_arg --log -
 default_arg --full-rpc-api
+default_arg --no-incremental-snapshots
 
 if [[ $maybeRequireTower = true ]]; then
   default_arg --require-tower

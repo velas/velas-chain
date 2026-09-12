@@ -6,6 +6,7 @@ use {
     rayon::iter::*,
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
+        contact_info::ContactInfo,
         crds::Cursor,
         gossip_service::GossipService,
     },
@@ -18,7 +19,10 @@ use {
         timing::timestamp,
         transaction::Transaction,
     },
-    solana_streamer::socket::SocketAddrSpace,
+    solana_streamer::{
+        sendmmsg::{multi_target_send, SendPktsError},
+        socket::SocketAddrSpace,
+    },
     solana_vote_program::{vote_instruction, vote_state::Vote},
     std::{
         net::UdpSocket,
@@ -45,6 +49,7 @@ fn test_node(exit: &Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSoc
         test_node.sockets.gossip,
         None,
         true, // should_check_duplicate_instance
+        None,
         exit,
     );
     let _ = cluster_info.my_contact_info();
@@ -72,6 +77,7 @@ fn test_node_with_bank(
         test_node.sockets.gossip,
         None,
         true, // should_check_duplicate_instance
+        None,
         exit,
     );
     let _ = cluster_info.my_contact_info();
@@ -111,6 +117,40 @@ where
     }
     assert!(done);
 }
+
+/// retransmit messages to a list of nodes
+fn retransmit_to(
+    peers: &[&ContactInfo],
+    data: &[u8],
+    socket: &UdpSocket,
+    forwarded: bool,
+    socket_addr_space: &SocketAddrSpace,
+) {
+    trace!("retransmit orders {}", peers.len());
+    let dests: Vec<_> = if forwarded {
+        peers
+            .iter()
+            .map(|peer| peer.tvu_forwards)
+            .filter(|addr| ContactInfo::is_valid_address(addr, socket_addr_space))
+            .collect()
+    } else {
+        peers
+            .iter()
+            .map(|peer| peer.tvu)
+            .filter(|addr| socket_addr_space.check(addr))
+            .collect()
+    };
+    if let Err(SendPktsError::IoError(ioerr, num_failed)) = multi_target_send(socket, data, &dests)
+    {
+        error!(
+            "retransmit_to multi_target_send error: {:?}, {}/{} packets failed",
+            ioerr,
+            num_failed,
+            dests.len(),
+        );
+    }
+}
+
 /// ring a -> b -> c -> d -> e -> a
 #[test]
 fn gossip_ring() {
@@ -218,9 +258,9 @@ pub fn cluster_info_retransmit() {
     p.meta.size = 10;
     let peers = c1.tvu_peers();
     let retransmit_peers: Vec<_> = peers.iter().collect();
-    ClusterInfo::retransmit_to(
+    retransmit_to(
         &retransmit_peers,
-        &p.data[..p.meta.size],
+        p.data(..).unwrap(),
         &tn1,
         false,
         &SocketAddrSpace::Unspecified,
@@ -230,7 +270,7 @@ pub fn cluster_info_retransmit() {
         .map(|s| {
             let mut p = Packet::default();
             s.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
-            let res = s.recv_from(&mut p.data);
+            let res = s.recv_from(p.buffer_mut());
             res.is_err() //true if failed to receive the retransmit packet
         })
         .collect();

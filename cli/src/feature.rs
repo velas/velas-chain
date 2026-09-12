@@ -8,11 +8,14 @@ use {
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_clap_utils::{input_parsers::*, input_validators::*, keypair::*},
     solana_cli_output::{QuietDisplay, VerboseDisplay},
-    solana_client::{client_error::ClientError, rpc_client::RpcClient},
+    solana_client::{
+        client_error::ClientError, rpc_client::RpcClient, rpc_request::MAX_MULTIPLE_ACCOUNTS,
+    },
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_sdk::{
         account::Account,
         clock::Slot,
+        epoch_schedule::EpochSchedule,
         feature::{self, Feature},
         feature_set::FEATURE_NAMES,
         message::Message,
@@ -107,6 +110,10 @@ impl Ord for CliFeature {
 #[serde(rename_all = "camelCase")]
 pub struct CliFeatures {
     pub features: Vec<CliFeature>,
+    #[serde(skip)]
+    pub epoch_schedule: EpochSchedule,
+    #[serde(skip)]
+    pub current_slot: Slot,
     pub feature_activation_allowed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cluster_feature_sets: Option<CliClusterFeatureSets>,
@@ -116,13 +123,13 @@ pub struct CliFeatures {
 
 impl fmt::Display for CliFeatures {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.features.len() > 1 {
+        if !self.features.is_empty() {
             writeln!(
                 f,
                 "{}",
                 style(format!(
-                    "{:<44} | {:<27} | {}",
-                    "Feature", "Status", "Description"
+                    "{:<44} | {:<23} | {} | {}",
+                    "Feature", "Status", "Activation Slot", "Description"
                 ))
                 .bold()
             )?;
@@ -130,13 +137,22 @@ impl fmt::Display for CliFeatures {
         for feature in &self.features {
             writeln!(
                 f,
-                "{:<44} | {:<27} | {}",
+                "{:<44} | {:<23} | {:<15} | {}",
                 feature.id,
                 match feature.status {
                     CliFeatureStatus::Inactive => style("inactive".to_string()).red(),
-                    CliFeatureStatus::Pending => style("activation pending".to_string()).yellow(),
-                    CliFeatureStatus::Active(activation_slot) =>
-                        style(format!("active since slot {:>9}", activation_slot)).green(),
+                    CliFeatureStatus::Pending => {
+                        let current_epoch = self.epoch_schedule.get_epoch(self.current_slot);
+                        style(format!("pending until epoch {}", current_epoch + 1)).yellow()
+                    }
+                    CliFeatureStatus::Active(activation_slot) => {
+                        let activation_epoch = self.epoch_schedule.get_epoch(activation_slot);
+                        style(format!("active since epoch {}", activation_epoch)).green()
+                    }
+                },
+                match feature.status {
+                    CliFeatureStatus::Active(activation_slot) => activation_slot.to_string(),
+                    _ => "NA".to_string(),
                 },
                 feature.description,
             )?;
@@ -443,7 +459,8 @@ pub fn parse_feature_subcommand(
             } else {
                 FEATURE_NAMES.keys().cloned().collect()
             };
-            let display_all = matches.is_present("display_all");
+            let display_all =
+                matches.is_present("display_all") || features.len() < FEATURE_NAMES.len();
             features.sort();
             CliCommandInfo {
                 command: CliCommand::Feature(FeatureCliCommand::Status {
@@ -680,49 +697,57 @@ fn process_status(
     feature_ids: &[Pubkey],
     display_all: bool,
 ) -> ProcessResult {
+    let current_slot = rpc_client.get_slot()?;
     let filter = if !display_all {
-        let now = rpc_client.get_slot()?;
-        now.checked_sub(DEFAULT_MAX_ACTIVE_DISPLAY_AGE_SLOTS)
+        current_slot.checked_sub(DEFAULT_MAX_ACTIVE_DISPLAY_AGE_SLOTS)
     } else {
         None
     };
     let mut inactive = false;
-    let mut features = rpc_client
-        .get_multiple_accounts(feature_ids)?
-        .into_iter()
-        .zip(feature_ids)
-        .map(|(account, feature_id)| {
-            let feature_name = FEATURE_NAMES.get(feature_id).unwrap();
-            account
-                .and_then(status_from_account)
-                .map(|feature_status| CliFeature {
-                    id: feature_id.to_string(),
-                    description: feature_name.to_string(),
-                    status: feature_status,
-                })
-                .unwrap_or_else(|| {
-                    inactive = true;
-                    CliFeature {
+    let mut features = vec![];
+    for feature_ids in feature_ids.chunks(MAX_MULTIPLE_ACCOUNTS) {
+        let mut feature_chunk = rpc_client
+            .get_multiple_accounts(feature_ids)
+            .unwrap_or_default()
+            .into_iter()
+            .zip(feature_ids)
+            .map(|(account, feature_id)| {
+                let feature_name = FEATURE_NAMES.get(feature_id).unwrap();
+                account
+                    .and_then(status_from_account)
+                    .map(|feature_status| CliFeature {
                         id: feature_id.to_string(),
                         description: feature_name.to_string(),
-                        status: CliFeatureStatus::Inactive,
-                    }
-                })
-        })
-        .filter(|feature| match (filter, &feature.status) {
-            (Some(min_activation), CliFeatureStatus::Active(activation)) => {
-                activation > &min_activation
-            }
-            _ => true,
-        })
-        .collect::<Vec<_>>();
+                        status: feature_status,
+                    })
+                    .unwrap_or_else(|| {
+                        inactive = true;
+                        CliFeature {
+                            id: feature_id.to_string(),
+                            description: feature_name.to_string(),
+                            status: CliFeatureStatus::Inactive,
+                        }
+                    })
+            })
+            .filter(|feature| match (filter, &feature.status) {
+                (Some(min_activation), CliFeatureStatus::Active(activation)) => {
+                    activation > &min_activation
+                }
+                _ => true,
+            })
+            .collect::<Vec<_>>();
+        features.append(&mut feature_chunk);
+    }
 
     features.sort_unstable();
 
     let (feature_activation_allowed, cluster_feature_sets) =
         feature_activation_allowed(rpc_client, features.len() <= 1)?;
+    let epoch_schedule = rpc_client.get_epoch_schedule()?;
     let feature_set = CliFeatures {
         features,
+        current_slot,
+        epoch_schedule,
         feature_activation_allowed,
         cluster_feature_sets,
         inactive,

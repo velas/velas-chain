@@ -1,6 +1,6 @@
 [package]
 name = "solana-storage-bigtable"
-version = "1.9.29"
+version = "1.10.41"
 description = "Solana Storage BigTable"
 authors = ["Solana Maintainers <maintainers@solana.com>"]
 repository = "https://github.com/solana-labs/solana"
@@ -10,25 +10,31 @@ documentation = "https://docs.rs/solana-storage-bigtable"
 edition = "2021"
 
 [dependencies]
-backoff = { version = "0.3.0", features = ["tokio"] }
+backoff = { version = "0.4.0", features = ["tokio"] }
 bincode = "1.3.3"
+bytes = "1.0"
 bzip2 = "0.4.3"
 enum-iterator = "0.7.0"
 flate2 = "1.0.22"
-goauth = "0.10.0"
+futures = "0.3.21"
+goauth = "0.11.1"
+http = "0.2.6"
+hyper = "0.14.14"
+hyper-proxy = "0.9.1"
 log = "0.4.14"
 prost = "0.11.0"
-prost-types = "0.11.1"
-serde = "1.0.130"
+prost-types = "0.11.0"
+serde = "1.0.136"
 serde_derive = "1.0.103"
 smpl_jwt = "0.6.1"
-solana-metrics = { path = "../metrics", version = "=1.9.29" }
-solana-sdk = { path = "../sdk", version = "=1.9.29" }
-solana-storage-proto = { path = "../storage-proto", version = "=1.9.29" }
-solana-transaction-status = { path = "../transaction-status", version = "=1.9.29" }
+solana-metrics = { path = "../metrics", version = "=1.10.41" }
+solana-sdk = { path = "../sdk", version = "=1.10.41" }
+solana-storage-proto = { path = "../storage-proto", version = "=1.10.41" }
+solana-transaction-status = { path = "../transaction-status", version = "=1.10.41" }
 thiserror = "1.0"
-tonic = { version = "0.8.1", features = ["tls", "transport", "gzip"] }
-zstd = "0.9.0"
+tokio = "1"
+tonic = { version = "0.8.1", features = ["tls", "gzip", "transport"] }
+zstd = "0.11.1"
 
 evm-state = { path = "../evm-utils/evm-state" }
 evm-rpc = { path = "../evm-utils/evm-rpc" }

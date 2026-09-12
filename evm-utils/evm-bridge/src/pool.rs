@@ -1,41 +1,41 @@
 mod listener;
 
-use std::{
-    collections::{HashMap, HashSet},
-    ops::Deref,
-    sync::{Arc, Mutex},
-    time::Duration,
+use {
+    crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult},
+    ::tokio::sync::mpsc,
+    base64::{engine::general_purpose::STANDARD as BASE64, Engine},
+    borsh::BorshSerialize,
+    evm_rpc::{error::into_native_error, Bytes, RPCTransaction},
+    evm_state::{Address, TransactionAction, H160, H256, U256},
+    listener::PoolListener,
+    log::*,
+    once_cell::sync::Lazy,
+    serde_json::json,
+    solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest},
+    solana_evm_loader_program::{
+        scope::{evm, solana},
+        tx_chunks::TxChunks,
+    },
+    solana_sdk::{
+        commitment_config::{CommitmentConfig, CommitmentLevel},
+        message::Message,
+        pubkey::Pubkey,
+        signature::Signature,
+        signer::Signer,
+        system_instruction,
+    },
+    std::{
+        collections::{HashMap, HashSet},
+        ops::Deref,
+        sync::{Arc, Mutex},
+        time::Duration,
+    },
+    tokio::sync::mpsc::error::SendError,
+    tracing_attributes::instrument,
+    txpool::{
+        scoring::Choice, Pool, Readiness, Ready, Scoring, ShouldReplace, VerifiedTransaction,
+    },
 };
-
-use ::tokio::sync::mpsc;
-use borsh::BorshSerialize;
-use evm_rpc::{error::into_native_error, Bytes, Hex, RPCTransaction};
-use evm_state::{Address, TransactionAction, H160, H256, U256};
-use listener::PoolListener;
-use log::*;
-use once_cell::sync::Lazy;
-use serde_json::json;
-use solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest};
-use solana_evm_loader_program::{
-    scope::{evm, solana},
-    tx_chunks::TxChunks,
-};
-use solana_sdk::{
-    commitment_config::{CommitmentConfig, CommitmentLevel},
-    message::Message,
-    pubkey::Pubkey,
-    signature::Signature,
-    signer::Signer,
-    system_instruction,
-};
-use tokio::sync::mpsc::error::SendError;
-use txpool::{
-    scoring::Choice, Pool, Readiness, Ready, Scoring, ShouldReplace, VerifiedTransaction,
-};
-
-use tracing_attributes::instrument;
-
-use crate::{from_client_error, send_and_confirm_transactions, EvmBridge, EvmResult};
 
 type UnixTimeMs = u64;
 
@@ -180,9 +180,9 @@ impl<C: Clock> EthPool<C> {
     }
 
     /// Gets transaction from the pool by specified hash
-    pub fn transaction_by_hash(&self, tx_hash: Hex<H256>) -> Option<Arc<PooledTransaction>> {
+    pub fn transaction_by_hash(&self, tx_hash: H256) -> Option<Arc<PooledTransaction>> {
         let pool = self.pool.lock().unwrap();
-        pool.find(&tx_hash.0)
+        pool.find(&tx_hash)
     }
 
     /// Strips outdated timestamps and returns the number of
@@ -260,14 +260,14 @@ pub struct PooledTransaction {
     pub meta_keys: HashSet<Pubkey>,
     sender: Address,
     hash: H256,
-    hash_sender: Option<mpsc::Sender<EvmResult<Hex<H256>>>>,
+    hash_sender: Option<mpsc::Sender<EvmResult<H256>>>,
 }
 
 impl PooledTransaction {
     pub fn new(
         transaction: evm::Transaction,
         meta_keys: HashSet<Pubkey>,
-        hash_sender: mpsc::Sender<EvmResult<Hex<H256>>>,
+        hash_sender: mpsc::Sender<EvmResult<H256>>,
     ) -> Result<Self, evm_state::error::Error> {
         let hash = transaction.tx_id_hash();
         let sender = transaction.caller()?;
@@ -297,10 +297,7 @@ impl PooledTransaction {
         })
     }
 
-    async fn send(
-        &self,
-        hash: EvmResult<Hex<H256>>,
-    ) -> Result<(), SendError<EvmResult<Hex<H256>>>> {
+    async fn send(&self, hash: EvmResult<H256>) -> Result<(), SendError<EvmResult<H256>>> {
         if let Some(hash_sender) = &self.hash_sender {
             hash_sender.send(hash).await
         } else {
@@ -308,10 +305,7 @@ impl PooledTransaction {
         }
     }
 
-    fn blocking_send(
-        &self,
-        hash: EvmResult<Hex<H256>>,
-    ) -> Result<(), SendError<EvmResult<Hex<H256>>>> {
+    fn blocking_send(&self, hash: EvmResult<H256>) -> Result<(), SendError<EvmResult<H256>>> {
         if let Some(hash_sender) = &self.hash_sender {
             hash_sender.blocking_send(hash)
         } else {
@@ -423,14 +417,14 @@ pub async fn worker_deploy(bridge: Arc<EvmBridge>) {
 
                     if is_recoverable_error(&e) {
                         debug!(
-                            "Found recoverable error, for tx = {:?}. Error = {:?}",
+                            "Found recoverable error, for tx = {:?}. Error = {}",
                             &hash, &e
                         );
                         continue;
                     }
 
                     warn!(
-                        "Something went wrong in transaction {}. Error = {:?}",
+                        "Something went wrong in transaction {:?}. Error = {}",
                         &hash, &e
                     );
                     let _result = pooled_tx.send(Err(e)).await;
@@ -508,7 +502,7 @@ pub async fn worker_signature_checker(bridge: Arc<EvmBridge>) {
                                         }
                                         Err(err) => {
                                             warn!(
-                                                "Transaction can not be reimported to the pool: {:?}",
+                                                "Transaction can not be reimported to the pool: {}",
                                                 err
                                             )
                                         }
@@ -540,7 +534,7 @@ async fn process_tx(
     hash: H256,
     sender: H160,
     mut meta_keys: HashSet<Pubkey>,
-) -> EvmResult<Hex<H256>> {
+) -> EvmResult<H256> {
     let mut bytes = vec![];
     BorshSerialize::serialize(&tx, &mut bytes).unwrap();
 
@@ -559,7 +553,7 @@ async fn process_tx(
         debug!("Sending tx = {}, by chunks", hash);
         match deploy_big_tx(&bridge, &bridge.key, &tx).await {
             Ok(_tx) => {
-                return Ok(Hex(hash));
+                return Ok(hash);
             }
             Err(e) => {
                 error!("Error creating big tx = {}", e);
@@ -615,8 +609,8 @@ async fn process_tx(
     debug!("Sending tx = {:?}", send_raw_tx);
 
     debug!(
-        "Sending tx raw = {:?}",
-        base64::encode(&send_raw_tx.message_data())
+        "Sending tx raw = {}",
+        BASE64.encode(send_raw_tx.message_data())
     );
 
     let signature = bridge
@@ -636,7 +630,7 @@ async fn process_tx(
         .pool
         .schedule_after_deploy_check(hash, signature, meta_keys, tx);
 
-    Ok(Hex(hash))
+    Ok(hash)
 }
 
 #[instrument]
@@ -731,7 +725,7 @@ async fn deploy_big_tx(
             );
         }
         Err(e) => {
-            error!("Error create and allocate {} tx: {:?}", storage_pubkey, e);
+            error!("Error create and allocate {} tx: {}", storage_pubkey, e);
             return Err(into_native_error(e, bridge.verbose_errors));
         }
     }
@@ -777,7 +771,7 @@ async fn deploy_big_tx(
         .await
         .map(|_| debug!("All write txs for storage {} was done", storage_pubkey))
         .map_err(|e| {
-            error!("Error on write data to storage {}: {:?}", storage_pubkey, e);
+            error!("Error on write data to storage {}: {}", storage_pubkey, e);
             into_native_error(e, bridge.verbose_errors)
         })?;
 
@@ -813,7 +807,7 @@ async fn deploy_big_tx(
             warn!("Executing EVM tx return AlreadyExist error, handle as executed.");
         }
         Err(e) => {
-            error!("Execute EVM tx at {} failed: {:?}", storage_pubkey, e);
+            error!("Execute EVM tx at {} failed: {}", storage_pubkey, e);
             return Err(from_client_error(e));
         }
     }

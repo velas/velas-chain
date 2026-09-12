@@ -1,14 +1,16 @@
 use {
+    crate::vote_transaction::VoteTransaction,
     solana_sdk::{
         hash::Hash,
         program_utils::limited_deserialize,
         pubkey::Pubkey,
+        signature::Signature,
         transaction::{SanitizedTransaction, Transaction},
     },
-    solana_vote_program::{vote_instruction::VoteInstruction, vote_state::Vote},
+    solana_vote_program::vote_instruction::VoteInstruction,
 };
 
-pub type ParsedVote = (Pubkey, Vote, Option<Hash>);
+pub type ParsedVote = (Pubkey, VoteTransaction, Option<Hash>, Signature);
 
 // Used for filtering out votes from the transaction log collector
 pub(crate) fn is_simple_vote_transaction(transaction: &SanitizedTransaction) -> bool {
@@ -23,7 +25,10 @@ pub(crate) fn is_simple_vote_transaction(transaction: &SanitizedTransaction) -> 
             {
                 return matches!(
                     vote_instruction,
-                    VoteInstruction::Vote(_) | VoteInstruction::VoteSwitch(_, _)
+                    VoteInstruction::Vote(_)
+                        | VoteInstruction::VoteSwitch(_, _)
+                        | VoteInstruction::UpdateVoteState(_)
+                        | VoteInstruction::UpdateVoteStateSwitch(_, _)
                 );
             }
         }
@@ -40,9 +45,10 @@ pub fn parse_sanitized_vote_transaction(tx: &SanitizedTransaction) -> Option<Par
         return None;
     }
     let first_account = usize::from(*first_instruction.accounts.first()?);
-    let key = message.get_account_key(first_account)?;
+    let key = message.account_keys().get(first_account)?;
     let (vote, switch_proof_hash) = parse_vote_instruction_data(&first_instruction.data)?;
-    Some((*key, vote, switch_proof_hash))
+    let signature = tx.signatures().get(0).cloned().unwrap_or_default();
+    Some((*key, vote, switch_proof_hash, signature))
 }
 
 // Used for parsing gossip vote transactions
@@ -58,25 +64,45 @@ pub fn parse_vote_transaction(tx: &Transaction) -> Option<ParsedVote> {
     let first_account = usize::from(*first_instruction.accounts.first()?);
     let key = message.account_keys.get(first_account)?;
     let (vote, switch_proof_hash) = parse_vote_instruction_data(&first_instruction.data)?;
-    Some((*key, vote, switch_proof_hash))
+    let signature = tx.signatures.get(0).cloned().unwrap_or_default();
+    Some((*key, vote, switch_proof_hash, signature))
 }
 
-fn parse_vote_instruction_data(vote_instruction_data: &[u8]) -> Option<(Vote, Option<Hash>)> {
+fn parse_vote_instruction_data(
+    vote_instruction_data: &[u8],
+) -> Option<(VoteTransaction, Option<Hash>)> {
     match limited_deserialize(vote_instruction_data).ok()? {
-        VoteInstruction::Vote(vote) => Some((vote, None)),
-        VoteInstruction::VoteSwitch(vote, hash) => Some((vote, Some(hash))),
-        _ => None,
+        VoteInstruction::Vote(vote) => Some((VoteTransaction::from(vote), None)),
+        VoteInstruction::VoteSwitch(vote, hash) => Some((VoteTransaction::from(vote), Some(hash))),
+        VoteInstruction::UpdateVoteState(vote_state_update) => {
+            Some((VoteTransaction::from(vote_state_update), None))
+        }
+        VoteInstruction::UpdateVoteStateSwitch(vote_state_update, hash) => {
+            Some((VoteTransaction::from(vote_state_update), Some(hash)))
+        }
+        VoteInstruction::Authorize(_, _)
+        | VoteInstruction::AuthorizeChecked(_)
+        | VoteInstruction::AuthorizeWithSeed(_)
+        | VoteInstruction::AuthorizeCheckedWithSeed(_)
+        | VoteInstruction::InitializeAccount(_)
+        | VoteInstruction::UpdateCommission(_)
+        | VoteInstruction::UpdateValidatorIdentity
+        | VoteInstruction::Withdraw(_) => None,
     }
 }
 
 #[cfg(test)]
 mod test {
-    use solana_sdk::signature::{Keypair, Signer};
-    use solana_vote_program::{
-        vote_instruction, vote_state::Vote, vote_transaction::new_vote_transaction,
+    use {
+        super::*,
+        solana_sdk::{
+            hash::hash,
+            signature::{Keypair, Signer},
+        },
+        solana_vote_program::{
+            vote_instruction, vote_state::Vote, vote_transaction::new_vote_transaction,
+        },
     };
-
-    use {super::*, solana_sdk::hash::hash};
 
     fn run_test_parse_vote_transaction(input_hash: Option<Hash>) {
         let node_keypair = Keypair::new();
@@ -92,10 +118,11 @@ mod test {
             &auth_voter_keypair,
             input_hash,
         );
-        let (key, vote, hash) = parse_vote_transaction(&vote_tx).unwrap();
+        let (key, vote, hash, signature) = parse_vote_transaction(&vote_tx).unwrap();
         assert_eq!(hash, input_hash);
-        assert_eq!(vote, Vote::new(vec![42], bank_hash));
+        assert_eq!(vote, VoteTransaction::from(Vote::new(vec![42], bank_hash)));
         assert_eq!(key, vote_keypair.pubkey());
+        assert_eq!(signature, vote_tx.signatures[0]);
 
         // Test bad program id fails
         let mut vote_ix = vote_instruction::vote(

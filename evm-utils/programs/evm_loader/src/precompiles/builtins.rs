@@ -123,7 +123,7 @@ where
         ensure!(
             hash == self.function_hash,
             MismatchFunctionHash {
-                expected: hex::encode(&self.function_hash),
+                expected: hex::encode(self.function_hash),
                 got: hex::encode(hash)
             }
         );

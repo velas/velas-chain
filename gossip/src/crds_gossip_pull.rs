@@ -14,6 +14,7 @@
 use {
     crate::{
         cluster_info::{Ping, CRDS_UNIQUE_PUBKEY_CAPACITY},
+        cluster_info_metrics::GossipStats,
         contact_info::ContactInfo,
         crds::{Crds, GossipRoute, VersionedCrdsValue},
         crds_gossip::{get_stake, get_weight},
@@ -98,7 +99,7 @@ impl CrdsFilter {
     fn compute_mask(seed: u64, mask_bits: u32) -> u64 {
         assert!(seed <= 2u64.pow(mask_bits));
         let seed: u64 = seed.checked_shl(64 - mask_bits).unwrap_or(0x0);
-        seed | (!0u64).checked_shr(mask_bits).unwrap_or(!0x0) as u64
+        seed | (!0u64).checked_shr(mask_bits).unwrap_or(!0x0)
     }
     fn max_items(max_bits: f64, false_rate: f64, num_keys: f64) -> f64 {
         let m = max_bits;
@@ -148,7 +149,7 @@ impl CrdsFilterSet {
     fn new(num_items: usize, max_bytes: usize) -> Self {
         let max_bits = (max_bytes * 8) as f64;
         let max_items = CrdsFilter::max_items(max_bits, FALSE_RATE, KEYS);
-        let mask_bits = CrdsFilter::mask_bits(num_items as f64, max_items as f64);
+        let mask_bits = CrdsFilter::mask_bits(num_items as f64, max_items);
         let filters =
             repeat_with(|| Bloom::random(max_items as usize, FALSE_RATE, max_bits as usize).into())
                 .take(1 << mask_bits)
@@ -360,8 +361,9 @@ impl CrdsGossipPull {
         requests: &[(CrdsValue, CrdsFilter)],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
+        stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
-        Self::filter_crds_values(thread_pool, crds, requests, output_size_limit, now)
+        Self::filter_crds_values(thread_pool, crds, requests, output_size_limit, now, stats)
     }
 
     // Checks if responses should be inserted and
@@ -513,6 +515,7 @@ impl CrdsGossipPull {
         filters: &[(CrdsValue, CrdsFilter)],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
+        stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
         let jitter = rand::thread_rng().gen_range(0, msg_timeout / 4);
@@ -559,14 +562,12 @@ impl CrdsGossipPull {
                 .map(|(caller, filter)| apply_filter(caller, filter))
                 .collect()
         });
-        inc_new_counter_info!(
-            "gossip_filter_crds_values-dropped_requests",
-            dropped_requests.into_inner()
-        );
-        inc_new_counter_info!(
-            "gossip_filter_crds_values-dropped_values",
-            total_skipped.into_inner()
-        );
+        stats
+            .filter_crds_values_dropped_requests
+            .add_relaxed(dropped_requests.into_inner() as u64);
+        stats
+            .filter_crds_values_dropped_values
+            .add_relaxed(total_skipped.into_inner() as u64);
         ret
     }
 
@@ -1257,6 +1258,7 @@ pub(crate) mod tests {
             &filters,
             usize::MAX, // output_size_limit
             0,          // now
+            &GossipStats::default(),
         );
 
         assert_eq!(rsp[0].len(), 0);
@@ -1282,6 +1284,7 @@ pub(crate) mod tests {
             &filters,
             usize::MAX,                      // output_size_limit
             CRDS_GOSSIP_PULL_MSG_TIMEOUT_MS, // now
+            &GossipStats::default(),
         );
         assert_eq!(rsp[0].len(), 0);
         assert_eq!(filters.len(), MIN_NUM_BLOOM_FILTERS);
@@ -1301,6 +1304,7 @@ pub(crate) mod tests {
             &filters,
             usize::MAX, // output_size_limit
             CRDS_GOSSIP_PULL_MSG_TIMEOUT_MS,
+            &GossipStats::default(),
         );
         assert_eq!(rsp.len(), 2 * MIN_NUM_BLOOM_FILTERS);
         // There should be only one non-empty response in the 2nd half.
@@ -1357,6 +1361,7 @@ pub(crate) mod tests {
             &filters,
             usize::MAX, // output_size_limit
             0,          // now
+            &GossipStats::default(),
         );
         let callers = filters.into_iter().map(|(caller, _)| caller);
         CrdsGossipPull::process_pull_requests(&dest_crds, callers, 1);
@@ -1442,6 +1447,7 @@ pub(crate) mod tests {
                 &filters,
                 usize::MAX, // output_size_limit
                 0,          // now
+                &GossipStats::default(),
             );
             CrdsGossipPull::process_pull_requests(
                 &dest_crds,

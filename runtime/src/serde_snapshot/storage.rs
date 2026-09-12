@@ -1,22 +1,25 @@
 use {
-    crate::accounts_db::{AccountStorageEntry, AppendVecId},
+    crate::accounts_db::AccountStorageEntry,
     serde::{Deserialize, Serialize},
 };
+
+/// The serialized AppendVecId type is fixed as usize
+pub(super) type SerializedAppendVecId = usize;
 
 // Serializable version of AccountStorageEntry for snapshot format
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) struct SerializableAccountStorageEntry {
-    id: AppendVecId,
+    id: SerializedAppendVecId,
     accounts_current_len: usize,
 }
 
 pub(super) trait SerializableStorage {
-    fn id(&self) -> AppendVecId;
+    fn id(&self) -> SerializedAppendVecId;
     fn current_len(&self) -> usize;
 }
 
 impl SerializableStorage for SerializableAccountStorageEntry {
-    fn id(&self) -> AppendVecId {
+    fn id(&self) -> SerializedAppendVecId {
         self.id
     }
     fn current_len(&self) -> usize {
@@ -27,7 +30,7 @@ impl SerializableStorage for SerializableAccountStorageEntry {
 impl From<&AccountStorageEntry> for SerializableAccountStorageEntry {
     fn from(rhs: &AccountStorageEntry) -> Self {
         Self {
-            id: rhs.append_vec_id(),
+            id: rhs.append_vec_id() as SerializedAppendVecId,
             accounts_current_len: rhs.accounts.len(),
         }
     }

@@ -10,8 +10,7 @@ use {
         account::AccountSharedData,
         clock::Slot,
         hash::Hash,
-        instruction::Instruction,
-        instruction::InstructionError,
+        instruction::{Instruction, InstructionError},
         pubkey::Pubkey,
         signature::{Keypair, Signer},
         slot_hashes::SlotHashes,
@@ -77,9 +76,7 @@ pub async fn add_lookup_table_account(
     account_address: Pubkey,
     address_lookup_table: AddressLookupTable<'static>,
 ) -> AccountSharedData {
-    let mut data = Vec::new();
-    address_lookup_table.serialize_for_tests(&mut data).unwrap();
-
+    let data = address_lookup_table.serialize_for_tests().unwrap();
     let rent = context.banks_client.get_rent().await.unwrap();
     let rent_exempt_balance = rent.minimum_balance(data.len());
 

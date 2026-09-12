@@ -2,11 +2,12 @@ use {
     crate::accountsdb_repl_service::AccountsDbReplService,
     crossbeam_channel::unbounded,
     log::*,
+    solana_client::connection_cache::ConnectionCache,
     solana_download_utils::download_snapshot_archive,
     solana_genesis_utils::download_then_check_genesis_hash,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_ledger::{
-        blockstore::Blockstore, blockstore_db::AccessType, blockstore_processor,
+        blockstore::Blockstore, blockstore_db::BlockstoreOptions, blockstore_processor,
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_replica_lib::accountsdb_repl_client::AccountsDbReplClientServiceConfig,
@@ -180,11 +181,12 @@ fn start_client_rpc_services(
         block_commitment_cache,
     } = bank_info;
     let blockstore = Arc::new(
-        Blockstore::open_with_access_type(
+        Blockstore::open_with_options(
             &replica_config.ledger_path,
-            AccessType::PrimaryOnly,
-            None,
-            false,
+            BlockstoreOptions {
+                enforce_ulimit_nofile: false,
+                ..BlockstoreOptions::default()
+            },
         )
         .unwrap(),
     );
@@ -226,6 +228,7 @@ fn start_client_rpc_services(
         .write()
         .unwrap()
         .register_exit(Box::new(move || trigger.cancel()));
+    let connection_cache = Arc::new(ConnectionCache::default());
 
     let (_bank_notification_sender, bank_notification_receiver) = unbounded();
     (
@@ -251,6 +254,7 @@ fn start_client_rpc_services(
             },
             max_slots,
             leader_schedule_cache.clone(),
+            connection_cache,
             max_complete_transaction_status_slot,
             None,
             replica_config.jaeger_collector_url.clone(),

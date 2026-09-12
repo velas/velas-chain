@@ -1,5 +1,4 @@
-use crate::H256;
-use evm::executor::traces::Trace;
+use {crate::H256, evm::executor::traces::Trace};
 
 #[derive(Debug, Clone)]
 pub struct TraceResultsWithTransactionHash {

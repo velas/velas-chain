@@ -1,13 +1,26 @@
-use anyhow::*;
-use solana_sdk::clock::Slot;
-use solana_storage_bigtable::LedgerStorage;
+use crate::{
+    cli::CheckNativeArgs,
+    error::{AppError, RoutineResult},
+    extensions::NativeBlockExt,
+    ledger,
+};
 
-use crate::extensions::NativeBlockExt;
+pub async fn check_native(
+    creds: Option<String>,
+    instance: String,
+    args: CheckNativeArgs,
+) -> RoutineResult {
+    let CheckNativeArgs { slot } = args;
+    let ledger = ledger::with_params(creds, instance).await?;
 
-pub async fn check_native(ledger: LedgerStorage, slot: Slot) -> Result<()> {
-    let native_block = ledger.get_confirmed_block(slot).await.context(format!(
-        r#"Unable to get Native block {slot} from table "blocks""#
-    ))?;
+    let native_block =
+        ledger
+            .get_confirmed_block(slot)
+            .await
+            .map_err(|source| AppError::GetNativeBlock {
+                source,
+                block: slot,
+            })?;
 
     let txs = native_block.parse_instructions();
 

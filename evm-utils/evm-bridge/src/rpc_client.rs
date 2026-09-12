@@ -1,42 +1,41 @@
-use log::*;
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
+use {
+    evm_rpc::{BlockId, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTransaction},
+    evm_state::{Address, H256, U256},
+    log::*,
+    reqwest::{
+        header::{CONTENT_TYPE, RETRY_AFTER},
+        StatusCode,
+    },
+    serde::Deserialize,
+    serde_json::{json, Value},
+    solana_client::{
+        client_error::{ClientError, ClientErrorKind, Result as ClientResult},
+        rpc_client::serialize_and_encode,
+        rpc_config::RpcSendTransactionConfig,
+        rpc_custom_error,
+        rpc_request::{RpcError, RpcRequest, RpcResponseErrorData},
+        rpc_response::{Response as RpcResponse, *},
+    },
+    solana_evm_loader_program::scope::solana,
+    solana_sdk::{
+        clock::{Slot, DEFAULT_MS_PER_SLOT},
+        commitment_config::CommitmentConfig,
+        fee_calculator::FeeCalculator,
+        hash::Hash,
+        message::Message,
+        signature::Signature,
+        transaction::uses_durable_nonce,
+    },
+    solana_transaction_status::{TransactionStatus, UiTransactionEncoding},
+    std::{
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
+        time::{Duration, Instant},
+    },
+    tokio::{sync::RwLock, time::sleep},
 };
-use std::time::{Duration, Instant};
-
-use reqwest::{
-    header::{CONTENT_TYPE, RETRY_AFTER},
-    StatusCode,
-};
-use serde::Deserialize;
-use serde_json::{json, Value};
-use tokio::sync::RwLock;
-use tokio::time::sleep;
-
-use solana_client::{
-    client_error::{ClientError, ClientErrorKind, Result as ClientResult},
-    rpc_client::serialize_and_encode,
-    rpc_config::RpcSendTransactionConfig,
-    rpc_custom_error,
-    rpc_request::{RpcError, RpcRequest, RpcResponseErrorData},
-    rpc_response::Response as RpcResponse,
-    rpc_response::*,
-};
-use solana_sdk::{
-    clock::{Slot, DEFAULT_MS_PER_SLOT},
-    commitment_config::CommitmentConfig,
-    fee_calculator::FeeCalculator,
-    hash::Hash,
-    message::Message,
-    signature::Signature,
-    transaction::uses_durable_nonce,
-};
-use solana_transaction_status::{TransactionStatus, UiTransactionEncoding};
-
-use evm_rpc::{BlockId, Hex, RPCBlock, RPCLog, RPCLogFilter, RPCReceipt, RPCTransaction};
-use evm_state::{Address, H256, U256};
-use solana_evm_loader_program::scope::solana;
 
 #[derive(Deserialize, Debug)]
 struct RpcErrorObject {
@@ -89,7 +88,7 @@ impl AsyncRpcClient {
                                     match serde_json::from_value::<RpcSimulateTransactionResult>(json["error"]["data"].clone()) {
                                         Ok(data) => RpcResponseErrorData::SendTransactionPreflightFailure(data),
                                         Err(err) => {
-                                            debug!("Failed to deserialize RpcSimulateTransactionResult: {:?}", err);
+                                            debug!("Failed to deserialize RpcSimulateTransactionResult: {}", err);
                                             RpcResponseErrorData::Empty
                                         }
                                     }
@@ -182,7 +181,7 @@ impl AsyncRpcClient {
 
     pub async fn get_evm_block_by_hash(
         &self,
-        block_hash: Hex<H256>,
+        block_hash: H256,
         full: bool,
     ) -> ClientResult<Option<RPCBlock>> {
         self.send(RpcRequest::EthGetBlockByHash, json!([block_hash, full]))
@@ -210,30 +209,23 @@ impl AsyncRpcClient {
 
     pub async fn get_evm_transaction_by_hash(
         &self,
-        tx_hash: Hex<H256>,
+        tx_hash: H256,
     ) -> ClientResult<Option<RPCTransaction>> {
         self.send(RpcRequest::EthGetTransactionByHash, json!([tx_hash]))
             .await
     }
 
     pub async fn get_evm_transaction_count(&self, address: &Address) -> ClientResult<U256> {
-        self.send::<Hex<_>>(
-            RpcRequest::EthGetTransactionCount,
-            json!([evm_rpc::Hex(*address)]),
-        )
-        .await
-        .map(|h| h.0)
+        self.send(RpcRequest::EthGetTransactionCount, json!([*address]))
+            .await
     }
 
     pub async fn get_evm_transaction_receipt(
         &self,
         hash: &H256,
     ) -> ClientResult<Option<RPCReceipt>> {
-        self.send::<Option<RPCReceipt>>(
-            RpcRequest::EthGetTransactionReceipt,
-            json!([evm_rpc::Hex(*hash)]),
-        )
-        .await
+        self.send::<Option<RPCReceipt>>(RpcRequest::EthGetTransactionReceipt, json!([*hash]))
+            .await
     }
 
     pub async fn get_version(&self) -> ClientResult<RpcVersionInfo> {
@@ -607,11 +599,7 @@ impl AsyncRpcClient {
 
         let minimum_balance: u64 = serde_json::from_value(minimum_balance_json)
             .map_err(|err| ClientError::new_with_request(err.into(), request))?;
-        trace!(
-            "Response minimum balance {:?} {:?}",
-            data_len,
-            minimum_balance
-        );
+        trace!("Response minimum balance {} {}", data_len, minimum_balance);
         Ok(minimum_balance)
     }
 

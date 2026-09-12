@@ -8,11 +8,11 @@ use clap::{value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand};
 use log::*;
 use solana_clap_utils::ArgConstant;
 
-use evm_state::storage::{
+use evm_state::{storage::{
     inspectors::verifier::{AccountsVerifier, HashVerifier},
     inspectors::NoopInspector,
     walker::Walker,
-};
+}, StorageSecondary};
 use rayon::prelude::*;
 
 use evm_state::{
@@ -37,6 +37,13 @@ impl EvmStateSubCommand for App<'_, '_> {
         self.subcommand(
             SubCommand::with_name("evm_state")
                 .about("EVM state utilities")
+                .arg(
+                    Arg::with_name("secondary_mode")
+                        .long("secondary")
+                        .required(false)
+                        .takes_value(false)
+                        .help("whether to open evm_state_db in secondary mode"),
+                )
                 .setting(AppSettings::ArgRequiredElseHelp)
                 .subcommand(
                     SubCommand::with_name("purge")
@@ -105,10 +112,25 @@ impl EvmStateSubCommand for App<'_, '_> {
 }
 
 pub fn process_evm_state_command(evm_state_path: &Path, matches: &ArgMatches<'_>) -> Result<()> {
-    let storage = Storage::open_persistent(
-        evm_state_path,
-        true, // enable gc
-    )?;
+    let secondary_mode = matches.is_present("secondary_mode");
+    if secondary_mode {
+        let storage = Storage::open_secondary_persistent(
+            evm_state_path,
+            true, // enable gc
+        )?;
+        secondary_evm_state_command(storage, matches)?;
+    } else {
+        let storage = Storage::open_persistent(
+            evm_state_path,
+            true, // enable gc
+        )?;
+        primary_evm_state_command(storage, matches)?;
+    }
+
+    Ok(())
+}
+
+ fn primary_evm_state_command(storage: Storage, matches: &ArgMatches<'_>) -> Result<()> {
 
     match matches.subcommand() {
         ("purge", Some(matches)) => {
@@ -203,6 +225,17 @@ pub fn process_evm_state_command(evm_state_path: &Path, matches: &ArgMatches<'_>
             walker.traverse(root)?;
 
             println!("Total balance = {:?}", walker.data_inspector.inner.balance)
+        }
+        unhandled => panic!("Unhandled {:?}", unhandled),
+    }
+    Ok(())
+}
+
+fn secondary_evm_state_command(storage: StorageSecondary, matches: &ArgMatches<'_>) -> Result<()> {
+
+    match matches.subcommand() {
+        ("list-roots", Some(_)) => {
+            storage.list_roots()?;
         }
         unhandled => panic!("Unhandled {:?}", unhandled),
     }

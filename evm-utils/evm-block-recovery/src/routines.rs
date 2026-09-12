@@ -1,25 +1,32 @@
 pub(crate) mod check_evm;
 pub(crate) mod check_native;
 pub(crate) mod compare;
+pub(crate) mod completion;
 pub(crate) mod find;
 pub(crate) mod repeat;
 pub(crate) mod restore_chain;
+pub(crate) mod scan_evm_state_roots;
 pub(crate) mod upload;
+// a tmp placeholder to test out various new commands or approaches
+// it's convenient, as all potentially required dependencies have been imported
+pub(crate) mod scratchpad;
 
-pub use check_evm::check_evm;
-pub use check_native::check_native;
-pub use compare::compare_native;
-pub use find::{find_evm, find_native};
-pub use repeat::{repeat_evm, repeat_native};
-pub use restore_chain::restore_chain;
-pub use upload::upload;
-
-use anyhow::*;
+use crate::error::AppError;
+pub use {
+    check_evm::check_evm,
+    check_native::check_native,
+    compare::compare_native,
+    completion::completion,
+    find::{find_evm, find_native},
+    repeat::{repeat_evm, repeat_native},
+    restore_chain::restore_chain,
+    upload::upload,
+};
 
 async fn write_blocks_collection(
     ledger: &solana_storage_bigtable::LedgerStorage,
     blocks: Vec<evm_state::Block>,
-) -> Result<()> {
+) -> Result<(), AppError> {
     for block in blocks {
         log::info!(
             "Writing block {} with hash {} to the Ledger...",
@@ -29,11 +36,10 @@ async fn write_blocks_collection(
 
         let block_num = block.header.block_number;
 
-        // TODO: informative message if early-return
         ledger
             .upload_evm_block(block_num, block)
             .await
-            .context(format!("Unable to write block {block_num} to bigtable"))?;
+            .map_err(AppError::UploadEvmBlock)?;
     }
 
     Ok(())
@@ -59,7 +65,6 @@ fn find_uncommitted_ranges(blocks: Vec<u64>, start_block: u64, end_block: u64) -
             let first = previous + 1;
             let last = current - 1;
             let missing_range = BlockRange::new(first, last);
-            // log::info!("Found missing {missing_range}");
             result.push(missing_range);
         }
     }

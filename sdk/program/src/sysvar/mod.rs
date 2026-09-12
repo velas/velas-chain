@@ -1,5 +1,9 @@
-//! named accounts for synthesized data accounts for bank state, etc.
+//! Access to special accounts with dynamically-updated data.
 //!
+//! For more details see the Solana [documentation on sysvars][sysvardoc].
+//!
+//! [sysvardoc]: https://docs.solana.com/developing/runtime-facilities/sysvars
+
 use {
     crate::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey},
     lazy_static::lazy_static,
@@ -103,6 +107,13 @@ pub trait Sysvar:
     fn size_of() -> usize {
         bincode::serialized_size(&Self::default()).unwrap() as usize
     }
+
+    /// Deserializes a sysvar from its `AccountInfo`.
+    ///
+    /// # Errors
+    ///
+    /// If `account_info` does not have the same ID as the sysvar
+    /// this function returns [`ProgramError::InvalidArgument`].
     fn from_account_info(account_info: &AccountInfo) -> Result<Self, ProgramError> {
         if !Self::check_id(account_info.unsigned_key()) {
             return Err(ProgramError::InvalidArgument);

@@ -149,6 +149,19 @@ all_test_steps() {
   # Full test suite
   command_step stable ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_stable_docker_image ci/test-stable.sh" 70
 
+  # Docs tests
+  if affects \
+             .rs$ \
+             ^ci/rust-version.sh \
+             ^ci/test-docs.sh \
+      ; then
+    command_step doctest "ci/test-docs.sh" 15
+  else
+    annotate --style info --context test-docs \
+      "Docs skipped as no .rs files were modified"
+  fi
+  wait_step
+
   # BPF test suite
   if affects \
              .rs$ \
@@ -230,33 +243,6 @@ EOF
       "downstream-projects skipped as no relevant files were modified"
   fi
 
-  # Downstream Anchor projects backwards compatibility
-  if affects \
-             .rs$ \
-             Cargo.lock$ \
-             Cargo.toml$ \
-             ^ci/rust-version.sh \
-             ^ci/test-stable-perf.sh \
-             ^ci/test-stable.sh \
-             ^ci/test-local-cluster.sh \
-             ^core/build.rs \
-             ^fetch-perf-libs.sh \
-             ^programs/ \
-             ^sdk/ \
-             ^scripts/build-downstream-anchor-projects.sh \
-      ; then
-    cat >> "$output_file" <<"EOF"
-  - command: "scripts/build-downstream-anchor-projects.sh"
-    name: "downstream-anchor-projects"
-    timeout_in_minutes: 20
-    agents:
-      - "queue=sol-private"
-EOF
-  else
-    annotate --style info \
-      "downstream-anchor-projects skipped as no relevant files were modified"
-  fi
-
   # Wasm support
   if affects \
              ^ci/test-wasm.sh \
@@ -278,7 +264,7 @@ EOF
              ^ci/test-coverage.sh \
              ^ci/test-bench.sh \
       ; then
-    command_step bench "ci/test-bench.sh" 30
+    command_step bench "ci/test-bench.sh" 45
   else
     annotate --style info --context test-bench \
       "Bench skipped as no .rs files were modified"
@@ -286,15 +272,15 @@ EOF
 
   command_step "local-cluster" \
     ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_stable_docker_image ci/test-local-cluster.sh" \
-    40
+    50
 
   command_step "local-cluster-flakey" \
     ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_stable_docker_image ci/test-local-cluster-flakey.sh" \
-    10
+    20
 
   command_step "local-cluster-slow" \
     ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_stable_docker_image ci/test-local-cluster-slow.sh" \
-    40
+    50
 }
 
 pull_or_push_steps() {

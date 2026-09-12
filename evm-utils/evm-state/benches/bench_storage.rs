@@ -1,12 +1,11 @@
-use std::fs;
-
-use derive_more::Display;
-use rand::Rng;
-use tempfile::tempdir;
-
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-
-use evm_state::{types::BlockNum, AccountProvider, EvmBackend, EvmState, Incomming, Storage};
+use {
+    criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion},
+    derive_more::Display,
+    evm_state::{types::BlockNum, AccountProvider, EvmBackend, EvmState, Incomming, Storage},
+    rand::Rng,
+    std::fs,
+    tempfile::tempdir,
+};
 
 mod utils;
 
@@ -78,14 +77,25 @@ fn add_some_and_advance(state: &mut EvmBackend<Incomming>, params: &Params) {
         if params.with_gc {
             if slot % params.squash_each == 0 {
                 for remove_slot in (slot - params.squash_each)..slot {
-                    let mut elems: Vec<_> = state
-                        .kvs()
-                        .purge_slot(remove_slot)
-                        .unwrap()
-                        .into_iter()
-                        .collect();
-                    while !elems.is_empty() {
-                        elems = state.kvs().gc_try_cleanup_account_hashes(&elems).unwrap()
+                    let (mut direct, mut indirect): (Vec<_>, Vec<_>) = (
+                        state
+                            .kvs()
+                            .purge_slot(remove_slot)
+                            .unwrap()
+                            .into_iter()
+                            .collect(),
+                        vec![],
+                    );
+                    while !direct.is_empty() {
+                        let childs = state.kvs().gc_try_cleanup_account_hashes(&direct);
+
+                        direct = childs.0;
+                        indirect.extend_from_slice(&childs.1);
+                    }
+                    while !indirect.is_empty() {
+                        let childs = state.kvs().gc_try_cleanup_account_hashes(&direct);
+
+                        indirect = childs.0;
                     }
                 }
             }

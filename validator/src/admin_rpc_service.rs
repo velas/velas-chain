@@ -5,10 +5,11 @@ use {
     jsonrpc_ipc_server::{RequestContext, ServerBuilder},
     jsonrpc_server_utils::tokio,
     log::*,
+    serde::{Deserialize, Serialize},
     solana_core::{
         consensus::Tower, tower_storage::TowerStorage, validator::ValidatorStartProgress,
     },
-    solana_gossip::cluster_info::ClusterInfo,
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{
         exit::Exit,
@@ -16,6 +17,7 @@ use {
         signature::{read_keypair_file, Keypair, Signer},
     },
     std::{
+        fmt::{self, Display},
         net::SocketAddr,
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
@@ -45,9 +47,9 @@ pub struct AdminRpcRequestMetadata {
 impl Metadata for AdminRpcRequestMetadata {}
 
 impl AdminRpcRequestMetadata {
-    fn with_post_init<F>(&self, func: F) -> Result<()>
+    fn with_post_init<F, R>(&self, func: F) -> Result<R>
     where
-        F: FnOnce(&AdminRpcRequestMetadataPostInit) -> Result<()>,
+        F: FnOnce(&AdminRpcRequestMetadataPostInit) -> Result<R>,
     {
         if let Some(post_init) = self.post_init.read().unwrap().as_ref() {
             func(post_init)
@@ -56,6 +58,76 @@ impl AdminRpcRequestMetadata {
                 "Retry once validator start up is complete",
             ))
         }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AdminRpcContactInfo {
+    pub id: String,
+    pub gossip: SocketAddr,
+    pub tvu: SocketAddr,
+    pub tvu_forwards: SocketAddr,
+    pub repair: SocketAddr,
+    pub tpu: SocketAddr,
+    pub tpu_forwards: SocketAddr,
+    pub tpu_vote: SocketAddr,
+    pub rpc: SocketAddr,
+    pub rpc_pubsub: SocketAddr,
+    pub serve_repair: SocketAddr,
+    pub last_updated_timestamp: u64,
+    pub shred_version: u16,
+}
+
+impl From<ContactInfo> for AdminRpcContactInfo {
+    fn from(contact_info: ContactInfo) -> Self {
+        let ContactInfo {
+            id,
+            gossip,
+            tvu,
+            tvu_forwards,
+            repair,
+            tpu,
+            tpu_forwards,
+            tpu_vote,
+            rpc,
+            rpc_pubsub,
+            serve_repair,
+            wallclock,
+            shred_version,
+        } = contact_info;
+        Self {
+            id: id.to_string(),
+            last_updated_timestamp: wallclock,
+            gossip,
+            tvu,
+            tvu_forwards,
+            repair,
+            tpu,
+            tpu_forwards,
+            tpu_vote,
+            rpc,
+            rpc_pubsub,
+            serve_repair,
+            shred_version,
+        }
+    }
+}
+
+impl Display for AdminRpcContactInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "Identity: {}", self.id)?;
+        writeln!(f, "Gossip: {}", self.gossip)?;
+        writeln!(f, "TVU: {}", self.tvu)?;
+        writeln!(f, "TVU Forwards: {}", self.tvu_forwards)?;
+        writeln!(f, "Repair: {}", self.repair)?;
+        writeln!(f, "TPU: {}", self.tpu)?;
+        writeln!(f, "TPU Forwards: {}", self.tpu_forwards)?;
+        writeln!(f, "TPU Votes: {}", self.tpu_vote)?;
+        writeln!(f, "RPC: {}", self.rpc)?;
+        writeln!(f, "RPC Pubsub: {}", self.rpc_pubsub)?;
+        writeln!(f, "Serve Repair: {}", self.serve_repair)?;
+        writeln!(f, "Last Updated Timestamp: {}", self.last_updated_timestamp)?;
+        writeln!(f, "Shred Version: {}", self.shred_version)
     }
 }
 
@@ -81,14 +153,34 @@ pub trait AdminRpc {
     #[rpc(meta, name = "addAuthorizedVoter")]
     fn add_authorized_voter(&self, meta: Self::Metadata, keypair_file: String) -> Result<()>;
 
-    #[rpc(meta, name = "mergeEvmState")]
-    fn merge_evm_state(&self, meta: Self::Metadata, path: String, backup: bool) -> Result<()>;
+    #[rpc(meta, name = "addAuthorizedVoterFromBytes")]
+    fn add_authorized_voter_from_bytes(&self, meta: Self::Metadata, keypair: Vec<u8>)
+        -> Result<()>;
 
     #[rpc(meta, name = "removeAllAuthorizedVoters")]
     fn remove_all_authorized_voters(&self, meta: Self::Metadata) -> Result<()>;
 
     #[rpc(meta, name = "setIdentity")]
     fn set_identity(
+        &self,
+        meta: Self::Metadata,
+        keypair_file: String,
+        require_tower: bool,
+    ) -> Result<()>;
+
+    #[rpc(meta, name = "setIdentityFromBytes")]
+    fn set_identity_from_bytes(
+        &self,
+        meta: Self::Metadata,
+        identity_keypair: Vec<u8>,
+        require_tower: bool,
+    ) -> Result<()>;
+
+    #[rpc(meta, name = "contactInfo")]
+    fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
+
+    #[rpc(meta, name = "contactInfo")]
+    fn merge_evm_state(
         &self,
         meta: Self::Metadata,
         keypair_file: String,
@@ -149,22 +241,78 @@ impl AdminRpc for AdminRpcImpl {
         let authorized_voter = read_keypair_file(keypair_file)
             .map_err(|err| jsonrpc_core::error::Error::invalid_params(format!("{}", err)))?;
 
-        let mut authorized_voter_keypairs = meta.authorized_voter_keypairs.write().unwrap();
-
-        if authorized_voter_keypairs
-            .iter()
-            .any(|x| x.pubkey() == authorized_voter.pubkey())
-        {
-            Err(jsonrpc_core::error::Error::invalid_params(
-                "Authorized voter already present",
-            ))
-        } else {
-            authorized_voter_keypairs.push(Arc::new(authorized_voter));
-            Ok(())
-        }
+        AdminRpcImpl::add_authorized_voter_keypair(meta, authorized_voter)
     }
 
-    fn merge_evm_state(&self, meta: Self::Metadata, path: String, backup: bool) -> Result<()> {
+    fn add_authorized_voter_from_bytes(
+        &self,
+        meta: Self::Metadata,
+        keypair: Vec<u8>,
+    ) -> Result<()> {
+        debug!("add_authorized_voter_from_bytes request received");
+
+        let authorized_voter = Keypair::from_bytes(&keypair).map_err(|err| {
+            jsonrpc_core::error::Error::invalid_params(format!(
+                "Failed to read authorized voter keypair from provided byte array: {}",
+                err
+            ))
+        })?;
+
+        AdminRpcImpl::add_authorized_voter_keypair(meta, authorized_voter)
+    }
+
+    fn remove_all_authorized_voters(&self, meta: Self::Metadata) -> Result<()> {
+        debug!("remove_all_authorized_voters received");
+        meta.authorized_voter_keypairs.write().unwrap().clear();
+        Ok(())
+    }
+
+    fn set_identity(
+        &self,
+        meta: Self::Metadata,
+        keypair_file: String,
+        require_tower: bool,
+    ) -> Result<()> {
+        debug!("set_identity request received");
+
+        let identity_keypair = read_keypair_file(&keypair_file).map_err(|err| {
+            jsonrpc_core::error::Error::invalid_params(format!(
+                "Failed to read identity keypair from {}: {}",
+                keypair_file, err
+            ))
+        })?;
+
+        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_tower)
+    }
+
+    fn set_identity_from_bytes(
+        &self,
+        meta: Self::Metadata,
+        identity_keypair: Vec<u8>,
+        require_tower: bool,
+    ) -> Result<()> {
+        debug!("set_identity_from_bytes request received");
+
+        let identity_keypair = Keypair::from_bytes(&identity_keypair).map_err(|err| {
+            jsonrpc_core::error::Error::invalid_params(format!(
+                "Failed to read identity keypair from provided byte array: {}",
+                err
+            ))
+        })?;
+
+        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_tower)
+    }
+
+    fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo> {
+        meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
+    }
+
+    fn merge_evm_state(
+        &self,
+        meta: AdminRpcRequestMetadata,
+        path: String,
+        backup: bool,
+    ) -> Result<()> {
         info!("Merging evm state: {}, backup: {}", path, backup);
         let archive_evm_state = if let Some(archive_evm_state) = &meta.archive_evm_state {
             archive_evm_state
@@ -214,27 +362,33 @@ impl AdminRpc for AdminRpcImpl {
                 ))
             })
     }
-    fn remove_all_authorized_voters(&self, meta: Self::Metadata) -> Result<()> {
-        debug!("remove_all_authorized_voters received");
-        meta.authorized_voter_keypairs.write().unwrap().clear();
-        Ok(())
+}
+
+impl AdminRpcImpl {
+    fn add_authorized_voter_keypair(
+        meta: AdminRpcRequestMetadata,
+        authorized_voter: Keypair,
+    ) -> Result<()> {
+        let mut authorized_voter_keypairs = meta.authorized_voter_keypairs.write().unwrap();
+
+        if authorized_voter_keypairs
+            .iter()
+            .any(|x| x.pubkey() == authorized_voter.pubkey())
+        {
+            Err(jsonrpc_core::error::Error::invalid_params(
+                "Authorized voter already present",
+            ))
+        } else {
+            authorized_voter_keypairs.push(Arc::new(authorized_voter));
+            Ok(())
+        }
     }
 
-    fn set_identity(
-        &self,
-        meta: Self::Metadata,
-        keypair_file: String,
+    fn set_identity_keypair(
+        meta: AdminRpcRequestMetadata,
+        identity_keypair: Keypair,
         require_tower: bool,
     ) -> Result<()> {
-        debug!("set_identity request received");
-
-        let identity_keypair = read_keypair_file(&keypair_file).map_err(|err| {
-            jsonrpc_core::error::Error::invalid_params(format!(
-                "Failed to read identity keypair from {}: {}",
-                keypair_file, err
-            ))
-        })?;
-
         meta.with_post_init(|post_init| {
             if require_tower {
                 let _ = Tower::restore(meta.tower_storage.as_ref(), &identity_keypair.pubkey())
@@ -263,6 +417,7 @@ pub fn run(ledger_path: &Path, metadata: AdminRpcRequestMetadata) {
 
     let event_loop = tokio::runtime::Builder::new_multi_thread()
         .thread_name("sol-adminrpc-el")
+        .worker_threads(3) // Three still seems like a lot, and better than the default of available core count
         .enable_all()
         .build()
         .unwrap();

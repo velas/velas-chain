@@ -8,6 +8,7 @@ use {
     std::os::unix::io::AsRawFd,
 };
 use {
+    solana_sdk::transport::TransportError,
     std::{
         borrow::Borrow,
         io,
@@ -22,6 +23,12 @@ pub enum SendPktsError {
     /// IO Error during send: first error, num failed packets
     #[error("IO Error, some packets could not be sent")]
     IoError(io::Error, usize),
+}
+
+impl From<SendPktsError> for TransportError {
+    fn from(err: SendPktsError) -> Self {
+        Self::Custom(format!("{:?}", err))
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -84,12 +91,12 @@ fn mmsghdr_for_packet(
 }
 
 #[cfg(target_os = "linux")]
-fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut Vec<mmsghdr>) -> Result<(), SendPktsError> {
+fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut [mmsghdr]) -> Result<(), SendPktsError> {
     let sock_fd = sock.as_raw_fd();
     let mut total_sent = 0;
     let mut erropt = None;
 
-    let mut pkts = &mut hdrs[..];
+    let mut pkts = &mut *hdrs;
     while !pkts.is_empty() {
         let npkts = match unsafe { libc::sendmmsg(sock_fd, &mut pkts[0], pkts.len() as u32, 0) } {
             -1 => {
@@ -124,7 +131,8 @@ where
 {
     let size = packets.len();
     #[allow(clippy::uninit_assumed_init)]
-    let mut iovs = vec![unsafe { std::mem::MaybeUninit::uninit().assume_init() }; size];
+    let iovec = std::mem::MaybeUninit::<iovec>::uninit();
+    let mut iovs = vec![unsafe { iovec.assume_init() }; size];
     let mut addrs = vec![unsafe { std::mem::zeroed() }; size];
     let mut hdrs = vec![unsafe { std::mem::zeroed() }; size];
     for ((pkt, dest), hdr, iov, addr) in izip!(packets, &mut hdrs, &mut iovs, &mut addrs) {
@@ -234,7 +242,7 @@ mod tests {
 
         let sent = multi_target_send(
             &sender,
-            &packet.data[..packet.meta.size],
+            packet.data(..).unwrap(),
             &[&addr, &addr2, &addr3, &addr4],
         )
         .ok();

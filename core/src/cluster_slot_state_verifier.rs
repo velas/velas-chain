@@ -299,7 +299,7 @@ pub enum ResultingStateChange {
 impl SlotStateUpdate {
     fn into_state_changes(self, slot: Slot) -> Vec<ResultingStateChange> {
         let bank_frozen_hash = self.bank_hash();
-        if bank_frozen_hash == None {
+        if bank_frozen_hash.is_none() {
             // If the bank hasn't been frozen yet, then there's nothing to do
             // since replay of the slot hasn't finished yet.
             return vec![];
@@ -766,11 +766,33 @@ pub(crate) fn check_slot_agrees_with_cluster(
 
     // Needs to happen before the bank_frozen_hash.is_none() check below to account for duplicate
     // signals arriving before the bank is constructed in replay.
-    if matches!(slot_state_update, SlotStateUpdate::Duplicate(_)) {
+    if let SlotStateUpdate::Duplicate(ref state) = slot_state_update {
         // If this slot has already been processed before, return
         if !duplicate_slots_tracker.insert(slot) {
             return;
         }
+
+        datapoint_info!(
+            "duplicate_slot",
+            ("slot", slot, i64),
+            (
+                "duplicate_confirmed_hash",
+                state
+                    .duplicate_confirmed_hash
+                    .unwrap_or_default()
+                    .to_string(),
+                String
+            ),
+            (
+                "my_hash",
+                state
+                    .bank_status
+                    .bank_hash()
+                    .unwrap_or_default()
+                    .to_string(),
+                String
+            ),
+        );
     }
 
     // Avoid duplicate work from multiple of the same DuplicateConfirmed signal. This can
@@ -781,6 +803,25 @@ pub(crate) fn check_slot_agrees_with_cluster(
                 return;
             }
         }
+
+        datapoint_info!(
+            "duplicate_confirmed_slot",
+            ("slot", slot, i64),
+            (
+                "duplicate_confirmed_hash",
+                state.duplicate_confirmed_hash.to_string(),
+                String
+            ),
+            (
+                "my_hash",
+                state
+                    .bank_status
+                    .bank_hash()
+                    .unwrap_or_default()
+                    .to_string(),
+                String
+            ),
+        );
     }
 
     if let SlotStateUpdate::EpochSlotsFrozen(epoch_slots_frozen_state) = &slot_state_update {

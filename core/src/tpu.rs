@@ -10,10 +10,13 @@ use {
             GossipVerifiedVoteHashSender, VerifiedVoteSender, VoteTracker,
         },
         fetch_stage::FetchStage,
+        find_packet_sender_stake_stage::FindPacketSenderStakeStage,
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
+        staked_nodes_updater_service::StakedNodesUpdaterService,
     },
-    crossbeam_channel::{self, bounded, unbounded, RecvTimeoutError},
+    crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError},
+    solana_client::connection_cache::ConnectionCache,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{blockstore::Blockstore, blockstore_processor::TransactionStatusSender},
     solana_poh::poh_recorder::{PohRecorder, WorkingBankEntry},
@@ -27,13 +30,13 @@ use {
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_sdk::signature::Keypair,
+    solana_streamer::{
+        quic::{spawn_server, StreamStats, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
+        streamer::StakedNodes,
+    },
     std::{
         net::UdpSocket,
-        sync::{
-            atomic::AtomicBool,
-            mpsc::{channel, Receiver},
-            Arc, Mutex, RwLock,
-        },
+        sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
         thread,
         time::Duration,
     },
@@ -44,6 +47,18 @@ pub const DEFAULT_TPU_COALESCE_MS: u64 = 5;
 /// Timeout interval when joining threads during TPU close
 const TPU_THREADS_JOIN_TIMEOUT_SECONDS: u64 = 10;
 
+// allow multiple connections for NAT and any open/close overlap
+pub const MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
+
+pub struct TpuSockets {
+    pub transactions: Vec<UdpSocket>,
+    pub transaction_forwards: Vec<UdpSocket>,
+    pub vote: Vec<UdpSocket>,
+    pub broadcast: Vec<UdpSocket>,
+    pub transactions_quic: UdpSocket,
+    pub transactions_forwards_quic: UdpSocket,
+}
+
 pub struct Tpu {
     fetch_stage: FetchStage,
     sigverify_stage: SigVerifyStage,
@@ -51,7 +66,11 @@ pub struct Tpu {
     banking_stage: BankingStage,
     cluster_info_vote_listener: ClusterInfoVoteListener,
     broadcast_stage: BroadcastStage,
-    tpu_quic_t: thread::JoinHandle<()>,
+    tpu_quic_t: Option<thread::JoinHandle<()>>,
+    tpu_forwards_quic_t: Option<thread::JoinHandle<()>>,
+    find_packet_sender_stake_stage: FindPacketSenderStakeStage,
+    vote_find_packet_sender_stake_stage: FindPacketSenderStakeStage,
+    staked_nodes_updater_service: StakedNodesUpdaterService,
 }
 
 impl Tpu {
@@ -61,11 +80,7 @@ impl Tpu {
         poh_recorder: &Arc<Mutex<PohRecorder>>,
         entry_receiver: Receiver<WorkingBankEntry>,
         retransmit_slots_receiver: RetransmitSlotsReceiver,
-        transactions_sockets: Vec<UdpSocket>,
-        tpu_forwards_sockets: Vec<UdpSocket>,
-        tpu_vote_sockets: Vec<UdpSocket>,
-        broadcast_sockets: Vec<UdpSocket>,
-        transactions_quic_socket: UdpSocket,
+        sockets: TpuSockets,
         subscriptions: &Arc<RpcSubscriptions>,
         transaction_status_sender: Option<TransactionStatusSender>,
         blockstore: &Arc<Blockstore>,
@@ -82,10 +97,22 @@ impl Tpu {
         tpu_coalesce_ms: u64,
         cluster_confirmed_slot_sender: GossipDuplicateConfirmedSlotsSender,
         cost_model: &Arc<RwLock<CostModel>>,
+        connection_cache: &Arc<ConnectionCache>,
         keypair: &Keypair,
+        enable_quic_servers: bool,
     ) -> Self {
-        let (packet_sender, packet_receiver) = channel();
-        let (vote_packet_sender, vote_packet_receiver) = channel();
+        let TpuSockets {
+            transactions: transactions_sockets,
+            transaction_forwards: tpu_forwards_sockets,
+            vote: tpu_vote_sockets,
+            broadcast: broadcast_sockets,
+            transactions_quic: transactions_quic_sockets,
+            transactions_forwards_quic: transactions_forwards_quic_sockets,
+        } = sockets;
+
+        let (packet_sender, packet_receiver) = unbounded();
+        let (vote_packet_sender, vote_packet_receiver) = unbounded();
+        let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
         let fetch_stage = FetchStage::new_with_sender(
             transactions_sockets,
             tpu_forwards_sockets,
@@ -93,33 +120,87 @@ impl Tpu {
             exit,
             &packet_sender,
             &vote_packet_sender,
+            &forwarded_packet_sender,
+            forwarded_packet_receiver,
             poh_recorder,
             tpu_coalesce_ms,
             Some(bank_forks.read().unwrap().get_vote_only_mode_signal()),
         );
+
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes_updater_service = StakedNodesUpdaterService::new(
+            exit.clone(),
+            cluster_info.clone(),
+            bank_forks.clone(),
+            staked_nodes.clone(),
+        );
+
+        let (find_packet_sender_stake_sender, find_packet_sender_stake_receiver) = unbounded();
+
+        let find_packet_sender_stake_stage = FindPacketSenderStakeStage::new(
+            packet_receiver,
+            find_packet_sender_stake_sender,
+            staked_nodes.clone(),
+            "tpu-find-packet-sender-stake",
+        );
+
+        let (vote_find_packet_sender_stake_sender, vote_find_packet_sender_stake_receiver) =
+            unbounded();
+
+        let vote_find_packet_sender_stake_stage = FindPacketSenderStakeStage::new(
+            vote_packet_receiver,
+            vote_find_packet_sender_stake_sender,
+            staked_nodes.clone(),
+            "tpu-vote-find-packet-sender-stake",
+        );
+
         let (verified_sender, verified_receiver) = unbounded();
 
-        let tpu_quic_t = solana_streamer::quic::spawn_server(
-            transactions_quic_socket,
-            keypair,
-            cluster_info.my_contact_info().tpu.ip(),
-            packet_sender,
-            exit.clone(),
-        )
-        .unwrap();
+        let stats = Arc::new(StreamStats::default());
+        let tpu_quic_t = enable_quic_servers.then(|| {
+            spawn_server(
+                transactions_quic_sockets,
+                keypair,
+                cluster_info.my_contact_info().tpu.ip(),
+                packet_sender,
+                exit.clone(),
+                MAX_QUIC_CONNECTIONS_PER_PEER,
+                staked_nodes.clone(),
+                MAX_STAKED_CONNECTIONS,
+                MAX_UNSTAKED_CONNECTIONS,
+                stats.clone(),
+            )
+            .unwrap()
+        });
+
+        let tpu_forwards_quic_t = enable_quic_servers.then(|| {
+            spawn_server(
+                transactions_forwards_quic_sockets,
+                keypair,
+                cluster_info.my_contact_info().tpu_forwards.ip(),
+                forwarded_packet_sender,
+                exit.clone(),
+                MAX_QUIC_CONNECTIONS_PER_PEER,
+                staked_nodes,
+                MAX_STAKED_CONNECTIONS.saturating_add(MAX_UNSTAKED_CONNECTIONS),
+                0, // Prevent unstaked nodes from forwarding transactions
+                stats,
+            )
+            .unwrap()
+        });
 
         let sigverify_stage = {
-            let verifier = TransactionSigVerifier::default();
-            SigVerifyStage::new(packet_receiver, verified_sender, verifier, "tpu-verifier")
+            let verifier = TransactionSigVerifier::new(verified_sender);
+            SigVerifyStage::new(find_packet_sender_stake_receiver, verifier, "tpu-verifier")
         };
 
         let (verified_tpu_vote_packets_sender, verified_tpu_vote_packets_receiver) = unbounded();
 
         let vote_sigverify_stage = {
-            let verifier = TransactionSigVerifier::new_reject_non_vote();
+            let verifier =
+                TransactionSigVerifier::new_reject_non_vote(verified_tpu_vote_packets_sender);
             SigVerifyStage::new(
-                vote_packet_receiver,
-                verified_tpu_vote_packets_sender,
+                vote_find_packet_sender_stake_receiver,
                 verifier,
                 "tpu-vote-verifier",
             )
@@ -152,6 +233,8 @@ impl Tpu {
             transaction_status_sender,
             replay_vote_sender,
             cost_model.clone(),
+            connection_cache.clone(),
+            bank_forks.clone(),
         );
 
         let broadcast_stage = broadcast_type.new_broadcast_stage(
@@ -159,9 +242,9 @@ impl Tpu {
             cluster_info.clone(),
             entry_receiver,
             retransmit_slots_receiver,
-            exit,
-            blockstore,
-            &bank_forks,
+            exit.clone(),
+            blockstore.clone(),
+            bank_forks,
             shred_version,
         );
 
@@ -173,6 +256,10 @@ impl Tpu {
             cluster_info_vote_listener,
             broadcast_stage,
             tpu_quic_t,
+            tpu_forwards_quic_t,
+            find_packet_sender_stake_stage,
+            vote_find_packet_sender_stake_stage,
+            staked_nodes_updater_service,
         }
     }
 
@@ -187,7 +274,7 @@ impl Tpu {
         // exit can deadlock. put an upper-bound on how long we wait for it
         let timeout = Duration::from_secs(TPU_THREADS_JOIN_TIMEOUT_SECONDS);
         if let Err(RecvTimeoutError::Timeout) = receiver.recv_timeout(timeout) {
-            error!("timeout for closing tvu");
+            error!("timeout for closing tpu");
         }
         Ok(())
     }
@@ -199,8 +286,16 @@ impl Tpu {
             self.vote_sigverify_stage.join(),
             self.cluster_info_vote_listener.join(),
             self.banking_stage.join(),
+            self.find_packet_sender_stake_stage.join(),
+            self.vote_find_packet_sender_stake_stage.join(),
+            self.staked_nodes_updater_service.join(),
         ];
-        self.tpu_quic_t.join()?;
+        if let Some(tpu_quic_t) = self.tpu_quic_t {
+            tpu_quic_t.join()?;
+        }
+        if let Some(tpu_forwards_quic_t) = self.tpu_forwards_quic_t {
+            tpu_forwards_quic_t.join()?;
+        }
         let broadcast_result = self.broadcast_stage.join();
         for result in results {
             result?;

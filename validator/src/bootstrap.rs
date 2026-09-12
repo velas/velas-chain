@@ -149,6 +149,7 @@ fn verify_reachable_ports(
     }
     if ContactInfo::is_valid_address(&node.info.tpu_forwards, socket_addr_space) {
         udp_sockets.extend(node.sockets.tpu_forwards.iter());
+        udp_sockets.push(&node.sockets.tpu_forwards_quic);
     }
     if ContactInfo::is_valid_address(&node.info.tpu_vote, socket_addr_space) {
         udp_sockets.extend(node.sockets.tpu_vote.iter());
@@ -231,6 +232,7 @@ fn start_gossip_node(
         gossip_socket,
         gossip_validators,
         should_check_duplicate_instance,
+        None,
         &gossip_exit_flag,
     );
     (cluster_info, gossip_exit_flag, gossip_service)
@@ -1010,13 +1012,6 @@ mod with_incremental_snapshots {
     ///
     /// This function finds the highest compatible snapshots from the cluster, then picks one peer
     /// at random to use (return).
-    ///
-    /// NOTE: If the node has configured a full snapshot interval that is not common and/or
-    /// different from its known validators, then it is possible that there are no compatible
-    /// snapshot hashes available.  At that time, a node may (1) try again, (2) change its full
-    /// snapshot interval back to a standard/default value, or (3) disable downloading an
-    /// incremental snapshot and instead download the highest full snapshot hash, regardless of
-    /// compatibility.
     fn get_rpc_node(
         cluster_info: &ClusterInfo,
         cluster_entrypoints: &[ContactInfo],
@@ -1123,6 +1118,7 @@ mod with_incremental_snapshots {
             bootstrap_config,
             rpc_peers,
         );
+
         if validator_config.known_validators.is_some() {
             let known_snapshot_hashes =
                 get_snapshot_hashes_from_known_validators(cluster_info, validator_config);
