@@ -6316,7 +6316,7 @@ pub mod tests {
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
         let mirror_vote_pubkey = solana_sdk::pubkey::new_rand();
 
-        let (voting_sender, voting_receiver) = channel();
+        let (voting_sender, voting_receiver) = unbounded();
         let mut voted_signatures = vec![];
         tower.record_bank_vote(&bank0, &my_vote_pubkey);
 
