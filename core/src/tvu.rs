@@ -124,6 +124,7 @@ impl Tvu {
     #[allow(clippy::new_ret_no_self, clippy::too_many_arguments)]
     pub fn new(
         vote_account: &Pubkey,
+        mirror_vote_accounts: &[Pubkey],
         authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
         bank_forks: &Arc<RwLock<BankForks>>,
         cluster_info: &Arc<ClusterInfo>,
@@ -275,6 +276,7 @@ impl Tvu {
 
         let replay_stage_config = ReplayStageConfig {
             vote_account: *vote_account,
+            mirror_vote_accounts: mirror_vote_accounts.to_vec(),
             authorized_voter_keypairs,
             exit: exit.clone(),
             rpc_subscriptions: rpc_subscriptions.clone(),
@@ -501,6 +503,7 @@ pub mod tests {
         let (_pruned_banks_sender, pruned_banks_receiver) = unbounded();
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
+            &[],
             Arc::new(RwLock::new(vec![Arc::new(vote_keypair)])),
             &bank_forks,
             &cref1,

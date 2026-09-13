@@ -5,7 +5,7 @@ use {
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{clock::Slot, transaction::Transaction},
+    solana_sdk::{clock::Slot, pubkey::Pubkey, transaction::Transaction},
     std::{
         sync::{Arc, Mutex, RwLock},
         thread::{self, Builder, JoinHandle},
@@ -17,10 +17,15 @@ pub enum VoteOp {
         tx: Transaction,
         tower_slots: Vec<Slot>,
         saved_tower: SavedTowerVersions,
+        /// Which vote account's tower `saved_tower` is. `None` is the node's
+        /// primary vote account; see [`TowerStorage`].
+        vote_account: Option<Pubkey>,
     },
     RefreshVote {
         tx: Transaction,
         last_voted_slot: Slot,
+        /// Which vote account this refresh belongs to; see `PushVote`.
+        vote_account: Option<Pubkey>,
     },
 }
 
@@ -71,9 +76,14 @@ impl VotingService {
         vote_op: VoteOp,
         send_to_tpu_vote_port: bool,
     ) {
-        if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
+        if let VoteOp::PushVote {
+            saved_tower,
+            vote_account,
+            ..
+        } = &vote_op
+        {
             let mut measure = Measure::start("tower_save-ms");
-            if let Err(err) = tower_storage.store(saved_tower) {
+            if let Err(err) = tower_storage.store(saved_tower, vote_account.as_ref()) {
                 error!("Unable to save tower to storage: {:?}", err);
                 std::process::exit(1);
             }
@@ -91,17 +101,27 @@ impl VotingService {
             pubkey_and_target_address.map(|(_pubkey, target_addr)| target_addr),
         );
 
+        // Only the primary vote account is published to the gossip vote table.
+        // Mirror votes still reach the cluster via the leader TPU above.
         match vote_op {
             VoteOp::PushVote {
-                tx, tower_slots, ..
+                tx,
+                tower_slots,
+                vote_account,
+                ..
             } => {
-                cluster_info.push_vote(&tower_slots, tx);
+                if vote_account.is_none() {
+                    cluster_info.push_vote(&tower_slots, tx);
+                }
             }
             VoteOp::RefreshVote {
                 tx,
                 last_voted_slot,
+                vote_account,
             } => {
-                cluster_info.refresh_vote(tx, last_voted_slot);
+                if vote_account.is_none() {
+                    cluster_info.refresh_vote(tx, last_voted_slot);
+                }
             }
         }
     }

@@ -585,6 +585,26 @@ impl Tower {
     }
 
     pub fn is_locked_out(&self, slot: Slot, ancestors: &HashSet<Slot>) -> bool {
+        self.check_locked_out(slot, ancestors, /*allow_purged_root*/ false)
+    }
+
+    /// Same lockout rules as [`Self::is_locked_out`], but a mirror tower is
+    /// allowed to lag the primary-driven `bank_forks` root.
+    ///
+    /// When that happens the mirror root has already been dropped from
+    /// `ancestors`. The primary path asserts here; a mirror must instead treat
+    /// a root that is strictly behind the ancestor window as already
+    /// confirmed, and only sit out a root that is actually on another fork.
+    pub fn is_locked_out_for_mirror(&self, slot: Slot, ancestors: &HashSet<Slot>) -> bool {
+        self.check_locked_out(slot, ancestors, /*allow_purged_root*/ true)
+    }
+
+    fn check_locked_out(
+        &self,
+        slot: Slot,
+        ancestors: &HashSet<Slot>,
+        allow_purged_root: bool,
+    ) -> bool {
         if !self.is_recent(slot) {
             return true;
         }
@@ -602,16 +622,23 @@ impl Tower {
         }
 
         if let Some(root_slot) = vote_state.root_slot {
-            if slot != root_slot {
-                // This case should never happen because bank forks purges all
-                // non-descendants of the root every time root is set
+            if slot != root_slot && !ancestors.contains(&root_slot) {
+                if allow_purged_root
+                    && slot > root_slot
+                    && ancestors.iter().all(|ancestor| *ancestor > root_slot)
+                {
+                    return false;
+                }
+                // This case should never happen for the primary tower because
+                // bank forks purges all non-descendants of the root every time
+                // root is set. A mirror can lag that root; only the primary
+                // path still asserts.
                 assert!(
-                    ancestors.contains(&root_slot),
+                    allow_purged_root,
                     "ancestors: {:?}, slot: {} root: {}",
-                    ancestors,
-                    slot,
-                    root_slot
+                    ancestors, slot, root_slot
                 );
+                return true;
             }
         }
 
@@ -1274,13 +1301,34 @@ impl Tower {
     }
 
     pub fn save(&self, tower_storage: &dyn TowerStorage, node_keypair: &Keypair) -> Result<()> {
+        self.save_for_vote_account(tower_storage, node_keypair, None)
+    }
+
+    /// Save the tower belonging to `vote_account`. `None` is the node's primary
+    /// vote account; see [`TowerStorage`].
+    pub fn save_for_vote_account(
+        &self,
+        tower_storage: &dyn TowerStorage,
+        node_keypair: &Keypair,
+        vote_account: Option<&Pubkey>,
+    ) -> Result<()> {
         let saved_tower = SavedTower::new(self, node_keypair)?;
-        tower_storage.store(&SavedTowerVersions::from(saved_tower))?;
+        tower_storage.store(&SavedTowerVersions::from(saved_tower), vote_account)?;
         Ok(())
     }
 
     pub fn restore(tower_storage: &dyn TowerStorage, node_pubkey: &Pubkey) -> Result<Self> {
-        tower_storage.load(node_pubkey)
+        Self::restore_for_vote_account(tower_storage, node_pubkey, None)
+    }
+
+    /// Restore the tower belonging to `vote_account`. `None` is the node's
+    /// primary vote account; see [`TowerStorage`].
+    pub fn restore_for_vote_account(
+        tower_storage: &dyn TowerStorage,
+        node_pubkey: &Pubkey,
+        vote_account: Option<&Pubkey>,
+    ) -> Result<Self> {
+        tower_storage.load(node_pubkey, vote_account)
     }
 }
 
@@ -2274,6 +2322,33 @@ pub mod test {
         assert_eq!(tower.vote_state.votes[0].confirmation_count, 2);
         assert_eq!(tower.vote_state.votes[1].slot, 4);
         assert_eq!(tower.vote_state.votes[1].confirmation_count, 1);
+    }
+
+    #[test]
+    fn test_mirror_locked_out_purged_root_does_not_panic() {
+        // Local e2e crash: rebuilt mirror tower still has root 674 after
+        // bank_forks has already dropped that slot from ancestors of 711.
+        let mut tower = Tower::new_for_tests(0, 0.67);
+        tower.vote_state.root_slot = Some(674);
+        let ancestors: HashSet<Slot> = (675..=710).collect();
+        assert!(!tower.is_locked_out_for_mirror(711, &ancestors));
+    }
+
+    #[test]
+    fn test_mirror_locked_out_foreign_root_sits_out() {
+        let mut tower = Tower::new_for_tests(0, 0.67);
+        tower.vote_state.root_slot = Some(800);
+        let ancestors: HashSet<Slot> = (675..=710).collect();
+        assert!(tower.is_locked_out_for_mirror(711, &ancestors));
+    }
+
+    #[test]
+    fn test_mirror_locked_out_still_honors_sibling_lockout() {
+        let mut tower = Tower::new_for_tests(0, 0.67);
+        let ancestors: HashSet<Slot> = vec![0].into_iter().collect();
+        tower.vote_state.root_slot = Some(0);
+        tower.record_vote(1, Hash::default());
+        assert!(tower.is_locked_out_for_mirror(2, &ancestors));
     }
 
     #[test]
