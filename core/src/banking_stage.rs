@@ -2206,6 +2206,7 @@ impl BankingStage {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn next_leader_tpu(
     cluster_info: &ClusterInfo,
     poh_recorder: &Mutex<PohRecorder>,
@@ -2225,6 +2226,46 @@ pub(crate) fn next_leader_tpu_vote(
     poh_recorder: &Mutex<PohRecorder>,
 ) -> Option<(Pubkey, std::net::SocketAddr)> {
     next_leader_x(cluster_info, poh_recorder, |leader| leader.tpu_vote)
+}
+
+pub(crate) fn upcoming_leader_tpu_votes(
+    cluster_info: &ClusterInfo,
+    poh_recorder: &Mutex<PohRecorder>,
+    fanout_slots: u64,
+) -> Vec<std::net::SocketAddr> {
+    upcoming_leader_x(cluster_info, poh_recorder, fanout_slots, |leader| leader.tpu_vote)
+}
+
+pub(crate) fn upcoming_leader_tpus(
+    cluster_info: &ClusterInfo,
+    poh_recorder: &Mutex<PohRecorder>,
+    fanout_slots: u64,
+) -> Vec<std::net::SocketAddr> {
+    upcoming_leader_x(cluster_info, poh_recorder, fanout_slots, |leader| leader.tpu)
+}
+
+fn upcoming_leader_x<F>(
+    cluster_info: &ClusterInfo,
+    poh_recorder: &Mutex<PohRecorder>,
+    fanout_slots: u64,
+    port_selector: F,
+) -> Vec<std::net::SocketAddr>
+where
+    F: Fn(&ContactInfo) -> std::net::SocketAddr,
+{
+    let mut addrs = Vec::new();
+    let mut seen_leaders = std::collections::HashSet::new();
+    let poh = poh_recorder.lock().unwrap();
+    for offset in 1..=fanout_slots {
+        if let Some(leader_pubkey) = poh.leader_after_n_slots(offset) {
+            if seen_leaders.insert(leader_pubkey) {
+                if let Some(addr) = cluster_info.lookup_contact_info(&leader_pubkey, |c| port_selector(c)) {
+                    addrs.push(addr);
+                }
+            }
+        }
+    }
+    addrs
 }
 
 fn next_leader_x<F>(

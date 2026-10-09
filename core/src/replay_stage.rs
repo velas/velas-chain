@@ -2235,13 +2235,28 @@ impl ReplayStage {
                 last_voted_slot
             );
         }
+        let is_mirror = tower_vote_account.is_some();
+        let hash_age_valid = heaviest_bank_on_same_fork
+            .check_hash_age(&tower.last_vote_tx_blockhash(), MAX_PROCESSING_AGE)
+            .unwrap_or(false);
+
+        // For the primary vote account, gossip handles delivery so we only refresh if the
+        // transaction's recent blockhash has expired (!hash_age_valid).
+        // For mirror vote accounts, gossip is bypassed, so if the vote has not landed yet,
+        // we must not wait for 150-slot blockhash expiration to retry; we retry as soon
+        // as the refresh interval elapses.
+        let should_wait_for_hash_expiry = !is_mirror && hash_age_valid;
+        let refresh_interval_millis = if is_mirror {
+            1500u128
+        } else {
+            MAX_VOTE_REFRESH_INTERVAL_MILLIS as u128
+        };
+
         if my_latest_landed_vote >= last_voted_slot
-            || heaviest_bank_on_same_fork
-                .check_hash_age(&tower.last_vote_tx_blockhash(), MAX_PROCESSING_AGE)
-                .unwrap_or(false)
+            || should_wait_for_hash_expiry
             // In order to avoid voting on multiple forks all past MAX_PROCESSING_AGE that don't
             // include the last voted blockhash
-            || last_vote_refresh_time.last_refresh_time.elapsed().as_millis() < MAX_VOTE_REFRESH_INTERVAL_MILLIS as u128
+            || last_vote_refresh_time.last_refresh_time.elapsed().as_millis() < refresh_interval_millis
         {
             return;
         }
